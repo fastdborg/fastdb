@@ -2,7 +2,7 @@
 
 use crate::ast::*;
 use crate::error::{LimitKind, ParseError, ParseErrorKind};
-use crate::lexer::{tokenize_with_limits, Token, TokenKind};
+use crate::lexer::{Lexer, Token, TokenKind};
 use crate::ParserLimits;
 use std::mem::discriminant;
 
@@ -11,8 +11,17 @@ pub fn parse(input: &str) -> Result<Script, ParseError> {
 }
 
 pub fn parse_with_limits(input: &str, limits: &ParserLimits) -> Result<Script, ParseError> {
-    let tokens = tokenize_with_limits(input, limits)?;
-    Parser::new(tokens, limits).parse_script()
+    let mut cursor = StatementCursor::with_limits(input, limits.clone());
+    let mut statements = Vec::new();
+    while let Some(statement) = cursor.next_statement()? {
+        statements.push(statement);
+    }
+    let first = statements.first().expect("empty input rejected").span();
+    let last = statements.last().expect("empty input rejected").span();
+    Ok(Script {
+        statements,
+        span: first.union(last),
+    })
 }
 
 pub fn parse_one(input: &str) -> Result<Statement, ParseError> {
@@ -38,6 +47,124 @@ pub fn parse_one_with_limits(input: &str, limits: &ParserLimits) -> Result<State
         .into_iter()
         .next()
         .expect("length checked above"))
+}
+
+/// Incrementally lexes and parses one statement at a time.
+///
+/// Spans always refer to the complete input, and token/statement limits are
+/// cumulative across calls. In particular, a lexical error after a statement
+/// separator is not discovered until the caller asks for the later statement.
+pub struct StatementCursor<'a> {
+    source: &'a str,
+    position: usize,
+    limits: ParserLimits,
+    token_count: usize,
+    statement_count: usize,
+    emitted_statement: bool,
+    finished: bool,
+}
+
+impl<'a> StatementCursor<'a> {
+    pub fn new(source: &'a str) -> Self {
+        Self::with_limits(source, ParserLimits::default())
+    }
+
+    pub fn with_limits(source: &'a str, limits: ParserLimits) -> Self {
+        Self {
+            source,
+            position: 0,
+            limits,
+            token_count: 0,
+            statement_count: 0,
+            emitted_statement: false,
+            finished: false,
+        }
+    }
+
+    pub fn next_statement(&mut self) -> Result<Option<Statement>, ParseError> {
+        if self.finished {
+            return Ok(None);
+        }
+
+        let mut tokens = Vec::new();
+        loop {
+            let mut lexer = Lexer {
+                source: self.source,
+                position: self.position,
+                limits: &self.limits,
+            };
+            let token = lexer.next_token()?;
+            self.position = lexer.position;
+            if self.position > self.limits.max_input_bytes {
+                return Err(ParseError::new(
+                    ParseErrorKind::LimitExceeded {
+                        kind: LimitKind::InputBytes,
+                        limit: self.limits.max_input_bytes,
+                    },
+                    Span::new(
+                        self.limits.max_input_bytes,
+                        self.position - self.limits.max_input_bytes,
+                    ),
+                ));
+            }
+
+            let eof = matches!(token.kind, TokenKind::Eof);
+            if !eof {
+                if self.token_count == self.limits.max_tokens {
+                    return Err(ParseError::new(
+                        ParseErrorKind::LimitExceeded {
+                            kind: LimitKind::Tokens,
+                            limit: self.limits.max_tokens,
+                        },
+                        token.span,
+                    ));
+                }
+                self.token_count += 1;
+            }
+            let separator = matches!(token.kind, TokenKind::Semicolon);
+            tokens.push(token);
+            if eof || separator {
+                let boundary = tokens.last().expect("token was pushed").span.end();
+                if separator {
+                    tokens.push(Token {
+                        kind: TokenKind::Eof,
+                        span: Span::new(boundary, 0),
+                    });
+                } else {
+                    self.finished = true;
+                }
+                break;
+            }
+        }
+
+        if matches!(
+            tokens.first().map(|token| &token.kind),
+            Some(TokenKind::Eof)
+        ) {
+            if self.emitted_statement {
+                return Ok(None);
+            }
+            return Err(ParseError::new(ParseErrorKind::EmptyInput, tokens[0].span));
+        }
+
+        let mut script = Parser::new(tokens, &self.limits).parse_script()?;
+        let statement = script
+            .statements
+            .pop()
+            .expect("parser accepted exactly one cursor segment");
+        self.statement_count += 1;
+        if self.statement_count > self.limits.max_statements {
+            return Err(ParseError::new(
+                ParseErrorKind::LimitExceeded {
+                    kind: LimitKind::Statements,
+                    limit: self.limits.max_statements,
+                },
+                statement.span(),
+            ));
+        }
+        self.emitted_statement = true;
+        Ok(Some(statement))
+    }
 }
 
 struct Parser<'a> {

@@ -10,3 +10,4 @@ turso_fastdb = { path = "../fastdb-frontend", features = ["testing"] }
 turso_fastdb_parser = { path = "../fastdb-parser" }
 turso_core = { workspace = true }
 tempfile = { workspace = true }
+uuid = { version = "1.11.0", features = ["v4", "v7"] }

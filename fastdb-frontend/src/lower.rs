@@ -10,6 +10,15 @@ use turso_parser::ast::*;
 pub type Bindings = Vec<Value>;
 pub(crate) const TRANSLATED_INPUT: &str = "<fastdb-translated>";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateOperator {
+    Equal,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
 fn nm(value: &str) -> Name {
     Name::from_string(value)
 }
@@ -614,6 +623,18 @@ pub fn physical_select_stmt(
     encoded_rid: Option<&str>,
     filters: &[(String, FastValue)],
 ) -> Result<(Stmt, Bindings), FastDbError> {
+    let predicates = filters
+        .iter()
+        .map(|(path, value)| (path.clone(), PredicateOperator::Equal, value.clone()))
+        .collect::<Vec<_>>();
+    physical_select_predicates_stmt(opaque_table, encoded_rid, &predicates)
+}
+
+pub fn physical_select_predicates_stmt(
+    opaque_table: &str,
+    encoded_rid: Option<&str>,
+    predicates: &[(String, PredicateOperator, FastValue)],
+) -> Result<(Stmt, Bindings), FastDbError> {
     validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
     let mut bindings = Vec::new();
     let mut condition = None;
@@ -621,14 +642,17 @@ pub fn physical_select_stmt(
         bindings.push(text(rid));
         condition = Some(Expr::binary(id("rid"), Operator::Equals, var(1)));
     }
-    for (path, value) in filters {
+    for (path, predicate_operator, value) in predicates {
         bindings.push(engine_scalar(value)?);
         let index = u32::try_from(bindings.len())
             .map_err(|_| FastDbError::Engine("too many translated bindings".into()))?;
-        let operator = if matches!(value, FastValue::Null) {
-            Operator::Is
-        } else {
-            Operator::Equals
+        let operator = match predicate_operator {
+            PredicateOperator::Equal if matches!(value, FastValue::Null) => Operator::Is,
+            PredicateOperator::Equal => Operator::Equals,
+            PredicateOperator::Less => Operator::Less,
+            PredicateOperator::LessEqual => Operator::LessEquals,
+            PredicateOperator::Greater => Operator::Greater,
+            PredicateOperator::GreaterEqual => Operator::GreaterEquals,
         };
         let predicate = Expr::binary(json_extract_doc(path), operator, var(index));
         condition = Some(match condition {

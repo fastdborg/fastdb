@@ -24,9 +24,10 @@ fn quoted_semicolon_value_stored_literally_and_schema_unchanged() {
         let conn = db.connect().unwrap();
         // The value contains a semicolon and an escaped quote; it is data.
         let r = conn.execute("CREATE person:x SET name = 'a;''b';").unwrap();
-        assert_eq!(r.records.len(), 1);
+        let records = r.legacy_records();
+        assert_eq!(records.len(), 1);
         assert_eq!(
-            r.records[0].fields,
+            records[0].fields,
             vec![("name".to_string(), Value::Str("a;'b".to_string()))]
         );
     }
@@ -35,10 +36,11 @@ fn quoted_semicolon_value_stored_literally_and_schema_unchanged() {
     let db = Database::open(s).unwrap();
     let conn = db.connect().unwrap();
     let r = conn.execute("SELECT * FROM person:x;").unwrap();
-    assert_eq!(r.records.len(), 1);
-    assert_eq!(r.records[0].id.id, "x");
+    let records = r.legacy_records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id.id, "x");
     assert_eq!(
-        r.records[0].fields,
+        records[0].fields,
         vec![("name".to_string(), Value::Str("a;'b".to_string()))]
     );
 

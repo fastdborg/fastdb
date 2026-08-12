@@ -59,10 +59,11 @@ fn expression_index_selected_before_and_after_reopen() {
         let r = conn
             .execute("SELECT * FROM person WHERE name = 'Jaime';")
             .unwrap();
-        assert_eq!(r.records.len(), 1);
-        assert_eq!(r.records[0].id.id, "jaime");
+        let records = r.legacy_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id.id, "jaime");
         assert_eq!(
-            r.records[0].fields,
+            records[0].fields,
             vec![("name".to_string(), Value::Str("Jaime".to_string()))]
         );
 
@@ -79,8 +80,9 @@ fn expression_index_selected_before_and_after_reopen() {
         let r = conn
             .execute("SELECT * FROM person WHERE name = 'Nikola';")
             .unwrap();
-        assert_eq!(r.records.len(), 1);
-        assert_eq!(r.records[0].id.id, "nikola");
+        let records = r.legacy_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id.id, "nikola");
 
         let plans = conn.explain_field_filter("person", "name").unwrap();
         assert_uses_index(&plans, &idx_name);
@@ -94,11 +96,14 @@ fn expression_index_selected_before_and_after_reopen() {
         let r = conn
             .execute("SELECT * FROM person WHERE name = 'Jaime';")
             .unwrap();
-        assert!(r.records.is_empty(), "deleted record must not match");
+        assert!(
+            r.legacy_records().is_empty(),
+            "deleted record must not match"
+        );
         // Other records still match.
         let r = conn
             .execute("SELECT * FROM person WHERE name = 'Tracy';")
             .unwrap();
-        assert_eq!(r.records.len(), 1);
+        assert_eq!(r.legacy_records().len(), 1);
     }
 }

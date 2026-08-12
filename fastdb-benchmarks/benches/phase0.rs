@@ -26,14 +26,21 @@ use turso_core::{
 };
 use turso_fastdb::names::{decode_rid, encode_rid};
 use turso_fastdb::{
-    parse_doc, Connection as FdbConn, Database as FdbDb, ExecutionResult, Record, RecordId,
-    RecordIdValue, Value as FdbValue,
+    parse_doc, Connection as FdbConn, Database as FdbDb, QueryResponse, Record, RecordId,
+    RecordIdValue, StatementResult, Value as FdbValue,
 };
 
 // --------------------------- helpers ---------------------------
 
 fn fresh_file(dir: &TempDir, name: &str) -> String {
     dir.path().join(name).to_str().unwrap().to_string()
+}
+
+fn response_rows(response: &QueryResponse) -> &[FdbValue] {
+    let Some(StatementResult::Rows(rows)) = response.statements.first() else {
+        panic!("benchmark statement must return rows")
+    };
+    rows
 }
 
 fn native_open(path: &str) -> Arc<turso_core::Connection> {
@@ -170,7 +177,7 @@ impl Native {
         records
     }
 
-    fn delete(&mut self, id: &str) -> ExecutionResult {
+    fn delete(&mut self, id: &str) {
         self.delete
             .bind_at(
                 NonZeroUsize::new(1).unwrap(),
@@ -179,9 +186,6 @@ impl Native {
             .unwrap();
         self.delete.run_ignore_rows().unwrap();
         self.delete.reset().unwrap();
-        ExecutionResult {
-            records: Vec::new(),
-        }
     }
 }
 
@@ -221,7 +225,7 @@ fn cold_create(c: &mut Criterion) {
                 let r = conn
                     .execute("CREATE person:first SET name = 'Tracy';")
                     .unwrap();
-                assert_eq!(r.records.len(), 1);
+                assert_eq!(response_rows(&r).len(), 1);
                 black_box(r);
             },
             BatchSize::SmallInput,
@@ -275,7 +279,7 @@ fn steady_create(c: &mut Criterion) {
             i += 1;
             let sql = format!("CREATE person:k{i} SET name = 'v{i}';");
             let r = fdb.execute(&sql).unwrap();
-            assert_eq!(r.records.len(), 1);
+            assert_eq!(response_rows(&r).len(), 1);
             black_box(r);
         })
     });
@@ -300,7 +304,7 @@ fn point_read(c: &mut Criterion) {
     g.bench_function("fastdb", |b| {
         b.iter(|| {
             let r = fdb.execute("SELECT * FROM person:rec0;").unwrap();
-            assert_eq!(r.records.len(), 1);
+            assert_eq!(response_rows(&r).len(), 1);
             black_box(r);
         })
     });
@@ -324,7 +328,7 @@ fn indexed_filter(c: &mut Criterion) {
             let r = fdb
                 .execute("SELECT * FROM person WHERE name = 'rec25';")
                 .unwrap();
-            assert_eq!(r.records.len(), 1);
+            assert_eq!(response_rows(&r).len(), 1);
             black_box(r);
         })
     });
@@ -356,7 +360,7 @@ fn delete_op(c: &mut Criterion) {
             },
             |n| {
                 let r = fdb.execute(&format!("DELETE person:del{n};")).unwrap();
-                assert!(r.records.is_empty());
+                assert!(response_rows(&r).is_empty());
                 black_box(r);
             },
             BatchSize::SmallInput,
@@ -379,9 +383,8 @@ fn delete_op(c: &mut Criterion) {
                 n
             },
             |n| {
-                let result = native.borrow_mut().delete(&format!("del{n}"));
-                assert!(result.records.is_empty());
-                black_box(result);
+                native.borrow_mut().delete(&format!("del{n}"));
+                black_box(());
             },
             BatchSize::SmallInput,
         )
@@ -391,8 +394,9 @@ fn delete_op(c: &mut Criterion) {
     assert!(
         fdb.execute(&format!("SELECT * FROM person:del{last_fdb};"))
             .unwrap()
-            .records
-            .is_empty(),
+            .statements
+            .first()
+            .is_some_and(|result| matches!(result, StatementResult::Rows(rows) if rows.is_empty())),
         "last FastDB delete persisted"
     );
     let last_native = j.get().checked_sub(1).unwrap();

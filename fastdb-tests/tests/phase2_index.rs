@@ -65,7 +65,7 @@ fn p2_idx_001_field_composite_and_named_plan_survive_reopen() {
     assert_eq!(
         conn.execute("SELECT * FROM person WHERE name='Tracy' AND age=42")
             .unwrap()
-            .records
+            .legacy_records()
             .len(),
         1
     );
@@ -111,7 +111,7 @@ fn p2_idx_002_unique_missing_null_existing_duplicates_and_write_maintenance() {
     assert_eq!(
         conn.execute("SELECT * FROM user WHERE email='same@example.test'")
             .unwrap()
-            .records
+            .legacy_records()
             .len(),
         1
     );
@@ -160,7 +160,10 @@ fn p2_idx_003_non_scalar_existing_and_future_values_are_rejected() {
         ErrorCategory::Schema
     );
     assert_eq!(
-        conn.execute("SELECT * FROM item:b").unwrap().records.len(),
+        conn.execute("SELECT * FROM item:b")
+            .unwrap()
+            .legacy_records()
+            .len(),
         0
     );
 }

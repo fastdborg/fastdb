@@ -25,12 +25,13 @@ fn p2_bridge_001_exact_create_select_define_and_generated_uuid_slice() {
              CONTENT { name: 'Tracy', profile: { age: 42 } }",
         )
         .unwrap();
-    assert_eq!(created.records.len(), 1);
+    let created_records = created.legacy_records();
+    assert_eq!(created_records.len(), 1);
     assert!(matches!(
-        created.records[0].id.id,
+        created_records[0].id.id,
         RecordIdValue::Uuid(uuid) if uuid.get_version_num() == 4
     ));
-    let profile = created.records[0]
+    let profile = created_records[0]
         .fields
         .iter()
         .find(|(key, _)| key == "profile")
@@ -46,16 +47,17 @@ fn p2_bridge_001_exact_create_select_define_and_generated_uuid_slice() {
              WHERE name = 'Tracy' AND profile.age = 42.0",
         )
         .unwrap();
-    assert_eq!(selected.records, created.records);
+    assert_eq!(selected.legacy_records(), created_records);
 
     let generated = conn
         .execute("CREATE note CONTENT { title: 'generated' }")
         .unwrap();
-    let RecordIdValue::Uuid(uuid) = generated.records[0].id.id else {
+    let generated_records = generated.legacy_records();
+    let RecordIdValue::Uuid(uuid) = generated_records[0].id.id else {
         panic!("omitted CREATE ID must generate UUID");
     };
     assert_eq!(uuid.get_version_num(), 7);
-    let source = generated.records[0].id.to_string();
+    let source = generated_records[0].id.to_string();
     assert!(source.starts_with("note:u'"));
     assert_eq!(
         conn.execute(&format!("SELECT * FROM {source}")).unwrap(),
@@ -77,9 +79,10 @@ fn p2_bridge_002_values_duplicate_keys_nested_set_and_typed_record_tags() {
             }",
         )
         .unwrap();
-    assert_eq!(created.records[0].id.id, RecordIdValue::Integer(1));
+    let created_records = created.legacy_records();
+    assert_eq!(created_records[0].id.id, RecordIdValue::Integer(1));
     assert_eq!(
-        created.records[0]
+        created_records[0]
             .fields
             .iter()
             .map(|(key, _)| key.as_str())
@@ -87,14 +90,19 @@ fn p2_bridge_002_values_duplicate_keys_nested_set_and_typed_record_tags() {
         vec!["a", "dup", "f", "list", "n", "owner", "z"]
     );
     assert_eq!(
-        created.records[0]
+        created_records[0]
             .fields
             .iter()
             .find(|(key, _)| key == "dup")
             .map(|(_, value)| value),
         Some(&Value::Str("last".into()))
     );
-    assert_eq!(conn.execute("SELECT * FROM item:1").unwrap(), created);
+    assert_eq!(
+        conn.execute("SELECT * FROM item:1")
+            .unwrap()
+            .legacy_records(),
+        created_records
+    );
 
     let nested = conn
         .execute("CREATE metric:-1 SET profile.age = 42")
@@ -102,34 +110,26 @@ fn p2_bridge_002_values_duplicate_keys_nested_set_and_typed_record_tags() {
     let mut profile = BTreeMap::new();
     profile.insert("age".into(), Value::Integer(42));
     assert_eq!(
-        nested.records[0].fields,
+        nested.legacy_records()[0].fields,
         vec![("profile".into(), Value::Object(profile))]
     );
     assert_eq!(
         conn.execute("SELECT * FROM metric WHERE profile.age = 42")
-            .unwrap(),
-        nested
+            .unwrap()
+            .legacy_records(),
+        nested.legacy_records()
     );
 }
 
 #[test]
-fn p2_bridge_003_phase3_syntax_and_nonconstant_values_stay_gated() {
+fn p2_bridge_003_explicit_mvp_exclusions_stay_gated() {
     let db = Database::open_memory().unwrap();
     let conn = db.connect().unwrap();
     for source in [
-        "CREATE ONLY person:tracy SET name = 'Tracy'",
-        "CREATE person:tracy SET a = 1, b = 2",
-        "CREATE person:tracy CONTENT $doc",
-        "CREATE person:tracy SET age = other",
-        "CREATE person:tracy SET age = 1 + 2",
-        "CREATE person:tracy SET active = NOT true",
-        "CREATE person:tracy SET name = 'Tracy' RETURN AFTER",
-        "SELECT name FROM person",
-        "SELECT * FROM person WHERE age > 1",
-        "SELECT * FROM person WHERE age = 1 OR age = 2",
-        "SELECT * FROM person ORDER BY name",
-        "UPDATE person:tracy SET name = 'Trace'",
-        "BEGIN",
+        "SELECT * FROM ONLY person",
+        "UPDATE ONLY person:tracy SET name = 'Trace'",
+        "DELETE FROM person",
+        "SELECT * FROM person WHERE lower(name) = 'tracy'",
     ] {
         let error = conn.execute(source).unwrap_err();
         assert_eq!(

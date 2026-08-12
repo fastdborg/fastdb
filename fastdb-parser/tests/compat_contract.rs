@@ -1,4 +1,4 @@
-//! Mechanical checks for the normative compatibility matrix through Phase 2.
+//! Mechanical checks for the normative compatibility matrix through Phase 3.
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -6,11 +6,14 @@
 use std::{fs, path::Path};
 
 #[test]
-fn p2_compat_001_every_feature_row_has_evidence_and_honest_status() {
+fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
     let matrix_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../COMPAT.md");
     let matrix = fs::read_to_string(matrix_path).unwrap();
-    let parser_tests =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/phase1.rs")).unwrap();
+    let parser_tests = ["tests/phase1.rs", "tests/phase3.rs"]
+        .into_iter()
+        .map(|path| fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
     let integration_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fastdb-tests/tests");
     let integration_tests = fs::read_dir(integration_dir)
         .unwrap()
@@ -51,7 +54,8 @@ fn p2_compat_001_every_feature_row_has_evidence_and_honest_status() {
         }
         assert!(
             columns[5].contains("docs/compat-research/phase1.md#")
-                || columns[5].contains("docs/compat-research/phase2.md#"),
+                || columns[5].contains("docs/compat-research/phase2.md#")
+                || columns[5].contains("docs/compat-research/phase3.md#"),
             "missing clean-room provenance in {feature}"
         );
         assert!(
@@ -61,15 +65,18 @@ fn p2_compat_001_every_feature_row_has_evidence_and_honest_status() {
 
         if matches!(status, "Partial" | "Supported") {
             assert!(
-                columns[6].contains("P2-"),
-                "Phase 2 executable row lacks Phase 2 evidence: {feature}"
+                columns[6].contains("P2-") || columns[6].contains("P3-"),
+                "executable row lacks execution evidence: {feature}"
             );
-            for test_id in columns[6].split('`').filter(|part| part.starts_with("P2-")) {
+            for test_id in columns[6]
+                .split('`')
+                .filter(|part| part.starts_with("P2-") || part.starts_with("P3-"))
+            {
                 let function = test_id.to_ascii_lowercase().replace('-', "_");
                 assert!(
                     integration_tests.contains(&format!("fn {function}_"))
                         || parser_tests.contains(&format!("fn {function}_")),
-                    "unknown Phase 2 test {test_id} in {feature}"
+                    "unknown execution test {test_id} in {feature}"
                 );
             }
         }

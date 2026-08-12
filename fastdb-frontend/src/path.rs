@@ -120,14 +120,31 @@ pub fn set_path(
         let entry = object
             .entry(segment.clone())
             .or_insert_with(|| Value::Object(BTreeMap::new()));
+        if !matches!(entry, Value::Object(_)) {
+            *entry = Value::Object(BTreeMap::new());
+        }
         let Value::Object(next) = entry else {
-            return Err(FastDbError::Schema(format!(
-                "field path crosses non-object segment {segment:?}"
-            )));
+            unreachable!("entry was normalized to an object")
         };
         object = next;
     }
     object.insert(last.clone(), value);
+    Ok(())
+}
+
+/// Remove a path while retaining now-empty ancestor objects.
+pub fn remove_path(document: &mut BTreeMap<String, Value>, path: &[String]) -> Result<()> {
+    let (last, parents) = path
+        .split_last()
+        .ok_or_else(|| FastDbError::Schema("field path is empty".into()))?;
+    let mut object = document;
+    for segment in parents {
+        let Some(Value::Object(next)) = object.get_mut(segment) else {
+            return Ok(());
+        };
+        object = next;
+    }
+    object.remove(last);
     Ok(())
 }
 

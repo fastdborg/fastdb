@@ -23,8 +23,7 @@ fn category_parse_malformed() {
 fn category_unsupported_syntax() {
     let db = Database::open_memory().unwrap();
     let conn = db.connect().unwrap();
-    // Multiple SET assignments are recognized-but-unsupported.
-    let err = conn.execute("CREATE p:x SET a = '1', b = '2'").unwrap_err();
+    let err = conn.execute("UPDATE ONLY p:x SET a = '1'").unwrap_err();
     assert_eq!(err.category(), ErrorCategory::UnsupportedSyntax, "{err}");
 }
 

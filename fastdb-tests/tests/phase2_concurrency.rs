@@ -80,7 +80,10 @@ fn p2_conc_002_simultaneous_implicit_registration_commits_one_table_two_rows() {
     }
     let conn = db.connect().unwrap();
     assert_eq!(
-        conn.execute("SELECT * FROM person").unwrap().records.len(),
+        conn.execute("SELECT * FROM person")
+            .unwrap()
+            .legacy_records()
+            .len(),
         2
     );
     assert_eq!(

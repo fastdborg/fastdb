@@ -14,7 +14,7 @@ pub mod parser;
 pub use ast::*;
 pub use error::{LimitKind, ParseError, ParseErrorKind};
 pub use lexer::{tokenize, tokenize_with_limits, Token, TokenKind};
-pub use parser::{parse, parse_one, parse_one_with_limits, parse_with_limits};
+pub use parser::{parse, parse_one, parse_one_with_limits, parse_with_limits, StatementCursor};
 
 /// Resource ceilings applied before or during parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]

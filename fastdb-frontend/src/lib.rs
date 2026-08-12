@@ -1,6 +1,6 @@
 //! # turso_fastdb
 //!
-//! FastDB Phase 0 frontend: parses SurrealQL-subset input with the
+//! FastDB Phase 3 frontend: parses SurrealQL-subset input with the
 //! independent parser crate, lowers it directly into Turso AST, executes
 //! via `Connection::prepare_translated_stmt_with_options`, and decodes
 //! results into FastDB value/record types.
@@ -29,6 +29,7 @@ pub mod catalog;
 pub mod connection;
 pub mod decode;
 pub mod error;
+mod eval;
 pub mod execute;
 pub mod lower;
 pub mod names;
@@ -41,19 +42,159 @@ pub use decode::{parse_doc, Record, RecordId, RecordIdValue, Value};
 pub use error::{ErrorCategory, FastDbError};
 pub use test_failpoints::Failpoint;
 
-/// Result of executing one FastDB statement. `records` is empty for `DELETE`
-/// and for selects that match nothing; `CREATE` returns the created record.
+use std::collections::BTreeMap;
+
+/// Named value bindings. Keys do not include the `$` source prefix.
+pub type Params = BTreeMap<String, Value>;
+
+/// The exact result of one statement in an executed script.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExecutionResult {
-    pub records: Vec<Record>,
+pub enum StatementResult {
+    None,
+    Rows(Vec<Value>),
+    Value(Value),
 }
 
-impl ExecutionResult {
-    pub fn len(&self) -> usize {
-        self.records.len()
+/// Ordered results for a successfully executed request.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueryResponse {
+    pub statements: Vec<StatementResult>,
+}
+
+impl QueryResponse {
+    pub(crate) fn new(statements: Vec<StatementResult>) -> Self {
+        Self { statements }
     }
-    pub fn is_empty(&self) -> bool {
-        self.records.is_empty()
+
+    /// Phase 0-2 test adapter. New code must inspect [`Self::statements`].
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn legacy_records(&self) -> Vec<Record> {
+        self.statements
+            .first()
+            .map(statement_records)
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+fn statement_records(result: &StatementResult) -> Vec<Record> {
+    let values = match result {
+        StatementResult::Rows(values) => values.as_slice(),
+        StatementResult::Value(value) => std::slice::from_ref(value),
+        StatementResult::None => &[],
+    };
+    values.iter().filter_map(value_record).collect()
+}
+
+#[cfg(any(test, feature = "testing"))]
+fn value_record(value: &Value) -> Option<Record> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    let Value::RecordId(id) = object.get("id")? else {
+        return None;
+    };
+    Some(Record {
+        id: id.clone(),
+        fields: object
+            .iter()
+            .filter(|(key, _)| key.as_str() != "id")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    })
+}
+
+pub(crate) fn validate_params(params: &Params) -> error::Result<()> {
+    for (name, value) in params {
+        if !valid_parameter_name(name) {
+            return Err(FastDbError::Schema(format!(
+                "invalid parameter name {name:?}; names omit `$` and use identifier syntax"
+            )));
+        }
+        validate_bound_value(value, 0)?;
+    }
+    Ok(())
+}
+
+fn valid_parameter_name(name: &str) -> bool {
+    if name.is_empty()
+        || name.len() > turso_fastdb_parser::ParserLimits::default().max_identifier_bytes
+    {
+        return false;
+    }
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_alphabetic())
+        && chars.all(|value| value == '_' || value.is_alphanumeric())
+}
+
+fn validate_bound_value(value: &Value, depth: usize) -> error::Result<()> {
+    let limits = turso_fastdb_parser::ParserLimits::default();
+    if depth > limits.max_nesting_depth {
+        return Err(FastDbError::Schema(format!(
+            "parameter value nesting exceeds {}",
+            limits.max_nesting_depth
+        )));
+    }
+    match value {
+        Value::Float(value) if !value.is_finite() => Err(FastDbError::Schema(
+            "parameter contains a non-finite float".into(),
+        )),
+        Value::Array(values) => {
+            if values.len() > limits.max_collection_elements {
+                return Err(FastDbError::Schema(format!(
+                    "parameter array exceeds {} elements",
+                    limits.max_collection_elements
+                )));
+            }
+            for value in values {
+                validate_bound_value(value, depth + 1)?;
+            }
+            Ok(())
+        }
+        Value::Object(values) => {
+            if values.len() > limits.max_collection_elements {
+                return Err(FastDbError::Schema(format!(
+                    "parameter object exceeds {} elements",
+                    limits.max_collection_elements
+                )));
+            }
+            for (key, value) in values {
+                if key.len() > limits.max_identifier_bytes {
+                    return Err(FastDbError::Schema(
+                        "parameter object key exceeds the identifier byte limit".into(),
+                    ));
+                }
+                validate_bound_value(value, depth + 1)?;
+            }
+            Ok(())
+        }
+        Value::RecordId(record) => {
+            if !valid_parameter_name(&record.table) || record.table.starts_with("__fastdb_") {
+                return Err(FastDbError::Schema(
+                    "parameter contains an invalid record-ID table".into(),
+                ));
+            }
+            if matches!(&record.id, RecordIdValue::String(value) if value.len() > limits.max_identifier_bytes)
+            {
+                return Err(FastDbError::Schema(
+                    "parameter record-ID component exceeds the byte limit".into(),
+                ));
+            }
+            if matches!(&record.id, RecordIdValue::Uuid(value) if !matches!(value.get_version_num(), 4 | 7))
+            {
+                return Err(FastDbError::Schema(
+                    "parameter record-ID UUID must be UUIDv4 or UUIDv7".into(),
+                ));
+            }
+            Ok(())
+        }
+        Value::Null | Value::Bool(_) | Value::Integer(_) | Value::Float(_) | Value::Str(_) => {
+            Ok(())
+        }
     }
 }
 
@@ -69,8 +210,9 @@ mod tests {
         let r = conn
             .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
-        assert_eq!(r.records.len(), 1);
-        let rec = &r.records[0];
+        let records = r.legacy_records();
+        assert_eq!(records.len(), 1);
+        let rec = &records[0];
         assert_eq!(rec.id.table, "person");
         assert_eq!(rec.id.id, "tracy");
         assert_eq!(
@@ -79,19 +221,20 @@ mod tests {
         );
 
         let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
-        assert_eq!(r.records.len(), 1);
-        assert_eq!(r.records[0].id.id, "tracy");
+        let records = r.legacy_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id.id, "tracy");
 
         let r = conn
             .execute("SELECT * FROM person WHERE name = 'Tracy';")
             .unwrap();
-        assert_eq!(r.records.len(), 1);
+        assert_eq!(r.legacy_records().len(), 1);
 
         let r = conn.execute("DELETE person:tracy;").unwrap();
-        assert!(r.records.is_empty());
+        assert!(r.legacy_records().is_empty());
 
         let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
-        assert!(r.records.is_empty());
+        assert!(r.legacy_records().is_empty());
     }
 
     #[test]
@@ -99,7 +242,7 @@ mod tests {
         let db = Database::open_memory().unwrap();
         let conn = db.connect().unwrap();
         let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
-        assert!(r.records.is_empty());
+        assert!(r.legacy_records().is_empty());
         // No catalog should have been created by the read.
         let exists = crate::catalog::catalog_exists(&conn, crate::catalog::META_TABLE).unwrap();
         assert!(!exists, "read of empty db must not create catalog");

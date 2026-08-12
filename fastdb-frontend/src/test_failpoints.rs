@@ -33,6 +33,14 @@ pub enum Failpoint {
     AfterRecordPrepare,
     /// After the record is inserted, before COMMIT.
     AfterRecordInsert,
+    /// After UPDATE candidates validate, before the first physical mutation.
+    BeforeUpdateMutations,
+    /// After one physical UPDATE mutation, before statement completion.
+    AfterUpdateMutation,
+    /// After DELETE candidates are fixed, before the first physical mutation.
+    BeforeDeleteMutations,
+    /// After one physical DELETE mutation, before statement completion.
+    AfterDeleteMutation,
     /// After the body succeeds and the (optional) real COMMIT would run.
     /// Simulates a COMMIT-time failure so the commit-failure rollback path is
     /// exercised deterministically. A separate integration test wraps Turso's
@@ -56,6 +64,10 @@ pub struct Failpoints {
     after_index_catalog_row: AtomicBool,
     after_record_prepare: AtomicBool,
     after_record_insert: AtomicBool,
+    before_update_mutations: AtomicBool,
+    after_update_mutation: AtomicBool,
+    before_delete_mutations: AtomicBool,
+    after_delete_mutation: AtomicBool,
     commit_failure: AtomicBool,
     rollback_failure: AtomicBool,
 }
@@ -78,6 +90,10 @@ impl Failpoints {
             Failpoint::AfterIndexCatalogRow => self.after_index_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterRecordPrepare => self.after_record_prepare.load(Ordering::SeqCst),
             Failpoint::AfterRecordInsert => self.after_record_insert.load(Ordering::SeqCst),
+            Failpoint::BeforeUpdateMutations => self.before_update_mutations.load(Ordering::SeqCst),
+            Failpoint::AfterUpdateMutation => self.after_update_mutation.load(Ordering::SeqCst),
+            Failpoint::BeforeDeleteMutations => self.before_delete_mutations.load(Ordering::SeqCst),
+            Failpoint::AfterDeleteMutation => self.after_delete_mutation.load(Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.load(Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.load(Ordering::SeqCst),
         };
@@ -115,6 +131,18 @@ impl Failpoints {
                 self.after_record_prepare.store(true, Ordering::SeqCst)
             }
             Failpoint::AfterRecordInsert => self.after_record_insert.store(true, Ordering::SeqCst),
+            Failpoint::BeforeUpdateMutations => {
+                self.before_update_mutations.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterUpdateMutation => {
+                self.after_update_mutation.store(true, Ordering::SeqCst)
+            }
+            Failpoint::BeforeDeleteMutations => {
+                self.before_delete_mutations.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterDeleteMutation => {
+                self.after_delete_mutation.store(true, Ordering::SeqCst)
+            }
             Failpoint::CommitFailure => self.commit_failure.store(true, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(true, Ordering::SeqCst),
         }
@@ -146,6 +174,18 @@ impl Failpoints {
                 self.after_record_prepare.store(false, Ordering::SeqCst)
             }
             Failpoint::AfterRecordInsert => self.after_record_insert.store(false, Ordering::SeqCst),
+            Failpoint::BeforeUpdateMutations => {
+                self.before_update_mutations.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterUpdateMutation => {
+                self.after_update_mutation.store(false, Ordering::SeqCst)
+            }
+            Failpoint::BeforeDeleteMutations => {
+                self.before_delete_mutations.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterDeleteMutation => {
+                self.after_delete_mutation.store(false, Ordering::SeqCst)
+            }
             Failpoint::CommitFailure => self.commit_failure.store(false, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(false, Ordering::SeqCst),
         }
@@ -165,6 +205,10 @@ impl Failpoints {
             Failpoint::AfterIndexCatalogRow,
             Failpoint::AfterRecordPrepare,
             Failpoint::AfterRecordInsert,
+            Failpoint::BeforeUpdateMutations,
+            Failpoint::AfterUpdateMutation,
+            Failpoint::BeforeDeleteMutations,
+            Failpoint::AfterDeleteMutation,
             Failpoint::CommitFailure,
             Failpoint::RollbackFailure,
         ] {
