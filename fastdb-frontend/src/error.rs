@@ -9,6 +9,9 @@ use miette::Diagnostic;
 use thiserror::Error;
 use turso_fastdb_parser::ParseError;
 
+/// Convenience alias for `Result<T, FastDbError>`.
+pub type Result<T> = std::result::Result<T, FastDbError>;
+
 /// Stable Phase 0 error category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCategory {
@@ -79,5 +82,23 @@ impl Diagnostic for FastDbError {
 impl From<std::io::Error> for FastDbError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e.to_string())
+    }
+}
+
+impl From<turso_core::LimboError> for FastDbError {
+    /// Classify common engine errors into FastDB categories where possible;
+    /// otherwise surface as `Engine`. The duplicate-primary-key error from a
+    /// `CREATE` of an existing id maps to `Constraint`.
+    fn from(e: turso_core::LimboError) -> Self {
+        let msg = e.to_string();
+        let lower = msg.to_lowercase();
+        if lower.contains("unique constraint")
+            || lower.contains("primary key")
+            || lower.contains("constraint")
+        {
+            Self::Constraint(msg)
+        } else {
+            Self::Engine(msg)
+        }
     }
 }

@@ -3,6 +3,31 @@
 //! The decoder synthesizes the typed [`RecordId`] from the catalog (table
 //! name) and the canonical `rid`; `id` is never stored inside `doc`.
 
+use crate::error::{FastDbError, Result};
+
+/// Parse a canonical JSON object (produced by `json(doc)` on the engine) into
+/// ordered Phase 0 fields. Phase 0 supports only string field values; any
+/// other JSON value is an explicit error.
+pub fn parse_doc(json: &str) -> Result<Vec<(String, Value)>> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| FastDbError::Engine(format!("stored doc is not valid JSON: {e}")))?;
+    let obj = v
+        .as_object()
+        .ok_or_else(|| FastDbError::Engine("stored doc is not a JSON object".to_string()))?;
+    let mut fields = Vec::with_capacity(obj.len());
+    for (k, v) in obj {
+        match v {
+            serde_json::Value::String(s) => fields.push((k.clone(), Value::Str(s.clone()))),
+            _ => {
+                return Err(FastDbError::Engine(
+                    "Phase 0 supports only string field values in doc".to_string(),
+                ))
+            }
+        }
+    }
+    Ok(fields)
+}
+
 /// A typed record id. Phase 0 supports a single bare-string id component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordId {

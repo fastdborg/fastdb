@@ -25,9 +25,93 @@
 #![forbid(unsafe_code)]
 #![deny(warnings)]
 
+pub mod catalog;
+pub mod connection;
 pub mod decode;
 pub mod error;
+pub mod execute;
+pub mod lower;
 pub mod names;
+pub mod test_failpoints;
 
-pub use decode::{Record, RecordId, Value};
+pub use connection::{Connection, Database};
+pub use decode::{parse_doc, Record, RecordId, Value};
 pub use error::{ErrorCategory, FastDbError};
+pub use test_failpoints::Failpoint;
+
+/// Result of executing one FastDB statement. `records` is empty for `DELETE`
+/// and for selects that match nothing; `CREATE` returns the created record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionResult {
+    pub records: Vec<Record>,
+}
+
+impl ExecutionResult {
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smoke_create_select_filter_delete_memory() {
+        let db = Database::open_memory().unwrap();
+        let conn = db.connect().unwrap();
+
+        let r = conn
+            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .unwrap();
+        assert_eq!(r.records.len(), 1);
+        let rec = &r.records[0];
+        assert_eq!(rec.id.table, "person");
+        assert_eq!(rec.id.id, "tobie");
+        assert_eq!(
+            rec.fields,
+            vec![("name".to_string(), Value::Str("Tobie".to_string()))]
+        );
+
+        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        assert_eq!(r.records.len(), 1);
+        assert_eq!(r.records[0].id.id, "tobie");
+
+        let r = conn
+            .execute("SELECT * FROM person WHERE name = 'Tobie';")
+            .unwrap();
+        assert_eq!(r.records.len(), 1);
+
+        let r = conn.execute("DELETE person:tobie;").unwrap();
+        assert!(r.records.is_empty());
+
+        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        assert!(r.records.is_empty());
+    }
+
+    #[test]
+    fn smoke_read_of_empty_db_does_not_mutate() {
+        let db = Database::open_memory().unwrap();
+        let conn = db.connect().unwrap();
+        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        assert!(r.records.is_empty());
+        // No catalog should have been created by the read.
+        let exists = crate::catalog::catalog_exists(&conn, crate::catalog::META_TABLE).unwrap();
+        assert!(!exists, "read of empty db must not create catalog");
+    }
+
+    #[test]
+    fn smoke_duplicate_create_is_constraint_error() {
+        let db = Database::open_memory().unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("CREATE person:tobie SET name = 'Tobie';")
+            .unwrap();
+        let err = conn
+            .execute("CREATE person:tobie SET name = 'Other';")
+            .unwrap_err();
+        assert_eq!(err.category(), ErrorCategory::Constraint);
+    }
+}

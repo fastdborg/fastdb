@@ -61,7 +61,9 @@ pub fn validate_physical_name(name: &str, prefix: &str) -> Result<(), FastDbErro
         .strip_prefix(prefix)
         .ok_or_else(|| FastDbError::format("physical name has wrong prefix"))?;
     if rest.len() != HEX_LEN {
-        return Err(FastDbError::format("physical name suffix must be 32 hex chars"));
+        return Err(FastDbError::format(
+            "physical name suffix must be 32 hex chars",
+        ));
     }
     if !rest
         .bytes()
@@ -104,7 +106,9 @@ pub fn decode_rid(s: &str) -> Result<String, FastDbError> {
     }
     // Separator between tag and length.
     if bytes.get(1) != Some(&b':') {
-        return Err(FastDbError::format("record id is missing ':' after the type tag"));
+        return Err(FastDbError::format(
+            "record id is missing ':' after the type tag",
+        ));
     }
     let rest = &bytes[2..];
     // Length digits up to the next ':'.
@@ -152,14 +156,19 @@ mod tests {
         // 32 lowercase hex suffix
         let suffix = &t["__fastdb_t_".len()..];
         assert_eq!(suffix.len(), HEX_LEN);
-        assert!(suffix.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+        assert!(suffix
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
     }
 
     #[test]
     fn physical_name_zero_padded_to_32() {
         // Small id must still render as 32 hex chars (zero-padded).
         let t = physical_table_name(TableId::from_u128(1));
-        assert_eq!(&t["__fastdb_t_".len()..], "00000000000000000000000000000001");
+        assert_eq!(
+            &t["__fastdb_t_".len()..],
+            "00000000000000000000000000000001"
+        );
     }
 
     #[test]
@@ -195,7 +204,11 @@ mod tests {
         // Wrong length.
         assert!(validate_physical_name("__fastdb_t_abc", TABLE_NAME_PREFIX).is_err());
         // Non-hex.
-        assert!(validate_physical_name("__fastdb_t_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", TABLE_NAME_PREFIX).is_err());
+        assert!(validate_physical_name(
+            "__fastdb_t_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            TABLE_NAME_PREFIX
+        )
+        .is_err());
     }
 
     #[test]
@@ -235,14 +248,14 @@ mod tests {
             "s",
             "s:",
             "s:0",
-            "x:5:tobie",    // wrong tag
-            "s:x:tobie",    // non-numeric length
-            "s:05:tobie",   // leading zero (canonical form is s:5:)
-            "s:3:ab",       // length too short
-            "s:3:abcd",     // length too long
-            "s:abc:ab",     // non-numeric
-            "tobie",        // no tag
-            "s::",          // empty length
+            "x:5:tobie",  // wrong tag
+            "s:x:tobie",  // non-numeric length
+            "s:05:tobie", // leading zero (canonical form is s:5:)
+            "s:3:ab",     // length too short
+            "s:3:abcd",   // length too long
+            "s:abc:ab",   // non-numeric
+            "tobie",      // no tag
+            "s::",        // empty length
             "ss:1:a",
         ];
         for b in bad {
@@ -256,8 +269,14 @@ mod tests {
             }
         }
         // Spot-check the category explicitly.
-        assert_eq!(decode_rid("x:5:tobie").unwrap_err().category(), ErrorCategory::Format);
-        assert_eq!(decode_rid("s:99:short").unwrap_err().category(), ErrorCategory::Format);
+        assert_eq!(
+            decode_rid("x:5:tobie").unwrap_err().category(),
+            ErrorCategory::Format
+        );
+        assert_eq!(
+            decode_rid("s:99:short").unwrap_err().category(),
+            ErrorCategory::Format
+        );
     }
 
     #[test]
