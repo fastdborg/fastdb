@@ -106,6 +106,25 @@ FastDB user input is **never** parsed by Turso's SQLite parser and
 `Text(Text)`, `Blob(ValueBlob)`. User values are bound as `Value`
 parameters; they are never interpolated into SQL text.
 
+### COMMIT I/O failure cleanup
+
+The Phase 0 integration test
+`atomic_007_real_wal_sync_failure_rolls_back_and_connection_recovers` wraps
+Turso's public `IO`/`File` interfaces and fails the next real WAL `sync`
+completion. At this pin, Turso returns the typed completion error and has
+already cleared the active transaction; an unconditional second `ROLLBACK`
+therefore reports that no transaction is active and would mask the original
+I/O error.
+
+FastDB handles both possible public states without matching rendered engine
+errors: after a failed cleanup rollback, it attempts a fresh `BEGIN
+IMMEDIATE`. Success proves that Turso already cleared the failed transaction;
+FastDB immediately rolls back that empty probe and preserves the original
+error. Failure means cleanup did not establish a known-clean state, so FastDB
+returns a combined transaction error. The test pins original error category,
+connection reuse, reopen durability, and integrity without modifying Turso
+core.
+
 ### JSONB and expression indexes
 
 - JSONB subsystem: `core/json/` (`jsonb.rs`, `ops.rs`, `path.rs`).
@@ -149,9 +168,10 @@ Command:
 ```sh
 cargo build -p turso_core -p turso_parser
 ```
-Result: `Finished dev profile [unoptimized + debuginfo] target(s) in 1m 03s`.
-Two pre-existing upstream warnings in `turso_core` (unused import of
-`CollationSeq` and one other) — not introduced by FastDB, not fixed.
+Result: passed. `turso_core` emitted two pre-existing upstream unused-import
+warnings: protobuf helpers in `core/mvcc/persistent_storage/logical_log.rs`
+and `CollationSeq` in `core/vdbe/mod.rs`. They were not introduced or changed
+by FastDB.
 
 ## Baseline test results
 
@@ -161,17 +181,17 @@ failure rather than fixing it.
 
 | Command | Result |
 | --- | --- |
-| `cargo build -p turso_core -p turso_parser` | Finished, 1m03s, 2 pre-existing upstream warnings (unused imports), 0 errors. |
+| `cargo build -p turso_core -p turso_parser` | Passed; 2 pre-existing upstream unused-import warnings, 0 errors. |
 | `cargo test -p turso_core --lib` | `ok. 2286 passed; 0 failed; 17 ignored` (44.38s). |
 
 The engine core unit suite passes cleanly at the pin, validating the
 storage/transaction/WAL/JSONB primitives FastDB depends on. Expression
 index behavior is exercised in Phase 0's own plan-proof test (P0.9)
 using the same `EXPLAIN QUERY PLAN` assertion style as
-`tests/integration/query_processing/test_expr_index.rs`. Broader upstream
-integration suites (`-p tests`, `-p turso_pg_tests`) are referenced in
-Section 8 of `plan-phase0.md`; they are not gating for the Phase 0
-vertical slice but should be run before any pin update.
+`tests/integration/query_processing/test_expr_index.rs`. The targeted
+upstream integration subsets and full PostgreSQL frontend suite required for
+Phase 0 completion were also run; their exact results are recorded in
+`docs/phase0-report.md`. They must be rerun for any engine-pin update.
 
 ## Known upstream limitations relevant to Phase 0
 
@@ -181,11 +201,12 @@ process rather than a workaround.
 
 ### Pre-existing upstream lint warnings (not fixed by Phase 0)
 
-`turso_core` at the pin emits two warnings under the pinned toolchain when
-built as a workspace-member dependency:
+`cargo clippy` for the FastDB packages also checks the workspace-member
+`turso_core` dependency, which emits two warnings at the pin:
 
 - `unused import: crate::translate::collate::CollationSeq` (`core/vdbe/mod.rs:43`).
-- an unfulfilled `#[expect(unused_imports)]` (`core/thread.rs`).
+- an unfulfilled `#[expect(clippy::new_without_default)]`
+  (`core/json/cache.rs:107`).
 
 These are pre-existing upstream conditions. `plan-phase0.md` forbids fixing
 upstream failures, so Phase 0 leaves them untouched.

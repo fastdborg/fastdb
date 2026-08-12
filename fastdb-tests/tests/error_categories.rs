@@ -81,6 +81,8 @@ fn category_engine_not_a_database() {
 #[test]
 fn category_io_missing_directory() {
     // Opening a file in a nonexistent directory surfaces an I/O error.
-    let err = Database::open("/tmp/fastdb_no_such_dir_xyz_987/sub.fastdb").unwrap_err();
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("missing").join("sub.fastdb");
+    let err = Database::open(path.to_str().unwrap()).unwrap_err();
     assert_eq!(err.category(), ErrorCategory::Io, "expected Io, got: {err}");
 }

@@ -7432,7 +7432,6 @@ name = "turso_fastdb_benchmarks"
 version = "0.0.0"
 dependencies = [
  "criterion",
- "serde_json",
  "tempfile",
  "turso_core",
  "turso_fastdb",

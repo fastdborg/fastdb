@@ -37,11 +37,31 @@ fn with_tx<R>(conn: &Connection, body: impl FnOnce() -> Result<R>) -> Result<R> 
     });
     match outcome {
         Ok(r) => Ok(r),
-        Err(e) => match conn.exec_bound(lower::rollback(), vec![]) {
+        Err(e) => match conn
+            .check_failpoint(Failpoint::RollbackFailure)
+            .and_then(|()| conn.exec_bound(lower::rollback(), vec![]))
+        {
             Ok(()) => Err(e),
-            Err(rb) => Err(FastDbError::Transaction(format!(
-                "transaction failed; original: {e}; rollback also failed: {rb}"
-            ))),
+            Err(rb) => {
+                // Turso's statement lifecycle may already roll back and clear
+                // the transaction after a COMMIT I/O failure. Probe that state
+                // without matching engine error strings: a fresh BEGIN can
+                // succeed only when the failed transaction is no longer
+                // active. Roll back the empty probe transaction immediately.
+                match conn.exec_bound(lower::begin_immediate(), vec![]) {
+                    Ok(()) => match conn.exec_bound(lower::rollback(), vec![]) {
+                        Ok(()) => Err(e),
+                        Err(probe_rb) => Err(FastDbError::Transaction(format!(
+                            "transaction failed; original: {e}; rollback reported: {rb}; \
+                             cleanup probe rollback also failed: {probe_rb}"
+                        ))),
+                    },
+                    Err(probe) => Err(FastDbError::Transaction(format!(
+                        "transaction failed; original: {e}; rollback also failed: {rb}; \
+                         clean-state probe failed: {probe}"
+                    ))),
+                }
+            }
         },
     }
 }

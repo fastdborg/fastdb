@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync Turso Upstream"
+  short_description: "Safely audit and merge Turso updates"
+  default_prompt: "Use $upstream-sync to audit and merge a pinned Turso update into FastDB."

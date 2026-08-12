@@ -12,19 +12,20 @@ read), the same bound values, and the same full-durability file-backed WAL.
   resolution, direct-AST lowering, `prepare_translated_stmt_with_options`,
   bind, execute, decode (canonical rid + serde_json doc → typed `Record`).
 - **Native** — the bare engine via SQL text, statement prepared **once** and
-  re-bound per iteration (the pure-engine baseline, no frontend). It does the
-  **same result materialization** as FastDB: `SELECT rid, json(doc) ...` and a
-  serde_json decode of `doc` per result — it does not merely count rows.
+  re-bound per iteration (the cached pure-engine baseline, no frontend). It
+  uses the same canonical rid encoding, `SELECT rid, json(doc) ...`, rid/doc
+  decoders, typed `Record`, and empty delete result as FastDB. It does not
+  merely count rows.
 
 Both paths run on the same pinned engine, same physical schema
 (`rid TEXT PRIMARY KEY, doc BLOB`), same JSONB functions
 (`jsonb(json_object(...))` to write; `json(doc)` / `json_extract(doc,...)` to
 read), same bound values, same full-durability file-backed WAL, and equivalent
-temp-directory lifetimes. Correctness is asserted inside every workload
-(record counts / decoded fields). The `delete` workload times **only** the
-delete (the target record is created in untimed setup); `cold_create` is
-bootstrap + implicit table creation + JSONB write + decode (the `open` is in
-untimed setup, per `plan-phase0.md` P0.10's definition).
+temp-directory lifetimes. Correctness is asserted inside every workload, and
+the last deleted record is checked outside the timed region. The `delete`
+workload times **only** the delete (the target record is created in untimed
+setup); `cold_create` is bootstrap + implicit table creation + JSONB write +
+typed result construction (the open is untimed, per P0.10).
 
 The ratio therefore isolates **FastDB frontend overhead over a cached
 engine baseline**: FastDB re-parses, re-resolves the catalog, and re-prepares
@@ -46,45 +47,38 @@ Full run (default sampling):
 ```sh
 cargo bench -p turso_fastdb_benchmarks --bench phase0
 ```
-The numbers below were collected with reduced sampling; re-running the
-command above reproduces them within noise and yields the full percentile
-estimates (criterion writes p50/p95/p99 to
-`target/criterion/<group>/<bench>/estimates.json`):
-```sh
-cargo bench -p turso_fastdb_benchmarks --bench phase0 -- \
-    --warm-up-time 1 --measurement-time 2 --sample-size 30
-```
+The results below are from the full default-sampling command above: 3-second
+warm-up, 100 samples, and Criterion's automatically selected measurement
+duration. Criterion 0.5 records mean, median, slope, and confidence intervals,
+but not p95/p99 latency percentiles; Phase 0 therefore reports median (p50) and
+explicitly leaves tail-latency measurement to the later process-level harness.
 
-## Results (median estimate; bracket = criterion 95% confidence)
+## Results (median/p50 estimate; bracket = 95% confidence interval)
 
 | Workload | FastDB | Native | FastDB / Native |
 | --- | ---: | ---: | ---: |
-| cold_create (bootstrap + table DDL + first write + decode) | 1.79 ms [1.63–2.01] | 525 µs [474–566] | **3.4×** |
-| steady_create (existing table, unique id) | 62.8 µs [54.6–73.8] | 10.1 µs [9.23–11.8] | **6.2×** |
-| point_read (by rid, with doc decode) | 46.0 µs [39.9–52.9] | 3.18 µs [2.80–3.45] | **14.5×** |
-| indexed_filter (by name, with doc decode) | 30.0 µs [29.9–30.0] | 2.30 µs [1.94–2.66] | **13.0×** |
-| delete (by rid, delete-only) | 65.2 µs [58.7–69.9] | 10.2 µs [9.03–11.8] | **6.4×** |
-
-The CIs are wider than ideal (this run hit background load); the ratios are
-representative, not precise. A full-sampling run on a quiet machine is the
-authoritative measurement.
+| cold_create (bootstrap + table DDL + first write + typed result) | 1.497 ms [1.473–1.512] | 369.4 µs [362.7–383.7] | **4.1×** |
+| steady_create (existing table, unique id, typed result) | 48.91 µs [48.69–48.99] | 9.694 µs [9.651–9.735] | **5.0×** |
+| point_read (canonical rid + doc → typed record) | 29.60 µs [29.58–29.67] | 1.995 µs [1.954–2.002] | **14.8×** |
+| indexed_filter (canonical rid + doc → typed record) | 30.06 µs [29.98–30.16] | 2.058 µs [2.056–2.059] | **14.6×** |
+| delete (by canonical rid, delete-only) | 36.05 µs [35.78–36.28] | 7.810 µs [7.746–7.863] | **4.6×** |
 
 ## Observations and honest interpretation
 
-- **No pathological result.** The largest ratio is ~14×, dominated by
-  per-call frontend work, not by anything that makes the architecture
-  unusable. Phase 0 has **no** performance pass ratio (`plan-phase0.md`
-  P0.10); the MVP targets in `revised_plan.md` §11 (e.g. point-read p50
-  ≤ 1.5×, filter p95 ≤ 2×) are **future** gates, not Phase 0 gates.
+- **The feasibility spike passes, but the current uncached frontend is far
+  outside the future MVP gates.** The largest measured median ratio is 14.8×.
+  Phase 0 has no pass ratio (`plan-phase0.md` P0.10), while the 1.5–2× targets
+  in `revised_plan.md` §11 remain release gates that require profiling and
+  caching work in Phases 1–3.
 - **The overhead is concentrated and explainable.** Each FastDB
   `Connection::execute`, including reads, currently:
   1. parses the SurrealQL input (Phase 0 hand-written parser),
-  2. resolves the catalog with **two engine round-trips** per call
-     (`SELECT … FROM sqlite_schema` for existence, then
-     `SELECT … FROM __fastdb_tables` + version check),
+  2. performs **three engine round-trips** per existing-table read
+     (`sqlite_schema` existence, metadata versions, then logical→physical
+     catalog resolution),
   3. re-lowers and **re-prepares** the statement every call,
   4. decodes via `json(doc)` + serde.
-  Native prepares **once** and skips 1–3 entirely; the two extra catalog
+  Native prepares **once** and skips 1–3 entirely; the catalog/version
   round-trips dominate the read ratios.
 - **Concrete Phase 1–3 optimization targets** (not Phase 0 work): cache the
   catalog resolution (logical→physical + version) per connection, add a
@@ -92,6 +86,6 @@ authoritative measurement.
   without an intermediate `json()` text round-trip. These bring the ratios
   toward the MVP gates.
 
-The benchmark is reproducible, equivalent (both paths decode the same logical
-result), and correctness-checked; it makes no absolute-latency or
-"production-ready" claim.
+The benchmark is reproducible, materially equivalent (including typed result
+construction), and correctness-checked. It makes no tail-latency,
+"production-ready", or competitive-performance claim.

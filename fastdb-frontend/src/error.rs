@@ -89,19 +89,53 @@ impl From<std::io::Error> for FastDbError {
     }
 }
 
-/// Map typed `LimboError` variants to FastDB categories: constraint and
-/// foreign-key violations to `Constraint`; I/O (`CompletionError`, which is
-/// how Turso wraps all `std::io::Error`) to `Io`; everything else to
-/// `Engine`. This does not string-match rendered error text.
+/// Map typed `LimboError` variants to FastDB categories. Only completion
+/// failures that describe storage I/O are classified as `Io`; codec,
+/// checksum, cancellation, and other completion failures remain `Engine`.
+/// This does not string-match rendered error text.
 impl From<turso_core::LimboError> for FastDbError {
     fn from(e: turso_core::LimboError) -> Self {
-        use turso_core::LimboError;
+        use turso_core::{CompletionError, LimboError};
         match &e {
             LimboError::Constraint(msg) | LimboError::ForeignKeyConstraint(msg) => {
                 Self::Constraint(msg.clone())
             }
-            LimboError::CompletionError(_) => Self::Io(e.to_string()),
+            LimboError::CompletionError(
+                CompletionError::IOError(..)
+                | CompletionError::ShortWrite
+                | CompletionError::ShortRead { .. }
+                | CompletionError::ShortReadWalFrame { .. },
+            ) => Self::Io(e.to_string()),
+            #[cfg(target_family = "unix")]
+            LimboError::CompletionError(CompletionError::RustixIOError(..)) => {
+                Self::Io(e.to_string())
+            }
             _ => Self::Engine(e.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ErrorCategory, FastDbError};
+    use std::io::ErrorKind;
+    use turso_core::{CompletionError, LimboError};
+
+    #[test]
+    fn completion_errors_distinguish_storage_io_from_corruption() {
+        let io = FastDbError::from(LimboError::CompletionError(CompletionError::IOError(
+            ErrorKind::Other,
+            "test",
+        )));
+        assert_eq!(io.category(), ErrorCategory::Io);
+
+        let checksum = FastDbError::from(LimboError::CompletionError(
+            CompletionError::ChecksumMismatch {
+                page_id: 1,
+                expected: 2,
+                actual: 3,
+            },
+        ));
+        assert_eq!(checksum.category(), ErrorCategory::Engine);
     }
 }

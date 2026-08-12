@@ -1,8 +1,8 @@
 # Upstream (Turso) Policy
 
 FastDB is a clean-room frontend built on a pinned fork of Turso. This
-document records the engine pin, how to audit and update it, the
-merge/rebase policy, notice preservation, and how to isolate any change
+document records the engine pin, how to audit and update it, the merge
+policy, notice preservation, and how to isolate any change
 that is intended for upstream contribution.
 
 ## Pinned baseline
@@ -46,17 +46,27 @@ Before moving the pin to a newer Turso commit:
    index methods, FTS, encryption, sync) remain disabled unless a phase
    plan explicitly and auditedly enables them.
 
-## Merge / rebase policy
+## Merge policy
 
 - Review upstream changes regularly.
-- Merge or rebase only after the relevant FastDB tests and the unchanged
-  Turso tests pass on the candidate commit.
+- Integrate one exact candidate SHA on a dedicated `upstream-sync/<date>-<sha>`
+  branch. Use an explicit merge commit so Turso provenance and FastDB pin
+  transitions remain auditable.
+- Do not rebase or force-push shared FastDB history to update Turso.
+- Merge only after the relevant FastDB tests and unchanged Turso tests pass
+  on the candidate commit.
 - Preserve unrelated user changes. Never use destructive Git operations
   (`reset --hard`, force-push to shared branches, `filter-branch`) to
   simplify an import or update.
 - When upstream paths conflict with FastDB files, stop and report the
   exact paths before resolving (as done for the root `AGENTS.md` and
   `README.md` during the initial import — resolved in favor of FastDB).
+
+The required read-only audit, candidate selection, conflict checklist,
+verification commands, urgent-patch exception, atomic pin update, and handoff
+format are defined in [`.claude/skills/upstream-sync/SKILL.md`](.claude/skills/upstream-sync/SKILL.md).
+Agents must load that skill before any upstream fetch, comparison, pin change,
+merge, cherry-pick, or conflict resolution.
 
 ## Notice preservation and provenance
 

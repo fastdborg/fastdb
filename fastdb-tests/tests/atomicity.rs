@@ -12,8 +12,157 @@
 
 mod common;
 
+use std::io::ErrorKind;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use tempfile::{tempdir, TempDir};
+use turso_core::io::{FileId, FileSyncType};
+use turso_core::{
+    Buffer, Clock, Completion, CompletionError, File, MemoryIO, MonotonicInstant, OpenFlags,
+    WallClockInstant, IO,
+};
 use turso_fastdb::{Database, ErrorCategory, Failpoint, Value};
+
+/// An in-memory Turso I/O backend that can fail the next WAL sync completion.
+/// Writes still pass through the real pager/WAL commit state machine; only the
+/// durability completion is replaced with an I/O error.
+struct WalSyncFaultIo {
+    inner: Arc<MemoryIO>,
+    fail_next_wal_sync: Arc<AtomicBool>,
+    failures: Arc<AtomicUsize>,
+}
+
+impl WalSyncFaultIo {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(MemoryIO::new()),
+            fail_next_wal_sync: Arc::new(AtomicBool::new(false)),
+            failures: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn arm_next_wal_sync(&self) {
+        self.fail_next_wal_sync.store(true, Ordering::SeqCst);
+    }
+
+    fn failure_count(&self) -> usize {
+        self.failures.load(Ordering::SeqCst)
+    }
+}
+
+impl Clock for WalSyncFaultIo {
+    fn current_time_monotonic(&self) -> MonotonicInstant {
+        self.inner.current_time_monotonic()
+    }
+
+    fn current_time_wall_clock(&self) -> WallClockInstant {
+        self.inner.current_time_wall_clock()
+    }
+}
+
+impl IO for WalSyncFaultIo {
+    fn open_file(
+        &self,
+        path: &str,
+        flags: OpenFlags,
+        direct: bool,
+    ) -> turso_core::Result<Arc<dyn File>> {
+        let inner = self.inner.open_file(path, flags, direct)?;
+        Ok(Arc::new(WalSyncFaultFile {
+            path: path.to_string(),
+            inner,
+            fail_next_wal_sync: self.fail_next_wal_sync.clone(),
+            failures: self.failures.clone(),
+        }))
+    }
+
+    fn remove_file(&self, path: &str) -> turso_core::Result<()> {
+        self.inner.remove_file(path)
+    }
+
+    fn step(&self) -> turso_core::Result<()> {
+        self.inner.step()
+    }
+
+    fn file_id(&self, path: &str) -> turso_core::Result<FileId> {
+        self.inner.file_id(path)
+    }
+
+    fn fill_bytes(&self, dest: &mut [u8]) {
+        self.inner.fill_bytes(dest);
+    }
+
+    fn generate_random_number(&self) -> i64 {
+        self.inner.generate_random_number()
+    }
+}
+
+struct WalSyncFaultFile {
+    path: String,
+    inner: Arc<dyn File>,
+    fail_next_wal_sync: Arc<AtomicBool>,
+    failures: Arc<AtomicUsize>,
+}
+
+impl File for WalSyncFaultFile {
+    fn lock_file(&self, exclusive: bool) -> turso_core::Result<()> {
+        self.inner.lock_file(exclusive)
+    }
+
+    fn unlock_file(&self) -> turso_core::Result<()> {
+        self.inner.unlock_file()
+    }
+
+    fn pread(&self, pos: u64, c: Completion) -> turso_core::Result<Completion> {
+        self.inner.pread(pos, c)
+    }
+
+    fn pwrite(
+        &self,
+        pos: u64,
+        buffer: Arc<Buffer>,
+        c: Completion,
+    ) -> turso_core::Result<Completion> {
+        self.inner.pwrite(pos, buffer, c)
+    }
+
+    fn pwritev(
+        &self,
+        pos: u64,
+        buffers: Vec<Arc<Buffer>>,
+        c: Completion,
+    ) -> turso_core::Result<Completion> {
+        self.inner.pwritev(pos, buffers, c)
+    }
+
+    fn sync(&self, c: Completion, sync_type: FileSyncType) -> turso_core::Result<Completion> {
+        if self.path.ends_with("-wal") && self.fail_next_wal_sync.swap(false, Ordering::SeqCst) {
+            self.failures.fetch_add(1, Ordering::SeqCst);
+            c.error(CompletionError::IOError(
+                ErrorKind::Other,
+                "fastdb_test_wal_sync",
+            ));
+            return Ok(c);
+        }
+        self.inner.sync(c, sync_type)
+    }
+
+    fn size(&self) -> turso_core::Result<u64> {
+        self.inner.size()
+    }
+
+    fn truncate(&self, len: u64, c: Completion) -> turso_core::Result<Completion> {
+        self.inner.truncate(len, c)
+    }
+
+    fn has_hole(&self, pos: usize, len: usize) -> turso_core::Result<bool> {
+        self.inner.has_hole(pos, len)
+    }
+
+    fn punch_hole(&self, pos: usize, len: usize) -> turso_core::Result<()> {
+        self.inner.punch_hole(pos, len)
+    }
+}
 
 fn fresh_db() -> (TempDir, String) {
     let dir = tempdir().unwrap();
@@ -97,6 +246,75 @@ fn atomic_006_fail_at_commit() {
     // A COMMIT-time failure must still enter the rollback path: the schema
     // ends up empty and a subsequent CREATE succeeds.
     injected_fail_round(Failpoint::CommitFailure);
+}
+
+#[test]
+fn atomic_007_real_wal_sync_failure_rolls_back_and_connection_recovers() {
+    let io = Arc::new(WalSyncFaultIo::new());
+    let path = "commit-sync-failure.fastdb";
+
+    {
+        let db = Database::open_with_io(path, io.clone()).unwrap();
+        let conn = db.connect().unwrap();
+        io.arm_next_wal_sync();
+
+        let err = conn
+            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .unwrap_err();
+        assert_eq!(err.category(), ErrorCategory::Io, "{err}");
+        assert_eq!(io.failure_count(), 1, "the WAL sync boundary was reached");
+
+        let selected = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        assert!(
+            selected.records.is_empty(),
+            "failed COMMIT must leave no locally visible record"
+        );
+
+        let created = conn
+            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .unwrap();
+        assert_eq!(created.records.len(), 1, "connection remains reusable");
+    }
+
+    let db = Database::open_with_io(path, io).unwrap();
+    let conn = db.connect().unwrap();
+    let selected = conn.execute("SELECT * FROM person:tobie;").unwrap();
+    assert_eq!(
+        selected.records.len(),
+        1,
+        "successful retry survives reopen"
+    );
+    assert_eq!(common::integrity_check(conn.native()), "ok");
+}
+
+#[test]
+fn atomic_008_rollback_failure_preserves_both_errors() {
+    let (_dir, path) = fresh_db();
+    {
+        let db = Database::open(&path).unwrap();
+        let conn = db.connect().unwrap();
+        conn.arm_failpoint(Failpoint::AfterRecordInsert);
+        conn.arm_failpoint(Failpoint::RollbackFailure);
+
+        let err = conn
+            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .unwrap_err();
+        assert_eq!(err.category(), ErrorCategory::Transaction, "{err}");
+        let detail = err.to_string();
+        assert!(
+            detail.contains("original:"),
+            "missing original error: {detail}"
+        );
+        assert!(
+            detail.contains("rollback also failed:"),
+            "missing rollback error: {detail}"
+        );
+    }
+
+    // Dropping the unusable connection invokes the engine's transaction
+    // cleanup. Reopen must not expose any of the failed first mutation.
+    assert_empty_after_rollback(&path);
+    then_create_succeeds(&path);
 }
 
 #[test]

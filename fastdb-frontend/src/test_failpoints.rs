@@ -23,9 +23,12 @@ pub enum Failpoint {
     AfterRecordInsert,
     /// After the body succeeds and the (optional) real COMMIT would run.
     /// Simulates a COMMIT-time failure so the commit-failure rollback path is
-    /// exercised deterministically (real WAL/I/O commit failures are not
-    /// injectable without an engine seam).
+    /// exercised deterministically. A separate integration test wraps Turso's
+    /// public `IO` interface to fail an actual WAL sync completion.
     CommitFailure,
+    /// Before transaction cleanup issues `ROLLBACK`. Used to prove that the
+    /// original and cleanup failures are reported together.
+    RollbackFailure,
 }
 
 #[derive(Default)]
@@ -36,6 +39,7 @@ pub struct Failpoints {
     after_record_prepare: AtomicBool,
     after_record_insert: AtomicBool,
     commit_failure: AtomicBool,
+    rollback_failure: AtomicBool,
 }
 
 impl Failpoints {
@@ -49,6 +53,7 @@ impl Failpoints {
             Failpoint::AfterRecordPrepare => self.after_record_prepare.load(Ordering::SeqCst),
             Failpoint::AfterRecordInsert => self.after_record_insert.load(Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.load(Ordering::SeqCst),
+            Failpoint::RollbackFailure => self.rollback_failure.load(Ordering::SeqCst),
         };
         if armed {
             return Err(FastDbError::Transaction(format!(
@@ -69,6 +74,7 @@ impl Failpoints {
             }
             Failpoint::AfterRecordInsert => self.after_record_insert.store(true, Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.store(true, Ordering::SeqCst),
+            Failpoint::RollbackFailure => self.rollback_failure.store(true, Ordering::SeqCst),
         }
     }
 
@@ -83,6 +89,7 @@ impl Failpoints {
             }
             Failpoint::AfterRecordInsert => self.after_record_insert.store(false, Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.store(false, Ordering::SeqCst),
+            Failpoint::RollbackFailure => self.rollback_failure.store(false, Ordering::SeqCst),
         }
     }
 
@@ -95,6 +102,7 @@ impl Failpoints {
             Failpoint::AfterRecordPrepare,
             Failpoint::AfterRecordInsert,
             Failpoint::CommitFailure,
+            Failpoint::RollbackFailure,
         ] {
             self.disarm(fp);
         }
