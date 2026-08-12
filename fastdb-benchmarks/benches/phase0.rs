@@ -27,7 +27,7 @@ use turso_core::{
 use turso_fastdb::names::{decode_rid, encode_rid};
 use turso_fastdb::{
     parse_doc, Connection as FdbConn, Database as FdbDb, ExecutionResult, Record, RecordId,
-    Value as FdbValue,
+    RecordIdValue, Value as FdbValue,
 };
 
 // --------------------------- helpers ---------------------------
@@ -79,7 +79,7 @@ impl Native {
         for i in 0..n {
             seed.bind_at(
                 NonZeroUsize::new(1).unwrap(),
-                Value::build_text(encode_rid(&format!("rec{i}"))),
+                Value::build_text(encode_rid(format!("rec{i}"))),
             )
             .unwrap();
             seed.bind_at(
@@ -285,7 +285,7 @@ fn steady_create(c: &mut Criterion) {
         b.iter(|| {
             j += 1;
             let record = native.create(&format!("k{j}"), &format!("v{j}"));
-            assert_eq!(record.id.id, format!("k{j}"));
+            assert_eq!(record.id.id, RecordIdValue::String(format!("k{j}")));
             black_box(record);
         })
     });

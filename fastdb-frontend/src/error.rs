@@ -17,6 +17,7 @@ pub type Result<T> = std::result::Result<T, FastDbError>;
 pub enum ErrorCategory {
     Parse,
     UnsupportedSyntax,
+    Schema,
     Constraint,
     Format,
     Transaction,
@@ -32,6 +33,8 @@ pub enum FastDbError {
     Parse(ParseError),
     #[error("unsupported syntax: {0}")]
     UnsupportedSyntax(ParseError),
+    #[error("schema error: {0}")]
+    Schema(String),
     #[error("constraint violation: {0}")]
     Constraint(String),
     #[error("format error: {0}")]
@@ -49,6 +52,7 @@ impl FastDbError {
         match self {
             Self::Parse(_) => ErrorCategory::Parse,
             Self::UnsupportedSyntax(_) => ErrorCategory::UnsupportedSyntax,
+            Self::Schema(_) => ErrorCategory::Schema,
             Self::Constraint(_) => ErrorCategory::Constraint,
             Self::Format(_) => ErrorCategory::Format,
             Self::Transaction(_) => ErrorCategory::Transaction,

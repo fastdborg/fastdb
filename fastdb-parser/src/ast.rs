@@ -281,6 +281,19 @@ pub enum RecordIdPartKind {
     Bare(String),
     Quoted(String),
     Integer(i64),
+    Uuid(uuid::Uuid),
+}
+
+impl RecordIdPart {
+    /// Render the component as source accepted by this parser.
+    pub fn to_source(&self) -> String {
+        match &self.kind {
+            RecordIdPartKind::Bare(value) => value.clone(),
+            RecordIdPartKind::Quoted(value) => format!("`{}`", value.replace('`', "``")),
+            RecordIdPartKind::Integer(value) => value.to_string(),
+            RecordIdPartKind::Uuid(value) => format!("u'{}'", value.hyphenated()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

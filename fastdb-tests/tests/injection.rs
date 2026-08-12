@@ -53,12 +53,12 @@ fn quoted_semicolon_value_stored_literally_and_schema_unchanged() {
         rows[0][0]
     );
 
-    // Schema unchanged: exactly __fastdb_meta, __fastdb_tables, and the one
-    // opaque physical table — no injected table and nothing dropped.
+    // Schema unchanged: four stable catalogs and one opaque physical table —
+    // no injected table and nothing dropped.
     let tables = common::native_rows(native, "SELECT name FROM sqlite_schema WHERE type='table'");
     assert_eq!(
         tables.len(),
-        3,
+        5,
         "no injected/dropped tables, got: {tables:?}"
     );
     assert_eq!(common::integrity_check(native), "ok");

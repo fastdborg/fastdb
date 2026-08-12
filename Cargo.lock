@@ -7425,6 +7425,7 @@ dependencies = [
  "turso_core",
  "turso_fastdb_parser",
  "turso_parser",
+ "uuid",
 ]
 
 [[package]]
@@ -7443,6 +7444,7 @@ version = "0.0.0"
 dependencies = [
  "miette",
  "thiserror 2.0.16",
+ "uuid",
 ]
 
 [[package]]

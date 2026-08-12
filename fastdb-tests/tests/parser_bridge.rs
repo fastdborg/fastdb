@@ -44,30 +44,23 @@ fn p1_bridge_001_phase0_shapes_still_execute() {
 }
 
 #[test]
-fn p1_bridge_002_every_broader_parsed_shape_is_frontend_unsupported() {
+fn p1_bridge_002_every_still_deferred_shape_is_frontend_unsupported() {
     let database = Database::open_memory().unwrap();
     let connection = database.connect().unwrap();
     let inputs = [
-        "CREATE person CONTENT {name: 'Tracy'}",
         "CREATE ONLY person:tracy SET name = 'Tracy'",
-        "CREATE person:`quoted id` SET name = 'Tracy'",
-        "CREATE person:7 SET name = 'Tracy'",
         "CREATE person:tracy SET name = 'Tracy', active = true",
-        "CREATE person:tracy SET profile.name = 'Tracy'",
-        "CREATE person:tracy SET age = 42",
-        "CREATE person:tracy SET name = \"Tracy\"",
+        "CREATE person:tracy SET age = 1 + 2",
+        "CREATE person:tracy SET age = other",
+        "CREATE person:tracy CONTENT $document",
         "CREATE person:tracy SET name = 'Tracy' RETURN AFTER",
         "SELECT name FROM person",
-        "SELECT * FROM person",
         "SELECT * FROM person WHERE age >= 18",
-        "SELECT * FROM person WHERE name = \"Tracy\"",
+        "SELECT * FROM person WHERE age = 18 OR age = 21",
         "SELECT * FROM person ORDER BY name LIMIT 1 START 0",
         "UPDATE person:tracy SET name = 'Trace'",
         "DELETE person WHERE active = false",
         "DELETE person:tracy RETURN BEFORE",
-        "DEFINE TABLE person SCHEMALESS",
-        "DEFINE FIELD name ON person TYPE string",
-        "DEFINE INDEX by_name ON person FIELDS name",
         "BEGIN",
         "COMMIT",
         "CANCEL",

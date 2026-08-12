@@ -178,6 +178,58 @@ fn p1_expr_002_record_id_component_types() {
 }
 
 #[test]
+fn p2_uuid_001_typed_uuid_components_validate_spans_and_source() {
+    let source = "SELECT * FROM person:u'018f22e2-79b0-7cc3-98c4-dc0c0c07398f';";
+    let statement = parse_one(source).unwrap();
+    let Statement::Select(select) = statement else {
+        panic!("expected SELECT");
+    };
+    let Target::Record(record) = select.target else {
+        panic!("expected record target");
+    };
+    assert_eq!(record.id.span.offset, source.find("u'").unwrap());
+    assert_eq!(record.id.span.len, 39);
+    assert_eq!(
+        record.id.to_source(),
+        "u'018f22e2-79b0-7cc3-98c4-dc0c0c07398f'"
+    );
+    assert!(matches!(record.id.kind, RecordIdPartKind::Uuid(uuid) if uuid.get_version_num() == 7));
+
+    let v4 = parse_one("DELETE person:u\"550e8400-e29b-41d4-a716-446655440000\"").unwrap();
+    let Statement::Delete(delete) = v4 else {
+        panic!("expected DELETE");
+    };
+    let Target::Record(record) = delete.target else {
+        panic!("expected record target");
+    };
+    assert!(matches!(record.id.kind, RecordIdPartKind::Uuid(uuid) if uuid.get_version_num() == 4));
+}
+
+#[test]
+fn p2_uuid_002_rejects_noncanonical_wrong_version_and_separated_prefix() {
+    for source in [
+        "SELECT * FROM person:u'550E8400-E29B-41D4-A716-446655440000'",
+        "SELECT * FROM person:u'550e8400e29b41d4a716446655440000'",
+        "SELECT * FROM person:u'6ba7b810-9dad-11d1-80b4-00c04fd430c8'",
+        "SELECT * FROM person:u'not-a-uuid'",
+    ] {
+        let error = parse_one(source).unwrap_err();
+        assert!(
+            matches!(error.kind, ParseErrorKind::InvalidUuid { .. }),
+            "{source}: {error:?}"
+        );
+        assert_eq!(
+            &source[error.span.offset..error.span.end()],
+            &source[source.find("u'").unwrap()..]
+        );
+    }
+
+    let error =
+        parse_one("SELECT * FROM person:u '550e8400-e29b-41d4-a716-446655440000'").unwrap_err();
+    assert!(matches!(error.kind, ParseErrorKind::UnexpectedToken { .. }));
+}
+
+#[test]
 fn p1_expr_003_precedence_and_left_associativity() {
     let expression = create_content("CREATE p CONTENT a OR b AND c = d + e * f");
     let (_, root, right) = binary(&expression);

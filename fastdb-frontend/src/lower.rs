@@ -1,71 +1,46 @@
-//! Direct FastDB → Turso AST lowering and the internal catalog statement
-//! builders.
-//!
-//! Every statement produced here is a directly-constructed
-//! `turso_parser::ast::Stmt` executed via
-//! `Connection::prepare_translated_stmt_with_options`. No FastDB input is
-//! ever parsed by Turso's SQLite parser, and no user value or logical
-//! identifier is interpolated into SQL text:
-//!
-//! - user values are `Expr::Variable` bound with `Statement::bind_at`;
-//! - logical table names resolve through the catalog and never appear in
-//!   generated SQL;
-//! - physical table/index names are validated opaque names from P0.4;
-//! - the only static text that appears is the canonical JSON path and the
-//!   static internal catalog DDL, both built in this one reviewed module.
+//! Direct FastDB-to-Turso AST lowering and reviewed internal schema builders.
 
+use crate::decode::Value as FastValue;
 use crate::error::FastDbError;
 use crate::names::{validate_physical_name, INDEX_NAME_PREFIX, TABLE_NAME_PREFIX};
 use std::num::NonZeroU32;
 use turso_core::Value;
 use turso_parser::ast::*;
 
-/// 1-based parameter index used both in `Expr::Variable` and for
-/// `Statement::bind_at`. A lowering returns a [`Stmt`] plus an ordered
-/// `Vec<Value>` whose position `i` is bound at index `i+1`.
 pub type Bindings = Vec<Value>;
-
-/// Internal-only source string attached to translated statements for
-/// diagnostics. It never becomes persisted DDL.
 pub(crate) const TRANSLATED_INPUT: &str = "<fastdb-translated>";
 
-// ---------- small constructors ----------
+fn nm(value: &str) -> Name {
+    Name::from_string(value)
+}
 
-fn nm(s: &str) -> Name {
-    Name::from_string(s)
+fn qnm(value: &str) -> QualifiedName {
+    QualifiedName::single(nm(value))
 }
-fn qnm(s: &str) -> QualifiedName {
-    QualifiedName::single(nm(s))
+
+fn id(value: &str) -> Expr {
+    Expr::Id(nm(value))
 }
-fn id(s: &str) -> Expr {
-    Expr::Id(nm(s))
-}
-fn var(idx: u32) -> Expr {
+
+fn var(index: u32) -> Expr {
     Expr::Variable(Variable::indexed(
-        NonZeroU32::new(idx).expect("nonzero param index"),
+        NonZeroU32::new(index).expect("binding indexes are one-based"),
     ))
 }
-fn strlit(s: &str) -> Expr {
-    // `Literal::String` stores the already-quoted, escaped form (the parser
-    // itself builds e.g. `Literal::String("'error'".to_owned())`).
-    let quoted = format!("'{}'", s.replace('\'', "''"));
-    Expr::Literal(Literal::String(quoted))
+
+fn strlit(value: &str) -> Expr {
+    Expr::Literal(Literal::String(format!("'{}'", value.replace('\'', "''"))))
 }
-fn numlit(s: &'static str) -> Expr {
-    Expr::Literal(Literal::Numeric(s.to_string()))
+
+fn numlit(value: impl ToString) -> Expr {
+    Expr::Literal(Literal::Numeric(value.to_string()))
 }
-fn ty(s: &'static str) -> Type {
-    Type {
-        name: s.to_string(),
-        size: None,
-        array_dimensions: 0,
-    }
-}
-fn fcall(name_str: &'static str, args: Vec<Expr>) -> Expr {
+
+fn fcall(name: &str, arguments: Vec<Expr>) -> Expr {
     Expr::FunctionCall {
-        name: nm(name_str),
+        name: nm(name),
         distinctness: None,
-        args: args.into_iter().map(Box::new).collect(),
+        args: arguments.into_iter().map(Box::new).collect(),
         order_by: vec![],
         within_group: vec![],
         filter_over: FunctionTail {
@@ -74,7 +49,28 @@ fn fcall(name_str: &'static str, args: Vec<Expr>) -> Expr {
         },
     }
 }
-fn pk_constraint() -> NamedColumnConstraint {
+
+fn ty(name: &str) -> Type {
+    Type {
+        name: name.to_string(),
+        size: None,
+        array_dimensions: 0,
+    }
+}
+
+fn column(
+    name: &str,
+    type_name: &str,
+    constraints: Vec<NamedColumnConstraint>,
+) -> ColumnDefinition {
+    ColumnDefinition {
+        col_name: nm(name),
+        col_type: Some(ty(type_name)),
+        constraints,
+    }
+}
+
+fn primary_key() -> NamedColumnConstraint {
     NamedColumnConstraint {
         name: None,
         constraint: ColumnConstraint::PrimaryKey {
@@ -84,7 +80,8 @@ fn pk_constraint() -> NamedColumnConstraint {
         },
     }
 }
-fn not_null_constraint() -> NamedColumnConstraint {
+
+fn not_null() -> NamedColumnConstraint {
     NamedColumnConstraint {
         name: None,
         constraint: ColumnConstraint::NotNull {
@@ -93,38 +90,73 @@ fn not_null_constraint() -> NamedColumnConstraint {
         },
     }
 }
-fn unique_constraint() -> NamedColumnConstraint {
+
+fn unique() -> NamedColumnConstraint {
     NamedColumnConstraint {
         name: None,
         constraint: ColumnConstraint::Unique(None),
     }
 }
-fn check_constraint(expr: Expr) -> NamedColumnConstraint {
+
+fn check(expression: Expr) -> NamedColumnConstraint {
     NamedColumnConstraint {
         name: None,
-        constraint: ColumnConstraint::Check(Box::new(expr)),
+        constraint: ColumnConstraint::Check(Box::new(expression)),
     }
 }
-fn column(
-    name: &'static str,
-    type_str: &'static str,
-    cons: Vec<NamedColumnConstraint>,
-) -> ColumnDefinition {
-    ColumnDefinition {
-        col_name: nm(name),
-        col_type: Some(ty(type_str)),
-        constraints: cons,
+
+fn sorted_id(name: &str) -> SortedColumn {
+    SortedColumn {
+        expr: Box::new(id(name)),
+        order: None,
+        nulls: None,
+    }
+}
+
+fn table_unique(columns: &[&str]) -> NamedTableConstraint {
+    NamedTableConstraint {
+        name: None,
+        constraint: TableConstraint::Unique {
+            columns: columns.iter().map(|name| sorted_id(name)).collect(),
+            conflict_clause: None,
+        },
+    }
+}
+
+fn table_primary_key(columns: &[&str]) -> NamedTableConstraint {
+    NamedTableConstraint {
+        name: None,
+        constraint: TableConstraint::PrimaryKey {
+            columns: columns.iter().map(|name| sorted_id(name)).collect(),
+            auto_increment: false,
+            conflict_clause: None,
+        },
     }
 }
 
 fn strict_options() -> TableOptions {
     TableOptions {
         without_rowid_text: None,
-        strict_text: Some("STRICT".to_string()),
+        strict_text: Some("STRICT".into()),
     }
 }
 
-// ---------- transactions ----------
+fn create_table(
+    table: &str,
+    columns: Vec<ColumnDefinition>,
+    constraints: Vec<NamedTableConstraint>,
+) -> Stmt {
+    Stmt::CreateTable {
+        temporary: false,
+        if_not_exists: false,
+        tbl_name: qnm(table),
+        body: CreateTableBody::ColumnsAndConstraints {
+            columns,
+            constraints,
+            options: strict_options(),
+        },
+    }
+}
 
 pub fn begin_immediate() -> Stmt {
     Stmt::Begin {
@@ -132,9 +164,11 @@ pub fn begin_immediate() -> Stmt {
         name: None,
     }
 }
+
 pub fn commit() -> Stmt {
     Stmt::Commit { name: None }
 }
+
 pub fn rollback() -> Stmt {
     Stmt::Rollback {
         tx_name: None,
@@ -142,36 +176,28 @@ pub fn rollback() -> Stmt {
     }
 }
 
-// ---------- static internal catalog DDL ----------
-
-/// `CREATE TABLE __fastdb_meta (...) STRICT`.
 pub fn catalog_meta_ddl() -> Stmt {
-    let columns = vec![
-        column(
-            "singleton",
-            "INTEGER",
-            vec![
-                pk_constraint(),
-                check_constraint(Expr::binary(id("singleton"), Operator::Equals, numlit("1"))),
-            ],
-        ),
-        column("format_version", "INTEGER", vec![not_null_constraint()]),
-        column("dialect_version", "INTEGER", vec![not_null_constraint()]),
-        column("database_id", "TEXT", vec![not_null_constraint()]),
-    ];
-    Stmt::CreateTable {
-        temporary: false,
-        if_not_exists: false,
-        tbl_name: qnm(crate::catalog::META_TABLE),
-        body: CreateTableBody::ColumnsAndConstraints {
-            columns,
-            constraints: vec![],
-            options: strict_options(),
-        },
-    }
+    create_table(
+        crate::catalog::META_TABLE,
+        vec![
+            column(
+                "singleton",
+                "INTEGER",
+                vec![
+                    primary_key(),
+                    check(Expr::binary(id("singleton"), Operator::Equals, numlit(1))),
+                ],
+            ),
+            column("format_version", "INTEGER", vec![not_null()]),
+            column("dialect_version", "INTEGER", vec![not_null()]),
+            column("database_id", "TEXT", vec![not_null(), unique()]),
+            column("creation_version", "TEXT", vec![not_null()]),
+            column("last_migration", "INTEGER", vec![not_null()]),
+        ],
+        vec![],
+    )
 }
 
-/// `CREATE TABLE __fastdb_tables (...) STRICT`.
 pub fn catalog_tables_ddl() -> Stmt {
     let mode_check = Expr::InList {
         lhs: Box::new(id("mode")),
@@ -181,342 +207,504 @@ pub fn catalog_tables_ddl() -> Stmt {
             Box::new(strlit("SCHEMAFULL")),
         ],
     };
-    let columns = vec![
-        column("table_id", "TEXT", vec![pk_constraint()]),
-        column(
-            "logical_name",
-            "TEXT",
-            vec![not_null_constraint(), unique_constraint()],
-        ),
-        column(
-            "physical_name",
-            "TEXT",
-            vec![not_null_constraint(), unique_constraint()],
-        ),
-        column(
-            "mode",
-            "TEXT",
-            vec![not_null_constraint(), check_constraint(mode_check)],
-        ),
-        column("definition", "TEXT", vec![not_null_constraint()]),
-    ];
-    Stmt::CreateTable {
-        temporary: false,
-        if_not_exists: false,
-        tbl_name: qnm(crate::catalog::TABLES_TABLE),
-        body: CreateTableBody::ColumnsAndConstraints {
-            columns,
-            constraints: vec![],
-            options: strict_options(),
-        },
-    }
+    create_table(
+        crate::catalog::TABLES_TABLE,
+        vec![
+            column("table_id", "TEXT", vec![primary_key()]),
+            column("logical_name", "TEXT", vec![not_null(), unique()]),
+            column("physical_name", "TEXT", vec![not_null(), unique()]),
+            column("mode", "TEXT", vec![not_null(), check(mode_check)]),
+            column("definition", "TEXT", vec![]),
+        ],
+        vec![],
+    )
 }
 
-/// `CREATE TABLE <opaque> (rid TEXT PRIMARY KEY, doc BLOB NOT NULL) STRICT`.
-///
-/// The logical `doc` invariant is JSONB content: every stored `doc` is
-/// produced by `jsonb(...)` and read back only through `json`/`json_extract`.
-/// STRICT mode rejects the literal type name `JSONB` (only INT/INTEGER/REAL/
-/// TEXT/BLOB/ANY are STRICT-valid on the pinned engine), so the physical
-/// column is declared `BLOB`, which is exactly how JSONB is represented
-/// internally (a BLOB subtype). This is the documented, plan-sanctioned
-/// "smallest valid physical declaration without weakening the JSONB
-/// invariant." See docs/phase0-engine-audit.md.
+pub fn catalog_fields_ddl() -> Stmt {
+    create_table(
+        crate::catalog::FIELDS_TABLE,
+        vec![
+            column("table_id", "TEXT", vec![not_null()]),
+            column("path_key", "TEXT", vec![not_null()]),
+            column("type_ast", "TEXT", vec![not_null()]),
+            column(
+                "required",
+                "INTEGER",
+                vec![
+                    not_null(),
+                    check(Expr::InList {
+                        lhs: Box::new(id("required")),
+                        not: false,
+                        rhs: vec![Box::new(numlit(0)), Box::new(numlit(1))],
+                    }),
+                ],
+            ),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![table_primary_key(&["table_id", "path_key"])],
+    )
+}
+
+pub fn catalog_indexes_ddl() -> Stmt {
+    create_table(
+        crate::catalog::INDEXES_TABLE,
+        vec![
+            column("index_id", "TEXT", vec![primary_key()]),
+            column("table_id", "TEXT", vec![not_null()]),
+            column("logical_name", "TEXT", vec![not_null()]),
+            column("physical_name", "TEXT", vec![not_null(), unique()]),
+            column("paths_json", "TEXT", vec![not_null()]),
+            column(
+                "unique_flag",
+                "INTEGER",
+                vec![
+                    not_null(),
+                    check(Expr::InList {
+                        lhs: Box::new(id("unique_flag")),
+                        not: false,
+                        rhs: vec![Box::new(numlit(0)), Box::new(numlit(1))],
+                    }),
+                ],
+            ),
+            column("expression_version", "INTEGER", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![table_unique(&["table_id", "logical_name"])],
+    )
+}
+
 pub fn physical_table_ddl(opaque_name: &str) -> Result<Stmt, FastDbError> {
     validate_physical_name(opaque_name, TABLE_NAME_PREFIX)?;
-    let columns = vec![
-        column("rid", "TEXT", vec![pk_constraint()]),
-        column("doc", "BLOB", vec![not_null_constraint()]),
-    ];
-    Ok(Stmt::CreateTable {
-        temporary: false,
-        if_not_exists: false,
-        tbl_name: qnm(opaque_name),
-        body: CreateTableBody::ColumnsAndConstraints {
-            columns,
-            constraints: vec![],
-            options: strict_options(),
-        },
-    })
+    Ok(create_table(
+        opaque_name,
+        vec![
+            column("rid", "TEXT", vec![primary_key()]),
+            column("doc", "BLOB", vec![not_null()]),
+        ],
+        vec![],
+    ))
 }
 
-/// Test-only non-unique expression index on the canonical `name` field.
-/// `CREATE INDEX <opaque_index> ON <opaque_table> (json_extract(doc,'$.name'))`.
-pub fn physical_name_index_ddl(
-    opaque_index: &str,
-    opaque_table: &str,
-    path: &str,
-) -> Result<Stmt, FastDbError> {
-    validate_physical_name(opaque_index, INDEX_NAME_PREFIX)?;
-    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
-    let idx = Stmt::CreateIndex {
-        unique: false,
-        if_not_exists: false,
-        idx_name: qnm(opaque_index),
-        tbl_name: nm(opaque_table),
-        using: None,
-        columns: vec![SortedColumn {
-            expr: Box::new(json_extract_doc(path)),
-            order: None,
-            nulls: None,
-        }],
-        with_clause: vec![],
-        where_clause: None,
-    };
-    Ok(idx)
-}
-
-// ---------- canonical JSON expression (shared by index + filter) ----------
-
-/// Build the canonical top-level JSON path `$.<field>` for a single Phase 0
-/// identifier field. This is the sole owner of path construction. The lexer
-/// already restricts identifiers; here we additionally reject any character
-/// that could break out of a JSON path.
-pub fn canonical_field_path(field: &str) -> Result<String, FastDbError> {
-    if field.is_empty() {
-        return Err(FastDbError::format("JSON path field is empty"));
-    }
-    let bad = |c: char| matches!(c, '.' | '[' | ']' | '\'' | '"' | '\\' | ' ') || c.is_control();
-    if field.chars().any(bad) {
-        return Err(FastDbError::format(
-            "field contains characters not allowed in a Phase 0 JSON path",
-        ));
-    }
-    Ok(format!("$.{field}"))
-}
-
-/// `json_extract(doc, '<path>')` as an AST expression. Identical structure is
-/// used by the expression-index definition and the equality filter so the
-/// optimizer can match them.
+/// This is the only expression builder used by filters and index DDL.
 pub fn json_extract_doc(path: &str) -> Expr {
     fcall("json_extract", vec![id("doc"), strlit(path)])
 }
 
-// ---------- catalog data statements (bound logical names) ----------
+pub fn physical_index_ddl(
+    opaque_index: &str,
+    opaque_table: &str,
+    paths: &[String],
+    is_unique: bool,
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_index, INDEX_NAME_PREFIX)?;
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    if paths.is_empty() {
+        return Err(FastDbError::Schema("index has no field paths".into()));
+    }
+    Ok(Stmt::CreateIndex {
+        unique: is_unique,
+        if_not_exists: false,
+        idx_name: qnm(opaque_index),
+        tbl_name: nm(opaque_table),
+        using: None,
+        columns: paths
+            .iter()
+            .map(|path| SortedColumn {
+                expr: Box::new(json_extract_doc(path)),
+                order: None,
+                nulls: None,
+            })
+            .collect(),
+        with_clause: vec![],
+        where_clause: None,
+    })
+}
 
-/// `SELECT 1 FROM sqlite_schema WHERE type='table' AND name = ?1`.
-/// Caller binds the object name at `?1`.
-pub fn catalog_exists_stmt() -> Stmt {
-    Stmt::Select(Select {
+pub fn sqlite_schema_stmt() -> Stmt {
+    one_select(
+        vec!["type", "name", "tbl_name", "sql"]
+            .into_iter()
+            .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+            .collect(),
+        "sqlite_schema",
+        None,
+    )
+}
+
+pub fn meta_format_stmt() -> Stmt {
+    one_select(
+        vec![ResultColumn::Expr(Box::new(id("format_version")), None)],
+        crate::catalog::META_TABLE,
+        Some(Expr::binary(id("singleton"), Operator::Equals, numlit(1))),
+    )
+}
+
+pub fn meta_stmt() -> Stmt {
+    one_select(
+        [
+            "format_version",
+            "dialect_version",
+            "database_id",
+            "creation_version",
+            "last_migration",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::META_TABLE,
+        Some(Expr::binary(id("singleton"), Operator::Equals, numlit(1))),
+    )
+}
+
+pub fn tables_stmt() -> Stmt {
+    one_select(
+        [
+            "table_id",
+            "logical_name",
+            "physical_name",
+            "mode",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::TABLES_TABLE,
+        None,
+    )
+}
+
+pub fn fields_stmt() -> Stmt {
+    one_select(
+        ["table_id", "path_key", "type_ast", "required", "definition"]
+            .into_iter()
+            .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+            .collect(),
+        crate::catalog::FIELDS_TABLE,
+        None,
+    )
+}
+
+pub fn indexes_stmt() -> Stmt {
+    one_select(
+        [
+            "index_id",
+            "table_id",
+            "logical_name",
+            "physical_name",
+            "paths_json",
+            "unique_flag",
+            "expression_version",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::INDEXES_TABLE,
+        None,
+    )
+}
+
+pub fn meta_insert(
+    database_id: &str,
+    creation_version: &str,
+    last_migration: i64,
+) -> (Stmt, Bindings) {
+    insert_values(
+        crate::catalog::META_TABLE,
+        &[
+            "singleton",
+            "format_version",
+            "dialect_version",
+            "database_id",
+            "creation_version",
+            "last_migration",
+        ],
+        vec![
+            numlit(1),
+            numlit(1),
+            numlit(1),
+            var(1),
+            var(2),
+            numlit(last_migration),
+        ],
+        vec![text(database_id), text(creation_version)],
+    )
+}
+
+pub fn migrate_to_one_stmt() -> Stmt {
+    Stmt::Update(Update {
         with: None,
-        body: SelectBody {
-            select: OneSelect::Select {
-                distinctness: None,
-                columns: vec![ResultColumn::Expr(Box::new(numlit("1")), None)],
-                from: Some(FromClause {
-                    select: Box::new(SelectTable::Table(qnm("sqlite_schema"), None, None)),
-                    joins: vec![],
-                }),
-                where_clause: Some(Box::new(Expr::binary(
-                    Expr::binary(strlit("table"), Operator::Equals, id("type")),
-                    Operator::And,
-                    Expr::binary(id("name"), Operator::Equals, var(1)),
-                ))),
-                group_by: None,
-                window_clause: vec![],
-            },
-            compounds: vec![],
-        },
+        or_conflict: None,
+        tbl_name: qnm(crate::catalog::META_TABLE),
+        indexed: None,
+        sets: vec![Set {
+            col_names: vec![nm("last_migration")],
+            expr: Box::new(numlit(1)),
+        }],
+        from: None,
+        where_clause: Some(Box::new(Expr::binary(
+            Expr::binary(id("singleton"), Operator::Equals, numlit(1)),
+            Operator::And,
+            Expr::binary(id("last_migration"), Operator::Equals, numlit(0)),
+        ))),
+        returning: vec![],
         order_by: vec![],
         limit: None,
     })
 }
 
-/// `SELECT format_version, dialect_version FROM __fastdb_meta WHERE singleton = 1`.
-pub fn catalog_versions_stmt() -> Stmt {
-    one_select(
-        vec![
-            ResultColumn::Expr(Box::new(id("format_version")), None),
-            ResultColumn::Expr(Box::new(id("dialect_version")), None),
+pub fn table_insert(
+    table_id: &str,
+    logical_name: &str,
+    physical_name: &str,
+    mode: &str,
+    definition: Option<&str>,
+) -> (Stmt, Bindings) {
+    let mut bindings = vec![
+        text(table_id),
+        text(logical_name),
+        text(physical_name),
+        text(mode),
+    ];
+    let definition_expr = if let Some(definition) = definition {
+        bindings.push(text(definition));
+        var(5)
+    } else {
+        Expr::Literal(Literal::Null)
+    };
+    insert_values(
+        crate::catalog::TABLES_TABLE,
+        &[
+            "table_id",
+            "logical_name",
+            "physical_name",
+            "mode",
+            "definition",
         ],
-        crate::catalog::META_TABLE,
-        Some(Expr::binary(id("singleton"), Operator::Equals, numlit("1"))),
+        vec![var(1), var(2), var(3), var(4), definition_expr],
+        bindings,
     )
 }
 
-/// `INSERT INTO __fastdb_meta VALUES (1, 0, 0, ?1)` (database_id bound).
-pub fn catalog_meta_insert(database_id: &str) -> (Stmt, Bindings) {
-    let stmt = Stmt::Insert {
-        with: None,
-        or_conflict: None,
-        tbl_name: qnm(crate::catalog::META_TABLE),
-        columns: vec![
-            nm("singleton"),
-            nm("format_version"),
-            nm("dialect_version"),
-            nm("database_id"),
-        ],
-        body: InsertBody::Select(
-            Select {
-                with: None,
-                body: SelectBody {
-                    select: OneSelect::Values(vec![vec![
-                        Box::new(numlit("1")),
-                        Box::new(numlit("0")),
-                        Box::new(numlit("0")),
-                        Box::new(var(1)),
-                    ]]),
-                    compounds: vec![],
-                },
-                order_by: vec![],
-                limit: None,
-            },
-            None,
-        ),
-        returning: vec![],
-    };
-    let bindings = vec![Value::build_text(database_id.to_string())];
-    (stmt, bindings)
-}
-
-/// `SELECT table_id, physical_name FROM __fastdb_tables WHERE logical_name = ?1`.
-pub fn catalog_lookup_stmt(logical_name: &str) -> (Stmt, Bindings) {
-    let stmt = one_select(
-        vec![
-            ResultColumn::Expr(Box::new(id("table_id")), None),
-            ResultColumn::Expr(Box::new(id("physical_name")), None),
-        ],
-        crate::catalog::TABLES_TABLE,
-        Some(Expr::binary(id("logical_name"), Operator::Equals, var(1))),
-    );
-    (stmt, bindings_text(vec![logical_name]))
-}
-
-/// `INSERT INTO __fastdb_tables VALUES (?1, ?2, ?3, 'SCHEMALESS', ?4)`.
-pub fn catalog_register_stmt(
-    table_id_hex: &str,
-    logical_name: &str,
-    physical_name: &str,
+pub fn field_insert(
+    table_id: &str,
+    path_key: &str,
+    type_ast: &str,
+    required: bool,
     definition: &str,
 ) -> (Stmt, Bindings) {
-    let stmt = Stmt::Insert {
-        with: None,
-        or_conflict: None,
-        tbl_name: qnm(crate::catalog::TABLES_TABLE),
-        columns: vec![
-            nm("table_id"),
-            nm("logical_name"),
-            nm("physical_name"),
-            nm("mode"),
-            nm("definition"),
-        ],
-        body: InsertBody::Select(
-            Select {
-                with: None,
-                body: SelectBody {
-                    select: OneSelect::Values(vec![vec![
-                        Box::new(var(1)),
-                        Box::new(var(2)),
-                        Box::new(var(3)),
-                        Box::new(strlit("SCHEMALESS")),
-                        Box::new(var(4)),
-                    ]]),
-                    compounds: vec![],
-                },
-                order_by: vec![],
-                limit: None,
-            },
-            None,
-        ),
-        returning: vec![],
-    };
-    let bindings = bindings_text(vec![table_id_hex, logical_name, physical_name, definition]);
-    (stmt, bindings)
-}
-
-// ---------- physical data statements ----------
-
-/// User `CREATE`: `INSERT INTO <opaque> (rid, doc) VALUES (?1, jsonb(json_object(?2, ?3)))`.
-/// `?1`=encoded rid, `?2`=field name, `?3`=field value. The engine builds the
-/// JSON object so no FastDB-side JSON construction or escaping is needed.
-pub fn physical_insert_stmt(
-    opaque_table: &str,
-    encoded_rid: &str,
-    field_name: &str,
-    field_value: &str,
-) -> Result<(Stmt, Bindings), FastDbError> {
-    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
-    let doc_expr = fcall("jsonb", vec![fcall("json_object", vec![var(2), var(3)])]);
-    let stmt = Stmt::Insert {
-        with: None,
-        or_conflict: None,
-        tbl_name: qnm(opaque_table),
-        columns: vec![nm("rid"), nm("doc")],
-        body: InsertBody::Select(
-            Select {
-                with: None,
-                body: SelectBody {
-                    select: OneSelect::Values(vec![vec![Box::new(var(1)), Box::new(doc_expr)]]),
-                    compounds: vec![],
-                },
-                order_by: vec![],
-                limit: None,
-            },
-            None,
-        ),
-        returning: vec![],
-    };
-    let bindings = bindings_text(vec![encoded_rid, field_name, field_value]);
-    Ok((stmt, bindings))
-}
-
-/// Record read: `SELECT rid, json(doc) FROM <opaque> WHERE rid = ?1`.
-pub fn physical_select_by_rid_stmt(
-    opaque_table: &str,
-    encoded_rid: &str,
-) -> Result<(Stmt, Bindings), FastDbError> {
-    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
-    let doc_json = fcall("json", vec![id("doc")]);
-    let stmt = one_select(
+    insert_values(
+        crate::catalog::FIELDS_TABLE,
+        &["table_id", "path_key", "type_ast", "required", "definition"],
+        vec![var(1), var(2), var(3), numlit(i64::from(required)), var(4)],
         vec![
-            ResultColumn::Expr(Box::new(id("rid")), None),
-            ResultColumn::Expr(Box::new(doc_json), None),
+            text(table_id),
+            text(path_key),
+            text(type_ast),
+            text(definition),
         ],
-        opaque_table,
-        Some(Expr::binary(id("rid"), Operator::Equals, var(1))),
-    );
-    Ok((stmt, bindings_text(vec![encoded_rid])))
+    )
 }
 
-/// Equality filter: `SELECT rid, json(doc) FROM <opaque> WHERE json_extract(doc,'$.<field>') = ?1`.
-pub fn physical_select_by_field_stmt(
+#[allow(clippy::too_many_arguments)]
+pub fn index_insert(
+    index_id: &str,
+    table_id: &str,
+    logical_name: &str,
+    physical_name: &str,
+    paths_json: &str,
+    is_unique: bool,
+    expression_version: i64,
+    definition: &str,
+) -> (Stmt, Bindings) {
+    insert_values(
+        crate::catalog::INDEXES_TABLE,
+        &[
+            "index_id",
+            "table_id",
+            "logical_name",
+            "physical_name",
+            "paths_json",
+            "unique_flag",
+            "expression_version",
+            "definition",
+        ],
+        vec![
+            var(1),
+            var(2),
+            var(3),
+            var(4),
+            var(5),
+            numlit(i64::from(is_unique)),
+            numlit(expression_version),
+            var(6),
+        ],
+        vec![
+            text(index_id),
+            text(table_id),
+            text(logical_name),
+            text(physical_name),
+            text(paths_json),
+            text(definition),
+        ],
+    )
+}
+
+pub fn physical_insert_content_stmt(
     opaque_table: &str,
+    encoded_rid: &str,
+    encoded_doc: &str,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    let jsonb = fcall("jsonb", vec![var(2)]);
+    Ok(insert_values(
+        opaque_table,
+        &["rid", "doc"],
+        vec![var(1), jsonb],
+        vec![text(encoded_rid), text(encoded_doc)],
+    ))
+}
+
+pub fn physical_insert_set_stmt(
+    opaque_table: &str,
+    encoded_rid: &str,
     path: &str,
-    field_value: &str,
+    encoded_value: &str,
 ) -> Result<(Stmt, Bindings), FastDbError> {
     validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
-    let doc_json = fcall("json", vec![id("doc")]);
-    let where_expr = Expr::binary(json_extract_doc(path), Operator::Equals, var(1));
-    let stmt = one_select(
-        vec![
-            ResultColumn::Expr(Box::new(id("rid")), None),
-            ResultColumn::Expr(Box::new(doc_json), None),
-        ],
+    let empty = fcall("jsonb", vec![strlit("{}")]);
+    let value = fcall("json", vec![var(3)]);
+    let document = fcall("jsonb", vec![fcall("json_set", vec![empty, var(2), value])]);
+    Ok(insert_values(
         opaque_table,
-        Some(where_expr),
-    );
-    Ok((stmt, bindings_text(vec![field_value])))
+        &["rid", "doc"],
+        vec![var(1), document],
+        vec![text(encoded_rid), text(path), text(encoded_value)],
+    ))
 }
 
-/// `DELETE FROM <opaque> WHERE rid = ?1`.
+pub fn physical_update_doc_stmt(
+    opaque_table: &str,
+    encoded_rid: &str,
+    encoded_doc: &str,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    Ok((
+        Stmt::Update(Update {
+            with: None,
+            or_conflict: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            sets: vec![Set {
+                col_names: vec![nm("doc")],
+                expr: Box::new(fcall("jsonb", vec![var(2)])),
+            }],
+            from: None,
+            where_clause: Some(Box::new(Expr::binary(id("rid"), Operator::Equals, var(1)))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        }),
+        vec![text(encoded_rid), text(encoded_doc)],
+    ))
+}
+
+pub fn physical_select_stmt(
+    opaque_table: &str,
+    encoded_rid: Option<&str>,
+    filters: &[(String, FastValue)],
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    let mut bindings = Vec::new();
+    let mut condition = None;
+    if let Some(rid) = encoded_rid {
+        bindings.push(text(rid));
+        condition = Some(Expr::binary(id("rid"), Operator::Equals, var(1)));
+    }
+    for (path, value) in filters {
+        bindings.push(engine_scalar(value)?);
+        let index = u32::try_from(bindings.len())
+            .map_err(|_| FastDbError::Engine("too many translated bindings".into()))?;
+        let operator = if matches!(value, FastValue::Null) {
+            Operator::Is
+        } else {
+            Operator::Equals
+        };
+        let predicate = Expr::binary(json_extract_doc(path), operator, var(index));
+        condition = Some(match condition {
+            None => predicate,
+            Some(previous) => Expr::binary(previous, Operator::And, predicate),
+        });
+    }
+    let doc_json = fcall("json", vec![id("doc")]);
+    Ok((
+        one_select(
+            vec![
+                ResultColumn::Expr(Box::new(id("rid")), None),
+                ResultColumn::Expr(Box::new(doc_json), None),
+            ],
+            opaque_table,
+            condition,
+        ),
+        bindings,
+    ))
+}
+
+pub fn physical_all_rows_stmt(opaque_table: &str) -> Result<Stmt, FastDbError> {
+    physical_select_stmt(opaque_table, None, &[]).map(|(statement, _)| statement)
+}
+
 pub fn physical_delete_by_rid_stmt(
     opaque_table: &str,
     encoded_rid: &str,
 ) -> Result<(Stmt, Bindings), FastDbError> {
     validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
-    let stmt = Stmt::Delete {
-        with: None,
-        tbl_name: qnm(opaque_table),
-        indexed: None,
-        where_clause: Some(Box::new(Expr::binary(id("rid"), Operator::Equals, var(1)))),
-        returning: vec![],
-        order_by: vec![],
-        limit: None,
-    };
-    Ok((stmt, bindings_text(vec![encoded_rid])))
+    Ok((
+        Stmt::Delete {
+            with: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            where_clause: Some(Box::new(Expr::binary(id("rid"), Operator::Equals, var(1)))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        },
+        vec![text(encoded_rid)],
+    ))
 }
 
-// ---------- helpers ----------
+fn insert_values(
+    table: &str,
+    columns: &[&str],
+    expressions: Vec<Expr>,
+    bindings: Bindings,
+) -> (Stmt, Bindings) {
+    (
+        Stmt::Insert {
+            with: None,
+            or_conflict: None,
+            tbl_name: qnm(table),
+            columns: columns.iter().map(|name| nm(name)).collect(),
+            body: InsertBody::Select(
+                Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Values(vec![expressions
+                            .into_iter()
+                            .map(Box::new)
+                            .collect()]),
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                },
+                None,
+            ),
+            returning: vec![],
+        },
+        bindings,
+    )
+}
 
 fn one_select(columns: Vec<ResultColumn>, table: &str, where_clause: Option<Expr>) -> Stmt {
     Stmt::Select(Select {
@@ -540,9 +728,59 @@ fn one_select(columns: Vec<ResultColumn>, table: &str, where_clause: Option<Expr
     })
 }
 
-fn bindings_text(values: Vec<&str>) -> Bindings {
-    values
-        .into_iter()
-        .map(|v| Value::build_text(v.to_string()))
-        .collect()
+fn text(value: &str) -> Value {
+    Value::build_text(value.to_string())
+}
+
+fn engine_scalar(value: &FastValue) -> Result<Value, FastDbError> {
+    match value {
+        FastValue::Null => Ok(Value::Null),
+        FastValue::Bool(value) => Ok(Value::from_i64(i64::from(*value))),
+        FastValue::Integer(value) => Ok(Value::from_i64(*value)),
+        FastValue::Float(value) if value.is_finite() => Ok(Value::from_f64(*value)),
+        FastValue::Str(value) => Ok(text(value)),
+        FastValue::Float(_) => Err(FastDbError::Schema("non-finite filter value".into())),
+        FastValue::Array(_) | FastValue::Object(_) | FastValue::RecordId(_) => Err(
+            FastDbError::UnsupportedSyntax(turso_fastdb_parser::ParseError::unsupported(
+                "filters support only scalar constants in this phase",
+                turso_fastdb_parser::Span::default(),
+            )),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn p2_path_003_filter_and_index_use_structurally_identical_expression_ast() {
+        let table = "__fastdb_t_00000000000000000000000000000001";
+        let index = "__fastdb_i_00000000000000000000000000000002";
+        let path = r#"$."profile"."age""#.to_string();
+        let Stmt::CreateIndex { columns, .. } =
+            physical_index_ddl(index, table, std::slice::from_ref(&path), false).unwrap()
+        else {
+            panic!("index lowering returned the wrong statement kind");
+        };
+        let index_expression = columns[0].expr.as_ref();
+
+        let (select, _) =
+            physical_select_stmt(table, None, &[(path, FastValue::Integer(42))]).unwrap();
+        let Stmt::Select(select) = select else {
+            panic!("filter lowering returned the wrong statement kind");
+        };
+        let OneSelect::Select {
+            where_clause: Some(predicate),
+            ..
+        } = &select.body.select
+        else {
+            panic!("filter lowering omitted its predicate");
+        };
+        let Expr::Binary(filter_expression, Operator::Equals, _) = predicate.as_ref() else {
+            panic!("filter lowering returned the wrong predicate shape");
+        };
+
+        assert_eq!(filter_expression.as_ref(), index_expression);
+    }
 }

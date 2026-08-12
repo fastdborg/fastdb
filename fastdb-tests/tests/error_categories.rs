@@ -52,10 +52,20 @@ fn category_format_future_version() {
         let conn = db.connect().unwrap();
         common::native_exec(conn.native(), "UPDATE __fastdb_meta SET format_version = 7");
     }
-    let db = Database::open(s).unwrap();
-    let conn = db.connect().unwrap();
-    let err = conn.execute("CREATE p:y SET n = '2'").unwrap_err();
+    let err = Database::open(s).unwrap_err();
     assert_eq!(err.category(), ErrorCategory::Format, "{err}");
+}
+
+#[test]
+fn category_schema_validation() {
+    let db = Database::open_memory().unwrap();
+    let conn = db.connect().unwrap();
+    conn.execute("DEFINE TABLE person SCHEMAFULL").unwrap();
+    conn.execute("DEFINE FIELD age ON person TYPE int").unwrap();
+    let err = conn
+        .execute("CREATE person:tracy CONTENT { age:'not an integer' }")
+        .unwrap_err();
+    assert_eq!(err.category(), ErrorCategory::Schema, "{err}");
 }
 
 #[test]

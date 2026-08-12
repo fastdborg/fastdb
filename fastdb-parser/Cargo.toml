@@ -9,3 +9,4 @@ publish = false
 [dependencies]
 miette = { workspace = true, features = ["fancy"] }
 thiserror = { workspace = true }
+uuid = { version = "1.11.0", default-features = false }

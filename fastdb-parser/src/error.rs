@@ -54,6 +54,11 @@ pub enum ParseErrorKind {
         literal: String,
         reason: &'static str,
     },
+    #[error("invalid typed UUID {literal:?}: {reason}")]
+    InvalidUuid {
+        literal: String,
+        reason: &'static str,
+    },
     #[error("missing semicolon between statements")]
     MissingStatementSeparator,
     #[error("empty statements are not allowed")]
@@ -99,6 +104,7 @@ impl ParseError {
             ParseErrorKind::UnterminatedComment => "comment starts here",
             ParseErrorKind::InvalidEscape { .. } => "invalid escape",
             ParseErrorKind::InvalidNumber { .. } => "invalid number",
+            ParseErrorKind::InvalidUuid { .. } => "invalid UUID",
             ParseErrorKind::MissingStatementSeparator => "separator required here",
             ParseErrorKind::EmptyStatement => "empty statement",
             ParseErrorKind::MultipleStatements { .. } => "additional statement",
@@ -123,6 +129,7 @@ impl ParseError {
             ParseErrorKind::UnterminatedComment => "fastdb::parse::unterminated_comment",
             ParseErrorKind::InvalidEscape { .. } => "fastdb::parse::invalid_escape",
             ParseErrorKind::InvalidNumber { .. } => "fastdb::parse::invalid_number",
+            ParseErrorKind::InvalidUuid { .. } => "fastdb::parse::invalid_uuid",
             ParseErrorKind::MissingStatementSeparator => {
                 "fastdb::parse::missing_statement_separator"
             }
