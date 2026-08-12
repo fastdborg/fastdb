@@ -241,10 +241,13 @@ impl Parser {
         Ok(RecordTarget { span, table, id })
     }
 
+    /// Phase 0 supports only a bare-identifier record id (`table:identifier`).
+    /// A quoted string id is not part of the declared compatibility subset
+    /// (`COMPAT.md` `RID-STR`) and is rejected here.
     fn parse_record_id_part(&mut self) -> Result<RecordIdPart, ParseError> {
         let tok = &self.tokens[self.pos];
         match &tok.kind {
-            TokenKind::Ident(s) | TokenKind::String(s) => {
+            TokenKind::Ident(s) => {
                 let part = RecordIdPart {
                     value: s.clone(),
                     span: tok.span,
@@ -252,7 +255,11 @@ impl Parser {
                 self.pos += 1;
                 Ok(part)
             }
-            _ => Err(self.unexpected("a record id (identifier or string)")),
+            TokenKind::String(_) => Err(unsupported(
+                "quoted record ids are not supported (use a bare identifier)",
+                tok.span,
+            )),
+            _ => Err(self.unexpected("a record id (a bare identifier)")),
         }
     }
 }
@@ -502,6 +509,13 @@ mod tests {
         // '5' is not a valid token start -> explicit lex error, never accepted.
         let err = parse("CREATE p:5 SET n = 'v'").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::UnexpectedChar { .. }));
+    }
+
+    #[test]
+    fn quoted_record_id_unsupported() {
+        // Quoted ids are not part of the Phase 0 declared subset (COMPAT RID-STR).
+        let err = parse("CREATE person:'tobie' SET name = 'Tobie'").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::UnsupportedSyntax { .. }));
     }
 
     #[test]

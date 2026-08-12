@@ -7,7 +7,7 @@
 
 use miette::Diagnostic;
 use thiserror::Error;
-use turso_fastdb_parser::ParseError;
+use turso_fastdb_parser::{ParseError, ParseErrorKind};
 
 /// Convenience alias for `Result<T, FastDbError>`.
 pub type Result<T> = std::result::Result<T, FastDbError>;
@@ -24,14 +24,14 @@ pub enum ErrorCategory {
     Io,
 }
 
-/// A FastDB frontend error. Carries a category; parse errors additionally
-/// carry a source span via the inner [`ParseError`].
+/// A FastDB frontend error. Parse and unsupported-syntax errors carry the
+/// original [`ParseError`] so the source span/diagnostic is preserved.
 #[derive(Debug, Clone, Error)]
 pub enum FastDbError {
     #[error("parse error: {0}")]
-    Parse(#[from] ParseError),
+    Parse(ParseError),
     #[error("unsupported syntax: {0}")]
-    UnsupportedSyntax(String),
+    UnsupportedSyntax(ParseError),
     #[error("constraint violation: {0}")]
     Constraint(String),
     #[error("format error: {0}")]
@@ -57,23 +57,27 @@ impl FastDbError {
         }
     }
 
-    pub fn unsupported(msg: impl Into<String>) -> Self {
-        Self::UnsupportedSyntax(msg.into())
-    }
-
-    pub fn constraint(msg: impl Into<String>) -> Self {
-        Self::Constraint(msg.into())
-    }
-
     pub fn format(msg: impl Into<String>) -> Self {
         Self::Format(msg.into())
+    }
+}
+
+/// Route parser errors by kind: an `UnsupportedSyntax` parse error becomes a
+/// FastDB `UnsupportedSyntax` (distinct category), preserving its span; all
+/// other parse errors become `Parse`.
+impl From<ParseError> for FastDbError {
+    fn from(e: ParseError) -> Self {
+        match e.kind {
+            ParseErrorKind::UnsupportedSyntax { .. } => Self::UnsupportedSyntax(e),
+            _ => Self::Parse(e),
+        }
     }
 }
 
 impl Diagnostic for FastDbError {
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         match self {
-            Self::Parse(pe) => Diagnostic::labels(pe),
+            Self::Parse(pe) | Self::UnsupportedSyntax(pe) => Diagnostic::labels(pe),
             _ => None,
         }
     }
@@ -85,20 +89,19 @@ impl From<std::io::Error> for FastDbError {
     }
 }
 
+/// Map typed `LimboError` variants to FastDB categories: constraint and
+/// foreign-key violations to `Constraint`; I/O (`CompletionError`, which is
+/// how Turso wraps all `std::io::Error`) to `Io`; everything else to
+/// `Engine`. This does not string-match rendered error text.
 impl From<turso_core::LimboError> for FastDbError {
-    /// Classify common engine errors into FastDB categories where possible;
-    /// otherwise surface as `Engine`. The duplicate-primary-key error from a
-    /// `CREATE` of an existing id maps to `Constraint`.
     fn from(e: turso_core::LimboError) -> Self {
-        let msg = e.to_string();
-        let lower = msg.to_lowercase();
-        if lower.contains("unique constraint")
-            || lower.contains("primary key")
-            || lower.contains("constraint")
-        {
-            Self::Constraint(msg)
-        } else {
-            Self::Engine(msg)
+        use turso_core::LimboError;
+        match &e {
+            LimboError::Constraint(msg) | LimboError::ForeignKeyConstraint(msg) => {
+                Self::Constraint(msg.clone())
+            }
+            LimboError::CompletionError(_) => Self::Io(e.to_string()),
+            _ => Self::Engine(e.to_string()),
         }
     }
 }

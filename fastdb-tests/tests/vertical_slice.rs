@@ -25,7 +25,9 @@ fn file_backed_vertical_slice() {
     let created = {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
-        let r = conn.execute("CREATE person:tobie SET name = 'Tobie';").unwrap();
+        let r = conn
+            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .unwrap();
         assert_eq!(r.records.len(), 1);
         let rec = &r.records[0];
         assert_eq!(rec.id.table, "person");
@@ -55,7 +57,10 @@ fn file_backed_vertical_slice() {
         // 8. Inspect internal state through the test-only native connection.
         let native = conn.native();
         // 8a. One version-0 metadata row.
-        let meta = common::native_rows(native, "SELECT singleton, format_version, dialect_version FROM __fastdb_meta");
+        let meta = common::native_rows(
+            native,
+            "SELECT singleton, format_version, dialect_version FROM __fastdb_meta",
+        );
         assert_eq!(meta.len(), 1, "exactly one metadata row");
         assert_eq!(meta[0][0], "1");
         assert_eq!(meta[0][1], "0", "format_version == 0");
@@ -81,15 +86,14 @@ fn file_backed_vertical_slice() {
         );
         assert_eq!(physical.len(), "__fastdb_t_".len() + 32);
         let suffix = &physical["__fastdb_t_".len()..];
-        assert!(suffix.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+        assert!(suffix
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
         assert!(!physical.contains("person"), "no logical name leakage");
         assert!(!physical.contains("tobie"), "no record id leakage");
 
         // 8d. The physical row stores the canonical rid and a doc with no id.
-        let prows = common::native_rows(
-            native,
-            &format!("SELECT rid, json(doc) FROM {physical}"),
-        );
+        let prows = common::native_rows(native, &format!("SELECT rid, json(doc) FROM {physical}"));
         assert_eq!(prows.len(), 1);
         let rid = &prows[0][0];
         let doc = &prows[0][1];
@@ -108,7 +112,10 @@ fn file_backed_vertical_slice() {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
         let r = conn.execute("DELETE person:tobie;").unwrap();
-        assert!(r.records.is_empty(), "DELETE returns the empty default result");
+        assert!(
+            r.records.is_empty(),
+            "DELETE returns the empty default result"
+        );
         let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
         assert!(r.records.is_empty());
     }

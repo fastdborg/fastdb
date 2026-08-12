@@ -47,15 +47,33 @@ pub fn catalog_exists(conn: &Connection, name: &str) -> Result<bool> {
     Ok(!rows.is_empty())
 }
 
-/// Read the persisted format version. Caller must ensure `__fastdb_meta`
-/// exists.
-pub fn read_format_version(conn: &Connection) -> Result<i64> {
-    let rows = conn.collect_rows(lower::catalog_meta_version_stmt(), vec![])?;
+/// Read the persisted `(format_version, dialect_version)`. Caller must
+/// ensure `__fastdb_meta` exists.
+pub fn read_catalog_versions(conn: &Connection) -> Result<(i64, i64)> {
+    let rows = conn.collect_rows(lower::catalog_versions_stmt(), vec![])?;
     let row = rows
         .into_iter()
         .next()
         .ok_or_else(|| FastDbError::Format("__fastdb_meta row missing".into()))?;
-    value_to_i64(&row[0])
+    Ok((value_to_i64(&row[0])?, value_to_i64(&row[1])?))
+}
+
+/// Refuse an existing catalog whose format or dialect version is not the
+/// Phase 0 value (`0`). Called before resolving or interpreting the catalog
+/// on every operation, so a future-format/dialect database is never mutated.
+pub fn ensure_catalog_compatible(conn: &Connection) -> Result<()> {
+    let (format_version, dialect_version) = read_catalog_versions(conn)?;
+    if format_version != FORMAT_VERSION {
+        return Err(FastDbError::Format(format!(
+            "unknown Phase 0 format version {format_version}; only {FORMAT_VERSION} is supported"
+        )));
+    }
+    if dialect_version != DIALECT_VERSION {
+        return Err(FastDbError::Format(format!(
+            "unknown Phase 0 dialect version {dialect_version}; only {DIALECT_VERSION} is supported"
+        )));
+    }
+    Ok(())
 }
 
 /// Create the two catalog tables and the singleton metadata row. Run inside

@@ -21,6 +21,11 @@ pub enum Failpoint {
     AfterRecordPrepare,
     /// After the record is inserted, before COMMIT.
     AfterRecordInsert,
+    /// After the body succeeds and the (optional) real COMMIT would run.
+    /// Simulates a COMMIT-time failure so the commit-failure rollback path is
+    /// exercised deterministically (real WAL/I/O commit failures are not
+    /// injectable without an engine seam).
+    CommitFailure,
 }
 
 #[derive(Default)]
@@ -30,6 +35,7 @@ pub struct Failpoints {
     after_physical_ddl: AtomicBool,
     after_record_prepare: AtomicBool,
     after_record_insert: AtomicBool,
+    commit_failure: AtomicBool,
 }
 
 impl Failpoints {
@@ -42,6 +48,7 @@ impl Failpoints {
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.load(Ordering::SeqCst),
             Failpoint::AfterRecordPrepare => self.after_record_prepare.load(Ordering::SeqCst),
             Failpoint::AfterRecordInsert => self.after_record_insert.load(Ordering::SeqCst),
+            Failpoint::CommitFailure => self.commit_failure.load(Ordering::SeqCst),
         };
         if armed {
             return Err(FastDbError::Transaction(format!(
@@ -61,6 +68,7 @@ impl Failpoints {
                 self.after_record_prepare.store(true, Ordering::SeqCst)
             }
             Failpoint::AfterRecordInsert => self.after_record_insert.store(true, Ordering::SeqCst),
+            Failpoint::CommitFailure => self.commit_failure.store(true, Ordering::SeqCst),
         }
     }
 
@@ -74,6 +82,7 @@ impl Failpoints {
                 self.after_record_prepare.store(false, Ordering::SeqCst)
             }
             Failpoint::AfterRecordInsert => self.after_record_insert.store(false, Ordering::SeqCst),
+            Failpoint::CommitFailure => self.commit_failure.store(false, Ordering::SeqCst),
         }
     }
 
@@ -85,6 +94,7 @@ impl Failpoints {
             Failpoint::AfterPhysicalDdl,
             Failpoint::AfterRecordPrepare,
             Failpoint::AfterRecordInsert,
+            Failpoint::CommitFailure,
         ] {
             self.disarm(fp);
         }

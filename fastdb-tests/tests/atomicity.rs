@@ -28,8 +28,7 @@ fn assert_empty_after_rollback(path: &str) {
     let db = Database::open(path).unwrap();
     let conn = db.connect().unwrap();
     let native = conn.native();
-    let tables =
-        common::native_rows(native, "SELECT name FROM sqlite_schema WHERE type='table'");
+    let tables = common::native_rows(native, "SELECT name FROM sqlite_schema WHERE type='table'");
     assert!(
         tables.is_empty(),
         "rolled-back transaction left tables behind: {tables:?}"
@@ -46,7 +45,9 @@ fn assert_empty_after_rollback(path: &str) {
 fn then_create_succeeds(path: &str) {
     let db = Database::open(path).unwrap();
     let conn = db.connect().unwrap();
-    let r = conn.execute("CREATE person:tobie SET name = 'Tobie';").unwrap();
+    let r = conn
+        .execute("CREATE person:tobie SET name = 'Tobie';")
+        .unwrap();
     assert_eq!(r.records.len(), 1, "subsequent non-failing CREATE succeeds");
 }
 
@@ -91,6 +92,12 @@ fn atomic_004_fail_after_record_prepare() {
 fn atomic_005_fail_after_record_insert() {
     injected_fail_round(Failpoint::AfterRecordInsert);
 }
+#[test]
+fn atomic_006_fail_at_commit() {
+    // A COMMIT-time failure must still enter the rollback path: the schema
+    // ends up empty and a subsequent CREATE succeeds.
+    injected_fail_round(Failpoint::CommitFailure);
+}
 
 #[test]
 fn duplicate_explicit_id_is_constraint_and_preserves_original() {
@@ -98,7 +105,9 @@ fn duplicate_explicit_id_is_constraint_and_preserves_original() {
     {
         let db = Database::open(&path).unwrap();
         let conn = db.connect().unwrap();
-        let r = conn.execute("CREATE person:tobie SET name = 'Tobie';").unwrap();
+        let r = conn
+            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .unwrap();
         assert_eq!(
             r.records[0].fields,
             vec![("name".to_string(), Value::Str("Tobie".to_string()))]

@@ -71,17 +71,27 @@ impl Native {
             .prepare("INSERT INTO t (rid, doc) VALUES (?1, jsonb(json_object('name', ?2)))")
             .unwrap();
         for i in 0..n {
-            seed.bind_at(NonZeroUsize::new(1).unwrap(), Value::build_text(format!("rid{i}"))).unwrap();
-            seed.bind_at(NonZeroUsize::new(2).unwrap(), Value::build_text(format!("rec{i}"))).unwrap();
+            seed.bind_at(
+                NonZeroUsize::new(1).unwrap(),
+                Value::build_text(format!("rid{i}")),
+            )
+            .unwrap();
+            seed.bind_at(
+                NonZeroUsize::new(2).unwrap(),
+                Value::build_text(format!("rec{i}")),
+            )
+            .unwrap();
             seed.run_ignore_rows().unwrap();
             seed.reset().unwrap();
         }
         let insert = conn
             .prepare("INSERT INTO t (rid, doc) VALUES (?1, jsonb(json_object('name', ?2)))")
             .unwrap();
-        let select_rid = conn.prepare("SELECT json(doc) FROM t WHERE rid = ?1").unwrap();
+        let select_rid = conn
+            .prepare("SELECT rid, json(doc) FROM t WHERE rid = ?1")
+            .unwrap();
         let select_filter = conn
-            .prepare("SELECT json(doc) FROM t WHERE json_extract(doc, '$.name') = ?1")
+            .prepare("SELECT rid, json(doc) FROM t WHERE json_extract(doc, '$.name') = ?1")
             .unwrap();
         let delete = conn.prepare("DELETE FROM t WHERE rid = ?1").unwrap();
         Self {
@@ -95,47 +105,84 @@ impl Native {
 
     fn create(&mut self, key: &str, name: &str) {
         self.insert
-            .bind_at(NonZeroUsize::new(1).unwrap(), Value::build_text(key.to_string())).unwrap();
+            .bind_at(
+                NonZeroUsize::new(1).unwrap(),
+                Value::build_text(key.to_string()),
+            )
+            .unwrap();
         self.insert
-            .bind_at(NonZeroUsize::new(2).unwrap(), Value::build_text(name.to_string())).unwrap();
+            .bind_at(
+                NonZeroUsize::new(2).unwrap(),
+                Value::build_text(name.to_string()),
+            )
+            .unwrap();
         self.insert.run_ignore_rows().unwrap();
         self.insert.reset().unwrap();
     }
 
-    fn read_by_rid(&mut self, key: &str) -> String {
+    /// Read by rid, materializing the doc (serde_json decode) like FastDB.
+    /// Returns the number of decoded fields so the work is real, not a count.
+    fn read_by_rid(&mut self, key: &str) -> usize {
         self.select_rid
-            .bind_at(NonZeroUsize::new(1).unwrap(), Value::build_text(key.to_string())).unwrap();
-        let mut got = String::new();
+            .bind_at(
+                NonZeroUsize::new(1).unwrap(),
+                Value::build_text(key.to_string()),
+            )
+            .unwrap();
+        let mut fields = 0;
         self.select_rid
             .run_with_row_callback(|row| {
-                got = row.get::<String>(0).unwrap_or_default();
+                let _rid = row.get::<String>(0).unwrap_or_default();
+                let doc = row.get::<String>(1).unwrap_or_default();
+                fields = materialize_field_count(&doc);
                 Ok(())
             })
             .unwrap();
         self.select_rid.reset().unwrap();
-        got
+        fields
     }
 
+    /// Filter by name, materializing each matching doc. Returns the total
+    /// decoded field count across matches (not a row count).
     fn filter(&mut self, name: &str) -> usize {
         self.select_filter
-            .bind_at(NonZeroUsize::new(1).unwrap(), Value::build_text(name.to_string())).unwrap();
-        let mut count = 0;
+            .bind_at(
+                NonZeroUsize::new(1).unwrap(),
+                Value::build_text(name.to_string()),
+            )
+            .unwrap();
+        let mut total = 0;
         self.select_filter
-            .run_with_row_callback(|_row| {
-                count += 1;
+            .run_with_row_callback(|row| {
+                let _rid = row.get::<String>(0).unwrap_or_default();
+                let doc = row.get::<String>(1).unwrap_or_default();
+                total += materialize_field_count(&doc);
                 Ok(())
             })
             .unwrap();
         self.select_filter.reset().unwrap();
-        count
+        total
     }
 
     fn delete(&mut self, key: &str) {
         self.delete
-            .bind_at(NonZeroUsize::new(1).unwrap(), Value::build_text(key.to_string())).unwrap();
+            .bind_at(
+                NonZeroUsize::new(1).unwrap(),
+                Value::build_text(key.to_string()),
+            )
+            .unwrap();
         self.delete.run_ignore_rows().unwrap();
         self.delete.reset().unwrap();
     }
+}
+
+/// Parse a `json(doc)` string and return its field count, mirroring the
+/// serde_json materialization the FastDB decode path does.
+fn materialize_field_count(json: &str) -> usize {
+    serde_json::from_str::<serde_json::Value>(json)
+        .ok()
+        .and_then(|v| v.as_object().map(|o| o.len()))
+        .unwrap_or(0)
 }
 
 fn fdb_seed(path: &str, n: usize, with_index: bool) -> FdbConn {
@@ -172,8 +219,12 @@ fn cold_create(c: &mut Criterion) {
     });
     g.bench_function("native", |b| {
         b.iter_batched(
-            || native_open(&fresh_file(&tempdir().unwrap(), "c.fastdb")),
-            |conn| {
+            || {
+                let dir = tempdir().unwrap();
+                let path = fresh_file(&dir, "c.fastdb");
+                (dir, native_open(&path))
+            },
+            |(_dir, conn)| {
                 conn.prepare("CREATE TABLE t (rid TEXT PRIMARY KEY, doc BLOB) STRICT")
                     .unwrap()
                     .run_ignore_rows()
@@ -181,8 +232,16 @@ fn cold_create(c: &mut Criterion) {
                 let mut s = conn
                     .prepare("INSERT INTO t (rid, doc) VALUES (?1, jsonb(json_object('name', ?2)))")
                     .unwrap();
-                s.bind_at(NonZeroUsize::new(1).unwrap(), Value::build_text("rid".to_string())).unwrap();
-                s.bind_at(NonZeroUsize::new(2).unwrap(), Value::build_text("Tobie".to_string())).unwrap();
+                s.bind_at(
+                    NonZeroUsize::new(1).unwrap(),
+                    Value::build_text("rid".to_string()),
+                )
+                .unwrap();
+                s.bind_at(
+                    NonZeroUsize::new(2).unwrap(),
+                    Value::build_text("Tobie".to_string()),
+                )
+                .unwrap();
                 s.run_ignore_rows().unwrap();
             },
             BatchSize::SmallInput,
@@ -229,8 +288,8 @@ fn point_read(c: &mut Criterion) {
     });
     g.bench_function("native", |b| {
         b.iter(|| {
-            let got = native.read_by_rid("rid0");
-            assert!(got.contains("rec0"));
+            let fields = native.read_by_rid("rid0");
+            assert_eq!(fields, 1, "decoded the one field");
         })
     });
     g.finish();
@@ -243,7 +302,9 @@ fn indexed_filter(c: &mut Criterion) {
     let mut native = Native::setup(&fresh_file(&dir, "fn.fastdb"), 50, true);
     g.bench_function("fastdb", |b| {
         b.iter(|| {
-            let r = fdb.execute("SELECT * FROM person WHERE name = 'rec25';").unwrap();
+            let r = fdb
+                .execute("SELECT * FROM person WHERE name = 'rec25';")
+                .unwrap();
             assert_eq!(r.records.len(), 1);
         })
     });
@@ -258,31 +319,42 @@ fn indexed_filter(c: &mut Criterion) {
 
 fn delete_op(c: &mut Criterion) {
     let mut g = c.benchmark_group("delete");
+    // Delete-only timing: setup creates the target record (untimed); the
+    // routine times only the delete.
+    let fdb = fdb_seed(&fresh_file(&tempdir().unwrap(), "d.fastdb"), 0, false);
+    let k = std::cell::Cell::new(0u64);
     g.bench_function("fastdb", |b| {
-        let mut k: u64 = 0;
-        b.iter_batched_ref(
+        b.iter_batched(
             || {
-                let dir = tempdir().unwrap();
-                let conn = fdb_seed(&fresh_file(&dir, "d.fastdb"), 1, false);
-                (dir, conn)
-            },
-            |(_dir, conn)| {
-                k += 1;
-                // seed a fresh target record, then time its deletion
-                conn.execute(&format!("CREATE person:del{k} SET name = 'del{k}';"))
+                let n = k.get();
+                k.set(n + 1);
+                fdb.execute(&format!("CREATE person:del{n} SET name = 'del{n}';"))
                     .unwrap();
-                let r = conn.execute(&format!("DELETE person:del{k};")).unwrap();
+                n
+            },
+            |n| {
+                let r = fdb.execute(&format!("DELETE person:del{n};")).unwrap();
                 assert!(r.records.is_empty());
             },
             BatchSize::SmallInput,
         )
     });
+    let native = std::cell::RefCell::new(Native::setup(
+        &fresh_file(&tempdir().unwrap(), "dn.fastdb"),
+        0,
+        false,
+    ));
+    let j = std::cell::Cell::new(0u64);
     g.bench_function("native", |b| {
-        b.iter_batched_ref(
-            || Native::setup(&fresh_file(&tempdir().unwrap(), "dn.fastdb"), 1, false),
-            |native| {
-                native.create("del", "del");
-                native.delete("del");
+        b.iter_batched(
+            || {
+                let n = j.get();
+                j.set(n + 1);
+                native.borrow_mut().create(&format!("rid{n}"), "del");
+                n
+            },
+            |n| {
+                native.borrow_mut().delete(&format!("rid{n}"));
             },
             BatchSize::SmallInput,
         )
@@ -290,5 +362,12 @@ fn delete_op(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(benches, cold_create, steady_create, point_read, indexed_filter, delete_op);
+criterion_group!(
+    benches,
+    cold_create,
+    steady_create,
+    point_read,
+    indexed_filter,
+    delete_op
+);
 criterion_main!(benches);

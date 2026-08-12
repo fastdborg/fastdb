@@ -322,10 +322,13 @@ pub fn catalog_exists_stmt() -> Stmt {
     })
 }
 
-/// `SELECT format_version FROM __fastdb_meta WHERE singleton = 1`.
-pub fn catalog_meta_version_stmt() -> Stmt {
+/// `SELECT format_version, dialect_version FROM __fastdb_meta WHERE singleton = 1`.
+pub fn catalog_versions_stmt() -> Stmt {
     one_select(
-        vec![ResultColumn::Expr(Box::new(id("format_version")), None)],
+        vec![
+            ResultColumn::Expr(Box::new(id("format_version")), None),
+            ResultColumn::Expr(Box::new(id("dialect_version")), None),
+        ],
         crate::catalog::META_TABLE,
         Some(Expr::binary(id("singleton"), Operator::Equals, numlit("1"))),
     )

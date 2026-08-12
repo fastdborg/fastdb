@@ -23,9 +23,12 @@ fn fresh_db() -> (TempDir, String) {
 fn seed_three(path: &str) {
     let db = Database::open(path).unwrap();
     let conn = db.connect().unwrap();
-    conn.execute("CREATE person:tobie SET name = 'Tobie';").unwrap();
-    conn.execute("CREATE person:jaime SET name = 'Jaime';").unwrap();
-    conn.execute("CREATE person:nikola SET name = 'Nikola';").unwrap();
+    conn.execute("CREATE person:tobie SET name = 'Tobie';")
+        .unwrap();
+    conn.execute("CREATE person:jaime SET name = 'Jaime';")
+        .unwrap();
+    conn.execute("CREATE person:nikola SET name = 'Nikola';")
+        .unwrap();
 }
 
 /// Assert the plan selects the index (mentions its name) and is not a plain

@@ -45,7 +45,10 @@ pub fn physical_name_for(conn: &Arc<Connection>, logical: &str) -> Option<String
     // logical name bound, not interpolated, by the FastDB path; here we are
     // running a known internal value for inspection only.
     let sql = format!("SELECT physical_name FROM __fastdb_tables WHERE logical_name = '{logical}'");
-    native_rows(conn, &sql).into_iter().next().and_then(|r| r.into_iter().next())
+    native_rows(conn, &sql)
+        .into_iter()
+        .next()
+        .and_then(|r| r.into_iter().next())
 }
 
 fn value_to_string(v: &Value) -> String {

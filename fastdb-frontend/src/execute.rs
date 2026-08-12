@@ -24,23 +24,25 @@ pub fn run_statement(conn: &Connection, stmt: Statement) -> Result<ExecutionResu
     }
 }
 
-/// `BEGIN` … body … `COMMIT`, rolling back on any error. The original typed
-/// error is preserved on rollback success; a rollback failure is surfaced.
+/// `BEGIN` … body … `COMMIT`. Any failure after `BEGIN` — a body error, an
+/// injected commit failure, or a real `COMMIT` failure — enters the rollback
+/// path. The original typed error is preserved on rollback success; a
+/// rollback failure is surfaced alongside the original.
 fn with_tx<R>(conn: &Connection, body: impl FnOnce() -> Result<R>) -> Result<R> {
     conn.exec_bound(lower::begin_immediate(), vec![])?;
-    match body() {
-        Ok(r) => {
-            conn.exec_bound(lower::commit(), vec![])?;
-            Ok(r)
-        }
-        Err(e) => {
-            if let Err(rb) = conn.exec_bound(lower::rollback(), vec![]) {
-                return Err(FastDbError::Transaction(format!(
-                    "rollback failed after error; original: {e}; rollback: {rb}"
-                )));
-            }
-            Err(e)
-        }
+    // Body, then an optional injected commit failure, then the real COMMIT.
+    let outcome: Result<R> = body().and_then(|r| {
+        conn.check_failpoint(Failpoint::CommitFailure)?;
+        conn.exec_bound(lower::commit(), vec![]).map(|()| r)
+    });
+    match outcome {
+        Ok(r) => Ok(r),
+        Err(e) => match conn.exec_bound(lower::rollback(), vec![]) {
+            Ok(()) => Err(e),
+            Err(rb) => Err(FastDbError::Transaction(format!(
+                "transaction failed; original: {e}; rollback also failed: {rb}"
+            ))),
+        },
     }
 }
 
@@ -53,12 +55,7 @@ fn run_create(conn: &Connection, c: CreateStatement) -> Result<ExecutionResult> 
 
     with_tx(conn, || {
         if catalog::catalog_exists(conn, catalog::META_TABLE)? {
-            let v = catalog::read_format_version(conn)?;
-            if v != catalog::FORMAT_VERSION {
-                return Err(FastDbError::Format(format!(
-                    "unknown Phase 0 format version {v}; only 0 is supported"
-                )));
-            }
+            catalog::ensure_catalog_compatible(conn)?;
         } else {
             catalog::bootstrap_catalog(conn, &database_id)?;
             conn.check_failpoint(Failpoint::AfterBootstrap)?;
@@ -98,6 +95,8 @@ fn run_select(conn: &Connection, s: SelectStatement) -> Result<ExecutionResult> 
     if !catalog::catalog_exists(conn, catalog::META_TABLE)? {
         return Ok(ExecutionResult { records: vec![] });
     }
+    // Refuse an unknown future format/dialect before interpreting the catalog.
+    catalog::ensure_catalog_compatible(conn)?;
     let Some(resolved) = catalog::resolve_table(conn, &logical)? else {
         return Ok(ExecutionResult { records: vec![] });
     };
@@ -129,6 +128,8 @@ fn run_delete(conn: &Connection, d: DeleteStatement) -> Result<ExecutionResult> 
     if !catalog::catalog_exists(conn, catalog::META_TABLE)? {
         return Ok(ExecutionResult { records: vec![] });
     }
+    // Refuse an unknown future format/dialect before mutating.
+    catalog::ensure_catalog_compatible(conn)?;
     let Some(resolved) = catalog::resolve_table(conn, &logical)? else {
         return Ok(ExecutionResult { records: vec![] });
     };
