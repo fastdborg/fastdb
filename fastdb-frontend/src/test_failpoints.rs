@@ -13,10 +13,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum Failpoint {
     /// After catalog bootstrap (meta + tables tables + metadata row).
     AfterBootstrap,
+    /// After the no-op migration row update, before commit.
+    AfterMigration,
     /// After the logical-table catalog row is inserted.
     AfterCatalogRow,
     /// After the hidden physical table is created.
     AfterPhysicalDdl,
+    /// After existing rows pass a new field definition.
+    AfterFieldValidation,
+    /// After a field catalog row is written.
+    AfterFieldCatalogRow,
+    /// After existing rows pass a new index definition.
+    AfterIndexValidation,
+    /// After physical index DDL is executed.
+    AfterIndexPhysicalDdl,
+    /// After an index catalog row is written.
+    AfterIndexCatalogRow,
     /// After the record INSERT is prepared, before it is executed.
     AfterRecordPrepare,
     /// After the record is inserted, before COMMIT.
@@ -34,8 +46,14 @@ pub enum Failpoint {
 #[derive(Default)]
 pub struct Failpoints {
     after_bootstrap: AtomicBool,
+    after_migration: AtomicBool,
     after_catalog_row: AtomicBool,
     after_physical_ddl: AtomicBool,
+    after_field_validation: AtomicBool,
+    after_field_catalog_row: AtomicBool,
+    after_index_validation: AtomicBool,
+    after_index_physical_ddl: AtomicBool,
+    after_index_catalog_row: AtomicBool,
     after_record_prepare: AtomicBool,
     after_record_insert: AtomicBool,
     commit_failure: AtomicBool,
@@ -48,8 +66,16 @@ impl Failpoints {
     pub fn check(&self, fp: Failpoint) -> Result<()> {
         let armed = match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.load(Ordering::SeqCst),
+            Failpoint::AfterMigration => self.after_migration.load(Ordering::SeqCst),
             Failpoint::AfterCatalogRow => self.after_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.load(Ordering::SeqCst),
+            Failpoint::AfterFieldValidation => self.after_field_validation.load(Ordering::SeqCst),
+            Failpoint::AfterFieldCatalogRow => self.after_field_catalog_row.load(Ordering::SeqCst),
+            Failpoint::AfterIndexValidation => self.after_index_validation.load(Ordering::SeqCst),
+            Failpoint::AfterIndexPhysicalDdl => {
+                self.after_index_physical_ddl.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexCatalogRow => self.after_index_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterRecordPrepare => self.after_record_prepare.load(Ordering::SeqCst),
             Failpoint::AfterRecordInsert => self.after_record_insert.load(Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.load(Ordering::SeqCst),
@@ -67,8 +93,24 @@ impl Failpoints {
     pub(crate) fn arm(&self, fp: Failpoint) {
         match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.store(true, Ordering::SeqCst),
+            Failpoint::AfterMigration => self.after_migration.store(true, Ordering::SeqCst),
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(true, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(true, Ordering::SeqCst),
+            Failpoint::AfterFieldValidation => {
+                self.after_field_validation.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFieldCatalogRow => {
+                self.after_field_catalog_row.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexValidation => {
+                self.after_index_validation.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexPhysicalDdl => {
+                self.after_index_physical_ddl.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexCatalogRow => {
+                self.after_index_catalog_row.store(true, Ordering::SeqCst)
+            }
             Failpoint::AfterRecordPrepare => {
                 self.after_record_prepare.store(true, Ordering::SeqCst)
             }
@@ -82,8 +124,24 @@ impl Failpoints {
     pub(crate) fn disarm(&self, fp: Failpoint) {
         match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.store(false, Ordering::SeqCst),
+            Failpoint::AfterMigration => self.after_migration.store(false, Ordering::SeqCst),
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(false, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(false, Ordering::SeqCst),
+            Failpoint::AfterFieldValidation => {
+                self.after_field_validation.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFieldCatalogRow => {
+                self.after_field_catalog_row.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexValidation => {
+                self.after_index_validation.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexPhysicalDdl => {
+                self.after_index_physical_ddl.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexCatalogRow => {
+                self.after_index_catalog_row.store(false, Ordering::SeqCst)
+            }
             Failpoint::AfterRecordPrepare => {
                 self.after_record_prepare.store(false, Ordering::SeqCst)
             }
@@ -97,8 +155,14 @@ impl Failpoints {
     pub(crate) fn disarm_all(&self) {
         for fp in [
             Failpoint::AfterBootstrap,
+            Failpoint::AfterMigration,
             Failpoint::AfterCatalogRow,
             Failpoint::AfterPhysicalDdl,
+            Failpoint::AfterFieldValidation,
+            Failpoint::AfterFieldCatalogRow,
+            Failpoint::AfterIndexValidation,
+            Failpoint::AfterIndexPhysicalDdl,
+            Failpoint::AfterIndexCatalogRow,
             Failpoint::AfterRecordPrepare,
             Failpoint::AfterRecordInsert,
             Failpoint::CommitFailure,

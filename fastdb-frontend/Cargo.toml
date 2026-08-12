@@ -15,6 +15,7 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
+uuid = { version = "1.11.0", features = ["v4", "v7"] }
 
 [features]
 # Exposes deterministic failure-injection (`arm_failpoint`/`disarm_all_failpoints`).

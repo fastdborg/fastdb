@@ -56,15 +56,15 @@ fn file_backed_vertical_slice() {
 
         // 8. Inspect internal state through the test-only native connection.
         let native = conn.native();
-        // 8a. One version-0 metadata row.
+        // 8a. One stable format-1 metadata row.
         let meta = common::native_rows(
             native,
             "SELECT singleton, format_version, dialect_version FROM __fastdb_meta",
         );
         assert_eq!(meta.len(), 1, "exactly one metadata row");
         assert_eq!(meta[0][0], "1");
-        assert_eq!(meta[0][1], "0", "format_version == 0");
-        assert_eq!(meta[0][2], "0", "dialect_version == 0");
+        assert_eq!(meta[0][1], "1", "format_version == 1");
+        assert_eq!(meta[0][2], "1", "dialect_version == 1");
 
         // 8b. One person catalog row.
         let tables = common::native_rows(
@@ -97,7 +97,7 @@ fn file_backed_vertical_slice() {
         assert_eq!(prows.len(), 1);
         let rid = &prows[0][0];
         let doc = &prows[0][1];
-        assert!(rid.starts_with("s:5:"), "rid is canonical: {rid}");
+        assert!(rid.starts_with("v1:s:5:"), "rid is canonical: {rid}");
         assert!(rid.ends_with("tracy"));
         assert!(doc.contains("\"name\""), "doc has name field: {doc}");
         assert!(doc.contains("Tracy"));

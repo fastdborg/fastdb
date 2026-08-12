@@ -441,6 +441,21 @@ impl<'a> Parser<'a> {
         let token = self.peek().clone();
         match token.kind {
             TokenKind::Ident(value) => {
+                if value.eq_ignore_ascii_case("u") {
+                    if let Some(string) = self.tokens.get(self.position + 1) {
+                        if token.span.end() == string.span.offset {
+                            if let TokenKind::String(value) = &string.kind {
+                                let span = token.span.union(string.span);
+                                let uuid = parse_uuid(value, span)?;
+                                self.position += 2;
+                                return Ok(RecordIdPart {
+                                    span,
+                                    kind: RecordIdPartKind::Uuid(uuid),
+                                });
+                            }
+                        }
+                    }
+                }
                 self.position += 1;
                 Ok(RecordIdPart {
                     span: token.span,
@@ -493,7 +508,8 @@ impl<'a> Parser<'a> {
                 },
                 token.span,
             )),
-            _ => Err(self.unexpected("a bare, backtick-quoted, or integer record-ID component")),
+            _ => Err(self
+                .unexpected("a bare, backtick-quoted, integer, or typed-UUID record-ID component")),
         }
     }
 
@@ -1204,6 +1220,37 @@ fn parse_signed_integer(value: &str, sign: i8, span: Span) -> Result<i64, ParseE
     }
     let integer = magnitude as i64;
     Ok(if sign < 0 { -integer } else { integer })
+}
+
+fn parse_uuid(value: &str, span: Span) -> Result<uuid::Uuid, ParseError> {
+    let uuid = uuid::Uuid::parse_str(value).map_err(|_| {
+        ParseError::new(
+            ParseErrorKind::InvalidUuid {
+                literal: value.to_string(),
+                reason: "expected a canonical lowercase hyphenated UUIDv4 or UUIDv7",
+            },
+            span,
+        )
+    })?;
+    if uuid.hyphenated().to_string() != value {
+        return Err(ParseError::new(
+            ParseErrorKind::InvalidUuid {
+                literal: value.to_string(),
+                reason: "UUIDs must use canonical lowercase hyphenated spelling",
+            },
+            span,
+        ));
+    }
+    if !matches!(uuid.get_version_num(), 4 | 7) {
+        return Err(ParseError::new(
+            ParseErrorKind::InvalidUuid {
+                literal: value.to_string(),
+                reason: "only UUIDv4 and UUIDv7 are supported",
+            },
+            span,
+        ));
+    }
+    Ok(uuid)
 }
 
 fn binary_binding_power(kind: &TokenKind) -> Option<(BinaryOperator, u8, u8)> {

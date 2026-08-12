@@ -10,15 +10,35 @@ use crate::error::{FastDbError, Result};
 use crate::execute;
 use crate::test_failpoints::{Failpoint, Failpoints};
 use crate::ExecutionResult;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use turso_core::Value;
 use turso_parser::ast::Stmt;
 
 /// An open FastDB database. Phase 0 uses one connection and one writer.
+#[derive(Clone)]
 pub struct Database {
     db: Arc<turso_core::Database>,
+    coordinator: Arc<Coordinator>,
 }
+
+pub(crate) struct Coordinator {
+    pub(crate) schema_mutex: Mutex<()>,
+    pub(crate) catalog: RwLock<Option<crate::catalog::CatalogState>>,
+}
+
+impl Coordinator {
+    fn new() -> Self {
+        Self {
+            schema_mutex: Mutex::new(()),
+            catalog: RwLock::new(None),
+        }
+    }
+}
+
+static COORDINATORS: OnceLock<Mutex<HashMap<PathBuf, Weak<Coordinator>>>> = OnceLock::new();
 
 impl std::fmt::Debug for Database {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -42,7 +62,10 @@ impl Database {
             .flags(flags)
             .db_opts(turso_core::DatabaseOpts::default());
         let db = turso_core::Database::open(io, path, opts)?;
-        Ok(Self { db })
+        let coordinator = coordinator_for_path(path)?;
+        let database = Self { db, coordinator };
+        database.initialize_catalog()?;
+        Ok(database)
     }
 
     /// Open using a caller-supplied I/O implementation. This is exposed only
@@ -61,14 +84,75 @@ impl Database {
     /// Connect a single FastDB connection.
     pub fn connect(&self) -> Result<Connection> {
         let conn = self.db.connect()?;
-        Ok(Connection::new(conn))
+        Ok(Connection::new(conn, self.coordinator.clone()))
     }
+
+    fn initialize_catalog(&self) -> Result<()> {
+        let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+        let _schema_guard =
+            self.coordinator.schema_mutex.lock().map_err(|_| {
+                FastDbError::Transaction("database schema mutex is poisoned".into())
+            })?;
+        let loaded = crate::catalog::load_and_validate(&connection)?;
+        let mut cached = self
+            .coordinator
+            .catalog
+            .write()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
+        if let Some(existing) = cached.as_ref() {
+            if existing != &loaded {
+                return Err(FastDbError::Format(
+                    "database catalog changed incompatibly across open wrappers".into(),
+                ));
+            }
+        } else {
+            *cached = Some(loaded);
+        }
+        Ok(())
+    }
+}
+
+fn coordinator_for_path(path: &str) -> Result<Arc<Coordinator>> {
+    if path == ":memory:" {
+        return Ok(Arc::new(Coordinator::new()));
+    }
+    let key = normalized_database_path(path)?;
+    let registry = COORDINATORS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry.lock().map_err(|_| {
+        FastDbError::Transaction("database coordinator registry is poisoned".into())
+    })?;
+    if let Some(coordinator) = registry.get(&key).and_then(Weak::upgrade) {
+        return Ok(coordinator);
+    }
+    let coordinator = Arc::new(Coordinator::new());
+    registry.insert(key, Arc::downgrade(&coordinator));
+    Ok(coordinator)
+}
+
+fn normalized_database_path(path: &str) -> Result<PathBuf> {
+    let path = Path::new(path);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| FastDbError::Io("database path has no parent".into()))?;
+    let file_name = absolute
+        .file_name()
+        .ok_or_else(|| FastDbError::Io("database path has no file name".into()))?;
+    let normalized_parent = parent
+        .canonicalize()
+        .unwrap_or_else(|_| parent.to_path_buf());
+    Ok(normalized_parent.join(file_name))
 }
 
 /// A FastDB connection wrapping one Turso connection. Not `Send`/`Sync` in
 /// Phase 0: one connection, one writer.
 pub struct Connection {
     conn: Arc<turso_core::Connection>,
+    pub(crate) coordinator: Arc<Coordinator>,
     failpoints: Failpoints,
 }
 
@@ -79,9 +163,10 @@ impl std::fmt::Debug for Connection {
 }
 
 impl Connection {
-    pub(crate) fn new(conn: Arc<turso_core::Connection>) -> Self {
+    pub(crate) fn new(conn: Arc<turso_core::Connection>, coordinator: Arc<Coordinator>) -> Self {
         Self {
             conn,
+            coordinator,
             failpoints: Failpoints::default(),
         }
     }
@@ -136,6 +221,39 @@ impl Connection {
         self.failpoints.check(fp)
     }
 
+    pub(crate) fn with_transaction<R>(&self, body: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.exec_bound(crate::lower::begin_immediate(), vec![])?;
+        let outcome = body().and_then(|result| {
+            self.check_failpoint(Failpoint::CommitFailure)?;
+            self.exec_bound(crate::lower::commit(), vec![])
+                .map(|()| result)
+        });
+        match outcome {
+            Ok(result) => Ok(result),
+            Err(error) => match self
+                .check_failpoint(Failpoint::RollbackFailure)
+                .and_then(|()| self.exec_bound(crate::lower::rollback(), vec![]))
+            {
+                Ok(()) => Err(error),
+                Err(rollback_error) => {
+                    match self.exec_bound(crate::lower::begin_immediate(), vec![]) {
+                        Ok(()) => match self.exec_bound(crate::lower::rollback(), vec![]) {
+                            Ok(()) => Err(error),
+                            Err(probe_rollback) => Err(FastDbError::Transaction(format!(
+                            "transaction failed; original: {error}; rollback reported: \
+                             {rollback_error}; cleanup probe rollback also failed: {probe_rollback}"
+                        ))),
+                        },
+                        Err(probe) => Err(FastDbError::Transaction(format!(
+                            "transaction failed; original: {error}; rollback also failed: \
+                         {rollback_error}; clean-state probe failed: {probe}"
+                        ))),
+                    }
+                }
+            },
+        }
+    }
+
     /// Arm a deterministic failpoint (test-only).
     #[cfg(feature = "testing")]
     #[doc(hidden)]
@@ -150,6 +268,60 @@ impl Connection {
         self.failpoints.disarm_all();
     }
 
+    /// Reload and validate the persisted catalog into the shared cache.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn reload_catalog(&self) -> Result<()> {
+        let _schema_guard =
+            self.coordinator.schema_mutex.lock().map_err(|_| {
+                FastDbError::Transaction("database schema mutex is poisoned".into())
+            })?;
+        let loaded = crate::catalog::load_and_validate(self)?;
+        let mut cache = self
+            .coordinator
+            .catalog
+            .write()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
+        *cache = Some(loaded);
+        Ok(())
+    }
+
+    /// Return the shared immutable catalog snapshot for test assertions.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn catalog_state(&self) -> Result<crate::catalog::CatalogState> {
+        self.coordinator
+            .catalog
+            .read()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+            .clone()
+            .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))
+    }
+
+    /// Explain the actual canonical composite filter lowering.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn explain_filters(
+        &self,
+        logical_table: &str,
+        filters: &[(&str, crate::Value)],
+    ) -> Result<Vec<String>> {
+        let state = self.catalog_state()?;
+        let table = state
+            .snapshot()
+            .and_then(|snapshot| snapshot.tables.get(logical_table))
+            .ok_or_else(|| {
+                FastDbError::Engine(format!("table {logical_table:?} is not registered"))
+            })?;
+        let filters = filters
+            .iter()
+            .map(|(field, value)| Ok((crate::path::canonical_path([*field])?, value.clone())))
+            .collect::<Result<Vec<_>>>()?;
+        let (statement, _) =
+            crate::lower::physical_select_stmt(&table.physical_name, None, &filters)?;
+        explain_statement(self, statement)
+    }
+
     /// Test-only: install the canonical non-unique expression index on a
     /// top-level field of a logical table, returning the opaque index name.
     /// Resolves the table through the catalog and reuses the same canonical
@@ -157,21 +329,27 @@ impl Connection {
     #[cfg(feature = "testing")]
     #[doc(hidden)]
     pub fn create_field_index(&self, logical_table: &str, field: &str) -> Result<String> {
-        if !crate::catalog::catalog_exists(self, crate::catalog::META_TABLE)? {
-            return Err(FastDbError::Engine(format!(
-                "table {logical_table:?} is not registered"
-            )));
-        }
-        crate::catalog::ensure_catalog_compatible(self)?;
-        let resolved = crate::catalog::resolve_table(self, logical_table)?.ok_or_else(|| {
-            FastDbError::Engine(format!("table {logical_table:?} is not registered"))
-        })?;
-        let idx_name = crate::names::physical_index_name(crate::names::TableId::new_random());
-        let path = crate::lower::canonical_field_path(field)?;
-        let stmt =
-            crate::lower::physical_name_index_ddl(&idx_name, &resolved.physical_name, &path)?;
-        self.exec_bound(stmt, vec![])?;
-        Ok(idx_name)
+        let logical_index = "phase0_field_index";
+        self.execute(&format!(
+            "DEFINE INDEX {logical_index} ON TABLE {logical_table} FIELDS {field}"
+        ))?;
+        let state = self
+            .coordinator
+            .catalog
+            .read()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
+        let snapshot = state
+            .as_ref()
+            .and_then(crate::catalog::CatalogState::snapshot)
+            .ok_or_else(|| {
+                FastDbError::Engine("catalog disappeared after index definition".into())
+            })?;
+        snapshot
+            .tables
+            .get(logical_table)
+            .and_then(|table| table.indexes.get(logical_index))
+            .map(|index| index.physical_name.clone())
+            .ok_or_else(|| FastDbError::Engine("index disappeared after definition".into()))
     }
 
     /// Test-only: explain the actual lowered FastDB filter statement. The
@@ -182,43 +360,56 @@ impl Connection {
     #[cfg(feature = "testing")]
     #[doc(hidden)]
     pub fn explain_field_filter(&self, logical_table: &str, field: &str) -> Result<Vec<String>> {
-        if !crate::catalog::catalog_exists(self, crate::catalog::META_TABLE)? {
-            return Err(FastDbError::Engine(format!(
-                "table {logical_table:?} is not registered"
-            )));
-        }
-        crate::catalog::ensure_catalog_compatible(self)?;
-        let resolved = crate::catalog::resolve_table(self, logical_table)?.ok_or_else(|| {
-            FastDbError::Engine(format!("table {logical_table:?} is not registered"))
-        })?;
-        let path = crate::lower::canonical_field_path(field)?;
+        let state = self
+            .coordinator
+            .catalog
+            .read()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
+        let resolved = state
+            .as_ref()
+            .and_then(crate::catalog::CatalogState::snapshot)
+            .and_then(|snapshot| snapshot.tables.get(logical_table))
+            .ok_or_else(|| {
+                FastDbError::Engine(format!("table {logical_table:?} is not registered"))
+            })?;
+        let path = crate::path::canonical_path([field])?;
         // The exact translated statement the filter lowering builds.
-        let (select_stmt, _bindings) =
-            crate::lower::physical_select_by_field_stmt(&resolved.physical_name, &path, "x")?;
-        let explain_cmd = turso_parser::ast::Cmd::ExplainQueryPlan(select_stmt);
-        let explain_sql = explain_cmd.to_string();
-        let mut reparsed = turso_parser::parser::Parser::new(explain_sql.as_bytes())
-            .next()
-            .transpose()
-            .map_err(|e| FastDbError::Engine(format!("failed to reparse explain AST: {e}")))?
-            .ok_or_else(|| FastDbError::Engine("empty rendered explain command".into()))?;
-        strip_parser_implicit_result_names(&mut reparsed);
-        if reparsed != explain_cmd {
-            return Err(FastDbError::Engine(format!(
-                "rendered explain command did not round-trip to the lowered AST; \
-                 expected {explain_cmd:?}, got {reparsed:?}"
-            )));
-        }
-        // EXPLAIN QUERY PLAN does not execute, so `?1` needs no binding.
-        let mut stmt = self.conn.prepare(&explain_sql)?;
-        let mut plans = Vec::new();
-        stmt.run_with_row_callback(|row| {
-            plans.push(row.get::<String>(3)?);
-            Ok(())
-        })?;
-        Ok(plans)
+        let (select_stmt, _bindings) = crate::lower::physical_select_stmt(
+            &resolved.physical_name,
+            None,
+            &[(path, crate::Value::Str("x".into()))],
+        )?;
+        explain_statement(self, select_stmt)
     }
+}
 
+#[cfg(feature = "testing")]
+fn explain_statement(connection: &Connection, select_stmt: Stmt) -> Result<Vec<String>> {
+    let explain_cmd = turso_parser::ast::Cmd::ExplainQueryPlan(select_stmt);
+    let explain_sql = explain_cmd.to_string();
+    let mut reparsed = turso_parser::parser::Parser::new(explain_sql.as_bytes())
+        .next()
+        .transpose()
+        .map_err(|e| FastDbError::Engine(format!("failed to reparse explain AST: {e}")))?
+        .ok_or_else(|| FastDbError::Engine("empty rendered explain command".into()))?;
+    strip_parser_implicit_result_names(&mut reparsed);
+    if reparsed != explain_cmd {
+        return Err(FastDbError::Engine(format!(
+            "rendered explain command did not round-trip to the lowered AST; \
+                 expected {explain_cmd:?}, got {reparsed:?}"
+        )));
+    }
+    // EXPLAIN QUERY PLAN does not execute, so `?1` needs no binding.
+    let mut stmt = connection.conn.prepare(&explain_sql)?;
+    let mut plans = Vec::new();
+    stmt.run_with_row_callback(|row| {
+        plans.push(row.get::<String>(3)?);
+        Ok(())
+    })?;
+    Ok(plans)
+}
+
+impl Connection {
     /// Prepare, bind, and run a statement, collecting every row's raw values.
     pub(crate) fn collect_rows(
         &self,
@@ -276,16 +467,6 @@ pub(crate) fn value_to_string(v: &Value) -> Result<String> {
         Value::Text(t) => Ok(t.as_str().to_string()),
         other => Err(FastDbError::Engine(format!(
             "expected text value, got {other:?}"
-        ))),
-    }
-}
-
-/// Convert a single engine [`Value`] to an `i64` (integer) or error.
-pub(crate) fn value_to_i64(v: &Value) -> Result<i64> {
-    match v {
-        Value::Numeric(turso_core::Numeric::Integer(i)) => Ok(*i),
-        other => Err(FastDbError::Engine(format!(
-            "expected integer value, got {other:?}"
         ))),
     }
 }

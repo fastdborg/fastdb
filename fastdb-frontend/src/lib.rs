@@ -32,16 +32,18 @@ pub mod error;
 pub mod execute;
 pub mod lower;
 pub mod names;
+pub mod path;
+pub mod schema;
 pub mod test_failpoints;
 
 pub use connection::{Connection, Database};
-pub use decode::{parse_doc, Record, RecordId, Value};
+pub use decode::{parse_doc, Record, RecordId, RecordIdValue, Value};
 pub use error::{ErrorCategory, FastDbError};
 pub use test_failpoints::Failpoint;
 
 /// Result of executing one FastDB statement. `records` is empty for `DELETE`
 /// and for selects that match nothing; `CREATE` returns the created record.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionResult {
     pub records: Vec<Record>,
 }
