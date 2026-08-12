@@ -1,0 +1,12 @@
+# FastDB integration tests (Phase 0). Test-only package.
+[package]
+name = "turso_fastdb_tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+turso_fastdb = { path = "../fastdb-frontend", features = ["testing"] }
+turso_fastdb_parser = { path = "../fastdb-parser" }
+turso_core = { workspace = true }
+tempfile = { workspace = true }

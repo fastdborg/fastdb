@@ -1,0 +1,11 @@
+# FastDB parser crate (Phase 0). FastDB-authored.
+# publish = false and no license field: see docs/licensing.md.
+[package]
+name = "turso_fastdb_parser"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+miette = { workspace = true }
+thiserror = { workspace = true }

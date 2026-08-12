@@ -1,0 +1,16 @@
+# FastDB Phase 0 benchmarks. FastDB-authored.
+[package]
+name = "turso_fastdb_benchmarks"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+turso_fastdb = { path = "../fastdb-frontend", features = ["testing"] }
+turso_core = { workspace = true }
+tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "phase0"
+harness = false

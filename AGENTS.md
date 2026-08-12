@@ -12,6 +12,7 @@ Before changing code or repository structure:
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
+7. For any Turso release check, fetch, comparison, pin change, merge, cherry-pick, or upstream conflict, load and follow [`.claude/skills/upstream-sync/SKILL.md`](.claude/skills/upstream-sync/SKILL.md) before acting.
 
 If instructions conflict, apply this precedence:
 
@@ -19,7 +20,7 @@ If instructions conflict, apply this precedence:
 2. The most-specific applicable `AGENTS.md`.
 3. The active phase plan.
 4. `revised_plan.md`.
-5. `plan.md`, which is historical input only.
+5. `plan.md` was historical pre-planning input that was **not** carried into this monorepo (only `revised_plan.md` and the per-phase plans were preserved). Treat `revised_plan.md` and the active phase plan as the live planning sources; do not expect a `plan.md` file.
 
 Do not silently resolve a material architectural contradiction. Record it and follow the stop/escalation process in the active phase plan.
 
@@ -126,10 +127,11 @@ This workspace is to become one monorepo based on Turso's Git history. Do not cr
 - Configure the official Turso repository as the `upstream` remote.
 - Record the audited engine SHA in machine-readable project metadata and CI output.
 - Keep FastDB crates and later service components in the same workspace.
-- Regularly review upstream changes, but merge or rebase only after relevant FastDB and unchanged Turso tests pass.
+- Regularly review upstream changes, but integrate only an exact audited SHA through a dedicated upstream-sync branch after relevant FastDB and unchanged Turso tests pass.
+- Preserve public FastDB history with explicit upstream merge commits. Do not rebase or force-push shared branches to update the engine.
 - Preserve unrelated user changes and never use destructive Git operations to simplify an import or update.
 
-Detailed bootstrap instructions and the initial crate layout are in `plan-phase0.md`.
+Detailed bootstrap instructions and the initial crate layout are in `plan-phase0.md`. The operational update procedure is in the mandatory `upstream-sync` skill; `UPSTREAM.md` remains the durable policy and pin record.
 
 ## Phase Boundaries
 
@@ -154,7 +156,10 @@ The planned business is a managed FastDB service at `cloud.fastdb.org`, but clou
 - Do not assume a permanent free managed tier; the initial hypothesis is bounded `$5`, `$20`, and `$100` plans, with a capped trial or one-time credit if economical.
 - Pricing is a hypothesis, not a promise. Model storage, requests, compute, egress, backups, support, and abuse before publishing prices.
 - Object storage does not make the service cheap by merely uploading live SQLite files. A safe design needs immutable blocks/segments, manifests, conditional publication, caching, recovery, compaction, and garbage collection.
-- Cloud evolves through research and staged architectures: C0 decision research, C1 local MVP plus block storage, C2 object-backed managed service, and only later an object-native design if measurements justify it.
+- The initial `cloud.fastdb.org` target is Cloudflare: a Worker API gateway routes each database through a container-backed Durable Object to native FastDB/Turso running in a Cloudflare Container, with R2 holding ordered recovery artifacts and immutable generations.
+- Worker temporary files and Container disks are ephemeral and never the sole durable copy of acknowledged data. Do not run the active mutable database directly on an R2 FUSE mount.
+- Cloud evolves through research and staged architectures: C0 proves Cloudflare/R2 recovery and economics, C1 ships an eager-hydration native-container alpha, C2 adds lazy R2 segments and bounded disposable caches, and C3 hardens the object-native service.
+- Keep storage/recovery behind a FastDB-owned object-store interface so AWS S3 and other compatible backends remain possible; Cloudflare types must not leak into FastDB Core.
 - Future sync follows Turso's central-authority model: explicit push/pull/checkpoint, authoritative remote schema, and offline record-data mutations. Do not invent peer-to-peer replication independently of Turso.
 
 ## Extension Direction
