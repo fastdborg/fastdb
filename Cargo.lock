@@ -7436,6 +7436,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "turso_fastdb_tests"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+ "turso_core",
+ "turso_fastdb",
+ "turso_fastdb_parser",
+]
+
+[[package]]
 name = "turso_macros"
 version = "0.8.0-pre.3"
 dependencies = [

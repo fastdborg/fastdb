@@ -58,6 +58,7 @@ members = [
     # license inheritance (see docs/licensing.md).
     "fastdb-parser",
     "fastdb-frontend",
+    "fastdb-tests",
 ]
 exclude = ["perf/latency/limbo"]
 
