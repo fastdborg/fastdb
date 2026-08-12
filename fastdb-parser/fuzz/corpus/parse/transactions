@@ -1,0 +1,1 @@
+BEGIN; UPDATE person:tracy SET name = 'Trace' RETURN NONE; COMMIT; DELETE person:tracy RETURN BEFORE; CANCEL;

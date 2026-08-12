@@ -1,0 +1,1 @@
+DEFINE TABLE person SCHEMAFULL; DEFINE FIELD name ON TABLE person TYPE option<string>; DEFINE INDEX by_name ON person FIELDS name UNIQUE;

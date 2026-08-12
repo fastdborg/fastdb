@@ -187,7 +187,7 @@ fn assert_empty_after_rollback(path: &str) {
         "ok",
         "integrity_check after rollback"
     );
-    let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+    let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
     assert!(r.records.is_empty(), "no record after rollback");
 }
 
@@ -195,7 +195,7 @@ fn then_create_succeeds(path: &str) {
     let db = Database::open(path).unwrap();
     let conn = db.connect().unwrap();
     let r = conn
-        .execute("CREATE person:tobie SET name = 'Tobie';")
+        .execute("CREATE person:tracy SET name = 'Tracy';")
         .unwrap();
     assert_eq!(r.records.len(), 1, "subsequent non-failing CREATE succeeds");
 }
@@ -209,7 +209,7 @@ fn injected_fail_round(fp: Failpoint) {
         let conn = db.connect().unwrap();
         conn.arm_failpoint(fp);
         let err = conn
-            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap_err();
         assert_eq!(
             err.category(),
@@ -259,26 +259,26 @@ fn atomic_007_real_wal_sync_failure_rolls_back_and_connection_recovers() {
         io.arm_next_wal_sync();
 
         let err = conn
-            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap_err();
         assert_eq!(err.category(), ErrorCategory::Io, "{err}");
         assert_eq!(io.failure_count(), 1, "the WAL sync boundary was reached");
 
-        let selected = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        let selected = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert!(
             selected.records.is_empty(),
             "failed COMMIT must leave no locally visible record"
         );
 
         let created = conn
-            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
         assert_eq!(created.records.len(), 1, "connection remains reusable");
     }
 
     let db = Database::open_with_io(path, io).unwrap();
     let conn = db.connect().unwrap();
-    let selected = conn.execute("SELECT * FROM person:tobie;").unwrap();
+    let selected = conn.execute("SELECT * FROM person:tracy;").unwrap();
     assert_eq!(
         selected.records.len(),
         1,
@@ -297,7 +297,7 @@ fn atomic_008_rollback_failure_preserves_both_errors() {
         conn.arm_failpoint(Failpoint::RollbackFailure);
 
         let err = conn
-            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap_err();
         assert_eq!(err.category(), ErrorCategory::Transaction, "{err}");
         let detail = err.to_string();
@@ -324,14 +324,14 @@ fn duplicate_explicit_id_is_constraint_and_preserves_original() {
         let db = Database::open(&path).unwrap();
         let conn = db.connect().unwrap();
         let r = conn
-            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
         assert_eq!(
             r.records[0].fields,
-            vec![("name".to_string(), Value::Str("Tobie".to_string()))]
+            vec![("name".to_string(), Value::Str("Tracy".to_string()))]
         );
         let err = conn
-            .execute("CREATE person:tobie SET name = 'Other';")
+            .execute("CREATE person:tracy SET name = 'Other';")
             .unwrap_err();
         assert_eq!(
             err.category(),
@@ -343,7 +343,7 @@ fn duplicate_explicit_id_is_constraint_and_preserves_original() {
     let db = Database::open(&path).unwrap();
     let conn = db.connect().unwrap();
     let r = conn
-        .execute("SELECT * FROM person WHERE name = 'Tobie';")
+        .execute("SELECT * FROM person WHERE name = 'Tracy';")
         .unwrap();
     assert_eq!(r.records.len(), 1);
     let r = conn

@@ -65,30 +65,30 @@ mod tests {
         let conn = db.connect().unwrap();
 
         let r = conn
-            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
         assert_eq!(r.records.len(), 1);
         let rec = &r.records[0];
         assert_eq!(rec.id.table, "person");
-        assert_eq!(rec.id.id, "tobie");
+        assert_eq!(rec.id.id, "tracy");
         assert_eq!(
             rec.fields,
-            vec![("name".to_string(), Value::Str("Tobie".to_string()))]
+            vec![("name".to_string(), Value::Str("Tracy".to_string()))]
         );
 
-        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert_eq!(r.records.len(), 1);
-        assert_eq!(r.records[0].id.id, "tobie");
+        assert_eq!(r.records[0].id.id, "tracy");
 
         let r = conn
-            .execute("SELECT * FROM person WHERE name = 'Tobie';")
+            .execute("SELECT * FROM person WHERE name = 'Tracy';")
             .unwrap();
         assert_eq!(r.records.len(), 1);
 
-        let r = conn.execute("DELETE person:tobie;").unwrap();
+        let r = conn.execute("DELETE person:tracy;").unwrap();
         assert!(r.records.is_empty());
 
-        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert!(r.records.is_empty());
     }
 
@@ -96,7 +96,7 @@ mod tests {
     fn smoke_read_of_empty_db_does_not_mutate() {
         let db = Database::open_memory().unwrap();
         let conn = db.connect().unwrap();
-        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert!(r.records.is_empty());
         // No catalog should have been created by the read.
         let exists = crate::catalog::catalog_exists(&conn, crate::catalog::META_TABLE).unwrap();
@@ -107,10 +107,10 @@ mod tests {
     fn smoke_duplicate_create_is_constraint_error() {
         let db = Database::open_memory().unwrap();
         let conn = db.connect().unwrap();
-        conn.execute("CREATE person:tobie SET name = 'Tobie';")
+        conn.execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
         let err = conn
-            .execute("CREATE person:tobie SET name = 'Other';")
+            .execute("CREATE person:tracy SET name = 'Other';")
             .unwrap_err();
         assert_eq!(err.category(), ErrorCategory::Constraint);
     }

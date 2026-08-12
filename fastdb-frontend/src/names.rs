@@ -176,7 +176,7 @@ mod tests {
         // The logical name must not appear in the physical name.
         let t = physical_table_name(TableId::new_random());
         assert!(!t.contains("person"));
-        assert!(!t.contains("tobie"));
+        assert!(!t.contains("tracy"));
         assert!(!t.contains("name"));
     }
 
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn rid_round_trip_ascii() {
-        for v in ["tobie", "a", "", "with spaces", "UPPER", "12345"] {
+        for v in ["tracy", "a", "", "with spaces", "UPPER", "12345"] {
             assert_eq!(decode_rid(&encode_rid(v)).unwrap(), v);
         }
     }
@@ -248,13 +248,13 @@ mod tests {
             "s",
             "s:",
             "s:0",
-            "x:5:tobie",  // wrong tag
-            "s:x:tobie",  // non-numeric length
-            "s:05:tobie", // leading zero (canonical form is s:5:)
+            "x:5:tracy",  // wrong tag
+            "s:x:tracy",  // non-numeric length
+            "s:05:tracy", // leading zero (canonical form is s:5:)
             "s:3:ab",     // length too short
             "s:3:abcd",   // length too long
             "s:abc:ab",   // non-numeric
-            "tobie",      // no tag
+            "tracy",      // no tag
             "s::",        // empty length
             "ss:1:a",
         ];
@@ -270,7 +270,7 @@ mod tests {
         }
         // Spot-check the category explicitly.
         assert_eq!(
-            decode_rid("x:5:tobie").unwrap_err().category(),
+            decode_rid("x:5:tracy").unwrap_err().category(),
             ErrorCategory::Format
         );
         assert_eq!(
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn rid_known_encoding() {
-        assert_eq!(encode_rid("tobie"), "s:5:tobie");
-        assert_eq!(decode_rid("s:5:tobie").unwrap(), "tobie");
+        assert_eq!(encode_rid("tracy"), "s:5:tracy");
+        assert_eq!(decode_rid("s:5:tracy").unwrap(), "tracy");
     }
 }

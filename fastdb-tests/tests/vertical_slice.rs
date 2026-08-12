@@ -26,15 +26,15 @@ fn file_backed_vertical_slice() {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
         let r = conn
-            .execute("CREATE person:tobie SET name = 'Tobie';")
+            .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
         assert_eq!(r.records.len(), 1);
         let rec = &r.records[0];
         assert_eq!(rec.id.table, "person");
-        assert_eq!(rec.id.id, "tobie"); // typed, not the string "person:tobie"
+        assert_eq!(rec.id.id, "tracy"); // typed, not the string "person:tracy"
         assert_eq!(
             rec.fields,
-            vec![("name".to_string(), Value::Str("Tobie".to_string()))]
+            vec![("name".to_string(), Value::Str("Tracy".to_string()))]
         );
         rec.clone()
     }; // 5. drop statements/connections/database handles
@@ -45,13 +45,13 @@ fn file_backed_vertical_slice() {
     {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
-        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert_eq!(r.records.len(), 1);
         assert_eq!(r.records[0].id.table, "person");
-        assert_eq!(r.records[0].id.id, "tobie");
+        assert_eq!(r.records[0].id.id, "tracy");
         assert_eq!(
             r.records[0].fields,
-            vec![("name".to_string(), Value::Str("Tobie".to_string()))]
+            vec![("name".to_string(), Value::Str("Tracy".to_string()))]
         );
 
         // 8. Inspect internal state through the test-only native connection.
@@ -90,7 +90,7 @@ fn file_backed_vertical_slice() {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
         assert!(!physical.contains("person"), "no logical name leakage");
-        assert!(!physical.contains("tobie"), "no record id leakage");
+        assert!(!physical.contains("tracy"), "no record id leakage");
 
         // 8d. The physical row stores the canonical rid and a doc with no id.
         let prows = common::native_rows(native, &format!("SELECT rid, json(doc) FROM {physical}"));
@@ -98,9 +98,9 @@ fn file_backed_vertical_slice() {
         let rid = &prows[0][0];
         let doc = &prows[0][1];
         assert!(rid.starts_with("s:5:"), "rid is canonical: {rid}");
-        assert!(rid.ends_with("tobie"));
+        assert!(rid.ends_with("tracy"));
         assert!(doc.contains("\"name\""), "doc has name field: {doc}");
-        assert!(doc.contains("Tobie"));
+        assert!(doc.contains("Tracy"));
         assert!(
             !doc.contains("\"id\""),
             "doc must not store an id member: {doc}"
@@ -111,12 +111,12 @@ fn file_backed_vertical_slice() {
     {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
-        let r = conn.execute("DELETE person:tobie;").unwrap();
+        let r = conn.execute("DELETE person:tracy;").unwrap();
         assert!(
             r.records.is_empty(),
             "DELETE returns the empty default result"
         );
-        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert!(r.records.is_empty());
     }
 
@@ -124,7 +124,7 @@ fn file_backed_vertical_slice() {
     let physical = {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
-        let r = conn.execute("SELECT * FROM person:tobie;").unwrap();
+        let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert!(r.records.is_empty(), "record stays absent after reopen");
         let native = conn.native();
         // Catalog row remains.

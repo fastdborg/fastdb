@@ -154,7 +154,7 @@ This SQL is illustrative internal DDL, never a user-facing translation. Keep Tur
 
 Physical names are opaque and deterministic from immutable catalog IDs, for example a fixed prefix plus a lowercase encoding of a 128-bit table ID. User-provided identifiers are never interpolated into physical names. Catalog resolution is the only path from a logical name to a physical object.
 
-`rid` stores an immutable, versioned, type-tagged canonical encoding of the ID component so a string, integer, and UUID cannot collide and can be decoded losslessly. `doc` stores user content only and never duplicates `id`. The result decoder synthesizes a typed `RecordId { table, id }`. Generated IDs use UUIDv7. MVP record ID components may be bare UTF-8 identifiers, quoted UTF-8 strings, signed integers where accepted by the grammar, or generated UUIDv7 values. Array/object IDs are deferred.
+`rid` stores an immutable, versioned, type-tagged canonical encoding of the ID component so a string, integer, and UUID cannot collide and can be decoded losslessly. `doc` stores user content only and never duplicates `id`. The result decoder synthesizes a typed `RecordId { table, id }`. Generated IDs use UUIDv7. MVP record ID components may be bare UTF-8 identifiers, backtick-quoted UTF-8 text, signed integers where accepted by the grammar, or generated UUIDv7 values. Array/object IDs are deferred.
 
 Native JSON values map directly to JSONB. Record IDs embedded in user documents require a versioned tagged representation because JSON has no record-ID type. The codec must escape any user object that would collide with its reserved tag shape, decode recursively, and have round-trip tests. Index support for tagged record-valued fields is deferred unless the canonical expression builder can prove correct ordering and equality semantics.
 
@@ -389,7 +389,7 @@ Deliverables:
 - Fork Turso, retain all MIT notices, configure an `upstream` remote, and document a regular upstream review/merge cadence.
 - Record the audited Turso commit in a machine-readable dependency file and CI output.
 - Add the clean-room policy, compatibility-research template, and initial `COMPAT.md` skeleton pinned to SurrealDB `v3.1.5`.
-- Implement a disposable vertical slice for `CREATE person:tobie SET name = 'Tobie';`, reopen, select, delete, and reopen again.
+- Implement a disposable vertical slice for `CREATE person:tracy SET name = 'Tracy';`, reopen, select, delete, and reopen again.
 - Add one JSON field index and prove with an explain-plan test that an equality predicate uses a B-tree access path.
 - Test rollback of automatic catalog registration, physical table creation, and the first record as one unit.
 - Benchmark the slice against equivalent native Turso JSONB operations to establish harness noise and frontend overhead.

@@ -43,31 +43,31 @@ Do not reopen these decisions during Phase 0 unless evidence triggers a stop con
 The end-to-end test runner must accept these forms as FastDB input:
 
 ```sql
-CREATE person:tobie SET name = 'Tobie';
-SELECT * FROM person:tobie;
-SELECT * FROM person WHERE name = 'Tobie';
-DELETE person:tobie;
+CREATE person:tracy SET name = 'Tracy';
+SELECT * FROM person:tracy;
+SELECT * FROM person WHERE name = 'Tracy';
+DELETE person:tracy;
 ```
 
 Required behavior:
 
 | Input | Required result |
 | --- | --- |
-| `CREATE person:tobie SET name = 'Tobie';` | Atomically auto-register `person` as schemaless, create its hidden physical table, store one JSONB document, and return the created record |
-| `SELECT * FROM person:tobie;` | Return an array containing the record when present, otherwise an empty array |
-| `SELECT * FROM person WHERE name = 'Tobie';` | Return the matching record and use the Phase 0 expression index once it has been installed by the test fixture |
-| `DELETE person:tobie;` | Delete the record and return the default empty result |
+| `CREATE person:tracy SET name = 'Tracy';` | Atomically auto-register `person` as schemaless, create its hidden physical table, store one JSONB document, and return the created record |
+| `SELECT * FROM person:tracy;` | Return an array containing the record when present, otherwise an empty array |
+| `SELECT * FROM person WHERE name = 'Tracy';` | Return the matching record and use the Phase 0 expression index once it has been installed by the test fixture |
+| `DELETE person:tracy;` | Delete the record and return the default empty result |
 
 The decoded created/selected record is logically:
 
 ```text
 {
-  id: person:tobie,
-  name: 'Tobie'
+  id: person:tracy,
+  name: 'Tracy'
 }
 ```
 
-The result type must keep `id` as a typed Phase 0 record ID, not the string `"person:tobie"`. It is acceptable for Phase 0 to support only a bare string record ID and a string-valued top-level `SET` assignment, provided unsupported forms produce explicit errors.
+The result type must keep `id` as a typed Phase 0 record ID, not the string `"person:tracy"`. It is acceptable for Phase 0 to support only a bare string record ID and a string-valued top-level `SET` assignment, provided unsupported forms produce explicit errors.
 
 ### 3.2 Parser slice
 
@@ -302,7 +302,7 @@ Required tests:
 - Type tag and length prevent ambiguous decoding.
 - Malformed ID encoding is a typed engine/format error, not a panic.
 
-Do not implement generated UUIDv7 record IDs; the vertical slice always supplies `tobie`.
+Do not implement generated UUIDv7 record IDs; the vertical slice always supplies `tracy`.
 
 ### P0.5 — Disposable catalog and database open path
 
@@ -377,8 +377,8 @@ Requirements for all user-facing statements:
 2. Create Phase 0 catalog tables and metadata if missing.
 3. Look up logical table `person` by a bound value.
 4. If absent, generate its catalog ID/physical name, insert a `SCHEMALESS` catalog row, and create its hidden table.
-5. Encode `tobie` as `rid`.
-6. Build JSONB user content containing only `{ "name": "Tobie" }` using a bound value and an engine JSONB function or another audited typed path.
+5. Encode `tracy` as `rid`.
+6. Build JSONB user content containing only `{ "name": "Tracy" }` using a bound value and an engine JSONB function or another audited typed path.
 7. Insert the physical row; a duplicate explicit ID must fail.
 8. Decode the created record.
 9. Commit.
@@ -414,17 +414,17 @@ Write one end-to-end test that performs exactly this sequence:
 
 1. Create a new temporary directory and choose `vertical.fastdb` inside it.
 2. Open FastDB.
-3. Execute `CREATE person:tobie SET name = 'Tobie';`.
+3. Execute `CREATE person:tracy SET name = 'Tracy';`.
 4. Assert the returned typed record.
 5. Drop all statements, connections, and database handles.
 6. Reopen the same path.
-7. Execute `SELECT * FROM person:tobie;` and assert exactly one typed record.
+7. Execute `SELECT * FROM person:tracy;` and assert exactly one typed record.
 8. Inspect internal state through a test-only native connection:
    - One version-0 metadata row exists.
    - One `person` catalog row exists.
-   - Its physical name matches the opaque-name format and does not contain `person` or `tobie`.
+   - Its physical name matches the opaque-name format and does not contain `person` or `tracy`.
    - The physical row stores canonical `rid` and JSONB `doc` without an `id` member.
-9. Execute `DELETE person:tobie;` and assert the empty default result.
+9. Execute `DELETE person:tracy;` and assert the empty default result.
 10. Select again and assert an empty array.
 11. Drop/reopen again and assert the record remains absent while catalog/table definitions remain.
 12. Run `PRAGMA integrity_check` through a test-only native connection and require `ok`.
@@ -452,7 +452,7 @@ For each point, begin from a new empty file, execute the `CREATE`, force the err
 
 Also test duplicate explicit ID:
 
-1. Create `person:tobie` successfully.
+1. Create `person:tracy` successfully.
 2. Attempt the same `CREATE` again.
 3. Require a constraint-category error.
 4. Reopen and prove exactly one unchanged record exists.
@@ -729,9 +729,9 @@ Phase 0 is done only when every checkbox is true.
 
 ### Vertical slice and indexing
 
-- [ ] `CREATE person:tobie SET name = 'Tobie';` returns the typed created record.
+- [ ] `CREATE person:tracy SET name = 'Tracy';` returns the typed created record.
 - [ ] Clean close/reopen followed by record `SELECT` returns the same record.
-- [ ] `DELETE person:tobie;` returns the default empty result and persists across another reopen.
+- [ ] `DELETE person:tracy;` returns the default empty result and persists across another reopen.
 - [ ] The canonical `name` expression is shared by index creation and filter lowering.
 - [ ] Equality-filter results are correct before and after reopen.
 - [ ] `EXPLAIN QUERY PLAN` names the opaque B-tree expression index and does not show a full hidden-table scan before or after reopen.
@@ -834,4 +834,3 @@ The report must lead with the decision and evidence. Do not call the result prod
 - [SurrealDB CREATE documentation](https://surrealdb.com/docs/reference/query-language/statements/create)
 - [SurrealDB SELECT documentation](https://surrealdb.com/docs/reference/query-language/statements/select)
 - [SurrealDB DELETE documentation](https://surrealdb.com/docs/reference/query-language/statements/delete)
-

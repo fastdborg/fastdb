@@ -1,0 +1,1 @@
+SELECT name AS display, address.city FROM ONLY person WHERE active = true AND age >= 18 ORDER BY name DESC LIMIT 10 START 0;

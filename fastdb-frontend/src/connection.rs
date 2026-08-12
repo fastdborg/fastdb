@@ -88,8 +88,8 @@ impl Connection {
 
     /// Parse and execute one FastDB statement end-to-end.
     pub fn execute(&self, sql: &str) -> Result<ExecutionResult> {
-        let stmt = turso_fastdb_parser::parse(sql)?;
-        execute::run_statement(self, stmt)
+        let stmt = turso_fastdb_parser::parse_one(sql)?;
+        execute::run_statement(self, stmt, sql)
     }
 
     /// The underlying Turso connection (test-only diagnostics: PRAGMA,

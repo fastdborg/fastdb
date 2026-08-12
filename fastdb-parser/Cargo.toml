@@ -7,5 +7,5 @@ edition = "2021"
 publish = false
 
 [dependencies]
-miette = { workspace = true }
+miette = { workspace = true, features = ["fancy"] }
 thiserror = { workspace = true }

@@ -47,7 +47,7 @@ persisting/querying/deleting a JSONB document with a usable expression index —
   The explained predicate is therefore the optimizer-relevant translated AST,
   without a core change.
 - **P2 — quoted record IDs.** `COMPAT.md` declares only a bare id
-  (`table:identifier`); quoted ids (`person:'tobie'`) are now rejected with an
+  (`table:identifier`); quoted ids (`person:'tracy'`) are now rejected with an
   explicit unsupported error. New parser test.
 - **P2 — P0-INJECT-001.** New end-to-end `injection.rs`: a value containing a
   quote and semicolon (`'a;''b'` → `a;'b`) is stored literally, round-trips
@@ -75,12 +75,12 @@ persisting/querying/deleting a JSONB document with a usable expression index —
 
 ## Vertical Slice Results (`turso_fastdb_tests::vertical_slice`)
 
-`CREATE person:tobie SET name = 'Tobie';` returns the typed record
-`{ id: person:tobie, name: 'Tobie' }`. After clean close + reopen,
-`SELECT * FROM person:tobie;` returns the same record. Internal inspection
+`CREATE person:tracy SET name = 'Tracy';` returns the typed record
+`{ id: person:tracy, name: 'Tracy' }`. After clean close + reopen,
+`SELECT * FROM person:tracy;` returns the same record. Internal inspection
 (test-only native connection): one **version-0** metadata row, one `person`
 catalog row whose physical name is `__fastdb_t_<32-hex>` (contains neither
-`person` nor `tobie`), and a physical row storing canonical `rid` (`s:5:tobie`)
+`person` nor `tracy`), and a physical row storing canonical `rid` (`s:5:tracy`)
 and a `doc` with **no `id` member**. `DELETE` returns the empty default; a
 second reopen shows the record absent while catalog/table definitions remain.
 `PRAGMA integrity_check` → `ok`.

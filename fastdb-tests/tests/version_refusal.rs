@@ -22,7 +22,7 @@ fn fresh_with_record() -> (TempDir, String) {
     {
         let db = Database::open(&s).unwrap();
         let conn = db.connect().unwrap();
-        conn.execute("CREATE person:tobie SET name = 'Tobie';")
+        conn.execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
     }
     (dir, s)
@@ -45,9 +45,9 @@ fn set_meta_column(path: &str, col: &'static str, val: &'static str) {
 fn assert_refuses_all_ops(path: &str) {
     for sql in [
         "CREATE person:jaime SET name = 'Jaime';",
-        "SELECT * FROM person:tobie;",
-        "SELECT * FROM person WHERE name = 'Tobie';",
-        "DELETE person:tobie;",
+        "SELECT * FROM person:tracy;",
+        "SELECT * FROM person WHERE name = 'Tracy';",
+        "DELETE person:tracy;",
     ] {
         let db = Database::open(path).unwrap();
         let conn = db.connect().unwrap();

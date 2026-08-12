@@ -8,7 +8,7 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. For Phase 0, [`plan-phase0.md`](plan-phase0.md) is the authoritative execution plan and Definition of Done.
+3. Read the plan for the active phase. For Phase 1, [`plan-phase1.md`](plan-phase1.md) is the authoritative execution plan and Definition of Done. [`docs/phase0-report.md`](docs/phase0-report.md) preserves the completed Phase 0 evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -34,7 +34,7 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Behavioral compatibility reference: SurrealDB `v3.1.5`.
 - Durability default: stable Turso WAL with full durability.
 - Delivery surfaces for the MVP: an embedded Rust library and the `fastdb` CLI.
-- Current implementation stage: Core Phase 0, the feasibility spike described in `plan-phase0.md`.
+- Current implementation stage: Core Phase 1, the parser, AST, and compatibility-contract work described in `plan-phase1.md`.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.
@@ -146,11 +146,11 @@ Keep work within the active phase unless the user explicitly changes scope.
 | 4 | Deliver the embedded Rust API and CLI. |
 | 5 | Fuzz, crash-test, benchmark, document, and harden the MVP for release. |
 
-Phase 0 is a feasibility spike, not the public API, full parser, cloud service, or stable database format. A precise failed feasibility result that satisfies a documented stop condition is more useful than bypassing an invariant.
+Phase 1 defines the complete MVP syntax and independent AST, but is not the public API, general execution frontend, cloud service, or stable database format. Newly parsed syntax remains planned until its execution phase.
 
 ## Cloud and Business Context
 
-The planned business is a managed FastDB service at `cloud.fastdb.org`, but cloud implementation is not on the Phase 0 critical path.
+The planned business is a managed FastDB service at `cloud.fastdb.org`, but cloud implementation is not on the Phase 1 critical path.
 
 - Local and permitted self-hosted use should remain available under the Community License terms.
 - Do not assume a permanent free managed tier; the initial hypothesis is bounded `$5`, `$20`, and `$100` plans, with a capped trial or one-time credit if economical.
@@ -199,6 +199,6 @@ For each task:
 6. Review the diff for generated SQL, provenance, accidental core edits, silent syntax acceptance, and unrelated changes.
 7. Report the outcome, commands run, remaining risks, and any stop condition.
 
-Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. For Phase 0, use the final report template in `plan-phase0.md` and lead with the proceed/stop decision and its evidence.
+Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. For Phase 1, use the final report structure in `plan-phase1.md` and lead with the proceed/stop decision and its evidence.
 
 Update this file only when durable project-wide decisions change. Put detailed implementation recipes in phase plans, observed results in reports, and temporary work status in normal task tracking.
