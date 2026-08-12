@@ -51,7 +51,12 @@ members = [
     "testing/differential-oracle/sql_gen_prop",
     "testing/differential-oracle/sql_gen",
     "testing/differential-oracle/fuzzer",
-    "testing/sqltest"
+    "testing/sqltest",
+    # FastDB-authored crates (Phase 0). NOT in default-members: bare
+    # `cargo build` keeps building the Turso default set; FastDB crates
+    # are built/tested via `-p turso_fastdb*`. publish=false, no MIT
+    # license inheritance (see docs/licensing.md).
+    "fastdb-parser",
 ]
 exclude = ["perf/latency/limbo"]
 
