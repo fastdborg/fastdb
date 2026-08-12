@@ -59,6 +59,7 @@ members = [
     "fastdb-parser",
     "fastdb-frontend",
     "fastdb-tests",
+    "fastdb-benchmarks",
 ]
 exclude = ["perf/latency/limbo"]
 
