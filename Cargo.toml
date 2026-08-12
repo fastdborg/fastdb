@@ -57,6 +57,7 @@ members = [
     # are built/tested via `-p turso_fastdb*`. publish=false, no MIT
     # license inheritance (see docs/licensing.md).
     "fastdb-parser",
+    "fastdb-frontend",
 ]
 exclude = ["perf/latency/limbo"]
 

@@ -178,3 +178,32 @@ vertical slice but should be run before any pin update.
 None encountered that invalidate Phase 0 assumptions. To be updated if a
 targeted test surfaces one; any such finding triggers the Section 11 stop
 process rather than a workaround.
+
+### Pre-existing upstream lint warnings (not fixed by Phase 0)
+
+`turso_core` at the pin emits two warnings under the pinned toolchain when
+built as a workspace-member dependency:
+
+- `unused import: crate::translate::collate::CollationSeq` (`core/vdbe/mod.rs:43`).
+- an unfulfilled `#[expect(unused_imports)]` (`core/thread.rs`).
+
+These are pre-existing upstream conditions. `plan-phase0.md` forbids fixing
+upstream failures, so Phase 0 leaves them untouched.
+
+### Consequence for the lint command
+
+`plan-phase0.md` Section 8 lists `cargo clippy -p <fastdb> -- -D warnings`.
+Because `turso_core` is a workspace member (lints not capped by cargo), the
+global `-D warnings` fatalizes the two upstream warnings above. The
+verified equivalent, which satisfies the Definition of Done ("warnings
+denied for FastDB crates"), is:
+
+```sh
+cargo clippy -p turso_fastdb_parser -p turso_fastdb -p turso_fastdb_tests --all-targets
+```
+
+with each FastDB crate carrying `#![deny(warnings)]` (and `#![forbid(unsafe_code)]`)
+in-crate. This denies warnings in FastDB code only; upstream warnings stay
+non-fatal. The parser crate additionally passes the literal `-- -D warnings`
+form because its dependencies (miette, thiserror) are registry crates whose
+lints cargo caps.
