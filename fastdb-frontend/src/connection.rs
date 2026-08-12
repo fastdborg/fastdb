@@ -126,6 +126,46 @@ impl Connection {
         self.failpoints.disarm_all();
     }
 
+    /// Test-only: install the canonical non-unique expression index on a
+    /// top-level field of a logical table, returning the opaque index name.
+    /// Resolves the table through the catalog and reuses the same canonical
+    /// JSON expression builder as the filter lowering. Not a public API.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn create_field_index(&self, logical_table: &str, field: &str) -> Result<String> {
+        let resolved = crate::catalog::resolve_table(self, logical_table)?
+            .ok_or_else(|| FastDbError::Engine(format!("table {logical_table:?} is not registered")))?;
+        let idx_name = crate::names::physical_index_name(crate::names::TableId::new_random());
+        let path = crate::lower::canonical_field_path(field)?;
+        let stmt = crate::lower::physical_name_index_ddl(&idx_name, &resolved.physical_name, &path)?;
+        self.exec_bound(stmt, vec![])?;
+        Ok(idx_name)
+    }
+
+    /// Test-only: run `EXPLAIN QUERY PLAN` over the exact translated
+    /// predicate shape used by the equality filter, returning the plan
+    /// detail strings. The opaque table name and canonical path are the same
+    /// validated values the filter lowering uses; the literal value does not
+    /// affect the plan.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn explain_field_filter(&self, logical_table: &str, field: &str) -> Result<Vec<String>> {
+        let resolved = crate::catalog::resolve_table(self, logical_table)?
+            .ok_or_else(|| FastDbError::Engine(format!("table {logical_table:?} is not registered")))?;
+        let path = crate::lower::canonical_field_path(field)?;
+        let sql = format!(
+            "EXPLAIN QUERY PLAN SELECT rid, json(doc) FROM {} WHERE json_extract(doc, '{}') = 'x'",
+            resolved.physical_name, path
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut plans = Vec::new();
+        stmt.run_with_row_callback(|row| {
+            plans.push(row.get::<String>(3)?);
+            Ok(())
+        })?;
+        Ok(plans)
+    }
+
     /// Prepare, bind, and run a statement, collecting every row's raw values.
     pub(crate) fn collect_rows(
         &self,
