@@ -188,7 +188,7 @@ fn assert_empty_after_rollback(path: &str) {
         "integrity_check after rollback"
     );
     let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
-    assert!(r.records.is_empty(), "no record after rollback");
+    assert!(r.legacy_records().is_empty(), "no record after rollback");
 }
 
 fn then_create_succeeds(path: &str) {
@@ -197,7 +197,11 @@ fn then_create_succeeds(path: &str) {
     let r = conn
         .execute("CREATE person:tracy SET name = 'Tracy';")
         .unwrap();
-    assert_eq!(r.records.len(), 1, "subsequent non-failing CREATE succeeds");
+    assert_eq!(
+        r.legacy_records().len(),
+        1,
+        "subsequent non-failing CREATE succeeds"
+    );
 }
 
 /// Arm `fp`, run a CREATE that must fail, reopen, prove clean rollback, then
@@ -266,21 +270,25 @@ fn atomic_007_real_wal_sync_failure_rolls_back_and_connection_recovers() {
 
         let selected = conn.execute("SELECT * FROM person:tracy;").unwrap();
         assert!(
-            selected.records.is_empty(),
+            selected.legacy_records().is_empty(),
             "failed COMMIT must leave no locally visible record"
         );
 
         let created = conn
             .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
-        assert_eq!(created.records.len(), 1, "connection remains reusable");
+        assert_eq!(
+            created.legacy_records().len(),
+            1,
+            "connection remains reusable"
+        );
     }
 
     let db = Database::open_with_io(path, io).unwrap();
     let conn = db.connect().unwrap();
     let selected = conn.execute("SELECT * FROM person:tracy;").unwrap();
     assert_eq!(
-        selected.records.len(),
+        selected.legacy_records().len(),
         1,
         "successful retry survives reopen"
     );
@@ -327,7 +335,7 @@ fn duplicate_explicit_id_is_constraint_and_preserves_original() {
             .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
         assert_eq!(
-            r.records[0].fields,
+            r.legacy_records()[0].fields,
             vec![("name".to_string(), Value::Str("Tracy".to_string()))]
         );
         let err = conn
@@ -345,10 +353,56 @@ fn duplicate_explicit_id_is_constraint_and_preserves_original() {
     let r = conn
         .execute("SELECT * FROM person WHERE name = 'Tracy';")
         .unwrap();
-    assert_eq!(r.records.len(), 1);
+    assert_eq!(r.legacy_records().len(), 1);
     let r = conn
         .execute("SELECT * FROM person WHERE name = 'Other';")
         .unwrap();
-    assert!(r.records.is_empty(), "failed create must not persist");
+    assert!(
+        r.legacy_records().is_empty(),
+        "failed create must not persist"
+    );
+    assert_eq!(common::integrity_check(conn.native()), "ok");
+}
+
+#[test]
+fn p3_atomic_004_real_wal_sync_failure_at_explicit_commit_rolls_back_and_reopens() {
+    let io = Arc::new(WalSyncFaultIo::new());
+    let path = "explicit-commit-sync-failure.fastdb";
+    {
+        let db = Database::open_with_io(path, io.clone()).unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("BEGIN; CREATE person:failed SET name='failed'")
+            .unwrap();
+        io.arm_next_wal_sync();
+        let error = conn.execute("COMMIT").unwrap_err();
+        assert_eq!(error.category(), ErrorCategory::Transaction, "{error}");
+        assert!(error.to_string().contains("rollback cleanup failed"));
+        assert_eq!(io.failure_count(), 1);
+        assert_eq!(
+            conn.execute("SELECT * FROM person").unwrap_err().category(),
+            ErrorCategory::Transaction
+        );
+    }
+
+    {
+        let db = Database::open_with_io(path, io.clone()).unwrap();
+        let conn = db.connect().unwrap();
+        assert!(conn
+            .execute("SELECT * FROM person:failed")
+            .unwrap()
+            .legacy_records()
+            .is_empty());
+        assert_eq!(common::integrity_check(conn.native()), "ok");
+        conn.execute("CREATE person:kept SET name='kept'").unwrap();
+    }
+    let db = Database::open_with_io(path, io).unwrap();
+    let conn = db.connect().unwrap();
+    assert_eq!(
+        conn.execute("SELECT * FROM person:kept")
+            .unwrap()
+            .legacy_records()
+            .len(),
+        1
+    );
     assert_eq!(common::integrity_check(conn.native()), "ok");
 }

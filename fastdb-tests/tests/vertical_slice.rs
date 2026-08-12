@@ -28,8 +28,9 @@ fn file_backed_vertical_slice() {
         let r = conn
             .execute("CREATE person:tracy SET name = 'Tracy';")
             .unwrap();
-        assert_eq!(r.records.len(), 1);
-        let rec = &r.records[0];
+        let records = r.legacy_records();
+        assert_eq!(records.len(), 1);
+        let rec = &records[0];
         assert_eq!(rec.id.table, "person");
         assert_eq!(rec.id.id, "tracy"); // typed, not the string "person:tracy"
         assert_eq!(
@@ -46,11 +47,12 @@ fn file_backed_vertical_slice() {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
         let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
-        assert_eq!(r.records.len(), 1);
-        assert_eq!(r.records[0].id.table, "person");
-        assert_eq!(r.records[0].id.id, "tracy");
+        let records = r.legacy_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id.table, "person");
+        assert_eq!(records[0].id.id, "tracy");
         assert_eq!(
-            r.records[0].fields,
+            records[0].fields,
             vec![("name".to_string(), Value::Str("Tracy".to_string()))]
         );
 
@@ -113,11 +115,11 @@ fn file_backed_vertical_slice() {
         let conn = db.connect().unwrap();
         let r = conn.execute("DELETE person:tracy;").unwrap();
         assert!(
-            r.records.is_empty(),
+            r.legacy_records().is_empty(),
             "DELETE returns the empty default result"
         );
         let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
-        assert!(r.records.is_empty());
+        assert!(r.legacy_records().is_empty());
     }
 
     // 11. Drop/reopen again: record absent, catalog/table definitions remain.
@@ -125,7 +127,10 @@ fn file_backed_vertical_slice() {
         let db = Database::open(path_str).unwrap();
         let conn = db.connect().unwrap();
         let r = conn.execute("SELECT * FROM person:tracy;").unwrap();
-        assert!(r.records.is_empty(), "record stays absent after reopen");
+        assert!(
+            r.legacy_records().is_empty(),
+            "record stays absent after reopen"
+        );
         let native = conn.native();
         // Catalog row remains.
         assert_eq!(

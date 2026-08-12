@@ -8,7 +8,7 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. For Phase 2, [`plan-phase2.md`](plan-phase2.md) is the authoritative execution plan and Definition of Done. [`docs/phase0-report.md`](docs/phase0-report.md) and [`docs/phase1-report.md`](docs/phase1-report.md) preserve completed evidence.
+3. Read the plan for the active phase. For Phase 3, [`plan-phase3.md`](plan-phase3.md) is the authoritative execution plan and Definition of Done. [`docs/phase0-report.md`](docs/phase0-report.md), [`docs/phase1-report.md`](docs/phase1-report.md), and [`docs/phase2-report.md`](docs/phase2-report.md) preserve completed evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -34,7 +34,7 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Behavioral compatibility reference: SurrealDB `v3.1.5`.
 - Durability default: stable Turso WAL with full durability.
 - Delivery surfaces for the MVP: an embedded Rust library and the `fastdb` CLI.
-- Current implementation stage: Core Phase 2, the stable storage, catalog, schema, and index work described in `plan-phase2.md`.
+- Current implementation stage: Core Phase 3, the CRUD, parameter, result, script, and transaction work described in `plan-phase3.md`.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.
@@ -86,7 +86,7 @@ The SQL above is a storage illustration, not a user-input translation template.
 - Direct external changes to hidden physical tables are unsupported even though the file uses a SQLite-compatible format.
 - “Single file” means one durable `.fastdb` artifact after checkpoint and clean shutdown. WAL/shared-memory files may exist while open, and sync may add Turso-owned sidecars later.
 
-Every standalone statement is atomic. In the eventual MVP, any error inside an explicit transaction poisons and rolls back the complete transaction.
+Every standalone statement is atomic. Any error inside an explicit transaction poisons and rolls back the complete transaction.
 
 ## Compatibility and Clean-Room Rules
 
@@ -146,7 +146,7 @@ Keep work within the active phase unless the user explicitly changes scope.
 | 4 | Deliver the embedded Rust API and CLI. |
 | 5 | Fuzz, crash-test, benchmark, document, and harden the MVP for release. |
 
-Phase 2 establishes stable format version 1 and executes only the schema and storage proof surface defined in `plan-phase2.md`. General CRUD expressions, parameters, scripts, updates, explicit transactions, the public API, CLI, and cloud service remain later phases.
+Phase 2 established stable format version 1. Phase 3 completes the synchronous frontend CRUD, expression, parameter, result, script, and explicit transaction semantics defined in `plan-phase3.md`. The asynchronous public API, transaction guard, CLI, release hardening, and cloud service remain later phases.
 
 ## Cloud and Business Context
 
@@ -199,6 +199,6 @@ For each task:
 6. Review the diff for generated SQL, provenance, accidental core edits, silent syntax acceptance, and unrelated changes.
 7. Report the outcome, commands run, remaining risks, and any stop condition.
 
-Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. For Phase 2, use the final report structure in `plan-phase2.md` and lead with the proceed/stop decision and its evidence.
+Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. For Phase 3, use the final report structure in `plan-phase3.md` and lead with the proceed/stop decision and its evidence.
 
 Update this file only when durable project-wide decisions change. Put detailed implementation recipes in phase plans, observed results in reports, and temporary work status in normal task tracking.

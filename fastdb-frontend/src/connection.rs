@@ -9,11 +9,12 @@
 use crate::error::{FastDbError, Result};
 use crate::execute;
 use crate::test_failpoints::{Failpoint, Failpoints};
-use crate::ExecutionResult;
+use crate::{Params, QueryResponse, StatementResult};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, Weak};
 use turso_core::Value;
 use turso_parser::ast::Stmt;
 
@@ -27,6 +28,9 @@ pub struct Database {
 pub(crate) struct Coordinator {
     pub(crate) schema_mutex: Mutex<()>,
     pub(crate) catalog: RwLock<Option<crate::catalog::CatalogState>>,
+    schema_lease: Mutex<Option<u64>>,
+    schema_lease_changed: Condvar,
+    next_connection_id: AtomicU64,
 }
 
 impl Coordinator {
@@ -34,6 +38,51 @@ impl Coordinator {
         Self {
             schema_mutex: Mutex::new(()),
             catalog: RwLock::new(None),
+            schema_lease: Mutex::new(None),
+            schema_lease_changed: Condvar::new(),
+            next_connection_id: AtomicU64::new(1),
+        }
+    }
+
+    fn connection_id(&self) -> u64 {
+        self.next_connection_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub(crate) fn wait_for_catalog(&self, connection_id: u64) -> Result<()> {
+        let mut owner = self
+            .schema_lease
+            .lock()
+            .map_err(|_| FastDbError::Transaction("schema lease lock is poisoned".into()))?;
+        while owner.is_some_and(|owner| owner != connection_id) {
+            owner = self
+                .schema_lease_changed
+                .wait(owner)
+                .map_err(|_| FastDbError::Transaction("schema lease lock is poisoned".into()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn acquire_schema_lease(&self, connection_id: u64) -> Result<()> {
+        let mut owner = self
+            .schema_lease
+            .lock()
+            .map_err(|_| FastDbError::Transaction("schema lease lock is poisoned".into()))?;
+        while owner.is_some_and(|owner| owner != connection_id) {
+            owner = self
+                .schema_lease_changed
+                .wait(owner)
+                .map_err(|_| FastDbError::Transaction("schema lease lock is poisoned".into()))?;
+        }
+        *owner = Some(connection_id);
+        Ok(())
+    }
+
+    pub(crate) fn release_schema_lease(&self, connection_id: u64) {
+        if let Ok(mut owner) = self.schema_lease.lock() {
+            if *owner == Some(connection_id) {
+                *owner = None;
+                self.schema_lease_changed.notify_all();
+            }
         }
     }
 }
@@ -154,6 +203,24 @@ pub struct Connection {
     conn: Arc<turso_core::Connection>,
     pub(crate) coordinator: Arc<Coordinator>,
     failpoints: Failpoints,
+    connection_id: u64,
+    execution: Mutex<ExecutionState>,
+}
+
+pub(crate) struct ExecutionState {
+    pub(crate) transaction: TransactionState,
+}
+
+pub(crate) enum TransactionState {
+    Idle,
+    Active(ActiveTransaction),
+    Poisoned,
+    Broken,
+}
+
+pub(crate) struct ActiveTransaction {
+    pub(crate) catalog: crate::catalog::CatalogState,
+    pub(crate) schema_changed: bool,
 }
 
 impl std::fmt::Debug for Connection {
@@ -164,17 +231,188 @@ impl std::fmt::Debug for Connection {
 
 impl Connection {
     pub(crate) fn new(conn: Arc<turso_core::Connection>, coordinator: Arc<Coordinator>) -> Self {
+        let connection_id = coordinator.connection_id();
         Self {
             conn,
             coordinator,
             failpoints: Failpoints::default(),
+            connection_id,
+            execution: Mutex::new(ExecutionState {
+                transaction: TransactionState::Idle,
+            }),
         }
     }
 
-    /// Parse and execute one FastDB statement end-to-end.
-    pub fn execute(&self, sql: &str) -> Result<ExecutionResult> {
-        let stmt = turso_fastdb_parser::parse_one(sql)?;
-        execute::run_statement(self, stmt, sql)
+    /// Execute one or more FastDB statements with no named parameters.
+    pub fn execute(&self, source: &str) -> Result<QueryResponse> {
+        self.execute_with_params(source, &Params::new())
+    }
+
+    /// Execute one or more statements with named value bindings.
+    pub fn execute_with_params(&self, source: &str, params: &Params) -> Result<QueryResponse> {
+        let mut execution = self.execution.lock().map_err(|_| {
+            FastDbError::Transaction("connection execution lock is poisoned".into())
+        })?;
+        if matches!(execution.transaction, TransactionState::Broken) {
+            return Err(FastDbError::Transaction(
+                "connection transaction state is broken; close and reopen it".into(),
+            ));
+        }
+        if let Err(error) = crate::validate_params(params) {
+            return Err(self.poison_after_error(&mut execution, error));
+        }
+
+        let mut cursor = turso_fastdb_parser::StatementCursor::new(source);
+        let mut statements = Vec::new();
+        loop {
+            let statement = match cursor.next_statement() {
+                Ok(Some(statement)) => statement,
+                Ok(None) => break,
+                Err(error) => {
+                    let error = FastDbError::from(error);
+                    return Err(self.poison_after_error(&mut execution, error));
+                }
+            };
+            match execute::run_statement(self, &mut execution, statement, source, params) {
+                Ok(result) => statements.push(result),
+                Err(error) => return Err(self.poison_after_error(&mut execution, error)),
+            }
+        }
+        Ok(QueryResponse::new(statements))
+    }
+
+    pub(crate) fn begin_explicit(&self, state: &mut ExecutionState) -> Result<StatementResult> {
+        match state.transaction {
+            TransactionState::Idle => {}
+            TransactionState::Active(_) => {
+                return Err(FastDbError::Transaction(
+                    "an explicit transaction is already active".into(),
+                ))
+            }
+            TransactionState::Poisoned => {
+                return Err(FastDbError::Transaction(
+                    "transaction is poisoned; CANCEL is required".into(),
+                ))
+            }
+            TransactionState::Broken => {
+                return Err(FastDbError::Transaction(
+                    "connection transaction state is broken; close and reopen it".into(),
+                ))
+            }
+        }
+        self.coordinator.wait_for_catalog(self.connection_id)?;
+        self.exec_bound(crate::lower::begin_immediate(), vec![])?;
+        let catalog = self
+            .coordinator
+            .catalog
+            .read()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+            .clone()
+            .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
+        state.transaction = TransactionState::Active(ActiveTransaction {
+            catalog,
+            schema_changed: false,
+        });
+        Ok(StatementResult::None)
+    }
+
+    pub(crate) fn commit_explicit(&self, state: &mut ExecutionState) -> Result<StatementResult> {
+        let TransactionState::Active(active) = &state.transaction else {
+            return Err(match state.transaction {
+                TransactionState::Poisoned => {
+                    FastDbError::Transaction("transaction is poisoned; CANCEL is required".into())
+                }
+                TransactionState::Broken => FastDbError::Transaction(
+                    "connection transaction state is broken; close and reopen it".into(),
+                ),
+                TransactionState::Idle => {
+                    FastDbError::Transaction("no explicit transaction is active".into())
+                }
+                TransactionState::Active(_) => unreachable!(),
+            });
+        };
+        let schema_changed = active.schema_changed;
+        let candidate = schema_changed.then(|| active.catalog.clone());
+        self.check_failpoint(Failpoint::CommitFailure)?;
+        self.exec_bound(crate::lower::commit(), vec![])?;
+        if let Some(candidate) = candidate {
+            let publication = self.coordinator.catalog.write().map(|mut cache| {
+                *cache = Some(candidate);
+            });
+            if publication.is_err() {
+                state.transaction = TransactionState::Broken;
+                self.coordinator.release_schema_lease(self.connection_id);
+                return Err(FastDbError::Transaction(
+                    "commit succeeded but catalog publication failed; close and reopen the connection"
+                        .into(),
+                ));
+            }
+        }
+        state.transaction = TransactionState::Idle;
+        self.coordinator.release_schema_lease(self.connection_id);
+        Ok(StatementResult::None)
+    }
+
+    pub(crate) fn cancel_explicit(&self, state: &mut ExecutionState) -> Result<StatementResult> {
+        match state.transaction {
+            TransactionState::Active(_) => {
+                let rollback = self
+                    .check_failpoint(Failpoint::RollbackFailure)
+                    .and_then(|()| self.exec_bound(crate::lower::rollback(), vec![]));
+                self.coordinator.release_schema_lease(self.connection_id);
+                match rollback {
+                    Ok(()) => state.transaction = TransactionState::Idle,
+                    Err(error) => {
+                        state.transaction = TransactionState::Broken;
+                        return Err(FastDbError::Transaction(format!(
+                            "explicit transaction rollback failed: {error}"
+                        )));
+                    }
+                }
+            }
+            TransactionState::Poisoned => state.transaction = TransactionState::Idle,
+            TransactionState::Idle => {
+                return Err(FastDbError::Transaction(
+                    "no explicit transaction is active".into(),
+                ))
+            }
+            TransactionState::Broken => {
+                return Err(FastDbError::Transaction(
+                    "connection transaction state is broken; close and reopen it".into(),
+                ))
+            }
+        }
+        Ok(StatementResult::None)
+    }
+
+    fn poison_after_error(&self, state: &mut ExecutionState, error: FastDbError) -> FastDbError {
+        if !matches!(state.transaction, TransactionState::Active(_)) {
+            return error;
+        }
+        let rollback = self
+            .check_failpoint(Failpoint::RollbackFailure)
+            .and_then(|()| self.exec_bound(crate::lower::rollback(), vec![]));
+        self.coordinator.release_schema_lease(self.connection_id);
+        match rollback {
+            Ok(()) => {
+                state.transaction = TransactionState::Poisoned;
+                error
+            }
+            Err(rollback_error) => {
+                state.transaction = TransactionState::Broken;
+                FastDbError::Transaction(format!(
+                    "transaction failed and rollback cleanup failed; original: {error}; rollback: {rollback_error}"
+                ))
+            }
+        }
+    }
+
+    pub(crate) fn wait_for_catalog(&self) -> Result<()> {
+        self.coordinator.wait_for_catalog(self.connection_id)
+    }
+
+    pub(crate) fn acquire_schema_lease(&self) -> Result<()> {
+        self.coordinator.acquire_schema_lease(self.connection_id)
     }
 
     /// The underlying Turso connection (test-only diagnostics: PRAGMA,
@@ -322,6 +560,25 @@ impl Connection {
         explain_statement(self, statement)
     }
 
+    /// Explain the candidate scan built for a parameterized FastDB SELECT.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn explain_query_with_params(
+        &self,
+        source: &str,
+        params: &crate::Params,
+    ) -> Result<Vec<String>> {
+        crate::validate_params(params)?;
+        let statement = turso_fastdb_parser::parse_one(source)?;
+        let turso_fastdb_parser::Statement::Select(statement) = statement else {
+            return Err(FastDbError::Schema(
+                "explain_query_with_params requires SELECT".into(),
+            ));
+        };
+        let statement = crate::execute::lowered_select_for_explain(self, statement, params)?;
+        explain_statement(self, statement)
+    }
+
     /// Test-only: install the canonical non-unique expression index on a
     /// top-level field of a logical table, returning the opaque index name.
     /// Resolves the table through the catalog and reuses the same canonical
@@ -380,6 +637,20 @@ impl Connection {
             &[(path, crate::Value::Str("x".into()))],
         )?;
         explain_statement(self, select_stmt)
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let Ok(state) = self.execution.get_mut() {
+            if matches!(
+                state.transaction,
+                TransactionState::Active(_) | TransactionState::Broken
+            ) {
+                let _ = self.exec_bound(crate::lower::rollback(), vec![]);
+            }
+        }
+        self.coordinator.release_schema_lease(self.connection_id);
     }
 }
 

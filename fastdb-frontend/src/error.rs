@@ -114,6 +114,14 @@ impl From<turso_core::LimboError> for FastDbError {
             LimboError::CompletionError(CompletionError::RustixIOError(..)) => {
                 Self::Io(e.to_string())
             }
+            LimboError::Busy
+            | LimboError::BusySnapshot
+            | LimboError::TableLocked
+            | LimboError::StatementsInProgress(_)
+            | LimboError::LockingError(_)
+            | LimboError::SchemaConflict => {
+                Self::Transaction("database is busy or locked by another transaction".into())
+            }
             _ => Self::Engine(e.to_string()),
         }
     }

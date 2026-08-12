@@ -303,10 +303,10 @@ pub fn tokenize_with_limits(input: &str, limits: &ParserLimits) -> Result<Vec<To
     }
 }
 
-struct Lexer<'a> {
-    source: &'a str,
-    position: usize,
-    limits: &'a ParserLimits,
+pub(crate) struct Lexer<'a> {
+    pub(crate) source: &'a str,
+    pub(crate) position: usize,
+    pub(crate) limits: &'a ParserLimits,
 }
 
 impl Lexer<'_> {
@@ -330,7 +330,7 @@ impl Lexer<'_> {
         self.source[self.position..].starts_with(value)
     }
 
-    fn next_token(&mut self) -> Result<Token, ParseError> {
+    pub(crate) fn next_token(&mut self) -> Result<Token, ParseError> {
         self.skip_trivia()?;
         let start = self.position;
         let Some(ch) = self.peek() else {

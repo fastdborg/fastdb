@@ -1,187 +1,494 @@
-//! Phase-2 capability gate and atomic catalog/schema/data execution.
+//! Phase 3 planning, evaluation, lowering, and atomic execution.
 
 use crate::catalog::{self, CatalogState, IndexDefinition, TableDefinition};
-use crate::connection::{value_to_string, Connection};
+use crate::connection::{value_to_string, Connection, ExecutionState, TransactionState};
 use crate::decode::{self, RecordIdValue};
 use crate::error::{ErrorCategory, FastDbError, Result};
-use crate::lower;
+use crate::eval::{self, EvalContext, EvalValue};
+use crate::lower::{self, PredicateOperator};
 use crate::names::{decode_rid, encode_rid};
 use crate::schema::{self, FieldRule, FieldType};
 use crate::test_failpoints::Failpoint;
-use crate::{ExecutionResult, Record, RecordId, Value};
+use crate::{Params, RecordId, StatementResult, Value};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use turso_fastdb_parser::{
     BinaryOperator, CreateData, Expr, ExprKind, ProjectionList, RecordIdPart, RecordIdPartKind,
-    Span, Statement, TableMode, Target, UnaryOperator,
+    ReturnKind, Span, Statement, TableMode, Target,
 };
 
-#[derive(Debug)]
-struct CreatePlan {
-    table: String,
-    id: Option<RecordIdValue>,
-    data: CreatePlanData,
+#[derive(Debug, Clone)]
+struct Candidate {
+    encoded_rid: String,
+    id: RecordId,
+    document: BTreeMap<String, Value>,
 }
 
-#[derive(Debug)]
-enum CreatePlanData {
-    Content(BTreeMap<String, Value>),
-    Set {
-        path: Vec<String>,
-        path_key: String,
-        value: Value,
-    },
-}
-
-#[derive(Debug)]
-struct SelectPlan {
-    table: String,
-    id: Option<RecordIdValue>,
-    filters: Vec<(Vec<String>, String, Value)>,
-}
-
-#[derive(Debug)]
-struct DeletePlan {
-    table: String,
-    id: RecordIdValue,
-}
-
-enum ExecutableStatement {
-    Create(CreatePlan),
-    Select(SelectPlan),
-    Delete(DeletePlan),
-    DefineTable(turso_fastdb_parser::DefineTableStatement),
-    DefineField(turso_fastdb_parser::DefineFieldStatement),
-    DefineIndex(turso_fastdb_parser::DefineIndexStatement),
-}
-
-pub fn run_statement(
+pub(crate) fn run_statement(
     conn: &Connection,
+    execution: &mut ExecutionState,
     statement: Statement,
     source: &str,
-) -> Result<ExecutionResult> {
-    match capability_gate(statement)? {
-        ExecutableStatement::Create(plan) => run_create(conn, plan),
-        ExecutableStatement::Select(plan) => run_select(conn, plan),
-        ExecutableStatement::Delete(plan) => run_delete(conn, plan),
-        ExecutableStatement::DefineTable(statement) => run_define_table(conn, statement, source),
-        ExecutableStatement::DefineField(statement) => run_define_field(conn, statement, source),
-        ExecutableStatement::DefineIndex(statement) => run_define_index(conn, statement, source),
+    params: &Params,
+) -> Result<StatementResult> {
+    if matches!(execution.transaction, TransactionState::Poisoned)
+        && !matches!(statement, Statement::Cancel(_))
+    {
+        return Err(FastDbError::Transaction(
+            "transaction is poisoned; CANCEL is required".into(),
+        ));
+    }
+    if matches!(execution.transaction, TransactionState::Broken) {
+        return Err(FastDbError::Transaction(
+            "connection transaction state is broken; close and reopen it".into(),
+        ));
+    }
+
+    match statement {
+        Statement::Begin(_) => conn.begin_explicit(execution),
+        Statement::Commit(_) => conn.commit_explicit(execution),
+        Statement::Cancel(_) => conn.cancel_explicit(execution),
+        statement => {
+            eval::validate_parameter_references(&statement, params)?;
+            match statement {
+                Statement::Create(statement) => run_create(conn, execution, statement, params),
+                Statement::Select(statement) => run_select(conn, execution, statement, params),
+                Statement::Update(statement) => run_update(conn, execution, statement, params),
+                Statement::Delete(statement) => run_delete(conn, execution, statement, params),
+                Statement::DefineTable(statement) => {
+                    run_define_table(conn, execution, statement, source)
+                }
+                Statement::DefineField(statement) => {
+                    run_define_field(conn, execution, statement, source)
+                }
+                Statement::DefineIndex(statement) => {
+                    run_define_index(conn, execution, statement, source)
+                }
+                Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {
+                    unreachable!("transaction statements were handled above")
+                }
+            }
+        }
     }
 }
 
-fn capability_gate(statement: Statement) -> Result<ExecutableStatement> {
-    let span = statement.span();
-    match statement {
-        Statement::Create(statement) => {
-            if let Some(span) = statement
-                .only
-                .or_else(|| statement.return_clause.map(|value| value.span))
-            {
-                return unsupported(span, "ONLY and RETURN remain deferred to Phase 3");
-            }
-            let (table, id) = target_parts(statement.target)?;
-            let data = match statement.data {
-                CreateData::Content(expression) => {
-                    let expression_span = expression.span;
-                    let Value::Object(object) = constant_value(expression)? else {
-                        return unsupported(
-                            expression_span,
-                            "CREATE CONTENT requires a constant object",
-                        );
-                    };
-                    CreatePlanData::Content(object)
-                }
-                CreateData::Set(mut assignments) if assignments.len() == 1 => {
-                    let assignment = assignments.pop().expect("one assignment checked");
-                    let (path, path_key) = crate::path::parser_path(&assignment.path)?;
-                    if path.first().is_some_and(|segment| segment == "id") {
-                        return Err(FastDbError::Schema(
-                            "top-level field `id` is reserved and cannot be assigned".into(),
-                        ));
-                    }
-                    CreatePlanData::Set {
-                        path,
-                        path_key,
-                        value: constant_value(assignment.value)?,
-                    }
-                }
-                CreateData::Set(assignments) => {
-                    let span = assignments
-                        .first()
-                        .map_or(span, |assignment| assignment.span);
-                    return unsupported(span, "Phase 2 CREATE SET requires exactly one assignment");
-                }
+fn run_create(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::CreateStatement,
+    params: &Params,
+) -> Result<StatementResult> {
+    let (table_name, parsed_id) = target_parts(statement.target)?;
+    let id_value = parsed_id.unwrap_or_else(|| RecordIdValue::Uuid(uuid::Uuid::now_v7()));
+    let id = RecordId::new(table_name.clone(), id_value.clone());
+    let empty = BTreeMap::new();
+    let context = EvalContext {
+        document: &empty,
+        id: &id,
+        params,
+    };
+    let mut document = match &statement.data {
+        CreateData::Content(expression) => {
+            let value = eval::evaluate(expression, &context)?.into_projection();
+            let Value::Object(document) = value else {
+                return Err(FastDbError::Schema(
+                    "CREATE CONTENT must evaluate to an object".into(),
+                ));
             };
-            Ok(ExecutableStatement::Create(CreatePlan { table, id, data }))
+            document
         }
-        Statement::Select(statement) => {
-            if !matches!(statement.projections, ProjectionList::All(_)) {
-                return unsupported(span, "projections remain deferred to Phase 3");
-            }
-            if let Some(span) = statement.only {
-                return unsupported(span, "ONLY remains deferred to Phase 3");
-            }
-            if let Some(order) = statement.order_by.first() {
-                return unsupported(order.span, "ORDER BY remains deferred to Phase 3");
-            }
-            if let Some(limit) = statement.limit {
-                return unsupported(limit.span, "LIMIT remains deferred to Phase 3");
-            }
-            if let Some(start) = statement.start {
-                return unsupported(start.span, "START remains deferred to Phase 3");
-            }
-            let (table, id) = target_parts(statement.target)?;
-            let filters = statement
-                .condition
-                .map(parse_predicates)
-                .transpose()?
-                .unwrap_or_default();
-            Ok(ExecutableStatement::Select(SelectPlan {
-                table,
-                id,
-                filters,
-            }))
+        CreateData::Set(assignments) => {
+            let evaluated = evaluate_assignments(assignments, &context)?;
+            let mut document = BTreeMap::new();
+            apply_assignments(&mut document, evaluated)?;
+            document
         }
-        Statement::Delete(statement) => {
-            if let Some(condition) = statement.condition {
-                return unsupported(condition.span, "DELETE WHERE remains deferred to Phase 3");
-            }
-            if let Some(return_clause) = statement.return_clause {
-                return unsupported(
-                    return_clause.span,
-                    "DELETE RETURN remains deferred to Phase 3",
-                );
-            }
-            let Target::Record(record) = statement.target else {
-                return unsupported(
-                    statement.target.span(),
-                    "Phase 2 DELETE requires one record target",
-                );
-            };
-            let RecordIdPartKind::Bare(id) = record.id.kind else {
-                return unsupported(
-                    record.id.span,
-                    "Phase 2 preserves the bare-ID Phase 0 DELETE shape",
-                );
-            };
-            Ok(ExecutableStatement::Delete(DeletePlan {
-                table: record.table.value,
-                id: RecordIdValue::String(id),
-            }))
+    };
+    reject_stored_id(&document)?;
+    let encoded_rid = encode_rid(&id_value);
+    let table_was_missing = !catalog_for_read(conn, execution)?
+        .snapshot()
+        .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
+
+    let value = with_create_mutation(conn, execution, table_was_missing, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        if !snapshot.tables.contains_key(&table_name) {
+            let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
+            catalog::persist_table(conn, &table)?;
+            conn.check_failpoint(Failpoint::AfterCatalogRow)?;
+            conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
+            conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
+            snapshot.tables.insert(table_name.clone(), table);
         }
-        Statement::DefineTable(statement) => Ok(ExecutableStatement::DefineTable(statement)),
-        Statement::DefineField(statement) => Ok(ExecutableStatement::DefineField(statement)),
-        Statement::DefineIndex(statement) => Ok(ExecutableStatement::DefineIndex(statement)),
-        Statement::Update(statement) => {
-            unsupported(statement.span, "UPDATE remains deferred to Phase 3")
-        }
-        Statement::Begin(statement)
-        | Statement::Commit(statement)
-        | Statement::Cancel(statement) => unsupported(
-            statement.span,
-            "explicit transactions remain deferred to Phase 3",
-        ),
+        let table = snapshot
+            .tables
+            .get(&table_name)
+            .expect("table inserted or already present");
+        schema::validate_document(
+            table.mode == TableMode::Schemafull,
+            &table.fields,
+            &mut document,
+        )?;
+        validate_index_values(table, &document)?;
+        let (insert, bindings) = lower::physical_insert_content_stmt(
+            &table.physical_name,
+            &encoded_rid,
+            &decode::encode_doc(&document)?,
+        )?;
+        let mut prepared = conn.prepare_bound(insert, bindings)?;
+        conn.check_failpoint(Failpoint::AfterRecordPrepare)?;
+        contextual_constraint(
+            prepared.run_ignore_rows().map_err(FastDbError::from),
+            "record ID already exists or violates a declared unique index",
+        )?;
+        conn.check_failpoint(Failpoint::AfterRecordInsert)?;
+        Ok(full_record_value(&id, &document))
+    })?;
+
+    let returned = match statement.return_clause.map(|clause| clause.kind.value) {
+        Some(ReturnKind::None) => None,
+        Some(ReturnKind::Before) => Some(Value::Null),
+        Some(ReturnKind::After) | None => Some(value),
+    };
+    if statement.only.is_some() {
+        Ok(StatementResult::Value(returned.unwrap_or(Value::Null)))
+    } else {
+        Ok(StatementResult::Rows(returned.into_iter().collect()))
     }
+}
+
+fn run_select(
+    conn: &Connection,
+    execution: &ExecutionState,
+    statement: turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<StatementResult> {
+    if let Some(only) = statement.only {
+        if !matches!(statement.target, Target::Record(_)) {
+            return unsupported(only, "SELECT ONLY requires a record target");
+        }
+    }
+    let (table_name, id) = target_parts(statement.target.clone())?;
+    let catalog = catalog_for_read(conn, execution)?;
+    let Some(table) = catalog
+        .snapshot()
+        .and_then(|snapshot| snapshot.tables.get(&table_name))
+    else {
+        return Ok(if statement.only.is_some() {
+            StatementResult::Value(Value::Null)
+        } else {
+            StatementResult::Rows(Vec::new())
+        });
+    };
+    let candidates = read_candidates(
+        conn,
+        table,
+        id.as_ref(),
+        statement.condition.as_ref(),
+        params,
+    )?;
+    let mut matched = Vec::new();
+    for candidate in candidates {
+        if matches_condition(statement.condition.as_ref(), &candidate, params)? {
+            matched.push(candidate);
+        }
+    }
+    let mut candidates = matched;
+
+    if !statement.order_by.is_empty() {
+        let mut keyed = candidates
+            .into_iter()
+            .map(|candidate| {
+                let context = candidate_context(&candidate, params);
+                let keys = statement
+                    .order_by
+                    .iter()
+                    .map(|term| {
+                        eval::evaluate(
+                            &Expr::new(ExprKind::FieldPath(term.path.clone()), term.path.span),
+                            &context,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((candidate, keys))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        keyed.sort_by(|(_, left), (_, right)| {
+            for ((left, right), term) in left.iter().zip(right).zip(&statement.order_by) {
+                let ordering = eval::compare_values(left, right);
+                if ordering != Ordering::Equal {
+                    return match term.direction.value {
+                        turso_fastdb_parser::OrderDirection::Ascending => ordering,
+                        turso_fastdb_parser::OrderDirection::Descending => ordering.reverse(),
+                    };
+                }
+            }
+            Ordering::Equal
+        });
+        candidates = keyed.into_iter().map(|(candidate, _)| candidate).collect();
+    }
+
+    let start = statement.start.as_ref().map_or(0, |value| {
+        usize::try_from(value.value).unwrap_or(usize::MAX)
+    });
+    let limit = statement.limit.as_ref().map_or(usize::MAX, |value| {
+        usize::try_from(value.value).unwrap_or(usize::MAX)
+    });
+    let rows = candidates
+        .into_iter()
+        .skip(start)
+        .take(limit)
+        .map(|candidate| project_candidate(&candidate, &statement.projections, params))
+        .collect::<Result<Vec<_>>>()?;
+    if statement.only.is_some() {
+        Ok(StatementResult::Value(
+            rows.into_iter().next().unwrap_or(Value::Null),
+        ))
+    } else {
+        Ok(StatementResult::Rows(rows))
+    }
+}
+
+fn run_update(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::UpdateStatement,
+    params: &Params,
+) -> Result<StatementResult> {
+    let assignment_paths = statement
+        .assignments
+        .iter()
+        .map(|assignment| assignment_path(&assignment.path))
+        .collect::<Result<Vec<_>>>()?;
+    let (table_name, id) = target_parts(statement.target.clone())?;
+    let updates = data_mutation(conn, execution, || {
+        let catalog = catalog_for_read(conn, execution)?;
+        let Some(table) = catalog
+            .snapshot()
+            .and_then(|snapshot| snapshot.tables.get(&table_name))
+            .cloned()
+        else {
+            return Ok(Vec::new());
+        };
+        let candidates = read_candidates(
+            conn,
+            &table,
+            id.as_ref(),
+            statement.condition.as_ref(),
+            params,
+        )?;
+        let mut updates = Vec::new();
+        for candidate in candidates {
+            if !matches_condition(statement.condition.as_ref(), &candidate, params)? {
+                continue;
+            }
+            let context = candidate_context(&candidate, params);
+            let values = statement
+                .assignments
+                .iter()
+                .map(|assignment| eval::evaluate(&assignment.value, &context))
+                .collect::<Result<Vec<_>>>()?;
+            let mut document = candidate.document.clone();
+            apply_assignments(
+                &mut document,
+                assignment_paths.iter().cloned().zip(values).collect(),
+            )?;
+            reject_stored_id(&document)?;
+            schema::validate_document(
+                table.mode == TableMode::Schemafull,
+                &table.fields,
+                &mut document,
+            )?;
+            validate_index_values(&table, &document)?;
+            updates.push((candidate, document));
+        }
+
+        conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
+        for (candidate, document) in &updates {
+            let (update, bindings) = lower::physical_update_doc_stmt(
+                &table.physical_name,
+                &candidate.encoded_rid,
+                &decode::encode_doc(document)?,
+            )?;
+            contextual_constraint(
+                conn.exec_bound(update, bindings),
+                "UPDATE violates a declared unique index",
+            )?;
+            conn.check_failpoint(Failpoint::AfterUpdateMutation)?;
+        }
+        Ok(updates)
+    })?;
+    if matches!(
+        statement.return_clause.map(|clause| clause.kind.value),
+        Some(ReturnKind::None)
+    ) {
+        return Ok(StatementResult::Rows(Vec::new()));
+    }
+    Ok(StatementResult::Rows(
+        updates
+            .into_iter()
+            .map(|(candidate, document)| full_record_value(&candidate.id, &document))
+            .collect(),
+    ))
+}
+
+fn run_delete(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::DeleteStatement,
+    params: &Params,
+) -> Result<StatementResult> {
+    let (table_name, id) = target_parts(statement.target.clone())?;
+    let deleted = data_mutation(conn, execution, || {
+        let catalog = catalog_for_read(conn, execution)?;
+        let Some(table) = catalog
+            .snapshot()
+            .and_then(|snapshot| snapshot.tables.get(&table_name))
+            .cloned()
+        else {
+            return Ok(Vec::new());
+        };
+        let candidates = read_candidates(
+            conn,
+            &table,
+            id.as_ref(),
+            statement.condition.as_ref(),
+            params,
+        )?;
+        let mut deleted = Vec::new();
+        for candidate in candidates {
+            if matches_condition(statement.condition.as_ref(), &candidate, params)? {
+                deleted.push(candidate);
+            }
+        }
+        conn.check_failpoint(Failpoint::BeforeDeleteMutations)?;
+        for candidate in &deleted {
+            let (delete, bindings) =
+                lower::physical_delete_by_rid_stmt(&table.physical_name, &candidate.encoded_rid)?;
+            conn.exec_bound(delete, bindings)?;
+            conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
+        }
+        Ok(deleted)
+    })?;
+    if statement.return_clause.is_some() {
+        Ok(StatementResult::Rows(
+            deleted
+                .into_iter()
+                .map(|candidate| full_record_value(&candidate.id, &candidate.document))
+                .collect(),
+        ))
+    } else {
+        Ok(StatementResult::Rows(Vec::new()))
+    }
+}
+
+fn evaluate_assignments(
+    assignments: &[turso_fastdb_parser::Assignment],
+    context: &EvalContext<'_>,
+) -> Result<Vec<(Vec<String>, EvalValue)>> {
+    assignments
+        .iter()
+        .map(|assignment| {
+            Ok((
+                assignment_path(&assignment.path)?,
+                eval::evaluate(&assignment.value, context)?,
+            ))
+        })
+        .collect()
+}
+
+fn assignment_path(path: &turso_fastdb_parser::FieldPath) -> Result<Vec<String>> {
+    let (path, _) = crate::path::parser_path(path)?;
+    if path.first().is_some_and(|segment| segment == "id") {
+        return Err(FastDbError::Schema(
+            "top-level field `id` is read-only and cannot be assigned".into(),
+        ));
+    }
+    Ok(path)
+}
+
+fn apply_assignments(
+    document: &mut BTreeMap<String, Value>,
+    assignments: Vec<(Vec<String>, EvalValue)>,
+) -> Result<()> {
+    for (path, value) in assignments {
+        match value {
+            EvalValue::Missing => crate::path::remove_path(document, &path)?,
+            EvalValue::Present(value) => crate::path::set_path(document, &path, value)?,
+        }
+    }
+    Ok(())
+}
+
+fn project_candidate(
+    candidate: &Candidate,
+    projections: &ProjectionList,
+    params: &Params,
+) -> Result<Value> {
+    if matches!(projections, ProjectionList::All(_)) {
+        return Ok(full_record_value(&candidate.id, &candidate.document));
+    }
+    let ProjectionList::Fields(projections) = projections else {
+        unreachable!()
+    };
+    let context = candidate_context(candidate, params);
+    let mut object = BTreeMap::new();
+    for projection in projections {
+        let value = eval::evaluate(
+            &Expr::new(
+                ExprKind::FieldPath(projection.path.clone()),
+                projection.path.span,
+            ),
+            &context,
+        )?
+        .into_projection();
+        if let Some(alias) = &projection.alias {
+            object.insert(alias.value.clone(), value);
+        } else {
+            let path = projection
+                .path
+                .segments
+                .iter()
+                .map(|segment| segment.value.clone())
+                .collect::<Vec<_>>();
+            crate::path::set_path(&mut object, &path, value)?;
+        }
+    }
+    Ok(Value::Object(object))
+}
+
+fn matches_condition(
+    condition: Option<&Expr>,
+    candidate: &Candidate,
+    params: &Params,
+) -> Result<bool> {
+    let Some(condition) = condition else {
+        return Ok(true);
+    };
+    Ok(eval::evaluate(condition, &candidate_context(candidate, params))?.truthy())
+}
+
+fn candidate_context<'a>(candidate: &'a Candidate, params: &'a Params) -> EvalContext<'a> {
+    EvalContext {
+        document: &candidate.document,
+        id: &candidate.id,
+        params,
+    }
+}
+
+fn full_record_value(id: &RecordId, document: &BTreeMap<String, Value>) -> Value {
+    let mut object = document.clone();
+    object.insert("id".into(), Value::RecordId(id.clone()));
+    Value::Object(object)
+}
+
+fn reject_stored_id(document: &BTreeMap<String, Value>) -> Result<()> {
+    if document.contains_key("id") {
+        return Err(FastDbError::Schema(
+            "top-level field `id` is reserved and synthesized from the record ID".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn target_parts(target: Target) -> Result<(String, Option<RecordIdValue>)> {
@@ -201,229 +508,235 @@ fn record_id_value(value: RecordIdPart) -> Result<RecordIdValue> {
     })
 }
 
-fn constant_value(expression: Expr) -> Result<Value> {
-    let span = expression.span;
-    match expression.kind {
-        ExprKind::Null => Ok(Value::Null),
-        ExprKind::Bool(value) => Ok(Value::Bool(value)),
-        ExprKind::Integer(value) => Ok(Value::Integer(value)),
-        ExprKind::Float(value) if value.is_finite() => Ok(Value::Float(value)),
-        ExprKind::Float(_) => Err(FastDbError::Schema("non-finite constant float".into())),
-        ExprKind::String(value) => Ok(Value::Str(value)),
-        ExprKind::Array(values) => values
-            .into_iter()
-            .map(constant_value)
-            .collect::<Result<Vec<_>>>()
-            .map(Value::Array),
-        ExprKind::Object(fields) => {
-            let mut object = BTreeMap::new();
-            for field in fields {
-                let key = match field.key.kind {
-                    turso_fastdb_parser::ObjectKeyKind::Identifier(key)
-                    | turso_fastdb_parser::ObjectKeyKind::String(key) => key,
-                };
-                object.insert(key, constant_value(field.value)?);
-            }
-            Ok(Value::Object(object))
-        }
-        ExprKind::RecordId(record) => Ok(Value::RecordId(RecordId::new(
-            record.table.value,
-            record_id_value(record.id)?,
-        ))),
-        ExprKind::Parenthesized(value) => constant_value(*value),
-        ExprKind::Unary { operator, operand } => {
-            let value = constant_value(*operand)?;
-            match (operator.value, value) {
-                (UnaryOperator::Plus, Value::Integer(value)) => Ok(Value::Integer(value)),
-                (UnaryOperator::Plus, Value::Float(value)) => Ok(Value::Float(value)),
-                (UnaryOperator::Minus, Value::Integer(value)) => value
-                    .checked_neg()
-                    .map(Value::Integer)
-                    .ok_or_else(|| FastDbError::Schema("integer unary negation overflow".into())),
-                (UnaryOperator::Minus, Value::Float(value)) if (-value).is_finite() => {
-                    Ok(Value::Float(-value))
-                }
-                (UnaryOperator::Not, _) => unsupported(
-                    operator.span,
-                    "NOT is not a Phase 2 constant-value operator",
-                ),
-                _ => unsupported(operator.span, "numeric unary signs require a number"),
-            }
-        }
-        ExprKind::Parameter(_) => unsupported(span, "parameters remain deferred to Phase 3"),
-        ExprKind::FieldPath(_) => unsupported(span, "field references are not constant values"),
-        ExprKind::Binary { operator, .. } => unsupported(
-            operator.span,
-            "binary expressions are not constant values in Phase 2",
-        ),
+fn catalog_for_read(conn: &Connection, execution: &ExecutionState) -> Result<CatalogState> {
+    if let TransactionState::Active(active) = &execution.transaction {
+        return Ok(active.catalog.clone());
     }
+    conn.wait_for_catalog()?;
+    conn.coordinator
+        .catalog
+        .read()
+        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+        .clone()
+        .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))
 }
 
-fn parse_predicates(expression: Expr) -> Result<Vec<(Vec<String>, String, Value)>> {
-    match expression.kind {
-        ExprKind::Parenthesized(inner) => parse_predicates(*inner),
+fn read_candidates(
+    conn: &Connection,
+    table: &TableDefinition,
+    id: Option<&RecordIdValue>,
+    condition: Option<&Expr>,
+    params: &Params,
+) -> Result<Vec<Candidate>> {
+    let predicates = condition
+        .map(|condition| safe_pushdowns(condition, params, table))
+        .unwrap_or_default();
+    let encoded_rid = id.map(encode_rid);
+    let (statement, bindings) = lower::physical_select_predicates_stmt(
+        &table.physical_name,
+        encoded_rid.as_deref(),
+        &predicates,
+    )?;
+    conn.collect_rows(statement, bindings)
+        .map_err(stored_value_error)?
+        .into_iter()
+        .map(|row| {
+            let encoded_rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))
+                .map_err(stored_value_error)?;
+            let id = RecordId::new(&table.logical_name, decode_rid(&encoded_rid)?);
+            let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
+                .map_err(stored_value_error)?;
+            let document = decode::parse_doc(&json)?.into_iter().collect();
+            Ok(Candidate {
+                encoded_rid,
+                id,
+                document,
+            })
+        })
+        .collect()
+}
+
+fn safe_pushdowns(
+    expression: &Expr,
+    params: &Params,
+    table: &TableDefinition,
+) -> Vec<(String, PredicateOperator, Value)> {
+    match &expression.kind {
+        ExprKind::Parenthesized(inner) => safe_pushdowns(inner, params, table),
         ExprKind::Binary {
             left,
             operator,
             right,
         } if operator.value == BinaryOperator::And => {
-            let mut predicates = parse_predicates(*left)?;
-            predicates.extend(parse_predicates(*right)?);
-            Ok(predicates)
+            let mut result = safe_pushdowns(left, params, table);
+            result.extend(safe_pushdowns(right, params, table));
+            result
         }
         ExprKind::Binary {
             left,
             operator,
             right,
         } if operator.value == BinaryOperator::Equal => {
-            let ExprKind::FieldPath(path) = left.kind else {
-                return unsupported(left.span, "Phase 2 predicates require path = scalar");
+            scalar_comparison_pushdown(left, right, PredicateOperator::Equal, params, table, false)
+                .or_else(|| {
+                    scalar_comparison_pushdown(
+                        right,
+                        left,
+                        PredicateOperator::Equal,
+                        params,
+                        table,
+                        false,
+                    )
+                })
+                .into_iter()
+                .collect()
+        }
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } if matches!(
+            operator.value,
+            BinaryOperator::Less
+                | BinaryOperator::LessEqual
+                | BinaryOperator::Greater
+                | BinaryOperator::GreaterEqual
+        ) =>
+        {
+            let direct = match operator.value {
+                BinaryOperator::Less => PredicateOperator::Less,
+                BinaryOperator::LessEqual => PredicateOperator::LessEqual,
+                BinaryOperator::Greater => PredicateOperator::Greater,
+                BinaryOperator::GreaterEqual => PredicateOperator::GreaterEqual,
+                _ => unreachable!(),
             };
-            let (segments, key) = crate::path::parser_path(&path)?;
-            let right_span = right.span;
-            let value = constant_value(*right)?;
-            if !value.is_indexable_scalar() {
-                return unsupported(right_span, "Phase 2 predicates require a scalar constant");
-            }
-            Ok(vec![(segments, key, value)])
+            let reversed = match direct {
+                PredicateOperator::Less => PredicateOperator::Greater,
+                PredicateOperator::LessEqual => PredicateOperator::GreaterEqual,
+                PredicateOperator::Greater => PredicateOperator::Less,
+                PredicateOperator::GreaterEqual => PredicateOperator::LessEqual,
+                PredicateOperator::Equal => PredicateOperator::Equal,
+            };
+            scalar_comparison_pushdown(left, right, direct, params, table, true)
+                .or_else(|| scalar_comparison_pushdown(right, left, reversed, params, table, true))
+                .into_iter()
+                .collect()
         }
-        ExprKind::Binary { operator, .. } => unsupported(
-            operator.span,
-            "Phase 2 predicates support only equality joined by AND",
-        ),
-        _ => unsupported(expression.span, "Phase 2 predicates require path = scalar"),
+        _ => Vec::new(),
     }
 }
 
-fn run_create(conn: &Connection, mut plan: CreatePlan) -> Result<ExecutionResult> {
-    let id = plan
-        .id
-        .take()
-        .unwrap_or_else(|| RecordIdValue::Uuid(uuid::Uuid::now_v7()));
-    let mut document = match &plan.data {
-        CreatePlanData::Content(document) => document.clone(),
-        CreatePlanData::Set { path, value, .. } => {
-            let mut document = BTreeMap::new();
-            crate::path::set_path(&mut document, path, value.clone())?;
-            document
-        }
+fn scalar_comparison_pushdown(
+    path: &Expr,
+    value: &Expr,
+    operator: PredicateOperator,
+    params: &Params,
+    table: &TableDefinition,
+    require_declared_type: bool,
+) -> Option<(String, PredicateOperator, Value)> {
+    let ExprKind::FieldPath(path) = &path.kind else {
+        return None;
     };
-    if document.contains_key("id") {
-        return Err(FastDbError::Schema(
-            "top-level field `id` is reserved and synthesized from the record ID".into(),
-        ));
+    if path.segments.first()?.value == "id" {
+        return None;
     }
-    let encoded_rid = encode_rid(&id);
-
-    let record = schema_mutation(conn, |state| {
-        let snapshot = ensure_snapshot(conn, state)?;
-        if !snapshot.tables.contains_key(&plan.table) {
-            let table = catalog::allocate_table(&plan.table, TableMode::Schemaless, None)?;
-            catalog::persist_table(conn, &table)?;
-            conn.check_failpoint(Failpoint::AfterCatalogRow)?;
-            conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
-            conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
-            snapshot.tables.insert(plan.table.clone(), table);
+    let value = scalar_expression_value(value, params)?;
+    if matches!(value, Value::Null) || !value.is_indexable_scalar() {
+        return None;
+    }
+    let (_, path) = crate::path::parser_path(path).ok()?;
+    if require_declared_type {
+        let rule = table.fields.get(&path)?;
+        if !rule.required || !range_type_matches(&rule.ty, &value) {
+            return None;
         }
-        let table = snapshot
-            .tables
-            .get(&plan.table)
-            .expect("table inserted or already present");
-        schema::validate_document(
-            table.mode == TableMode::Schemafull,
-            &table.fields,
-            &mut document,
-        )?;
-        validate_index_values(table, &document)?;
+    }
+    Some((path, operator, value))
+}
 
-        let (insert, bindings) = match &plan.data {
-            CreatePlanData::Content(_) => lower::physical_insert_content_stmt(
-                &table.physical_name,
-                &encoded_rid,
-                &decode::encode_doc(&document)?,
-            )?,
-            CreatePlanData::Set { path_key, path, .. } => {
-                let normalized = crate::path::get_path(&document, path)
-                    .expect("SET path was inserted before validation");
-                let encoded =
-                    serde_json::to_string(&decode::encode_value(normalized)?).map_err(|error| {
-                        FastDbError::Engine(format!("failed to encode SET value: {error}"))
-                    })?;
-                lower::physical_insert_set_stmt(
-                    &table.physical_name,
-                    &encoded_rid,
-                    path_key,
-                    &encoded,
-                )?
-            }
+fn range_type_matches(ty: &FieldType, value: &Value) -> bool {
+    matches!(
+        (ty, value),
+        (FieldType::Bool, Value::Bool(_))
+            | (FieldType::Int, Value::Integer(_))
+            | (FieldType::Float, Value::Float(_))
+            | (FieldType::Number, Value::Integer(_) | Value::Float(_))
+            | (FieldType::String, Value::Str(_))
+    )
+}
+
+fn scalar_expression_value(expression: &Expr, params: &Params) -> Option<Value> {
+    match &expression.kind {
+        ExprKind::Null => Some(Value::Null),
+        ExprKind::Bool(value) => Some(Value::Bool(*value)),
+        ExprKind::Integer(value) => Some(Value::Integer(*value)),
+        ExprKind::Float(value) if value.is_finite() => Some(Value::Float(*value)),
+        ExprKind::String(value) => Some(Value::Str(value.clone())),
+        ExprKind::Parameter(name) => params.get(name).cloned(),
+        ExprKind::Parenthesized(inner) => scalar_expression_value(inner, params),
+        _ => None,
+    }
+}
+
+fn data_mutation<R>(
+    conn: &Connection,
+    execution: &ExecutionState,
+    body: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    if matches!(execution.transaction, TransactionState::Active(_)) {
+        body()
+    } else {
+        conn.with_transaction(body)
+    }
+}
+
+fn with_create_mutation<R>(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    table_was_missing: bool,
+    body: impl FnOnce(&mut CatalogState) -> Result<R>,
+) -> Result<R> {
+    if matches!(execution.transaction, TransactionState::Active(_)) {
+        if table_was_missing {
+            conn.acquire_schema_lease()?;
+        }
+        let TransactionState::Active(active) = &mut execution.transaction else {
+            unreachable!()
         };
-        let mut statement = conn.prepare_bound(insert, bindings)?;
-        conn.check_failpoint(Failpoint::AfterRecordPrepare)?;
-        contextual_constraint(
-            statement.run_ignore_rows().map_err(FastDbError::from),
-            "record ID already exists or violates a declared unique index",
-        )?;
-        conn.check_failpoint(Failpoint::AfterRecordInsert)?;
-        Ok(Record {
-            id: RecordId::new(plan.table.clone(), id.clone()),
-            fields: document.clone().into_iter().collect(),
-        })
-    })?;
-    Ok(ExecutionResult {
-        records: vec![record],
-    })
+        if table_was_missing {
+            active.schema_changed = true;
+        }
+        return body(&mut active.catalog);
+    }
+    conn.wait_for_catalog()?;
+    schema_mutation(conn, body)
 }
 
-fn run_select(conn: &Connection, plan: SelectPlan) -> Result<ExecutionResult> {
-    let state = conn
-        .coordinator
-        .catalog
-        .read()
-        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
-    let Some(snapshot) = state.as_ref().and_then(CatalogState::snapshot) else {
-        return Ok(ExecutionResult { records: vec![] });
-    };
-    let Some(table) = snapshot.tables.get(&plan.table) else {
-        return Ok(ExecutionResult { records: vec![] });
-    };
-    let rid = plan.id.as_ref().map(encode_rid);
-    let filters = plan
-        .filters
-        .iter()
-        .map(|(_, key, value)| (key.clone(), value.clone()))
-        .collect::<Vec<_>>();
-    let (statement, bindings) =
-        lower::physical_select_stmt(&table.physical_name, rid.as_deref(), &filters)?;
-    let records = decode_rows(conn, statement, bindings, &table.logical_name)?;
-    Ok(ExecutionResult { records })
-}
-
-fn run_delete(conn: &Connection, plan: DeletePlan) -> Result<ExecutionResult> {
-    let state = conn
-        .coordinator
-        .catalog
-        .read()
-        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
-    let Some(table) = state
-        .as_ref()
-        .and_then(CatalogState::snapshot)
-        .and_then(|snapshot| snapshot.tables.get(&plan.table))
-    else {
-        return Ok(ExecutionResult { records: vec![] });
-    };
-    let (statement, bindings) =
-        lower::physical_delete_by_rid_stmt(&table.physical_name, &encode_rid(&plan.id))?;
-    conn.exec_bound(statement, bindings)?;
-    Ok(ExecutionResult { records: vec![] })
+fn with_schema_mutation<R>(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    body: impl FnOnce(&mut CatalogState) -> Result<R>,
+) -> Result<R> {
+    if matches!(execution.transaction, TransactionState::Active(_)) {
+        conn.acquire_schema_lease()?;
+        let TransactionState::Active(active) = &mut execution.transaction else {
+            unreachable!()
+        };
+        active.schema_changed = true;
+        return body(&mut active.catalog);
+    }
+    conn.wait_for_catalog()?;
+    schema_mutation(conn, body)
 }
 
 fn run_define_table(
     conn: &Connection,
+    execution: &mut ExecutionState,
     statement: turso_fastdb_parser::DefineTableStatement,
     source: &str,
-) -> Result<ExecutionResult> {
+) -> Result<StatementResult> {
     let definition = source_slice(source, statement.span)?.to_string();
-    schema_mutation(conn, |state| {
+    with_schema_mutation(conn, execution, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
         if snapshot.tables.contains_key(&statement.name.value) {
             return Err(FastDbError::Constraint(format!(
@@ -443,14 +756,15 @@ fn run_define_table(
         snapshot.tables.insert(statement.name.value.clone(), table);
         Ok(())
     })?;
-    Ok(ExecutionResult { records: vec![] })
+    Ok(StatementResult::None)
 }
 
 fn run_define_field(
     conn: &Connection,
+    execution: &mut ExecutionState,
     statement: turso_fastdb_parser::DefineFieldStatement,
     source: &str,
-) -> Result<ExecutionResult> {
+) -> Result<StatementResult> {
     let definition = source_slice(source, statement.span)?.to_string();
     let (path, path_key) = crate::path::parser_path(&statement.path)?;
     if path.first().is_some_and(|segment| segment == "id") {
@@ -466,7 +780,7 @@ fn run_define_field(
         ty,
         definition,
     };
-    schema_mutation(conn, |state| {
+    with_schema_mutation(conn, execution, |state| {
         let snapshot = ready_snapshot_mut(state)?;
         let table = snapshot
             .tables
@@ -505,27 +819,36 @@ fn run_define_field(
         table.fields.insert(path_key.clone(), rule.clone());
         Ok(())
     })?;
-    Ok(ExecutionResult { records: vec![] })
+    Ok(StatementResult::None)
 }
 
 fn run_define_index(
     conn: &Connection,
+    execution: &mut ExecutionState,
     statement: turso_fastdb_parser::DefineIndexStatement,
     source: &str,
-) -> Result<ExecutionResult> {
+) -> Result<StatementResult> {
     let definition = source_slice(source, statement.span)?.to_string();
     let paths = statement
         .fields
         .iter()
         .map(|path| crate::path::parser_path(path).map(|(segments, _)| segments))
         .collect::<Result<Vec<_>>>()?;
+    if paths
+        .iter()
+        .any(|path| path.first().is_some_and(|segment| segment == "id"))
+    {
+        return Err(FastDbError::Schema(
+            "the synthesized `id` path cannot be indexed".into(),
+        ));
+    }
     let index = catalog::allocate_index(
         &statement.name.value,
         paths,
         statement.unique.is_some(),
         definition,
     )?;
-    schema_mutation(conn, |state| {
+    with_schema_mutation(conn, execution, |state| {
         let snapshot = ready_snapshot_mut(state)?;
         let table = snapshot
             .tables
@@ -559,7 +882,7 @@ fn run_define_index(
             .insert(statement.name.value.clone(), index.clone());
         Ok(())
     })?;
-    Ok(ExecutionResult { records: vec![] })
+    Ok(StatementResult::None)
 }
 
 fn schema_mutation<R>(
@@ -686,29 +1009,6 @@ fn index_key(
     Ok(Some(components.join("|")))
 }
 
-fn decode_rows(
-    conn: &Connection,
-    statement: turso_parser::ast::Stmt,
-    bindings: lower::Bindings,
-    table: &str,
-) -> Result<Vec<Record>> {
-    conn.collect_rows(statement, bindings)
-        .map_err(stored_value_error)?
-        .into_iter()
-        .map(|row| {
-            let rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))
-                .map_err(stored_value_error)?;
-            let id = decode_rid(&rid)?;
-            let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
-                .map_err(stored_value_error)?;
-            Ok(Record {
-                id: RecordId::new(table, id),
-                fields: decode::parse_doc(&json)?,
-            })
-        })
-        .collect()
-}
-
 fn source_slice(source: &str, span: Span) -> Result<&str> {
     source
         .get(span.offset..span.end())
@@ -748,4 +1048,37 @@ fn unsupported<T>(span: Span, message: &'static str) -> Result<T> {
     Err(FastDbError::UnsupportedSyntax(
         turso_fastdb_parser::ParseError::unsupported(message, span),
     ))
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn lowered_select_for_explain(
+    conn: &Connection,
+    statement: turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<turso_parser::ast::Stmt> {
+    eval::validate_parameter_references(&Statement::Select(statement.clone()), params)?;
+    let (table_name, id) = target_parts(statement.target)?;
+    conn.wait_for_catalog()?;
+    let catalog = conn
+        .coordinator
+        .catalog
+        .read()
+        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+        .clone()
+        .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
+    let table = catalog
+        .snapshot()
+        .and_then(|snapshot| snapshot.tables.get(&table_name))
+        .ok_or_else(|| FastDbError::Schema(format!("table {table_name:?} is not defined")))?;
+    let predicates = statement
+        .condition
+        .as_ref()
+        .map(|condition| safe_pushdowns(condition, params, table))
+        .unwrap_or_default();
+    lower::physical_select_predicates_stmt(
+        &table.physical_name,
+        id.as_ref().map(encode_rid).as_deref(),
+        &predicates,
+    )
+    .map(|(statement, _)| statement)
 }

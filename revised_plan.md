@@ -1,6 +1,6 @@
 # FastDB MVP Technical Plan and Roadmap
 
-Status: proposed engineering baseline, 2026-08-12
+Status: proposed engineering baseline, cloud track revised 2026-08-13
 
 ## 1. Product Definition
 
@@ -537,14 +537,19 @@ Cloudflare Worker API gateway
                   v
 named container-backed Durable Object per database
   writer coordination | epoch/lease | idempotency | lifecycle
+  bounded authoritative recent recovery journal in DO SQLite
                   |
                   v
 Cloudflare Container running native FastDB/Turso
   query frontend | transaction owner | ephemeral local file/cache
                   |
                   v
-ordered immutable WAL/log fragments in R2
-  sequence | checksum | mutation ID | recovery metadata
+deterministic replay artifact returned to the Durable Object
+  sequence | checksum | mutation ID | result digest
+                  |
+                  v
+verified immutable WAL/log batches in R2
+  contiguous sequence ranges | checksums | recovery metadata
                   |
                   v
 checkpoint / compaction / generation maintenance
@@ -558,18 +563,30 @@ immutable R2 database segments and conditional current manifest
 Apply these Cloudflare-specific boundaries:
 
 - Workers are the public edge and control-plane entry point, not the database process. Their request-local, memory-backed virtual filesystem is not persistent FastDB storage.
-- A database ID deterministically routes to one container-backed Durable Object. The object coordinates the active writer, epoch/fencing token, request idempotency, and container lifecycle. Durable Object SQLite may store small coordination metadata, but it must not replace Turso as FastDB's query/storage engine or become an undocumented second record store.
+- A database ID deterministically routes to one container-backed Durable Object. The object coordinates the active writer, epoch/fencing token, request idempotency, container lifecycle, and a bounded recent recovery journal. SQLite-backed Durable Object storage may be the synchronous durability point for that journal, but it must contain only protocol metadata, bound mutation intents, deterministic replay artifacts, and result/idempotency records. It must not store user documents as a queryable second database or replace Turso as FastDB's query/storage engine.
 - The native Rust FastDB/Turso engine runs in a Cloudflare Container with an ordinary local `.fastdb` file and WAL. Container disks are ephemeral; sleep, eviction, host replacement, and deployment must be treated as routine recovery events.
-- The active local database is a disposable cache reconstructed from an R2 checkpoint generation plus ordered WAL/log fragments. It is never the sole durable copy of an acknowledged commit.
+- The active local database is a disposable cache reconstructed from an R2 checkpoint generation, verified R2 log batches, and any newer committed Durable Object journal tail. It is never the sole durable copy of an acknowledged commit.
 - Do not run the active mutable database directly on an R2 FUSE mount. FUSE may be useful for import, export, or diagnostics, but object-store filesystem semantics and latency are not a substitute for database pager/WAL semantics.
 - Access R2 through Workers bindings/outbound handlers or its S3-compatible API with least-privilege, database-scoped prefixes. Immutable data objects use content-derived or generation/sequence keys; the small current manifest is published conditionally using its prior version/ETag.
 - R2's consistency and conditional operations simplify publication but do not replace transaction ordering or fencing. The Durable Object remains the per-database coordinator, and every manifest/log transition must be independently recoverable.
-- Queues and Workflows may schedule checkpointing, compaction, retention, verification, and garbage collection. Background workers may publish state only while holding a valid generation/epoch fence; delivery retries must be idempotent.
+- Awaiting a Container request or R2 operation can permit other Durable Object events to interleave. The write path must use an explicit per-database queue or concurrency barrier around sequence allocation, Container execution, and journal finalization; correctness must not rely on automatic storage input/output gates alone.
+- The journal is bounded, not an indefinite primary store. Alarms, Queues, or Workflows batch contiguous committed journal ranges into immutable R2 objects, verify publication, advance a fenced archive watermark, and only then delete the corresponding journal prefix. R2 delay or failure applies backpressure before the journal reaches its provider limit; it never causes journal overwrite or acknowledgement from ephemeral state.
+- Queues and Workflows may also schedule checkpointing, compaction, retention, verification, and garbage collection. Background workers may publish state only while holding a valid generation/epoch fence; delivery retries must be idempotent.
 - Do not assume the Worker, Durable Object isolate, and Container are co-located. Measure each hop and use placement features only as optimizations, never correctness requirements.
 
-The initial durable commit candidate is: execute and fsync locally, upload the transaction's immutable physical WAL fragment or independently specified logical mutation batch to R2, conditionally advance the database recovery manifest/high-water mark, and only then acknowledge success. C0 must determine the exact Turso artifact and prove replay, idempotency, crash behavior, and acceptable latency. If R2-per-commit latency or request cost is not viable, stop and redesign the ordered durable-log tier; do not acknowledge from ephemeral disk or silently weaken durability.
+The primary C0 durable-commit candidate is a Durable Object journal with asynchronous R2 packing:
 
-Turso Cloud demonstrates one implementation using local compute caches, S3 Express One Zone for recent durable commits, S3 for checkpointed generations, and cross-database/time batching to amortize object-request cost. FastDB may learn from that public architecture but does not inherit it from the Turso engine fork. Cloudflare R2 is not S3 Express and must be measured on the intended workload. Every required component must be located in audited upstream code, implemented independently, or purchased as an external service with its cost and guarantees recorded.
+1. While holding the database write serialization boundary, durably allocate an epoch, monotonic sequence, and mutation/request ID in SQLite-backed Durable Object storage before asking the Container to mutate state. Bind all generated IDs and other nondeterministic inputs into the intent so retry and replay are deterministic.
+2. Execute and fsync the local FastDB transaction. The Container returns the exact independently specified logical mutation batch or audited physical Turso WAL/sync artifact required to reconstruct the commit, plus its sequence, checksum, and result digest.
+3. Atomically finalize the Durable Object journal entry and idempotency result. Do not acknowledge the client until this durable write is confirmed. If the Container may have advanced but finalization is absent or failed, fence and discard that local generation and reconstruct it before serving another mutation; an unacknowledged local "ghost" commit must never become visible as authoritative state.
+4. Pack contiguous committed entries into substantially larger immutable R2 log objects on a size/time threshold, publish a fenced archive watermark or generation manifest, verify recovery, and delete only the safely archived journal prefix.
+5. Recover by hydrating the latest verified R2 generation, replaying subsequent R2 batches, then replaying the committed Durable Object journal tail. A repeated request returns its stored outcome without applying the mutation twice.
+
+C0 must still determine the exact replay artifact and protocol states from audited Turso facilities. Journal entries must be bounded and chunked within current provider limits, and point-in-time recovery of Durable Object storage is an operational aid rather than the database recovery protocol. Direct per-commit R2 publication remains a measured comparison, not the C1 default. If the Durable Object journal cannot meet latency, throughput, capacity, availability, or recovery gates, stop before paid service and move the authoritative log to the regional multi-tenant fallback below; never acknowledge from ephemeral disk or silently weaken durability.
+
+Turso Cloud publicly describes one implementation using local compute caches, S3 Express One Zone for recent durable commits, S3 for checkpointed generations, and cross-database/time batching to amortize object-request cost. FastDB may learn from that architecture but does not inherit a complete Turso Cloud storage server from the public Turso engine fork. The current public repository exposes useful sync/WAL protocol concepts, not the production multi-tenant cloud data plane. Every required component must therefore be located in audited upstream code, implemented independently, or purchased as an external service with its cost and guarantees recorded.
+
+The fallback is hybrid rather than an all-or-nothing Cloudflare exit: keep the Cloudflare Worker as the global API/auth/routing edge, but route each database to a regional FastDB storage shard that hosts many isolated database files, group-commits across active databases to a low-latency durable log such as S3 Express, caches locally, and checkpoints immutable generations to S3-compatible object storage. This is the closest FastDB analogue to Turso's public design. It is selected only if the Cloudflare-native journal fails its gates because it adds tenant placement, leases/fencing, cross-database group commit, noisy-neighbor control, cache eviction, hot-database movement, metering, and regional operations. Merely changing object-store vendors while retaining one object mutation per logical commit does not fix the economics.
 
 Cloud invariants include:
 
@@ -579,45 +596,53 @@ Cloud invariants include:
 - A compute worker can disappear after acknowledgement without losing the commit.
 - Manifests never expose a partial generation and can recover from an interrupted checkpoint.
 - Local caches are disposable and never the sole durable copy of acknowledged data.
+- The Durable Object journal cannot be truncated until its archived R2 range and restore path are verified; backlog limits trigger admission control before data loss.
 - Restore is continuously exercised, not inferred from object presence.
 - Database deletion, retention, legal hold, and tenant erasure have explicit object-lifecycle semantics.
 
 ### 10.2 Staged cloud delivery
 
+#### August 2026 acceleration rule
+
+Cloud work begins in parallel with the end of Core Phase 3, but it does not broaden or modify the Phase 3 Core contract. This month's deliverable is C0 evidence plus an internal or explicitly invited single-region technical preview, not a production launch, multi-region service, durability SLA, or unlimited public signup.
+
+Parallel work may build the separate Worker gateway, container image, database provisioning, credentials, metering in shadow mode, Durable Object journal, R2 archival path, recovery harness, and a provisional SDK. The cloud adapter consumes the same reviewed FastDB frontend boundary as local use and must not introduce network-only semantics into Core. External charging and durability claims remain blocked until the applicable C0/C1 exit gates pass.
+
 #### Cloud C0 — Architecture and cost feasibility
 
-Run during Core Phases 0–2 without shipping a service:
+Run immediately during the end of Core Phase 3 and Phase 4 without shipping a generally available service:
 
 - Specify global database IDs, log sequence/epoch rules, mutation IDs, and CDC/sync metadata.
 - Determine which Turso sync/log facilities are stable and reusable at the pinned commit.
 - Prototype replay from an immutable WAL/log into a clean `.fastdb` file.
-- Prototype a Worker-to-container-backed-Durable-Object request path without making it a Core dependency.
-- Prove that a native FastDB container can hydrate from an R2 generation, execute a transaction, publish its recovery artifact, lose all local disk, and recover the acknowledged result exactly once.
-- Benchmark R2 PUT/GET/range latency, conditional-manifest publication, Worker-to-Durable-Object-to-Container hops, cold hydration, generation size, checkpoint frequency, cache hit rate, and restore time using realistic document and index workloads.
-- Compare direct R2 commit publication with any audited Cloudflare durable-log alternative. Record limits, availability assumptions, request sizes, batching delay, and failure semantics; do not select by nominal storage price alone.
+- Prototype a Worker-to-container-backed-Durable-Object request path and the bounded SQLite-backed Durable Object recovery journal without making either a Core dependency.
+- Specify and failure-test every state in the intent, Container execution, journal finalization, R2 packing, archive-watermark, checkpoint, truncation, and reconstruction protocol. Inject loss after every transition, including Durable Object restart and Container commit before journal finalization.
+- Prove that a native FastDB container can hydrate from an R2 generation plus R2 batches and a Durable Object journal tail, execute a transaction, lose all local disk, and recover every acknowledged result exactly once.
+- Benchmark journal intent/finalization, Worker-to-Durable-Object-to-Container hops, R2 PUT/GET/range latency, conditional-manifest publication, batch size/delay, archive backlog, cold hydration, generation size, checkpoint frequency, cache hit rate, and restore time using realistic document and index workloads.
+- Compare the Durable Object journal with direct per-commit R2 publication and a small regional multi-tenant group-commit prototype. Record limits, availability assumptions, request sizes, maximum batching delay, physical object operations per logical transaction, and failure semantics; do not select by nominal storage price alone.
 - Define an object-store portability contract and run the recovery prototype against R2 plus at least one S3-compatible local test service.
 - Build a cost model for each proposed price tier and at low, expected, and adversarial utilization.
 - Have counsel finalize the BSL 1.1 parameters, Additional Use Grant, commercial terms, Change License/Date, CLA, and trademark policy before accepting material external contributions.
 
-Exit gate: a reviewed design demonstrates a recoverable log and database-generation model after forced Container loss, proves fencing and idempotent retry behavior, identifies all non-upstream and Cloudflare-specific components, and shows a credible path to positive unit economics. Failure does not block the local MVP; it blocks cloud implementation, pricing, and durability promises.
+Exit gate: a reviewed design demonstrates a recoverable journal/log and database-generation model after forced Durable Object and Container loss, proves fencing and idempotent retry behavior, bounds journal backlog under R2 outage, identifies all non-upstream and Cloudflare-specific components, and shows a credible path to positive unit economics. Failure does not block the local MVP; it blocks external charging, durability promises, and advancement beyond a disposable internal prototype.
 
-#### Cloud C1 — Paid Cloudflare native-container alpha
+#### Cloud C1 — Private Cloudflare native-container alpha
 
-Start after the local MVP:
+Start after the C0 protocol gate and Core Phase 3; it may overlap Phase 4 behind an invite-only boundary:
 
 - Add a Cloudflare Worker HTTP/WebSocket gateway, authentication, organizations/projects, database provisioning, SDK credentials, quotas, and usage metering.
-- Route each database to a named container-backed Durable Object that owns writer fencing, request idempotency, and the native FastDB Container lifecycle.
-- Run authoritative query execution in the native Container. Hydrate the complete checkpoint eagerly on cold start, use ephemeral local disk while active, synchronously publish ordered WAL/log recovery artifacts to R2 before acknowledgement, and periodically publish versioned whole-file or coarse-generation checkpoints.
+- Route each database to a named container-backed Durable Object that owns writer fencing, request idempotency, the bounded authoritative recent recovery journal, archive watermark, and native FastDB Container lifecycle.
+- Run authoritative query execution in the native Container. Hydrate the complete checkpoint and log tail eagerly on cold start, use ephemeral local disk while active, durably finalize the ordered recovery artifact in Durable Object SQLite before acknowledgement, asynchronously pack verified contiguous ranges into R2, and periodically publish versioned whole-file or coarse-generation checkpoints.
 - Keep the C1 recovery format simple and auditable. Lazy page/segment fetch, shared cache infrastructure, branching, and aggressive multi-tenant packing belong to C2.
 - Add encrypted transport, encryption/key policy at rest, tenant isolation tests, rate limits, audit events, observability, and automated restore drills.
-- Offer a small invite-only paid alpha or card-backed capped trial; do not offer a permanent free cloud tier.
+- Begin with shadow billing and a hard account/resource allowlist. A small paid alpha or card-backed capped trial may start only after recovery, isolation, metering, spend-cap, legal, and support gates pass; do not offer a permanent free cloud tier.
 
-Exit gate: measured metering reconciles with engine activity; every acknowledged commit survives forced Container termination and reconstruction from R2; restore drills meet the documented objective; tenant isolation tests pass; and no workload can exceed its configured spend/resource cap.
+Exit gate: measured metering reconciles with engine activity; every acknowledged commit survives forced Durable Object restart and Container termination and reconstruction from the verified R2 state plus journal tail; archive backlog remains bounded under fault injection; restore drills meet the documented objective; tenant isolation tests pass; and no workload can exceed its configured spend/resource cap.
 
 #### Cloud C2 — Lazy-segment, multi-tenant Cloudflare beta
 
 - Replace eager whole-database hydration with immutable chunked R2 generations, range/segment reads, bounded disposable local caches, background checkpointing, branching, and point-in-time restore.
-- Keep recent ordered log data and historical generations in separately tunable R2 layouts, or introduce another durable log tier only if C0/C1 measurements and recovery tests justify it.
+- Keep recent ordered log data and historical generations in separately tunable R2 layouts. Retain the Durable Object journal as a bounded tail or replace it with the approved regional durable-log tier only if C0/C1 measurements and recovery tests justify the migration.
 - Add safe container packing or sharding only after database-level isolation, resource accounting, and noisy-neighbor tests pass; one shared user-supplied tenant predicate is never the isolation boundary.
 - Validate Worker, Durable Object, and Container eviction; fencing; replay; duplicate delivery; checkpoint interruption; stale cache; R2 throttling/unavailability; and documented regional failure scenarios.
 - Add opt-in overages, budget alerts, hard limits, and published usage definitions.
@@ -646,6 +671,19 @@ Meter at least:
 - Backup/restore retention beyond the included window.
 
 Track the underlying cost of Worker and Durable Object requests/CPU/duration/storage, Container vCPU/memory/ephemeral disk and idle time, R2 bytes/operations, cache hydration, historical versions, egress, Queues/Workflows, observability, backups, payment processing, and support. Before public launch, the p95 customer using all included quota must have positive variable gross margin; target at least 70% blended gross margin at expected scale, and reduce quotas or raise prices rather than subsidizing structurally unprofitable usage.
+
+The cost worksheet must expose physical amplification rather than assuming one provider operation per customer request:
+
+```text
+DO requests / logical request
+DO rows read and written / committed transaction
+R2 Class A and Class B operations / committed transaction
+durable and checkpoint bytes / logical written byte
+Container active milliseconds and cold-start milliseconds / request
+restore bytes and operations / database wake
+```
+
+The economic design target is `R2 Class A operations / committed transaction << 1` at sustained load, achieved by packing contiguous journal ranges and amortizing manifest/checkpoint publication. A low-traffic database may flush a small batch after a bounded delay, but the service-wide p95 mix must still pass the tier margin gate. Every cost report records the provider price sheet and date used because request prices, included allowances, rounding, and platform limits change. One R2 log object plus one manifest mutation per logical commit is a rejected steady-state design for the proposed low-price tiers unless new measurements prove otherwise.
 
 Commercial rules:
 
@@ -706,9 +744,12 @@ Maintain a separate, non-gating competitive suite against the pinned SurrealDB b
 | Experimental Turso index/extension APIs change | Keep providers internal and versioned; do not freeze a public ABI | Upstream API churn breaks reopen, maintenance, or planner matching |
 | Object presence is mistaken for database durability | Specify ordered log, manifest, fencing, and acknowledgement invariants; inject failures | An acknowledged commit is absent or duplicated after worker loss/replay |
 | Cloudflare Worker storage is treated as a persistent filesystem | Keep Workers at the edge; run native FastDB in a Container and persist recovery artifacts before acknowledgement | Any correctness path depends on Worker `/tmp`, isolate lifetime, or in-memory state |
-| Ephemeral Container disk is mistaken for durable state | Reconstruct from R2 generations plus ordered logs; continuously kill Containers in recovery tests | Forced sleep/replacement loses an acknowledged commit or requires manual repair |
-| R2 latency or request cost makes per-commit durability uneconomic | Measure realistic PUT, conditional-manifest, batching, and restore workloads in C0/C1 | Approved tier latency or p95 variable-margin gate fails |
+| Ephemeral Container disk is mistaken for durable state | Reconstruct from R2 generations, archived log batches, and the committed Durable Object journal tail; continuously kill Containers in recovery tests | Forced sleep/replacement loses an acknowledged commit or requires manual repair |
+| Container state and the Durable Object journal diverge across their non-atomic boundary | Durable intent and sequence allocation, deterministic replay artifacts, idempotency records, explicit write serialization, and fencing/discard of any unjournaled local generation | An unacknowledged local commit becomes visible, an acknowledged result lacks replay data, or retry duplicates a mutation |
+| Durable Object journal backlog exceeds capacity during R2 delay or outage | Size/time batching, archive watermark, alarms, backlog metrics, reserved headroom, and admission control before provider limits | The service must overwrite/truncate unarchived entries, cannot recover within the target, or availability assumptions make bounded backlog impractical |
+| R2 latency or request cost makes the archive path uneconomic | Acknowledge against the bounded Durable Object journal, pack contiguous ranges, amortize manifests/checkpoints, and measure physical operations per logical commit | Approved tier latency or p95 variable-margin gate fails despite batching |
 | Cloudflare coupling prevents portability or recovery outside the service | FastDB-owned object-store/recovery interfaces; S3-compatible test backend; no platform types in Core | A database cannot be exported/recovered without proprietary live control-plane state |
+| Cloudflare-native durability cannot meet the service gates | Preserve the Worker edge and move the data plane to independently implemented regional multi-tenant FastDB shards with group commit and S3-compatible generations | Durable Object latency, throughput, capacity, regional behavior, or economics fail C0/C1 after the protocol is optimized |
 | Multi-tenant isolation fails | Database-level tenancy, hard resource limits, adversarial tests, least-privilege credentials | Cross-tenant access, noisy-neighbor outage, or unbounded resource use |
 | The `$5` tier is structurally unprofitable | Bounded credits, no included manual support, C0/C1 cost model | p95 included usage has non-positive variable gross margin |
 | Licensing discourages adoption or weakens the hosted strategy | BSL Additional Use Grant, eventual Apache-2.0 conversion, practical examples, CLA, and legal review | Target users reject terms, cloud restriction is ambiguous, or copyright ownership prevents dual licensing |
@@ -718,10 +759,10 @@ Any failed Phase 0 feasibility assumption is a design decision point, not permis
 ## 13. Post-MVP Roadmap
 
 1. **Complete CRUD compatibility.** Add additional return modes, `TIMEOUT`, richer update operators, `UPSERT`, `INSERT`, functions, more value and record-ID forms, and broader `SELECT` clauses. Extend the matrix one independently tested feature at a time.
-2. **Paid Cloudflare C1 alpha.** Add the Worker HTTP/WebSocket gateway, authentication, a JavaScript SDK, database provisioning, resource limits, and metering. Route each database through a container-backed Durable Object to a native FastDB Container, publish ordered recovery artifacts to R2 before acknowledgement, and continuously test reconstruction after ephemeral-disk loss. Preserve embedded semantics as the reference behavior.
+2. **Private Cloudflare C1 alpha.** Add the Worker HTTP/WebSocket gateway, authentication, a JavaScript SDK, database provisioning, resource limits, and shadow metering. Route each database through a container-backed Durable Object to a native FastDB Container, finalize deterministic recovery artifacts in the bounded Durable Object journal before acknowledgement, pack verified ranges into R2, and continuously test reconstruction after ephemeral-disk loss. Preserve embedded semantics as the reference behavior; charge customers only after the C0/C1 gates pass.
 3. **Experimental Turso Sync.** Reuse Turso's explicit `push`, `pull`, and `checkpoint` model where the audit shows it is suitable. Treat the remote database as the source of truth. Push local row-level logical mutations and pull physical updates. Follow Turso's Last-Push-Wins default, with an optional documented transform/conflict hook. Initially require schema and index definitions to execute against the authoritative remote; offline writes apply only to record data. Do not design independent peer-to-peer replication.
 4. **Specialized extensions.** Stabilize the internal type/function/index-provider contract, then add exact vector operations, production vector indexing when available, full-text indexing, and a focused geospatial subset. Do not claim PostGIS compatibility from PostgreSQL syntax compatibility.
-5. **Cloudflare object-backed C2/C3.** Add lazy R2 segments, bounded disposable Container caches, immutable generations, carefully bounded durable-log batching, branching, point-in-time restore, automated placement/maintenance, and production object-native durability after all section 10 gates pass.
+5. **Object-backed C2/C3 or regional-shard fallback.** Add lazy R2 segments, bounded disposable Container caches, immutable generations, carefully bounded durable-log batching, branching, point-in-time restore, automated placement/maintenance, and production object-native durability after all section 10 gates pass. If the Cloudflare-native journal fails its gates, retain the Cloudflare edge while moving authoritative execution to regional multi-tenant shards with cross-database group commit; do not attempt a complete Turso Cloud clone before that focused prototype passes.
 6. **Graph records.** Introduce typed relation tables with `in` and `out` record IDs, `RELATE`, adjacency indexes, and traversal syntax. Define storage and query-plan gates before claiming graph support.
 7. **Additional models and services.** Add direct key-value APIs, live queries/changefeeds, permissions, namespaces, WASM/mobile targets, partial sync, backups, and broader managed-cloud tooling.
 8. **Concurrent writes.** Enable MVCC or multiprocess modes only after the corresponding Turso facilities are stable and pass FastDB's correctness, recovery, and performance workload suite.
@@ -730,16 +771,16 @@ Each roadmap item must update the format policy and `COMPAT.md`, add migration/r
 
 ## 14. Immediate Engineering Checklist
 
-1. Make this workspace the FastDB monorepo based on the Turso fork history; record the pinned commit and configure the Turso `upstream` remote.
-2. Have counsel finalize BSL 1.1 plus the Additional Use Grant, commercial license, Apache-2.0 Change License/Date, CLA, trademark policy, and inherited Turso notices.
-3. Audit the pinned Rust binding, PostgreSQL frontend, JSONB/vector functions, expression and experimental index-method support, WAL/sync facilities, and failure-injection facilities.
-4. Write the clean-room policy and initial `COMPAT.md` feature IDs.
-5. Specify catalog DDL, format version 1, opaque-name encoding, canonical record-ID encoding, JSON-path encoding, and future hidden typed-column metadata.
-6. Specify Cloud C0 database identity, log epoch/sequence, mutation identity, replay, generation, object-store portability, Durable Object fencing, ephemeral Container recovery, and conditional R2 manifest requirements without making Core network-dependent.
-7. Implement the Phase 0 vertical slice without changing Turso core.
-8. Run reopen, rollback, explain-plan, native-baseline, log-replay, and initial cloud-cost benchmarks.
-9. Build the first `$5 / $20 / $100` cost model with bounded hypothetical quotas; do not publish quotas yet.
-10. Record the Core and Cloud feasibility decisions and only then commit to the Phase 1 crate layout and public API details.
+1. Finish the authoritative Core Phase 3 gates and report without adding Cloudflare types, network behavior, or cloud recovery semantics to the Phase 3 crates.
+2. Create a separate Cloud C0 design note that specifies database identity, epoch/sequence allocation, mutation identity, deterministic inputs, journal state transitions, idempotent results, archive watermark, checkpoint/generation format, fencing, backlog admission control, and deletion/retention semantics.
+3. Audit the pinned Turso WAL, sync, CDC, checkpoint, and failure-injection facilities and select the smallest replay artifact that can reconstruct a committed FastDB transaction without generated SQL or copied Turso Cloud implementation details.
+4. Build a minimal native Container server around the reviewed FastDB frontend boundary, then deploy a single-region Worker -> named container-backed Durable Object -> Container path with authentication limited to internal/invited accounts.
+5. Implement the SQLite-backed Durable Object journal prototype with explicit write serialization across Container and R2 I/O. Keep user documents exclusively in FastDB; store only bounded intents, recovery artifacts, protocol state, and idempotency outcomes in the journal.
+6. Implement R2 packing of contiguous journal ranges, fenced archive-watermark/manifest publication, a simple full or coarse checkpoint, verified truncation, and reconstruction from generation + R2 batches + Durable Object tail.
+7. Run deterministic failure injection after every protocol transition, including Durable Object restart, Container commit before journal finalization, lost responses, duplicated requests, interrupted R2 upload, stale fences, archive publication before truncation, R2 outage, journal-pressure admission control, and total Container disk loss.
+8. Benchmark warm and cold end-to-end latency, Worker/DO/Container hops, DO duration and row operations, Container active time, R2 operations per logical commit, packing delay, backlog growth, hydration, checkpointing, and randomized restore. Preserve raw measurements and the dated provider price sheets.
+9. Build the first `$5 / $20 / $100` cost model with bounded hypothetical quotas and shadow metering. Do not publish quotas or enable uncapped overages until p95 included usage has positive variable gross margin and the spend cap is proven.
+10. Compare the Cloudflare-native result with a focused regional multi-tenant group-commit prototype. Proceed to an invite-only C1 preview only if recovery, isolation, latency, backlog, and economics gates pass; otherwise retain the Worker edge and adopt the regional-shard data plane before taking payment.
 
 ## 15. References
 
@@ -765,11 +806,16 @@ Each roadmap item must update the format policy and `COMPAT.md`, add migration/r
 - [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
 - [Workers virtual filesystem](https://developers.cloudflare.com/workers/runtime-apis/nodejs/fs/)
 - [Cloudflare Durable Objects](https://developers.cloudflare.com/durable-objects/)
+- [Durable Object input/output gates and concurrency rules](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/)
 - [SQLite-backed Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+- [Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/)
+- [Durable Object pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)
 - [Cloudflare Containers architecture and ephemeral disk](https://developers.cloudflare.com/containers/platform-details/architecture/)
 - [Cloudflare Container connections to Workers bindings](https://developers.cloudflare.com/containers/platform-details/workers-connections/)
+- [Cloudflare Containers pricing](https://developers.cloudflare.com/containers/pricing/)
 - [Cloudflare R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)
 - [Cloudflare R2 conditional Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
+- [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/)
 
 ### SurrealDB behavioral reference
 

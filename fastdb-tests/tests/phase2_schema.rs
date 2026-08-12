@@ -51,7 +51,7 @@ fn p2_schema_004_schemaless_enforces_declared_fields_but_allows_extras() {
     let result = conn
         .execute("CREATE flexible:one CONTENT { age: 42, extra: { any: true } }")
         .unwrap();
-    assert_eq!(result.records.len(), 1);
+    assert_eq!(result.legacy_records().len(), 1);
     assert_eq!(
         conn.execute("CREATE flexible:two CONTENT { age: 'wrong', extra: 1 }")
             .unwrap_err()
@@ -76,8 +76,9 @@ fn p2_schema_005_new_field_validates_and_normalizes_existing_rows_atomically() {
     conn.execute("DEFINE FIELD score ON metric TYPE float")
         .unwrap();
     let selected = conn.execute("SELECT * FROM metric:one").unwrap();
+    let records = selected.legacy_records();
     assert_eq!(
-        selected.records[0]
+        records[0]
             .fields
             .iter()
             .find(|(key, _)| key == "score")
