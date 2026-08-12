@@ -109,7 +109,7 @@ Build `EXPLAIN QUERY PLAN` around the same translated AST produced by `physical_
 
 ### P2 — The parser accepts quoted record IDs outside the declared compatibility subset
 
-The compatibility matrix says Phase 0 supports only a bare record ID (`table:identifier`) and that all other grammar is unsupported. [`parse_record_id_part`](fastdb-parser/src/parser.rs#L244), however, accepts both `TokenKind::Ident` and `TokenKind::String`. Inputs such as `CREATE person:'tobie' SET name = 'Tobie'` therefore parse and execute even though `COMPAT.md` does not declare or test that surface.
+The compatibility matrix says Phase 0 supports only a bare record ID (`table:identifier`) and that all other grammar is unsupported. [`parse_record_id_part`](fastdb-parser/src/parser.rs#L244), however, accepts both `TokenKind::Ident` and `TokenKind::String`. Inputs such as `CREATE person:'tracy' SET name = 'Tracy'` therefore parse and execute even though `COMPAT.md` does not declare or test that surface.
 
 This violates the clean-room rule that every accepted syntax shape be deliberately specified and independently tested.
 

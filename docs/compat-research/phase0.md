@@ -23,10 +23,10 @@ Behavioral reference: **SurrealDB `v3.1.5`**.
 
 - Source kind: public-doc
 - Reference: CREATE docs (above); Record IDs docs (above).
-- Input: `CREATE person:tobie SET name = 'Tobie';`
+- Input: `CREATE person:tracy SET name = 'Tracy';`
 - Expected output: the created record, logically
-  `{ id: person:tobie, name: 'Tobie' }`. The `id` is a typed record id,
-  not the string `"person:tobie"`.
+  `{ id: person:tracy, name: 'Tracy' }`. The `id` is a typed record id,
+  not the string `"person:tracy"`.
 - Notes (Phase 0 narrowing): SurrealQL permits many `CREATE` forms
   (omitted id with generated values, `CONTENT`, `RETURN`, `ONLY`, multiple
   assignments, non-string values). Phase 0 implements only the single
@@ -38,7 +38,7 @@ Behavioral reference: **SurrealDB `v3.1.5`**.
 
 - Source kind: public-doc
 - Reference: SELECT docs (above).
-- Input: `SELECT * FROM person:tobie;`
+- Input: `SELECT * FROM person:tracy;`
 - Expected output: an array containing the record when present, otherwise
   an empty array. Record targets return arrays by default.
 - FastDB behavior: implemented (Phase 0 slice).
@@ -48,7 +48,7 @@ Behavioral reference: **SurrealDB `v3.1.5`**.
 
 - Source kind: public-doc
 - Reference: SELECT docs (above).
-- Input: `SELECT * FROM person WHERE name = 'Tobie';`
+- Input: `SELECT * FROM person WHERE name = 'Tracy';`
 - Expected output: an array of matching records.
 - Notes (Phase 0 narrowing): SurrealQL permits arbitrary `WHERE`
   expressions, projections, ordering, and pagination. Phase 0 implements
@@ -62,7 +62,7 @@ Behavioral reference: **SurrealDB `v3.1.5`**.
 
 - Source kind: public-doc
 - Reference: DELETE docs (above).
-- Input: `DELETE person:tobie;`
+- Input: `DELETE person:tracy;`
 - Expected output: the default empty result. A missing record target
   succeeds with zero deleted records.
 - FastDB behavior: implemented (Phase 0 slice).

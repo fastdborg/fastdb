@@ -1,563 +1,1315 @@
-//! Phase 0 recursive-descent parser.
-//!
-//! Parses exactly the four supported forms and rejects everything else,
-//! including recognized-but-unimplemented clauses, with explicit errors.
-//! Multiple statements are rejected. The parser depends only on this
-//! crate; it never touches Turso AST.
+//! Recursive-descent statement parser and Pratt expression parser.
 
 use crate::ast::*;
-use crate::error::{ParseError, ParseErrorKind};
-use crate::lexer::{tokenize, Token, TokenKind};
+use crate::error::{LimitKind, ParseError, ParseErrorKind};
+use crate::lexer::{tokenize_with_limits, Token, TokenKind};
+use crate::ParserLimits;
+use std::mem::discriminant;
 
-/// Parse one Phase 0 statement from `input`.
-///
-/// `input` must be valid UTF-8 (`&str`). Callers receiving bytes must
-/// validate UTF-8 before calling; invalid UTF-8 is outside this API's
-/// contract and is reported by the caller, not synthesized here.
-pub fn parse(input: &str) -> Result<Statement, ParseError> {
-    let tokens = tokenize(input)?;
-    let mut p = Parser { tokens, pos: 0 };
-    p.parse_statement()
+pub fn parse(input: &str) -> Result<Script, ParseError> {
+    parse_with_limits(input, &ParserLimits::default())
 }
 
-struct Parser {
-    tokens: Vec<Token>,
-    pos: usize,
+pub fn parse_with_limits(input: &str, limits: &ParserLimits) -> Result<Script, ParseError> {
+    let tokens = tokenize_with_limits(input, limits)?;
+    Parser::new(tokens, limits).parse_script()
 }
 
-impl Parser {
-    fn peek_kind(&self) -> &TokenKind {
-        &self.tokens[self.pos].kind
-    }
-    fn peek_span(&self) -> Span {
-        self.tokens[self.pos].span
-    }
-    fn prev_end(&self) -> usize {
-        self.tokens[self.pos - 1].span.end()
-    }
-    fn at_end(&self) -> bool {
-        matches!(self.tokens[self.pos].kind, TokenKind::Eof)
-    }
-    fn eat(&mut self, kind: &TokenKind) -> bool {
-        if &self.tokens[self.pos].kind == kind {
-            self.pos += 1;
-            true
-        } else {
-            false
-        }
-    }
-    fn expect(&mut self, kind: &TokenKind, name: &'static str) -> Result<(), ParseError> {
-        if &self.tokens[self.pos].kind == kind {
-            self.pos += 1;
-            Ok(())
-        } else {
-            Err(self.unexpected(name))
-        }
-    }
-    fn unexpected(&self, expected: &'static str) -> ParseError {
-        let tok = &self.tokens[self.pos];
-        ParseError::new(
-            ParseErrorKind::UnexpectedToken {
-                expected,
-                found: tok.kind.describe(),
+pub fn parse_one(input: &str) -> Result<Statement, ParseError> {
+    parse_one_with_limits(input, &ParserLimits::default())
+}
+
+pub fn parse_one_with_limits(input: &str, limits: &ParserLimits) -> Result<Statement, ParseError> {
+    let script = parse_with_limits(input, limits)?;
+    if script.statements.len() != 1 {
+        let span = script
+            .statements
+            .get(1)
+            .map_or(script.span, Statement::span);
+        return Err(ParseError::new(
+            ParseErrorKind::MultipleStatements {
+                count: script.statements.len(),
             },
-            tok.span,
-        )
+            span,
+        ));
     }
-    fn expect_ident(&mut self, what: &'static str) -> Result<Identifier, ParseError> {
-        let tok = &self.tokens[self.pos];
-        if let TokenKind::Ident(s) = &tok.kind {
-            let id = Identifier::new(s.clone(), tok.span);
-            self.pos += 1;
-            Ok(id)
-        } else {
-            Err(self.unexpected(what))
+    Ok(script
+        .statements
+        .into_iter()
+        .next()
+        .expect("length checked above"))
+}
+
+struct Parser<'a> {
+    tokens: Vec<Token>,
+    position: usize,
+    limits: &'a ParserLimits,
+    depth: usize,
+}
+
+impl<'a> Parser<'a> {
+    fn new(tokens: Vec<Token>, limits: &'a ParserLimits) -> Self {
+        Self {
+            tokens,
+            position: 0,
+            limits,
+            depth: 0,
         }
     }
-    fn parse_string_lit(&mut self) -> Result<StringLit, ParseError> {
-        let tok = &self.tokens[self.pos];
-        match &tok.kind {
-            TokenKind::String(s) => {
-                let lit = StringLit {
-                    value: s.clone(),
-                    span: tok.span,
-                };
-                self.pos += 1;
-                Ok(lit)
+
+    fn parse_script(mut self) -> Result<Script, ParseError> {
+        if self.at(&TokenKind::Eof) {
+            return Err(ParseError::new(
+                ParseErrorKind::EmptyInput,
+                self.peek().span,
+            ));
+        }
+        if self.at(&TokenKind::Semicolon) {
+            return Err(ParseError::new(
+                ParseErrorKind::EmptyStatement,
+                self.peek().span,
+            ));
+        }
+
+        let mut statements = Vec::new();
+        loop {
+            let statement = self.parse_statement()?;
+            self.check_collection_limit(
+                statements.len() + 1,
+                LimitKind::Statements,
+                self.limits.max_statements,
+                statement.span(),
+            )?;
+            statements.push(statement);
+
+            if self.at(&TokenKind::Eof) {
+                break;
             }
-            _ => Err(self.unexpected("a string literal")),
+            if !self.eat(&TokenKind::Semicolon) {
+                return Err(ParseError::new(
+                    ParseErrorKind::MissingStatementSeparator,
+                    self.peek().span,
+                ));
+            }
+            if self.at(&TokenKind::Eof) {
+                break;
+            }
+            if self.at(&TokenKind::Semicolon) {
+                return Err(ParseError::new(
+                    ParseErrorKind::EmptyStatement,
+                    self.peek().span,
+                ));
+            }
         }
+
+        let first = statements.first().expect("empty input rejected").span();
+        let last = statements.last().expect("empty input rejected").span();
+        Ok(Script {
+            statements,
+            span: first.union(last),
+        })
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
-        if matches!(self.peek_kind(), TokenKind::Eof) {
-            return Err(ParseError::new(
-                ParseErrorKind::EmptyInput,
-                self.peek_span(),
-            ));
-        }
-        let stmt = match self.peek_kind() {
+        let statement = match &self.peek().kind {
             TokenKind::Create => Statement::Create(self.parse_create()?),
             TokenKind::Select => Statement::Select(self.parse_select()?),
+            TokenKind::Update => Statement::Update(self.parse_update()?),
             TokenKind::Delete => Statement::Delete(self.parse_delete()?),
-            _ => return Err(self.unexpected("a statement keyword (CREATE, SELECT, or DELETE)")),
+            TokenKind::Define => self.parse_define()?,
+            TokenKind::Begin => Statement::Begin(self.parse_transaction(TokenKind::Begin)?),
+            TokenKind::Commit => Statement::Commit(self.parse_transaction(TokenKind::Commit)?),
+            TokenKind::Cancel => Statement::Cancel(self.parse_transaction(TokenKind::Cancel)?),
+            kind if is_unsupported_statement(kind) => {
+                return Err(ParseError::unsupported(
+                    "statement family is outside the FastDB MVP",
+                    self.peek().span,
+                ));
+            }
+            TokenKind::Eof => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof {
+                        expected: "a statement",
+                    },
+                    self.peek().span,
+                ));
+            }
+            _ => return Err(self.unexpected("a statement keyword")),
         };
-        // One optional trailing semicolon.
-        self.eat(&TokenKind::Semicolon);
-        if !self.at_end() {
-            let is_stmt_kw = matches!(
-                self.peek_kind(),
-                TokenKind::Create | TokenKind::Select | TokenKind::Delete
-            );
-            return Err(ParseError::new(
-                if is_stmt_kw {
-                    ParseErrorKind::MultipleStatements
-                } else {
-                    ParseErrorKind::TrailingTokens
-                },
-                self.peek_span(),
-            ));
-        }
-        Ok(stmt)
+        self.ensure_statement_boundary()?;
+        Ok(statement)
     }
 
     fn parse_create(&mut self) -> Result<CreateStatement, ParseError> {
-        let start = self.peek_span().offset;
-        self.expect(&TokenKind::Create, "keyword CREATE")?;
+        let start = self.expect(&TokenKind::Create, "keyword CREATE")?.span;
+        let only = self.take(&TokenKind::Only).map(|token| token.span);
         let target = self.parse_target()?;
-        if target.id.is_none() {
-            return Err(unsupported(
-                "CREATE without an explicit record id (generated ids are not supported)",
-                target.span,
+        let data = if self.eat(&TokenKind::Content) {
+            CreateData::Content(self.parse_expression()?)
+        } else if self.eat(&TokenKind::Set) {
+            CreateData::Set(self.parse_assignments()?)
+        } else {
+            return Err(self.unexpected("keyword CONTENT or SET"));
+        };
+        if self.at(&TokenKind::Content) || self.at(&TokenKind::Set) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "CONTENT and SET are mutually exclusive",
+                },
+                self.peek().span,
             ));
         }
-        self.expect(&TokenKind::Set, "keyword SET")?;
-        let assignment = self.parse_assignment()?;
-        let span = Span::new(start, self.prev_end() - start);
+        let return_clause = if self.eat(&TokenKind::Return) {
+            Some(self.parse_return_clause(ReturnContext::Create)?)
+        } else {
+            None
+        };
+        if self.at(&TokenKind::Return) {
+            return Err(self.duplicate_clause("RETURN"));
+        }
+        let end = self.previous_end();
         Ok(CreateStatement {
-            span,
+            span: Span::new(start.offset, end - start.offset),
+            only,
             target,
-            assignment,
+            data,
+            return_clause,
         })
-    }
-
-    fn parse_assignment(&mut self) -> Result<Assignment, ParseError> {
-        let field = self.expect_ident("a field name")?;
-        self.expect(&TokenKind::Eq, "'='")?;
-        let value = self.parse_string_lit()?;
-        let span = field.span.union(value.span);
-        // Phase 0 supports exactly one assignment; a comma means more follow.
-        if matches!(self.peek_kind(), TokenKind::Comma) {
-            return Err(unsupported(
-                "multiple SET assignments are not supported",
-                self.peek_span(),
-            ));
-        }
-        Ok(Assignment { span, field, value })
     }
 
     fn parse_select(&mut self) -> Result<SelectStatement, ParseError> {
-        let start = self.peek_span().offset;
-        self.expect(&TokenKind::Select, "keyword SELECT")?;
-        self.expect(&TokenKind::Star, "'*' (field projection is not supported)")?;
+        let start = self.expect(&TokenKind::Select, "keyword SELECT")?.span;
+        let projections = self.parse_projections()?;
         self.expect(&TokenKind::From, "keyword FROM")?;
+        let only = self.take(&TokenKind::Only).map(|token| token.span);
         let target = self.parse_target()?;
-        let filter = if self.eat(&TokenKind::Where) {
-            Some(self.parse_predicate()?)
+        let condition = if self.eat(&TokenKind::Where) {
+            Some(self.parse_expression()?)
         } else {
             None
         };
-        // Enforce the two supported SELECT shapes.
-        match (&target.id, &filter) {
-            (Some(_), Some(f)) => {
-                let span = match f {
-                    Predicate::StringEquals { span, .. } => *span,
-                };
-                return Err(unsupported(
-                    "a record-id SELECT combined with a WHERE filter is not supported",
-                    span,
-                ));
-            }
-            (None, None) => {
-                return Err(unsupported(
-                    "SELECT without a record id or WHERE filter is not supported",
-                    target.span,
-                ))
-            }
-            _ => {}
+        let order_by = if self.eat(&TokenKind::Order) {
+            self.expect(&TokenKind::By, "keyword BY after ORDER")?;
+            self.parse_order_by()?
+        } else {
+            Vec::new()
+        };
+        let limit = if self.eat(&TokenKind::Limit) {
+            Some(self.parse_nonnegative_integer()?)
+        } else {
+            None
+        };
+        let start_value = if self.eat(&TokenKind::Start) {
+            Some(self.parse_nonnegative_integer()?)
+        } else {
+            None
+        };
+
+        if self.at(&TokenKind::Where) {
+            return Err(if condition.is_some() {
+                self.duplicate_clause("WHERE")
+            } else {
+                self.out_of_order_clause("WHERE")
+            });
         }
-        let span = Span::new(start, self.prev_end() - start);
+        if self.at(&TokenKind::Order) {
+            return Err(if order_by.is_empty() {
+                self.out_of_order_clause("ORDER BY")
+            } else {
+                self.duplicate_clause("ORDER BY")
+            });
+        }
+        if self.at(&TokenKind::Limit) {
+            return Err(if limit.is_some() {
+                self.duplicate_clause("LIMIT")
+            } else {
+                self.out_of_order_clause("LIMIT")
+            });
+        }
+        if self.at(&TokenKind::Start) {
+            return Err(if start_value.is_some() {
+                self.duplicate_clause("START")
+            } else {
+                self.out_of_order_clause("START")
+            });
+        }
+
+        let end = self.previous_end();
         Ok(SelectStatement {
-            span,
+            span: Span::new(start.offset, end - start.offset),
+            projections,
+            only,
             target,
-            filter,
+            condition,
+            order_by,
+            limit,
+            start: start_value,
         })
     }
 
-    fn parse_predicate(&mut self) -> Result<Predicate, ParseError> {
-        let start = self.peek_span().offset;
-        let field = self.expect_ident("a field name")?;
-        self.expect(&TokenKind::Eq, "'='")?;
-        let value = self.parse_string_lit()?;
-        let span = Span::new(start, self.prev_end() - start);
-        Ok(Predicate::StringEquals { span, field, value })
-    }
-
-    fn parse_delete(&mut self) -> Result<DeleteStatement, ParseError> {
-        let start = self.peek_span().offset;
-        self.expect(&TokenKind::Delete, "keyword DELETE")?;
-        if matches!(self.peek_kind(), TokenKind::From) {
-            return Err(unsupported(
-                "DELETE FROM is not supported (use `DELETE <table>:<id>`)",
-                self.peek_span(),
+    fn parse_update(&mut self) -> Result<UpdateStatement, ParseError> {
+        let start = self.expect(&TokenKind::Update, "keyword UPDATE")?.span;
+        if self.at(&TokenKind::Only) {
+            return Err(ParseError::unsupported(
+                "UPDATE ONLY is outside the MVP grammar",
+                self.peek().span,
             ));
         }
         let target = self.parse_target()?;
-        if target.id.is_none() {
-            return Err(unsupported(
-                "DELETE without an explicit record id is not supported",
-                target.span,
+        if matches!(
+            self.peek().kind,
+            TokenKind::Content
+                | TokenKind::Merge
+                | TokenKind::Patch
+                | TokenKind::Replace
+                | TokenKind::Unset
+        ) {
+            return Err(ParseError::unsupported(
+                "only UPDATE ... SET is in the MVP grammar",
+                self.peek().span,
             ));
         }
-        if matches!(self.peek_kind(), TokenKind::Where) {
-            return Err(unsupported(
-                "DELETE with a WHERE clause is not supported",
-                self.peek_span(),
-            ));
-        }
-        let span = Span::new(start, self.prev_end() - start);
-        Ok(DeleteStatement { span, target })
-    }
-
-    fn parse_target(&mut self) -> Result<RecordTarget, ParseError> {
-        let table = self.expect_ident("a table name")?;
-        let start = table.span.offset;
-        let id = if self.eat(&TokenKind::Colon) {
-            Some(self.parse_record_id_part()?)
+        self.expect(&TokenKind::Set, "keyword SET")?;
+        let assignments = self.parse_assignments()?;
+        let condition = if self.eat(&TokenKind::Where) {
+            Some(self.parse_expression()?)
         } else {
             None
         };
-        let span = Span::new(start, self.prev_end() - start);
-        Ok(RecordTarget { span, table, id })
+        let return_clause = if self.eat(&TokenKind::Return) {
+            Some(self.parse_return_clause(ReturnContext::Update)?)
+        } else {
+            None
+        };
+        if self.at(&TokenKind::Where) {
+            return Err(if condition.is_some() {
+                self.duplicate_clause("WHERE")
+            } else {
+                self.out_of_order_clause("WHERE")
+            });
+        }
+        if self.at(&TokenKind::Return) {
+            return Err(self.duplicate_clause("RETURN"));
+        }
+        let end = self.previous_end();
+        Ok(UpdateStatement {
+            span: Span::new(start.offset, end - start.offset),
+            target,
+            assignments,
+            condition,
+            return_clause,
+        })
     }
 
-    /// Phase 0 supports only a bare-identifier record id (`table:identifier`).
-    /// A quoted string id is not part of the declared compatibility subset
-    /// (`COMPAT.md` `RID-STR`) and is rejected here.
-    fn parse_record_id_part(&mut self) -> Result<RecordIdPart, ParseError> {
-        let tok = &self.tokens[self.pos];
-        match &tok.kind {
-            TokenKind::Ident(s) => {
-                let part = RecordIdPart {
-                    value: s.clone(),
-                    span: tok.span,
-                };
-                self.pos += 1;
-                Ok(part)
-            }
-            TokenKind::String(_) => Err(unsupported(
-                "quoted record ids are not supported (use a bare identifier)",
-                tok.span,
+    fn parse_delete(&mut self) -> Result<DeleteStatement, ParseError> {
+        let start = self.expect(&TokenKind::Delete, "keyword DELETE")?.span;
+        if self.at(&TokenKind::From) || self.at(&TokenKind::Only) {
+            return Err(ParseError::unsupported(
+                "DELETE FROM and DELETE ONLY are outside the MVP grammar",
+                self.peek().span,
+            ));
+        }
+        let target = self.parse_target()?;
+        let condition = if self.eat(&TokenKind::Where) {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+        let return_clause = if self.eat(&TokenKind::Return) {
+            Some(self.parse_return_clause(ReturnContext::Delete)?)
+        } else {
+            None
+        };
+        if self.at(&TokenKind::Where) {
+            return Err(if condition.is_some() {
+                self.duplicate_clause("WHERE")
+            } else {
+                self.out_of_order_clause("WHERE")
+            });
+        }
+        if self.at(&TokenKind::Return) {
+            return Err(self.duplicate_clause("RETURN"));
+        }
+        let end = self.previous_end();
+        Ok(DeleteStatement {
+            span: Span::new(start.offset, end - start.offset),
+            target,
+            condition,
+            return_clause,
+        })
+    }
+
+    fn parse_define(&mut self) -> Result<Statement, ParseError> {
+        let start = self.expect(&TokenKind::Define, "keyword DEFINE")?.span;
+        match &self.peek().kind {
+            TokenKind::Table => Ok(Statement::DefineTable(self.parse_define_table(start)?)),
+            TokenKind::Field => Ok(Statement::DefineField(self.parse_define_field(start)?)),
+            TokenKind::Index => Ok(Statement::DefineIndex(self.parse_define_index(start)?)),
+            _ => Err(ParseError::unsupported(
+                "only DEFINE TABLE, DEFINE FIELD, and DEFINE INDEX are in the MVP grammar",
+                self.peek().span,
             )),
-            _ => Err(self.unexpected("a record id (a bare identifier)")),
-        }
-    }
-}
-
-fn unsupported(what: &'static str, span: Span) -> ParseError {
-    ParseError::new(ParseErrorKind::UnsupportedSyntax { what }, span)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ast::Statement;
-
-    fn unsupported_kind(e: &ParseError) -> &'static str {
-        match &e.kind {
-            ParseErrorKind::UnsupportedSyntax { what } => what,
-            _ => panic!("expected UnsupportedSyntax, got {:?}", e.kind),
         }
     }
 
-    #[test]
-    fn parse_create_exact() {
-        //        CREATE person:tobie SET name = 'Tobie';
-        let s = "CREATE person:tobie SET name = 'Tobie';";
-        let stmt = parse(s).unwrap();
-        let Statement::Create(c) = stmt else {
-            panic!("expected Create");
+    fn parse_define_table(&mut self, start: Span) -> Result<DefineTableStatement, ParseError> {
+        self.expect(&TokenKind::Table, "keyword TABLE")?;
+        let name = self.expect_identifier("a table name")?;
+        let mode_token = self.advance().clone();
+        let mode = match mode_token.kind {
+            TokenKind::Schemaless => TableMode::Schemaless,
+            TokenKind::Schemafull => TableMode::Schemafull,
+            _ => return Err(self.unexpected_at(&mode_token, "SCHEMALESS or SCHEMAFULL")),
         };
-        assert_eq!(c.target.table.value, "person");
-        assert_eq!(c.target.table.span, Span::new(7, 6)); // "person"
-        let id = c.target.id.expect("id present");
-        assert_eq!(id.value, "tobie");
-        assert_eq!(id.span, Span::new(14, 5)); // "tobie"
-        assert_eq!(c.assignment.field.value, "name");
-        assert_eq!(c.assignment.value.value, "Tobie");
-        assert_eq!(c.span, Span::new(0, s.len() - 1)); // excludes ';'
+        Ok(DefineTableStatement {
+            span: Span::new(start.offset, mode_token.span.end() - start.offset),
+            name,
+            mode: Spanned::new(mode, mode_token.span),
+        })
     }
 
-    #[test]
-    fn parse_select_record_exact() {
-        let s = "SELECT * FROM person:tobie";
-        let stmt = parse(s).unwrap();
-        let Statement::Select(sel) = stmt else {
-            panic!("expected Select");
-        };
-        assert_eq!(sel.target.table.value, "person");
-        assert_eq!(sel.target.id.as_ref().unwrap().value, "tobie");
-        assert!(sel.filter.is_none());
+    fn parse_define_field(&mut self, start: Span) -> Result<DefineFieldStatement, ParseError> {
+        self.expect(&TokenKind::Field, "keyword FIELD")?;
+        let path = self.parse_field_path()?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("a table name")?;
+        self.expect(&TokenKind::Type, "keyword TYPE")?;
+        let ty = self.parse_schema_type()?;
+        Ok(DefineFieldStatement {
+            span: Span::new(start.offset, ty.span.end() - start.offset),
+            path,
+            table_keyword,
+            table,
+            ty,
+        })
     }
 
-    #[test]
-    fn parse_select_filter_exact() {
-        let s = "SELECT * FROM person WHERE name = 'Tobie'";
-        let stmt = parse(s).unwrap();
-        let Statement::Select(sel) = stmt else {
-            panic!("expected Select");
+    fn parse_define_index(&mut self, start: Span) -> Result<DefineIndexStatement, ParseError> {
+        self.expect(&TokenKind::Index, "keyword INDEX")?;
+        let name = self.expect_identifier("an index name")?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("a table name")?;
+        self.expect(&TokenKind::Fields, "keyword FIELDS")?;
+        let mut fields = vec![self.parse_field_path()?];
+        while self.eat(&TokenKind::Comma) {
+            let field = self.parse_field_path()?;
+            self.check_element_count(fields.len() + 1, field.span)?;
+            fields.push(field);
+        }
+        let unique = self.take(&TokenKind::Unique).map(|token| token.span);
+        let end = unique.map_or_else(|| fields.last().expect("one field").span.end(), Span::end);
+        Ok(DefineIndexStatement {
+            span: Span::new(start.offset, end - start.offset),
+            name,
+            table_keyword,
+            table,
+            fields,
+            unique,
+        })
+    }
+
+    fn parse_transaction(
+        &mut self,
+        keyword: TokenKind,
+    ) -> Result<TransactionStatement, ParseError> {
+        let token = self.expect(&keyword, "transaction statement")?;
+        if self.at(&TokenKind::Transaction) {
+            return Err(ParseError::unsupported(
+                "the optional TRANSACTION suffix is outside the fixed MVP grammar",
+                self.peek().span,
+            ));
+        }
+        Ok(TransactionStatement { span: token.span })
+    }
+
+    fn parse_target(&mut self) -> Result<Target, ParseError> {
+        let table = self.expect_identifier("a table name")?;
+        if !self.eat(&TokenKind::Colon) {
+            return Ok(Target::Table(TableTarget {
+                span: table.span,
+                name: table,
+            }));
+        }
+        let id = self.parse_record_id_part()?;
+        let span = table.span.union(id.span);
+        Ok(Target::Record(RecordId { span, table, id }))
+    }
+
+    fn parse_record_id_part(&mut self) -> Result<RecordIdPart, ParseError> {
+        let token = self.peek().clone();
+        match token.kind {
+            TokenKind::Ident(value) => {
+                self.position += 1;
+                Ok(RecordIdPart {
+                    span: token.span,
+                    kind: RecordIdPartKind::Bare(value),
+                })
+            }
+            TokenKind::QuotedIdent(value) => {
+                self.position += 1;
+                Ok(RecordIdPart {
+                    span: token.span,
+                    kind: RecordIdPartKind::Quoted(value),
+                })
+            }
+            TokenKind::Number(value) => {
+                self.position += 1;
+                let integer = parse_signed_integer(&value, 1, token.span)?;
+                Ok(RecordIdPart {
+                    span: token.span,
+                    kind: RecordIdPartKind::Integer(integer),
+                })
+            }
+            TokenKind::Plus | TokenKind::Minus => {
+                self.position += 1;
+                let sign = if matches!(token.kind, TokenKind::Minus) {
+                    -1
+                } else {
+                    1
+                };
+                let number = self.peek().clone();
+                let TokenKind::Number(value) = number.kind else {
+                    return Err(self.unexpected("an integer record-ID component"));
+                };
+                self.position += 1;
+                let span = token.span.union(number.span);
+                let integer = parse_signed_integer(&value, sign, span)?;
+                Ok(RecordIdPart {
+                    span,
+                    kind: RecordIdPartKind::Integer(integer),
+                })
+            }
+            TokenKind::String(_) => Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "record-ID text uses backticks, not string quotes",
+                },
+                token.span,
+            )),
+            TokenKind::Eof => Err(ParseError::new(
+                ParseErrorKind::UnexpectedEof {
+                    expected: "a record-ID component",
+                },
+                token.span,
+            )),
+            _ => Err(self.unexpected("a bare, backtick-quoted, or integer record-ID component")),
+        }
+    }
+
+    fn parse_assignments(&mut self) -> Result<Vec<Assignment>, ParseError> {
+        let mut assignments = vec![self.parse_assignment()?];
+        while self.eat(&TokenKind::Comma) {
+            let assignment = self.parse_assignment()?;
+            self.check_element_count(assignments.len() + 1, assignment.span)?;
+            assignments.push(assignment);
+        }
+        Ok(assignments)
+    }
+
+    fn parse_assignment(&mut self) -> Result<Assignment, ParseError> {
+        let path = self.parse_field_path()?;
+        self.expect(&TokenKind::Equal, "'='")?;
+        let value = self.parse_expression()?;
+        Ok(Assignment {
+            span: path.span.union(value.span),
+            path,
+            value,
+        })
+    }
+
+    fn parse_projections(&mut self) -> Result<ProjectionList, ParseError> {
+        if let Some(star) = self.take(&TokenKind::Star) {
+            if self.at(&TokenKind::Comma) {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "'*' cannot be mixed with named projections",
+                    },
+                    self.peek().span,
+                ));
+            }
+            return Ok(ProjectionList::All(star.span));
+        }
+        let mut fields = vec![self.parse_projection()?];
+        while self.eat(&TokenKind::Comma) {
+            if self.at(&TokenKind::Star) {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "'*' cannot be mixed with named projections",
+                    },
+                    self.peek().span,
+                ));
+            }
+            let projection = self.parse_projection()?;
+            self.check_element_count(fields.len() + 1, projection.span)?;
+            fields.push(projection);
+        }
+        Ok(ProjectionList::Fields(fields))
+    }
+
+    fn parse_projection(&mut self) -> Result<Projection, ParseError> {
+        let path = self.parse_field_path()?;
+        let alias = if self.eat(&TokenKind::As) {
+            Some(self.expect_identifier("an alias")?)
+        } else {
+            None
         };
-        assert_eq!(sel.target.table.value, "person");
-        assert!(sel.target.id.is_none());
-        match sel.filter.unwrap() {
-            Predicate::StringEquals { field, value, .. } => {
-                assert_eq!(field.value, "name");
-                assert_eq!(value.value, "Tobie");
+        let span = alias
+            .as_ref()
+            .map_or(path.span, |alias| path.span.union(alias.span));
+        Ok(Projection { span, path, alias })
+    }
+
+    fn parse_order_by(&mut self) -> Result<Vec<OrderBy>, ParseError> {
+        let mut terms = Vec::new();
+        loop {
+            let path = self.parse_field_path()?;
+            let direction = if let Some(token) = self.take(&TokenKind::Asc) {
+                Spanned::new(OrderDirection::Ascending, token.span)
+            } else if let Some(token) = self.take(&TokenKind::Desc) {
+                Spanned::new(OrderDirection::Descending, token.span)
+            } else {
+                Spanned::new(OrderDirection::Ascending, Span::new(path.span.end(), 0))
+            };
+            let span = path.span.union(direction.span);
+            self.check_element_count(terms.len() + 1, span)?;
+            terms.push(OrderBy {
+                span,
+                path,
+                direction,
+            });
+            if !self.eat(&TokenKind::Comma) {
+                return Ok(terms);
             }
         }
     }
 
-    #[test]
-    fn parse_delete_exact() {
-        let s = "DELETE person:tobie";
-        let stmt = parse(s).unwrap();
-        let Statement::Delete(d) = stmt else {
-            panic!("expected Delete");
+    fn parse_return_clause(&mut self, context: ReturnContext) -> Result<ReturnClause, ParseError> {
+        let return_span = self.tokens[self.position - 1].span;
+        let token = self.advance().clone();
+        let kind = match token.kind {
+            TokenKind::After if context != ReturnContext::Delete => ReturnKind::After,
+            TokenKind::None if context != ReturnContext::Delete => ReturnKind::None,
+            TokenKind::Before if context != ReturnContext::Update => ReturnKind::Before,
+            TokenKind::Eof => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof {
+                        expected: context.expected_returns(),
+                    },
+                    token.span,
+                ));
+            }
+            _ => return Err(self.unexpected_at(&token, context.expected_returns())),
         };
-        assert_eq!(d.target.table.value, "person");
-        assert_eq!(d.target.id.as_ref().unwrap().value, "tobie");
+        Ok(ReturnClause {
+            span: return_span.union(token.span),
+            kind: Spanned::new(kind, token.span),
+        })
     }
 
-    #[test]
-    fn case_insensitive_keywords_preserve_ident_text() {
-        let s = "create Person:Tobie set Name = 'value'";
-        let stmt = parse(s).unwrap();
-        let Statement::Create(c) = stmt else {
-            panic!("expected Create");
+    fn parse_nonnegative_integer(&mut self) -> Result<NonnegativeInteger, ParseError> {
+        if self.at(&TokenKind::Minus) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidNumber {
+                    literal: "negative integer".into(),
+                    reason: "LIMIT and START require a nonnegative integer",
+                },
+                self.peek().span,
+            ));
+        }
+        let plus = self.take(&TokenKind::Plus).map(|token| token.span);
+        let token = self.peek().clone();
+        let TokenKind::Number(value) = &token.kind else {
+            return Err(self.unexpected("a nonnegative integer"));
         };
-        // Keywords matched case-insensitively; identifiers retain text.
-        assert_eq!(c.target.table.value, "Person");
-        assert_eq!(c.target.id.unwrap().value, "Tobie");
-        assert_eq!(c.assignment.field.value, "Name");
+        if value.contains(['.', 'e', 'E']) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidNumber {
+                    literal: value.clone(),
+                    reason: "LIMIT and START do not accept floats or exponents",
+                },
+                token.span,
+            ));
+        }
+        let parsed = value.parse::<u64>().map_err(|_| {
+            ParseError::new(
+                ParseErrorKind::InvalidNumber {
+                    literal: value.clone(),
+                    reason: "integer is outside the supported signed 64-bit range",
+                },
+                token.span,
+            )
+        })?;
+        if parsed > i64::MAX as u64 {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidNumber {
+                    literal: value.clone(),
+                    reason: "integer is outside the supported signed 64-bit range",
+                },
+                token.span,
+            ));
+        }
+        self.position += 1;
+        let span = plus.map_or(token.span, |plus| plus.union(token.span));
+        Ok(NonnegativeInteger {
+            value: parsed,
+            span,
+        })
     }
 
-    #[test]
-    fn unicode_identifier_retained() {
-        let s = "CREATE café:naïve SET flavor = 'good'";
-        let stmt = parse(s).unwrap();
-        let Statement::Create(c) = stmt else {
-            panic!("expected Create");
+    fn parse_schema_type(&mut self) -> Result<SchemaType, ParseError> {
+        let token = self.advance().clone();
+        let kind = match token.kind {
+            TokenKind::BoolType => SchemaTypeKind::Bool,
+            TokenKind::IntType => SchemaTypeKind::Int,
+            TokenKind::FloatType => SchemaTypeKind::Float,
+            TokenKind::NumberType => SchemaTypeKind::Number,
+            TokenKind::StringType => SchemaTypeKind::String,
+            TokenKind::ObjectType => SchemaTypeKind::Object,
+            TokenKind::ArrayType => SchemaTypeKind::Array,
+            TokenKind::RecordType => SchemaTypeKind::Record,
+            TokenKind::OptionType => {
+                self.expect(&TokenKind::Less, "'<' after option")?;
+                self.enter_depth(token.span)?;
+                let inner_result = self.parse_schema_type();
+                self.leave_depth();
+                let inner = inner_result?;
+                let close = self.expect(&TokenKind::Greater, "'>' after option type")?;
+                return Ok(SchemaType {
+                    span: token.span.union(close.span),
+                    kind: SchemaTypeKind::Option(Box::new(inner)),
+                });
+            }
+            TokenKind::Eof => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof {
+                        expected: "a schema type",
+                    },
+                    token.span,
+                ));
+            }
+            _ => return Err(self.unexpected_at(&token, "a schema type")),
         };
-        assert_eq!(c.target.table.value, "café");
-        assert_eq!(c.target.id.unwrap().value, "naïve");
+        Ok(SchemaType {
+            span: token.span,
+            kind,
+        })
     }
 
-    #[test]
-    fn whitespace_around_punctuation() {
-        let s = "CREATE   person : tobie  SET  name  =  'Tobie' ;";
-        let stmt = parse(s).unwrap();
-        let Statement::Create(c) = stmt else {
-            panic!("expected Create");
-        };
-        assert_eq!(c.target.id.unwrap().value, "tobie");
-        assert_eq!(c.assignment.value.value, "Tobie");
+    fn parse_expression(&mut self) -> Result<Expr, ParseError> {
+        self.parse_expression_bp(0)
     }
 
-    #[test]
-    fn string_with_escaped_quote() {
-        // 'O''Brien' decodes to O'Brien; backslash is literal.
-        let s = r"CREATE p:x SET n = 'O''Brien\n'";
-        let stmt = parse(s).unwrap();
-        let Statement::Create(c) = stmt else {
-            panic!("expected Create");
-        };
-        assert_eq!(c.assignment.value.value, "O'Brien\\n");
+    fn parse_expression_bp(&mut self, minimum_binding_power: u8) -> Result<Expr, ParseError> {
+        let mut left = self.parse_prefix_expression()?;
+        loop {
+            if self.at(&TokenKind::LeftBracket) {
+                return Err(ParseError::unsupported(
+                    "array indexing is outside the MVP expression grammar",
+                    self.peek().span,
+                ));
+            }
+            if let TokenKind::UnsupportedOperator(operator) = self.peek().kind {
+                return Err(ParseError::unsupported(
+                    excluded_operator_description(operator),
+                    self.peek().span,
+                ));
+            }
+            if let TokenKind::Ident(value) = &self.peek().kind {
+                if is_excluded_comparison(value) {
+                    return Err(ParseError::unsupported(
+                        "comparison operator is outside the MVP expression grammar",
+                        self.peek().span,
+                    ));
+                }
+            }
+            let Some((operator, left_bp, right_bp)) = binary_binding_power(&self.peek().kind)
+            else {
+                break;
+            };
+            if left_bp < minimum_binding_power {
+                break;
+            }
+            let token = self.advance().clone();
+            let right = self.parse_expression_bp(right_bp)?;
+            let span = left.span.union(right.span);
+            left = Expr::new(
+                ExprKind::Binary {
+                    left: Box::new(left),
+                    operator: Spanned::new(operator, token.span),
+                    right: Box::new(right),
+                },
+                span,
+            );
+        }
+        Ok(left)
     }
 
-    #[test]
-    fn semicolon_and_quote_inside_string_are_data() {
-        // The value contains a semicolon and a quote; it must be one value
-        // and there must be no second statement.
-        let s = "CREATE p:x SET n = 'a;''b'";
-        let stmt = parse(s).unwrap();
-        let Statement::Create(c) = stmt else {
-            panic!("expected Create");
-        };
-        assert_eq!(c.assignment.value.value, "a;'b");
+    fn parse_prefix_expression(&mut self) -> Result<Expr, ParseError> {
+        let token = self.peek().clone();
+        match token.kind {
+            TokenKind::Not | TokenKind::Plus | TokenKind::Minus => {
+                self.position += 1;
+                if matches!(token.kind, TokenKind::Minus) {
+                    if let TokenKind::Number(value) = &self.peek().kind {
+                        if !value.contains(['.', 'e', 'E']) && value == "9223372036854775808" {
+                            let number_span = self.advance().span;
+                            return Ok(Expr::new(
+                                ExprKind::Integer(i64::MIN),
+                                token.span.union(number_span),
+                            ));
+                        }
+                    }
+                }
+                self.enter_depth(token.span)?;
+                let operand_result = self.parse_expression_bp(13);
+                self.leave_depth();
+                let operand = operand_result?;
+                let operator = match token.kind {
+                    TokenKind::Not => UnaryOperator::Not,
+                    TokenKind::Plus => UnaryOperator::Plus,
+                    TokenKind::Minus => UnaryOperator::Minus,
+                    _ => unreachable!(),
+                };
+                let span = token.span.union(operand.span);
+                Ok(Expr::new(
+                    ExprKind::Unary {
+                        operator: Spanned::new(operator, token.span),
+                        operand: Box::new(operand),
+                    },
+                    span,
+                ))
+            }
+            TokenKind::Null => {
+                self.position += 1;
+                Ok(Expr::new(ExprKind::Null, token.span))
+            }
+            TokenKind::True | TokenKind::False => {
+                self.position += 1;
+                Ok(Expr::new(
+                    ExprKind::Bool(matches!(token.kind, TokenKind::True)),
+                    token.span,
+                ))
+            }
+            TokenKind::Number(value) => {
+                self.position += 1;
+                parse_number_expression(value, token.span)
+            }
+            TokenKind::String(value) => {
+                self.position += 1;
+                Ok(Expr::new(ExprKind::String(value), token.span))
+            }
+            TokenKind::Parameter(value) => {
+                self.position += 1;
+                Ok(Expr::new(ExprKind::Parameter(value), token.span))
+            }
+            TokenKind::Ident(_) => self.parse_identifier_expression(),
+            TokenKind::LeftParen => self.parse_parenthesized_expression(),
+            TokenKind::LeftBracket => self.parse_array_expression(),
+            TokenKind::LeftBrace => self.parse_object_expression(),
+            TokenKind::Less => Err(ParseError::unsupported(
+                "casts are outside the MVP expression grammar",
+                token.span,
+            )),
+            TokenKind::Select => Err(ParseError::unsupported(
+                "subqueries are outside the MVP expression grammar",
+                token.span,
+            )),
+            TokenKind::UnsupportedOperator(operator) => Err(ParseError::unsupported(
+                excluded_operator_description(operator),
+                token.span,
+            )),
+            TokenKind::Eof => Err(ParseError::new(
+                ParseErrorKind::UnexpectedEof {
+                    expected: "an expression",
+                },
+                token.span,
+            )),
+            _ => Err(self.unexpected("an expression")),
+        }
     }
 
-    #[test]
-    fn unterminated_string() {
-        let err = parse("CREATE p:x SET n = 'oops").unwrap_err();
-        assert_eq!(err.kind, ParseErrorKind::UnterminatedString);
+    fn parse_identifier_expression(&mut self) -> Result<Expr, ParseError> {
+        let table_or_first = self.expect_identifier("an identifier")?;
+        if self.eat(&TokenKind::Colon) {
+            let id = self.parse_record_id_part()?;
+            let span = table_or_first.span.union(id.span);
+            return Ok(Expr::new(
+                ExprKind::RecordId(RecordId {
+                    span,
+                    table: table_or_first,
+                    id,
+                }),
+                span,
+            ));
+        }
+        let path = self.parse_field_path_tail(table_or_first)?;
+        if self.at(&TokenKind::LeftParen) {
+            return Err(ParseError::unsupported(
+                "function calls are outside the MVP expression grammar",
+                self.peek().span,
+            ));
+        }
+        Ok(Expr::new(ExprKind::FieldPath(path.clone()), path.span))
     }
 
-    #[test]
-    fn missing_table() {
-        let err = parse("CREATE SET n = 'v'").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnexpectedToken { .. }));
+    fn parse_parenthesized_expression(&mut self) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::LeftParen, "'('")?.span;
+        self.enter_depth(open)?;
+        let expression_result = self.parse_expression();
+        self.leave_depth();
+        let expression = expression_result?;
+        let close = self.expect(&TokenKind::RightParen, "')'")?.span;
+        Ok(Expr::new(
+            ExprKind::Parenthesized(Box::new(expression)),
+            open.union(close),
+        ))
     }
 
-    #[test]
-    fn missing_id_in_create() {
-        let err = parse("CREATE person SET n = 'v'").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnsupportedSyntax { .. }));
+    fn parse_array_expression(&mut self) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::LeftBracket, "'['")?.span;
+        self.enter_depth(open)?;
+        let result = self.parse_array_elements();
+        self.leave_depth();
+        let (elements, close) = result?;
+        Ok(Expr::new(ExprKind::Array(elements), open.union(close)))
     }
 
-    #[test]
-    fn missing_field() {
-        let err = parse("CREATE p:x SET = 'v'").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnexpectedToken { .. }));
+    fn parse_array_elements(&mut self) -> Result<(Vec<Expr>, Span), ParseError> {
+        let mut elements = Vec::new();
+        if let Some(close) = self.take(&TokenKind::RightBracket) {
+            return Ok((elements, close.span));
+        }
+        loop {
+            let element = self.parse_expression()?;
+            self.check_element_count(elements.len() + 1, element.span)?;
+            elements.push(element);
+            if !self.eat(&TokenKind::Comma) {
+                let close = self.expect(&TokenKind::RightBracket, "']'")?.span;
+                return Ok((elements, close));
+            }
+            if let Some(close) = self.take(&TokenKind::RightBracket) {
+                return Ok((elements, close.span));
+            }
+        }
     }
 
-    #[test]
-    fn missing_value() {
-        let err = parse("CREATE p:x SET n = ").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnexpectedToken { .. }));
+    fn parse_object_expression(&mut self) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::LeftBrace, "'{'")?.span;
+        self.enter_depth(open)?;
+        let result = self.parse_object_fields();
+        self.leave_depth();
+        let (fields, close) = result?;
+        Ok(Expr::new(ExprKind::Object(fields), open.union(close)))
     }
 
-    #[test]
-    fn missing_from() {
-        let err = parse("SELECT * person").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnexpectedToken { .. }));
+    fn parse_object_fields(&mut self) -> Result<(Vec<ObjectField>, Span), ParseError> {
+        let mut fields = Vec::new();
+        if let Some(close) = self.take(&TokenKind::RightBrace) {
+            return Ok((fields, close.span));
+        }
+        loop {
+            let key_token = self.advance().clone();
+            let key_kind = match key_token.kind {
+                TokenKind::Ident(value) => ObjectKeyKind::Identifier(value),
+                TokenKind::String(value) => ObjectKeyKind::String(value),
+                TokenKind::Eof => {
+                    return Err(ParseError::new(
+                        ParseErrorKind::UnexpectedEof {
+                            expected: "an object key",
+                        },
+                        key_token.span,
+                    ));
+                }
+                _ => return Err(self.unexpected_at(&key_token, "an identifier or string key")),
+            };
+            self.expect(&TokenKind::Colon, "':' after object key")?;
+            let value = self.parse_expression()?;
+            let span = key_token.span.union(value.span);
+            self.check_element_count(fields.len() + 1, span)?;
+            fields.push(ObjectField {
+                span,
+                key: ObjectKey {
+                    span: key_token.span,
+                    kind: key_kind,
+                },
+                value,
+            });
+            if !self.eat(&TokenKind::Comma) {
+                let close = self.expect(&TokenKind::RightBrace, "'}'")?.span;
+                return Ok((fields, close));
+            }
+            if let Some(close) = self.take(&TokenKind::RightBrace) {
+                return Ok((fields, close.span));
+            }
+        }
     }
 
-    #[test]
-    fn trailing_unsupported_clause_return_only() {
-        let err = parse("CREATE p:x SET n = 'v' RETURN NONE").unwrap_err();
-        // RETURN lexes as an identifier -> trailing tokens.
-        assert!(
-            matches!(
-                err.kind,
-                ParseErrorKind::TrailingTokens | ParseErrorKind::UnexpectedToken { .. }
-            ),
-            "got {:?}",
-            err.kind
-        );
+    fn parse_field_path(&mut self) -> Result<FieldPath, ParseError> {
+        let first = self.expect_identifier("a field path")?;
+        self.parse_field_path_tail(first)
     }
 
-    #[test]
-    fn only_clause_unsupported() {
-        let err = parse("SELECT ONLY * FROM p:x").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnexpectedToken { .. }));
+    fn parse_field_path_tail(&mut self, first: Identifier) -> Result<FieldPath, ParseError> {
+        let start = first.span;
+        let mut segments = vec![first];
+        while self.eat(&TokenKind::Dot) {
+            segments.push(self.expect_identifier("a path segment after '.'")?);
+        }
+        let end = segments.last().expect("one path segment").span;
+        Ok(FieldPath {
+            segments,
+            span: start.union(end),
+        })
     }
 
-    #[test]
-    fn limit_clause_unsupported() {
-        let err = parse("SELECT * FROM p:x LIMIT 5").unwrap_err();
-        // LIMIT lexes as ident; '5' is not a valid token start -> error.
-        assert!(!matches!(err.kind, ParseErrorKind::EmptyInput));
+    fn ensure_statement_boundary(&self) -> Result<(), ParseError> {
+        if self.at(&TokenKind::Semicolon) || self.at(&TokenKind::Eof) {
+            return Ok(());
+        }
+        if is_unsupported_clause(&self.peek().kind) {
+            return Err(ParseError::unsupported(
+                "clause is outside the FastDB MVP",
+                self.peek().span,
+            ));
+        }
+        if is_statement_start(&self.peek().kind) {
+            return Err(ParseError::new(
+                ParseErrorKind::MissingStatementSeparator,
+                self.peek().span,
+            ));
+        }
+        Err(self.unexpected("a semicolon or end of input"))
     }
 
-    #[test]
-    fn multiple_set_assignments_unsupported() {
-        let err = parse("CREATE p:x SET a = '1', b = '2'").unwrap_err();
-        assert!(unsup_contains(&err, "multiple SET assignments"));
+    fn check_element_count(&self, count: usize, span: Span) -> Result<(), ParseError> {
+        self.check_collection_limit(
+            count,
+            LimitKind::CollectionElements,
+            self.limits.max_collection_elements,
+            span,
+        )
     }
 
-    #[test]
-    fn multiple_statements_rejected() {
-        let err = parse("CREATE p:x SET n = 'v'; CREATE p:y SET n = 'w'").unwrap_err();
-        assert_eq!(err.kind, ParseErrorKind::MultipleStatements);
+    fn check_collection_limit(
+        &self,
+        count: usize,
+        kind: LimitKind,
+        limit: usize,
+        span: Span,
+    ) -> Result<(), ParseError> {
+        if count <= limit {
+            return Ok(());
+        }
+        Err(ParseError::new(
+            ParseErrorKind::LimitExceeded { kind, limit },
+            span,
+        ))
     }
 
-    #[test]
-    fn trailing_tokens_rejected() {
-        let err = parse("DELETE p:x extra").unwrap_err();
-        assert_eq!(err.kind, ParseErrorKind::TrailingTokens);
+    fn enter_depth(&mut self, span: Span) -> Result<(), ParseError> {
+        if self.depth == self.limits.max_nesting_depth {
+            return Err(ParseError::new(
+                ParseErrorKind::LimitExceeded {
+                    kind: LimitKind::NestingDepth,
+                    limit: self.limits.max_nesting_depth,
+                },
+                span,
+            ));
+        }
+        self.depth += 1;
+        Ok(())
     }
 
-    #[test]
-    fn record_select_with_where_unsupported() {
-        let err = parse("SELECT * FROM p:x WHERE n = 'v'").unwrap_err();
-        assert!(unsup_contains(
-            &err,
-            "record-id SELECT combined with a WHERE"
+    fn leave_depth(&mut self) {
+        debug_assert!(self.depth > 0);
+        self.depth -= 1;
+    }
+
+    fn peek(&self) -> &Token {
+        &self.tokens[self.position]
+    }
+
+    fn at(&self, expected: &TokenKind) -> bool {
+        discriminant(&self.peek().kind) == discriminant(expected)
+    }
+
+    fn take(&mut self, expected: &TokenKind) -> Option<Token> {
+        if self.at(expected) {
+            let token = self.peek().clone();
+            self.position += 1;
+            Some(token)
+        } else {
+            None
+        }
+    }
+
+    fn eat(&mut self, expected: &TokenKind) -> bool {
+        self.take(expected).is_some()
+    }
+
+    fn expect(
+        &mut self,
+        expected_kind: &TokenKind,
+        expected: &'static str,
+    ) -> Result<Token, ParseError> {
+        if let Some(token) = self.take(expected_kind) {
+            return Ok(token);
+        }
+        if self.at(&TokenKind::Eof) {
+            return Err(ParseError::new(
+                ParseErrorKind::UnexpectedEof { expected },
+                self.peek().span,
+            ));
+        }
+        Err(self.unexpected(expected))
+    }
+
+    fn expect_identifier(&mut self, expected: &'static str) -> Result<Identifier, ParseError> {
+        let token = self.peek().clone();
+        if let TokenKind::Ident(value) = token.kind {
+            self.position += 1;
+            return Ok(Identifier::new(value, token.span));
+        }
+        if matches!(token.kind, TokenKind::Eof) {
+            return Err(ParseError::new(
+                ParseErrorKind::UnexpectedEof { expected },
+                token.span,
+            ));
+        }
+        Err(self.unexpected_at(&token, expected))
+    }
+
+    fn advance(&mut self) -> &Token {
+        let index = self.position;
+        if !matches!(self.tokens[index].kind, TokenKind::Eof) {
+            self.position += 1;
+        }
+        &self.tokens[index]
+    }
+
+    fn previous_end(&self) -> usize {
+        self.tokens[self.position.saturating_sub(1)].span.end()
+    }
+
+    fn unexpected(&self, expected: &'static str) -> ParseError {
+        self.unexpected_at(self.peek(), expected)
+    }
+
+    fn unexpected_at(&self, token: &Token, expected: &'static str) -> ParseError {
+        if matches!(token.kind, TokenKind::Eof) {
+            ParseError::new(ParseErrorKind::UnexpectedEof { expected }, token.span)
+        } else {
+            ParseError::new(
+                ParseErrorKind::UnexpectedToken {
+                    expected,
+                    found: token.kind.describe(),
+                },
+                token.span,
+            )
+        }
+    }
+
+    fn duplicate_clause(&self, clause: &'static str) -> ParseError {
+        ParseError::new(ParseErrorKind::DuplicateClause { clause }, self.peek().span)
+    }
+
+    fn out_of_order_clause(&self, clause: &'static str) -> ParseError {
+        ParseError::new(ParseErrorKind::ClauseOrder { clause }, self.peek().span)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnContext {
+    Create,
+    Update,
+    Delete,
+}
+
+impl ReturnContext {
+    const fn expected_returns(self) -> &'static str {
+        match self {
+            Self::Create => "AFTER, NONE, or BEFORE",
+            Self::Update => "AFTER or NONE",
+            Self::Delete => "BEFORE",
+        }
+    }
+}
+
+fn parse_number_expression(value: String, span: Span) -> Result<Expr, ParseError> {
+    if value.contains(['.', 'e', 'E']) {
+        let parsed = value.parse::<f64>().map_err(|_| {
+            ParseError::new(
+                ParseErrorKind::InvalidNumber {
+                    literal: value.clone(),
+                    reason: "invalid decimal float",
+                },
+                span,
+            )
+        })?;
+        if !parsed.is_finite() {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidNumber {
+                    literal: value,
+                    reason: "non-finite floats are not accepted",
+                },
+                span,
+            ));
+        }
+        Ok(Expr::new(ExprKind::Float(parsed), span))
+    } else {
+        let parsed = value.parse::<i64>().map_err(|_| {
+            ParseError::new(
+                ParseErrorKind::InvalidNumber {
+                    literal: value,
+                    reason: "integer is outside the signed 64-bit range",
+                },
+                span,
+            )
+        })?;
+        Ok(Expr::new(ExprKind::Integer(parsed), span))
+    }
+}
+
+fn parse_signed_integer(value: &str, sign: i8, span: Span) -> Result<i64, ParseError> {
+    if value.contains(['.', 'e', 'E']) {
+        return Err(ParseError::new(
+            ParseErrorKind::InvalidNumber {
+                literal: value.to_string(),
+                reason: "record IDs require an integer without a decimal point or exponent",
+            },
+            span,
         ));
     }
-
-    #[test]
-    fn bare_table_select_unsupported() {
-        let err = parse("SELECT * FROM person").unwrap_err();
-        assert!(unsup_contains(&err, "without a record id or WHERE filter"));
+    let magnitude = value.parse::<u64>().map_err(|_| {
+        ParseError::new(
+            ParseErrorKind::InvalidNumber {
+                literal: value.to_string(),
+                reason: "record-ID integer is outside the signed 64-bit range",
+            },
+            span,
+        )
+    })?;
+    if sign < 0 && magnitude == (i64::MAX as u64) + 1 {
+        return Ok(i64::MIN);
     }
-
-    #[test]
-    fn delete_from_unsupported() {
-        let err = parse("DELETE FROM p:x").unwrap_err();
-        assert!(unsup_contains(&err, "DELETE FROM"));
+    if magnitude > i64::MAX as u64 {
+        return Err(ParseError::new(
+            ParseErrorKind::InvalidNumber {
+                literal: value.to_string(),
+                reason: "record-ID integer is outside the signed 64-bit range",
+            },
+            span,
+        ));
     }
+    let integer = magnitude as i64;
+    Ok(if sign < 0 { -integer } else { integer })
+}
 
-    #[test]
-    fn delete_without_id_unsupported() {
-        let err = parse("DELETE person").unwrap_err();
-        assert!(unsup_contains(&err, "explicit record id"));
-    }
+fn binary_binding_power(kind: &TokenKind) -> Option<(BinaryOperator, u8, u8)> {
+    let (operator, power) = match kind {
+        TokenKind::Star => (BinaryOperator::Multiply, 11),
+        TokenKind::Slash => (BinaryOperator::Divide, 11),
+        TokenKind::Plus => (BinaryOperator::Add, 9),
+        TokenKind::Minus => (BinaryOperator::Subtract, 9),
+        TokenKind::Less => (BinaryOperator::Less, 7),
+        TokenKind::LessEqual => (BinaryOperator::LessEqual, 7),
+        TokenKind::Greater => (BinaryOperator::Greater, 7),
+        TokenKind::GreaterEqual => (BinaryOperator::GreaterEqual, 7),
+        TokenKind::Equal => (BinaryOperator::Equal, 5),
+        TokenKind::NotEqual => (BinaryOperator::NotEqual, 5),
+        TokenKind::And => (BinaryOperator::And, 3),
+        TokenKind::Or => (BinaryOperator::Or, 1),
+        _ => return None,
+    };
+    Some((operator, power, power + 1))
+}
 
-    #[test]
-    fn numeric_record_id_unsupported() {
-        // '5' is not a valid token start -> explicit lex error, never accepted.
-        let err = parse("CREATE p:5 SET n = 'v'").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnexpectedChar { .. }));
+fn excluded_operator_description(operator: &str) -> &'static str {
+    match operator {
+        "**" => "power is outside the MVP expression grammar",
+        "%" => "modulo is outside the MVP expression grammar",
+        "&&" | "||" | "!" => "symbolic boolean operators are outside the MVP grammar",
+        "==" => "exact equality is outside the MVP expression grammar",
+        ".." => "ranges are outside the MVP expression grammar",
+        "->" => "graph traversal is outside the MVP expression grammar",
+        _ => "operator is outside the MVP expression grammar",
     }
+}
 
-    #[test]
-    fn quoted_record_id_unsupported() {
-        // Quoted ids are not part of the Phase 0 declared subset (COMPAT RID-STR).
-        let err = parse("CREATE person:'tobie' SET name = 'Tobie'").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::UnsupportedSyntax { .. }));
-    }
+fn is_excluded_comparison(value: &str) -> bool {
+    [
+        "is",
+        "in",
+        "inside",
+        "contains",
+        "containsnot",
+        "containsall",
+        "containsany",
+        "containsnone",
+    ]
+    .iter()
+    .any(|keyword| value.eq_ignore_ascii_case(keyword))
+}
 
-    #[test]
-    fn empty_input_no_panic() {
-        let err = parse("").unwrap_err();
-        assert_eq!(err.kind, ParseErrorKind::EmptyInput);
-        let err = parse("   \n\t  ").unwrap_err();
-        assert_eq!(err.kind, ParseErrorKind::EmptyInput);
-    }
+fn is_statement_start(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Create
+            | TokenKind::Select
+            | TokenKind::Update
+            | TokenKind::Delete
+            | TokenKind::Define
+            | TokenKind::Begin
+            | TokenKind::Commit
+            | TokenKind::Cancel
+    ) || is_unsupported_statement(kind)
+}
 
-    #[test]
-    fn arbitrary_bytes_smoke_no_panic() {
-        // Random-ish bytes that are valid UTF-8 must not panic; they error.
-        for s in [
-            "\0",
-            "\x01\x02\x03",
-            "CREATE",
-            ":::::",
-            "'''",
-            "SELECT * * FROM",
-            "🦀🦀🦀",
-            "CREATE p:x SET n = '",
-            "\n\n\n;;;",
-        ] {
-            let _ = parse(s);
-        }
-    }
+fn is_unsupported_statement(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Insert
+            | TokenKind::Upsert
+            | TokenKind::Relate
+            | TokenKind::Let
+            | TokenKind::Remove
+            | TokenKind::Info
+            | TokenKind::Use
+            | TokenKind::Live
+            | TokenKind::Show
+            | TokenKind::Sleep
+            | TokenKind::Throw
+            | TokenKind::For
+            | TokenKind::If
+    )
+}
 
-    #[test]
-    fn optional_semicolon_accepted() {
-        assert!(parse("DELETE p:x").is_ok());
-        assert!(parse("DELETE p:x;").is_ok());
-        assert!(parse("DELETE p:x ;").is_ok());
-    }
-
-    fn unsup_contains(e: &ParseError, needle: &str) -> bool {
-        match &e.kind {
-            ParseErrorKind::UnsupportedSyntax { what } => what.contains(needle),
-            _ => {
-                let _ = unsupported_kind(e);
-                false
-            }
-        }
-    }
+fn is_unsupported_clause(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Timeout
+            | TokenKind::Fetch
+            | TokenKind::Group
+            | TokenKind::Split
+            | TokenKind::Omit
+            | TokenKind::Explain
+            | TokenKind::With
+            | TokenKind::Value
+            | TokenKind::Merge
+            | TokenKind::Patch
+            | TokenKind::Replace
+            | TokenKind::Unset
+            | TokenKind::Permissions
+            | TokenKind::Assert
+            | TokenKind::Default
+            | TokenKind::Readonly
+            | TokenKind::Changefeed
+            | TokenKind::View
+            | TokenKind::Fulltext
+            | TokenKind::Search
+            | TokenKind::Analyzer
+            | TokenKind::Parallel
+            | TokenKind::Transaction
+    )
 }

@@ -1,0 +1,1 @@
+CREATE ONLY person:`quoted id` CONTENT {name: 'Tracy', tags: ['db', 'fast',],} RETURN AFTER;

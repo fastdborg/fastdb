@@ -1,12 +1,8 @@
-//! Phase 0 FastDB AST.
-//!
-//! These types are deliberately independent of `turso_parser` and
-//! `turso_core` AST types. The frontend crate lowers them into Turso AST;
-//! the parser crate must not depend on the engine.
+//! Engine-independent syntax tree for the FastDB language subset.
 
 use miette::SourceSpan;
 
-/// A byte span into the source: `[offset, offset + len)`.
+/// A half-open byte range in the original UTF-8 source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     pub offset: usize,
@@ -18,16 +14,18 @@ impl Span {
         Self { offset, len }
     }
 
-    /// End offset (exclusive) of the span.
     pub const fn end(self) -> usize {
         self.offset + self.len
+    }
+
+    pub const fn is_within(self, input_len: usize) -> bool {
+        self.offset <= input_len && self.len <= input_len.saturating_sub(self.offset)
     }
 
     pub fn to_source_span(self) -> SourceSpan {
         SourceSpan::new(self.offset.into(), self.len)
     }
 
-    /// Smallest span covering both `self` and `other`.
     pub fn union(self, other: Span) -> Span {
         let start = self.offset.min(other.offset);
         let end = self.end().max(other.end());
@@ -35,92 +33,336 @@ impl Span {
     }
 }
 
-/// A value paired with the source span it came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A value paired with its source range.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Spanned<T> {
     pub value: T,
     pub span: Span,
 }
 
 impl<T> Spanned<T> {
-    pub fn new(value: T, span: Span) -> Self {
+    pub const fn new(value: T, span: Span) -> Self {
         Self { value, span }
     }
 }
 
-/// A bare identifier. The original Unicode text is preserved verbatim;
-/// only keywords are matched case-insensitively.
 pub type Identifier = Spanned<String>;
 
-/// One Phase 0 statement. Exactly the four supported forms lower to one
-/// of these variants; any other syntax is rejected by the parser.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Script {
+    pub statements: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Create(CreateStatement),
     Select(SelectStatement),
+    Update(UpdateStatement),
     Delete(DeleteStatement),
+    DefineTable(DefineTableStatement),
+    DefineField(DefineFieldStatement),
+    DefineIndex(DefineIndexStatement),
+    Begin(TransactionStatement),
+    Commit(TransactionStatement),
+    Cancel(TransactionStatement),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Statement {
+    pub const fn span(&self) -> Span {
+        match self {
+            Self::Create(stmt) => stmt.span,
+            Self::Select(stmt) => stmt.span,
+            Self::Update(stmt) => stmt.span,
+            Self::Delete(stmt) => stmt.span,
+            Self::DefineTable(stmt) => stmt.span,
+            Self::DefineField(stmt) => stmt.span,
+            Self::DefineIndex(stmt) => stmt.span,
+            Self::Begin(stmt) | Self::Commit(stmt) | Self::Cancel(stmt) => stmt.span,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CreateStatement {
-    /// Span of the whole statement.
     pub span: Span,
-    pub target: RecordTarget,
-    /// Phase 0 supports exactly one string-valued `SET` assignment.
-    pub assignment: Assignment,
+    pub only: Option<Span>,
+    pub target: Target,
+    pub data: CreateData,
+    pub return_clause: Option<ReturnClause>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Assignment {
-    pub span: Span,
-    pub field: Identifier,
-    pub value: StringLit,
+#[derive(Debug, Clone, PartialEq)]
+pub enum CreateData {
+    Content(Expr),
+    Set(Vec<Assignment>),
 }
 
-/// A decoded single-quoted string literal and its source span.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StringLit {
-    pub value: String,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectStatement {
     pub span: Span,
-    pub target: RecordTarget,
-    /// Present for the equality-filter form; absent for the record form.
-    pub filter: Option<Predicate>,
+    pub projections: ProjectionList,
+    pub only: Option<Span>,
+    pub target: Target,
+    pub condition: Option<Expr>,
+    pub order_by: Vec<OrderBy>,
+    pub limit: Option<NonnegativeInteger>,
+    pub start: Option<NonnegativeInteger>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectionList {
+    All(Span),
+    Fields(Vec<Projection>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Projection {
+    pub span: Span,
+    pub path: FieldPath,
+    pub alias: Option<Identifier>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderBy {
+    pub span: Span,
+    pub path: FieldPath,
+    pub direction: Spanned<OrderDirection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderDirection {
+    Ascending,
+    Descending,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NonnegativeInteger {
+    pub value: u64,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateStatement {
+    pub span: Span,
+    pub target: Target,
+    pub assignments: Vec<Assignment>,
+    pub condition: Option<Expr>,
+    pub return_clause: Option<ReturnClause>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeleteStatement {
     pub span: Span,
-    pub target: RecordTarget,
+    pub target: Target,
+    pub condition: Option<Expr>,
+    pub return_clause: Option<ReturnClause>,
 }
 
-/// `table` optionally followed by `:id`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordTarget {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assignment {
+    pub span: Span,
+    pub path: FieldPath,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReturnClause {
+    pub span: Span,
+    pub kind: Spanned<ReturnKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReturnKind {
+    After,
+    None,
+    Before,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefineTableStatement {
+    pub span: Span,
+    pub name: Identifier,
+    pub mode: Spanned<TableMode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableMode {
+    Schemaless,
+    Schemafull,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefineFieldStatement {
+    pub span: Span,
+    pub path: FieldPath,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
+    pub ty: SchemaType,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefineIndexStatement {
+    pub span: Span,
+    pub name: Identifier,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
+    pub fields: Vec<FieldPath>,
+    pub unique: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaType {
+    pub span: Span,
+    pub kind: SchemaTypeKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SchemaTypeKind {
+    Bool,
+    Int,
+    Float,
+    Number,
+    String,
+    Object,
+    Array,
+    Record,
+    Option(Box<SchemaType>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransactionStatement {
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Target {
+    Table(TableTarget),
+    Record(RecordId),
+}
+
+impl Target {
+    pub const fn span(&self) -> Span {
+        match self {
+            Self::Table(target) => target.span,
+            Self::Record(target) => target.span,
+        }
+    }
+
+    pub fn table(&self) -> &Identifier {
+        match self {
+            Self::Table(target) => &target.name,
+            Self::Record(target) => &target.table,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableTarget {
+    pub span: Span,
+    pub name: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordId {
     pub span: Span,
     pub table: Identifier,
-    /// `None` for the filter form of `SELECT`. `CREATE` and `DELETE`
-    /// require an id in Phase 0 (no generated ids).
-    pub id: Option<RecordIdPart>,
+    pub id: RecordIdPart,
 }
 
-/// Phase 0 supports only a single bare-string (or quoted-string) id part.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordIdPart {
-    pub value: String,
+    pub span: Span,
+    pub kind: RecordIdPartKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecordIdPartKind {
+    Bare(String),
+    Quoted(String),
+    Integer(i64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldPath {
+    pub segments: Vec<Identifier>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Predicate {
-    /// `field = 'value'` where the value is a string literal.
-    StringEquals {
-        span: Span,
-        field: Identifier,
-        value: StringLit,
+#[derive(Debug, Clone, PartialEq)]
+pub struct Expr {
+    pub span: Span,
+    pub kind: ExprKind,
+}
+
+impl Expr {
+    pub const fn new(kind: ExprKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind {
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    String(String),
+    Array(Vec<Expr>),
+    Object(Vec<ObjectField>),
+    Parameter(String),
+    RecordId(RecordId),
+    FieldPath(FieldPath),
+    Unary {
+        operator: Spanned<UnaryOperator>,
+        operand: Box<Expr>,
     },
+    Binary {
+        left: Box<Expr>,
+        operator: Spanned<BinaryOperator>,
+        right: Box<Expr>,
+    },
+    Parenthesized(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectField {
+    pub span: Span,
+    pub key: ObjectKey,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectKey {
+    pub span: Span,
+    pub kind: ObjectKeyKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectKeyKind {
+    Identifier(String),
+    String(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOperator {
+    Not,
+    Plus,
+    Minus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOperator {
+    Multiply,
+    Divide,
+    Add,
+    Subtract,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Equal,
+    NotEqual,
+    And,
+    Or,
 }

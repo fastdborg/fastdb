@@ -23,7 +23,7 @@ fn fresh_db() -> (TempDir, String) {
 fn seed_three(path: &str) {
     let db = Database::open(path).unwrap();
     let conn = db.connect().unwrap();
-    conn.execute("CREATE person:tobie SET name = 'Tobie';")
+    conn.execute("CREATE person:tracy SET name = 'Tracy';")
         .unwrap();
     conn.execute("CREATE person:jaime SET name = 'Jaime';")
         .unwrap();
@@ -97,7 +97,7 @@ fn expression_index_selected_before_and_after_reopen() {
         assert!(r.records.is_empty(), "deleted record must not match");
         // Other records still match.
         let r = conn
-            .execute("SELECT * FROM person WHERE name = 'Tobie';")
+            .execute("SELECT * FROM person WHERE name = 'Tracy';")
             .unwrap();
         assert_eq!(r.records.len(), 1);
     }

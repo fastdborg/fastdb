@@ -1,22 +1,7 @@
-//! # turso_fastdb_parser
+//! Independent lexer, syntax tree, and parser for the FastDB MVP grammar.
 //!
-//! FastDB Phase 0 parser: a hand-written lexer and recursive-descent
-//! parser for a tiny SurrealQL-compatible subset. It is intentionally
-//! independent of `turso_parser` and `turso_core` AST types.
-//!
-//! Supported Phase 0 forms (see `COMPAT.md`):
-//!
-//! ```text
-//! CREATE <table>:<id> SET <field> = '<string>';
-//! SELECT * FROM <table>:<id>;
-//! SELECT * FROM <table> WHERE <field> = '<string>';
-//! DELETE <table>:<id>;
-//! ```
-//!
-//! Every other syntax — including recognized clauses like `RETURN`,
-//! `ONLY`, `LIMIT`, multiple `SET` assignments, multiple statements, and
-//! unsupported value types — is rejected with an explicit
-//! [`ParseError`] rather than ignored.
+//! The crate has no dependency on Turso parser or engine types. It accepts a
+//! script through [`parse`] or exactly one statement through [`parse_one`].
 
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
@@ -26,10 +11,31 @@ pub mod error;
 pub mod lexer;
 pub mod parser;
 
-pub use ast::{
-    Assignment, CreateStatement, DeleteStatement, Identifier, Predicate, RecordIdPart,
-    RecordTarget, SelectStatement, Span, Spanned, Statement, StringLit,
-};
-pub use error::{ParseError, ParseErrorKind};
-pub use lexer::{tokenize, Token, TokenKind};
-pub use parser::parse;
+pub use ast::*;
+pub use error::{LimitKind, ParseError, ParseErrorKind};
+pub use lexer::{tokenize, tokenize_with_limits, Token, TokenKind};
+pub use parser::{parse, parse_one, parse_one_with_limits, parse_with_limits};
+
+/// Resource ceilings applied before or during parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParserLimits {
+    pub max_input_bytes: usize,
+    pub max_tokens: usize,
+    pub max_nesting_depth: usize,
+    pub max_collection_elements: usize,
+    pub max_statements: usize,
+    pub max_identifier_bytes: usize,
+}
+
+impl Default for ParserLimits {
+    fn default() -> Self {
+        Self {
+            max_input_bytes: 1 << 20,
+            max_tokens: 65_536,
+            max_nesting_depth: 64,
+            max_collection_elements: 1_024,
+            max_statements: 256,
+            max_identifier_bytes: 256,
+        }
+    }
+}

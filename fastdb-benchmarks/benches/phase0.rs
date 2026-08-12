@@ -219,7 +219,7 @@ fn cold_create(c: &mut Criterion) {
             },
             |(_dir, conn)| {
                 let r = conn
-                    .execute("CREATE person:first SET name = 'Tobie';")
+                    .execute("CREATE person:first SET name = 'Tracy';")
                     .unwrap();
                 assert_eq!(r.records.len(), 1);
                 black_box(r);
@@ -249,12 +249,12 @@ fn cold_create(c: &mut Criterion) {
                 .unwrap();
                 s.bind_at(
                     NonZeroUsize::new(2).unwrap(),
-                    Value::build_text("Tobie".to_string()),
+                    Value::build_text("Tracy".to_string()),
                 )
                 .unwrap();
                 s.run_ignore_rows().unwrap();
                 let record = Record::new(RecordId::new("person", "first"))
-                    .with_field("name", FdbValue::Str("Tobie".to_string()));
+                    .with_field("name", FdbValue::Str("Tracy".to_string()));
                 assert_eq!(record.id.id, "first");
                 black_box(record);
             },

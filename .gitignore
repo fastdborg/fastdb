@@ -5,6 +5,15 @@
 /.sqlite3
 **/target
 
+# cargo-fuzz runtime output; retain only the independently authored seeds.
+/fastdb-parser/fuzz/artifacts/
+/fastdb-parser/fuzz/corpus/parse/*
+!/fastdb-parser/fuzz/corpus/parse/create
+!/fastdb-parser/fuzz/corpus/parse/malformed
+!/fastdb-parser/fuzz/corpus/parse/schema
+!/fastdb-parser/fuzz/corpus/parse/select
+!/fastdb-parser/fuzz/corpus/parse/transactions
+
 *.so
 *.dylib
 *.dSYM/

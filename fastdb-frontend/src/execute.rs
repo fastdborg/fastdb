@@ -1,7 +1,4 @@
-//! Statement execution: the transaction owner and the per-statement
-//! algorithms. CREATE runs inside one `BEGIN IMMEDIATE` transaction so
-//! catalog bootstrap, table registration, physical DDL, and the record
-//! insert commit or roll back together. SELECT/DELETE are read/autocommit.
+//! Capability-gated statement execution and transaction ownership.
 
 use crate::catalog;
 use crate::connection::{value_to_string, Connection};
@@ -12,53 +9,214 @@ use crate::names::{decode_rid, encode_rid};
 use crate::test_failpoints::Failpoint;
 use crate::{ExecutionResult, Record, RecordId, Value as FValue};
 use turso_fastdb_parser::{
-    CreateStatement, DeleteStatement, Predicate, SelectStatement, Statement,
+    BinaryOperator, CreateData, Expr, ExprKind, ProjectionList, RecordIdPartKind, Span, Statement,
+    Target,
 };
 
-/// Parse + execute one statement. Dispatched from [`Connection::execute`].
-pub fn run_statement(conn: &Connection, stmt: Statement) -> Result<ExecutionResult> {
-    match stmt {
-        Statement::Create(c) => run_create(conn, c),
-        Statement::Select(s) => run_select(conn, s),
-        Statement::Delete(d) => run_delete(conn, d),
+struct ExecutableCreate {
+    table: String,
+    id: String,
+    field: String,
+    value: String,
+}
+
+struct ExecutableSelect {
+    table: String,
+    id: Option<String>,
+    filter: Option<ExecutablePredicate>,
+}
+
+struct ExecutableDelete {
+    table: String,
+    id: String,
+}
+
+struct ExecutablePredicate {
+    field: String,
+    value: String,
+}
+
+enum ExecutableStatement {
+    Create(ExecutableCreate),
+    Select(ExecutableSelect),
+    Delete(ExecutableDelete),
+}
+
+/// Execute a parsed statement only after proving it belongs to the existing
+/// storage-feasibility capability set.
+pub fn run_statement(conn: &Connection, stmt: Statement, source: &str) -> Result<ExecutionResult> {
+    match capability_gate(stmt, source)? {
+        ExecutableStatement::Create(create) => run_create(conn, create),
+        ExecutableStatement::Select(select) => run_select(conn, select),
+        ExecutableStatement::Delete(delete) => run_delete(conn, delete),
     }
 }
 
-/// `BEGIN` … body … `COMMIT`. Any failure after `BEGIN` — a body error, an
-/// injected commit failure, or a real `COMMIT` failure — enters the rollback
-/// path. The original typed error is preserved on rollback success; a
-/// rollback failure is surfaced alongside the original.
+fn capability_gate(statement: Statement, source: &str) -> Result<ExecutableStatement> {
+    let span = statement.span();
+    let executable = match statement {
+        Statement::Create(create) => {
+            if create.only.is_some() || create.return_clause.is_some() {
+                None
+            } else {
+                let (table, id) = bare_record_target(create.target)?;
+                match create.data {
+                    CreateData::Set(mut assignments) if assignments.len() == 1 => {
+                        let assignment = assignments.pop().expect("length checked above");
+                        let field = single_field(assignment.path)?;
+                        let value = phase0_string_expression(assignment.value, source)?;
+                        Some(ExecutableStatement::Create(ExecutableCreate {
+                            table,
+                            id,
+                            field,
+                            value,
+                        }))
+                    }
+                    CreateData::Set(_) | CreateData::Content(_) => None,
+                }
+            }
+        }
+        Statement::Select(select) => {
+            if !matches!(select.projections, ProjectionList::All(_))
+                || select.only.is_some()
+                || !select.order_by.is_empty()
+                || select.limit.is_some()
+                || select.start.is_some()
+            {
+                None
+            } else {
+                match (select.target, select.condition) {
+                    (Target::Record(record), None) => {
+                        let RecordIdPartKind::Bare(id) = record.id.kind else {
+                            return unsupported_execution(span);
+                        };
+                        Some(ExecutableStatement::Select(ExecutableSelect {
+                            table: record.table.value,
+                            id: Some(id),
+                            filter: None,
+                        }))
+                    }
+                    (Target::Table(table), Some(condition)) => {
+                        let predicate = equality_string_predicate(condition, source)?;
+                        Some(ExecutableStatement::Select(ExecutableSelect {
+                            table: table.name.value,
+                            id: None,
+                            filter: Some(predicate),
+                        }))
+                    }
+                    _ => None,
+                }
+            }
+        }
+        Statement::Delete(delete) => {
+            if delete.condition.is_some() || delete.return_clause.is_some() {
+                None
+            } else {
+                let (table, id) = bare_record_target(delete.target)?;
+                Some(ExecutableStatement::Delete(ExecutableDelete { table, id }))
+            }
+        }
+        Statement::Update(_)
+        | Statement::DefineTable(_)
+        | Statement::DefineField(_)
+        | Statement::DefineIndex(_)
+        | Statement::Begin(_)
+        | Statement::Commit(_)
+        | Statement::Cancel(_) => None,
+    };
+    executable.map_or_else(|| unsupported_execution(span), Ok)
+}
+
+fn bare_record_target(target: Target) -> Result<(String, String)> {
+    let Target::Record(record) = target else {
+        return unsupported_execution(target.span());
+    };
+    let RecordIdPartKind::Bare(id) = record.id.kind else {
+        return unsupported_execution(record.id.span);
+    };
+    Ok((record.table.value, id))
+}
+
+fn single_field(path: turso_fastdb_parser::FieldPath) -> Result<String> {
+    if path.segments.len() != 1 {
+        return unsupported_execution(path.span);
+    }
+    Ok(path
+        .segments
+        .into_iter()
+        .next()
+        .expect("length checked above")
+        .value)
+}
+
+fn phase0_string_expression(expression: Expr, source: &str) -> Result<String> {
+    let span = expression.span;
+    let ExprKind::String(value) = expression.kind else {
+        return unsupported_execution(span);
+    };
+    if source.as_bytes().get(span.offset) != Some(&b'\'') {
+        return unsupported_execution(span);
+    }
+    Ok(value)
+}
+
+fn equality_string_predicate(expression: Expr, source: &str) -> Result<ExecutablePredicate> {
+    let span = expression.span;
+    let ExprKind::Binary {
+        left,
+        operator,
+        right,
+    } = expression.kind
+    else {
+        return unsupported_execution(span);
+    };
+    if operator.value != BinaryOperator::Equal {
+        return unsupported_execution(operator.span);
+    }
+    let ExprKind::FieldPath(path) = left.kind else {
+        return unsupported_execution(left.span);
+    };
+    let field = single_field(path)?;
+    let value = phase0_string_expression(*right, source)?;
+    Ok(ExecutablePredicate { field, value })
+}
+
+fn unsupported_execution<T>(span: Span) -> Result<T> {
+    Err(FastDbError::UnsupportedSyntax(
+        turso_fastdb_parser::ParseError::unsupported(
+            "parsed syntax is not executable until its implementation phase",
+            span,
+        ),
+    ))
+}
+
 fn with_tx<R>(conn: &Connection, body: impl FnOnce() -> Result<R>) -> Result<R> {
     conn.exec_bound(lower::begin_immediate(), vec![])?;
-    // Body, then an optional injected commit failure, then the real COMMIT.
-    let outcome: Result<R> = body().and_then(|r| {
+    let outcome: Result<R> = body().and_then(|result| {
         conn.check_failpoint(Failpoint::CommitFailure)?;
-        conn.exec_bound(lower::commit(), vec![]).map(|()| r)
+        conn.exec_bound(lower::commit(), vec![]).map(|()| result)
     });
     match outcome {
-        Ok(r) => Ok(r),
-        Err(e) => match conn
+        Ok(result) => Ok(result),
+        Err(error) => match conn
             .check_failpoint(Failpoint::RollbackFailure)
             .and_then(|()| conn.exec_bound(lower::rollback(), vec![]))
         {
-            Ok(()) => Err(e),
-            Err(rb) => {
-                // Turso's statement lifecycle may already roll back and clear
-                // the transaction after a COMMIT I/O failure. Probe that state
-                // without matching engine error strings: a fresh BEGIN can
-                // succeed only when the failed transaction is no longer
-                // active. Roll back the empty probe transaction immediately.
+            Ok(()) => Err(error),
+            Err(rollback_error) => {
+                // A failed commit may have already cleared the transaction.
+                // Probe typed transaction state without matching error text.
                 match conn.exec_bound(lower::begin_immediate(), vec![]) {
                     Ok(()) => match conn.exec_bound(lower::rollback(), vec![]) {
-                        Ok(()) => Err(e),
-                        Err(probe_rb) => Err(FastDbError::Transaction(format!(
-                            "transaction failed; original: {e}; rollback reported: {rb}; \
-                             cleanup probe rollback also failed: {probe_rb}"
+                        Ok(()) => Err(error),
+                        Err(probe_rollback) => Err(FastDbError::Transaction(format!(
+                            "transaction failed; original: {error}; rollback reported: \
+                             {rollback_error}; cleanup probe rollback also failed: {probe_rollback}"
                         ))),
                     },
                     Err(probe) => Err(FastDbError::Transaction(format!(
-                        "transaction failed; original: {e}; rollback also failed: {rb}; \
-                         clean-state probe failed: {probe}"
+                        "transaction failed; original: {error}; rollback also failed: \
+                         {rollback_error}; clean-state probe failed: {probe}"
                     ))),
                 }
             }
@@ -66,11 +224,7 @@ fn with_tx<R>(conn: &Connection, body: impl FnOnce() -> Result<R>) -> Result<R> 
     }
 }
 
-fn run_create(conn: &Connection, c: CreateStatement) -> Result<ExecutionResult> {
-    let logical = c.target.table.value.clone();
-    let id_part = c.target.id.expect("parser guarantees CREATE id").value;
-    let field = c.assignment.field.value.clone();
-    let value = c.assignment.value.value.clone();
+fn run_create(conn: &Connection, create: ExecutableCreate) -> Result<ExecutionResult> {
     let database_id = format!("{:032x}", rand::random::<u128>());
 
     with_tx(conn, || {
@@ -81,103 +235,100 @@ fn run_create(conn: &Connection, c: CreateStatement) -> Result<ExecutionResult> 
             conn.check_failpoint(Failpoint::AfterBootstrap)?;
         }
 
-        let resolved = match catalog::resolve_table(conn, &logical)? {
-            Some(r) => r,
+        let resolved = match catalog::resolve_table(conn, &create.table)? {
+            Some(resolved) => resolved,
             None => {
-                let r = catalog::allocate_table(&logical)?;
-                catalog::insert_catalog_row(conn, &r)?;
+                let resolved = catalog::allocate_table(&create.table)?;
+                catalog::insert_catalog_row(conn, &resolved)?;
                 conn.check_failpoint(Failpoint::AfterCatalogRow)?;
-                catalog::create_physical_table(conn, &r)?;
+                catalog::create_physical_table(conn, &resolved)?;
                 conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
-                r
+                resolved
             }
         };
 
-        let encoded_rid = encode_rid(&id_part);
-        let (ins, bindings) =
-            lower::physical_insert_stmt(&resolved.physical_name, &encoded_rid, &field, &value)?;
-        let mut stmt = conn.prepare_bound(ins, bindings)?;
+        let encoded_rid = encode_rid(&create.id);
+        let (insert, bindings) = lower::physical_insert_stmt(
+            &resolved.physical_name,
+            &encoded_rid,
+            &create.field,
+            &create.value,
+        )?;
+        let mut statement = conn.prepare_bound(insert, bindings)?;
         conn.check_failpoint(Failpoint::AfterRecordPrepare)?;
-        stmt.run_ignore_rows()?;
+        statement.run_ignore_rows()?;
         conn.check_failpoint(Failpoint::AfterRecordInsert)?;
 
-        let record =
-            Record::new(RecordId::new(&logical, id_part)).with_field(field, FValue::Str(value));
+        let record = Record::new(RecordId::new(&create.table, create.id))
+            .with_field(create.field, FValue::Str(create.value));
         Ok(ExecutionResult {
             records: vec![record],
         })
     })
 }
 
-fn run_select(conn: &Connection, s: SelectStatement) -> Result<ExecutionResult> {
-    let logical = s.target.table.value.clone();
-    // A read of a new/empty database must not create catalog or user objects.
+fn run_select(conn: &Connection, select: ExecutableSelect) -> Result<ExecutionResult> {
     if !catalog::catalog_exists(conn, catalog::META_TABLE)? {
         return Ok(ExecutionResult { records: vec![] });
     }
-    // Refuse an unknown future format/dialect before interpreting the catalog.
     catalog::ensure_catalog_compatible(conn)?;
-    let Some(resolved) = catalog::resolve_table(conn, &logical)? else {
+    let Some(resolved) = catalog::resolve_table(conn, &select.table)? else {
         return Ok(ExecutionResult { records: vec![] });
     };
 
-    let records = match s.filter {
-        None => {
-            let id_part = s
-                .target
-                .id
-                .expect("parser guarantees record-select id")
-                .value;
-            let encoded = encode_rid(&id_part);
-            let (stmt, bindings) =
+    let records = match (select.id, select.filter) {
+        (Some(id), None) => {
+            let encoded = encode_rid(&id);
+            let (statement, bindings) =
                 lower::physical_select_by_rid_stmt(&resolved.physical_name, &encoded)?;
-            decode_rows(conn, stmt, bindings, &resolved.logical)?
+            decode_rows(conn, statement, bindings, &resolved.logical)?
         }
-        Some(Predicate::StringEquals { field, value, .. }) => {
-            let path = lower::canonical_field_path(&field.value)?;
-            let (stmt, bindings) =
-                lower::physical_select_by_field_stmt(&resolved.physical_name, &path, &value.value)?;
-            decode_rows(conn, stmt, bindings, &resolved.logical)?
+        (None, Some(predicate)) => {
+            let path = lower::canonical_field_path(&predicate.field)?;
+            let (statement, bindings) = lower::physical_select_by_field_stmt(
+                &resolved.physical_name,
+                &path,
+                &predicate.value,
+            )?;
+            decode_rows(conn, statement, bindings, &resolved.logical)?
         }
+        _ => unreachable!("capability gate creates exactly one SELECT mode"),
     };
     Ok(ExecutionResult { records })
 }
 
-fn run_delete(conn: &Connection, d: DeleteStatement) -> Result<ExecutionResult> {
-    let logical = d.target.table.value.clone();
+fn run_delete(conn: &Connection, delete: ExecutableDelete) -> Result<ExecutionResult> {
     if !catalog::catalog_exists(conn, catalog::META_TABLE)? {
         return Ok(ExecutionResult { records: vec![] });
     }
-    // Refuse an unknown future format/dialect before mutating.
     catalog::ensure_catalog_compatible(conn)?;
-    let Some(resolved) = catalog::resolve_table(conn, &logical)? else {
+    let Some(resolved) = catalog::resolve_table(conn, &delete.table)? else {
         return Ok(ExecutionResult { records: vec![] });
     };
-    let id_part = d.target.id.expect("parser guarantees DELETE id").value;
-    let encoded = encode_rid(&id_part);
-    let (stmt, bindings) = lower::physical_delete_by_rid_stmt(&resolved.physical_name, &encoded)?;
-    conn.exec_bound(stmt, bindings)?;
+    let encoded = encode_rid(&delete.id);
+    let (statement, bindings) =
+        lower::physical_delete_by_rid_stmt(&resolved.physical_name, &encoded)?;
+    conn.exec_bound(statement, bindings)?;
     Ok(ExecutionResult { records: vec![] })
 }
 
-/// Run a `SELECT rid, json(doc) ...` and decode each row into a [`Record`].
 fn decode_rows(
     conn: &Connection,
-    stmt: turso_parser::ast::Stmt,
+    statement: turso_parser::ast::Stmt,
     bindings: lower::Bindings,
     table: &str,
 ) -> Result<Vec<Record>> {
-    let rows = conn.collect_rows(stmt, bindings)?;
-    let mut out = Vec::with_capacity(rows.len());
+    let rows = conn.collect_rows(statement, bindings)?;
+    let mut records = Vec::with_capacity(rows.len());
     for row in rows {
         let rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))?;
         let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))?;
         let id = decode_rid(&rid)?;
         let fields = decode::parse_doc(&json)?;
-        out.push(Record {
+        records.push(Record {
             id: RecordId::new(table, id),
             fields,
         });
     }
-    Ok(out)
+    Ok(records)
 }
