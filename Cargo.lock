@@ -2198,6 +2198,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastdb"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "serde_json",
+ "tempfile",
+ "turso_core",
+ "turso_fastdb",
+ "turso_fastdb_parser",
+ "uuid",
+]
+
+[[package]]
+name = "fastdb-cli"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "fastdb",
+ "futures",
+ "serde_json",
+ "tempfile",
+ "turso_fastdb_parser",
+]
+
+[[package]]
 name = "fastdivide"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

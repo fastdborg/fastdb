@@ -59,10 +59,10 @@ fn p2_bridge_001_exact_create_select_define_and_generated_uuid_slice() {
     assert_eq!(uuid.get_version_num(), 7);
     let source = generated_records[0].id.to_string();
     assert!(source.starts_with("note:u'"));
-    assert_eq!(
-        conn.execute(&format!("SELECT * FROM {source}")).unwrap(),
-        generated
-    );
+    let selected = conn.execute(&format!("SELECT * FROM {source}")).unwrap();
+    assert_eq!(selected.statements, generated.statements);
+    assert_eq!(generated.mutation_count, 1);
+    assert_eq!(selected.mutation_count, 0);
 }
 
 #[test]

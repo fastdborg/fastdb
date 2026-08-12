@@ -111,6 +111,83 @@ pub enum Value {
     RecordId(RecordId),
 }
 
+impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Self::Bool(value)
+    }
+}
+
+macro_rules! signed_value_from {
+    ($($ty:ty),+ $(,)?) => {
+        $(impl From<$ty> for Value {
+            fn from(value: $ty) -> Self {
+                Self::Integer(i64::from(value))
+            }
+        })+
+    };
+}
+
+signed_value_from!(i8, i16, i32, i64, u8, u16, u32);
+
+impl From<f32> for Value {
+    fn from(value: f32) -> Self {
+        Self::Float(f64::from(value))
+    }
+}
+
+impl From<f64> for Value {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<String> for Value {
+    fn from(value: String) -> Self {
+        Self::Str(value)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(value: &str) -> Self {
+        Self::Str(value.to_owned())
+    }
+}
+
+impl From<RecordId> for Value {
+    fn from(value: RecordId) -> Self {
+        Self::RecordId(value)
+    }
+}
+
+impl From<Vec<Value>> for Value {
+    fn from(value: Vec<Value>) -> Self {
+        Self::Array(value)
+    }
+}
+
+impl From<BTreeMap<String, Value>> for Value {
+    fn from(value: BTreeMap<String, Value>) -> Self {
+        Self::Object(value)
+    }
+}
+
+impl<T> From<Option<T>> for Value
+where
+    T: Into<Value>,
+{
+    fn from(value: Option<T>) -> Self {
+        value.map(Into::into).unwrap_or(Self::Null)
+    }
+}
+
+impl TryFrom<u64> for Value {
+    type Error = std::num::TryFromIntError;
+
+    fn try_from(value: u64) -> std::result::Result<Self, Self::Error> {
+        i64::try_from(value).map(Self::Integer)
+    }
+}
+
 impl Value {
     pub const fn is_indexable_scalar(&self) -> bool {
         matches!(

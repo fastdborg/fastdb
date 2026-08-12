@@ -264,6 +264,7 @@ impl Connection {
 
         let mut cursor = turso_fastdb_parser::StatementCursor::new(source);
         let mut statements = Vec::new();
+        let mut mutation_count = 0_u64;
         loop {
             let statement = match cursor.next_statement() {
                 Ok(Some(statement)) => statement,
@@ -274,11 +275,28 @@ impl Connection {
                 }
             };
             match execute::run_statement(self, &mut execution, statement, source, params) {
-                Ok(result) => statements.push(result),
+                Ok(result) => {
+                    statements.push(result.result);
+                    mutation_count = mutation_count
+                        .checked_add(result.mutation_count)
+                        .ok_or_else(|| {
+                            FastDbError::Engine("request mutation count overflowed u64".into())
+                        })?;
+                }
                 Err(error) => return Err(self.poison_after_error(&mut execution, error)),
             }
         }
-        Ok(QueryResponse::new(statements))
+        Ok(QueryResponse::new(statements, mutation_count))
+    }
+
+    /// Cooperatively interrupt the currently active engine statement.
+    pub fn interrupt(&self) {
+        self.conn.interrupt();
+    }
+
+    /// Close this connection and request the engine's clean-shutdown checkpoint.
+    pub fn close(&self) -> Result<()> {
+        self.conn.close().map_err(FastDbError::from)
     }
 
     pub(crate) fn begin_explicit(&self, state: &mut ExecutionState) -> Result<StatementResult> {

@@ -24,13 +24,36 @@ struct Candidate {
     document: BTreeMap<String, Value>,
 }
 
+pub(crate) struct StatementExecution {
+    pub(crate) result: StatementResult,
+    pub(crate) mutation_count: u64,
+}
+
+impl StatementExecution {
+    fn read_only(result: StatementResult) -> Self {
+        Self {
+            result,
+            mutation_count: 0,
+        }
+    }
+
+    fn mutation(result: StatementResult, mutation_count: usize) -> Result<Self> {
+        Ok(Self {
+            result,
+            mutation_count: u64::try_from(mutation_count).map_err(|_| {
+                FastDbError::Engine("statement mutation count overflowed u64".into())
+            })?,
+        })
+    }
+}
+
 pub(crate) fn run_statement(
     conn: &Connection,
     execution: &mut ExecutionState,
     statement: Statement,
     source: &str,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     if matches!(execution.transaction, TransactionState::Poisoned)
         && !matches!(statement, Statement::Cancel(_))
     {
@@ -45,24 +68,34 @@ pub(crate) fn run_statement(
     }
 
     match statement {
-        Statement::Begin(_) => conn.begin_explicit(execution),
-        Statement::Commit(_) => conn.commit_explicit(execution),
-        Statement::Cancel(_) => conn.cancel_explicit(execution),
+        Statement::Begin(_) => conn
+            .begin_explicit(execution)
+            .map(StatementExecution::read_only),
+        Statement::Commit(_) => conn
+            .commit_explicit(execution)
+            .map(StatementExecution::read_only),
+        Statement::Cancel(_) => conn
+            .cancel_explicit(execution)
+            .map(StatementExecution::read_only),
         statement => {
             eval::validate_parameter_references(&statement, params)?;
             match statement {
                 Statement::Create(statement) => run_create(conn, execution, statement, params),
-                Statement::Select(statement) => run_select(conn, execution, statement, params),
+                Statement::Select(statement) => run_select(conn, execution, statement, params)
+                    .map(StatementExecution::read_only),
                 Statement::Update(statement) => run_update(conn, execution, statement, params),
                 Statement::Delete(statement) => run_delete(conn, execution, statement, params),
                 Statement::DefineTable(statement) => {
                     run_define_table(conn, execution, statement, source)
+                        .map(StatementExecution::read_only)
                 }
                 Statement::DefineField(statement) => {
                     run_define_field(conn, execution, statement, source)
+                        .map(StatementExecution::read_only)
                 }
                 Statement::DefineIndex(statement) => {
                     run_define_index(conn, execution, statement, source)
+                        .map(StatementExecution::read_only)
                 }
                 Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {
                     unreachable!("transaction statements were handled above")
@@ -77,7 +110,7 @@ fn run_create(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::CreateStatement,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     let (table_name, parsed_id) = target_parts(statement.target)?;
     let id_value = parsed_id.unwrap_or_else(|| RecordIdValue::Uuid(uuid::Uuid::now_v7()));
     let id = RecordId::new(table_name.clone(), id_value.clone());
@@ -150,11 +183,12 @@ fn run_create(
         Some(ReturnKind::Before) => Some(Value::Null),
         Some(ReturnKind::After) | None => Some(value),
     };
-    if statement.only.is_some() {
-        Ok(StatementResult::Value(returned.unwrap_or(Value::Null)))
+    let result = if statement.only.is_some() {
+        StatementResult::Value(returned.unwrap_or(Value::Null))
     } else {
-        Ok(StatementResult::Rows(returned.into_iter().collect()))
-    }
+        StatementResult::Rows(returned.into_iter().collect())
+    };
+    StatementExecution::mutation(result, 1)
 }
 
 fn run_select(
@@ -254,7 +288,7 @@ fn run_update(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::UpdateStatement,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     let assignment_paths = statement
         .assignments
         .iter()
@@ -322,14 +356,18 @@ fn run_update(
         statement.return_clause.map(|clause| clause.kind.value),
         Some(ReturnKind::None)
     ) {
-        return Ok(StatementResult::Rows(Vec::new()));
+        return StatementExecution::mutation(StatementResult::Rows(Vec::new()), updates.len());
     }
-    Ok(StatementResult::Rows(
-        updates
-            .into_iter()
-            .map(|(candidate, document)| full_record_value(&candidate.id, &document))
-            .collect(),
-    ))
+    let mutation_count = updates.len();
+    StatementExecution::mutation(
+        StatementResult::Rows(
+            updates
+                .into_iter()
+                .map(|(candidate, document)| full_record_value(&candidate.id, &document))
+                .collect(),
+        ),
+        mutation_count,
+    )
 }
 
 fn run_delete(
@@ -337,7 +375,7 @@ fn run_delete(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::DeleteStatement,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     let (table_name, id) = target_parts(statement.target.clone())?;
     let deleted = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
@@ -371,14 +409,18 @@ fn run_delete(
         Ok(deleted)
     })?;
     if statement.return_clause.is_some() {
-        Ok(StatementResult::Rows(
-            deleted
-                .into_iter()
-                .map(|candidate| full_record_value(&candidate.id, &candidate.document))
-                .collect(),
-        ))
+        let mutation_count = deleted.len();
+        StatementExecution::mutation(
+            StatementResult::Rows(
+                deleted
+                    .into_iter()
+                    .map(|candidate| full_record_value(&candidate.id, &candidate.document))
+                    .collect(),
+            ),
+            mutation_count,
+        )
     } else {
-        Ok(StatementResult::Rows(Vec::new()))
+        StatementExecution::mutation(StatementResult::Rows(Vec::new()), deleted.len())
     }
 }
 

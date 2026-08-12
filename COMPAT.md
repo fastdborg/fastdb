@@ -9,7 +9,7 @@ FastDB implements a documented SurrealQL-compatible subset. This file is the nor
 - **Planned**: reserved for parsed behavior that has not reached execution.
 - **Unsupported**: explicitly rejected and outside the MVP target.
 
-Phase 3 executes the complete synchronous MVP expression, parameter, CRUD, result, ordered-script, schema, index, and explicit-transaction surface below. Async public API ergonomics, a transaction guard, CLI behavior, and release hardening remain Phase 4/5.
+Phase 4 exposes the complete synchronous MVP expression, parameter, CRUD, result, ordered-script, schema, index, and explicit-transaction surface through the asynchronous `fastdb` Rust package and CLI. Release hardening remains Phase 5.
 
 ## Values and record IDs
 
@@ -89,6 +89,14 @@ Phase 3 executes the complete synchronous MVP expression, parameter, CRUD, resul
 - Standalone statements commit individually. A later script error does not undo earlier standalone mutations, although the call returns only the error.
 - Any error in an active explicit transaction rolls back data and private catalog state and enters `Poisoned`; only CANCEL clears it. Cleanup failure enters unrecoverable `Broken`.
 - Predicate lowering is only a candidate-selection optimization. Exact Rust evaluation remains authoritative, and only proven-safe equality/range conjuncts are pushed through the canonical indexed JSON expression.
+
+## Phase 4 delivery contracts
+
+- Each public connection serializes complete asynchronous requests through one dedicated worker. Dropped queued requests are skipped; dropped in-flight requests complete.
+- `ExecutionSummary` reports exact statement and mutation counts, including UPDATE/DELETE/CREATE under `RETURN NONE`. SELECT contributes zero mutations.
+- A transaction guard rejects source transaction control, consumes on commit/rollback, queues rollback on drop, and fully cleans up after any guarded operation error.
+- Public errors expose exactly seven stable categories. Parse and unsupported errors preserve half-open UTF-8 byte spans; internal format failures are `Engine`.
+- The CLI exposes command, piped batch, and interactive parser-completeness modes. Its strict JSON is one collision-safe version-1 `$fastdb` envelope per request.
 
 ## Maintenance rule
 
