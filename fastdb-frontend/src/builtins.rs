@@ -146,6 +146,8 @@ pub(crate) enum Builtin {
     Count,
     Not,
     ValueExpect,
+    ValueDiff,
+    ValuePatch,
     String(StringBuiltin),
 }
 
@@ -1079,6 +1081,8 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure!(Count, "count", 0, 1),
     pure!(Not, "not", 1),
     pure!(ValueExpect, "value::expect", 2, 3),
+    pure!(ValueDiff, "value::diff", 2),
+    pure!(ValuePatch, "value::patch", 2),
     context_value!(
         Builtin::CryptoPassword(PasswordAlgorithm::Argon2, PasswordOperation::Compare),
         "crypto::argon2::compare",

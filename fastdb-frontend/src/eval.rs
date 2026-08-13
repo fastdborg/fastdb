@@ -1990,6 +1990,8 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
         ValueExpect => Err(FastDbError::Engine(
             "value::expect bypassed its closure evaluator".into(),
         )),
+        ValueDiff => crate::value_functions::diff(&arguments[0], &arguments[1]),
+        ValuePatch => crate::value_functions::patch(&arguments[0], &arguments[1]),
         String(function) => crate::string_functions::evaluate(function, &arguments),
     }
 }

@@ -40,6 +40,7 @@ mod provider;
 pub mod schema;
 mod string_functions;
 pub mod test_failpoints;
+mod value_functions;
 
 pub use connection::{CheckReport, Connection, Database};
 pub use decode::{parse_doc, Record, RecordId, RecordIdValue, Value};

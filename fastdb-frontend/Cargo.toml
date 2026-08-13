@@ -28,6 +28,7 @@ ciborium = "=0.2.2"
 blake3 = "=1.7.0"
 hex = "=0.4.3"
 fuzzy-matcher = "=0.3.7"
+diff-match-patch-rs = "=0.5.1"
 md-5 = "=0.11.0"
 password-hash = { version = "=0.5.0", features = ["rand_core"] }
 pbkdf2 = { version = "=0.12.2", features = ["simple"] }

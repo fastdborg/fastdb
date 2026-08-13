@@ -333,3 +333,29 @@ synthesized `id`/edge endpoints; it never renders a JSON or SQLite path from
 the input. `value::expect` returns the original value when its lexical closure
 is truthy and otherwise fails the containing statement or transaction without
 including the value in diagnostics.
+
+## Value diff and patch
+
+Independent probes showed that `value::diff` returns ordered patch objects.
+Object changes use lexicographic field traversal, array changes use numeric
+indexes, and a scalar replacement uses the empty root path. String-to-string
+changes use a `change` operation whose value is diff-match-patch text; the
+root string path is `/`. Representative structural results were:
+
+```text
+value::diff({a:1,b:2},{a:1,b:3,c:4})
+  => [{op:'replace',path:'/b',value:3},{op:'add',path:'/c',value:4}]
+value::diff([1,2],[1,3,4])
+  => [{op:'replace',path:'/1',value:3},{op:'add',path:'/2',value:4}]
+value::diff(1,2)
+  => [{op:'replace',path:'',value:2}]
+```
+
+`value::patch` accepted `add`, `remove`, `replace`, `test`, `copy`, `move`,
+and `change`. Paths are slash-separated literal components; the observed
+implementation did not JSON-Pointer-unescape `~0` or `~1`. FastDB applies at
+most 65,536 operations to a clone, caps path and string-patch text at one MiB,
+and publishes the result only after every operation succeeds. Generated
+string patches use the pinned, memory-safe Rust diff-match-patch
+implementation in compatibility mode; no source text or patch input is sent
+to the storage engine or included in diagnostics.

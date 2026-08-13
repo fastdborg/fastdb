@@ -4104,11 +4104,11 @@ area = "Functions — Object, set, and value"
 title = "value::diff function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`value::diff(...)` executes with characterized ordering, equality, path, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/value"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-029", "P13-FN-030"]
 stop_report = ""
 
 [[capability]]
@@ -4130,11 +4130,11 @@ area = "Functions — Object, set, and value"
 title = "value::patch function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`value::patch(...)` executes with characterized ordering, equality, path, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/value"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-030"]
 stop_report = ""
 [[capability]]
 id = "FN-PARSE-EMAIL-HOST"
