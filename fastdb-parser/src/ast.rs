@@ -425,6 +425,7 @@ impl Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
+    None,
     Null,
     Bool(bool),
     Integer(i64),
@@ -435,6 +436,15 @@ pub enum ExprKind {
     Parameter(String),
     RecordId(RecordId),
     FieldPath(FieldPath),
+    Access {
+        target: Box<Expr>,
+        accessor: Accessor,
+    },
+    Cast {
+        ty: SchemaType,
+        value: Box<Expr>,
+    },
+    Range(RangeExpr),
     FunctionCall {
         name: Vec<Identifier>,
         arguments: Vec<Expr>,
@@ -451,6 +461,27 @@ pub enum ExprKind {
         right: Box<Expr>,
     },
     Parenthesized(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Accessor {
+    Field(Identifier),
+    Index(Box<Expr>),
+    Last(Span),
+    Slice {
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+        inclusive: bool,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RangeExpr {
+    pub start: Option<Box<Expr>>,
+    pub end: Option<Box<Expr>>,
+    pub inclusive: bool,
+    pub operator_span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -517,17 +548,34 @@ pub enum UnaryOperator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
+    Power,
     Multiply,
     Divide,
+    Modulo,
     Add,
     Subtract,
+    Contains,
+    ContainsNot,
+    ContainsAll,
+    ContainsAny,
+    ContainsNone,
+    Inside,
+    NotInside,
+    AllInside,
+    AnyInside,
+    NoneInside,
     Less,
     LessEqual,
     Greater,
     GreaterEqual,
     Equal,
+    ExactEqual,
+    AnyEqual,
+    AllEqual,
     NotEqual,
     FtsMatch(Option<u32>),
     And,
     Or,
+    NullCoalesce,
+    TruthyCoalesce,
 }

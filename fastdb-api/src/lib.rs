@@ -1113,7 +1113,7 @@ fn validate_expression_limits(
     params: &Params,
     limits: &ResourceLimits,
 ) -> Result<()> {
-    use turso_fastdb_parser::{BinaryOperator, ExprKind};
+    use turso_fastdb_parser::{Accessor, BinaryOperator, ExprKind};
 
     match &expression.kind {
         ExprKind::Array(values) => {
@@ -1124,6 +1124,32 @@ fn validate_expression_limits(
         ExprKind::Object(fields) => {
             for field in fields {
                 validate_expression_limits(&field.value, params, limits)?;
+            }
+        }
+        ExprKind::Access { target, accessor } => {
+            validate_expression_limits(target, params, limits)?;
+            match accessor {
+                Accessor::Index(index) => validate_expression_limits(index, params, limits)?,
+                Accessor::Slice { start, end, .. } => {
+                    if let Some(start) = start {
+                        validate_expression_limits(start, params, limits)?;
+                    }
+                    if let Some(end) = end {
+                        validate_expression_limits(end, params, limits)?;
+                    }
+                }
+                Accessor::Field(_) | Accessor::Last(_) => {}
+            }
+        }
+        ExprKind::Cast { value, .. } => {
+            validate_expression_limits(value, params, limits)?;
+        }
+        ExprKind::Range(range) => {
+            if let Some(start) = &range.start {
+                validate_expression_limits(start, params, limits)?;
+            }
+            if let Some(end) = &range.end {
+                validate_expression_limits(end, params, limits)?;
             }
         }
         ExprKind::FunctionCall { name, arguments } => {
@@ -1173,7 +1199,8 @@ fn validate_expression_limits(
             validate_expression_limits(left, params, limits)?;
             validate_expression_limits(right, params, limits)?;
         }
-        ExprKind::Null
+        ExprKind::None
+        | ExprKind::Null
         | ExprKind::Bool(_)
         | ExprKind::Integer(_)
         | ExprKind::Float(_)

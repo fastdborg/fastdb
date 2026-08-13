@@ -4,12 +4,12 @@
 
 FastDB implements a clean-room SurrealQL-compatible subset pinned to SurrealDB `v3.1.5`. Parser acceptance alone does not mean execution support, and compatibility does not imply sponsorship or certification. See `CLEAN_ROOM.md`.
 
-The locked inventory contains 756 atomic capabilities: 89 Supported, 0 Partial, and 667 Unsupported. `Partial` is allowed only for the active Phase 12; all future-phase targets remain Unsupported until their implementation phase.
+The locked inventory contains 756 atomic capabilities: 111 Supported, 0 Partial, and 645 Unsupported. `Partial` is allowed only for the active Phase 13; all future-phase targets remain Unsupported until their implementation phase.
 
 ## Status legend
 
 - **Supported**: executable behavior has conformance evidence.
-- **Partial**: an atomic Phase 12 capability is actively being implemented.
+- **Partial**: an atomic Phase 13 capability is actively being implemented.
 - **Unsupported**: unavailable, excluded, dormant, or awaiting its assigned phase.
 
 Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as SurrealQL compatibility. Geospatial/geometry, history/changefeeds/time-series retention, Realtime/LIVE/KILL, GraphQL, GQL, multiprocess access, and parallel writers are advertised as unavailable.
@@ -54,9 +54,9 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | Capability ID | Status | Delivery | Capability | Exact surface | Provenance | Evidence / stop report |
 | --- | --- | --- | --- | --- | --- | --- |
 | `EXPR-ALIAS` | Supported | Phase 13 | expression aliases | Scalar projections accept explicit AS aliases. | docs/compat-research/phase6.md | P6-AST-001<br>P6-LANG-001 |
-| `EXPR-ARRAY-INDEX` | Unsupported | Phase 13 | array indexing | Positive and negative array indices execute with NONE for missing positions. | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `EXPR-ARRAY-SLICE` | Unsupported | Phase 13 | array slicing | Bounded and omitted array slice endpoints execute. | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `EXPR-CAST` | Unsupported | Phase 13 | casts | Characterized <type> casts execute with checked conversion. | https://surrealdb.com/docs/reference/query-language/language-primitives/casting | — |
+| `EXPR-ARRAY-INDEX` | Supported | Phase 13 | array indexing | Positive and negative array indices execute with NONE for missing positions. | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-002<br>P13-EXPR-001 |
+| `EXPR-ARRAY-SLICE` | Supported | Phase 13 | array slicing | Bounded and omitted array slice endpoints execute. | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-002<br>P13-EXPR-001 |
+| `EXPR-CAST` | Supported | Phase 13 | casts | Characterized <type> casts execute with checked conversion. | https://surrealdb.com/docs/reference/query-language/language-primitives/casting | P13-PARSE-002<br>P13-EXPR-001 |
 | `EXPR-CLOSURE` | Unsupported | Phase 13 | closures | Bounded closures execute only in characterized expression/function positions. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types/closures | — |
 | `EXPR-FUTURE` | Unsupported | Phase 13 | future blocks | Future expressions are bounded and evaluated according to characterized field semantics. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types/futures | — |
 | `EXPR-OBJECT-PATH` | Supported | Phase 13 | object field paths | Dot-separated Unicode paths and synthesized id/in/out fields execute. | docs/compat-research/phase3.md#set-evaluation-and-conflicting-assignments<br>docs/compat-research/phase7.md | P1-EXPR-001<br>P7-AST-003<br>P3-CRUD-001<br>P7-GRAPH-001 |
@@ -65,37 +65,37 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `EXPR-PAREN` | Supported | Phase 13 | parenthesized expressions | Parentheses execute within configured nesting limits. | docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-004<br>P1-LIMIT-003<br>P3-EXPR-001 |
 | `EXPR-SUBQUERY` | Unsupported | Phase 13 | subquery expressions | Bounded scalar and collection subqueries execute through the FastDB frontend. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `OP-ADD` | Supported | Phase 13 | addition and concatenation | + arithmetic plus characterized string and array concatenation | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-ALL-EQUAL` | Unsupported | Phase 13 | all-equal operator | *= | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-ALL-INSIDE` | Unsupported | Phase 13 | all-inside operator | ALLINSIDE and subset aliases | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-ALL-EQUAL` | Supported | Phase 13 | all-equal operator | *= | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
+| `OP-ALL-INSIDE` | Supported | Phase 13 | all-inside operator | ALLINSIDE and subset aliases | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
 | `OP-AND` | Supported | Phase 13 | logical AND | AND and && | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-ANY-EQUAL` | Unsupported | Phase 13 | any-equal operator | ?= | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-ANY-INSIDE` | Unsupported | Phase 13 | any-inside operator | ANYINSIDE and subset aliases | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-CONTAINS` | Unsupported | Phase 13 | contains operator | CONTAINS and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-CONTAINS-ALL` | Unsupported | Phase 13 | contains-all operator | CONTAINSALL and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-CONTAINS-ANY` | Unsupported | Phase 13 | contains-any operator | CONTAINSANY and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-CONTAINS-NONE` | Unsupported | Phase 13 | contains-none operator | CONTAINSNONE and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-CONTAINS-NOT` | Unsupported | Phase 13 | contains-not operator | CONTAINSNOT and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-ANY-EQUAL` | Supported | Phase 13 | any-equal operator | ?= | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
+| `OP-ANY-INSIDE` | Supported | Phase 13 | any-inside operator | ANYINSIDE and subset aliases | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
+| `OP-CONTAINS` | Supported | Phase 13 | contains operator | CONTAINS and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
+| `OP-CONTAINS-ALL` | Supported | Phase 13 | contains-all operator | CONTAINSALL and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
+| `OP-CONTAINS-ANY` | Supported | Phase 13 | contains-any operator | CONTAINSANY and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
+| `OP-CONTAINS-NONE` | Supported | Phase 13 | contains-none operator | CONTAINSNONE and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
+| `OP-CONTAINS-NOT` | Supported | Phase 13 | contains-not operator | CONTAINSNOT and its symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-003<br>P13-EXPR-001 |
 | `OP-DIVIDE` | Supported | Phase 13 | division | / and the division symbol with checked numeric and duration semantics | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
 | `OP-EQUAL` | Supported | Phase 13 | value equality | = and IS | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-EXACT-EQUAL` | Unsupported | Phase 13 | exact equality | == with type identity | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-EXACT-EQUAL` | Supported | Phase 13 | exact equality | == with characterized numeric equivalence | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
 | `OP-GREATER` | Supported | Phase 13 | greater-than comparison | > | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
 | `OP-GREATER-EQUAL` | Supported | Phase 13 | greater-than-or-equal comparison | >= | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-INSIDE` | Unsupported | Phase 13 | inside operator | INSIDE, IN, and symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-INSIDE` | Supported | Phase 13 | inside operator | INSIDE, IN, and symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
 | `OP-LESS` | Supported | Phase 13 | less-than comparison | < | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
 | `OP-LESS-EQUAL` | Supported | Phase 13 | less-than-or-equal comparison | <= | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-MODULO` | Unsupported | Phase 13 | modulo | % | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-MODULO` | Supported | Phase 13 | modulo | % | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-003<br>P13-EXPR-001<br>P13-EXPR-002 |
 | `OP-MULTIPLY` | Supported | Phase 13 | multiplication | * and multiplication symbol | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-NONE-INSIDE` | Unsupported | Phase 13 | none-inside operator | NONEINSIDE and symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-NONE-INSIDE` | Supported | Phase 13 | none-inside operator | NONEINSIDE and symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-003<br>P13-EXPR-001 |
 | `OP-NOT` | Supported | Phase 13 | logical NOT | ! and keyword NOT | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
 | `OP-NOT-EQUAL` | Supported | Phase 13 | value inequality | != and IS NOT | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-NOT-INSIDE` | Unsupported | Phase 13 | not-inside operator | NOTINSIDE, NOT IN, and symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-NULL-COALESCE` | Unsupported | Phase 13 | null coalescing | ?? | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-NOT-INSIDE` | Supported | Phase 13 | not-inside operator | NOTINSIDE, NOT IN, and symbol alias | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-003<br>P13-EXPR-001 |
+| `OP-NULL-COALESCE` | Supported | Phase 13 | null coalescing | ?? | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
 | `OP-OR` | Supported | Phase 13 | logical OR | OR and \|\| | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-POWER` | Unsupported | Phase 13 | power | ** | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-RANGE` | Unsupported | Phase 13 | range construction | .. with inclusive and exclusive bounds | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-POWER` | Supported | Phase 13 | power | ** | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001<br>P13-EXPR-002 |
+| `OP-RANGE` | Supported | Phase 13 | range construction | .. with inclusive and exclusive bounds | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-002<br>P13-EXPR-001 |
 | `OP-SUBTRACT` | Supported | Phase 13 | subtraction | - | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
-| `OP-TRUTH` | Unsupported | Phase 13 | truthiness coercion | !! | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
-| `OP-TRUTHY-COALESCE` | Unsupported | Phase 13 | truthy coalescing | ?: | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | — |
+| `OP-TRUTH` | Supported | Phase 13 | truthiness coercion | !! | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-003<br>P13-EXPR-001 |
+| `OP-TRUTHY-COALESCE` | Supported | Phase 13 | truthy coalescing | ?: | https://surrealdb.com/docs/reference/query-language/language-primitives/operators | P13-PARSE-001<br>P13-EXPR-001 |
 | `OP-UNARY-NUMERIC` | Supported | Phase 13 | unary numeric | + and - | https://surrealdb.com/docs/reference/query-language/language-primitives/operators<br>docs/compat-research/phase3.md#expressions-and-truthiness | P1-EXPR-003<br>P1-EXPR-004<br>P3-EXPR-001 |
 ## Functions — Array
 

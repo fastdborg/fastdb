@@ -97,6 +97,10 @@ impl DurationValue {
         format!("{}.{fractional}s", self.seconds)
     }
 
+    pub fn parse(value: &str) -> Result<Self> {
+        Self::parse_canonical(value).map_err(|error| FastDbError::Schema(error.to_string()))
+    }
+
     pub fn parse_canonical(value: &str) -> Result<Self> {
         let value = value
             .strip_suffix('s')

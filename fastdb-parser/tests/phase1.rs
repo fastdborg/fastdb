@@ -264,23 +264,12 @@ fn p1_expr_004_unary_and_parentheses_are_preserved() {
 
 #[test]
 fn p1_expr_005_invalid_and_excluded_expressions_fail_explicitly() {
-    for input in [
-        "CREATE p CONTENT item[0]",
-        "CREATE p CONTENT 2 ** 3",
-        "CREATE p CONTENT 2 % 1",
-        "CREATE p CONTENT a && b",
-        "CREATE p CONTENT a == b",
-        "CREATE p CONTENT 1..2",
-        "CREATE p CONTENT person->friend",
-        "CREATE p CONTENT a CONTAINS b",
-        "CREATE p CONTENT <string>value",
-    ] {
-        let error = parse(input).unwrap_err();
-        assert!(
-            matches!(error.kind, ParseErrorKind::UnsupportedSyntax { .. }),
-            "{input}: {error:?}"
-        );
-    }
+    let input = "CREATE p CONTENT person->friend";
+    let error = parse(input).unwrap_err();
+    assert!(
+        matches!(error.kind, ParseErrorKind::UnsupportedSyntax { .. }),
+        "{input}: {error:?}"
+    );
     for input in [
         "CREATE p CONTENT 9223372036854775808",
         "CREATE p CONTENT 1e309",

@@ -39,10 +39,11 @@ fn p12_compat_004_status_and_evidence_rules_fail_closed() {
     assert!(duplicate.validate().unwrap_err().contains("duplicate"));
 
     let mut future_partial = inventory.clone();
+    let active_phase = future_partial.inventory.active_phase;
     let capability = future_partial
         .capability
         .iter_mut()
-        .find(|capability| capability.phase == 13)
+        .find(|capability| capability.phase > active_phase)
         .unwrap();
     capability.status = Status::Partial;
     assert!(future_partial

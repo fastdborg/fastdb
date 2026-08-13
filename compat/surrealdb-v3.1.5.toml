@@ -2,7 +2,7 @@
 schema_version = 1
 reference = "SurrealDB v3.1.5"
 reference_version = "3.1.5"
-active_phase = 12
+active_phase = 13
 granularity_locked = true
 inventory_date = "2026-08-13"
 binary_url = "https://github.com/surrealdb/surrealdb/releases/download/v3.1.5/surreal-v3.1.5.linux-amd64.tgz"
@@ -457,11 +457,11 @@ area = "Expressions and operators"
 title = "array indexing"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Positive and negative array indices execute with NONE for missing positions."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-002"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -470,11 +470,11 @@ area = "Expressions and operators"
 title = "array slicing"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Bounded and omitted array slice endpoints execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-002"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -483,11 +483,11 @@ area = "Expressions and operators"
 title = "casts"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Characterized <type> casts execute with checked conversion."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/casting"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-002"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -600,11 +600,11 @@ area = "Expressions and operators"
 title = "all-equal operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "*="
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -613,11 +613,11 @@ area = "Expressions and operators"
 title = "all-inside operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "ALLINSIDE and subset aliases"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -639,11 +639,11 @@ area = "Expressions and operators"
 title = "any-equal operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "?="
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -652,11 +652,11 @@ area = "Expressions and operators"
 title = "any-inside operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "ANYINSIDE and subset aliases"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -665,11 +665,11 @@ area = "Expressions and operators"
 title = "contains operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "CONTAINS and its symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -678,11 +678,11 @@ area = "Expressions and operators"
 title = "contains-all operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "CONTAINSALL and its symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -691,11 +691,11 @@ area = "Expressions and operators"
 title = "contains-any operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "CONTAINSANY and its symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -704,11 +704,11 @@ area = "Expressions and operators"
 title = "contains-none operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "CONTAINSNONE and its symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -717,11 +717,11 @@ area = "Expressions and operators"
 title = "contains-not operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "CONTAINSNOT and its symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-003"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -756,11 +756,11 @@ area = "Expressions and operators"
 title = "exact equality"
 phase = 13
 disposition = "target"
-status = "Unsupported"
-syntax = "== with type identity"
+status = "Supported"
+syntax = "== with characterized numeric equivalence"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -795,11 +795,11 @@ area = "Expressions and operators"
 title = "inside operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "INSIDE, IN, and symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -834,11 +834,11 @@ area = "Expressions and operators"
 title = "modulo"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "%"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-003"]
+execution_evidence = ["P13-EXPR-001", "P13-EXPR-002"]
 stop_report = ""
 
 [[capability]]
@@ -860,11 +860,11 @@ area = "Expressions and operators"
 title = "none-inside operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "NONEINSIDE and symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-003"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -899,11 +899,11 @@ area = "Expressions and operators"
 title = "not-inside operator"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "NOTINSIDE, NOT IN, and symbol alias"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-003"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -912,11 +912,11 @@ area = "Expressions and operators"
 title = "null coalescing"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "??"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -938,11 +938,11 @@ area = "Expressions and operators"
 title = "power"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "**"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001", "P13-EXPR-002"]
 stop_report = ""
 
 [[capability]]
@@ -951,11 +951,11 @@ area = "Expressions and operators"
 title = "range construction"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = ".. with inclusive and exclusive bounds"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-002"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -977,11 +977,11 @@ area = "Expressions and operators"
 title = "truthiness coercion"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "!!"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-003"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]
@@ -990,11 +990,11 @@ area = "Expressions and operators"
 title = "truthy coalescing"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "?:"
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/operators"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001"]
+execution_evidence = ["P13-EXPR-001"]
 stop_report = ""
 
 [[capability]]

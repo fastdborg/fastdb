@@ -1249,6 +1249,23 @@ impl<'a> Parser<'a> {
     fn parse_expression_bp(&mut self, minimum_binding_power: u8) -> Result<Expr, ParseError> {
         let mut left = self.parse_prefix_expression()?;
         loop {
+            if self.at(&TokenKind::LeftBracket) {
+                left = self.parse_access_expression(left)?;
+                continue;
+            }
+            if self.at(&TokenKind::Dot) && !self.at_offset(1, &TokenKind::Star) {
+                self.advance();
+                let field = self.expect_path_segment("a path segment after '.'")?;
+                let span = left.span.union(field.span);
+                left = Expr::new(
+                    ExprKind::Access {
+                        target: Box::new(left),
+                        accessor: Accessor::Field(field),
+                    },
+                    span,
+                );
+                continue;
+            }
             if self.at(&TokenKind::KnnStart) {
                 const LEFT_BP: u8 = 5;
                 const RIGHT_BP: u8 = 6;
@@ -1301,46 +1318,60 @@ impl<'a> Parser<'a> {
                     self.peek().span,
                 ));
             }
-            if self.at(&TokenKind::LeftBracket) {
-                return Err(ParseError::unsupported(
-                    "array indexing is outside the MVP expression grammar",
-                    self.peek().span,
-                ));
-            }
             if let TokenKind::UnsupportedOperator(operator) = self.peek().kind {
                 return Err(ParseError::unsupported(
                     excluded_operator_description(operator),
                     self.peek().span,
                 ));
             }
-            if let TokenKind::Ident(value) = &self.peek().kind {
-                if is_excluded_comparison(value) {
-                    return Err(ParseError::unsupported(
-                        "comparison operator is outside the MVP expression grammar",
-                        self.peek().span,
-                    ));
+            if matches!(
+                self.peek().kind,
+                TokenKind::Range | TokenKind::RangeInclusive
+            ) {
+                const LEFT_BP: u8 = 15;
+                if LEFT_BP < minimum_binding_power {
+                    break;
                 }
+                let token = self.advance().clone();
+                let inclusive = matches!(token.kind, TokenKind::RangeInclusive);
+                let end = if self.range_has_end() {
+                    Some(Box::new(self.parse_expression_bp(LEFT_BP + 1)?))
+                } else {
+                    None
+                };
+                let span = end.as_deref().map_or_else(
+                    || left.span.union(token.span),
+                    |end| left.span.union(end.span),
+                );
+                left = Expr::new(
+                    ExprKind::Range(RangeExpr {
+                        start: Some(Box::new(left)),
+                        end,
+                        inclusive,
+                        operator_span: token.span,
+                    }),
+                    span,
+                );
+                continue;
             }
-            if self.at(&TokenKind::In) {
-                return Err(ParseError::unsupported(
-                    "comparison operator is outside the MVP expression grammar",
-                    self.peek().span,
-                ));
-            }
-            let Some((operator, left_bp, right_bp)) = binary_binding_power(&self.peek().kind)
-            else {
+            let Some((operator, left_bp, right_bp, token_count)) = self.binary_operator() else {
                 break;
             };
             if left_bp < minimum_binding_power {
                 break;
             }
-            let token = self.advance().clone();
+            let first = self.advance().clone();
+            let last = if token_count == 2 {
+                self.advance().clone()
+            } else {
+                first.clone()
+            };
             let right = self.parse_expression_bp(right_bp)?;
             let span = left.span.union(right.span);
             left = Expr::new(
                 ExprKind::Binary {
                     left: Box::new(left),
-                    operator: Spanned::new(operator, token.span),
+                    operator: Spanned::new(operator, first.span.union(last.span)),
                     right: Box::new(right),
                 },
                 span,
@@ -1366,7 +1397,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 self.enter_depth(token.span)?;
-                let operand_result = self.parse_expression_bp(13);
+                let operand_result = self.parse_expression_bp(19);
                 self.leave_depth();
                 let operand = operand_result?;
                 let operator = match token.kind {
@@ -1383,6 +1414,10 @@ impl<'a> Parser<'a> {
                     },
                     span,
                 ))
+            }
+            TokenKind::None => {
+                self.position += 1;
+                Ok(Expr::new(ExprKind::None, token.span))
             }
             TokenKind::Null => {
                 self.position += 1;
@@ -1416,10 +1451,28 @@ impl<'a> Parser<'a> {
             TokenKind::LeftParen => self.parse_parenthesized_expression(),
             TokenKind::LeftBracket => self.parse_array_expression(),
             TokenKind::LeftBrace => self.parse_object_expression(),
-            TokenKind::Less => Err(ParseError::unsupported(
-                "casts are outside the MVP expression grammar",
-                token.span,
-            )),
+            TokenKind::Less => self.parse_cast_expression(),
+            TokenKind::Range | TokenKind::RangeInclusive => {
+                self.position += 1;
+                let inclusive = matches!(token.kind, TokenKind::RangeInclusive);
+                let end = if self.range_has_end() {
+                    Some(Box::new(self.parse_expression_bp(16)?))
+                } else {
+                    None
+                };
+                let span = end
+                    .as_deref()
+                    .map_or(token.span, |end| token.span.union(end.span));
+                Ok(Expr::new(
+                    ExprKind::Range(RangeExpr {
+                        start: None,
+                        end,
+                        inclusive,
+                        operator_span: token.span,
+                    }),
+                    span,
+                ))
+            }
             TokenKind::Select => Err(ParseError::unsupported(
                 "subqueries are outside the MVP expression grammar",
                 token.span,
@@ -1436,6 +1489,95 @@ impl<'a> Parser<'a> {
             )),
             _ => Err(self.unexpected("an expression")),
         }
+    }
+
+    fn parse_cast_expression(&mut self) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::Less, "'<' before cast type")?.span;
+        self.enter_depth(open)?;
+        let ty_result = self.parse_schema_type();
+        self.leave_depth();
+        let ty = ty_result?;
+        let close = self
+            .expect(&TokenKind::Greater, "'>' after cast type")?
+            .span;
+        self.enter_depth(open)?;
+        let value_result = self.parse_expression_bp(14);
+        self.leave_depth();
+        let value = value_result?;
+        let span = open.union(value.span);
+        Ok(Expr::new(
+            ExprKind::Cast {
+                ty: SchemaType {
+                    span: open.union(close),
+                    kind: ty.kind,
+                },
+                value: Box::new(value),
+            },
+            span,
+        ))
+    }
+
+    fn parse_access_expression(&mut self, target: Expr) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::LeftBracket, "'['")?.span;
+        self.enter_depth(open)?;
+        let accessor_result = if let Some(last) = self.take(&TokenKind::Dollar) {
+            Ok(Accessor::Last(last.span))
+        } else {
+            let expression = self.parse_expression()?;
+            match expression.kind {
+                ExprKind::Range(range) => Ok(Accessor::Slice {
+                    start: range.start,
+                    end: range.end,
+                    inclusive: range.inclusive,
+                    span: range.operator_span,
+                }),
+                _ => Ok(Accessor::Index(Box::new(expression))),
+            }
+        };
+        self.leave_depth();
+        let accessor = accessor_result?;
+        let close = self.expect(&TokenKind::RightBracket, "']'")?.span;
+        let span = target.span.union(close);
+        Ok(Expr::new(
+            ExprKind::Access {
+                target: Box::new(target),
+                accessor,
+            },
+            span,
+        ))
+    }
+
+    fn range_has_end(&self) -> bool {
+        !matches!(
+            self.peek().kind,
+            TokenKind::RightBracket
+                | TokenKind::RightParen
+                | TokenKind::RightBrace
+                | TokenKind::Comma
+                | TokenKind::Semicolon
+                | TokenKind::Eof
+                | TokenKind::As
+                | TokenKind::Where
+                | TokenKind::Order
+                | TokenKind::Limit
+                | TokenKind::Start
+                | TokenKind::Return
+        )
+    }
+
+    fn binary_operator(&self) -> Option<(BinaryOperator, u8, u8, usize)> {
+        if self.at(&TokenKind::Is) {
+            return Some(if self.at_offset(1, &TokenKind::Not) {
+                (BinaryOperator::NotEqual, 5, 6, 2)
+            } else {
+                (BinaryOperator::Equal, 5, 6, 1)
+            });
+        }
+        if self.at(&TokenKind::Not) && self.at_offset(1, &TokenKind::In) {
+            return Some((BinaryOperator::NotInside, 7, 8, 2));
+        }
+        binary_binding_power(&self.peek().kind)
+            .map(|(operator, left, right)| (operator, left, right, 1))
     }
 
     fn parse_traversal_expression(&mut self) -> Result<Expr, ParseError> {
@@ -1984,15 +2126,34 @@ fn parse_uuid(value: &str, span: Span) -> Result<uuid::Uuid, ParseError> {
 
 fn binary_binding_power(kind: &TokenKind) -> Option<(BinaryOperator, u8, u8)> {
     let (operator, power) = match kind {
+        // v3.1.5 evaluates every other characterized binary operator before
+        // either coalescing form (for example, `0 ?? 1 + 2` is `0`).
+        TokenKind::NullCoalesce => (BinaryOperator::NullCoalesce, 0),
+        TokenKind::TruthyCoalesce => (BinaryOperator::TruthyCoalesce, 0),
+        TokenKind::Power => (BinaryOperator::Power, 13),
         TokenKind::Star => (BinaryOperator::Multiply, 11),
         TokenKind::Slash => (BinaryOperator::Divide, 11),
+        TokenKind::Percent => (BinaryOperator::Modulo, 11),
         TokenKind::Plus => (BinaryOperator::Add, 9),
         TokenKind::Minus => (BinaryOperator::Subtract, 9),
+        TokenKind::Contains => (BinaryOperator::Contains, 7),
+        TokenKind::ContainsNot => (BinaryOperator::ContainsNot, 7),
+        TokenKind::ContainsAll => (BinaryOperator::ContainsAll, 7),
+        TokenKind::ContainsAny => (BinaryOperator::ContainsAny, 7),
+        TokenKind::ContainsNone => (BinaryOperator::ContainsNone, 7),
+        TokenKind::Inside | TokenKind::In => (BinaryOperator::Inside, 7),
+        TokenKind::NotInside => (BinaryOperator::NotInside, 7),
+        TokenKind::AllInside => (BinaryOperator::AllInside, 7),
+        TokenKind::AnyInside => (BinaryOperator::AnyInside, 7),
+        TokenKind::NoneInside => (BinaryOperator::NoneInside, 7),
         TokenKind::Less => (BinaryOperator::Less, 7),
         TokenKind::LessEqual => (BinaryOperator::LessEqual, 7),
         TokenKind::Greater => (BinaryOperator::Greater, 7),
         TokenKind::GreaterEqual => (BinaryOperator::GreaterEqual, 7),
         TokenKind::Equal => (BinaryOperator::Equal, 5),
+        TokenKind::ExactEqual => (BinaryOperator::ExactEqual, 5),
+        TokenKind::AnyEqual => (BinaryOperator::AnyEqual, 5),
+        TokenKind::AllEqual => (BinaryOperator::AllEqual, 5),
         TokenKind::NotEqual => (BinaryOperator::NotEqual, 5),
         TokenKind::FtsMatch(reference) => (BinaryOperator::FtsMatch(*reference), 5),
         TokenKind::And => (BinaryOperator::And, 3),
@@ -2004,29 +2165,9 @@ fn binary_binding_power(kind: &TokenKind) -> Option<(BinaryOperator, u8, u8)> {
 
 fn excluded_operator_description(operator: &str) -> &'static str {
     match operator {
-        "**" => "power is outside the MVP expression grammar",
-        "%" => "modulo is outside the MVP expression grammar",
-        "&&" | "||" | "!" => "symbolic boolean operators are outside the MVP grammar",
-        "==" => "exact equality is outside the MVP expression grammar",
-        ".." => "ranges are outside the MVP expression grammar",
         "->" => "graph traversal is outside the MVP expression grammar",
         _ => "operator is outside the MVP expression grammar",
     }
-}
-
-fn is_excluded_comparison(value: &str) -> bool {
-    [
-        "is",
-        "in",
-        "inside",
-        "contains",
-        "containsnot",
-        "containsall",
-        "containsany",
-        "containsnone",
-    ]
-    .iter()
-    .any(|keyword| value.eq_ignore_ascii_case(keyword))
 }
 
 fn traversal_direction(kind: &TokenKind) -> Option<TraversalDirection> {

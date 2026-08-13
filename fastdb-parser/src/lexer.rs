@@ -51,6 +51,17 @@ pub enum TokenKind {
     Not,
     And,
     Or,
+    Is,
+    Contains,
+    ContainsNot,
+    ContainsAll,
+    ContainsAny,
+    ContainsNone,
+    Inside,
+    NotInside,
+    AllInside,
+    AnyInside,
+    NoneInside,
     BoolType,
     IntType,
     FloatType,
@@ -121,6 +132,9 @@ pub enum TokenKind {
     Star,
     Dot,
     Equal,
+    ExactEqual,
+    AnyEqual,
+    AllEqual,
     NotEqual,
     Less,
     LessEqual,
@@ -129,6 +143,14 @@ pub enum TokenKind {
     Plus,
     Minus,
     Slash,
+    Percent,
+    Power,
+    Range,
+    RangeInclusive,
+    NullCoalesce,
+    TruthyCoalesce,
+    Pipe,
+    Dollar,
     Comma,
     Semicolon,
     LeftParen,
@@ -211,6 +233,17 @@ impl TokenKind {
             Self::Not => "keyword NOT",
             Self::And => "keyword AND",
             Self::Or => "keyword OR",
+            Self::Is => "keyword IS",
+            Self::Contains => "keyword CONTAINS",
+            Self::ContainsNot => "keyword CONTAINSNOT",
+            Self::ContainsAll => "keyword CONTAINSALL",
+            Self::ContainsAny => "keyword CONTAINSANY",
+            Self::ContainsNone => "keyword CONTAINSNONE",
+            Self::Inside => "keyword INSIDE",
+            Self::NotInside => "keyword NOTINSIDE",
+            Self::AllInside => "keyword ALLINSIDE",
+            Self::AnyInside => "keyword ANYINSIDE",
+            Self::NoneInside => "keyword NONEINSIDE",
             Self::BoolType => "type BOOL",
             Self::IntType => "type INT",
             Self::FloatType => "type FLOAT",
@@ -280,6 +313,9 @@ impl TokenKind {
             Self::Star => "'*'",
             Self::Dot => "'.'",
             Self::Equal => "'='",
+            Self::ExactEqual => "'=='",
+            Self::AnyEqual => "'?='",
+            Self::AllEqual => "'*='",
             Self::NotEqual => "'!='",
             Self::Less => "'<'",
             Self::LessEqual => "'<='",
@@ -288,6 +324,14 @@ impl TokenKind {
             Self::Plus => "'+'",
             Self::Minus => "'-'",
             Self::Slash => "'/'",
+            Self::Percent => "'%'",
+            Self::Power => "'**'",
+            Self::Range => "'..'",
+            Self::RangeInclusive => "'..='",
+            Self::NullCoalesce => "'??'",
+            Self::TruthyCoalesce => "'?:'",
+            Self::Pipe => "'|'",
+            Self::Dollar => "'$'",
             Self::Comma => "','",
             Self::Semicolon => "';'",
             Self::LeftParen => "'('",
@@ -454,10 +498,12 @@ impl Lexer<'_> {
             '*' if self.peek_next() == Some('*') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("**"),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::Power, Span::new(start, 2)))
+            }
+            '*' if self.peek_next() == Some('=') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::AllEqual, Span::new(start, 2)))
             }
             '*' => {
                 self.bump();
@@ -467,13 +513,16 @@ impl Lexer<'_> {
                 self.bump();
                 single(TokenKind::Slash)
             }
+            '.' if self.starts_with("..=") => {
+                self.bump();
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::RangeInclusive, Span::new(start, 3)))
+            }
             '.' if self.peek_next() == Some('.') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator(".."),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::Range, Span::new(start, 2)))
             }
             '.' => {
                 self.bump();
@@ -482,10 +531,7 @@ impl Lexer<'_> {
             '=' if self.peek_next() == Some('=') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("=="),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::ExactEqual, Span::new(start, 2)))
             }
             '=' => {
                 self.bump();
@@ -498,10 +544,7 @@ impl Lexer<'_> {
             }
             '!' => {
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("!"),
-                    Span::new(start, 1),
-                ))
+                single(TokenKind::Not)
             }
             '<' if self.starts_with("<->") => {
                 self.bump();
@@ -548,35 +591,66 @@ impl Lexer<'_> {
             '@' => self.lex_fts_match(start),
             '%' => {
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("%"),
-                    Span::new(start, 1),
-                ))
+                single(TokenKind::Percent)
+            }
+            '?' if self.peek_next() == Some('=') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::AnyEqual, Span::new(start, 2)))
+            }
+            '?' if self.peek_next() == Some('?') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::NullCoalesce, Span::new(start, 2)))
+            }
+            '?' if self.peek_next() == Some(':') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::TruthyCoalesce, Span::new(start, 2)))
             }
             '&' if self.peek_next() == Some('&') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("&&"),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::And, Span::new(start, 2)))
             }
             '|' if self.peek_next() == Some('|') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("||"),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::Or, Span::new(start, 2)))
             }
             '|' => {
                 self.bump();
+                single(TokenKind::Pipe)
+            }
+            '$' if self.peek_next().is_some_and(is_identifier_start) => self.lex_parameter(start),
+            '$' => {
+                self.bump();
+                single(TokenKind::Dollar)
+            }
+            '×' => {
+                self.bump();
                 Ok(Token::new(
-                    TokenKind::UnsupportedOperator("|"),
-                    Span::new(start, 1),
+                    TokenKind::Star,
+                    Span::new(start, '×'.len_utf8()),
                 ))
             }
-            '$' => self.lex_parameter(start),
+            '÷' => {
+                self.bump();
+                Ok(Token::new(
+                    TokenKind::Slash,
+                    Span::new(start, '÷'.len_utf8()),
+                ))
+            }
+            '∋' => self.lex_unicode_operator(start, TokenKind::Contains),
+            '∌' => self.lex_unicode_operator(start, TokenKind::ContainsNot),
+            '∈' => self.lex_unicode_operator(start, TokenKind::Inside),
+            '∉' => self.lex_unicode_operator(start, TokenKind::NotInside),
+            '⊇' => self.lex_unicode_operator(start, TokenKind::ContainsAll),
+            '⊃' => self.lex_unicode_operator(start, TokenKind::ContainsAny),
+            '⊅' => self.lex_unicode_operator(start, TokenKind::ContainsNone),
+            '⊆' => self.lex_unicode_operator(start, TokenKind::AllInside),
+            '⊂' => self.lex_unicode_operator(start, TokenKind::AnyInside),
+            '⊄' => self.lex_unicode_operator(start, TokenKind::NoneInside),
             '\'' | '"' => self.lex_string(start, ch),
             '`' => self.lex_quoted_identifier(start),
             value if value.is_ascii_digit() => self.lex_number(start),
@@ -617,6 +691,11 @@ impl Lexer<'_> {
             }
             return Ok(());
         }
+    }
+
+    fn lex_unicode_operator(&mut self, start: usize, kind: TokenKind) -> Result<Token, ParseError> {
+        let width = self.bump().expect("operator is present").len_utf8();
+        Ok(Token::new(kind, Span::new(start, width)))
     }
 
     fn lex_identifier(&mut self, start: usize) -> Result<Token, ParseError> {
@@ -915,7 +994,13 @@ fn classify_identifier(value: &str) -> TokenKind {
         "schemafull" => Schemafull, "normal" => Normal, "relation" => Relation,
         "in" => In, "out" => Out, "to" => To, "enforced" => Enforced,
         "null" => Null, "true" => True, "false" => False,
-        "not" => Not, "and" => And, "or" => Or, "bool" => BoolType, "int" => IntType,
+        "not" => Not, "and" => And, "or" => Or, "is" => Is,
+        "contains" => Contains, "containsnot" => ContainsNot,
+        "containsall" => ContainsAll, "containsany" => ContainsAny,
+        "containsnone" => ContainsNone, "inside" => Inside,
+        "notinside" => NotInside, "allinside" => AllInside,
+        "anyinside" => AnyInside, "noneinside" => NoneInside,
+        "bool" => BoolType, "int" => IntType,
         "float" => FloatType, "number" => NumberType, "string" => StringType,
         "decimal" => DecimalType, "bytes" => BytesType, "datetime" => DatetimeType,
         "duration" => DurationType, "uuid" => UuidType, "regex" => RegexType,
