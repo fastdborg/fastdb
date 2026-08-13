@@ -258,3 +258,25 @@ input for finite numeric representation and bounds ranks, precision, and
 collection sizes. The `math::inf`/`math::infinity` and negative-infinity
 constants remain Unsupported because format 3 and the public `Value` contract
 deliberately prohibit non-finite persisted numbers.
+
+## Password hashing and random values
+
+Generated reference hashes exposed these fixed work parameters:
+
+- Argon2id v19: `m=19456,t=2,p=1`, 32-byte output;
+- bcrypt: version `2b`, cost 12;
+- PBKDF2-HMAC-SHA256: 600,000 iterations, 32-byte output; and
+- scrypt: `ln=17,r=8,p=1`, 32-byte output.
+
+FastDB pins the stable RustCrypto implementations, rejects passwords above
+1,024 bytes (72 bytes for non-truncating bcrypt), caps encoded hashes at 512
+bytes, and accepts no caller-selected work factor. Compare takes encoded hash
+first and candidate password second. Invalid encodings produce false without
+echoing either argument.
+
+The random family uses the process CSPRNG. `rand::uuid()` is UUIDv7;
+`rand::uuid::v4` and `rand::uuid::v7` retain their explicit versions. Default
+ID and string lengths were 20 and 32; bounded explicit lengths were accepted.
+Duration and datetime calls require two typed endpoints, and equal endpoints
+return that exact typed value. The fixed binary rejected `rand::guid`, so its
+locked inventory row remains Unsupported rather than inferring an alias.

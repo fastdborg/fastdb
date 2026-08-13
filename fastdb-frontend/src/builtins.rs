@@ -120,7 +120,38 @@ pub(crate) enum Builtin {
     EncodingCborDecode,
     CryptoDigest(CryptoDigest),
     CryptoJoaat,
+    CryptoPassword(PasswordAlgorithm, PasswordOperation),
+    Random(RandomBuiltin),
     String(StringBuiltin),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PasswordAlgorithm {
+    Argon2,
+    Bcrypt,
+    Pbkdf2,
+    Scrypt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PasswordOperation {
+    Compare,
+    Generate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RandomBuiltin {
+    Bool,
+    Duration,
+    Enum,
+    Float,
+    Id,
+    Int,
+    String,
+    Time,
+    Ulid,
+    UuidV4,
+    UuidV7,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,6 +462,31 @@ macro_rules! context {
             name: $name,
             min_arity: $arity,
             max_arity: $arity,
+            class: BuiltinClass::Context,
+            syntax: BuiltinSyntax::Function,
+            implementation_version: 1,
+        }
+    };
+}
+
+macro_rules! context_value {
+    ($function:expr, $name:literal, $arity:expr) => {
+        BuiltinSpec {
+            function: $function,
+            name: $name,
+            min_arity: $arity,
+            max_arity: $arity,
+            class: BuiltinClass::Context,
+            syntax: BuiltinSyntax::Function,
+            implementation_version: 1,
+        }
+    };
+    ($function:expr, $name:literal, $min:expr, $max:expr) => {
+        BuiltinSpec {
+            function: $function,
+            name: $name,
+            min_arity: $min,
+            max_arity: $max,
             class: BuiltinClass::Context,
             syntax: BuiltinSyntax::Function,
             implementation_version: 1,
@@ -822,6 +878,62 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
         1
     ),
     pure!(CryptoJoaat, "crypto::joaat", 1),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Argon2, PasswordOperation::Compare),
+        "crypto::argon2::compare",
+        2
+    ),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Argon2, PasswordOperation::Generate),
+        "crypto::argon2::generate",
+        1
+    ),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Bcrypt, PasswordOperation::Compare),
+        "crypto::bcrypt::compare",
+        2
+    ),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Bcrypt, PasswordOperation::Generate),
+        "crypto::bcrypt::generate",
+        1
+    ),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Pbkdf2, PasswordOperation::Compare),
+        "crypto::pbkdf2::compare",
+        2
+    ),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Pbkdf2, PasswordOperation::Generate),
+        "crypto::pbkdf2::generate",
+        1
+    ),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Scrypt, PasswordOperation::Compare),
+        "crypto::scrypt::compare",
+        2
+    ),
+    context_value!(
+        Builtin::CryptoPassword(PasswordAlgorithm::Scrypt, PasswordOperation::Generate),
+        "crypto::scrypt::generate",
+        1
+    ),
+    context_value!(Builtin::Random(RandomBuiltin::Bool), "rand::bool", 0),
+    context_value!(
+        Builtin::Random(RandomBuiltin::Duration),
+        "rand::duration",
+        2
+    ),
+    context_value!(Builtin::Random(RandomBuiltin::Enum), "rand::enum", 1, 64),
+    context_value!(Builtin::Random(RandomBuiltin::Float), "rand::float", 0, 2),
+    context_value!(Builtin::Random(RandomBuiltin::Id), "rand::id", 0, 1),
+    context_value!(Builtin::Random(RandomBuiltin::Int), "rand::int", 0, 2),
+    context_value!(Builtin::Random(RandomBuiltin::String), "rand::string", 0, 1),
+    context_value!(Builtin::Random(RandomBuiltin::Time), "rand::time", 2),
+    context_value!(Builtin::Random(RandomBuiltin::Ulid), "rand::ulid", 0),
+    context_value!(Builtin::Random(RandomBuiltin::UuidV7), "rand::uuid", 0),
+    context_value!(Builtin::Random(RandomBuiltin::UuidV4), "rand::uuid::v4", 0),
+    context_value!(Builtin::Random(RandomBuiltin::UuidV7), "rand::uuid::v7", 0),
     pure_value!(
         Builtin::String(StringBuiltin::ParseEmailHost),
         "parse::email::host",

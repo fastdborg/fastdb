@@ -1910,11 +1910,11 @@ area = "Functions — Crypto"
 title = "crypto::argon2::compare function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::argon2::compare(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -1923,11 +1923,11 @@ area = "Functions — Crypto"
 title = "crypto::argon2::generate function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::argon2::generate(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -1936,11 +1936,11 @@ area = "Functions — Crypto"
 title = "crypto::bcrypt::compare function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::bcrypt::compare(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -1949,11 +1949,11 @@ area = "Functions — Crypto"
 title = "crypto::bcrypt::generate function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::bcrypt::generate(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -2001,11 +2001,11 @@ area = "Functions — Crypto"
 title = "crypto::pbkdf2::compare function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::pbkdf2::compare(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -2014,11 +2014,11 @@ area = "Functions — Crypto"
 title = "crypto::pbkdf2::generate function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::pbkdf2::generate(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -2027,11 +2027,11 @@ area = "Functions — Crypto"
 title = "crypto::scrypt::compare function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::scrypt::compare(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -2040,11 +2040,11 @@ area = "Functions — Crypto"
 title = "crypto::scrypt::generate function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::scrypt::generate(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-020", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5272,11 +5272,11 @@ area = "Functions — Random, record, and type"
 title = "rand::bool function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::bool(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5285,11 +5285,11 @@ area = "Functions — Random, record, and type"
 title = "rand::duration function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::duration(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5298,11 +5298,11 @@ area = "Functions — Random, record, and type"
 title = "rand::enum function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::enum(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5311,11 +5311,11 @@ area = "Functions — Random, record, and type"
 title = "rand::float function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::float(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5337,11 +5337,11 @@ area = "Functions — Random, record, and type"
 title = "rand::id function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::id(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5350,11 +5350,11 @@ area = "Functions — Random, record, and type"
 title = "rand::int function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::int(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5363,11 +5363,11 @@ area = "Functions — Random, record, and type"
 title = "rand::string function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::string(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5376,11 +5376,11 @@ area = "Functions — Random, record, and type"
 title = "rand::time function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::time(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5389,11 +5389,11 @@ area = "Functions — Random, record, and type"
 title = "rand::ulid function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::ulid(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5402,11 +5402,11 @@ area = "Functions — Random, record, and type"
 title = "rand::uuid function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::uuid(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5415,11 +5415,11 @@ area = "Functions — Random, record, and type"
 title = "rand::uuid::v4 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::uuid::v4(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]
@@ -5428,11 +5428,11 @@ area = "Functions — Random, record, and type"
 title = "rand::uuid::v7 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`rand::uuid::v7(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/rand"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-019", "P13-FN-021"]
 stop_report = ""
 
 [[capability]]

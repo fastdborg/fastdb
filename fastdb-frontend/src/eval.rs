@@ -2,7 +2,7 @@
 
 use crate::builtins::{
     self, Builtin, BuiltinClass, BuiltinSyntax, CryptoDigest, DurationUnit, MathConstant,
-    MathUnary, TimePart, TimeTruncate, TypeCast, TypeKind,
+    MathUnary, RandomBuiltin, TimePart, TimeTruncate, TypeCast, TypeKind,
 };
 use crate::decode::{
     canonical_value_cmp, decode_value, encode_value, DatetimeValue, DecimalValue, DurationValue,
@@ -13,6 +13,7 @@ use crate::error::{FastDbError, Result};
 use crate::Params;
 use base64::Engine as _;
 use chrono::{Datelike as _, Local, Timelike as _, Utc};
+use rand::Rng as _;
 use rust_decimal::prelude::ToPrimitive as _;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -1513,6 +1514,10 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
             hash = hash.wrapping_add(hash << 15);
             Ok(Value::Integer(i64::from(hash)))
         }
+        CryptoPassword(algorithm, operation) => {
+            crate::password_functions::evaluate(algorithm, operation, &arguments)
+        }
+        Random(function) => evaluate_random(function, &arguments),
         String(function) => crate::string_functions::evaluate(function, &arguments),
     }
 }
@@ -2167,6 +2172,169 @@ fn evaluate_mode(value: &Value) -> Result<Value> {
         start = end;
     }
     Ok(selected)
+}
+
+fn evaluate_random(function: RandomBuiltin, arguments: &[Value]) -> Result<Value> {
+    let mut rng = rand::rng();
+    match function {
+        RandomBuiltin::Bool => Ok(Value::Bool(rng.random())),
+        RandomBuiltin::Float => match arguments {
+            [] => Ok(Value::Float(rng.random())),
+            [minimum, maximum] => {
+                let minimum = numeric_f64(minimum, "rand::float")?;
+                let maximum = numeric_f64(maximum, "rand::float")?;
+                if minimum > maximum {
+                    return Err(FastDbError::Schema(
+                        "rand::float minimum exceeds maximum".into(),
+                    ));
+                }
+                Ok(Value::Float(if minimum == maximum {
+                    minimum
+                } else {
+                    rng.random_range(minimum..=maximum)
+                }))
+            }
+            _ => Err(FastDbError::Schema(
+                "rand::float requires zero or two arguments".into(),
+            )),
+        },
+        RandomBuiltin::Int => match arguments {
+            [] => Ok(Value::Integer(rng.random())),
+            [minimum, maximum] => {
+                let minimum = expect_integer(minimum, "rand::int")?;
+                let maximum = expect_integer(maximum, "rand::int")?;
+                if minimum > maximum {
+                    return Err(FastDbError::Schema(
+                        "rand::int minimum exceeds maximum".into(),
+                    ));
+                }
+                Ok(Value::Integer(if minimum == maximum {
+                    minimum
+                } else {
+                    rng.random_range(minimum..=maximum)
+                }))
+            }
+            _ => Err(FastDbError::Schema(
+                "rand::int requires zero or two arguments".into(),
+            )),
+        },
+        RandomBuiltin::Enum => {
+            let values = if arguments.len() == 1 {
+                match &arguments[0] {
+                    Value::Array(values) => values.as_slice(),
+                    Value::Set(values) => values.as_slice(),
+                    _ => arguments,
+                }
+            } else {
+                arguments
+            };
+            if values.is_empty() {
+                return Ok(Value::None);
+            }
+            Ok(values[rng.random_range(0..values.len())].clone())
+        }
+        RandomBuiltin::Id | RandomBuiltin::String => {
+            let default = if function == RandomBuiltin::Id {
+                20
+            } else {
+                32
+            };
+            let length = arguments
+                .first()
+                .map(|value| expect_nonnegative_usize(value, "random string length"))
+                .transpose()?
+                .unwrap_or(default);
+            if length > 65_536 {
+                return Err(FastDbError::ResourceLimit(
+                    "random string exceeds the output limit".into(),
+                ));
+            }
+            let alphabet = if function == RandomBuiltin::Id {
+                b"abcdefghijklmnopqrstuvwxyz0123456789".as_slice()
+            } else {
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".as_slice()
+            };
+            let output: String = (0..length)
+                .map(|_| alphabet[rng.random_range(0..alphabet.len())] as char)
+                .collect();
+            Ok(Value::Str(output))
+        }
+        RandomBuiltin::Duration => {
+            let Value::Duration(minimum) = arguments[0] else {
+                return Err(argument_type("rand::duration", "duration"));
+            };
+            let Value::Duration(maximum) = arguments[1] else {
+                return Err(argument_type("rand::duration", "duration"));
+            };
+            let minimum = duration_nanos(minimum);
+            let maximum = duration_nanos(maximum);
+            if minimum > maximum {
+                return Err(FastDbError::Schema(
+                    "rand::duration minimum exceeds maximum".into(),
+                ));
+            }
+            let value = if minimum == maximum {
+                minimum
+            } else {
+                rng.random_range(minimum..=maximum)
+            };
+            duration_from_nanos(value).map(Value::Duration)
+        }
+        RandomBuiltin::Time => {
+            let minimum = expect_datetime(&arguments[0], "rand::time")?;
+            let maximum = expect_datetime(&arguments[1], "rand::time")?;
+            let minimum = datetime_nanos(minimum);
+            let maximum = datetime_nanos(maximum);
+            if minimum > maximum {
+                return Err(FastDbError::Schema(
+                    "rand::time minimum exceeds maximum".into(),
+                ));
+            }
+            let value = if minimum == maximum {
+                minimum
+            } else {
+                rng.random_range(minimum..=maximum)
+            };
+            let seconds = value.div_euclid(1_000_000_000);
+            let nanos = value.rem_euclid(1_000_000_000) as u32;
+            DatetimeValue::from_timestamp(
+                i64::try_from(seconds)
+                    .map_err(|_| FastDbError::Schema("random datetime overflow".into()))?,
+                nanos,
+            )
+            .map(Value::Datetime)
+        }
+        RandomBuiltin::Ulid => Ok(Value::Str(random_ulid(&mut rng)?)),
+        RandomBuiltin::UuidV4 => Ok(Value::Uuid(uuid::Uuid::new_v4())),
+        RandomBuiltin::UuidV7 => Ok(Value::Uuid(uuid::Uuid::now_v7())),
+    }
+}
+
+fn datetime_nanos(value: &DatetimeValue) -> i128 {
+    i128::from(value.timestamp()) * 1_000_000_000 + i128::from(value.nanosecond())
+}
+
+fn random_ulid(rng: &mut impl rand::Rng) -> Result<String> {
+    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| FastDbError::Engine("system clock precedes the Unix epoch".into()))?;
+    let milliseconds = u64::try_from(elapsed.as_millis())
+        .map_err(|_| FastDbError::Engine("system clock exceeds ULID range".into()))?;
+    if milliseconds >= (1_u64 << 48) {
+        return Err(FastDbError::Engine(
+            "system clock exceeds ULID timestamp range".into(),
+        ));
+    }
+    let mut value =
+        (u128::from(milliseconds) << 80) | (rng.random::<u128>() & ((1_u128 << 80) - 1));
+    let mut output = [b'0'; 26];
+    for character in output.iter_mut().rev() {
+        *character = ALPHABET[(value & 31) as usize];
+        value >>= 5;
+    }
+    String::from_utf8(output.to_vec())
+        .map_err(|_| FastDbError::Engine("ULID alphabet is not UTF-8".into()))
 }
 
 fn crypto_input(value: &Value) -> Result<&[u8]> {

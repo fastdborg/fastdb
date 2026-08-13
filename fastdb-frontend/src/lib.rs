@@ -34,6 +34,7 @@ mod eval;
 pub mod execute;
 pub mod lower;
 pub mod names;
+mod password_functions;
 pub mod path;
 mod provider;
 pub mod schema;
