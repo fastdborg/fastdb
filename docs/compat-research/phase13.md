@@ -311,3 +311,17 @@ a cloned lexical binding map. Collection limits cap invocation count and
 explicit-transaction errors poison the transaction. The fixed binary rejected
 the catalog aliases `array::every` and `array::some`; those rows remain
 Unsupported.
+
+## Remaining pure helpers
+
+The reference's fuzzy similarity scores matched the bounded Skim V2 matcher:
+`abc`/`abc` scored 71, `hello`/`hlo` scored 62, and an unmatched pattern
+returned zero. FastDB caps the score-matrix work product. HTML sanitization
+removed script content and event attributes while retaining `<b>ok</b>`; the
+implementation uses a pinned HTML5 parser and allowlist sanitizer with bounded
+input and output.
+
+`time::from_ulid` decodes the 48-bit millisecond timestamp and rejects invalid
+or overflowing Crockford encodings. `count()` returned one, while a false,
+NONE, NULL, or zero argument returned zero. `not` applies the same
+characterized truthiness used by logical expressions.

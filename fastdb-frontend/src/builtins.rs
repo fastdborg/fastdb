@@ -130,6 +130,7 @@ pub(crate) enum Builtin {
     TimeSet(TimePart),
     TimeTruncate(TimeTruncate),
     TimeFromUuid,
+    TimeFromUlid,
     EncodingBase64Encode,
     EncodingBase64Decode,
     EncodingJsonEncode,
@@ -140,6 +141,8 @@ pub(crate) enum Builtin {
     CryptoJoaat,
     CryptoPassword(PasswordAlgorithm, PasswordOperation),
     Random(RandomBuiltin),
+    Count,
+    Not,
     String(StringBuiltin),
 }
 
@@ -214,6 +217,7 @@ pub(crate) enum StringBuiltin {
     Distance(StringDistance),
     EndsWith,
     HtmlEncode,
+    HtmlSanitize,
     Join,
     Len,
     Lowercase,
@@ -273,6 +277,7 @@ pub(crate) enum StringSemver {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StringSimilarity {
+    Fuzzy,
     Jaro,
     JaroWinkler,
 }
@@ -1026,6 +1031,7 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
         1
     ),
     pure!(TimeFromUuid, "time::from_uuid", 1),
+    pure!(TimeFromUlid, "time::from_ulid", 1),
     pure!(TimeIsLeapYear, "time::is_leap_year", 1),
     pure!(TimeMin, "time::min", 1),
     pure!(TimeMax, "time::max", 1),
@@ -1065,6 +1071,8 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
         1
     ),
     pure!(CryptoJoaat, "crypto::joaat", 1),
+    pure!(Count, "count", 0, 1),
+    pure!(Not, "not", 1),
     context_value!(
         Builtin::CryptoPassword(PasswordAlgorithm::Argon2, PasswordOperation::Compare),
         "crypto::argon2::compare",
@@ -1231,6 +1239,11 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
         "string::html::encode",
         1
     ),
+    pure_value!(
+        Builtin::String(StringBuiltin::HtmlSanitize),
+        "string::html::sanitize",
+        1
+    ),
     pure_value!(Builtin::String(StringBuiltin::Join), "string::join", 2, 64),
     pure_value!(Builtin::String(StringBuiltin::Len), "string::len", 1),
     pure_value!(
@@ -1302,6 +1315,11 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure_value!(
         Builtin::String(StringBuiltin::Semver(StringSemver::SetPatch)),
         "string::semver::set::patch",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Similarity(StringSimilarity::Fuzzy)),
+        "string::similarity::fuzzy",
         2
     ),
     pure_value!(

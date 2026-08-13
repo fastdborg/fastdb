@@ -2442,11 +2442,11 @@ area = "Functions — Duration and time"
 title = "time::from_ulid function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::from_ulid(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-026", "P13-FN-027"]
 stop_report = ""
 
 [[capability]]
@@ -4428,11 +4428,11 @@ area = "Functions — Parsing and strings"
 title = "string::html::sanitize function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::html::sanitize(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-026", "P13-FN-027"]
 stop_report = ""
 
 [[capability]]
@@ -5130,11 +5130,11 @@ area = "Functions — Parsing and strings"
 title = "string::similarity::fuzzy function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::similarity::fuzzy(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-026", "P13-FN-027"]
 stop_report = ""
 
 [[capability]]
@@ -6285,11 +6285,11 @@ area = "Functions — Resource and session"
 title = "count function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`count(...)` executes with characterized semantics; outbound or expensive work is deny-by-default and bounded."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-026", "P13-FN-027"]
 stop_report = ""
 
 [[capability]]
@@ -6597,11 +6597,11 @@ area = "Functions — Resource and session"
 title = "not function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`not(...)` executes with characterized semantics; outbound or expensive work is deny-by-default and bounded."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-026", "P13-FN-027"]
 stop_report = ""
 
 [[capability]]

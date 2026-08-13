@@ -1736,6 +1736,7 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
         TimePart(part) => evaluate_time_part(part, &arguments[0]),
         TimeFrom(unit) => evaluate_time_from(unit, &arguments[0]),
         TimeFromUuid => evaluate_time_from_uuid(&arguments[0]),
+        TimeFromUlid => evaluate_time_from_ulid(&arguments[0]),
         TimeIsLeapYear => {
             let datetime = expect_datetime(&arguments[0], "time::is_leap_year")?.as_utc();
             let year = datetime.year();
@@ -1863,6 +1864,19 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
             crate::password_functions::evaluate(algorithm, operation, &arguments)
         }
         Random(function) => evaluate_random(function, &arguments),
+        Count => Ok(Value::Integer(
+            if arguments
+                .first()
+                .is_none_or(|value| EvalValue::Present(value.clone()).truthy())
+            {
+                1
+            } else {
+                0
+            },
+        )),
+        Not => Ok(Value::Bool(
+            !EvalValue::Present(arguments[0].clone()).truthy(),
+        )),
         String(function) => crate::string_functions::evaluate(function, &arguments),
     }
 }
@@ -2393,6 +2407,46 @@ fn evaluate_time_from_uuid(value: &Value) -> Result<Value> {
         nanoseconds,
     )
     .map(Value::Datetime)
+}
+
+fn evaluate_time_from_ulid(value: &Value) -> Result<Value> {
+    let value = expect_string(value, "time::from_ulid")?;
+    if value.len() != 26 {
+        return Err(FastDbError::Schema(
+            "time::from_ulid requires a 26-character ULID".into(),
+        ));
+    }
+    let mut decoded = 0_u128;
+    for (index, byte) in value.bytes().enumerate() {
+        let digit = crockford_digit(byte)
+            .ok_or_else(|| FastDbError::Schema("ULID contains an invalid character".into()))?;
+        if index == 0 && digit > 7 {
+            return Err(FastDbError::Schema("ULID exceeds 128 bits".into()));
+        }
+        decoded = (decoded << 5) | u128::from(digit);
+    }
+    let milliseconds = u64::try_from(decoded >> 80)
+        .map_err(|_| FastDbError::Schema("ULID timestamp overflow".into()))?;
+    DatetimeValue::from_timestamp(
+        i64::try_from(milliseconds / 1_000)
+            .map_err(|_| FastDbError::Schema("ULID timestamp overflow".into()))?,
+        ((milliseconds % 1_000) * 1_000_000) as u32,
+    )
+    .map(Value::Datetime)
+}
+
+fn crockford_digit(byte: u8) -> Option<u8> {
+    match byte.to_ascii_uppercase() {
+        b'0' | b'O' => Some(0),
+        b'1' | b'I' | b'L' => Some(1),
+        b'2'..=b'9' => Some(byte - b'0'),
+        b'A'..=b'H' => Some(byte.to_ascii_uppercase() - b'A' + 10),
+        b'J'..=b'K' => Some(byte.to_ascii_uppercase() - b'J' + 18),
+        b'M'..=b'N' => Some(byte.to_ascii_uppercase() - b'M' + 20),
+        b'P'..=b'T' => Some(byte.to_ascii_uppercase() - b'P' + 22),
+        b'V'..=b'Z' => Some(byte.to_ascii_uppercase() - b'V' + 27),
+        _ => None,
+    }
 }
 
 fn evaluate_time_set(part: TimePart, datetime: &Value, replacement: &Value) -> Result<Value> {

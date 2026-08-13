@@ -35,6 +35,13 @@ pub(crate) fn evaluate(function: StringBuiltin, arguments: &[Value]) -> Result<V
                 .ends_with(string(&arguments[1], "string::ends_with")?),
         )),
         HtmlEncode => bounded_string(html_encode(string(&arguments[0], "string::html::encode")?)),
+        HtmlSanitize => {
+            let input = string(&arguments[0], "string::html::sanitize")?;
+            if input.len() > MAX_STRING_BYTES {
+                return Err(output_limit());
+            }
+            bounded_string(ammonia::clean(input))
+        }
         Join => {
             let separator = string(&arguments[0], "string::join")?;
             let mut output = String::new();
@@ -168,6 +175,19 @@ fn evaluate_similarity(similarity: StringSimilarity, arguments: &[Value]) -> Res
     let left = string(&arguments[0], "string similarity")?;
     let right = string(&arguments[1], "string similarity")?;
     let value = match similarity {
+        StringSimilarity::Fuzzy => {
+            use fuzzy_matcher::FuzzyMatcher as _;
+            if left.len().saturating_mul(right.len()) > 1_048_576 {
+                return Err(FastDbError::ResourceLimit(
+                    "fuzzy similarity exceeds the work limit".into(),
+                ));
+            }
+            return Ok(Value::Integer(
+                fuzzy_matcher::skim::SkimMatcherV2::default()
+                    .fuzzy_match(left, right)
+                    .unwrap_or(0),
+            ));
+        }
         StringSimilarity::Jaro => strsim::jaro(left, right),
         StringSimilarity::JaroWinkler => strsim::jaro_winkler(left, right),
     };
