@@ -1171,20 +1171,18 @@ impl<'a> Parser<'a> {
                     None
                 };
                 let close = self.expect(&TokenKind::Greater, "'>' after vector dimension")?;
-                if matches!(&element.kind, SchemaTypeKind::Float) && dimension.is_some() {
-                    return Ok(SchemaType {
-                        span: token.span.union(close.span),
-                        kind: SchemaTypeKind::FixedFloatArray(
-                            dimension.expect("checked dimension presence"),
-                        ),
-                    });
-                }
+                let kind = match (&element.kind, dimension) {
+                    (SchemaTypeKind::Float, Some(dimension)) => {
+                        SchemaTypeKind::FixedFloatArray(dimension)
+                    }
+                    (_, length) => SchemaTypeKind::TypedArray {
+                        element: Box::new(element),
+                        length,
+                    },
+                };
                 return Ok(SchemaType {
                     span: token.span.union(close.span),
-                    kind: SchemaTypeKind::TypedArray {
-                        element: Box::new(element),
-                        length: dimension,
-                    },
+                    kind,
                 });
             }
             TokenKind::ArrayType => SchemaTypeKind::Array,
