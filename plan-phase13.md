@@ -1,6 +1,6 @@
 # FastDB Phase 13 — Expressions, operators, and built-in functions
 
-Status: authoritative implementation plan; implementation not started
+Status: technically complete locally; see `docs/phase13-report.md`
 
 Starting checkpoint: `9627c82cd`
 

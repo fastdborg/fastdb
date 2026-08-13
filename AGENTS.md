@@ -12,11 +12,13 @@ Before changing code or repository structure:
    audit; [`plan-phase11.md`](plan-phase11.md) and
    [`docs/phase11-mvcc-audit.md`](docs/phase11-mvcc-audit.md) preserve the stop
    evidence. Phase 12 completed the compatibility inventory and format-3
-   foundation; [`plan-phase12.md`](plan-phase12.md) and
-   [`docs/phase12-report.md`](docs/phase12-report.md) preserve its contract and
-   evidence. Author the authoritative Phase 13 plan before executable
-   expression/function expansion. Earlier plans and reports remain historical
-   evidence.
+   foundation. Phase 13 completed bounded expressions and the context-neutral
+   function surface; [`plan-phase13.md`](plan-phase13.md),
+   [`docs/phase13-report.md`](docs/phase13-report.md), and
+   [`docs/phase13-architecture-stops.md`](docs/phase13-architecture-stops.md)
+   preserve its contract, evidence, and explicit unavailable boundaries.
+   Author the authoritative Phase 14 plan before CRUD/query expansion. Earlier
+   plans and reports remain historical evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -44,10 +46,10 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Active delivery surfaces: the embedded Rust library and `fastdb` CLI, later
   extended by the Phase 19 server and Phase 21 Rust/TypeScript/Go/PHP SDKs.
 - Current implementation stage: Phase 11 stopped because no stable
-  parallel-writer candidate qualified. Phase 12 is technically complete
-  locally and Phase 13 planning is next. The implemented on-disk format is
-  version 3; serialized stable WAL remains the only supported concurrency mode
-  through Phase 22.
+  parallel-writer candidate qualified. Phases 12 and 13 are technically
+  complete locally; Phase 14 planning is next. The implemented on-disk format
+  is version 3; serialized stable WAL remains the only supported concurrency
+  mode through Phase 22.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.

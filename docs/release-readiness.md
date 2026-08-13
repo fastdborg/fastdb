@@ -1,9 +1,9 @@
 # FastDB pre-1.0 and Core 1.0 release-readiness gates
 
-Status: Phase 11 stopped at its mandatory MVCC audit. Phase 12 is technically
-complete locally; Phase 13 planning is next on the serialized stable-WAL
-pre-1.0 track. No alpha, beta, pre-1.0 package publication, or Core 1.0 release
-is authorized.
+Status: Phase 11 stopped at its mandatory MVCC audit. Phases 12 and 13 are
+technically complete locally; Phase 14 planning is next on the serialized
+stable-WAL pre-1.0 track. No alpha, beta, pre-1.0 package publication, or Core
+1.0 release is authorized.
 
 This checklist is the durable release gate. Phase plans and reports preserve
 execution details and evidence. Completing a development phase does not itself
@@ -69,10 +69,13 @@ compatibility.
 
 ### Phase 13 — Expressions and functions
 
-- [ ] Complete bounded indexing/slicing, casts, collection/range operations,
+- [x] Complete bounded indexing/slicing, casts, collection/range operations,
       null/none semantics, subexpressions, and characterized pure functions.
-- [ ] Put external-resource functions behind deny-by-default capability
-      allowlists with SSRF, DNS, redirect, time, size, and concurrency limits.
+- [x] Keep external-resource and ambient-context functions unavailable where
+      the current evaluator cannot meet SSRF, DNS, redirect, cancellation,
+      authorization, time, size, concurrency, and isolation gates; record each
+      stop and require its later owning phase to reopen it with executable
+      evidence rather than publish a weaker provider.
 
 ### Phase 14 — CRUD and query completeness
 
