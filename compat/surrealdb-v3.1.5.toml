@@ -4142,11 +4142,11 @@ area = "Functions — Parsing and strings"
 title = "parse::email::host function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::email::host(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4155,11 +4155,11 @@ area = "Functions — Parsing and strings"
 title = "parse::email::user function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::email::user(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4168,11 +4168,11 @@ area = "Functions — Parsing and strings"
 title = "parse::url::domain function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::url::domain(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4181,11 +4181,11 @@ area = "Functions — Parsing and strings"
 title = "parse::url::fragment function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::url::fragment(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4194,11 +4194,11 @@ area = "Functions — Parsing and strings"
 title = "parse::url::host function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::url::host(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4207,11 +4207,11 @@ area = "Functions — Parsing and strings"
 title = "parse::url::path function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::url::path(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4220,11 +4220,11 @@ area = "Functions — Parsing and strings"
 title = "parse::url::port function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::url::port(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4233,11 +4233,11 @@ area = "Functions — Parsing and strings"
 title = "parse::url::query function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::url::query(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4246,11 +4246,11 @@ area = "Functions — Parsing and strings"
 title = "parse::url::scheme function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`parse::url::scheme(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/parse"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4259,11 +4259,11 @@ area = "Functions — Parsing and strings"
 title = "string::capitalize function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::capitalize(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4272,11 +4272,11 @@ area = "Functions — Parsing and strings"
 title = "string::concat function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::concat(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4285,11 +4285,11 @@ area = "Functions — Parsing and strings"
 title = "string::contains function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::contains(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4298,11 +4298,11 @@ area = "Functions — Parsing and strings"
 title = "string::distance::damerau_levenshtein function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::distance::damerau_levenshtein(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4311,11 +4311,11 @@ area = "Functions — Parsing and strings"
 title = "string::distance::hamming function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::distance::hamming(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4324,11 +4324,11 @@ area = "Functions — Parsing and strings"
 title = "string::distance::levenshtein function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::distance::levenshtein(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4337,11 +4337,11 @@ area = "Functions — Parsing and strings"
 title = "string::distance::normalized_damerau_levenshtein function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::distance::normalized_damerau_levenshtein(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4350,11 +4350,11 @@ area = "Functions — Parsing and strings"
 title = "string::distance::normalized_levenshtein function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::distance::normalized_levenshtein(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4363,11 +4363,11 @@ area = "Functions — Parsing and strings"
 title = "string::distance::osa function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::distance::osa(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4389,11 +4389,11 @@ area = "Functions — Parsing and strings"
 title = "string::ends_with function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::ends_with(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4415,11 +4415,11 @@ area = "Functions — Parsing and strings"
 title = "string::html::encode function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::html::encode(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4454,11 +4454,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_alpha function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_alpha(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4480,11 +4480,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_alphanum function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_alphanum(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4506,11 +4506,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_ascii function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_ascii(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4532,11 +4532,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_datetime function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_datetime(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4558,11 +4558,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_domain function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_domain(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4584,11 +4584,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_email function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_email(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4610,11 +4610,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_hexadecimal function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_hexadecimal(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4636,11 +4636,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_ip function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_ip(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4662,11 +4662,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_ipv4 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_ipv4(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4688,11 +4688,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_ipv6 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_ipv6(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4714,11 +4714,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_latitude function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_latitude(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4740,11 +4740,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_longitude function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_longitude(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4766,11 +4766,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_numeric function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_numeric(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4792,11 +4792,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_record function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_record(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4818,11 +4818,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_semver function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_semver(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4844,11 +4844,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_ulid function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_ulid(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4870,11 +4870,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_url function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_url(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4896,11 +4896,11 @@ area = "Functions — Parsing and strings"
 title = "string::is_uuid function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::is_uuid(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4909,11 +4909,11 @@ area = "Functions — Parsing and strings"
 title = "string::join function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::join(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4922,11 +4922,11 @@ area = "Functions — Parsing and strings"
 title = "string::len function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::len(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4935,11 +4935,11 @@ area = "Functions — Parsing and strings"
 title = "string::lowercase function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::lowercase(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4948,11 +4948,11 @@ area = "Functions — Parsing and strings"
 title = "string::matches function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::matches(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4961,11 +4961,11 @@ area = "Functions — Parsing and strings"
 title = "string::repeat function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::repeat(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4974,11 +4974,11 @@ area = "Functions — Parsing and strings"
 title = "string::replace function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::replace(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -4987,11 +4987,11 @@ area = "Functions — Parsing and strings"
 title = "string::reverse function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::reverse(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5000,11 +5000,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::compare function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::compare(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5013,11 +5013,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::inc::major function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::inc::major(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5026,11 +5026,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::inc::minor function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::inc::minor(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5039,11 +5039,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::inc::patch function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::inc::patch(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5052,11 +5052,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::major function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::major(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5065,11 +5065,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::minor function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::minor(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5078,11 +5078,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::patch function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::patch(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5091,11 +5091,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::set::major function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::set::major(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5104,11 +5104,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::set::minor function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::set::minor(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5117,11 +5117,11 @@ area = "Functions — Parsing and strings"
 title = "string::semver::set::patch function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::semver::set::patch(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5143,11 +5143,11 @@ area = "Functions — Parsing and strings"
 title = "string::similarity::jaro function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::similarity::jaro(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5156,11 +5156,11 @@ area = "Functions — Parsing and strings"
 title = "string::similarity::jaro_winkler function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::similarity::jaro_winkler(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5169,11 +5169,11 @@ area = "Functions — Parsing and strings"
 title = "string::slice function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::slice(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5182,11 +5182,11 @@ area = "Functions — Parsing and strings"
 title = "string::slug function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::slug(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5195,11 +5195,11 @@ area = "Functions — Parsing and strings"
 title = "string::split function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::split(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5208,11 +5208,11 @@ area = "Functions — Parsing and strings"
 title = "string::starts_with function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::starts_with(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5234,11 +5234,11 @@ area = "Functions — Parsing and strings"
 title = "string::trim function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::trim(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5247,11 +5247,11 @@ area = "Functions — Parsing and strings"
 title = "string::uppercase function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::uppercase(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 
 [[capability]]
@@ -5260,11 +5260,11 @@ area = "Functions — Parsing and strings"
 title = "string::words function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`string::words(...)` executes with characterized Unicode, byte, regex, and output limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/string"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-015", "P13-FN-016"]
 stop_report = ""
 [[capability]]
 id = "FN-RAND-BOOL"

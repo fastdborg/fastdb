@@ -943,7 +943,7 @@ fn parse_record_string(value: &str) -> Result<RecordId> {
     Ok(RecordId::new(table, component))
 }
 
-fn render_string(value: Value) -> Result<String> {
+pub(crate) fn render_string(value: Value) -> Result<String> {
     Ok(match value {
         Value::None => "NONE".into(),
         Value::Null => "NULL".into(),
@@ -1456,6 +1456,7 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
             hash = hash.wrapping_add(hash << 15);
             Ok(Value::Integer(i64::from(hash)))
         }
+        String(function) => crate::string_functions::evaluate(function, &arguments),
     }
 }
 

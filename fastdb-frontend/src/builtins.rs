@@ -107,6 +107,100 @@ pub(crate) enum Builtin {
     EncodingCborDecode,
     CryptoDigest(CryptoDigest),
     CryptoJoaat,
+    String(StringBuiltin),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringBuiltin {
+    Capitalize,
+    Concat,
+    Contains,
+    Distance(StringDistance),
+    EndsWith,
+    HtmlEncode,
+    Join,
+    Len,
+    Lowercase,
+    Matches,
+    ParseEmailHost,
+    ParseEmailUser,
+    ParseUrl(StringUrlPart),
+    Repeat,
+    Replace,
+    Reverse,
+    Semver(StringSemver),
+    Similarity(StringSimilarity),
+    Slice,
+    Slug,
+    Split,
+    StartsWith,
+    Trim,
+    Uppercase,
+    Validate(StringValidator),
+    Words,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringDistance {
+    DamerauLevenshtein,
+    Hamming,
+    Levenshtein,
+    NormalizedDamerauLevenshtein,
+    NormalizedLevenshtein,
+    Osa,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringUrlPart {
+    Domain,
+    Fragment,
+    Host,
+    Path,
+    Port,
+    Query,
+    Scheme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringSemver {
+    Compare,
+    IncMajor,
+    IncMinor,
+    IncPatch,
+    Major,
+    Minor,
+    Patch,
+    SetMajor,
+    SetMinor,
+    SetPatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringSimilarity {
+    Jaro,
+    JaroWinkler,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringValidator {
+    Alpha,
+    Alphanumeric,
+    Ascii,
+    Datetime,
+    Domain,
+    Email,
+    Hexadecimal,
+    Ip,
+    Ipv4,
+    Ipv6,
+    Latitude,
+    Longitude,
+    Numeric,
+    Record,
+    Semver,
+    Ulid,
+    Url,
+    Uuid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -702,6 +796,309 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
         1
     ),
     pure!(CryptoJoaat, "crypto::joaat", 1),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseEmailHost),
+        "parse::email::host",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseEmailUser),
+        "parse::email::user",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseUrl(StringUrlPart::Domain)),
+        "parse::url::domain",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseUrl(StringUrlPart::Fragment)),
+        "parse::url::fragment",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseUrl(StringUrlPart::Host)),
+        "parse::url::host",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseUrl(StringUrlPart::Path)),
+        "parse::url::path",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseUrl(StringUrlPart::Port)),
+        "parse::url::port",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseUrl(StringUrlPart::Query)),
+        "parse::url::query",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::ParseUrl(StringUrlPart::Scheme)),
+        "parse::url::scheme",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Capitalize),
+        "string::capitalize",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Concat),
+        "string::concat",
+        1,
+        64
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Contains),
+        "string::contains",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Distance(StringDistance::DamerauLevenshtein)),
+        "string::distance::damerau_levenshtein",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Distance(StringDistance::Hamming)),
+        "string::distance::hamming",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Distance(StringDistance::Levenshtein)),
+        "string::distance::levenshtein",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Distance(
+            StringDistance::NormalizedDamerauLevenshtein
+        )),
+        "string::distance::normalized_damerau_levenshtein",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Distance(
+            StringDistance::NormalizedLevenshtein
+        )),
+        "string::distance::normalized_levenshtein",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Distance(StringDistance::Osa)),
+        "string::distance::osa",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::EndsWith),
+        "string::ends_with",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::EndsWith),
+        "string::endswith",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::HtmlEncode),
+        "string::html::encode",
+        1
+    ),
+    pure_value!(Builtin::String(StringBuiltin::Join), "string::join", 2, 64),
+    pure_value!(Builtin::String(StringBuiltin::Len), "string::len", 1),
+    pure_value!(
+        Builtin::String(StringBuiltin::Lowercase),
+        "string::lowercase",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Matches),
+        "string::matches",
+        2
+    ),
+    pure_value!(Builtin::String(StringBuiltin::Repeat), "string::repeat", 2),
+    pure_value!(
+        Builtin::String(StringBuiltin::Replace),
+        "string::replace",
+        3
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Reverse),
+        "string::reverse",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::Compare)),
+        "string::semver::compare",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::IncMajor)),
+        "string::semver::inc::major",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::IncMinor)),
+        "string::semver::inc::minor",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::IncPatch)),
+        "string::semver::inc::patch",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::Major)),
+        "string::semver::major",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::Minor)),
+        "string::semver::minor",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::Patch)),
+        "string::semver::patch",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::SetMajor)),
+        "string::semver::set::major",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::SetMinor)),
+        "string::semver::set::minor",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Semver(StringSemver::SetPatch)),
+        "string::semver::set::patch",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Similarity(StringSimilarity::Jaro)),
+        "string::similarity::jaro",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Similarity(StringSimilarity::JaroWinkler)),
+        "string::similarity::jaro_winkler",
+        2
+    ),
+    pure_value!(Builtin::String(StringBuiltin::Slice), "string::slice", 2, 3),
+    pure_value!(Builtin::String(StringBuiltin::Slug), "string::slug", 1),
+    pure_value!(Builtin::String(StringBuiltin::Split), "string::split", 2),
+    pure_value!(
+        Builtin::String(StringBuiltin::StartsWith),
+        "string::starts_with",
+        2
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::StartsWith),
+        "string::startswith",
+        2
+    ),
+    pure_value!(Builtin::String(StringBuiltin::Trim), "string::trim", 1),
+    pure_value!(
+        Builtin::String(StringBuiltin::Uppercase),
+        "string::uppercase",
+        1
+    ),
+    pure_value!(Builtin::String(StringBuiltin::Words), "string::words", 1),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Alpha)),
+        "string::is_alpha",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Alphanumeric)),
+        "string::is_alphanum",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Ascii)),
+        "string::is_ascii",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Datetime)),
+        "string::is_datetime",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Domain)),
+        "string::is_domain",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Email)),
+        "string::is_email",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Hexadecimal)),
+        "string::is_hexadecimal",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Ip)),
+        "string::is_ip",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Ipv4)),
+        "string::is_ipv4",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Ipv6)),
+        "string::is_ipv6",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Latitude)),
+        "string::is_latitude",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Longitude)),
+        "string::is_longitude",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Numeric)),
+        "string::is_numeric",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Record)),
+        "string::is_record",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Semver)),
+        "string::is_semver",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Ulid)),
+        "string::is_ulid",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Url)),
+        "string::is_url",
+        1
+    ),
+    pure_value!(
+        Builtin::String(StringBuiltin::Validate(StringValidator::Uuid)),
+        "string::is_uuid",
+        1
+    ),
 ];
 
 pub(crate) fn lookup(name: &str) -> Option<&'static BuiltinSpec> {

@@ -219,3 +219,26 @@ SHA-256, SHA-512, and BLAKE3 reference outputs. `crypto::joaat('hello')`
 returned the unsigned 32-bit value `3372029979`. The same functions accept
 bytes without string re-encoding, reject other value categories, and do not
 include source or input values in errors.
+
+## Parsing, strings, and semantic versions
+
+String length and reversal operate on user-visible Unicode graphemes. The
+reference returned length `3` for `hé😊`, reversed it as `😊éh`, and treated
+slice bounds as half-open grapheme indexes. Capitalization uppercased the
+first grapheme after whitespace without lowercasing the remainder. Concatenation
+used the same scalar rendering as `type::string`, including the observed
+`a1NONENULL` result.
+
+URL extraction returned a known default port (`443` for HTTPS), raw query and
+path strings, and NONE for absent or invalid parts. Email extraction returned
+the local and host components or NONE for malformed input. FastDB implements
+both with bounded, non-networking parsers; URL parsing grants no outbound
+authority.
+
+Levenshtein, OSA, Jaro, and semantic-version probes fixed the representative
+results `3`, `3`, `0.9444444444444445`, and `-1` respectively. Incrementing
+`1.2.3` at major returned `2.0.0`; setting minor to nine returned `1.9.3`.
+The reference rejected the catalog aliases `string::startswith`,
+`string::endswith`, `string::distance::osa_distance`, and nested
+`string::is::*` spellings in favor of the underscored v3.1.5 paths. Those
+locked alias rows remain Unsupported despite defensive registry aliases.
