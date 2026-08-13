@@ -27,7 +27,8 @@ fn p6_fmt_001_format_one_migrates_transactionally_and_reopens_as_format_two() {
             .snapshot()
             .unwrap()
             .clone();
-        assert_eq!(snapshot.metadata.last_migration, 2);
+        assert_eq!(snapshot.metadata.last_migration, 3);
+        assert_eq!(snapshot.metadata.document_encoding_version, 2);
         let table = &snapshot.tables["person"];
         assert_eq!(table.kind, TableKind::Normal);
         assert_eq!(table.relation_in_table_id, None);
@@ -48,7 +49,7 @@ fn p6_fmt_001_format_one_migrates_transactionally_and_reopens_as_format_two() {
                 connection.native(),
                 "SELECT format_version,dialect_version,last_migration FROM __fastdb_meta",
             ),
-            vec![vec!["2", "1", "2"]]
+            vec![vec!["3", "1", "3"]]
         );
         assert_eq!(common::integrity_check(connection.native()), "ok");
         connection.close().unwrap();
@@ -122,7 +123,7 @@ fn p6_fmt_002_every_format_two_migration_boundary_rolls_back() {
                 connection.native(),
                 "SELECT format_version,last_migration FROM __fastdb_meta",
             ),
-            vec![vec!["2", "2"]]
+            vec![vec!["3", "3"]]
         );
         assert_eq!(common::integrity_check(connection.native()), "ok");
         connection.close().unwrap();
@@ -148,7 +149,7 @@ fn p6_fmt_006_committed_migration_survives_abrupt_process_exit() {
             connection.native(),
             "SELECT format_version,last_migration FROM __fastdb_meta",
         ),
-        vec![vec!["2", "2"]]
+        vec![vec!["3", "3"]]
     );
     assert_eq!(common::integrity_check(connection.native()), "ok");
     let plan = connection
@@ -213,7 +214,7 @@ fn p6_fmt_004_committed_format_two_fixture_reopens_mutates_and_uses_index() {
                 connection.native(),
                 "SELECT format_version,last_migration FROM __fastdb_meta",
             ),
-            vec![vec!["2", "2"]]
+            vec![vec!["3", "3"]]
         );
         let snapshot = connection.catalog_state().unwrap();
         let snapshot = snapshot.snapshot().unwrap();

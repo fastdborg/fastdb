@@ -1128,6 +1128,18 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn validate_collection_dimension(value: &NonnegativeInteger) -> Result<(), ParseError> {
+        if value.value == 0 || value.value > 65_536 {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "typed collection length must be between 1 and 65,536",
+                },
+                value.span,
+            ));
+        }
+        Ok(())
+    }
+
     fn parse_schema_type(&mut self) -> Result<SchemaType, ParseError> {
         let token = self.advance().clone();
         let kind = match token.kind {
@@ -1135,28 +1147,74 @@ impl<'a> Parser<'a> {
             TokenKind::IntType => SchemaTypeKind::Int,
             TokenKind::FloatType => SchemaTypeKind::Float,
             TokenKind::NumberType => SchemaTypeKind::Number,
+            TokenKind::DecimalType => SchemaTypeKind::Decimal,
             TokenKind::StringType => SchemaTypeKind::String,
+            TokenKind::BytesType => SchemaTypeKind::Bytes,
+            TokenKind::DatetimeType => SchemaTypeKind::Datetime,
+            TokenKind::DurationType => SchemaTypeKind::Duration,
+            TokenKind::UuidType => SchemaTypeKind::Uuid,
+            TokenKind::RegexType => SchemaTypeKind::Regex,
+            TokenKind::FileType => SchemaTypeKind::File,
+            TokenKind::Table => SchemaTypeKind::Table,
             TokenKind::ObjectType => SchemaTypeKind::Object,
             TokenKind::ArrayType if self.at(&TokenKind::Less) => {
                 self.advance();
-                self.expect(&TokenKind::FloatType, "FLOAT in fixed vector type")?;
-                self.expect(&TokenKind::Comma, "',' before vector dimension")?;
-                let dimension = self.parse_nonnegative_integer()?;
-                if dimension.value == 0 || dimension.value > 65_536 {
-                    return Err(ParseError::new(
-                        ParseErrorKind::InvalidCombination {
-                            what: "fixed vector dimension must be between 1 and 65,536",
-                        },
-                        dimension.span,
-                    ));
-                }
+                self.enter_depth(token.span)?;
+                let element_result = self.parse_schema_type();
+                self.leave_depth();
+                let element = element_result?;
+                let dimension = if self.eat(&TokenKind::Comma) {
+                    let dimension = self.parse_nonnegative_integer()?;
+                    Self::validate_collection_dimension(&dimension)?;
+                    Some(dimension)
+                } else {
+                    None
+                };
                 let close = self.expect(&TokenKind::Greater, "'>' after vector dimension")?;
+                if matches!(&element.kind, SchemaTypeKind::Float) && dimension.is_some() {
+                    return Ok(SchemaType {
+                        span: token.span.union(close.span),
+                        kind: SchemaTypeKind::FixedFloatArray(
+                            dimension.expect("checked dimension presence"),
+                        ),
+                    });
+                }
                 return Ok(SchemaType {
                     span: token.span.union(close.span),
-                    kind: SchemaTypeKind::FixedFloatArray(dimension),
+                    kind: SchemaTypeKind::TypedArray {
+                        element: Box::new(element),
+                        length: dimension,
+                    },
                 });
             }
             TokenKind::ArrayType => SchemaTypeKind::Array,
+            TokenKind::Set if self.at(&TokenKind::Less) => {
+                self.advance();
+                self.enter_depth(token.span)?;
+                let element_result = self.parse_schema_type();
+                self.leave_depth();
+                let element = element_result?;
+                let length = if self.eat(&TokenKind::Comma) {
+                    let length = self.parse_nonnegative_integer()?;
+                    Self::validate_collection_dimension(&length)?;
+                    Some(length)
+                } else {
+                    None
+                };
+                let close = self.expect(&TokenKind::Greater, "'>' after set type")?;
+                return Ok(SchemaType {
+                    span: token.span.union(close.span),
+                    kind: SchemaTypeKind::Set {
+                        element: Some(Box::new(element)),
+                        length,
+                    },
+                });
+            }
+            TokenKind::Set => SchemaTypeKind::Set {
+                element: None,
+                length: None,
+            },
+            TokenKind::RangeType => SchemaTypeKind::Range,
             TokenKind::RecordType => SchemaTypeKind::Record,
             TokenKind::OptionType => {
                 self.expect(&TokenKind::Less, "'<' after option")?;

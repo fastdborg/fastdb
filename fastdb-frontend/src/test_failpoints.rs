@@ -23,6 +23,14 @@ pub enum Failpoint {
     AfterFormat2Catalogs,
     /// After migrated format-2 ownership validates, before header publication.
     AfterFormat2Validation,
+    /// After the format-3 document encoding column is added.
+    AfterFormat3Metadata,
+    /// After format-3 provider auxiliary-version columns are added.
+    AfterFormat3ProviderColumns,
+    /// After the sealed format-3 catalogs are created.
+    AfterFormat3Catalogs,
+    /// After complete format-3 ownership validates, before header publication.
+    AfterFormat3Validation,
     /// After the logical-table catalog row is inserted.
     AfterCatalogRow,
     /// After the hidden physical table is created.
@@ -101,6 +109,10 @@ pub struct Failpoints {
     after_format2_index_columns: AtomicBool,
     after_format2_catalogs: AtomicBool,
     after_format2_validation: AtomicBool,
+    after_format3_metadata: AtomicBool,
+    after_format3_provider_columns: AtomicBool,
+    after_format3_catalogs: AtomicBool,
+    after_format3_validation: AtomicBool,
     after_catalog_row: AtomicBool,
     after_physical_ddl: AtomicBool,
     after_graph_hidden_catalog: AtomicBool,
@@ -150,6 +162,14 @@ impl Failpoints {
             Failpoint::AfterFormat2Catalogs => self.after_format2_catalogs.load(Ordering::SeqCst),
             Failpoint::AfterFormat2Validation => {
                 self.after_format2_validation.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Metadata => self.after_format3_metadata.load(Ordering::SeqCst),
+            Failpoint::AfterFormat3ProviderColumns => {
+                self.after_format3_provider_columns.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Catalogs => self.after_format3_catalogs.load(Ordering::SeqCst),
+            Failpoint::AfterFormat3Validation => {
+                self.after_format3_validation.load(Ordering::SeqCst)
             }
             Failpoint::AfterCatalogRow => self.after_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.load(Ordering::SeqCst),
@@ -234,6 +254,18 @@ impl Failpoints {
             }
             Failpoint::AfterFormat2Validation => {
                 self.after_format2_validation.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Metadata => {
+                self.after_format3_metadata.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3ProviderColumns => self
+                .after_format3_provider_columns
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat3Catalogs => {
+                self.after_format3_catalogs.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Validation => {
+                self.after_format3_validation.store(true, Ordering::SeqCst)
             }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(true, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(true, Ordering::SeqCst),
@@ -335,6 +367,18 @@ impl Failpoints {
             Failpoint::AfterFormat2Validation => {
                 self.after_format2_validation.store(false, Ordering::SeqCst)
             }
+            Failpoint::AfterFormat3Metadata => {
+                self.after_format3_metadata.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3ProviderColumns => self
+                .after_format3_provider_columns
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat3Catalogs => {
+                self.after_format3_catalogs.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Validation => {
+                self.after_format3_validation.store(false, Ordering::SeqCst)
+            }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(false, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(false, Ordering::SeqCst),
             Failpoint::AfterGraphHiddenCatalog => self
@@ -427,6 +471,10 @@ impl Failpoints {
             Failpoint::AfterFormat2IndexColumns,
             Failpoint::AfterFormat2Catalogs,
             Failpoint::AfterFormat2Validation,
+            Failpoint::AfterFormat3Metadata,
+            Failpoint::AfterFormat3ProviderColumns,
+            Failpoint::AfterFormat3Catalogs,
+            Failpoint::AfterFormat3Validation,
             Failpoint::AfterCatalogRow,
             Failpoint::AfterPhysicalDdl,
             Failpoint::AfterGraphHiddenCatalog,

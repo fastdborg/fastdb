@@ -194,7 +194,7 @@ pub fn rollback() -> Stmt {
     }
 }
 
-pub fn catalog_meta_ddl() -> Stmt {
+pub fn catalog_meta_v2_ddl() -> Stmt {
     create_table(
         crate::catalog::META_TABLE,
         vec![
@@ -214,6 +214,46 @@ pub fn catalog_meta_ddl() -> Stmt {
         ],
         vec![],
     )
+}
+
+pub fn catalog_meta_ddl() -> Stmt {
+    let Stmt::CreateTable {
+        tbl_name,
+        body:
+            CreateTableBody::ColumnsAndConstraints {
+                mut columns,
+                constraints,
+                options,
+            },
+        temporary,
+        if_not_exists,
+    } = catalog_meta_v2_ddl()
+    else {
+        unreachable!("metadata DDL is a column table")
+    };
+    columns.push(column(
+        "document_encoding_version",
+        "INTEGER",
+        vec![
+            not_null(),
+            default(numlit(crate::catalog::DOCUMENT_ENCODING_VERSION)),
+            check(Expr::binary(
+                id("document_encoding_version"),
+                Operator::Equals,
+                numlit(crate::catalog::DOCUMENT_ENCODING_VERSION),
+            )),
+        ],
+    ));
+    Stmt::CreateTable {
+        tbl_name,
+        body: CreateTableBody::ColumnsAndConstraints {
+            columns,
+            constraints,
+            options,
+        },
+        temporary,
+        if_not_exists,
+    }
 }
 
 pub fn catalog_tables_v1_ddl() -> Stmt {
@@ -321,7 +361,7 @@ pub fn catalog_indexes_v1_ddl() -> Stmt {
     )
 }
 
-pub fn catalog_indexes_ddl() -> Stmt {
+pub fn catalog_indexes_v2_ddl() -> Stmt {
     create_table(
         crate::catalog::INDEXES_TABLE,
         vec![
@@ -375,6 +415,38 @@ pub fn catalog_indexes_ddl() -> Stmt {
     )
 }
 
+pub fn catalog_indexes_ddl() -> Stmt {
+    let Stmt::CreateTable {
+        tbl_name,
+        body:
+            CreateTableBody::ColumnsAndConstraints {
+                mut columns,
+                constraints,
+                options,
+            },
+        temporary,
+        if_not_exists,
+    } = catalog_indexes_v2_ddl()
+    else {
+        unreachable!("index catalog DDL is a column table")
+    };
+    columns.push(column(
+        "auxiliary_version",
+        "INTEGER",
+        vec![not_null(), default(numlit(1))],
+    ));
+    Stmt::CreateTable {
+        tbl_name,
+        body: CreateTableBody::ColumnsAndConstraints {
+            columns,
+            constraints,
+            options,
+        },
+        temporary,
+        if_not_exists,
+    }
+}
+
 pub fn catalog_analyzers_ddl() -> Stmt {
     create_table(
         crate::catalog::ANALYZERS_TABLE,
@@ -390,7 +462,7 @@ pub fn catalog_analyzers_ddl() -> Stmt {
     )
 }
 
-pub fn catalog_hidden_columns_ddl() -> Stmt {
+pub fn catalog_hidden_columns_v2_ddl() -> Stmt {
     create_table(
         crate::catalog::HIDDEN_COLUMNS_TABLE,
         vec![
@@ -411,6 +483,38 @@ pub fn catalog_hidden_columns_ddl() -> Stmt {
     )
 }
 
+pub fn catalog_hidden_columns_ddl() -> Stmt {
+    let Stmt::CreateTable {
+        tbl_name,
+        body:
+            CreateTableBody::ColumnsAndConstraints {
+                mut columns,
+                constraints,
+                options,
+            },
+        temporary,
+        if_not_exists,
+    } = catalog_hidden_columns_v2_ddl()
+    else {
+        unreachable!("hidden-column catalog DDL is a column table")
+    };
+    columns.push(column(
+        "auxiliary_version",
+        "INTEGER",
+        vec![not_null(), default(numlit(1))],
+    ));
+    Stmt::CreateTable {
+        tbl_name,
+        body: CreateTableBody::ColumnsAndConstraints {
+            columns,
+            constraints,
+            options,
+        },
+        temporary,
+        if_not_exists,
+    }
+}
+
 pub fn catalog_capabilities_ddl() -> Stmt {
     create_table(
         crate::catalog::CAPABILITIES_TABLE,
@@ -420,6 +524,157 @@ pub fn catalog_capabilities_ddl() -> Stmt {
             column("min_encoding_version", "INTEGER", vec![not_null()]),
         ],
         vec![],
+    )
+}
+
+pub fn catalog_functions_ddl() -> Stmt {
+    create_table(
+        crate::catalog::FUNCTIONS_TABLE,
+        vec![
+            column("function_id", "TEXT", vec![primary_key()]),
+            column("logical_name", "TEXT", vec![not_null(), unique()]),
+            column("arguments_ast", "TEXT", vec![not_null()]),
+            column("body_source", "TEXT", vec![not_null()]),
+            column("ast_version", "INTEGER", vec![not_null()]),
+            column("limits_json", "TEXT", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![],
+    )
+}
+
+pub fn catalog_parameters_ddl() -> Stmt {
+    create_table(
+        crate::catalog::PARAMETERS_TABLE,
+        vec![
+            column("parameter_id", "TEXT", vec![primary_key()]),
+            column("logical_name", "TEXT", vec![not_null(), unique()]),
+            column("value_json", "TEXT", vec![not_null()]),
+            column("encoding_version", "INTEGER", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![],
+    )
+}
+
+pub fn catalog_views_ddl() -> Stmt {
+    create_table(
+        crate::catalog::VIEWS_TABLE,
+        vec![
+            column("view_id", "TEXT", vec![primary_key()]),
+            column("logical_name", "TEXT", vec![not_null(), unique()]),
+            column("definition", "TEXT", vec![not_null()]),
+            column("ast_version", "INTEGER", vec![not_null()]),
+            column("dependencies_json", "TEXT", vec![not_null()]),
+        ],
+        vec![],
+    )
+}
+
+pub fn catalog_events_ddl() -> Stmt {
+    create_table(
+        crate::catalog::EVENTS_TABLE,
+        vec![
+            column("event_id", "TEXT", vec![primary_key()]),
+            column("table_id", "TEXT", vec![not_null()]),
+            column("logical_name", "TEXT", vec![not_null()]),
+            column("when_source", "TEXT", vec![not_null()]),
+            column("then_source", "TEXT", vec![not_null()]),
+            column("expression_version", "INTEGER", vec![not_null()]),
+            column("recursion_limit", "INTEGER", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![table_unique(&["table_id", "logical_name"])],
+    )
+}
+
+pub fn catalog_permissions_ddl() -> Stmt {
+    let owner_kind = Expr::InList {
+        lhs: Box::new(id("owner_kind")),
+        not: false,
+        rhs: vec![
+            Box::new(strlit("TABLE")),
+            Box::new(strlit("FIELD")),
+            Box::new(strlit("FUNCTION")),
+        ],
+    };
+    create_table(
+        crate::catalog::PERMISSIONS_TABLE,
+        vec![
+            column("permission_id", "TEXT", vec![primary_key()]),
+            column("owner_kind", "TEXT", vec![not_null(), check(owner_kind)]),
+            column("owner_id", "TEXT", vec![not_null()]),
+            column("action", "TEXT", vec![not_null()]),
+            column("predicate_source", "TEXT", vec![not_null()]),
+            column("expression_version", "INTEGER", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![],
+    )
+}
+
+pub fn catalog_users_ddl() -> Stmt {
+    let scope_kind = Expr::InList {
+        lhs: Box::new(id("scope_kind")),
+        not: false,
+        rhs: vec![Box::new(strlit("DATABASE")), Box::new(strlit("RECORD"))],
+    };
+    create_table(
+        crate::catalog::USERS_TABLE,
+        vec![
+            column("user_id", "TEXT", vec![primary_key()]),
+            column("scope_kind", "TEXT", vec![not_null(), check(scope_kind)]),
+            column("scope_id", "TEXT", vec![]),
+            column("logical_name", "TEXT", vec![not_null()]),
+            column("roles_json", "TEXT", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![table_unique(&["scope_kind", "scope_id", "logical_name"])],
+    )
+}
+
+pub fn catalog_accesses_ddl() -> Stmt {
+    let scope_kind = Expr::InList {
+        lhs: Box::new(id("scope_kind")),
+        not: false,
+        rhs: vec![Box::new(strlit("DATABASE")), Box::new(strlit("RECORD"))],
+    };
+    create_table(
+        crate::catalog::ACCESSES_TABLE,
+        vec![
+            column("access_id", "TEXT", vec![primary_key()]),
+            column("scope_kind", "TEXT", vec![not_null(), check(scope_kind)]),
+            column("scope_id", "TEXT", vec![]),
+            column("logical_name", "TEXT", vec![not_null()]),
+            column("access_kind", "TEXT", vec![not_null()]),
+            column("options_json", "TEXT", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![table_unique(&["scope_kind", "scope_id", "logical_name"])],
+    )
+}
+
+pub fn format3_meta_column() -> ColumnDefinition {
+    column(
+        "document_encoding_version",
+        "INTEGER",
+        vec![
+            not_null(),
+            default(numlit(crate::catalog::DOCUMENT_ENCODING_VERSION)),
+            check(Expr::binary(
+                id("document_encoding_version"),
+                Operator::Equals,
+                numlit(crate::catalog::DOCUMENT_ENCODING_VERSION),
+            )),
+        ],
+    )
+}
+
+pub fn format3_provider_column() -> ColumnDefinition {
+    column(
+        "auxiliary_version",
+        "INTEGER",
+        vec![not_null(), default(numlit(1))],
     )
 }
 
@@ -877,6 +1132,22 @@ pub fn sqlite_schema_stmt() -> Stmt {
     )
 }
 
+pub fn meta_schema_stmt() -> Stmt {
+    one_select(
+        vec![ResultColumn::Expr(Box::new(id("name")), None)],
+        "sqlite_schema",
+        Some(Expr::binary(
+            Expr::binary(id("type"), Operator::Equals, strlit("table")),
+            Operator::And,
+            Expr::binary(
+                id("name"),
+                Operator::Equals,
+                strlit(crate::catalog::META_TABLE),
+            ),
+        )),
+    )
+}
+
 pub fn meta_format_stmt() -> Stmt {
     one_select(
         vec![ResultColumn::Expr(Box::new(id("format_version")), None)],
@@ -886,6 +1157,24 @@ pub fn meta_format_stmt() -> Stmt {
 }
 
 pub fn meta_stmt() -> Stmt {
+    one_select(
+        [
+            "format_version",
+            "dialect_version",
+            "database_id",
+            "creation_version",
+            "last_migration",
+            "document_encoding_version",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::META_TABLE,
+        Some(Expr::binary(id("singleton"), Operator::Equals, numlit(1))),
+    )
+}
+
+pub fn meta_v2_stmt() -> Stmt {
     one_select(
         [
             "format_version",
@@ -935,6 +1224,33 @@ pub fn fields_stmt() -> Stmt {
 }
 
 pub fn indexes_stmt() -> Stmt {
+    one_select(
+        [
+            "index_id",
+            "table_id",
+            "logical_name",
+            "physical_name",
+            "paths_json",
+            "unique_flag",
+            "expression_version",
+            "definition",
+            "index_kind",
+            "provider",
+            "provider_version",
+            "options_json",
+            "state",
+            "encoding_version",
+            "auxiliary_version",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::INDEXES_TABLE,
+        None,
+    )
+}
+
+pub fn indexes_v2_stmt() -> Stmt {
     one_select(
         [
             "index_id",
@@ -1030,11 +1346,44 @@ pub fn hidden_columns_stmt() -> Stmt {
             "options_json",
             "state",
             "encoding_version",
+            "auxiliary_version",
         ]
         .into_iter()
         .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
         .collect(),
         crate::catalog::HIDDEN_COLUMNS_TABLE,
+        None,
+    )
+}
+
+pub fn hidden_columns_v2_stmt() -> Stmt {
+    one_select(
+        [
+            "column_id",
+            "table_id",
+            "index_id",
+            "field_path_key",
+            "physical_name",
+            "provider",
+            "provider_version",
+            "physical_encoding",
+            "dimension",
+            "options_json",
+            "state",
+            "encoding_version",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::HIDDEN_COLUMNS_TABLE,
+        None,
+    )
+}
+
+pub fn future_catalog_stmt(table: &str, id_column: &str) -> Stmt {
+    one_select(
+        vec![ResultColumn::Expr(Box::new(id(id_column)), None)],
+        table,
         None,
     )
 }
@@ -1064,6 +1413,7 @@ pub fn meta_insert(
             "database_id",
             "creation_version",
             "last_migration",
+            "document_encoding_version",
         ],
         vec![
             numlit(1),
@@ -1072,6 +1422,7 @@ pub fn meta_insert(
             var(1),
             var(2),
             numlit(last_migration),
+            numlit(crate::catalog::DOCUMENT_ENCODING_VERSION),
         ],
         vec![text(database_id), text(creation_version)],
     )
@@ -1120,6 +1471,38 @@ pub fn migrate_to_two_stmt() -> Stmt {
             Expr::binary(id("singleton"), Operator::Equals, numlit(1)),
             Operator::And,
             Expr::binary(id("format_version"), Operator::Equals, numlit(1)),
+        ))),
+        returning: vec![],
+        order_by: vec![],
+        limit: None,
+    })
+}
+
+pub fn migrate_to_three_stmt() -> Stmt {
+    Stmt::Update(Update {
+        with: None,
+        or_conflict: None,
+        tbl_name: qnm(crate::catalog::META_TABLE),
+        indexed: None,
+        sets: vec![
+            Set {
+                col_names: vec![nm("last_migration")],
+                expr: Box::new(numlit(crate::catalog::LAST_MIGRATION)),
+            },
+            Set {
+                col_names: vec![nm("format_version")],
+                expr: Box::new(numlit(crate::catalog::FORMAT_VERSION)),
+            },
+        ],
+        from: None,
+        where_clause: Some(Box::new(Expr::binary(
+            Expr::binary(id("singleton"), Operator::Equals, numlit(1)),
+            Operator::And,
+            Expr::InList {
+                lhs: Box::new(id("format_version")),
+                not: false,
+                rhs: vec![Box::new(numlit(1)), Box::new(numlit(2))],
+            },
         ))),
         returning: vec![],
         order_by: vec![],
@@ -2168,12 +2551,25 @@ fn engine_scalar(value: &FastValue) -> Result<Value, FastDbError> {
         FastValue::Float(value) if value.is_finite() => Ok(Value::from_f64(*value)),
         FastValue::Str(value) => Ok(text(value)),
         FastValue::Float(_) => Err(FastDbError::Schema("non-finite filter value".into())),
-        FastValue::Array(_) | FastValue::Object(_) | FastValue::RecordId(_) => Err(
-            FastDbError::UnsupportedSyntax(turso_fastdb_parser::ParseError::unsupported(
+        FastValue::None
+        | FastValue::Decimal(_)
+        | FastValue::Bytes(_)
+        | FastValue::Duration(_)
+        | FastValue::Datetime(_)
+        | FastValue::Uuid(_)
+        | FastValue::Array(_)
+        | FastValue::Object(_)
+        | FastValue::Set(_)
+        | FastValue::Range(_)
+        | FastValue::Regex(_)
+        | FastValue::RecordId(_)
+        | FastValue::Table(_)
+        | FastValue::File(_) => Err(FastDbError::UnsupportedSyntax(
+            turso_fastdb_parser::ParseError::unsupported(
                 "filters support only scalar constants in this phase",
                 turso_fastdb_parser::Span::default(),
-            )),
-        ),
+            ),
+        )),
     }
 }
 

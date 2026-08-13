@@ -7443,8 +7443,12 @@ dependencies = [
 name = "turso_fastdb"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "miette",
  "rand 0.9.4",
+ "regex",
+ "rust_decimal",
  "serde",
  "serde_json",
  "thiserror 2.0.16",

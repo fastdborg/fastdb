@@ -11,6 +11,10 @@ mod error;
 pub mod json;
 
 pub use error::{Error, ErrorCategory, SourceSpan};
+pub use turso_fastdb::decode::{
+    DatetimeValue, DecimalValue, DurationValue, FileValue, RangeBound, RangeValue, RegexValue,
+    SetValue, TableValue,
+};
 pub use turso_fastdb::{CheckReport, RecordId, RecordIdValue, StatementResult, Value};
 
 use error::Result;
@@ -1267,10 +1271,14 @@ fn response_usage(response: &QueryResponse) -> Result<(usize, usize)> {
 
 fn value_size(value: &Value) -> Result<usize> {
     let size = match value {
-        Value::Null => 1,
+        Value::None | Value::Null => 1,
         Value::Bool(_) => 1,
         Value::Integer(_) | Value::Float(_) => 8,
+        Value::Decimal(value) => value.to_canonical().len(),
         Value::Str(value) => value.len(),
+        Value::Bytes(value) => value.len(),
+        Value::Duration(_) | Value::Datetime(_) => 12,
+        Value::Uuid(_) => 16,
         Value::Array(values) => values.iter().try_fold(0_usize, |total, value| {
             total
                 .checked_add(value_size(value)?)
@@ -1282,6 +1290,25 @@ fn value_size(value: &Value) -> Result<usize> {
                 .and_then(|total| total.checked_add(value_size(value).ok()?))
                 .ok_or_else(usage_overflow)
         })?,
+        Value::Set(values) => values.as_slice().iter().try_fold(0_usize, |total, value| {
+            total
+                .checked_add(value_size(value)?)
+                .ok_or_else(usage_overflow)
+        })?,
+        Value::Range(value) => {
+            [value.start(), value.end()]
+                .into_iter()
+                .try_fold(0_usize, |total, bound| {
+                    let size = match bound {
+                        RangeBound::Unbounded => 1,
+                        RangeBound::Included(value) | RangeBound::Excluded(value) => {
+                            value_size(value)?
+                        }
+                    };
+                    total.checked_add(size).ok_or_else(usage_overflow)
+                })?
+        }
+        Value::Regex(value) => value.as_str().len(),
         Value::RecordId(value) => {
             value.table.len()
                 + match &value.id {
@@ -1290,6 +1317,8 @@ fn value_size(value: &Value) -> Result<usize> {
                     RecordIdValue::Uuid(_) => 16,
                 }
         }
+        Value::Table(value) => value.as_str().len(),
+        Value::File(value) => value.as_str().len(),
     };
     Ok(size)
 }

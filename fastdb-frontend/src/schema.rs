@@ -12,10 +12,29 @@ pub enum FieldType {
     Int,
     Float,
     Number,
+    Decimal,
     String,
+    Bytes,
+    Datetime,
+    Duration,
+    Uuid,
+    Regex,
+    File,
+    Table,
     Object,
     Array,
-    Vector { dimension: u32 },
+    TypedArray {
+        element: Box<FieldType>,
+        length: Option<u32>,
+    },
+    Vector {
+        dimension: u32,
+    },
+    Set {
+        element: Option<Box<FieldType>>,
+        length: Option<u32>,
+    },
+    Range,
     Record,
     Option(Box<FieldType>),
 }
@@ -27,12 +46,31 @@ impl FieldType {
             SchemaTypeKind::Int => Self::Int,
             SchemaTypeKind::Float => Self::Float,
             SchemaTypeKind::Number => Self::Number,
+            SchemaTypeKind::Decimal => Self::Decimal,
             SchemaTypeKind::String => Self::String,
+            SchemaTypeKind::Bytes => Self::Bytes,
+            SchemaTypeKind::Datetime => Self::Datetime,
+            SchemaTypeKind::Duration => Self::Duration,
+            SchemaTypeKind::Uuid => Self::Uuid,
+            SchemaTypeKind::Regex => Self::Regex,
+            SchemaTypeKind::File => Self::File,
+            SchemaTypeKind::Table => Self::Table,
             SchemaTypeKind::Object => Self::Object,
             SchemaTypeKind::Array => Self::Array,
+            SchemaTypeKind::TypedArray { element, length } => Self::TypedArray {
+                element: Box::new(Self::from_parser(element)),
+                length: length.as_ref().map(|length| length.value as u32),
+            },
             SchemaTypeKind::FixedFloatArray(dimension) => Self::Vector {
                 dimension: dimension.value as u32,
             },
+            SchemaTypeKind::Set { element, length } => Self::Set {
+                element: element
+                    .as_ref()
+                    .map(|element| Box::new(Self::from_parser(element))),
+                length: length.as_ref().map(|length| length.value as u32),
+            },
+            SchemaTypeKind::Range => Self::Range,
             SchemaTypeKind::Record => Self::Record,
             SchemaTypeKind::Option(inner) => Self::Option(Box::new(Self::from_parser(inner))),
         }
@@ -54,10 +92,31 @@ impl FieldType {
             Self::Int => "int".into(),
             Self::Float => "float".into(),
             Self::Number => "number".into(),
+            Self::Decimal => "decimal".into(),
             Self::String => "string".into(),
+            Self::Bytes => "bytes".into(),
+            Self::Datetime => "datetime".into(),
+            Self::Duration => "duration".into(),
+            Self::Uuid => "uuid".into(),
+            Self::Regex => "regex".into(),
+            Self::File => "file".into(),
+            Self::Table => "table".into(),
             Self::Object => "object".into(),
             Self::Array => "array".into(),
+            Self::TypedArray { element, length } => match length {
+                Some(length) => format!("array<{},{}>", element.canonical(), length),
+                None => format!("array<{}>", element.canonical()),
+            },
             Self::Vector { dimension } => format!("array<float,{dimension}>"),
+            Self::Set { element, length } => match (element, length) {
+                (None, None) => "set".into(),
+                (Some(element), None) => format!("set<{}>", element.canonical()),
+                (Some(element), Some(length)) => {
+                    format!("set<{},{}>", element.canonical(), length)
+                }
+                (None, Some(_)) => unreachable!("set length requires an element type"),
+            },
+            Self::Range => "range".into(),
             Self::Record => "record".into(),
             Self::Option(inner) => format!("option<{}>", inner.canonical()),
         }
@@ -153,7 +212,49 @@ fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> 
         )));
     }
     if let FieldType::Option(inner) = ty {
+        if matches!(value, Value::None) {
+            return Ok(false);
+        }
         return validate_type(inner, value, path);
+    }
+    if let FieldType::TypedArray { element, length } = ty {
+        let Value::Array(values) = value else {
+            return type_mismatch(ty, path);
+        };
+        if length.is_some_and(|length| values.len() != length as usize) {
+            return Err(FastDbError::Schema(format!(
+                "field {path} requires exactly {} array elements",
+                length.expect("checked length presence")
+            )));
+        }
+        let mut changed = false;
+        for value in values {
+            changed |= validate_type(element, value, path)?;
+        }
+        return Ok(changed);
+    }
+    if let FieldType::Set { element, length } = ty {
+        let Value::Set(set) = value else {
+            return type_mismatch(ty, path);
+        };
+        if length.is_some_and(|length| set.as_slice().len() != length as usize) {
+            return Err(FastDbError::Schema(format!(
+                "field {path} requires exactly {} set elements",
+                length.expect("checked length presence")
+            )));
+        }
+        let Some(element) = element else {
+            return Ok(false);
+        };
+        let mut values = set.clone().into_vec();
+        let mut changed = false;
+        for value in &mut values {
+            changed |= validate_type(element, value, path)?;
+        }
+        if changed {
+            *value = Value::Set(crate::decode::SetValue::new(values)?);
+        }
+        return Ok(changed);
     }
     if let FieldType::Vector { dimension } = ty {
         let Value::Array(values) = value else {
@@ -192,10 +293,19 @@ fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> 
     match (ty, value) {
         (FieldType::Bool, Value::Bool(_))
         | (FieldType::Int, Value::Integer(_))
-        | (FieldType::Number, Value::Integer(_) | Value::Float(_))
+        | (FieldType::Number, Value::Integer(_) | Value::Float(_) | Value::Decimal(_))
+        | (FieldType::Decimal, Value::Decimal(_))
         | (FieldType::String, Value::Str(_))
+        | (FieldType::Bytes, Value::Bytes(_))
+        | (FieldType::Datetime, Value::Datetime(_))
+        | (FieldType::Duration, Value::Duration(_))
+        | (FieldType::Uuid, Value::Uuid(_))
+        | (FieldType::Regex, Value::Regex(_))
+        | (FieldType::File, Value::File(_))
+        | (FieldType::Table, Value::Table(_))
         | (FieldType::Object, Value::Object(_))
         | (FieldType::Array, Value::Array(_))
+        | (FieldType::Range, Value::Range(_))
         | (FieldType::Record, Value::RecordId(_))
         | (FieldType::Float, Value::Float(_)) => Ok(false),
         (FieldType::Float, value @ Value::Integer(_)) => {
@@ -205,11 +315,15 @@ fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> 
             *value = Value::Float(*integer as f64);
             Ok(true)
         }
-        _ => Err(FastDbError::Schema(format!(
-            "field {path} does not match type {}",
-            ty.canonical()
-        ))),
+        _ => type_mismatch(ty, path),
     }
+}
+
+fn type_mismatch(ty: &FieldType, path: &str) -> Result<bool> {
+    Err(FastDbError::Schema(format!(
+        "field {path} does not match type {}",
+        ty.canonical()
+    )))
 }
 
 fn validate_declared_paths(
@@ -260,14 +374,54 @@ fn parse_type(value: &str) -> Result<(FieldType, usize)> {
             "array<float,".len() + close + 1,
         ));
     }
+    if let Some(rest) = value.strip_prefix("array<") {
+        let (element, consumed) = parse_type(rest)?;
+        let suffix = &rest[consumed..];
+        let (length, suffix_consumed) = parse_collection_suffix(suffix)?;
+        return Ok((
+            FieldType::TypedArray {
+                element: Box::new(element),
+                length,
+            },
+            "array<".len() + consumed + suffix_consumed,
+        ));
+    }
+    if let Some(rest) = value.strip_prefix("set<") {
+        let (element, consumed) = parse_type(rest)?;
+        let suffix = &rest[consumed..];
+        let (length, suffix_consumed) = parse_collection_suffix(suffix)?;
+        return Ok((
+            FieldType::Set {
+                element: Some(Box::new(element)),
+                length,
+            },
+            "set<".len() + consumed + suffix_consumed,
+        ));
+    }
     for (name, ty) in [
         ("bool", FieldType::Bool),
         ("int", FieldType::Int),
         ("float", FieldType::Float),
         ("number", FieldType::Number),
+        ("decimal", FieldType::Decimal),
         ("string", FieldType::String),
+        ("bytes", FieldType::Bytes),
+        ("datetime", FieldType::Datetime),
+        ("duration", FieldType::Duration),
+        ("uuid", FieldType::Uuid),
+        ("regex", FieldType::Regex),
+        ("file", FieldType::File),
+        ("table", FieldType::Table),
         ("object", FieldType::Object),
         ("array", FieldType::Array),
+        (
+            "set",
+            FieldType::Set {
+                element: None,
+                length: None,
+            },
+        ),
+        ("range", FieldType::Range),
         ("record", FieldType::Record),
     ] {
         if value.starts_with(name) {
@@ -287,6 +441,31 @@ fn parse_type(value: &str) -> Result<(FieldType, usize)> {
         FieldType::Option(Box::new(inner)),
         "option<".len() + consumed + 1,
     ))
+}
+
+fn parse_collection_suffix(value: &str) -> Result<(Option<u32>, usize)> {
+    if value.starts_with('>') {
+        return Ok((None, 1));
+    }
+    let Some(rest) = value.strip_prefix(',') else {
+        return Err(FastDbError::format(
+            "stored typed collection is missing its closing delimiter",
+        ));
+    };
+    let Some(close) = rest.find('>') else {
+        return Err(FastDbError::format(
+            "stored typed collection is missing its closing delimiter",
+        ));
+    };
+    let length = rest[..close]
+        .parse::<u32>()
+        .map_err(|_| FastDbError::format("stored typed collection length is invalid"))?;
+    if length == 0 || length > 65_536 {
+        return Err(FastDbError::format(
+            "stored typed collection length is outside the supported range",
+        ));
+    }
+    Ok((Some(length), 1 + close + 1))
 }
 
 #[cfg(test)]

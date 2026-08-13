@@ -24,17 +24,22 @@ fn p2_cat_001_empty_open_is_read_only_and_bootstrap_shape_is_exact() {
             .unwrap();
         let metadata = common::native_rows(
             conn.native(),
-            "SELECT singleton,format_version,dialect_version,database_id,creation_version,last_migration FROM __fastdb_meta",
+            "SELECT singleton,format_version,dialect_version,database_id,creation_version,last_migration,document_encoding_version FROM __fastdb_meta",
         );
         assert_eq!(metadata.len(), 1);
-        assert_eq!(&metadata[0][..3], ["1", "2", "1"]);
+        assert_eq!(&metadata[0][..3], ["1", "3", "1"]);
         assert_eq!(metadata[0][3].len(), 32);
-        assert_eq!(metadata[0][5], "2");
+        assert_eq!(metadata[0][5], "3");
+        assert_eq!(metadata[0][6], "2");
         let catalogs = common::native_rows(
             conn.native(),
             "SELECT name,sql FROM sqlite_schema WHERE type='table' AND name LIKE '__fastdb_%' ORDER BY name",
         );
-        assert_eq!(catalogs.len(), 8, "seven catalogs plus one physical table");
+        assert_eq!(
+            catalogs.len(),
+            15,
+            "fourteen catalogs plus one physical table"
+        );
         assert!(catalogs.iter().all(|row| row[1].ends_with(" STRICT")));
     }
     Database::open(path).unwrap();
@@ -100,7 +105,7 @@ fn p2_cat_003_format_two_reload_is_idempotent_and_preserves_the_cache() {
     conn.reload_catalog().unwrap();
     assert_eq!(
         common::native_rows(conn.native(), "SELECT last_migration FROM __fastdb_meta")[0][0],
-        "2"
+        "3"
     );
     assert_eq!(conn.catalog_state().unwrap(), before);
     conn.reload_catalog().unwrap();
@@ -111,7 +116,7 @@ fn p2_cat_003_format_two_reload_is_idempotent_and_preserves_the_cache() {
             .unwrap()
             .metadata
             .last_migration,
-        2
+        3
     );
 }
 

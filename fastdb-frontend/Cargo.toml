@@ -17,6 +17,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
 uuid = { version = "1.11.0", features = ["v4", "v7"] }
+base64 = "=0.22.1"
+chrono = { workspace = true, features = ["std"] }
+regex = "=1.12.2"
+rust_decimal = { version = "=1.42.0", default-features = false, features = ["std"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 turso_core = { workspace = true, features = ["fts"] }

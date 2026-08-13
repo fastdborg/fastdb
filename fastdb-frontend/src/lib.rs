@@ -182,6 +182,29 @@ fn validate_bound_value(value: &Value, depth: usize) -> error::Result<()> {
             }
             Ok(())
         }
+        Value::Set(values) => {
+            if values.as_slice().len() > limits.max_collection_elements {
+                return Err(FastDbError::Schema(format!(
+                    "parameter set exceeds {} elements",
+                    limits.max_collection_elements
+                )));
+            }
+            for value in values.as_slice() {
+                validate_bound_value(value, depth + 1)?;
+            }
+            Ok(())
+        }
+        Value::Range(value) => {
+            for bound in [value.start(), value.end()] {
+                match bound {
+                    decode::RangeBound::Unbounded => {}
+                    decode::RangeBound::Included(value) | decode::RangeBound::Excluded(value) => {
+                        validate_bound_value(value, depth + 1)?;
+                    }
+                }
+            }
+            Ok(())
+        }
         Value::RecordId(record) => {
             if !valid_parameter_name(&record.table) || record.table.starts_with("__fastdb_") {
                 return Err(FastDbError::Schema(
@@ -202,9 +225,26 @@ fn validate_bound_value(value: &Value, depth: usize) -> error::Result<()> {
             }
             Ok(())
         }
-        Value::Null | Value::Bool(_) | Value::Integer(_) | Value::Float(_) | Value::Str(_) => {
-            Ok(())
-        }
+        Value::Str(value) if value.len() > 1 << 20 => Err(FastDbError::Schema(
+            "parameter string exceeds the value byte limit".into(),
+        )),
+        Value::Bytes(value) if value.len() > 1 << 20 => Err(FastDbError::Schema(
+            "parameter bytes exceed the value byte limit".into(),
+        )),
+        Value::None
+        | Value::Null
+        | Value::Bool(_)
+        | Value::Integer(_)
+        | Value::Float(_)
+        | Value::Decimal(_)
+        | Value::Str(_)
+        | Value::Bytes(_)
+        | Value::Duration(_)
+        | Value::Datetime(_)
+        | Value::Uuid(_)
+        | Value::Regex(_)
+        | Value::Table(_)
+        | Value::File(_) => Ok(()),
     }
 }
 

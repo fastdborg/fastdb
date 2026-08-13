@@ -81,11 +81,11 @@ area = "Values and types"
 title = "bytes values"
 phase = 12
 disposition = "target"
-status = "Partial"
-syntax = "`<bytes>\"...\"` and bound byte strings round-trip without UTF-8 coercion."
+status = "Supported"
+syntax = "Bound byte values and declared `bytes` fields round-trip without UTF-8 coercion; cast syntax is tracked separately."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -94,11 +94,11 @@ area = "Values and types"
 title = "datetime values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "RFC 3339 datetimes retain a UTC instant with nanosecond precision."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -107,11 +107,11 @@ area = "Values and types"
 title = "decimal values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Decimal values retain the characterized precision and scale without f64 conversion."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -120,11 +120,11 @@ area = "Values and types"
 title = "duration values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Nonnegative nanosecond-precision durations use the characterized v3.1.5 range."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types", "https://surrealdb.com/docs/reference/query-language/language-primitives/data-types/durations"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -133,11 +133,11 @@ area = "Values and types"
 title = "file values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "File references have a typed collision-safe representation; resource access remains capability-gated."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -172,11 +172,11 @@ area = "Values and types"
 title = "NONE value"
 phase = 12
 disposition = "target"
-status = "Partial"
-syntax = "NONE remains distinct from NULL inside objects and collections."
+status = "Supported"
+syntax = "Bound NONE remains distinct from NULL inside objects and collections; source-expression syntax is tracked with Phase 13 none semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types", "https://surrealdb.com/docs/reference/query-language/language-primitives/data-types/none-and-null"]
 parser_evidence = []
-execution_evidence = []
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004"]
 stop_report = ""
 
 [[capability]]
@@ -224,11 +224,11 @@ area = "Values and types"
 title = "range values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Bounded and unbounded ranges preserve bound presence and inclusivity."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -250,11 +250,11 @@ area = "Values and types"
 title = "regex values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Regex values round-trip as typed patterns with bounded compilation."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -263,11 +263,11 @@ area = "Values and types"
 title = "set values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Sets are deterministically ordered and deduplicate equal values."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -289,11 +289,11 @@ area = "Values and types"
 title = "table values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Table names are typed values and never interpolate physical identifiers."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -302,11 +302,11 @@ area = "Values and types"
 title = "UUID values"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Standalone UUID values retain canonical versioned bytes."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001"]
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-004", "P12-VALUE-005"]
 stop_report = ""
 
 [[capability]]
@@ -328,11 +328,11 @@ area = "Values and types"
 title = "collision-safe typed envelopes"
 phase = 12
 disposition = "target"
-status = "Partial"
+status = "Supported"
 syntax = "Typed values and adversarial user objects containing $fastdb round-trip without collisions."
 provenance = ["docs/compat-research/phase12.md"]
 parser_evidence = []
-execution_evidence = []
+execution_evidence = ["P12-VALUE-001", "P12-VALUE-002", "P12-API-001"]
 stop_report = ""
 
 [[capability]]
@@ -432,11 +432,11 @@ area = "Values and types"
 title = "typed collection schemas"
 phase = 12
 disposition = "target"
-status = "Partial"
-syntax = "Typed arrays, sets, records, unions, and fixed lengths retain canonical schema metadata."
+status = "Supported"
+syntax = "Typed arrays and sets, exact collection lengths, ranges, records, and nested option types retain canonical schema metadata."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P12-PARSE-001", "P12-PARSE-002"]
+execution_evidence = ["P12-VALUE-005"]
 stop_report = ""
 [[capability]]
 id = "EXPR-ALIAS"

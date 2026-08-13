@@ -421,13 +421,25 @@ fn print_human(response: &QueryResponse) {
 
 fn human_value(value: &Value) -> String {
     match value {
+        Value::None => "NONE".into(),
         Value::Null => "null".into(),
         Value::Bool(value) => value.to_string(),
         Value::Integer(value) => value.to_string(),
         Value::Float(value) => value.to_string(),
+        Value::Decimal(value) => format!("{}dec", value.to_canonical()),
         Value::Str(value) => {
             serde_json::to_string(value).expect("serializing a string cannot fail")
         }
+        Value::Bytes(value) => format!(
+            "b\"{}\"",
+            value
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<String>()
+        ),
+        Value::Duration(value) => value.to_canonical(),
+        Value::Datetime(value) => format!("d'{}'", value.to_canonical()),
+        Value::Uuid(value) => format!("u'{}'", value.hyphenated()),
         Value::Array(values) => format!(
             "[{}]",
             values
@@ -448,7 +460,32 @@ fn human_value(value: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Value::Set(values) => format!(
+            "set[{}]",
+            values
+                .as_slice()
+                .iter()
+                .map(human_value)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Range(value) => format!(
+            "range({}, {})",
+            human_range_bound(value.start()),
+            human_range_bound(value.end())
+        ),
+        Value::Regex(value) => format!("/{}/", value.as_str()),
         Value::RecordId(value) => value.to_string(),
+        Value::Table(value) => format!("table({})", value.as_str()),
+        Value::File(value) => format!("f'{}'", value.as_str()),
+    }
+}
+
+fn human_range_bound(bound: &fastdb::RangeBound) -> String {
+    match bound {
+        fastdb::RangeBound::Unbounded => "unbounded".into(),
+        fastdb::RangeBound::Included(value) => format!("included {}", human_value(value)),
+        fastdb::RangeBound::Excluded(value) => format!("excluded {}", human_value(value)),
     }
 }
 

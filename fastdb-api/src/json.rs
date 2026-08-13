@@ -1,55 +1,51 @@
 //! Collision-safe strict JSON encoding used by the public API and CLI.
 
 use crate::{Error, QueryResponse, RecordId, RecordIdValue, StatementResult, Value};
-use serde_json::{Map, Number};
+use serde_json::Map;
 use std::collections::BTreeMap;
 
 const KEY: &str = "$fastdb";
 const VERSION: i64 = 1;
 
 pub fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
-    match value {
-        Value::Null => Ok(serde_json::Value::Null),
-        Value::Bool(value) => Ok((*value).into()),
-        Value::Integer(value) => Ok((*value).into()),
-        Value::Float(value) => Number::from_f64(*value)
-            .map(serde_json::Value::Number)
-            .ok_or_else(|| Error::new(crate::ErrorCategory::Schema, "non-finite JSON number")),
-        Value::Str(value) => Ok(value.clone().into()),
-        Value::Array(values) => values
-            .iter()
-            .map(value_to_json)
-            .collect::<Result<Vec<_>, _>>()
-            .map(serde_json::Value::Array),
-        Value::Object(values) => object_to_json(values),
-        Value::RecordId(record) => Ok(record_envelope(record)),
-    }
+    turso_fastdb::decode::encode_value(value).map_err(Error::from_frontend)
 }
 
 pub fn value_from_json(value: serde_json::Value) -> Result<Value, Error> {
     match value {
-        serde_json::Value::Null => Ok(Value::Null),
-        serde_json::Value::Bool(value) => Ok(Value::Bool(value)),
-        serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Ok(Value::Integer(value))
-            } else if let Some(value) = value.as_f64().filter(|value| value.is_finite()) {
-                Ok(Value::Float(value))
-            } else {
-                Err(Error::new(
-                    crate::ErrorCategory::Schema,
-                    "JSON number is outside FastDB's finite i64/f64 range",
-                ))
-            }
-        }
-        serde_json::Value::String(value) => Ok(Value::Str(value)),
         serde_json::Value::Array(values) => values
             .into_iter()
             .map(value_from_json)
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
-        serde_json::Value::Object(values) => json_object_to_value(values),
+        serde_json::Value::Object(values) => {
+            if values.len() == 1 {
+                if let Some(tag) = values.get(KEY).and_then(serde_json::Value::as_object) {
+                    if tag.get("v").and_then(serde_json::Value::as_i64) == Some(VERSION) {
+                        return decode_envelope(tag.clone());
+                    }
+                }
+            }
+            if !values.contains_key(KEY) || values.len() != 1 {
+                return values
+                    .into_iter()
+                    .map(|(key, value)| Ok((key, value_from_json(value)?)))
+                    .collect::<Result<BTreeMap<_, _>, Error>>()
+                    .map(Value::Object);
+            }
+            decode_current_json(serde_json::Value::Object(values))
+        }
+        value => decode_current_json(value),
     }
+}
+
+fn decode_current_json(value: serde_json::Value) -> Result<Value, Error> {
+    turso_fastdb::decode::decode_value(value).map_err(|error| {
+        Error::new(
+            crate::ErrorCategory::Schema,
+            format!("invalid FastDB JSON value: {error}"),
+        )
+    })
 }
 
 pub fn response_to_json(response: &QueryResponse) -> Result<serde_json::Value, Error> {
@@ -107,33 +103,6 @@ pub fn error_to_json(error: &Error) -> serde_json::Value {
     envelope("error", fields)
 }
 
-fn object_to_json(values: &BTreeMap<String, Value>) -> Result<serde_json::Value, Error> {
-    let encoded = values
-        .iter()
-        .map(|(key, value)| Ok((key.clone(), value_to_json(value)?)))
-        .collect::<Result<Map<_, _>, Error>>()?;
-    if !values.contains_key(KEY) {
-        return Ok(serde_json::Value::Object(encoded));
-    }
-    Ok(envelope(
-        "object",
-        [("value", serde_json::Value::Object(encoded))],
-    ))
-}
-
-fn json_object_to_value(values: Map<String, serde_json::Value>) -> Result<Value, Error> {
-    if values.len() == 1 && values.contains_key(KEY) {
-        if let Some(tag) = values.get(KEY).and_then(|value| value.as_object().cloned()) {
-            return decode_envelope(tag);
-        }
-    }
-    values
-        .into_iter()
-        .map(|(key, value)| Ok((key, value_from_json(value)?)))
-        .collect::<Result<BTreeMap<_, _>, Error>>()
-        .map(Value::Object)
-}
-
 fn decode_envelope(mut tag: Map<String, serde_json::Value>) -> Result<Value, Error> {
     let version = tag.remove("v").and_then(|value| value.as_i64());
     let kind = tag
@@ -163,22 +132,6 @@ fn decode_envelope(mut tag: Map<String, serde_json::Value>) -> Result<Value, Err
             "JSON envelope is not a FastDB value",
         )),
     }
-}
-
-fn record_envelope(record: &RecordId) -> serde_json::Value {
-    let (kind, value) = match &record.id {
-        RecordIdValue::String(value) => ("string", value.clone().into()),
-        RecordIdValue::Integer(value) => ("integer", (*value).into()),
-        RecordIdValue::Uuid(value) => ("uuid", value.hyphenated().to_string().into()),
-    };
-    envelope(
-        "rid",
-        [
-            ("table", record.table.clone().into()),
-            ("id_type", kind.into()),
-            ("id", value),
-        ],
-    )
 }
 
 fn decode_record(mut tag: Map<String, serde_json::Value>) -> Result<RecordId, Error> {

@@ -3768,7 +3768,21 @@ fn index_key(
             Value::Integer(value) => format!("i:{value}"),
             Value::Float(value) => format!("f:{:016x}", value.to_bits()),
             Value::Str(value) => format!("s:{}:{value}", value.len()),
-            Value::Null | Value::Array(_) | Value::Object(_) | Value::RecordId(_) => {
+            Value::None
+            | Value::Null
+            | Value::Decimal(_)
+            | Value::Bytes(_)
+            | Value::Duration(_)
+            | Value::Datetime(_)
+            | Value::Uuid(_)
+            | Value::Array(_)
+            | Value::Object(_)
+            | Value::Set(_)
+            | Value::Range(_)
+            | Value::Regex(_)
+            | Value::RecordId(_)
+            | Value::Table(_)
+            | Value::File(_) => {
                 unreachable!("null returned early and non-scalars were rejected")
             }
         };

@@ -1,5 +1,10 @@
 # FastDB on-disk format version 2
 
+Status: retained migration input and Phase 6–11 historical contract. Current
+FastDB transactionally migrates a valid format-2 file to format 3 on open; see
+[`format-v3.md`](format-v3.md). The remainder of this document preserves the
+exact source-format contract used during migration validation.
+
 Status: Phase 8 implementation contract; not frozen for Core 1.0
 
 Format 2 extends format 1 with relation metadata and sealed provider-owned
@@ -272,6 +277,6 @@ adds a format-2 fixture only after migration and new bootstrap tests pass. Each
 fixture must reopen, accept a mutation, pass engine integrity, and demonstrate
 ordinary B-tree selection.
 
-Format 2 remains evolvable through Phases 7–11. Phase 12 freezes it for Core
-1.0 only after graph, FTS, vector, operations, migration, recovery, and
-parallel-writer gates pass.
+Format 2 was evolved through Phases 7–10 and retained unchanged by the stopped
+Phase 11 audit. Phase 12 superseded it with format 3 while keeping every
+format-1/2 fixture as a validated migration input.

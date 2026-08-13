@@ -1,6 +1,6 @@
 //! Authoritative FastDB expression evaluation over decoded documents.
 
-use crate::decode::{RecordId, RecordIdValue, Value};
+use crate::decode::{canonical_value_cmp, RecordId, RecordIdValue, Value};
 use crate::error::{FastDbError, Result};
 use crate::Params;
 use std::cmp::Ordering;
@@ -23,14 +23,28 @@ impl EvalValue {
 
     pub(crate) fn truthy(&self) -> bool {
         match self {
-            Self::Missing | Self::Present(Value::Null) | Self::Present(Value::Bool(false)) => false,
+            Self::Missing | Self::Present(Value::None | Value::Null | Value::Bool(false)) => false,
             Self::Present(Value::Integer(0)) => false,
             Self::Present(Value::Float(value)) if *value == 0.0 => false,
+            Self::Present(Value::Decimal(value)) if value.is_zero() => false,
             Self::Present(Value::Str(value)) => !value.is_empty(),
+            Self::Present(Value::Bytes(value)) => !value.is_empty(),
             Self::Present(Value::Array(value)) => !value.is_empty(),
             Self::Present(Value::Object(value)) => !value.is_empty(),
+            Self::Present(Value::Set(value)) => !value.as_slice().is_empty(),
             Self::Present(
-                Value::Bool(_) | Value::Integer(_) | Value::Float(_) | Value::RecordId(_),
+                Value::Bool(_)
+                | Value::Integer(_)
+                | Value::Float(_)
+                | Value::Decimal(_)
+                | Value::Duration(_)
+                | Value::Datetime(_)
+                | Value::Uuid(_)
+                | Value::Range(_)
+                | Value::Regex(_)
+                | Value::RecordId(_)
+                | Value::Table(_)
+                | Value::File(_),
             ) => true,
         }
     }
@@ -547,143 +561,10 @@ fn equal_values(left: &EvalValue, right: &EvalValue) -> bool {
 }
 
 pub(crate) fn compare_values(left: &EvalValue, right: &EvalValue) -> Ordering {
-    let left_rank = value_rank(left);
-    let right_rank = value_rank(right);
-    match left_rank.cmp(&right_rank) {
-        Ordering::Equal => {}
-        ordering => return ordering,
-    }
     match (left, right) {
-        (EvalValue::Missing, EvalValue::Missing)
-        | (EvalValue::Present(Value::Null), EvalValue::Present(Value::Null)) => Ordering::Equal,
-        (EvalValue::Present(Value::Bool(left)), EvalValue::Present(Value::Bool(right))) => {
-            left.cmp(right)
-        }
-        (EvalValue::Present(Value::Integer(left)), EvalValue::Present(Value::Integer(right))) => {
-            left.cmp(right)
-        }
-        (EvalValue::Present(Value::Float(left)), EvalValue::Present(Value::Float(right))) => {
-            left.partial_cmp(right).expect("finite floats")
-        }
-        (EvalValue::Present(Value::Integer(left)), EvalValue::Present(Value::Float(right))) => {
-            compare_integer_float(*left, *right)
-        }
-        (EvalValue::Present(Value::Float(left)), EvalValue::Present(Value::Integer(right))) => {
-            compare_integer_float(*right, *left).reverse()
-        }
-        (EvalValue::Present(Value::Str(left)), EvalValue::Present(Value::Str(right))) => {
-            left.cmp(right)
-        }
-        (EvalValue::Present(Value::Array(left)), EvalValue::Present(Value::Array(right))) => {
-            compare_sequences(left.iter(), right.iter())
-        }
-        (EvalValue::Present(Value::Object(left)), EvalValue::Present(Value::Object(right))) => {
-            compare_objects(left, right)
-        }
-        (EvalValue::Present(Value::RecordId(left)), EvalValue::Present(Value::RecordId(right))) => {
-            compare_record_ids(left, right)
-        }
-        _ => unreachable!("equal ranks imply comparable variants"),
-    }
-}
-
-fn value_rank(value: &EvalValue) -> u8 {
-    match value {
-        EvalValue::Missing => 0,
-        EvalValue::Present(Value::Null) => 1,
-        EvalValue::Present(Value::Bool(_)) => 2,
-        EvalValue::Present(Value::Integer(_) | Value::Float(_)) => 3,
-        EvalValue::Present(Value::Str(_)) => 4,
-        EvalValue::Present(Value::Array(_)) => 5,
-        EvalValue::Present(Value::Object(_)) => 6,
-        EvalValue::Present(Value::RecordId(_)) => 7,
-    }
-}
-
-fn compare_integer_float(integer: i64, float: f64) -> Ordering {
-    const I64_UPPER_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
-    const I64_LOWER: f64 = -9_223_372_036_854_775_808.0;
-    if float >= I64_UPPER_EXCLUSIVE {
-        return Ordering::Less;
-    }
-    if float < I64_LOWER {
-        return Ordering::Greater;
-    }
-    let truncated = float.trunc() as i64;
-    match integer.cmp(&truncated) {
-        Ordering::Equal if float.fract() > 0.0 => Ordering::Less,
-        Ordering::Equal if float.fract() < 0.0 => Ordering::Greater,
-        ordering => ordering,
-    }
-}
-
-fn compare_sequences<'a>(
-    mut left: impl Iterator<Item = &'a Value>,
-    mut right: impl Iterator<Item = &'a Value>,
-) -> Ordering {
-    loop {
-        match (left.next(), right.next()) {
-            (Some(left), Some(right)) => {
-                let ordering = compare_values(
-                    &EvalValue::Present(left.clone()),
-                    &EvalValue::Present(right.clone()),
-                );
-                if ordering != Ordering::Equal {
-                    return ordering;
-                }
-            }
-            (Some(_), None) => return Ordering::Greater,
-            (None, Some(_)) => return Ordering::Less,
-            (None, None) => return Ordering::Equal,
-        }
-    }
-}
-
-fn compare_objects(left: &BTreeMap<String, Value>, right: &BTreeMap<String, Value>) -> Ordering {
-    let mut left = left.iter();
-    let mut right = right.iter();
-    loop {
-        match (left.next(), right.next()) {
-            (Some((left_key, left_value)), Some((right_key, right_value))) => {
-                match left_key.cmp(right_key) {
-                    Ordering::Equal => {}
-                    ordering => return ordering,
-                }
-                let ordering = compare_values(
-                    &EvalValue::Present(left_value.clone()),
-                    &EvalValue::Present(right_value.clone()),
-                );
-                if ordering != Ordering::Equal {
-                    return ordering;
-                }
-            }
-            (Some(_), None) => return Ordering::Greater,
-            (None, Some(_)) => return Ordering::Less,
-            (None, None) => return Ordering::Equal,
-        }
-    }
-}
-
-fn compare_record_ids(left: &RecordId, right: &RecordId) -> Ordering {
-    match left.table.cmp(&right.table) {
-        Ordering::Equal => {}
-        ordering => return ordering,
-    }
-    let rank = |value: &RecordIdValue| match value {
-        RecordIdValue::Integer(_) => 0,
-        RecordIdValue::String(_) => 1,
-        RecordIdValue::Uuid(_) => 2,
-    };
-    match rank(&left.id).cmp(&rank(&right.id)) {
-        Ordering::Equal => {}
-        ordering => return ordering,
-    }
-    match (&left.id, &right.id) {
-        (RecordIdValue::Integer(left), RecordIdValue::Integer(right)) => left.cmp(right),
-        (RecordIdValue::String(left), RecordIdValue::String(right)) => left.cmp(right),
-        (RecordIdValue::Uuid(left), RecordIdValue::Uuid(right)) => {
-            left.as_bytes().cmp(right.as_bytes())
-        }
-        _ => unreachable!("equal component ranks imply equal variants"),
+        (EvalValue::Missing, EvalValue::Missing) => Ordering::Equal,
+        (EvalValue::Missing, EvalValue::Present(_)) => Ordering::Less,
+        (EvalValue::Present(_), EvalValue::Missing) => Ordering::Greater,
+        (EvalValue::Present(left), EvalValue::Present(right)) => canonical_value_cmp(left, right),
     }
 }

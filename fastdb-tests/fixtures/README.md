@@ -23,6 +23,10 @@ SurrealDB source, tests, fixtures, expected output, or fuzz corpus.
 - `phase9-format2-vector.fastdb` contains three independently authored point
   documents, one fixed two-dimensional vector field, normalized public arrays,
   and catalog-owned native `vector64` BLOBs.
+- `phase12-format3.fastdb` starts from the independently authored Phase 6
+  fixture, migrates it through the Phase 12 frontend to format 3, and adds one
+  Phase 12 record. It retains the ordinary expression index and contains the
+  exact current metadata/provider columns plus seven empty sealed catalogs.
 
 Generation date: 2026-08-13. Behavioral data and expected assertions were
 written for FastDB and are not adapted from another implementation. SHA-256
@@ -35,3 +39,6 @@ checks against the committed format-2 artifact.
 and verifies that provider maintenance remains live.
 `P9-VECTOR-008` reopens the vector artifact, proves exact scan execution,
 mutates it, and verifies that native vector maintenance remains live.
+The fixture provenance step verifies its digest. `P12-FORMAT-004` reopens it
+without migration, mutates it, checks integrity, and proves that its expression
+index remains selected.

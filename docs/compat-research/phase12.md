@@ -99,6 +99,14 @@ NULL. Numerically equal int/float/decimal set members deduplicate. A range may
 be unbounded on either side and independently marks exclusion or inclusion of
 present bounds.
 
+Additional mixed-number probes showed `0.1f = 0.1dec`, while decimal
+`9007199254740993dec` remains distinct from float
+`9007199254740992f`. A mixed set retained the two large adjacent values but
+deduplicated the exactly represented integer/float member. FastDB therefore
+compares a float's canonical decimal rendering against decimals and retains an
+exact integer/float boundary comparison instead of collapsing every numeric
+value through `f64`.
+
 ## Boundary probes
 
 Observed duration and datetime boundaries:
@@ -141,13 +149,55 @@ FastDB therefore uses a checked coefficient no greater than
 `2^96 - 1`, scale `0..=28`, and canonical zero/sign/trailing-zero handling.
 It does not use an unbounded decimal string.
 
+Additional scale-29 probes established midpoint-away-from-zero rounding at
+the 28-digit scale boundary:
+
+```text
+1.23456789012345678901234567894dec
+=> 1.2345678901234567890123456789dec
+
+1.23456789012345678901234567895dec
+=> 1.234567890123456789012345679dec
+
+9.99999999999999999999999999995dec
+=> 10dec
+
+-1.23456789012345678901234567895dec
+=> -1.234567890123456789012345679dec
+```
+
 ## File-value disposition
 
 The probe `RETURN f'bucket:/folder/file';` was rejected by the official binary
 unless its experimental files feature is enabled. The general value inventory
 retains a distinct file capability because `v3.1.5` exposes the syntax and
-file function family, but the FastDB row must not become Supported merely by
-adding an envelope. It requires a later sealed resource provider and the same
-deny-by-default capability policy as outbound functions. Until then it remains
-an active Phase 12 Partial and must resolve to either executable conformance or
-an architecture stop before the Phase 12 checkpoint.
+file function family. Phase 12 supports the value only as a validated opaque
+reference through bound values, schema enforcement, documents, JSON, reopen,
+and backup/restore. It does not dereference the value. File and outbound
+resource functions remain separately capability-gated Phase 13 inventory
+items and are deny-by-default.
+
+## Typed collection schema probe
+
+Input:
+
+```surql
+DEFINE TABLE item SCHEMAFULL;
+DEFINE FIELD xs ON item TYPE array<int, 2>;
+CREATE item:one SET xs = [1];
+CREATE item:two SET xs = [1, 2];
+CREATE item:three SET xs = [1, 2, 3];
+
+DEFINE TABLE thing SCHEMAFULL;
+DEFINE FIELD ys ON thing TYPE set<int, 2>;
+DEFINE FIELD span ON thing TYPE range;
+CREATE thing:one SET ys = <set>[1], span = 1..=3;
+CREATE thing:two SET ys = <set>[1, 2], span = 1..3;
+CREATE thing:three SET ys = <set>[1, 2, 3], span = 1..=3;
+```
+
+Observed behavior: the array and set declarations accepted only collections
+of exactly two elements. Lengths one and three failed coercion. The range type
+is written as unparameterized `range`; `range<int>` was rejected by the parser.
+The successful records retained `[1, 2]`, the typed set with members 1 and 2,
+and the exclusive-upper-bound range `1..3`.

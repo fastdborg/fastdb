@@ -1459,9 +1459,22 @@ fn scalar_kind(value: &crate::Value) -> Result<ScalarKind> {
         crate::Value::Integer(_) => Ok(ScalarKind::Integer),
         crate::Value::Float(_) => Ok(ScalarKind::Float),
         crate::Value::Str(_) => Ok(ScalarKind::String),
-        crate::Value::Array(_) | crate::Value::Object(_) | crate::Value::RecordId(_) => Err(
-            FastDbError::Engine("prepared SELECT cache received a non-scalar predicate".into()),
-        ),
+        crate::Value::None
+        | crate::Value::Decimal(_)
+        | crate::Value::Bytes(_)
+        | crate::Value::Duration(_)
+        | crate::Value::Datetime(_)
+        | crate::Value::Uuid(_)
+        | crate::Value::Array(_)
+        | crate::Value::Object(_)
+        | crate::Value::Set(_)
+        | crate::Value::Range(_)
+        | crate::Value::Regex(_)
+        | crate::Value::RecordId(_)
+        | crate::Value::Table(_)
+        | crate::Value::File(_) => Err(FastDbError::Engine(
+            "prepared SELECT cache received a non-scalar predicate".into(),
+        )),
     }
 }
 
