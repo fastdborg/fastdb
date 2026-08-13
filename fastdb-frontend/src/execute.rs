@@ -234,7 +234,7 @@ fn run_create(
         }
     };
     reject_stored_id(&document)?;
-    let encoded_rid = encode_rid(&id_value);
+    let encoded_rid = encode_rid(&id_value)?;
     let table_was_missing = !catalog_for_read(conn, execution)?
         .snapshot()
         .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
@@ -419,16 +419,19 @@ fn run_relate(
             .map(|column| column.physical_name.clone())
             .collect::<Vec<_>>();
         let derived_hidden = derived_hidden_values(snapshot, &relation, &document)?;
+        let encoded_edge = encode_rid(&edge_id.id)?;
+        let encoded_from = encode_rid(&from.id)?;
+        let encoded_to = encode_rid(&to.id)?;
         let (insert, bindings) = lower::physical_relation_insert_with_hidden_stmt(
             &relation.physical_name,
             &hidden,
             &derived_hidden,
-            &encode_rid(&edge_id.id),
+            &encoded_edge,
             &decode::encode_doc(&document)?,
             &from_table.id.to_hex(),
-            &encode_rid(&from.id),
+            &encoded_from,
             &to_table.id.to_hex(),
-            &encode_rid(&to.id),
+            &encoded_to,
         )?;
         conn.exec_bound(insert, bindings)?;
         conn.check_failpoint(Failpoint::AfterGraphEdgeInsert)?;
@@ -471,7 +474,7 @@ fn resolve_relate_endpoint(expression: &Expr, params: &Params) -> Result<RecordI
 }
 
 fn record_exists(conn: &Connection, table: &TableDefinition, id: &RecordIdValue) -> Result<bool> {
-    let encoded = encode_rid(id);
+    let encoded = encode_rid(id)?;
     let (statement, bindings) =
         lower::physical_select_stmt(&table.physical_name, Some(&encoded), &[])?;
     Ok(!conn.collect_rows(statement, bindings)?.is_empty())
@@ -726,11 +729,12 @@ fn lower_vector_scan_for_explain(
     } else {
         Vec::new()
     };
+    let encoded_id = id.as_ref().map(encode_rid).transpose()?;
     let (lowered, _) = lower::physical_vector_select_stmt(
         &table.physical_name,
         &vector.column.physical_name,
         &graph,
-        id.as_ref().map(encode_rid).as_deref(),
+        encoded_id.as_deref(),
         &predicates,
         vector.query.clone(),
         vector.metric,
@@ -797,11 +801,12 @@ fn lower_fts_scan_for_explain(
     } else {
         Vec::new()
     };
+    let encoded_id = id.as_ref().map(encode_rid).transpose()?;
     let (statement, _) = lower::physical_fts_select_stmt(
         &table.physical_name,
         &fts.index.physical_columns,
         &graph,
-        id.as_ref().map(encode_rid).as_deref(),
+        encoded_id.as_deref(),
         &fts.query,
     )?;
     Ok(Some(statement))
@@ -867,7 +872,7 @@ fn lower_graph_scans_for_explain(
                     &hidden,
                     *forward,
                     &current.id.to_hex(),
-                    &encode_rid("explain"),
+                    &encode_rid("explain")?,
                     &other.id.to_hex(),
                 )?;
                 statements.push(statement);
@@ -1097,7 +1102,7 @@ fn connected_edge_ids(
             &hidden,
             forward,
             &endpoint_table.id.to_hex(),
-            &encode_rid(endpoint_id),
+            &encode_rid(endpoint_id)?,
         )?;
         for row in conn.collect_rows(statement, bindings)? {
             result.push(value_to_string(
@@ -1498,7 +1503,7 @@ fn graph_neighbors(
         &hidden,
         forward,
         &endpoint_table.id.to_hex(),
-        &encode_rid(&endpoint.id),
+        &encode_rid(&endpoint.id)?,
         &other_table.id.to_hex(),
     )?;
     conn.collect_rows(statement, bindings)?
@@ -1519,7 +1524,7 @@ fn materialize_record(
         .tables
         .get(&endpoint.table)
         .ok_or_else(|| FastDbError::format("graph result references a missing endpoint table"))?;
-    let encoded = encode_rid(&endpoint.id);
+    let encoded = encode_rid(&endpoint.id)?;
     let (statement, bindings) =
         lower::physical_select_stmt(&table.physical_name, Some(&encoded), &[])?;
     let Some(row) = conn.collect_rows(statement, bindings)?.into_iter().next() else {
@@ -2217,6 +2222,26 @@ fn record_id_value(value: RecordIdPart) -> Result<RecordIdValue> {
         }
         RecordIdPartKind::Integer(value) => RecordIdValue::Integer(value),
         RecordIdPartKind::Uuid(value) => RecordIdValue::Uuid(value),
+        RecordIdPartKind::Complex(expression) => {
+            let document = BTreeMap::new();
+            let params = Params::new();
+            let id = RecordId::new("__literal", RecordIdValue::String("literal".into()));
+            let context = EvalContext {
+                document: &document,
+                id: &id,
+                endpoints: None,
+                params: &params,
+            };
+            match eval::evaluate(&expression, &context)?.into_projection() {
+                Value::Array(values) => RecordIdValue::Array(values),
+                Value::Object(values) => RecordIdValue::Object(values),
+                _ => {
+                    return Err(FastDbError::Schema(
+                        "complex record ID must evaluate to an array or object".into(),
+                    ))
+                }
+            }
+        }
     })
 }
 
@@ -2272,7 +2297,7 @@ fn read_candidates(
     let predicates = condition
         .map(|condition| safe_pushdowns(condition, params, table))
         .unwrap_or_default();
-    let encoded_rid = id.map(encode_rid);
+    let encoded_rid = id.map(encode_rid).transpose()?;
     let hidden = if table.kind == TableKind::Relation {
         Some(
             catalog::graph_columns(snapshot, table)?
@@ -3877,12 +3902,9 @@ fn lower_select_scan_for_explain(
         .as_ref()
         .map(|condition| safe_pushdowns(condition, params, table))
         .unwrap_or_default();
-    lower::physical_select_predicates_stmt(
-        &table.physical_name,
-        id.as_ref().map(encode_rid).as_deref(),
-        &predicates,
-    )
-    .map(|(statement, _)| statement)
+    let encoded_id = id.as_ref().map(encode_rid).transpose()?;
+    lower::physical_select_predicates_stmt(&table.physical_name, encoded_id.as_deref(), &predicates)
+        .map(|(statement, _)| statement)
 }
 
 #[cfg(feature = "testing")]

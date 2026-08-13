@@ -883,6 +883,21 @@ impl<'a> Parser<'a> {
     fn parse_record_id_part(&mut self) -> Result<RecordIdPart, ParseError> {
         let token = self.peek().clone();
         match token.kind {
+            TokenKind::LeftBracket | TokenKind::LeftBrace => {
+                let expression = self.parse_prefix_expression()?;
+                if !is_complex_record_id_expression(&expression) {
+                    return Err(ParseError::new(
+                        ParseErrorKind::InvalidCombination {
+                            what: "complex record IDs must contain only literal array/object values",
+                        },
+                        expression.span,
+                    ));
+                }
+                Ok(RecordIdPart {
+                    span: expression.span,
+                    kind: RecordIdPartKind::Complex(Box::new(expression)),
+                })
+            }
             TokenKind::Ident(value) => {
                 if value.eq_ignore_ascii_case("u") {
                     if let Some(string) = self.tokens.get(self.position + 1) {
@@ -951,8 +966,9 @@ impl<'a> Parser<'a> {
                 },
                 token.span,
             )),
-            _ => Err(self
-                .unexpected("a bare, backtick-quoted, integer, or typed-UUID record-ID component")),
+            _ => Err(self.unexpected(
+                "a bare, backtick-quoted, integer, typed-UUID, array, or object record-ID component",
+            )),
         }
     }
 
@@ -2163,6 +2179,28 @@ fn parse_signed_integer(value: &str, sign: i8, span: Span) -> Result<i64, ParseE
     }
     let integer = magnitude as i64;
     Ok(if sign < 0 { -integer } else { integer })
+}
+
+fn is_complex_record_id_expression(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::None
+        | ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Integer(_)
+        | ExprKind::Float(_)
+        | ExprKind::Duration(_)
+        | ExprKind::String(_) => true,
+        ExprKind::Array(values) => values.iter().all(is_complex_record_id_expression),
+        ExprKind::Object(fields) => fields
+            .iter()
+            .all(|field| is_complex_record_id_expression(&field.value)),
+        ExprKind::Unary { operator, operand } => {
+            matches!(operator.value, UnaryOperator::Plus | UnaryOperator::Minus)
+                && matches!(operand.kind, ExprKind::Integer(_) | ExprKind::Float(_))
+        }
+        ExprKind::Parenthesized(value) => is_complex_record_id_expression(value),
+        _ => false,
+    }
 }
 
 fn parse_uuid(value: &str, span: Span) -> Result<uuid::Uuid, ParseError> {

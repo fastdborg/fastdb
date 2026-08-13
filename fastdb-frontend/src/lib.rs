@@ -227,6 +227,19 @@ fn validate_bound_value(value: &Value, depth: usize) -> error::Result<()> {
                     "parameter record-ID UUID must be UUIDv4 or UUIDv7".into(),
                 ));
             }
+            match &record.id {
+                RecordIdValue::Array(values) => {
+                    for value in values {
+                        validate_bound_value(value, depth + 1)?;
+                    }
+                }
+                RecordIdValue::Object(values) => {
+                    for value in values.values() {
+                        validate_bound_value(value, depth + 1)?;
+                    }
+                }
+                RecordIdValue::String(_) | RecordIdValue::Integer(_) | RecordIdValue::Uuid(_) => {}
+            }
             Ok(())
         }
         Value::Str(value) if value.len() > 1 << 20 => Err(FastDbError::Schema(

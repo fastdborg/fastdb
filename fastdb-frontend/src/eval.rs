@@ -454,6 +454,17 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
                     RecordIdValue::Integer(*value)
                 }
                 turso_fastdb_parser::RecordIdPartKind::Uuid(value) => RecordIdValue::Uuid(*value),
+                turso_fastdb_parser::RecordIdPartKind::Complex(expression) => {
+                    match evaluate(expression, context)?.into_projection() {
+                        Value::Array(values) => RecordIdValue::Array(values),
+                        Value::Object(values) => RecordIdValue::Object(values),
+                        _ => {
+                            return Err(FastDbError::Schema(
+                                "complex record ID must evaluate to an array or object".into(),
+                            ))
+                        }
+                    }
+                }
             },
         )))),
         ExprKind::FieldPath(path) => Ok(read_path(path, context)),
@@ -1815,6 +1826,8 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
                 RecordIdValue::String(value) => Value::Str(value.clone()),
                 RecordIdValue::Integer(value) => Value::Integer(*value),
                 RecordIdValue::Uuid(value) => Value::Uuid(*value),
+                RecordIdValue::Array(value) => Value::Array(value.clone()),
+                RecordIdValue::Object(value) => Value::Object(value.clone()),
             }),
             _ => Err(argument_type("record::id", "record")),
         },
@@ -3099,6 +3112,8 @@ fn evaluate_type_cast(cast: TypeCast, arguments: &[Value]) -> Result<Value> {
                     Value::Str(value) => RecordIdValue::String(value.clone()),
                     Value::Integer(value) => RecordIdValue::Integer(*value),
                     Value::Uuid(value) => RecordIdValue::Uuid(*value),
+                    Value::Array(value) => RecordIdValue::Array(value.clone()),
+                    Value::Object(value) => RecordIdValue::Object(value.clone()),
                     _ => return Err(argument_type("type::record", "record ID component")),
                 };
                 Ok(Value::RecordId(RecordId::new(table, id)))

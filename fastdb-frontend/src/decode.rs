@@ -371,11 +371,13 @@ impl SetValue {
 }
 
 /// The typed component of a FastDB record ID.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RecordIdValue {
     String(String),
     Integer(i64),
     Uuid(uuid::Uuid),
+    Array(Vec<Value>),
+    Object(BTreeMap<String, Value>),
 }
 
 impl RecordIdValue {
@@ -385,7 +387,82 @@ impl RecordIdValue {
             Self::String(value) => format!("`{}`", value.replace('`', "``")),
             Self::Integer(value) => value.to_string(),
             Self::Uuid(value) => format!("u'{}'", value.hyphenated()),
+            Self::Array(values) => format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(record_component_value_to_source)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Object(values) => format!(
+                "{{{}}}",
+                values
+                    .iter()
+                    .map(|(key, value)| format!(
+                        "{}: {}",
+                        quote_source_string(key),
+                        record_component_value_to_source(value)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
+    }
+}
+
+fn quote_source_string(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+fn record_component_value_to_source(value: &Value) -> String {
+    match value {
+        Value::None => "NONE".into(),
+        Value::Null => "NULL".into(),
+        Value::Bool(value) => value.to_string(),
+        Value::Integer(value) => value.to_string(),
+        Value::Float(value) => value.to_string(),
+        Value::Decimal(value) => format!("{}dec", value.to_canonical()),
+        Value::Str(value) => quote_source_string(value),
+        Value::Bytes(value) => format!(
+            "<bytes>'{}'",
+            base64::engine::general_purpose::STANDARD.encode(value)
+        ),
+        Value::Duration(value) => value.to_canonical(),
+        Value::Datetime(value) => format!("d'{}'", value.to_canonical()),
+        Value::Uuid(value) => format!("u'{}'", value.hyphenated()),
+        Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(record_component_value_to_source)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(values) => format!(
+            "{{{}}}",
+            values
+                .iter()
+                .map(|(key, value)| format!(
+                    "{}: {}",
+                    quote_source_string(key),
+                    record_component_value_to_source(value)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Set(values) => format!(
+            "<set>[{}]",
+            values
+                .as_slice()
+                .iter()
+                .map(record_component_value_to_source)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Regex(value) => format!("/{}/", value.as_str()),
+        Value::RecordId(value) => value.to_string(),
+        Value::Range(_) | Value::Table(_) | Value::File(_) => "<unsupported-id-value>".into(),
     }
 }
 
@@ -439,7 +516,7 @@ impl PartialEq<&str> for RecordIdValue {
 
 /// A logical record ID. The table name is catalog-resolved; the component is
 /// encoded independently in the physical `rid` column.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordId {
     pub table: String,
     pub id: RecordIdValue,
@@ -676,7 +753,7 @@ fn encode_value_at(value: &Value, depth: usize) -> Result<serde_json::Value> {
         Value::RecordId(record) => {
             let mut tag = new_tag("rid");
             tag.insert("table".into(), record.table.clone().into());
-            tag.insert("id".into(), encode_rid(&record.id).into());
+            tag.insert("id".into(), encode_rid(&record.id)?.into());
             Ok(tag_envelope(tag))
         }
         Value::Table(value) => Ok(string_tag("table", value.as_str().to_string())),
@@ -1233,6 +1310,8 @@ fn record_component_cmp(left: &RecordIdValue, right: &RecordIdValue) -> Ordering
         RecordIdValue::Integer(_) => 0,
         RecordIdValue::String(_) => 1,
         RecordIdValue::Uuid(_) => 2,
+        RecordIdValue::Array(_) => 3,
+        RecordIdValue::Object(_) => 4,
     };
     rank(left)
         .cmp(&rank(right))
@@ -1242,6 +1321,8 @@ fn record_component_cmp(left: &RecordIdValue, right: &RecordIdValue) -> Ordering
             (RecordIdValue::Uuid(left), RecordIdValue::Uuid(right)) => {
                 left.as_bytes().cmp(right.as_bytes())
             }
+            (RecordIdValue::Array(left), RecordIdValue::Array(right)) => sequence_cmp(left, right),
+            (RecordIdValue::Object(left), RecordIdValue::Object(right)) => object_cmp(left, right),
             _ => Ordering::Equal,
         })
 }

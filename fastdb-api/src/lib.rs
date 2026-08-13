@@ -1347,6 +1347,21 @@ fn value_size(value: &Value) -> Result<usize> {
                     RecordIdValue::String(value) => value.len(),
                     RecordIdValue::Integer(_) => 8,
                     RecordIdValue::Uuid(_) => 16,
+                    RecordIdValue::Array(values) => {
+                        values.iter().try_fold(0_usize, |total, value| {
+                            total
+                                .checked_add(value_size(value)?)
+                                .ok_or_else(usage_overflow)
+                        })?
+                    }
+                    RecordIdValue::Object(values) => {
+                        values.iter().try_fold(0_usize, |total, (key, value)| {
+                            total
+                                .checked_add(key.len())
+                                .and_then(|total| total.checked_add(value_size(value).ok()?))
+                                .ok_or_else(usage_overflow)
+                        })?
+                    }
                 }
         }
         Value::Table(value) => value.as_str().len(),

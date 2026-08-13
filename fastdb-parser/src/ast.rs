@@ -391,6 +391,8 @@ pub enum RecordIdPartKind {
     Quoted(String),
     Integer(i64),
     Uuid(uuid::Uuid),
+    /// A collision-safe array or object record-ID component.
+    Complex(Box<Expr>),
 }
 
 impl RecordIdPart {
@@ -401,7 +403,58 @@ impl RecordIdPart {
             RecordIdPartKind::Quoted(value) => format!("`{}`", value.replace('`', "``")),
             RecordIdPartKind::Integer(value) => value.to_string(),
             RecordIdPartKind::Uuid(value) => format!("u'{}'", value.hyphenated()),
+            RecordIdPartKind::Complex(value) => render_record_id_expression(value),
         }
+    }
+}
+
+fn render_record_id_expression(expression: &Expr) -> String {
+    match &expression.kind {
+        ExprKind::None => "NONE".into(),
+        ExprKind::Null => "NULL".into(),
+        ExprKind::Bool(value) => value.to_string(),
+        ExprKind::Integer(value) => value.to_string(),
+        ExprKind::Float(value) => value.to_string(),
+        ExprKind::Duration(value) => value.clone(),
+        ExprKind::String(value) => {
+            format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
+        ExprKind::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(render_record_id_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::Object(fields) => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|field| {
+                    let key = match &field.key.kind {
+                        ObjectKeyKind::Identifier(value) => value.clone(),
+                        ObjectKeyKind::String(value) => {
+                            format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+                        }
+                    };
+                    format!("{key}: {}", render_record_id_expression(&field.value))
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::Unary {
+            operator, operand, ..
+        } => {
+            let operator = match operator.value {
+                UnaryOperator::Plus => "+",
+                UnaryOperator::Minus => "-",
+                UnaryOperator::Not => "!",
+            };
+            format!("{operator}{}", render_record_id_expression(operand))
+        }
+        ExprKind::Parenthesized(value) => format!("({})", render_record_id_expression(value)),
+        _ => "<invalid-record-id>".into(),
     }
 }
 
