@@ -1,9 +1,9 @@
 //! Authoritative FastDB expression evaluation over decoded documents.
 
 use crate::builtins::{
-    self, ArrayBoolean, ArrayLogical, Builtin, BuiltinClass, BuiltinSyntax, CryptoDigest,
-    DurationUnit, MathConstant, MathUnary, RandomBuiltin, TimePart, TimeTruncate, TypeCast,
-    TypeKind,
+    self, ArrayBoolean, ArrayLogical, Builtin, BuiltinClass, BuiltinSyntax, ClosureOperation,
+    CollectionKind, CryptoDigest, DurationUnit, MathConstant, MathUnary, RandomBuiltin, TimePart,
+    TimeTruncate, TypeCast, TypeKind,
 };
 use crate::decode::{
     canonical_value_cmp, decode_value, encode_value, DatetimeValue, DecimalValue, DurationValue,
@@ -20,8 +20,8 @@ use rust_decimal::prelude::ToPrimitive as _;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use turso_fastdb_parser::{
-    Accessor, BinaryOperator, Expr, ExprKind, FieldPath, SchemaType, SchemaTypeKind, Statement,
-    UnaryOperator,
+    Accessor, BinaryOperator, ClosureExpr, Expr, ExprKind, FieldPath, SchemaType, SchemaTypeKind,
+    Statement, UnaryOperator,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +206,17 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
                 collect_parameters(argument, names);
             }
         }
+        ExprKind::Closure(closure) => {
+            let mut captured = Vec::new();
+            collect_parameters(&closure.body, &mut captured);
+            captured.retain(|name| {
+                !closure
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.value == *name)
+            });
+            names.extend(captured);
+        }
         ExprKind::NamespacedValue { .. } => {}
         ExprKind::Knn(knn) => {
             collect_parameters(&knn.field, names);
@@ -298,6 +309,7 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
                 ))
             }
         }
+        ExprKind::Closure(closure) => reject_unavailable_functions(&closure.body),
         ExprKind::Traversal(_) => Ok(()),
         ExprKind::NamespacedValue { name } => {
             let canonical = normalized_function_segments(name).join("::");
@@ -480,12 +492,19 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
                     "function {canonical} requires a specialized query context"
                 )));
             };
+            if let Builtin::CollectionClosure(collection, operation) = spec.function {
+                return evaluate_collection_closure(collection, operation, arguments, context)
+                    .map(EvalValue::Present);
+            }
             let arguments = arguments
                 .iter()
                 .map(|argument| evaluate(argument, context).map(EvalValue::into_function_value))
                 .collect::<Result<Vec<_>>>()?;
             evaluate_builtin(spec.function, arguments).map(EvalValue::Present)
         }
+        ExprKind::Closure(_) => Err(FastDbError::Schema(
+            "closure values are accepted only by collection functions".into(),
+        )),
         ExprKind::NamespacedValue { name } => {
             let canonical = normalized_function_segments(name).join("::");
             let spec = builtins::lookup(&canonical).ok_or_else(|| {
@@ -989,6 +1008,149 @@ fn is_bare_record_component(value: &str) -> bool {
         && chars.all(|character| character == '_' || character.is_alphanumeric())
 }
 
+fn evaluate_collection_closure(
+    collection: CollectionKind,
+    operation: ClosureOperation,
+    arguments: &[Expr],
+    context: &EvalContext<'_>,
+) -> Result<Value> {
+    let collection_value = evaluate(&arguments[0], context)?.into_function_value();
+    let values = match collection {
+        CollectionKind::Array => collection_slice(&collection_value, "array closure")?,
+        CollectionKind::Set => set_slice(&collection_value, "set closure")?,
+    };
+    let closure_index = if operation == ClosureOperation::Fold {
+        2
+    } else {
+        1
+    };
+    let ExprKind::Closure(closure) = &arguments[closure_index].kind else {
+        return Err(FastDbError::Schema(
+            "collection function requires a closure argument".into(),
+        ));
+    };
+    let unary = !matches!(operation, ClosureOperation::Fold | ClosureOperation::Reduce);
+    if (unary && !(1..=2).contains(&closure.parameters.len()))
+        || (!unary && closure.parameters.len() != 2)
+    {
+        return Err(FastDbError::Schema(
+            "collection closure has the wrong parameter count".into(),
+        ));
+    }
+
+    match operation {
+        ClosureOperation::All | ClosureOperation::Any => {
+            let all = operation == ClosureOperation::All;
+            for (index, value) in values.iter().enumerate() {
+                let result = invoke_closure(
+                    closure,
+                    &[value.clone(), Value::Integer(index as i64)],
+                    context,
+                )?;
+                if all && !result.truthy() {
+                    return Ok(Value::Bool(false));
+                }
+                if !all && result.truthy() {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            Ok(Value::Bool(all))
+        }
+        ClosureOperation::Filter | ClosureOperation::FilterIndex => {
+            let mut output = Vec::new();
+            for (index, value) in values.iter().enumerate() {
+                if invoke_closure(
+                    closure,
+                    &[value.clone(), Value::Integer(index as i64)],
+                    context,
+                )?
+                .truthy()
+                {
+                    output.push(if operation == ClosureOperation::FilterIndex {
+                        Value::Integer(index as i64)
+                    } else {
+                        value.clone()
+                    });
+                }
+            }
+            if collection == CollectionKind::Set && operation == ClosureOperation::Filter {
+                SetValue::new(output).map(Value::Set)
+            } else {
+                Ok(Value::Array(output))
+            }
+        }
+        ClosureOperation::Find | ClosureOperation::FindIndex => {
+            for (index, value) in values.iter().enumerate() {
+                if invoke_closure(
+                    closure,
+                    &[value.clone(), Value::Integer(index as i64)],
+                    context,
+                )?
+                .truthy()
+                {
+                    return Ok(if operation == ClosureOperation::FindIndex {
+                        Value::Integer(index as i64)
+                    } else {
+                        value.clone()
+                    });
+                }
+            }
+            Ok(Value::None)
+        }
+        ClosureOperation::Map => {
+            let mut output = Vec::with_capacity(values.len());
+            for (index, value) in values.iter().enumerate() {
+                output.push(
+                    invoke_closure(
+                        closure,
+                        &[value.clone(), Value::Integer(index as i64)],
+                        context,
+                    )?
+                    .into_function_value(),
+                );
+            }
+            if collection == CollectionKind::Set {
+                SetValue::new(output).map(Value::Set)
+            } else {
+                Ok(Value::Array(output))
+            }
+        }
+        ClosureOperation::Fold | ClosureOperation::Reduce => {
+            let (mut accumulator, start) = if operation == ClosureOperation::Fold {
+                (evaluate(&arguments[1], context)?.into_function_value(), 0)
+            } else {
+                let Some(first) = values.first() else {
+                    return Ok(Value::None);
+                };
+                (first.clone(), 1)
+            };
+            for value in &values[start..] {
+                accumulator = invoke_closure(closure, &[accumulator, value.clone()], context)?
+                    .into_function_value();
+            }
+            Ok(accumulator)
+        }
+    }
+}
+
+fn invoke_closure(
+    closure: &ClosureExpr,
+    arguments: &[Value],
+    context: &EvalContext<'_>,
+) -> Result<EvalValue> {
+    let mut parameters = context.params.clone();
+    for (parameter, argument) in closure.parameters.iter().zip(arguments) {
+        parameters.insert(parameter.value.clone(), argument.clone());
+    }
+    let closure_context = EvalContext {
+        document: context.document,
+        id: context.id,
+        endpoints: context.endpoints,
+        params: &parameters,
+    };
+    evaluate(&closure.body, &closure_context)
+}
+
 fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
     use Builtin::*;
     match function {
@@ -1378,6 +1540,9 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
             }
             SetValue::new(output).map(Value::Set)
         }
+        CollectionClosure(_, _) => Err(FastDbError::Engine(
+            "collection closure bypassed its expression evaluator".into(),
+        )),
         MathConstant(constant) => Ok(Value::Float(math_constant(constant))),
         MathUnary(operation) => evaluate_math_unary(operation, &arguments[0]),
         MathClamp => {

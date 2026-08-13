@@ -172,3 +172,27 @@ fn p13_parse_005_composite_duration_literals_remain_typed_expressions() {
         matches!(values[0].kind, ExprKind::Duration(ref value) if value == "1d2h3m4s5ms6us7ns")
     );
 }
+
+#[test]
+fn p13_parse_006_closures_keep_parameters_and_bounded_body_structure() {
+    let values = assignments(
+        "CREATE calc:one SET mapped = array::map([1,2], |$value,$index| $value + $index)",
+    );
+    let ExprKind::FunctionCall { arguments, .. } = &values[0].kind else {
+        panic!("expected function call")
+    };
+    let ExprKind::Closure(closure) = &arguments[1].kind else {
+        panic!("expected closure")
+    };
+    assert_eq!(
+        closure
+            .parameters
+            .iter()
+            .map(|parameter| parameter.value.as_str())
+            .collect::<Vec<_>>(),
+        ["value", "index"]
+    );
+    assert!(matches!(closure.body.kind, ExprKind::Binary { .. }));
+
+    assert!(parse_one("CREATE calc:one SET bad = array::map([1], |$x,$x| $x)").is_err());
+}

@@ -1382,6 +1382,9 @@ impl<'a> Parser<'a> {
 
     fn parse_prefix_expression(&mut self) -> Result<Expr, ParseError> {
         let token = self.peek().clone();
+        if matches!(token.kind, TokenKind::Pipe) {
+            return self.parse_closure_expression();
+        }
         if (self.at_offset(1, &TokenKind::DoubleColon) || self.at_offset(1, &TokenKind::LeftParen))
             && function_segment_value(&token.kind).is_some()
         {
@@ -1669,6 +1672,52 @@ impl<'a> Parser<'a> {
         }
         let path = self.parse_field_path_tail(first)?;
         Ok(Expr::new(ExprKind::FieldPath(path.clone()), path.span))
+    }
+
+    fn parse_closure_expression(&mut self) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::Pipe, "'|' to start closure")?.span;
+        let mut parameters = Vec::new();
+        if !self.at(&TokenKind::Pipe) {
+            loop {
+                let token = self.peek().clone();
+                let TokenKind::Parameter(name) = token.kind else {
+                    return Err(self.unexpected("a closure parameter such as $value"));
+                };
+                self.position += 1;
+                if parameters
+                    .iter()
+                    .any(|parameter: &Identifier| parameter.value == name)
+                {
+                    return Err(ParseError::new(
+                        ParseErrorKind::InvalidCombination {
+                            what: "duplicate closure parameter",
+                        },
+                        token.span,
+                    ));
+                }
+                parameters.push(Identifier::new(name, token.span));
+                self.check_element_count(parameters.len(), token.span)?;
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        if parameters.is_empty() {
+            return Err(self.unexpected("at least one closure parameter"));
+        }
+        self.expect(&TokenKind::Pipe, "'|' after closure parameters")?;
+        self.enter_depth(open)?;
+        let body_result = self.parse_expression_bp(0);
+        self.leave_depth();
+        let body = body_result?;
+        let span = open.union(body.span);
+        Ok(Expr::new(
+            ExprKind::Closure(ClosureExpr {
+                parameters,
+                body: Box::new(body),
+            }),
+            span,
+        ))
     }
 
     fn parse_function_call(&mut self, first: Identifier) -> Result<Expr, ParseError> {

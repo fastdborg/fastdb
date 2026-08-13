@@ -295,3 +295,19 @@ clump, fill, insert, swap, transpose, and windows are all bounded at 65,536
 output elements. Natural sorts compare digit runs numerically; the lexical
 variant folds case. The v3.1.5 names are flat `array::sort_lexical`,
 `array::sort_natural`, and `array::sort_natural_lexical` paths.
+
+## Lexical closures
+
+The characterized closure form is `|$value| expression`, with comma-separated
+parameters for folds. Array map/filter/find/filter-index/find-index/all/any,
+fold, and reduce use ordered array iteration. Set equivalents iterate the
+canonical set order and return typed sets from map/filter. A unary collection
+closure may request the zero-based index as its second parameter; fold/reduce
+receive accumulator then value.
+
+FastDB keeps closure structure in its independent AST, removes local names
+from external-parameter validation, and evaluates captured parameters through
+a cloned lexical binding map. Collection limits cap invocation count and
+explicit-transaction errors poison the transaction. The fixed binary rejected
+the catalog aliases `array::every` and `array::some`; those rows remain
+Unsupported.

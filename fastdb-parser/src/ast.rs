@@ -453,6 +453,7 @@ pub enum ExprKind {
     NamespacedValue {
         name: Vec<Identifier>,
     },
+    Closure(ClosureExpr),
     Knn(KnnExpr),
     Traversal(TraversalExpr),
     Unary {
@@ -465,6 +466,12 @@ pub enum ExprKind {
         right: Box<Expr>,
     },
     Parenthesized(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosureExpr {
+    pub parameters: Vec<Identifier>,
+    pub body: Box<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

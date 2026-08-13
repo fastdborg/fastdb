@@ -58,6 +58,7 @@ pub(crate) enum Builtin {
     ArraySwap,
     ArrayTranspose,
     ArrayWindows,
+    CollectionClosure(CollectionKind, ClosureOperation),
     BytesLen,
     ObjectEntries,
     ObjectExtend,
@@ -140,6 +141,25 @@ pub(crate) enum Builtin {
     CryptoPassword(PasswordAlgorithm, PasswordOperation),
     Random(RandomBuiltin),
     String(StringBuiltin),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CollectionKind {
+    Array,
+    Set,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClosureOperation {
+    All,
+    Any,
+    Filter,
+    FilterIndex,
+    Find,
+    FindIndex,
+    Fold,
+    Map,
+    Reduce,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,6 +630,51 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure!(ArraySwap, "array::swap", 3),
     pure!(ArrayTranspose, "array::transpose", 1),
     pure!(ArrayWindows, "array::windows", 2),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::All),
+        "array::all",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::Any),
+        "array::any",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::Filter),
+        "array::filter",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::FilterIndex),
+        "array::filter_index",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::Find),
+        "array::find",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::FindIndex),
+        "array::find_index",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::Fold),
+        "array::fold",
+        3
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::Map),
+        "array::map",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Array, ClosureOperation::Reduce),
+        "array::reduce",
+        2
+    ),
     pure!(BytesLen, "bytes::len", 1),
     pure!(ObjectEntries, "object::entries", 1),
     pure!(ObjectExtend, "object::extend", 2),
@@ -636,6 +701,41 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure!(SetSlice, "set::slice", 2, 3),
     pure!(SetUnion, "set::union", 2),
     pure!(SetFlatten, "set::flatten", 1),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Set, ClosureOperation::All),
+        "set::all",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Set, ClosureOperation::Any),
+        "set::any",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Set, ClosureOperation::Filter),
+        "set::filter",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Set, ClosureOperation::Find),
+        "set::find",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Set, ClosureOperation::Fold),
+        "set::fold",
+        3
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Set, ClosureOperation::Map),
+        "set::map",
+        2
+    ),
+    pure_value!(
+        Builtin::CollectionClosure(CollectionKind::Set, ClosureOperation::Reduce),
+        "set::reduce",
+        2
+    ),
     constant!(Builtin::MathConstant(MathConstant::E), "math::e"),
     constant!(
         Builtin::MathConstant(MathConstant::Frac1Pi),
