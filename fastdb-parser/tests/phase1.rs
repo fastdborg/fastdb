@@ -184,7 +184,7 @@ fn p2_uuid_001_typed_uuid_components_validate_spans_and_source() {
     let Statement::Select(select) = statement else {
         panic!("expected SELECT");
     };
-    let Target::Record(record) = select.target else {
+    let turso_fastdb_parser::SelectTarget::Target(Target::Record(record)) = select.target else {
         panic!("expected record target");
     };
     assert_eq!(record.id.span.offset, source.find("u'").unwrap());
@@ -352,7 +352,6 @@ fn p1_stmt_004_clause_order_duplicates_and_combinations() {
         "SELECT * FROM person LIMIT 1 WHERE active = true",
         "SELECT * FROM person WHERE a = 1 WHERE b = 2",
         "SELECT * FROM person LIMIT 1 LIMIT 2",
-        "SELECT *, name FROM person",
         "SELECT name, * FROM person",
         "CREATE person CONTENT {} SET name = 'x'",
         "CREATE person SET name = 'x' CONTENT {}",
@@ -377,8 +376,6 @@ fn p1_stmt_004_clause_order_duplicates_and_combinations() {
 fn p1_stmt_005_unsupported_families_and_clauses_are_precise() {
     for input in [
         "LET $x = 1",
-        "SELECT * FROM person FETCH friend",
-        "SELECT * FROM person GROUP BY name",
         "CREATE person CONTENT {} TIMEOUT 1s",
         "CREATE person CONTENT {} PARALLEL",
         "DEFINE INDEX x ON person FIELDS name FULLTEXT",

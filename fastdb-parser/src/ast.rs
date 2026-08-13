@@ -145,13 +145,36 @@ pub struct RelateStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStatement {
     pub span: Span,
+    pub value: Option<Span>,
     pub projections: ProjectionList,
+    pub include_all: bool,
     pub only: Option<Span>,
-    pub target: Target,
+    pub target: SelectTarget,
+    pub additional_targets: Vec<SelectTarget>,
     pub condition: Option<Expr>,
+    pub split: Vec<FieldPath>,
+    pub group: Option<GroupClause>,
+    pub omit: Vec<FieldPath>,
     pub order_by: Vec<OrderBy>,
+    pub order_random: Option<Span>,
     pub limit: Option<NonnegativeInteger>,
+    pub limit_expression: Option<Expr>,
     pub start: Option<NonnegativeInteger>,
+    pub start_expression: Option<Expr>,
+    pub fetch: Vec<FieldPath>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectTarget {
+    Target(Target),
+    Expression(Expr),
+    Subquery(Box<SelectStatement>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GroupClause {
+    All(Span),
+    By(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +195,8 @@ pub struct OrderBy {
     pub span: Span,
     pub path: FieldPath,
     pub direction: Spanned<OrderDirection>,
+    pub collate: Option<Span>,
+    pub numeric: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,6 +362,9 @@ pub struct IndexOption {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExplainStatement {
     pub span: Span,
+    pub analyze: Option<Span>,
+    pub full: Option<Span>,
+    pub format_json: Option<Span>,
     pub select: SelectStatement,
 }
 
@@ -395,6 +423,7 @@ pub enum Target {
     Table(TableTarget),
     Record(RecordId),
     RecordRange(RecordRangeTarget),
+    Batch { span: Span, target: Box<Target> },
 }
 
 impl Target {
@@ -403,6 +432,7 @@ impl Target {
             Self::Table(target) => target.span,
             Self::Record(target) => target.span,
             Self::RecordRange(target) => target.span,
+            Self::Batch { span, .. } => *span,
         }
     }
 
@@ -411,6 +441,7 @@ impl Target {
             Self::Table(target) => &target.name,
             Self::Record(target) => &target.table,
             Self::RecordRange(target) => &target.table,
+            Self::Batch { target, .. } => target.table(),
         }
     }
 }
@@ -546,6 +577,11 @@ pub enum ExprKind {
     String(String),
     Array(Vec<Expr>),
     Object(Vec<ObjectField>),
+    Destructure {
+        target: Box<Expr>,
+        fields: Vec<Identifier>,
+    },
+    DestructureList(Vec<Expr>),
     Parameter(String),
     RecordId(RecordId),
     FieldPath(FieldPath),

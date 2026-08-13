@@ -279,7 +279,24 @@ impl<'a> Parser<'a> {
     fn parse_create(&mut self) -> Result<CreateStatement, ParseError> {
         let start = self.expect(&TokenKind::Create, "keyword CREATE")?.span;
         let only = self.take(&TokenKind::Only).map(|token| token.span);
-        let target = self.parse_target()?;
+        let target = if let Some(open) = self.take(&TokenKind::Pipe) {
+            let target = self.parse_target()?;
+            if !matches!(target, Target::Record(_) | Target::RecordRange(_)) {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "batch CREATE requires a count or integer record range",
+                    },
+                    target.span(),
+                ));
+            }
+            let close = self.expect(&TokenKind::Pipe, "'|' after batch CREATE target")?;
+            Target::Batch {
+                span: open.span.union(close.span),
+                target: Box::new(target),
+            }
+        } else {
+            self.parse_target()?
+        };
         let data = if self.eat(&TokenKind::Content) {
             Some(CreateData::Content(self.parse_expression()?))
         } else if self.eat(&TokenKind::Set) {
@@ -446,30 +463,94 @@ impl<'a> Parser<'a> {
 
     fn parse_select(&mut self) -> Result<SelectStatement, ParseError> {
         let start = self.expect(&TokenKind::Select, "keyword SELECT")?.span;
-        let projections = self.parse_projections()?;
+        let value = self.take(&TokenKind::Value).map(|token| token.span);
+        let (projections, include_all) = self.parse_projections()?;
+        let omit = if self.eat(&TokenKind::Omit) {
+            self.parse_field_paths()?
+        } else {
+            Vec::new()
+        };
         self.expect(&TokenKind::From, "keyword FROM")?;
         let only = self.take(&TokenKind::Only).map(|token| token.span);
-        let target = self.parse_target()?;
+        let target = self.parse_select_target()?;
+        let mut additional_targets = Vec::new();
+        while self.eat(&TokenKind::Comma) {
+            let target = self.parse_select_target()?;
+            self.check_element_count(additional_targets.len() + 2, select_target_span(&target))?;
+            additional_targets.push(target);
+        }
         let condition = if self.eat(&TokenKind::Where) {
             Some(self.parse_expression()?)
         } else {
             None
         };
-        let order_by = if self.eat(&TokenKind::Order) {
-            self.expect(&TokenKind::By, "keyword BY after ORDER")?;
-            self.parse_order_by()?
+        let split = if self.eat(&TokenKind::Split) {
+            self.expect(&TokenKind::On, "keyword ON after SPLIT")?;
+            self.parse_field_paths()?
         } else {
             Vec::new()
         };
-        let limit = if self.eat(&TokenKind::Limit) {
-            Some(self.parse_nonnegative_integer()?)
+        let group = if self.eat(&TokenKind::Group) {
+            if let Some(all) = self.take(&TokenKind::All) {
+                Some(GroupClause::All(all.span))
+            } else {
+                self.expect(&TokenKind::By, "keyword BY after GROUP")?;
+                let mut expressions = vec![self.parse_expression()?];
+                while self.eat(&TokenKind::Comma) {
+                    let expression = self.parse_expression()?;
+                    self.check_element_count(expressions.len() + 1, expression.span)?;
+                    expressions.push(expression);
+                }
+                Some(GroupClause::By(expressions))
+            }
         } else {
             None
         };
-        let start_value = if self.eat(&TokenKind::Start) {
-            Some(self.parse_nonnegative_integer()?)
+        let (order_by, order_random) = if self.eat(&TokenKind::Order) {
+            self.expect(&TokenKind::By, "keyword BY after ORDER")?;
+            if self.at(&TokenKind::Rand)
+                || matches!(&self.peek().kind, TokenKind::Ident(name) if name.eq_ignore_ascii_case("rand"))
+            {
+                let rand = self.advance().span;
+                self.expect(&TokenKind::LeftParen, "'(' after RAND")?;
+                let close = self.expect(&TokenKind::RightParen, "')' after RAND")?.span;
+                (Vec::new(), Some(rand.union(close)))
+            } else {
+                (self.parse_order_by()?, None)
+            }
         } else {
-            None
+            (Vec::new(), None)
+        };
+        let (limit, limit_expression) = if self.eat(&TokenKind::Limit) {
+            self.eat(&TokenKind::By);
+            if matches!(
+                self.peek().kind,
+                TokenKind::Number(_) | TokenKind::Plus | TokenKind::Minus
+            ) {
+                (Some(self.parse_nonnegative_integer()?), None)
+            } else {
+                (None, Some(self.parse_expression()?))
+            }
+        } else {
+            (None, None)
+        };
+        let (start_value, start_expression) = if self.eat(&TokenKind::Start) {
+            self.eat(&TokenKind::At);
+            if matches!(
+                self.peek().kind,
+                TokenKind::Number(_) | TokenKind::Plus | TokenKind::Minus
+            ) {
+                (Some(self.parse_nonnegative_integer()?), None)
+            } else {
+                (None, Some(self.parse_expression()?))
+            }
+        } else {
+            (None, None)
+        };
+        let fetch = if self.eat(&TokenKind::Fetch) {
+            self.parse_field_paths()?
+        } else {
+            Vec::new()
         };
 
         if self.at(&TokenKind::Where) {
@@ -504,14 +585,60 @@ impl<'a> Parser<'a> {
         let end = self.previous_end();
         Ok(SelectStatement {
             span: Span::new(start.offset, end - start.offset),
+            value,
             projections,
+            include_all,
             only,
             target,
+            additional_targets,
             condition,
+            split,
+            group,
+            omit,
             order_by,
+            order_random,
             limit,
+            limit_expression,
             start: start_value,
+            start_expression,
+            fetch,
         })
+    }
+
+    fn parse_select_target(&mut self) -> Result<SelectTarget, ParseError> {
+        if self.eat(&TokenKind::LeftParen) {
+            if !self.at(&TokenKind::Select) {
+                return Err(self.unexpected("a SELECT subquery"));
+            }
+            let select = self.parse_select()?;
+            self.expect(&TokenKind::RightParen, "')' after SELECT subquery")?;
+            return Ok(SelectTarget::Subquery(Box::new(select)));
+        }
+        if matches!(
+            self.peek().kind,
+            TokenKind::LeftBracket
+                | TokenKind::LeftBrace
+                | TokenKind::Parameter(_)
+                | TokenKind::String(_)
+                | TokenKind::Number(_)
+                | TokenKind::Null
+                | TokenKind::None
+                | TokenKind::True
+                | TokenKind::False
+        ) {
+            return self.parse_expression().map(SelectTarget::Expression);
+        }
+        self.parse_target().map(SelectTarget::Target)
+    }
+
+    fn parse_field_paths(&mut self) -> Result<Vec<FieldPath>, ParseError> {
+        let mut paths = vec![self.parse_field_path()?];
+        while self.eat(&TokenKind::Comma) {
+            let path = self.parse_field_path()?;
+            self.check_element_count(paths.len() + 1, path.span)?;
+            paths.push(path);
+        }
+        Ok(paths)
     }
 
     fn parse_update(&mut self, upsert: bool) -> Result<UpdateStatement, ParseError> {
@@ -632,6 +759,16 @@ impl<'a> Parser<'a> {
 
     fn parse_explain(&mut self) -> Result<ExplainStatement, ParseError> {
         let start = self.expect(&TokenKind::Explain, "keyword EXPLAIN")?.span;
+        let analyze = self.take(&TokenKind::Analyze).map(|token| token.span);
+        let full = self.take(&TokenKind::Full).map(|token| token.span);
+        let format_json = if self.eat(&TokenKind::Format) {
+            Some(
+                self.expect(&TokenKind::Json, "keyword JSON after FORMAT")?
+                    .span,
+            )
+        } else {
+            None
+        };
         if !self.at(&TokenKind::Select) {
             return Err(ParseError::unsupported(
                 "Phase 6 EXPLAIN accepts SELECT only",
@@ -641,6 +778,9 @@ impl<'a> Parser<'a> {
         let select = self.parse_select()?;
         Ok(ExplainStatement {
             span: start.union(select.span),
+            analyze,
+            full,
+            format_json,
             select,
         })
     }
@@ -1133,17 +1273,18 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_projections(&mut self) -> Result<ProjectionList, ParseError> {
+    fn parse_projections(&mut self) -> Result<(ProjectionList, bool), ParseError> {
         if let Some(star) = self.take(&TokenKind::Star) {
-            if self.at(&TokenKind::Comma) {
-                return Err(ParseError::new(
-                    ParseErrorKind::InvalidCombination {
-                        what: "'*' cannot be mixed with named projections",
-                    },
-                    self.peek().span,
-                ));
+            if self.eat(&TokenKind::Comma) {
+                let mut fields = vec![self.parse_projection()?];
+                while self.eat(&TokenKind::Comma) {
+                    let projection = self.parse_projection()?;
+                    self.check_element_count(fields.len() + 1, projection.span)?;
+                    fields.push(projection);
+                }
+                return Ok((ProjectionList::Fields(fields), true));
             }
-            return Ok(ProjectionList::All(star.span));
+            return Ok((ProjectionList::All(star.span), false));
         }
         let mut fields = vec![self.parse_projection()?];
         while self.eat(&TokenKind::Comma) {
@@ -1159,7 +1300,7 @@ impl<'a> Parser<'a> {
             self.check_element_count(fields.len() + 1, projection.span)?;
             fields.push(projection);
         }
-        Ok(ProjectionList::Fields(fields))
+        Ok((ProjectionList::Fields(fields), false))
     }
 
     fn parse_projection(&mut self) -> Result<Projection, ParseError> {
@@ -1191,19 +1332,52 @@ impl<'a> Parser<'a> {
         let mut terms = Vec::new();
         loop {
             let path = self.parse_field_path()?;
-            let direction = if let Some(token) = self.take(&TokenKind::Asc) {
-                Spanned::new(OrderDirection::Ascending, token.span)
-            } else if let Some(token) = self.take(&TokenKind::Desc) {
-                Spanned::new(OrderDirection::Descending, token.span)
-            } else {
+            let mut collate = None;
+            let mut numeric = None;
+            let mut direction = None;
+            loop {
+                if let Some(token) = self.take(&TokenKind::Collate) {
+                    if collate.replace(token.span).is_some() {
+                        return Err(self.duplicate_clause("COLLATE"));
+                    }
+                } else if let Some(token) = self.take(&TokenKind::Numeric) {
+                    if numeric.replace(token.span).is_some() {
+                        return Err(self.duplicate_clause("NUMERIC"));
+                    }
+                } else if let Some(token) = self.take(&TokenKind::Asc) {
+                    if direction
+                        .replace(Spanned::new(OrderDirection::Ascending, token.span))
+                        .is_some()
+                    {
+                        return Err(self.duplicate_clause("ASC/DESC"));
+                    }
+                } else if let Some(token) = self.take(&TokenKind::Desc) {
+                    if direction
+                        .replace(Spanned::new(OrderDirection::Descending, token.span))
+                        .is_some()
+                    {
+                        return Err(self.duplicate_clause("ASC/DESC"));
+                    }
+                } else {
+                    break;
+                }
+            }
+            let direction = direction.unwrap_or_else(|| {
                 Spanned::new(OrderDirection::Ascending, Span::new(path.span.end(), 0))
-            };
-            let span = path.span.union(direction.span);
+            });
+            let end = [collate, numeric, Some(direction.span)]
+                .into_iter()
+                .flatten()
+                .max_by_key(|span| span.end())
+                .unwrap_or(path.span);
+            let span = path.span.union(end);
             self.check_element_count(terms.len() + 1, span)?;
             terms.push(OrderBy {
                 span,
                 path,
                 direction,
+                collate,
+                numeric,
             });
             if !self.eat(&TokenKind::Comma) {
                 return Ok(terms);
@@ -1412,6 +1586,11 @@ impl<'a> Parser<'a> {
         loop {
             if self.at(&TokenKind::LeftBracket) {
                 left = self.parse_access_expression(left)?;
+                continue;
+            }
+            if self.at(&TokenKind::Dot) && self.at_offset(1, &TokenKind::LeftBrace) {
+                self.advance();
+                left = self.parse_destructure_expression(left)?;
                 continue;
             }
             if self.at(&TokenKind::Dot) && !self.at_offset(1, &TokenKind::Star) {
@@ -1623,7 +1802,8 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LeftParen => self.parse_parenthesized_expression(),
             TokenKind::LeftBracket => self.parse_array_expression(),
-            TokenKind::LeftBrace => self.parse_object_expression(),
+            TokenKind::LeftBrace if self.brace_starts_object() => self.parse_object_expression(),
+            TokenKind::LeftBrace => self.parse_destructure_list_expression(),
             TokenKind::Less => self.parse_cast_expression(),
             TokenKind::Range | TokenKind::RangeInclusive => {
                 self.position += 1;
@@ -1980,6 +2160,76 @@ impl<'a> Parser<'a> {
         Ok(Expr::new(ExprKind::Object(fields), open.union(close)))
     }
 
+    fn parse_destructure_expression(&mut self, target: Expr) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::LeftBrace, "'{' after '.'")?.span;
+        let mut fields = Vec::new();
+        if self.at(&TokenKind::RightBrace) {
+            return Err(self.unexpected("at least one destructured field"));
+        }
+        loop {
+            let field = self.expect_path_segment("a destructured field")?;
+            self.check_element_count(fields.len() + 1, field.span)?;
+            fields.push(field);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        let close = self
+            .expect(&TokenKind::RightBrace, "'}' after destructured fields")?
+            .span;
+        let span = target.span.union(close);
+        let _ = open;
+        Ok(Expr::new(
+            ExprKind::Destructure {
+                target: Box::new(target),
+                fields,
+            },
+            span,
+        ))
+    }
+
+    fn parse_destructure_list_expression(&mut self) -> Result<Expr, ParseError> {
+        let open = self.expect(&TokenKind::LeftBrace, "'{'")?.span;
+        let mut values = Vec::new();
+        loop {
+            let value = self.parse_expression()?;
+            self.check_element_count(values.len() + 1, value.span)?;
+            values.push(value);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        let close = self
+            .expect(&TokenKind::RightBrace, "'}' after destructuring")?
+            .span;
+        Ok(Expr::new(
+            ExprKind::DestructureList(values),
+            open.union(close),
+        ))
+    }
+
+    fn brace_starts_object(&self) -> bool {
+        if self.at_offset(1, &TokenKind::RightBrace) {
+            return true;
+        }
+        let mut depth = 0_usize;
+        for token in self.tokens.iter().skip(self.position + 1) {
+            match token.kind {
+                TokenKind::LeftBrace | TokenKind::LeftBracket | TokenKind::LeftParen => {
+                    depth += 1;
+                }
+                TokenKind::RightBrace if depth == 0 => return false,
+                TokenKind::RightBrace | TokenKind::RightBracket | TokenKind::RightParen => {
+                    depth = depth.saturating_sub(1);
+                }
+                TokenKind::Colon if depth == 0 => return true,
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn parse_object_fields(&mut self) -> Result<(Vec<ObjectField>, Span), ParseError> {
         let mut fields = Vec::new();
         if let Some(close) = self.take(&TokenKind::RightBrace) {
@@ -2037,7 +2287,8 @@ impl<'a> Parser<'a> {
     fn parse_field_path_tail(&mut self, first: Identifier) -> Result<FieldPath, ParseError> {
         let start = first.span;
         let mut segments = vec![first];
-        while self.eat(&TokenKind::Dot) {
+        while self.at(&TokenKind::Dot) && !self.at_offset(1, &TokenKind::LeftBrace) {
+            self.advance();
             segments.push(self.expect_path_segment("a path segment after '.'")?);
         }
         let end = segments.last().expect("one path segment").span;
@@ -2191,17 +2442,18 @@ impl<'a> Parser<'a> {
 
     fn expect_path_segment(&mut self, expected: &'static str) -> Result<Identifier, ParseError> {
         let token = self.peek().clone();
-        let value = match token.kind {
+        let value = match token.kind.clone() {
             TokenKind::Ident(value) => value,
-            TokenKind::In => "in".to_string(),
-            TokenKind::Out => "out".to_string(),
             TokenKind::Eof => {
                 return Err(ParseError::new(
                     ParseErrorKind::UnexpectedEof { expected },
                     token.span,
                 ));
             }
-            _ => return Err(self.unexpected_at(&token, expected)),
+            kind => match keyword_object_key(&kind) {
+                Some(value) => value,
+                None => return Err(self.unexpected_at(&token, expected)),
+            },
         };
         self.position += 1;
         Ok(Identifier::new(value, token.span))
@@ -2371,6 +2623,14 @@ fn keyword_object_key(token: &TokenKind) -> Option<String> {
         .strip_prefix("keyword ")
         .or_else(|| description.strip_prefix("type "))
         .map(str::to_ascii_lowercase)
+}
+
+fn select_target_span(target: &SelectTarget) -> Span {
+    match target {
+        SelectTarget::Target(target) => target.span(),
+        SelectTarget::Expression(expression) => expression.span,
+        SelectTarget::Subquery(select) => select.span,
+    }
 }
 
 fn parse_uuid(value: &str, span: Span) -> Result<uuid::Uuid, ParseError> {

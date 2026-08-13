@@ -120,6 +120,35 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
                 reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
+            for expression in statement
+                .limit_expression
+                .iter()
+                .chain(statement.start_expression.iter())
+            {
+                reject_unavailable_functions(expression)?;
+                collect_parameters(expression, &mut names);
+            }
+            if let Some(turso_fastdb_parser::GroupClause::By(expressions)) = &statement.group {
+                for expression in expressions {
+                    reject_unavailable_functions(expression)?;
+                    collect_parameters(expression, &mut names);
+                }
+            }
+            for target in std::iter::once(&statement.target).chain(&statement.additional_targets) {
+                match target {
+                    turso_fastdb_parser::SelectTarget::Expression(expression) => {
+                        reject_unavailable_functions(expression)?;
+                        collect_parameters(expression, &mut names);
+                    }
+                    turso_fastdb_parser::SelectTarget::Subquery(select) => {
+                        validate_parameter_references(
+                            &Statement::Select((**select).clone()),
+                            params,
+                        )?;
+                    }
+                    turso_fastdb_parser::SelectTarget::Target(_) => {}
+                }
+            }
         }
         Statement::Update(statement) | Statement::Upsert(statement) => {
             collect_update_data_parameters(&statement.data, &mut names)?;
@@ -239,6 +268,12 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
         ExprKind::Object(fields) => {
             for field in fields {
                 collect_parameters(&field.value, names);
+            }
+        }
+        ExprKind::Destructure { target, .. } => collect_parameters(target, names),
+        ExprKind::DestructureList(values) => {
+            for value in values {
+                collect_parameters(value, names);
             }
         }
         ExprKind::Access { target, accessor } => {
@@ -397,6 +432,13 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
             }
             Ok(())
         }
+        ExprKind::Destructure { target, .. } => reject_unavailable_functions(target),
+        ExprKind::DestructureList(values) => {
+            for value in values {
+                reject_unavailable_functions(value)?;
+            }
+            Ok(())
+        }
         ExprKind::Object(fields) => {
             for field in fields {
                 reject_unavailable_functions(&field.value)?;
@@ -496,6 +538,29 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
             }
             Ok(EvalValue::Present(Value::Object(object)))
         }
+        ExprKind::Destructure { target, fields } => {
+            let value = evaluate(target, context)?.into_projection();
+            let Value::Object(object) = value else {
+                return Ok(EvalValue::Present(Value::Object(BTreeMap::new())));
+            };
+            Ok(EvalValue::Present(Value::Object(
+                fields
+                    .iter()
+                    .filter_map(|field| {
+                        object
+                            .get(&field.value)
+                            .cloned()
+                            .map(|value| (field.value.clone(), value))
+                    })
+                    .collect(),
+            )))
+        }
+        ExprKind::DestructureList(values) => values
+            .iter()
+            .map(|value| evaluate(value, context).map(EvalValue::into_projection))
+            .collect::<Result<Vec<_>>>()
+            .map(Value::Array)
+            .map(EvalValue::Present),
         ExprKind::Parameter(name) => Ok(EvalValue::Present(
             context
                 .params

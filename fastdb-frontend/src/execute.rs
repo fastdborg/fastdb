@@ -15,13 +15,15 @@ use crate::names::{decode_rid, encode_rid};
 use crate::schema::{self, FieldRule, FieldType};
 use crate::test_failpoints::Failpoint;
 use crate::{Params, RecordId, StatementResult, Value};
+use rand::seq::SliceRandom as _;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLockReadGuard;
 use turso_fastdb_parser::{
-    AssignmentOperator, BinaryOperator, CreateData, Expr, ExprKind, IndexDefinitionSurface,
-    IndexKindSyntax, InsertData, ProjectionList, RecordIdPart, RecordIdPartKind, ReturnKind, Span,
-    Statement, TableKindSyntax, TableMode, Target, UpdateData,
+    AssignmentOperator, BinaryOperator, CreateData, Expr, ExprKind, GroupClause,
+    IndexDefinitionSurface, IndexKindSyntax, InsertData, ProjectionList, RecordIdPart,
+    RecordIdPartKind, ReturnKind, SelectTarget, Span, Statement, TableKindSyntax, TableMode,
+    Target, UpdateData,
 };
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,12 @@ struct Candidate {
     endpoints: Option<(RecordId, RecordId)>,
     fts: Option<FtsCandidateContext>,
     vector_distance: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct QueryRow {
+    value: Value,
+    source: Option<Candidate>,
 }
 
 #[derive(Debug, Clone)]
@@ -243,49 +251,16 @@ fn run_create(
     statement: turso_fastdb_parser::CreateStatement,
     params: &Params,
 ) -> Result<StatementExecution> {
-    let (table_name, selector) = target_parts(statement.target)?;
-    let id_value = match selector {
-        TargetSelector::All => RecordIdValue::Uuid(uuid::Uuid::now_v7()),
-        TargetSelector::Record(id) => id,
-        TargetSelector::Range(_) => {
-            return Err(FastDbError::Schema(
-                "CREATE record ranges require the bounded batch-create form".into(),
-            ))
-        }
-    };
-    let id = RecordId::new(table_name.clone(), id_value.clone());
-    let empty = BTreeMap::new();
-    let context = EvalContext {
-        document: &empty,
-        id: &id,
-        endpoints: None,
-        params,
-    };
-    let mut document = match &statement.data {
-        None => BTreeMap::new(),
-        Some(CreateData::Content(expression)) => {
-            let value = eval::evaluate(expression, &context)?.into_projection();
-            let Value::Object(document) = value else {
-                return Err(FastDbError::Schema(
-                    "CREATE CONTENT must evaluate to an object".into(),
-                ));
-            };
-            document
-        }
-        Some(CreateData::Set(assignments)) => {
-            let evaluated = evaluate_assignments(assignments, &context)?;
-            let mut document = BTreeMap::new();
-            apply_assignments(&mut document, evaluated)?;
-            document
-        }
-    };
-    reject_stored_id(&document)?;
-    let encoded_rid = encode_rid(&id_value)?;
+    let (table_name, ids) = resolve_create_ids(statement.target)?;
+    if statement.only.is_some() && ids.len() != 1 {
+        return Err(FastDbError::Schema(
+            "CREATE ONLY requires exactly one target record".into(),
+        ));
+    }
     let table_was_missing = !catalog_for_read(conn, execution)?
         .snapshot()
         .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
-
-    let value = with_create_mutation(conn, execution, table_was_missing, |state| {
+    let values = with_create_mutation(conn, execution, table_was_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
         if !snapshot.tables.contains_key(&table_name) {
             let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
@@ -298,50 +273,181 @@ fn run_create(
         let table = snapshot
             .tables
             .get(&table_name)
+            .cloned()
             .expect("table inserted or already present");
         if table.kind == TableKind::Relation {
             return Err(FastDbError::Schema(
                 "relation records must be created with RELATE".into(),
             ));
         }
-        schema::validate_document(
-            table.mode == TableMode::Schemafull,
-            &table.fields,
-            &mut document,
-        )?;
-        validate_index_values(table, &document)?;
-        let derived_hidden = derived_hidden_values(snapshot, table, &document)?;
-        let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
-            &table.physical_name,
-            &encoded_rid,
-            &decode::encode_doc(&document)?,
-            &derived_hidden,
-        )?;
-        let mut prepared = conn.prepare_bound(insert, bindings)?;
-        conn.check_failpoint(Failpoint::AfterRecordPrepare)?;
-        contextual_constraint(
-            prepared.run_ignore_rows().map_err(FastDbError::from),
-            "record ID already exists or violates a declared unique index",
-        )?;
-        conn.check_failpoint(Failpoint::AfterRecordInsert)?;
-        Ok(full_record_value(&id, &document))
+        let mut values = Vec::with_capacity(ids.len());
+        for id_value in &ids {
+            let id = RecordId::new(&table_name, id_value.clone());
+            let mut document = evaluate_create_document(statement.data.as_ref(), &id, params)?;
+            reject_stored_id(&document)?;
+            schema::validate_document(
+                table.mode == TableMode::Schemafull,
+                &table.fields,
+                &mut document,
+            )?;
+            validate_index_values(&table, &document)?;
+            let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
+            let encoded_rid = encode_rid(id_value)?;
+            let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
+                &table.physical_name,
+                &encoded_rid,
+                &decode::encode_doc(&document)?,
+                &derived_hidden,
+            )?;
+            let mut prepared = conn.prepare_bound(insert, bindings)?;
+            conn.check_failpoint(Failpoint::AfterRecordPrepare)?;
+            contextual_constraint(
+                prepared.run_ignore_rows().map_err(FastDbError::from),
+                "record ID already exists or violates a declared unique index",
+            )?;
+            conn.check_failpoint(Failpoint::AfterRecordInsert)?;
+            values.push((id.clone(), full_record_value(&id, &document)));
+        }
+        Ok(values)
     })?;
-    mark_fts_dirty(execution, &table_name);
-
-    let returned = mutation_return(
-        statement.return_clause.as_ref(),
-        &Value::Null,
-        &value,
-        &id,
-        None,
-        params,
-    )?;
+    if !values.is_empty() {
+        mark_fts_dirty(execution, &table_name);
+    }
+    let mutation_count = values.len();
+    let returned = values
+        .into_iter()
+        .filter_map(|(id, value)| {
+            mutation_return(
+                statement.return_clause.as_ref(),
+                &Value::Null,
+                &value,
+                &id,
+                None,
+                params,
+            )
+            .transpose()
+        })
+        .collect::<Result<Vec<_>>>()?;
     let result = if statement.only.is_some() {
-        StatementResult::Value(returned.unwrap_or(Value::Null))
+        StatementResult::Value(returned.into_iter().next().unwrap_or(Value::Null))
     } else {
-        StatementResult::Rows(returned.into_iter().collect())
+        StatementResult::Rows(returned)
     };
-    StatementExecution::mutation(result, 1)
+    StatementExecution::mutation(result, mutation_count)
+}
+
+fn evaluate_create_document(
+    data: Option<&CreateData>,
+    id: &RecordId,
+    params: &Params,
+) -> Result<BTreeMap<String, Value>> {
+    let empty = BTreeMap::new();
+    let context = EvalContext {
+        document: &empty,
+        id,
+        endpoints: None,
+        params,
+    };
+    match data {
+        None => Ok(BTreeMap::new()),
+        Some(CreateData::Content(expression)) => {
+            let value = eval::evaluate(expression, &context)?.into_projection();
+            let Value::Object(document) = value else {
+                return Err(FastDbError::Schema(
+                    "CREATE CONTENT must evaluate to an object".into(),
+                ));
+            };
+            Ok(document)
+        }
+        Some(CreateData::Set(assignments)) => {
+            let evaluated = evaluate_assignments(assignments, &context)?;
+            let mut document = BTreeMap::new();
+            apply_assignments(&mut document, evaluated)?;
+            Ok(document)
+        }
+    }
+}
+
+fn resolve_create_ids(target: Target) -> Result<(String, Vec<RecordIdValue>)> {
+    match target {
+        Target::Table(table) => Ok((
+            table.name.value,
+            vec![RecordIdValue::Uuid(uuid::Uuid::now_v7())],
+        )),
+        Target::Record(record) => Ok((record.table.value, vec![record_id_value(record.id)?])),
+        Target::RecordRange(range) => resolve_integer_create_range(range),
+        Target::Batch { target, .. } => match *target {
+            Target::Record(record) => {
+                let RecordIdPartKind::Integer(count) = record.id.kind else {
+                    return Err(FastDbError::Schema(
+                        "batch CREATE count must be an integer".into(),
+                    ));
+                };
+                let count = usize::try_from(count).map_err(|_| {
+                    FastDbError::Schema("batch CREATE count must be nonnegative".into())
+                })?;
+                if count == 0 || count > 10_000 {
+                    return Err(FastDbError::ResourceLimit(
+                        "batch CREATE count must be between 1 and 10,000".into(),
+                    ));
+                }
+                Ok((
+                    record.table.value,
+                    (0..count)
+                        .map(|_| RecordIdValue::Uuid(uuid::Uuid::now_v7()))
+                        .collect(),
+                ))
+            }
+            Target::RecordRange(range) => resolve_integer_create_range(range),
+            _ => Err(FastDbError::Schema(
+                "batch CREATE requires a count or integer record range".into(),
+            )),
+        },
+    }
+}
+
+fn resolve_integer_create_range(
+    range: turso_fastdb_parser::RecordRangeTarget,
+) -> Result<(String, Vec<RecordIdValue>)> {
+    let (Some(start), Some(end)) = (range.start, range.end) else {
+        return Err(FastDbError::Schema(
+            "CREATE record ranges require both integer bounds".into(),
+        ));
+    };
+    let RecordIdPartKind::Integer(start) = start.kind else {
+        return Err(FastDbError::Schema(
+            "CREATE record ranges require integer bounds".into(),
+        ));
+    };
+    let RecordIdPartKind::Integer(end) = end.kind else {
+        return Err(FastDbError::Schema(
+            "CREATE record ranges require integer bounds".into(),
+        ));
+    };
+    let exclusive_end = if range.inclusive {
+        end.checked_add(1)
+            .ok_or_else(|| FastDbError::Schema("CREATE range end overflows i64".into()))?
+    } else {
+        end
+    };
+    if start > exclusive_end {
+        return Err(FastDbError::Schema(
+            "CREATE record range start exceeds end".into(),
+        ));
+    }
+    let count = exclusive_end
+        .checked_sub(start)
+        .and_then(|count| usize::try_from(count).ok())
+        .ok_or_else(|| FastDbError::ResourceLimit("CREATE range is too large".into()))?;
+    if count > 10_000 {
+        return Err(FastDbError::ResourceLimit(
+            "CREATE range exceeds 10,000 records".into(),
+        ));
+    }
+    Ok((
+        range.table.value,
+        (start..exclusive_end).map(RecordIdValue::Integer).collect(),
+    ))
 }
 
 fn run_insert(
@@ -351,10 +457,7 @@ fn run_insert(
     params: &Params,
 ) -> Result<StatementExecution> {
     if statement.relation.is_some() {
-        return Err(FastDbError::Schema(
-            "INSERT RELATION is implemented with the graph-completion work; use RELATE for now"
-                .into(),
-        ));
+        return run_insert_relation(conn, execution, statement, params);
     }
     let table_name = statement.table.value.clone();
     let input_documents = evaluate_insert_documents(&statement.data, &table_name, params)?;
@@ -544,6 +647,233 @@ fn evaluate_insert_documents(
             )),
         })
         .collect()
+}
+
+fn run_insert_relation(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::InsertStatement,
+    params: &Params,
+) -> Result<StatementExecution> {
+    let relation_name = statement.table.value.clone();
+    let inputs = evaluate_insert_documents(&statement.data, &relation_name, params)?
+        .into_iter()
+        .map(|mut document| {
+            let from = match document.remove("in") {
+                Some(Value::RecordId(record)) => record,
+                _ => {
+                    return Err(FastDbError::Schema(
+                        "INSERT RELATION requires record field `in`".into(),
+                    ))
+                }
+            };
+            let to = match document.remove("out") {
+                Some(Value::RecordId(record)) => record,
+                _ => {
+                    return Err(FastDbError::Schema(
+                        "INSERT RELATION requires record field `out`".into(),
+                    ))
+                }
+            };
+            let (id, document) = normalize_insert_document(&relation_name, document)?;
+            Ok((id, from, to, document))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let catalogs_missing = !catalog_for_read(conn, execution)?
+        .snapshot()
+        .is_some_and(|snapshot| {
+            snapshot.tables.contains_key(&relation_name)
+                && inputs.iter().all(|(_, from, to, _)| {
+                    snapshot.tables.contains_key(&from.table)
+                        && snapshot.tables.contains_key(&to.table)
+                })
+        });
+    let outcomes = with_create_mutation(conn, execution, catalogs_missing, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        for (_, from, to, _) in &inputs {
+            for endpoint in [from, to] {
+                if !snapshot.tables.contains_key(&endpoint.table) {
+                    register_normal_table(
+                        conn,
+                        snapshot,
+                        &endpoint.table,
+                        TableMode::Schemaless,
+                        None,
+                    )?;
+                }
+                if snapshot.tables[&endpoint.table].kind != TableKind::Normal {
+                    return Err(FastDbError::Schema(
+                        "INSERT RELATION endpoints must be normal records".into(),
+                    ));
+                }
+            }
+        }
+        if !snapshot.tables.contains_key(&relation_name) {
+            create_relation_table(
+                conn,
+                snapshot,
+                &relation_name,
+                TableMode::Schemaless,
+                None,
+                None,
+                None,
+                false,
+            )?;
+        }
+        let relation = snapshot.tables[&relation_name].clone();
+        if relation.kind != TableKind::Relation {
+            return Err(FastDbError::Schema(
+                "INSERT RELATION target is not a relation table".into(),
+            ));
+        }
+        let hidden = catalog::graph_columns(snapshot, &relation)?
+            .into_iter()
+            .map(|column| column.physical_name.clone())
+            .collect::<Vec<_>>();
+        let mut outcomes = Vec::new();
+        for (id, from, to, input_document) in &inputs {
+            let from_table = snapshot.tables[&from.table].clone();
+            let to_table = snapshot.tables[&to.table].clone();
+            if relation
+                .relation_in_table_id
+                .is_some_and(|expected| expected != from_table.id)
+                || relation
+                    .relation_out_table_id
+                    .is_some_and(|expected| expected != to_table.id)
+            {
+                return Err(FastDbError::Schema(
+                    "INSERT RELATION endpoint table violates the relation definition".into(),
+                ));
+            }
+            if relation.relation_enforced
+                && (!record_exists(conn, &from_table, &from.id)?
+                    || !record_exists(conn, &to_table, &to.id)?)
+            {
+                return Err(FastDbError::Constraint(
+                    "INSERT RELATION enforced endpoint does not exist".into(),
+                ));
+            }
+            let existing = read_candidates(
+                conn,
+                snapshot,
+                &relation,
+                CandidateReadOptions {
+                    id: Some(&id.id),
+                    range: None,
+                    condition: None,
+                    params,
+                    allow_cache: false,
+                    fts: None,
+                    vector: None,
+                },
+            )?
+            .into_iter()
+            .next();
+            if let Some(candidate) = existing {
+                if statement.ignore.is_some() {
+                    continue;
+                }
+                if statement.on_duplicate.is_empty() {
+                    return Err(FastDbError::Constraint(
+                        "INSERT RELATION edge ID already exists".into(),
+                    ));
+                }
+                if candidate.endpoints.as_ref() != Some(&(from.clone(), to.clone())) {
+                    return Err(FastDbError::Schema(
+                        "INSERT RELATION cannot change immutable endpoints".into(),
+                    ));
+                }
+                let before = full_candidate_value(&candidate);
+                let mut scoped_params = params.clone();
+                let mut input = input_document.clone();
+                input.insert("id".into(), Value::RecordId(id.clone()));
+                input.insert("in".into(), Value::RecordId(from.clone()));
+                input.insert("out".into(), Value::RecordId(to.clone()));
+                scoped_params.insert("input".into(), Value::Object(input));
+                let context = EvalContext {
+                    document: &candidate.document,
+                    id: &candidate.id,
+                    endpoints: Some((from, to)),
+                    params: &scoped_params,
+                };
+                let assignments = evaluate_assignments(&statement.on_duplicate, &context)?;
+                let mut document = candidate.document.clone();
+                apply_assignments(&mut document, assignments)?;
+                reject_stored_edge_fields(&document)?;
+                schema::validate_document(
+                    relation.mode == TableMode::Schemafull,
+                    &relation.fields,
+                    &mut document,
+                )?;
+                validate_index_values(&relation, &document)?;
+                let derived_hidden = derived_hidden_values(snapshot, &relation, &document)?;
+                let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
+                    &relation.physical_name,
+                    &candidate.encoded_rid,
+                    &decode::encode_doc(&document)?,
+                    &derived_hidden,
+                )?;
+                conn.exec_bound(update, bindings)?;
+                outcomes.push((
+                    id.clone(),
+                    from.clone(),
+                    to.clone(),
+                    before,
+                    full_edge_value(id, from, to, &document),
+                ));
+                continue;
+            }
+            let mut document = input_document.clone();
+            reject_stored_edge_fields(&document)?;
+            schema::validate_document(
+                relation.mode == TableMode::Schemafull,
+                &relation.fields,
+                &mut document,
+            )?;
+            validate_index_values(&relation, &document)?;
+            let derived_hidden = derived_hidden_values(snapshot, &relation, &document)?;
+            let (insert, bindings) = lower::physical_relation_insert_with_hidden_stmt(
+                &relation.physical_name,
+                &hidden,
+                &derived_hidden,
+                &encode_rid(&id.id)?,
+                &decode::encode_doc(&document)?,
+                &from_table.id.to_hex(),
+                &encode_rid(&from.id)?,
+                &to_table.id.to_hex(),
+                &encode_rid(&to.id)?,
+            )?;
+            conn.exec_bound(insert, bindings)?;
+            conn.check_failpoint(Failpoint::AfterGraphEdgeInsert)?;
+            outcomes.push((
+                id.clone(),
+                from.clone(),
+                to.clone(),
+                Value::Null,
+                full_edge_value(id, from, to, &document),
+            ));
+        }
+        Ok(outcomes)
+    })?;
+    if !outcomes.is_empty() {
+        mark_fts_dirty(execution, &relation_name);
+    }
+    let mutation_count = outcomes.len();
+    let rows = outcomes
+        .into_iter()
+        .filter_map(|(id, from, to, before, after)| {
+            mutation_return(
+                statement.return_clause.as_ref(),
+                &before,
+                &after,
+                &id,
+                Some((&from, &to)),
+                params,
+            )
+            .transpose()
+        })
+        .collect::<Result<Vec<_>>>()?;
+    StatementExecution::mutation(StatementResult::Rows(rows), mutation_count)
 }
 
 fn normalize_insert_document(
@@ -768,13 +1098,18 @@ fn run_select(
     statement: turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<StatementResult> {
-    validate_projection_shapes(&statement.projections)?;
+    validate_projection_shapes(&statement.projections, statement.value.is_some())?;
+    if !statement.additional_targets.is_empty()
+        || !matches!(statement.target, SelectTarget::Target(_))
+    {
+        return run_multi_target_select(conn, execution, statement, params);
+    }
     if let Some(only) = statement.only {
-        if !matches!(statement.target, Target::Record(_)) {
+        if !matches!(statement.target, SelectTarget::Target(Target::Record(_))) {
             return unsupported(only, "SELECT ONLY requires a record target");
         }
     }
-    let (table_name, selector) = target_parts(statement.target.clone())?;
+    let (table_name, selector) = select_target_parts(&statement.target)?;
     let catalog = catalog_for_read(conn, execution)?;
     let Some(snapshot) = catalog.snapshot() else {
         return Ok(if statement.only.is_some() {
@@ -829,52 +1164,47 @@ fn run_select(
             matched.push(candidate);
         }
     }
-    let mut candidates = matched;
-
-    if !statement.order_by.is_empty() {
-        let mut keyed = candidates
+    let candidates = split_candidates(matched, &statement.split)?;
+    let mut rows = if let Some(group) = &statement.group {
+        project_grouped_candidates(conn, snapshot, &candidates, group, &statement, params)?
+    } else {
+        candidates
             .into_iter()
             .map(|candidate| {
-                let context = candidate_context(&candidate, params);
-                let keys = statement
-                    .order_by
-                    .iter()
-                    .map(|term| {
-                        order_key(&statement.projections, term, &candidate, params, &context)
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Ok((candidate, keys))
+                let value =
+                    project_select_candidate(conn, snapshot, &candidate, &statement, params)?;
+                Ok(QueryRow {
+                    value,
+                    source: Some(candidate),
+                })
             })
-            .collect::<Result<Vec<_>>>()?;
-        keyed.sort_by(|(_, left), (_, right)| {
-            for ((left, right), term) in left.iter().zip(right).zip(&statement.order_by) {
-                let ordering = eval::compare_values(left, right);
-                if ordering != Ordering::Equal {
-                    return match term.direction.value {
-                        turso_fastdb_parser::OrderDirection::Ascending => ordering,
-                        turso_fastdb_parser::OrderDirection::Descending => ordering.reverse(),
-                    };
-                }
-            }
-            Ordering::Equal
-        });
-        candidates = keyed.into_iter().map(|(candidate, _)| candidate).collect();
+            .collect::<Result<Vec<_>>>()?
+    };
+    for row in &mut rows {
+        apply_omit(&mut row.value, &statement.omit)?;
+        apply_fetch(conn, snapshot, &mut row.value, &statement.fetch)?;
     }
-
-    let start = statement.start.as_ref().map_or(0, |value| {
-        usize::try_from(value.value).unwrap_or(usize::MAX)
-    });
-    let limit = statement.limit.as_ref().map_or(usize::MAX, |value| {
-        usize::try_from(value.value).unwrap_or(usize::MAX)
-    });
-    let rows = candidates
+    order_query_rows(&mut rows, &statement, params)?;
+    let start = resolve_pagination(
+        statement.start.as_ref(),
+        statement.start_expression.as_ref(),
+        params,
+        "START",
+    )?
+    .unwrap_or(0);
+    let limit = resolve_pagination(
+        statement.limit.as_ref(),
+        statement.limit_expression.as_ref(),
+        params,
+        "LIMIT",
+    )?
+    .unwrap_or(usize::MAX);
+    let rows = rows
         .into_iter()
         .skip(start)
         .take(limit)
-        .map(|candidate| {
-            project_candidate(conn, snapshot, &candidate, &statement.projections, params)
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|row| row.value)
+        .collect::<Vec<_>>();
     if statement.only.is_some() {
         Ok(StatementResult::Value(
             rows.into_iter().next().unwrap_or(Value::Null),
@@ -884,40 +1214,620 @@ fn run_select(
     }
 }
 
-fn order_key(
-    projections: &ProjectionList,
-    term: &turso_fastdb_parser::OrderBy,
-    candidate: &Candidate,
+fn run_multi_target_select(
+    conn: &Connection,
+    execution: &ExecutionState,
+    statement: turso_fastdb_parser::SelectStatement,
     params: &Params,
-    context: &EvalContext<'_>,
-) -> Result<EvalValue> {
-    if term.path.segments.len() == 1 {
-        if let ProjectionList::Fields(projections) = projections {
-            if let Some(projection) = projections.iter().find(|projection| {
-                projection
-                    .alias
-                    .as_ref()
-                    .is_some_and(|alias| alias.value == term.path.segments[0].value)
-            }) {
-                let value = if matches!(projection.expression.kind, ExprKind::FunctionCall { .. }) {
-                    evaluate_special_projection(&projection.expression, candidate, params)?
-                } else {
-                    eval::evaluate(&projection.expression, context)?.into_projection()
+) -> Result<StatementResult> {
+    if statement.value.is_some()
+        || !matches!(statement.projections, ProjectionList::All(_))
+        || statement.condition.is_some()
+        || !statement.split.is_empty()
+        || statement.group.is_some()
+        || !statement.omit.is_empty()
+        || !statement.fetch.is_empty()
+        || statement.only.is_some()
+    {
+        return Err(FastDbError::Schema(
+            "heterogeneous SELECT targets currently require SELECT * without WHERE/SPLIT/GROUP/OMIT/FETCH/ONLY"
+                .into(),
+        ));
+    }
+    let mut targets = vec![statement.target.clone()];
+    targets.extend(statement.additional_targets.iter().cloned());
+    let mut rows = Vec::new();
+    for target in targets {
+        match target {
+            SelectTarget::Target(target) => {
+                let mut nested = statement.clone();
+                nested.target = SelectTarget::Target(target);
+                nested.additional_targets.clear();
+                nested.order_by.clear();
+                nested.order_random = None;
+                nested.limit = None;
+                nested.limit_expression = None;
+                nested.start = None;
+                nested.start_expression = None;
+                let StatementResult::Rows(values) = run_select(conn, execution, nested, params)?
+                else {
+                    unreachable!("nested multi-target SELECT is not ONLY")
                 };
-                return Ok(EvalValue::Present(value));
+                rows.extend(values.into_iter().map(|value| QueryRow {
+                    value,
+                    source: None,
+                }));
+            }
+            SelectTarget::Expression(expression) => {
+                let document = BTreeMap::new();
+                let id = RecordId::new("__target", "value");
+                let context = EvalContext {
+                    document: &document,
+                    id: &id,
+                    endpoints: None,
+                    params,
+                };
+                let value = eval::evaluate(&expression, &context)?.into_projection();
+                let values = match value {
+                    Value::Array(values) => values,
+                    value => vec![value],
+                };
+                rows.extend(values.into_iter().map(|value| QueryRow {
+                    value,
+                    source: None,
+                }));
+            }
+            SelectTarget::Subquery(select) => {
+                let result = run_select(conn, execution, *select, params)?;
+                match result {
+                    StatementResult::Rows(values) => {
+                        rows.extend(values.into_iter().map(|value| QueryRow {
+                            value,
+                            source: None,
+                        }));
+                    }
+                    StatementResult::Value(value) => rows.push(QueryRow {
+                        value,
+                        source: None,
+                    }),
+                    StatementResult::None => {}
+                }
             }
         }
     }
-    eval::evaluate(
-        &Expr::new(ExprKind::FieldPath(term.path.clone()), term.path.span),
-        context,
+    order_query_rows(&mut rows, &statement, params)?;
+    let start = resolve_pagination(
+        statement.start.as_ref(),
+        statement.start_expression.as_ref(),
+        params,
+        "START",
+    )?
+    .unwrap_or(0);
+    let limit = resolve_pagination(
+        statement.limit.as_ref(),
+        statement.limit_expression.as_ref(),
+        params,
+        "LIMIT",
+    )?
+    .unwrap_or(usize::MAX);
+    Ok(StatementResult::Rows(
+        rows.into_iter()
+            .skip(start)
+            .take(limit)
+            .map(|row| row.value)
+            .collect(),
+    ))
+}
+
+fn split_candidates(
+    mut candidates: Vec<Candidate>,
+    paths: &[turso_fastdb_parser::FieldPath],
+) -> Result<Vec<Candidate>> {
+    for path in paths {
+        let (path, _) = crate::path::parser_path(path)?;
+        let mut split = Vec::new();
+        for candidate in candidates {
+            let Some(Value::Array(values)) = crate::path::get_path(&candidate.document, &path)
+            else {
+                split.push(candidate);
+                continue;
+            };
+            if values.is_empty() {
+                split.push(candidate);
+                continue;
+            }
+            for value in values {
+                if split.len() >= 100_000 {
+                    return Err(FastDbError::ResourceLimit(
+                        "SPLIT result exceeds 100,000 rows".into(),
+                    ));
+                }
+                let mut candidate = candidate.clone();
+                crate::path::set_path(&mut candidate.document, &path, value.clone())?;
+                split.push(candidate);
+            }
+        }
+        candidates = split;
+    }
+    Ok(candidates)
+}
+
+fn project_select_candidate(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    candidate: &Candidate,
+    statement: &turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<Value> {
+    if statement.value.is_none() {
+        return project_candidate(
+            conn,
+            snapshot,
+            candidate,
+            &statement.projections,
+            statement.include_all,
+            params,
+        );
+    }
+    let ProjectionList::Fields(projections) = &statement.projections else {
+        return Err(FastDbError::Schema(
+            "SELECT VALUE requires an expression".into(),
+        ));
+    };
+    if projections.len() != 1 || projections[0].alias.is_some() {
+        return Err(FastDbError::Schema(
+            "SELECT VALUE requires exactly one unaliased expression".into(),
+        ));
+    }
+    evaluate_projection_expression(
+        conn,
+        snapshot,
+        candidate,
+        &projections[0].expression,
+        params,
     )
 }
 
-fn validate_projection_shapes(projections: &ProjectionList) -> Result<()> {
+fn project_grouped_candidates(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    candidates: &[Candidate],
+    group: &GroupClause,
+    statement: &turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<Vec<QueryRow>> {
+    let mut groups: Vec<(Vec<Value>, Vec<Candidate>)> = Vec::new();
+    if matches!(group, GroupClause::All(_)) && candidates.is_empty() {
+        groups.push((Vec::new(), Vec::new()));
+    }
+    for candidate in candidates {
+        let keys = match group {
+            GroupClause::All(_) => Vec::new(),
+            GroupClause::By(expressions) => expressions
+                .iter()
+                .map(|expression| {
+                    eval::evaluate(expression, &candidate_context(candidate, params))
+                        .map(EvalValue::into_projection)
+                })
+                .collect::<Result<Vec<_>>>()?,
+        };
+        if let Some((_, values)) = groups.iter_mut().find(|(existing, _)| {
+            existing.len() == keys.len()
+                && existing.iter().zip(&keys).all(|(left, right)| {
+                    decode::canonical_value_cmp(left, right) == Ordering::Equal
+                })
+        }) {
+            values.push(candidate.clone());
+        } else {
+            groups.push((keys, vec![candidate.clone()]));
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(_, candidates)| {
+            let value = project_group(conn, snapshot, &candidates, group, statement, params)?;
+            Ok(QueryRow {
+                value,
+                source: None,
+            })
+        })
+        .collect()
+}
+
+fn project_group(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    candidates: &[Candidate],
+    group: &GroupClause,
+    statement: &turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<Value> {
+    let ProjectionList::Fields(projections) = &statement.projections else {
+        return Err(FastDbError::Schema(
+            "GROUP requires explicit projections".into(),
+        ));
+    };
+    if statement.value.is_some() {
+        if projections.len() != 1 || projections[0].alias.is_some() {
+            return Err(FastDbError::Schema(
+                "SELECT VALUE with GROUP requires one unaliased projection".into(),
+            ));
+        }
+        return evaluate_group_expression(
+            conn,
+            snapshot,
+            candidates,
+            group,
+            &projections[0].expression,
+            params,
+        );
+    }
+    let mut object = BTreeMap::new();
+    for projection in projections {
+        let value = evaluate_group_expression(
+            conn,
+            snapshot,
+            candidates,
+            group,
+            &projection.expression,
+            params,
+        )?;
+        if let Some(alias) = &projection.alias {
+            object.insert(alias.value.clone(), value);
+        } else if let ExprKind::FieldPath(path) = &projection.expression.kind {
+            let path = path
+                .segments
+                .iter()
+                .map(|segment| segment.value.clone())
+                .collect::<Vec<_>>();
+            crate::path::set_path(&mut object, &path, value)?;
+        } else {
+            return Err(FastDbError::Schema(
+                "aggregate expressions require an alias".into(),
+            ));
+        }
+    }
+    Ok(Value::Object(object))
+}
+
+fn evaluate_group_expression(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    candidates: &[Candidate],
+    group: &GroupClause,
+    expression: &Expr,
+    params: &Params,
+) -> Result<Value> {
+    if let ExprKind::FunctionCall { name, arguments } = &expression.kind {
+        if function_name_is(name, &["count"]) {
+            if arguments.is_empty() {
+                return Ok(Value::Integer(i64::try_from(candidates.len()).map_err(
+                    |_| FastDbError::ResourceLimit("aggregate count exceeds i64".into()),
+                )?));
+            }
+        }
+        if is_aggregate_function(name) && arguments.len() == 1 {
+            let values = candidates
+                .iter()
+                .map(|candidate| {
+                    evaluate_projection_expression(conn, snapshot, candidate, &arguments[0], params)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if function_name_is(name, &["array", "group"]) {
+                return Ok(Value::Array(values));
+            }
+            let mut aggregate_params = params.clone();
+            aggregate_params.insert("__fastdb_group".into(), Value::Array(values));
+            let aggregate = Expr::new(
+                ExprKind::FunctionCall {
+                    name: name.clone(),
+                    arguments: vec![Expr::new(
+                        ExprKind::Parameter("__fastdb_group".into()),
+                        expression.span,
+                    )],
+                },
+                expression.span,
+            );
+            let document = BTreeMap::new();
+            let id = RecordId::new("__group", "all");
+            return eval::evaluate(
+                &aggregate,
+                &EvalContext {
+                    document: &document,
+                    id: &id,
+                    endpoints: None,
+                    params: &aggregate_params,
+                },
+            )
+            .map(EvalValue::into_projection);
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(Value::None);
+    }
+    let values = candidates
+        .iter()
+        .map(|candidate| {
+            evaluate_projection_expression(conn, snapshot, candidate, expression, params)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let is_group_key = match group {
+        GroupClause::All(_) => false,
+        GroupClause::By(keys) => keys
+            .iter()
+            .any(|key| expressions_equivalent(key, expression)),
+    };
+    if is_group_key || values.len() == 1 {
+        Ok(values.into_iter().next().unwrap_or(Value::None))
+    } else {
+        Ok(Value::Array(values))
+    }
+}
+
+fn expressions_equivalent(left: &Expr, right: &Expr) -> bool {
+    match (&left.kind, &right.kind) {
+        (ExprKind::FieldPath(left), ExprKind::FieldPath(right)) => left
+            .segments
+            .iter()
+            .map(|segment| &segment.value)
+            .eq(right.segments.iter().map(|segment| &segment.value)),
+        _ => left.kind == right.kind,
+    }
+}
+
+fn is_aggregate_function(name: &[turso_fastdb_parser::Identifier]) -> bool {
+    function_name_is(name, &["count"])
+        || function_name_is(name, &["array", "group"])
+        || [
+            "max", "mean", "median", "min", "mode", "product", "spread", "stddev", "sum",
+            "variance",
+        ]
+        .iter()
+        .any(|function| function_name_is(name, &["math", function]))
+}
+
+fn evaluate_projection_expression(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    candidate: &Candidate,
+    expression: &Expr,
+    params: &Params,
+) -> Result<Value> {
+    if let ExprKind::Traversal(traversal) = &expression.kind {
+        traverse_graph(conn, snapshot, &candidate.id, traversal)
+    } else if matches!(expression.kind, ExprKind::FunctionCall { .. }) {
+        evaluate_special_projection(expression, candidate, params)
+    } else {
+        eval::evaluate(expression, &candidate_context(candidate, params))
+            .map(EvalValue::into_projection)
+    }
+}
+
+fn apply_omit(value: &mut Value, paths: &[turso_fastdb_parser::FieldPath]) -> Result<()> {
+    let Value::Object(document) = value else {
+        return Ok(());
+    };
+    for path in paths {
+        let (path, _) = crate::path::parser_path(path)?;
+        crate::path::remove_path(document, &path)?;
+    }
+    Ok(())
+}
+
+fn apply_fetch(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    value: &mut Value,
+    paths: &[turso_fastdb_parser::FieldPath],
+) -> Result<()> {
+    let Value::Object(document) = value else {
+        return Ok(());
+    };
+    for path in paths {
+        let (path, _) = crate::path::parser_path(path)?;
+        let Some(value) = crate::path::get_path_mut(document, &path) else {
+            continue;
+        };
+        fetch_value(conn, snapshot, value)?;
+    }
+    Ok(())
+}
+
+fn fetch_value(conn: &Connection, snapshot: &CatalogSnapshot, value: &mut Value) -> Result<()> {
+    match value {
+        Value::RecordId(record) => {
+            *value = materialize_record(conn, snapshot, record)?.unwrap_or(Value::Null);
+        }
+        Value::Array(values) => {
+            for value in values {
+                if matches!(value, Value::RecordId(_)) {
+                    fetch_value(conn, snapshot, value)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn order_query_rows(
+    rows: &mut [QueryRow],
+    statement: &turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<()> {
+    if statement.order_random.is_some() {
+        rows.shuffle(&mut rand::rng());
+        return Ok(());
+    }
+    let keyed = rows
+        .iter()
+        .map(|row| {
+            statement
+                .order_by
+                .iter()
+                .map(|term| query_row_order_value(row, term, params))
+                .collect::<Result<Vec<_>>>()
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut order = (0..rows.len()).collect::<Vec<_>>();
+    order.sort_by(|left, right| {
+        for ((left_value, right_value), term) in keyed[*left]
+            .iter()
+            .zip(&keyed[*right])
+            .zip(&statement.order_by)
+        {
+            let ordering = compare_order_values(left_value, right_value, term);
+            if ordering != Ordering::Equal {
+                return match term.direction.value {
+                    turso_fastdb_parser::OrderDirection::Ascending => ordering,
+                    turso_fastdb_parser::OrderDirection::Descending => ordering.reverse(),
+                };
+            }
+        }
+        left.cmp(right)
+    });
+    let original = rows.to_vec();
+    for (slot, index) in rows.iter_mut().zip(order) {
+        *slot = original[index].clone();
+    }
+    Ok(())
+}
+
+fn query_row_order_value(
+    row: &QueryRow,
+    term: &turso_fastdb_parser::OrderBy,
+    params: &Params,
+) -> Result<Value> {
+    let path = term
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.value.clone())
+        .collect::<Vec<_>>();
+    if let Value::Object(document) = &row.value {
+        if let Some(value) = crate::path::get_path(document, &path) {
+            return Ok(value.clone());
+        }
+    }
+    if let Some(candidate) = &row.source {
+        return eval::evaluate(
+            &Expr::new(ExprKind::FieldPath(term.path.clone()), term.path.span),
+            &candidate_context(candidate, params),
+        )
+        .map(EvalValue::into_projection);
+    }
+    Ok(Value::None)
+}
+
+fn compare_order_values(
+    left: &Value,
+    right: &Value,
+    term: &turso_fastdb_parser::OrderBy,
+) -> Ordering {
+    if let (Value::Str(left), Value::Str(right)) = (left, right) {
+        let (left, right) = if term.collate.is_some() {
+            (left.to_lowercase(), right.to_lowercase())
+        } else {
+            (left.clone(), right.clone())
+        };
+        if term.numeric.is_some() {
+            return natural_string_cmp(&left, &right);
+        }
+        return left.cmp(&right);
+    }
+    decode::canonical_value_cmp(left, right)
+}
+
+fn natural_string_cmp(left: &str, right: &str) -> Ordering {
+    let mut left = left.chars().peekable();
+    let mut right = right.chars().peekable();
+    loop {
+        match (left.peek(), right.peek()) {
+            (Some(l), Some(r)) if l.is_ascii_digit() && r.is_ascii_digit() => {
+                let left_digits = std::iter::from_fn(|| {
+                    left.peek()
+                        .copied()
+                        .filter(char::is_ascii_digit)
+                        .inspect(|_| {
+                            left.next();
+                        })
+                })
+                .collect::<String>();
+                let right_digits = std::iter::from_fn(|| {
+                    right
+                        .peek()
+                        .copied()
+                        .filter(char::is_ascii_digit)
+                        .inspect(|_| {
+                            right.next();
+                        })
+                })
+                .collect::<String>();
+                let ordering = left_digits
+                    .trim_start_matches('0')
+                    .len()
+                    .cmp(&right_digits.trim_start_matches('0').len())
+                    .then_with(|| {
+                        left_digits
+                            .trim_start_matches('0')
+                            .cmp(right_digits.trim_start_matches('0'))
+                    });
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+            (Some(_), Some(_)) => {
+                let ordering = left.next().cmp(&right.next());
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+        }
+    }
+}
+
+fn resolve_pagination(
+    literal: Option<&turso_fastdb_parser::NonnegativeInteger>,
+    expression: Option<&Expr>,
+    params: &Params,
+    label: &str,
+) -> Result<Option<usize>> {
+    if let Some(literal) = literal {
+        return Ok(Some(usize::try_from(literal.value).unwrap_or(usize::MAX)));
+    }
+    let Some(expression) = expression else {
+        return Ok(None);
+    };
+    let document = BTreeMap::new();
+    let id = RecordId::new("__pagination", "value");
+    let value = eval::evaluate(
+        expression,
+        &EvalContext {
+            document: &document,
+            id: &id,
+            endpoints: None,
+            params,
+        },
+    )?
+    .into_projection();
+    let Value::Integer(value) = value else {
+        return Err(FastDbError::Schema(format!(
+            "{label} must evaluate to a nonnegative integer"
+        )));
+    };
+    usize::try_from(value)
+        .map(Some)
+        .map_err(|_| FastDbError::Schema(format!("{label} must be nonnegative")))
+}
+
+fn validate_projection_shapes(projections: &ProjectionList, select_value: bool) -> Result<()> {
     if let ProjectionList::Fields(projections) = projections {
         for projection in projections {
-            if projection.alias.is_none()
+            if !select_value
+                && projection.alias.is_none()
                 && !matches!(projection.expression.kind, ExprKind::FieldPath(_))
             {
                 return Err(FastDbError::Schema(
@@ -935,17 +1845,50 @@ fn run_explain(
     statement: turso_fastdb_parser::ExplainStatement,
     params: &Params,
 ) -> Result<StatementResult> {
-    validate_projection_shapes(&statement.select.projections)?;
-    let graph_statements = lower_graph_scans_for_explain(conn, execution, &statement.select)?;
-    let vector_plan = lower_vector_scan_for_explain(conn, execution, &statement.select, params)?;
+    validate_projection_shapes(
+        &statement.select.projections,
+        statement.select.value.is_some(),
+    )?;
+    let analyzed = if statement.analyze.is_some() {
+        let started = std::time::Instant::now();
+        let result = run_select(conn, execution, statement.select.clone(), params)?;
+        let row_count = match &result {
+            StatementResult::Rows(rows) => rows.len(),
+            StatementResult::Value(Value::Null) | StatementResult::None => 0,
+            StatementResult::Value(_) => 1,
+        };
+        Some((row_count, started.elapsed()))
+    } else {
+        None
+    };
+    let physical_target = matches!(statement.select.target, SelectTarget::Target(_))
+        && statement.select.additional_targets.is_empty();
+    let graph_statements = if physical_target {
+        lower_graph_scans_for_explain(conn, execution, &statement.select)?
+    } else {
+        Vec::new()
+    };
+    let vector_plan = if physical_target {
+        lower_vector_scan_for_explain(conn, execution, &statement.select, params)?
+    } else {
+        None
+    };
     let lowered = if let Some((lowered, _)) = &vector_plan {
         lowered.clone()
-    } else if let Some(lowered) =
+    } else if let Some(lowered) = if physical_target {
         lower_fts_scan_for_explain(conn, execution, &statement.select, params)?
-    {
-        lowered
     } else {
+        None
+    } {
+        lowered
+    } else if physical_target {
         lower_select_scan_for_explain(conn, execution, statement.select.clone(), params)?
+    } else {
+        let mut details = vec!["FASTDB BOUNDED MULTI-TARGET PIPELINE".to_string()];
+        if statement.full.is_some() {
+            details.push("FASTDB FULL DECODE/PROJECT/ORDER PIPELINE".into());
+        }
+        return explain_result(details, analyzed, statement.format_json.is_some());
     };
     let mut details = crate::connection::explain_statement(conn, lowered)?;
     if let Some((_, detail)) = vector_plan {
@@ -963,6 +1906,42 @@ fn run_explain(
     for graph_statement in graph_statements {
         details.extend(crate::connection::explain_statement(conn, graph_statement)?);
     }
+    if statement.full.is_some() {
+        details.push("FASTDB FULL DECODE/FILTER/PROJECT/ORDER PIPELINE".into());
+    }
+    explain_result(details, analyzed, statement.format_json.is_some())
+}
+
+fn explain_result(
+    details: Vec<String>,
+    analyzed: Option<(usize, std::time::Duration)>,
+    format_json: bool,
+) -> Result<StatementResult> {
+    if format_json {
+        let mut value = BTreeMap::from([
+            (
+                "operation".into(),
+                Value::Str("FastDB query pipeline".into()),
+            ),
+            (
+                "details".into(),
+                Value::Array(details.into_iter().map(Value::Str).collect()),
+            ),
+        ]);
+        if let Some((rows, elapsed)) = analyzed {
+            value.insert(
+                "actual_rows".into(),
+                Value::Integer(i64::try_from(rows).map_err(|_| {
+                    FastDbError::ResourceLimit("EXPLAIN row count exceeds i64".into())
+                })?),
+            );
+            value.insert(
+                "elapsed_ns".into(),
+                Value::Integer(i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX)),
+            );
+        }
+        return Ok(StatementResult::Value(Value::Object(value)));
+    }
     let rows =
         details
             .into_iter()
@@ -979,6 +1958,21 @@ fn run_explain(
                 ])))
             })
             .collect::<Result<Vec<_>>>()?;
+    let mut rows = rows;
+    if let Some((actual_rows, elapsed)) = analyzed {
+        rows.push(Value::Object(BTreeMap::from([
+            (
+                "actual_rows".into(),
+                Value::Integer(i64::try_from(actual_rows).map_err(|_| {
+                    FastDbError::ResourceLimit("EXPLAIN row count exceeds i64".into())
+                })?),
+            ),
+            (
+                "elapsed_ns".into(),
+                Value::Integer(i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX)),
+            ),
+        ])));
+    }
     Ok(StatementResult::Rows(rows))
 }
 
@@ -988,7 +1982,7 @@ fn lower_vector_scan_for_explain(
     select: &turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<Option<(turso_parser::ast::Stmt, String)>> {
-    let (table_name, selector) = target_parts(select.target.clone())?;
+    let (table_name, selector) = select_target_parts(&select.target)?;
     let catalog = catalog_for_read(conn, execution)?;
     let Some(snapshot) = catalog.snapshot() else {
         return Ok(None);
@@ -1045,7 +2039,7 @@ fn fts_index_name_for_explain(
     select: &turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<Option<String>> {
-    let (table_name, _) = target_parts(select.target.clone())?;
+    let (table_name, _) = select_target_parts(&select.target)?;
     let catalog = catalog_for_read(conn, execution)?;
     let Some(table) = catalog
         .snapshot()
@@ -1062,7 +2056,7 @@ fn lower_fts_scan_for_explain(
     select: &turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<Option<turso_parser::ast::Stmt>> {
-    let (table_name, selector) = target_parts(select.target.clone())?;
+    let (table_name, selector) = select_target_parts(&select.target)?;
     let catalog = catalog_for_read(conn, execution)?;
     let Some(snapshot) = catalog.snapshot() else {
         return Ok(None);
@@ -1113,7 +2107,7 @@ fn lower_graph_scans_for_explain(
     let ProjectionList::Fields(projections) = &select.projections else {
         return Ok(Vec::new());
     };
-    let (source_table_name, _) = target_parts(select.target.clone())?;
+    let (source_table_name, _) = select_target_parts(&select.target)?;
     let catalog = catalog_for_read(conn, execution)?;
     let snapshot = catalog
         .snapshot()
@@ -1678,6 +2672,7 @@ fn project_candidate(
     snapshot: &CatalogSnapshot,
     candidate: &Candidate,
     projections: &ProjectionList,
+    include_all: bool,
     params: &Params,
 ) -> Result<Value> {
     if matches!(projections, ProjectionList::All(_)) {
@@ -1687,7 +2682,14 @@ fn project_candidate(
         unreachable!()
     };
     let context = candidate_context(candidate, params);
-    let mut object = BTreeMap::new();
+    let mut object = if include_all {
+        match full_candidate_value(candidate) {
+            Value::Object(object) => object,
+            _ => unreachable!("full candidate is an object"),
+        }
+    } else {
+        BTreeMap::new()
+    };
     for projection in projections {
         let value = if let ExprKind::Traversal(traversal) = &projection.expression.kind {
             traverse_graph(conn, snapshot, &candidate.id, traversal)?
@@ -2744,6 +3746,18 @@ fn target_parts(target: Target) -> Result<(String, TargetSelector)> {
                 end: range.end.map(record_id_value).transpose()?,
                 inclusive: range.inclusive,
             }),
+        )),
+        Target::Batch { .. } => Err(FastDbError::Schema(
+            "batch targets are valid only for CREATE".into(),
+        )),
+    }
+}
+
+fn select_target_parts(target: &SelectTarget) -> Result<(String, TargetSelector)> {
+    match target {
+        SelectTarget::Target(target) => target_parts(target.clone()),
+        SelectTarget::Expression(_) | SelectTarget::Subquery(_) => Err(FastDbError::Schema(
+            "this SELECT operation requires a physical table or record target".into(),
         )),
     }
 }
@@ -4445,7 +5459,7 @@ fn lower_select_scan_for_explain(
     params: &Params,
 ) -> Result<turso_parser::ast::Stmt> {
     eval::validate_parameter_references(&Statement::Select(statement.clone()), params)?;
-    let (table_name, selector) = target_parts(statement.target)?;
+    let (table_name, selector) = select_target_parts(&statement.target)?;
     let catalog = catalog_for_read(conn, execution)?;
     let table = catalog
         .snapshot()

@@ -259,3 +259,234 @@ fn p14_api_005_create_and_delete_complete_return_modes() {
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p14_api_006_select_value_omit_split_group_fetch_and_destructure() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "CREATE person:a SET grp = 'x', n = 1, tags = ['b','a'], \
+                    nested = { keep: 2, secret: 9 }, friend = person:b; \
+                 CREATE person:b SET grp = 'x', n = 2, tags = ['c'], \
+                    nested = { keep: 3, secret: 8 }; \
+                 CREATE person:c SET grp = 'y', n = 3, tags = []",
+                params! {},
+            )
+            .await
+            .unwrap();
+
+        let value = connection
+            .query(
+                "SELECT VALUE n FROM person ORDER BY n LIMIT BY $limit START AT $start",
+                params! { "limit" => 2_i64, "start" => 1_i64 },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &value.statements[0],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::Integer(2), Value::Integer(3)]
+        ));
+
+        let omitted = connection
+            .query(
+                "SELECT *, n * 2 AS double OMIT nested.secret FROM person:a FETCH friend",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let StatementResult::Rows(rows) = &omitted.statements[0] else {
+            panic!("expected rows")
+        };
+        let Value::Object(row) = &rows[0] else {
+            panic!("expected object")
+        };
+        assert_eq!(row.get("double"), Some(&Value::Integer(2)));
+        assert!(
+            matches!(row.get("friend"), Some(Value::Object(friend)) if friend.get("n") == Some(&Value::Integer(2)))
+        );
+        assert!(
+            matches!(row.get("nested"), Some(Value::Object(nested)) if !nested.contains_key("secret"))
+        );
+
+        let split = connection
+            .query(
+                "SELECT tags FROM person SPLIT ON tags ORDER BY tags",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let StatementResult::Rows(split_rows) = &split.statements[0] else {
+            panic!("expected rows")
+        };
+        assert_eq!(split_rows.len(), 4);
+
+        let grouped = connection
+            .query(
+                "SELECT grp, count() AS count, math::sum(n) AS total, id FROM person GROUP BY grp ORDER BY grp",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let StatementResult::Rows(groups) = &grouped.statements[0] else {
+            panic!("expected rows")
+        };
+        assert_eq!(groups.len(), 2);
+        assert!(matches!(
+            &groups[0],
+            Value::Object(group)
+                if group.get("grp") == Some(&Value::Str("x".into()))
+                    && group.get("count") == Some(&Value::Integer(2))
+                    && group.get("total") == Some(&Value::Integer(3))
+                    && matches!(group.get("id"), Some(Value::Array(ids)) if ids.len() == 2)
+        ));
+
+        let destructured = connection
+            .query(
+                "SELECT { grp, nested.{ keep } } AS picked FROM person:a",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &destructured.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(row)
+                    if matches!(row.get("picked"), Some(Value::Array(values))
+                        if values == &vec![
+                            Value::Str("x".into()),
+                            Value::Object(BTreeMap::from([("keep".into(), Value::Integer(2))])),
+                        ]))
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_007_multi_targets_subqueries_and_numeric_order_preserve_pipeline_order() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "CREATE item:a SET label = 'item10'; CREATE item:b SET label = 'item2'",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let ordered = connection
+            .query("SELECT label FROM item ORDER BY label NUMERIC", params! {})
+            .await
+            .unwrap();
+        let StatementResult::Rows(rows) = &ordered.statements[0] else {
+            panic!("expected rows")
+        };
+        assert!(
+            matches!(&rows[0], Value::Object(row) if row.get("label") == Some(&Value::Str("item2".into())))
+        );
+
+        let targets = connection
+            .query(
+                "SELECT * FROM (SELECT * FROM item:a), [42, { x: 1 }], item:b",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let StatementResult::Rows(rows) = &targets.statements[0] else {
+            panic!("expected rows")
+        };
+        assert_eq!(rows.len(), 4);
+        assert!(matches!(rows[1], Value::Integer(42)));
+        assert!(
+            matches!(rows[2], Value::Object(ref value) if value.get("x") == Some(&Value::Integer(1)))
+        );
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_008_explain_full_analyze_json_executes_and_reports_structured_metrics() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute("CREATE item:a SET n = 1", params! {})
+            .await
+            .unwrap();
+        let response = connection
+            .query(
+                "EXPLAIN ANALYZE FULL FORMAT JSON SELECT * FROM item WHERE n = 1",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let StatementResult::Value(Value::Object(plan)) = &response.statements[0] else {
+            panic!("expected structured JSON plan")
+        };
+        assert_eq!(plan.get("actual_rows"), Some(&Value::Integer(1)));
+        assert!(matches!(plan.get("details"), Some(Value::Array(details)) if !details.is_empty()));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_009_batch_create_count_and_integer_ranges_are_one_atomic_statement() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "CREATE |batch:3| SET kind = 'generated'; \
+                 CREATE |numbered:1..=3| SET kind = 'range'",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 6);
+        assert!(matches!(&response.statements[0], StatementResult::Rows(rows) if rows.len() == 3));
+        let numbered = connection
+            .query("SELECT id FROM numbered ORDER BY id", params! {})
+            .await
+            .unwrap();
+        let StatementResult::Rows(rows) = &numbered.statements[0] else {
+            panic!("expected rows")
+        };
+        assert_eq!(rows.len(), 3);
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_010_insert_relation_maintains_both_adjacency_directions() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "CREATE person:a; CREATE person:b; \
+                 INSERT RELATION INTO likes { id: 'edge', in: person:a, out: person:b, weight: 1 }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let response = connection
+            .query(
+                "SELECT ->likes->person AS outgoing FROM person:a; \
+                 SELECT <-likes<-person AS incoming FROM person:b",
+                params! {},
+            )
+            .await
+            .unwrap();
+        for statement in response.statements {
+            let StatementResult::Rows(rows) = statement else {
+                panic!("expected rows")
+            };
+            assert!(
+                matches!(&rows[0], Value::Object(row) if matches!(row.values().next(), Some(Value::Array(ids)) if ids.len() == 1))
+            );
+        }
+        connection.close().await.unwrap();
+    });
+}

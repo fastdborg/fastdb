@@ -1078,6 +1078,16 @@ fn validate_statement_limits(
                 expressions.extend(projections.iter().map(|projection| &projection.expression));
             }
             expressions.extend(statement.condition.iter());
+            expressions.extend(statement.limit_expression.iter());
+            expressions.extend(statement.start_expression.iter());
+            if let Some(turso_fastdb_parser::GroupClause::By(group)) = &statement.group {
+                expressions.extend(group);
+            }
+            for target in std::iter::once(&statement.target).chain(&statement.additional_targets) {
+                if let turso_fastdb_parser::SelectTarget::Expression(expression) = target {
+                    expressions.push(expression);
+                }
+            }
         }
         Statement::Update(statement) | Statement::Upsert(statement) => {
             match &statement.data {
@@ -1156,6 +1166,14 @@ fn validate_expression_limits(
         ExprKind::Object(fields) => {
             for field in fields {
                 validate_expression_limits(&field.value, params, limits)?;
+            }
+        }
+        ExprKind::Destructure { target, .. } => {
+            validate_expression_limits(target, params, limits)?;
+        }
+        ExprKind::DestructureList(values) => {
+            for value in values {
+                validate_expression_limits(value, params, limits)?;
             }
         }
         ExprKind::Access { target, accessor } => {
