@@ -713,7 +713,7 @@ impl InterruptHandle {
 #[derive(Default)]
 struct ActiveStatement {
     engine: Mutex<Option<Arc<turso_core::Connection>>>,
-    requested: AtomicBool,
+    requested: Arc<AtomicBool>,
 }
 
 enum WorkerRequest {
@@ -865,7 +865,11 @@ fn run_request(
         .native()
         .set_query_timeout(options.limits.timeout);
     let result = connection
-        .execute_with_params(&source, &frontend_params)
+        .execute_with_params_and_cancellation(
+            &source,
+            &frontend_params,
+            Some(active.requested.clone()),
+        )
         .map_err(Error::from_frontend);
     connection.native().set_query_timeout(Duration::ZERO);
     *active
@@ -988,14 +992,39 @@ fn contains_transaction_control(source: &str) -> bool {
     let mut cursor = turso_fastdb_parser::StatementCursor::new(source);
     loop {
         match cursor.next_statement() {
-            Ok(Some(
-                turso_fastdb_parser::Statement::Begin(_)
-                | turso_fastdb_parser::Statement::Commit(_)
-                | turso_fastdb_parser::Statement::Cancel(_),
-            )) => return true,
+            Ok(Some(statement)) if statement_contains_transaction_control(&statement) => {
+                return true;
+            }
             Ok(Some(_)) => {}
             Ok(None) | Err(_) => return false,
         }
+    }
+}
+
+fn statement_contains_transaction_control(statement: &turso_fastdb_parser::Statement) -> bool {
+    use turso_fastdb_parser::Statement;
+
+    match statement {
+        Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => true,
+        Statement::If(statement) => {
+            statement.branches.iter().any(|(_, block)| {
+                block
+                    .statements
+                    .iter()
+                    .any(statement_contains_transaction_control)
+            }) || statement.otherwise.as_ref().is_some_and(|block| {
+                block
+                    .statements
+                    .iter()
+                    .any(statement_contains_transaction_control)
+            })
+        }
+        Statement::For(statement) => statement
+            .body
+            .statements
+            .iter()
+            .any(statement_contains_transaction_control),
+        _ => false,
     }
 }
 
@@ -1123,10 +1152,35 @@ fn validate_statement_limits(
             let nested = Statement::Select(statement.select.clone());
             return validate_statement_limits(&nested, params, limits);
         }
+        Statement::Let(statement) => expressions.push(&statement.value),
+        Statement::ScriptReturn(statement)
+        | Statement::Throw(statement)
+        | Statement::Sleep(statement) => expressions.push(&statement.value),
+        Statement::If(statement) => {
+            for (condition, block) in &statement.branches {
+                expressions.push(condition);
+                for nested in &block.statements {
+                    validate_statement_limits(nested, params, limits)?;
+                }
+            }
+            if let Some(block) = &statement.otherwise {
+                for nested in &block.statements {
+                    validate_statement_limits(nested, params, limits)?;
+                }
+            }
+        }
+        Statement::For(statement) => {
+            expressions.push(&statement.iterable);
+            for nested in &statement.body.statements {
+                validate_statement_limits(nested, params, limits)?;
+            }
+        }
         Statement::DefineTable(_)
         | Statement::DefineAnalyzer(_)
         | Statement::RemoveIndex(_)
         | Statement::RebuildIndex(_)
+        | Statement::Break(_)
+        | Statement::Continue(_)
         | Statement::Begin(_)
         | Statement::Commit(_)
         | Statement::Cancel(_) => {}

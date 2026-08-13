@@ -4,12 +4,12 @@
 
 FastDB implements a clean-room SurrealQL-compatible subset pinned to SurrealDB `v3.1.5`. Parser acceptance alone does not mean execution support, and compatibility does not imply sponsorship or certification. See `CLEAN_ROOM.md`.
 
-The locked inventory contains 756 atomic capabilities: 504 Supported, 0 Partial, and 252 Unsupported. `Partial` is allowed only for the active Phase 14; all future-phase targets remain Unsupported until their implementation phase.
+The locked inventory contains 756 atomic capabilities: 512 Supported, 0 Partial, and 244 Unsupported. `Partial` is allowed only for the active Phase 15; all future-phase targets remain Unsupported until their implementation phase.
 
 ## Status legend
 
 - **Supported**: executable behavior has conformance evidence.
-- **Partial**: an atomic Phase 14 capability is actively being implemented.
+- **Partial**: an atomic Phase 15 capability is actively being implemented.
 - **Unsupported**: unavailable, excluded, dormant, or awaiting its assigned phase.
 
 Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as SurrealQL compatibility. Geospatial/geometry, history/changefeeds/time-series retention, Realtime/LIVE/KILL, GraphQL, GQL, multiprocess access, and parallel writers are advertised as unavailable.
@@ -684,14 +684,14 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `SCHEMA-REMOVE-PARAM-COMPLETE` | Unsupported | Phase 15 | complete REMOVE PARAM | REMOVE PARAM executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-REMOVE-SEQUENCE-COMPLETE` | Unsupported | Phase 15 | complete REMOVE SEQUENCE | REMOVE SEQUENCE executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-REMOVE-TABLE-COMPLETE` | Unsupported | Phase 15 | complete REMOVE TABLE | REMOVE TABLE executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-BREAK` | Unsupported | Phase 15 | BREAK control flow | BREAK exits the characterized loop or block scope. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-CONTINUE` | Unsupported | Phase 15 | CONTINUE control flow | CONTINUE advances the characterized loop. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-FOR` | Unsupported | Phase 15 | FOR loops | FOR iterates bounded arrays, sets, and integer ranges. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-IF` | Unsupported | Phase 15 | IF and ELSE | IF, ELSE IF, and ELSE execute bounded blocks. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-LET` | Unsupported | Phase 15 | LET parameters | LET defines a statement-local parameter. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-RETURN` | Unsupported | Phase 15 | RETURN control flow | RETURN exits a script or function with a value. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-SLEEP` | Unsupported | Phase 15 | SLEEP statement | SLEEP obeys timeout and maximum-duration limits. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCRIPT-THROW` | Unsupported | Phase 15 | THROW statement | THROW aborts with a structured redacted error. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `SCRIPT-BREAK` | Supported | Phase 15 | BREAK control flow | BREAK exits the innermost bounded FOR loop, including from a nested IF block, and is rejected outside a loop. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#for-break-and-continue | P15-PARSE-001<br>P15-PARSE-003<br>P15-API-002 |
+| `SCRIPT-CONTINUE` | Supported | Phase 15 | CONTINUE control flow | CONTINUE advances the innermost bounded FOR loop, including from a nested IF block, and is rejected outside a loop. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#for-break-and-continue | P15-PARSE-001<br>P15-PARSE-003<br>P15-API-002 |
+| `SCRIPT-FOR` | Supported | Phase 15 | FOR loops | FOR snapshots and iterates bounded arrays, sets, and inclusive or exclusive integer ranges with lexical bindings and a 10,000-iteration ceiling. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#for-break-and-continue | P15-PARSE-001<br>P15-PARSE-002<br>P15-PARSE-003<br>P15-API-002<br>P15-API-004 |
+| `SCRIPT-IF` | Supported | Phase 15 | IF and ELSE | IF, ELSE IF, and ELSE lazily execute one bounded lexical block and expose its characterized result. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#script-scope-and-result-boundaries | P15-PARSE-001<br>P15-PARSE-002<br>P15-PARSE-003<br>P15-API-001<br>P15-API-002<br>P15-API-005 |
+| `SCRIPT-LET` | Supported | Phase 15 | LET parameters | LET binds an evaluated value in the current lexical script scope; block shadowing does not mutate the outer binding. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#script-scope-and-result-boundaries | P15-PARSE-001<br>P15-PARSE-003<br>P15-API-001<br>P15-API-002 |
+| `SCRIPT-RETURN` | Supported | Phase 15 | RETURN control flow | RETURN supplies a value and exits its immediate IF/FOR block boundary without suppressing later top-level statements. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#script-scope-and-result-boundaries | P15-PARSE-001<br>P15-PARSE-003<br>P15-API-001<br>P15-API-002 |
+| `SCRIPT-SLEEP` | Supported | Phase 15 | SLEEP statement | SLEEP accepts a duration, obeys the request timeout and a five-second ceiling, and is cooperatively interruptible. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#sleep-and-bounded-execution | P15-PARSE-001<br>P15-PARSE-003<br>P15-API-004 |
+| `SCRIPT-THROW` | Supported | Phase 15 | THROW statement | THROW stops later script statements with a redacted error; an explicit transaction is poisoned and rolled back. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#throw-and-statement-atomicity | P15-PARSE-001<br>P15-PARSE-003<br>P15-API-003 |
 ## Graph
 
 | Capability ID | Status | Delivery | Capability | Exact surface | Provenance | Evidence / stop report |

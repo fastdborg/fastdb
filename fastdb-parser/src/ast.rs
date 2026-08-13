@@ -70,6 +70,14 @@ pub enum Statement {
     Explain(ExplainStatement),
     RemoveIndex(IndexMaintenanceStatement),
     RebuildIndex(IndexMaintenanceStatement),
+    Let(LetStatement),
+    ScriptReturn(ScriptExpressionStatement),
+    If(IfStatement),
+    For(ForStatement),
+    Break(ControlFlowStatement),
+    Continue(ControlFlowStatement),
+    Throw(ScriptExpressionStatement),
+    Sleep(ScriptExpressionStatement),
     Begin(TransactionStatement),
     Commit(TransactionStatement),
     Cancel(TransactionStatement),
@@ -91,9 +99,53 @@ impl Statement {
             Self::DefineIndex(stmt) => stmt.span,
             Self::Explain(stmt) => stmt.span,
             Self::RemoveIndex(stmt) | Self::RebuildIndex(stmt) => stmt.span,
+            Self::Let(stmt) => stmt.span,
+            Self::ScriptReturn(stmt) | Self::Throw(stmt) | Self::Sleep(stmt) => stmt.span,
+            Self::If(stmt) => stmt.span,
+            Self::For(stmt) => stmt.span,
+            Self::Break(stmt) | Self::Continue(stmt) => stmt.span,
             Self::Begin(stmt) | Self::Commit(stmt) | Self::Cancel(stmt) => stmt.span,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptBlock {
+    pub span: Span,
+    pub statements: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LetStatement {
+    pub span: Span,
+    pub name: Identifier,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptExpressionStatement {
+    pub span: Span,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfStatement {
+    pub span: Span,
+    pub branches: Vec<(Expr, ScriptBlock)>,
+    pub otherwise: Option<ScriptBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForStatement {
+    pub span: Span,
+    pub binding: Identifier,
+    pub iterable: Expr,
+    pub body: ScriptBlock,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ControlFlowStatement {
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

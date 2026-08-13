@@ -18,8 +18,10 @@ use crate::{Params, RecordId, StatementResult, Value};
 use rand::seq::SliceRandom as _;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::Arc;
 use std::sync::RwLockReadGuard;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use turso_fastdb_parser::{
     AssignmentOperator, BinaryOperator, CreateData, Expr, ExprKind, GroupClause,
     IndexDefinitionSurface, IndexKindSyntax, InsertData, ProjectionList, RecordIdPart,
@@ -128,13 +130,146 @@ impl StatementExecution {
     }
 }
 
+const MAX_SCRIPT_STEPS: usize = 100_000;
+const MAX_LOOP_ITERATIONS: usize = 10_000;
+const MAX_SLEEP: Duration = Duration::from_secs(5);
+
+pub(crate) struct ScriptRuntime {
+    bindings: Params,
+    scopes: Vec<Vec<(String, Option<Value>)>>,
+    steps: usize,
+    loop_depth: usize,
+    deadline: Option<Instant>,
+    cancellation: Option<Arc<AtomicBool>>,
+}
+
+impl ScriptRuntime {
+    pub(crate) fn new(
+        bindings: Params,
+        timeout: Duration,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Self {
+        Self {
+            bindings,
+            scopes: Vec::new(),
+            steps: 0,
+            loop_depth: 0,
+            deadline: (!timeout.is_zero())
+                .then(|| Instant::now().checked_add(timeout))
+                .flatten(),
+            cancellation,
+        }
+    }
+
+    fn step(&mut self) -> Result<()> {
+        if self.steps == MAX_SCRIPT_STEPS {
+            return Err(FastDbError::ResourceLimit(format!(
+                "script exceeds {MAX_SCRIPT_STEPS} executed statements"
+            )));
+        }
+        self.steps += 1;
+        self.check_deadline()
+    }
+
+    fn check_deadline(&self) -> Result<()> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|cancellation| cancellation.load(AtomicOrdering::SeqCst))
+        {
+            return Err(FastDbError::Engine(
+                "script execution was interrupted".into(),
+            ));
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            Err(FastDbError::ResourceLimit(
+                "script exceeded the request timeout".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(Vec::new());
+    }
+
+    fn pop_scope(&mut self) {
+        let changes = self.scopes.pop().expect("script scope is balanced");
+        for (name, previous) in changes.into_iter().rev() {
+            if let Some(previous) = previous {
+                self.bindings.insert(name, previous);
+            } else {
+                self.bindings.remove(&name);
+            }
+        }
+    }
+
+    fn bind(&mut self, name: String, value: Value) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if !scope.iter().any(|(existing, _)| existing == &name) {
+                scope.push((name.clone(), self.bindings.get(&name).cloned()));
+            }
+        }
+        self.bindings.insert(name, value);
+    }
+}
+
+#[derive(Debug)]
+enum ScriptFlow {
+    Normal,
+    Break,
+    Continue,
+    Return(Value),
+}
+
+struct ScriptOutcome {
+    execution: StatementExecution,
+    flow: ScriptFlow,
+}
+
+impl ScriptOutcome {
+    fn normal(execution: StatementExecution) -> Self {
+        Self {
+            execution,
+            flow: ScriptFlow::Normal,
+        }
+    }
+}
+
 pub(crate) fn run_statement(
     conn: &Connection,
     execution: &mut ExecutionState,
     statement: Statement,
     source: &str,
-    params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
+    let outcome = run_script_statement(conn, execution, statement, source, script)?;
+    match outcome.flow {
+        ScriptFlow::Normal => Ok(outcome.execution),
+        ScriptFlow::Return(value) => {
+            Ok(StatementExecution::read_only(StatementResult::Value(value)))
+        }
+        ScriptFlow::Break => Err(FastDbError::Schema(
+            "BREAK is only valid inside a FOR loop".into(),
+        )),
+        ScriptFlow::Continue => Err(FastDbError::Schema(
+            "CONTINUE is only valid inside a FOR loop".into(),
+        )),
+    }
+}
+
+fn run_script_statement(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: Statement,
+    source: &str,
+    script: &mut ScriptRuntime,
+) -> Result<ScriptOutcome> {
+    script.step()?;
     if matches!(execution.transaction, TransactionState::Poisoned)
         && !matches!(statement, Statement::Cancel(_))
     {
@@ -149,18 +284,69 @@ pub(crate) fn run_statement(
     }
 
     match statement {
+        Statement::Let(statement) => {
+            let value = evaluate_script_expression(&statement.value, &script.bindings)?;
+            script.bind(statement.name.value, value);
+            Ok(ScriptOutcome::normal(StatementExecution::read_only(
+                StatementResult::None,
+            )))
+        }
+        Statement::ScriptReturn(statement) => {
+            let value = evaluate_script_expression(&statement.value, &script.bindings)?;
+            Ok(ScriptOutcome {
+                execution: StatementExecution::read_only(StatementResult::None),
+                flow: ScriptFlow::Return(value),
+            })
+        }
+        Statement::If(statement) => run_script_if(conn, execution, statement, source, script),
+        Statement::For(statement) => run_script_for(conn, execution, statement, source, script),
+        Statement::Break(_) => {
+            if script.loop_depth == 0 {
+                return Err(FastDbError::Schema(
+                    "BREAK is only valid inside a FOR loop".into(),
+                ));
+            }
+            Ok(ScriptOutcome {
+                execution: StatementExecution::read_only(StatementResult::None),
+                flow: ScriptFlow::Break,
+            })
+        }
+        Statement::Continue(_) => {
+            if script.loop_depth == 0 {
+                return Err(FastDbError::Schema(
+                    "CONTINUE is only valid inside a FOR loop".into(),
+                ));
+            }
+            Ok(ScriptOutcome {
+                execution: StatementExecution::read_only(StatementResult::None),
+                flow: ScriptFlow::Continue,
+            })
+        }
+        Statement::Throw(_) => Err(FastDbError::Schema(
+            "script THROW aborted execution (payload redacted)".into(),
+        )),
+        Statement::Sleep(statement) => {
+            run_script_sleep(&statement.value, script)?;
+            Ok(ScriptOutcome::normal(StatementExecution::read_only(
+                StatementResult::None,
+            )))
+        }
         Statement::Begin(_) => conn
             .begin_explicit(execution)
-            .map(StatementExecution::read_only),
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
         Statement::Commit(_) => conn
             .commit_explicit(execution)
-            .map(StatementExecution::read_only),
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
         Statement::Cancel(_) => conn
             .cancel_explicit(execution)
-            .map(StatementExecution::read_only),
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
         statement => {
-            eval::validate_parameter_references(&statement, params)?;
-            match statement {
+            eval::validate_parameter_references(&statement, &script.bindings)?;
+            let params = &script.bindings;
+            let execution = match statement {
                 Statement::Create(statement) => run_create(conn, execution, statement, params),
                 Statement::Insert(statement) => run_insert(conn, execution, statement, params),
                 Statement::Relate(statement) => run_relate(conn, execution, statement, params),
@@ -200,9 +386,254 @@ pub(crate) fn run_statement(
                 Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {
                     unreachable!("transaction statements were handled above")
                 }
+                Statement::Let(_)
+                | Statement::ScriptReturn(_)
+                | Statement::If(_)
+                | Statement::For(_)
+                | Statement::Break(_)
+                | Statement::Continue(_)
+                | Statement::Throw(_)
+                | Statement::Sleep(_) => {
+                    unreachable!("script statements were handled above")
+                }
+            }?;
+            Ok(ScriptOutcome::normal(execution))
+        }
+    }
+}
+
+fn evaluate_script_expression(expression: &Expr, params: &Params) -> Result<Value> {
+    let document = BTreeMap::new();
+    let id = RecordId::new("__script", "context");
+    eval::evaluate(
+        expression,
+        &EvalContext {
+            document: &document,
+            id: &id,
+            endpoints: None,
+            params,
+        },
+    )
+    .map(EvalValue::into_projection)
+}
+
+fn run_script_block(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    block: turso_fastdb_parser::ScriptBlock,
+    source: &str,
+    script: &mut ScriptRuntime,
+) -> Result<ScriptOutcome> {
+    script.push_scope();
+    let result = (|| {
+        let mut result = StatementExecution::read_only(StatementResult::None);
+        for statement in block.statements {
+            let outcome = run_script_statement(conn, execution, statement, source, script)?;
+            result.mutation_count = result
+                .mutation_count
+                .checked_add(outcome.execution.mutation_count)
+                .ok_or_else(|| {
+                    FastDbError::Engine("script mutation count overflowed u64".into())
+                })?;
+            result.result = outcome.execution.result;
+            if !matches!(outcome.flow, ScriptFlow::Normal) {
+                return Ok(ScriptOutcome {
+                    execution: result,
+                    flow: outcome.flow,
+                });
+            }
+        }
+        Ok(ScriptOutcome::normal(result))
+    })();
+    script.pop_scope();
+    result
+}
+
+fn run_script_if(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::IfStatement,
+    source: &str,
+    script: &mut ScriptRuntime,
+) -> Result<ScriptOutcome> {
+    let mut selected = None;
+    for (condition, block) in statement.branches {
+        if eval::evaluate(
+            &condition,
+            &EvalContext {
+                document: &BTreeMap::new(),
+                id: &RecordId::new("__script", "context"),
+                endpoints: None,
+                params: &script.bindings,
+            },
+        )?
+        .truthy()
+        {
+            selected = Some(block);
+            break;
+        }
+    }
+    let selected = selected.or(statement.otherwise);
+    let Some(block) = selected else {
+        return Ok(ScriptOutcome::normal(StatementExecution::read_only(
+            StatementResult::None,
+        )));
+    };
+    let mut outcome = run_script_block(conn, execution, block, source, script)?;
+    if let ScriptFlow::Return(value) = outcome.flow {
+        outcome.execution.result = StatementResult::Value(value);
+        outcome.flow = ScriptFlow::Normal;
+    }
+    Ok(outcome)
+}
+
+fn run_script_for(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::ForStatement,
+    source: &str,
+    script: &mut ScriptRuntime,
+) -> Result<ScriptOutcome> {
+    let iterable = evaluate_script_expression(&statement.iterable, &script.bindings)?;
+    let values = script_iterable_values(iterable)?;
+    let mut result = StatementExecution::read_only(StatementResult::None);
+    for value in values {
+        script.check_deadline()?;
+        script.push_scope();
+        script.bind(statement.binding.value.clone(), value);
+        script.loop_depth += 1;
+        let outcome = run_script_block(conn, execution, statement.body.clone(), source, script);
+        script.loop_depth -= 1;
+        script.pop_scope();
+        let outcome = outcome?;
+        result.mutation_count = result
+            .mutation_count
+            .checked_add(outcome.execution.mutation_count)
+            .ok_or_else(|| FastDbError::Engine("script mutation count overflowed u64".into()))?;
+        match outcome.flow {
+            ScriptFlow::Normal | ScriptFlow::Continue => {}
+            ScriptFlow::Break => break,
+            ScriptFlow::Return(value) => {
+                result.result = StatementResult::Value(value);
+                break;
             }
         }
     }
+    Ok(ScriptOutcome::normal(result))
+}
+
+fn script_iterable_values(value: Value) -> Result<Vec<Value>> {
+    let values = match value {
+        Value::Array(values) => values,
+        Value::Set(values) => values.as_slice().to_vec(),
+        Value::Range(range) => {
+            use crate::decode::RangeBound;
+            let start = match range.start() {
+                RangeBound::Included(value) => match value.as_ref() {
+                    Value::Integer(value) => *value,
+                    _ => {
+                        return Err(FastDbError::Schema(
+                            "FOR ranges require integer bounds".into(),
+                        ))
+                    }
+                },
+                RangeBound::Excluded(value) => match value.as_ref() {
+                    Value::Integer(value) => value.checked_add(1).ok_or_else(|| {
+                        FastDbError::ResourceLimit("FOR range start overflows".into())
+                    })?,
+                    _ => {
+                        return Err(FastDbError::Schema(
+                            "FOR ranges require integer bounds".into(),
+                        ))
+                    }
+                },
+                _ => {
+                    return Err(FastDbError::Schema(
+                        "FOR ranges require a bounded integer start".into(),
+                    ))
+                }
+            };
+            let end = match range.end() {
+                RangeBound::Included(value) => match value.as_ref() {
+                    Value::Integer(value) => *value,
+                    _ => {
+                        return Err(FastDbError::Schema(
+                            "FOR ranges require integer bounds".into(),
+                        ))
+                    }
+                },
+                RangeBound::Excluded(value) => match value.as_ref() {
+                    Value::Integer(value) => value.checked_sub(1).ok_or_else(|| {
+                        FastDbError::ResourceLimit("FOR range end overflows".into())
+                    })?,
+                    _ => {
+                        return Err(FastDbError::Schema(
+                            "FOR ranges require integer bounds".into(),
+                        ))
+                    }
+                },
+                _ => {
+                    return Err(FastDbError::Schema(
+                        "FOR ranges require a bounded integer end".into(),
+                    ))
+                }
+            };
+            if end < start {
+                Vec::new()
+            } else {
+                let count = end
+                    .checked_sub(start)
+                    .and_then(|distance| distance.checked_add(1))
+                    .and_then(|count| usize::try_from(count).ok())
+                    .ok_or_else(|| FastDbError::ResourceLimit("FOR range is too large".into()))?;
+                if count > MAX_LOOP_ITERATIONS {
+                    return Err(FastDbError::ResourceLimit(format!(
+                        "FOR loop exceeds {MAX_LOOP_ITERATIONS} iterations"
+                    )));
+                }
+                (start..=end).map(Value::Integer).collect()
+            }
+        }
+        _ => {
+            return Err(FastDbError::Schema(
+                "FOR requires an array, set, or bounded integer range".into(),
+            ))
+        }
+    };
+    if values.len() > MAX_LOOP_ITERATIONS {
+        return Err(FastDbError::ResourceLimit(format!(
+            "FOR loop exceeds {MAX_LOOP_ITERATIONS} iterations"
+        )));
+    }
+    Ok(values)
+}
+
+fn run_script_sleep(expression: &Expr, script: &ScriptRuntime) -> Result<()> {
+    let Value::Duration(value) = evaluate_script_expression(expression, &script.bindings)? else {
+        return Err(FastDbError::Schema("SLEEP requires a duration".into()));
+    };
+    let duration = Duration::new(value.seconds(), value.nanoseconds());
+    if duration > MAX_SLEEP {
+        return Err(FastDbError::ResourceLimit(format!(
+            "SLEEP exceeds the {} second limit",
+            MAX_SLEEP.as_secs()
+        )));
+    }
+    if script.deadline.is_some_and(|deadline| {
+        Instant::now()
+            .checked_add(duration)
+            .is_none_or(|end| end > deadline)
+    }) {
+        return Err(FastDbError::ResourceLimit(
+            "SLEEP exceeds the remaining request timeout".into(),
+        ));
+    }
+    let started = Instant::now();
+    while let Some(remaining) = duration.checked_sub(started.elapsed()) {
+        script.check_deadline()?;
+        std::thread::park_timeout(remaining.min(Duration::from_millis(10)));
+    }
+    script.check_deadline()
 }
 
 fn run_define_analyzer(

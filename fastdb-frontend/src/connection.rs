@@ -13,7 +13,7 @@ use crate::{Params, QueryResponse, StatementResult};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, Weak};
 use turso_core::Value;
 use turso_parser::ast::Stmt;
@@ -681,6 +681,18 @@ impl Connection {
 
     /// Execute one or more statements with named value bindings.
     pub fn execute_with_params(&self, source: &str, params: &Params) -> Result<QueryResponse> {
+        self.execute_with_params_and_cancellation(source, params, None)
+    }
+
+    /// Execute statements with a cooperative cancellation flag supplied by an
+    /// owning API worker. Direct embedded callers use [`Self::execute_with_params`].
+    #[doc(hidden)]
+    pub fn execute_with_params_and_cancellation(
+        &self,
+        source: &str,
+        params: &Params,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Result<QueryResponse> {
         let _maintenance = self
             .coordinator
             .maintenance
@@ -701,6 +713,11 @@ impl Connection {
 
         let mut statements = Vec::new();
         let mut mutation_count = 0_u64;
+        let mut script = execute::ScriptRuntime::new(
+            params.clone(),
+            self.conn.get_query_timeout(),
+            cancellation,
+        );
         let cached = self
             .parse_cache
             .lock()
@@ -731,7 +748,7 @@ impl Connection {
             let Some(statement) = statement else {
                 break;
             };
-            match execute::run_statement(self, &mut execution, statement, source, params) {
+            match execute::run_statement(self, &mut execution, statement, source, &mut script) {
                 Ok(result) => {
                     statements.push(result.result);
                     mutation_count = mutation_count

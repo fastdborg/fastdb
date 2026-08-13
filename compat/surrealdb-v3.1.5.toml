@@ -2,7 +2,7 @@
 schema_version = 1
 reference = "SurrealDB v3.1.5"
 reference_version = "3.1.5"
-active_phase = 14
+active_phase = 15
 granularity_locked = true
 inventory_date = "2026-08-14"
 binary_url = "https://github.com/surrealdb/surrealdb/releases/download/v3.1.5/surreal-v3.1.5.linux-amd64.tgz"
@@ -8064,11 +8064,11 @@ area = "Scripting and schema"
 title = "BREAK control flow"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "BREAK exits the characterized loop or block scope."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "BREAK exits the innermost bounded FOR loop, including from a nested IF block, and is rejected outside a loop."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#for-break-and-continue"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-003"]
+execution_evidence = ["P15-API-002"]
 stop_report = ""
 
 [[capability]]
@@ -8077,11 +8077,11 @@ area = "Scripting and schema"
 title = "CONTINUE control flow"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "CONTINUE advances the characterized loop."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "CONTINUE advances the innermost bounded FOR loop, including from a nested IF block, and is rejected outside a loop."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#for-break-and-continue"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-003"]
+execution_evidence = ["P15-API-002"]
 stop_report = ""
 
 [[capability]]
@@ -8090,11 +8090,11 @@ area = "Scripting and schema"
 title = "FOR loops"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "FOR iterates bounded arrays, sets, and integer ranges."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "FOR snapshots and iterates bounded arrays, sets, and inclusive or exclusive integer ranges with lexical bindings and a 10,000-iteration ceiling."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#for-break-and-continue"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-002", "P15-PARSE-003"]
+execution_evidence = ["P15-API-002", "P15-API-004"]
 stop_report = ""
 
 [[capability]]
@@ -8103,11 +8103,11 @@ area = "Scripting and schema"
 title = "IF and ELSE"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "IF, ELSE IF, and ELSE execute bounded blocks."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "IF, ELSE IF, and ELSE lazily execute one bounded lexical block and expose its characterized result."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#script-scope-and-result-boundaries"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-002", "P15-PARSE-003"]
+execution_evidence = ["P15-API-001", "P15-API-002", "P15-API-005"]
 stop_report = ""
 
 [[capability]]
@@ -8116,11 +8116,11 @@ area = "Scripting and schema"
 title = "LET parameters"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "LET defines a statement-local parameter."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "LET binds an evaluated value in the current lexical script scope; block shadowing does not mutate the outer binding."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#script-scope-and-result-boundaries"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-003"]
+execution_evidence = ["P15-API-001", "P15-API-002"]
 stop_report = ""
 
 [[capability]]
@@ -8129,11 +8129,11 @@ area = "Scripting and schema"
 title = "RETURN control flow"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "RETURN exits a script or function with a value."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "RETURN supplies a value and exits its immediate IF/FOR block boundary without suppressing later top-level statements."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#script-scope-and-result-boundaries"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-003"]
+execution_evidence = ["P15-API-001", "P15-API-002"]
 stop_report = ""
 
 [[capability]]
@@ -8142,11 +8142,11 @@ area = "Scripting and schema"
 title = "SLEEP statement"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "SLEEP obeys timeout and maximum-duration limits."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "SLEEP accepts a duration, obeys the request timeout and a five-second ceiling, and is cooperatively interruptible."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#sleep-and-bounded-execution"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-003"]
+execution_evidence = ["P15-API-004"]
 stop_report = ""
 
 [[capability]]
@@ -8155,11 +8155,11 @@ area = "Scripting and schema"
 title = "THROW statement"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "THROW aborts with a structured redacted error."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "THROW stops later script statements with a redacted error; an explicit transaction is poisoned and rolled back."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#throw-and-statement-atomicity"]
+parser_evidence = ["P15-PARSE-001", "P15-PARSE-003"]
+execution_evidence = ["P15-API-003"]
 stop_report = ""
 [[capability]]
 id = "GRAPH-CASCADE-DELETE"

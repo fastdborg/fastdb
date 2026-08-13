@@ -1,6 +1,6 @@
 # FastDB Phase 15 — Scripting, schema, views, and events
 
-Status: authoritative implementation plan; implementation not started
+Status: authoritative implementation plan; implementation in progress
 
 Starting checkpoint: `a027a777d`
 

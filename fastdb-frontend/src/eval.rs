@@ -203,7 +203,15 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         | Statement::RebuildIndex(_)
         | Statement::Begin(_)
         | Statement::Commit(_)
-        | Statement::Cancel(_) => {}
+        | Statement::Cancel(_)
+        | Statement::Let(_)
+        | Statement::ScriptReturn(_)
+        | Statement::If(_)
+        | Statement::For(_)
+        | Statement::Break(_)
+        | Statement::Continue(_)
+        | Statement::Throw(_)
+        | Statement::Sleep(_) => {}
     }
     if let Some(name) = names.into_iter().find(|name| !params.contains_key(*name)) {
         return Err(FastDbError::Schema(format!(

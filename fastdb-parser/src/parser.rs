@@ -87,6 +87,7 @@ impl<'a> StatementCursor<'a> {
         }
 
         let mut tokens = Vec::new();
+        let mut delimiter_depth = 0_usize;
         loop {
             let mut lexer = Lexer {
                 source: self.source,
@@ -121,7 +122,16 @@ impl<'a> StatementCursor<'a> {
                 }
                 self.token_count += 1;
             }
-            let separator = matches!(token.kind, TokenKind::Semicolon);
+            match &token.kind {
+                TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace => {
+                    delimiter_depth = delimiter_depth.saturating_add(1);
+                }
+                TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace => {
+                    delimiter_depth = delimiter_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+            let separator = matches!(token.kind, TokenKind::Semicolon) && delimiter_depth == 0;
             tokens.push(token);
             if eof || separator {
                 let boundary = tokens.last().expect("token was pushed").span.end();
@@ -249,6 +259,22 @@ impl<'a> Parser<'a> {
             TokenKind::Select => Statement::Select(self.parse_select()?),
             TokenKind::Update => Statement::Update(self.parse_update(false)?),
             TokenKind::Delete => Statement::Delete(self.parse_delete()?),
+            TokenKind::Let => Statement::Let(self.parse_let()?),
+            TokenKind::Return => Statement::ScriptReturn(
+                self.parse_script_expression(TokenKind::Return, "keyword RETURN")?,
+            ),
+            TokenKind::If => Statement::If(self.parse_if()?),
+            TokenKind::For => Statement::For(self.parse_for()?),
+            TokenKind::Break => Statement::Break(self.parse_control_flow(TokenKind::Break)?),
+            TokenKind::Continue => {
+                Statement::Continue(self.parse_control_flow(TokenKind::Continue)?)
+            }
+            TokenKind::Throw => {
+                Statement::Throw(self.parse_script_expression(TokenKind::Throw, "keyword THROW")?)
+            }
+            TokenKind::Sleep => {
+                Statement::Sleep(self.parse_script_expression(TokenKind::Sleep, "keyword SLEEP")?)
+            }
             TokenKind::Define => self.parse_define()?,
             TokenKind::Explain => Statement::Explain(self.parse_explain()?),
             TokenKind::Remove => Statement::RemoveIndex(self.parse_index_maintenance(false)?),
@@ -274,6 +300,121 @@ impl<'a> Parser<'a> {
         };
         self.ensure_statement_boundary()?;
         Ok(statement)
+    }
+
+    fn parse_let(&mut self) -> Result<LetStatement, ParseError> {
+        let start = self.expect(&TokenKind::Let, "keyword LET")?.span;
+        let name = self.expect_parameter("a LET parameter")?;
+        self.expect(&TokenKind::Equal, "'=' after LET parameter")?;
+        let value = self.parse_expression()?;
+        Ok(LetStatement {
+            span: start.union(value.span),
+            name,
+            value,
+        })
+    }
+
+    fn parse_script_expression(
+        &mut self,
+        keyword: TokenKind,
+        expected: &'static str,
+    ) -> Result<ScriptExpressionStatement, ParseError> {
+        let start = self.expect(&keyword, expected)?.span;
+        let value = self.parse_expression()?;
+        Ok(ScriptExpressionStatement {
+            span: start.union(value.span),
+            value,
+        })
+    }
+
+    fn parse_if(&mut self) -> Result<IfStatement, ParseError> {
+        let start = self.expect(&TokenKind::If, "keyword IF")?.span;
+        let mut branches = Vec::new();
+        let condition = self.parse_expression()?;
+        let body = self.parse_script_block()?;
+        branches.push((condition, body));
+        let mut otherwise = None;
+        while self.eat(&TokenKind::Else) {
+            if self.eat(&TokenKind::If) {
+                let condition = self.parse_expression()?;
+                let body = self.parse_script_block()?;
+                self.check_element_count(branches.len() + 1, body.span)?;
+                branches.push((condition, body));
+            } else {
+                otherwise = Some(self.parse_script_block()?);
+                break;
+            }
+        }
+        let end = otherwise.as_ref().map_or_else(
+            || branches.last().expect("one IF branch").1.span,
+            |block| block.span,
+        );
+        Ok(IfStatement {
+            span: start.union(end),
+            branches,
+            otherwise,
+        })
+    }
+
+    fn parse_for(&mut self) -> Result<ForStatement, ParseError> {
+        let start = self.expect(&TokenKind::For, "keyword FOR")?.span;
+        let binding = self.expect_parameter("a FOR binding parameter")?;
+        self.expect(&TokenKind::In, "keyword IN after FOR binding")?;
+        let iterable = self.parse_expression()?;
+        let body = self.parse_script_block()?;
+        Ok(ForStatement {
+            span: start.union(body.span),
+            binding,
+            iterable,
+            body,
+        })
+    }
+
+    fn parse_control_flow(
+        &mut self,
+        keyword: TokenKind,
+    ) -> Result<ControlFlowStatement, ParseError> {
+        let token = self.expect(&keyword, "control-flow keyword")?;
+        Ok(ControlFlowStatement { span: token.span })
+    }
+
+    fn parse_script_block(&mut self) -> Result<ScriptBlock, ParseError> {
+        let open = self.expect(&TokenKind::LeftBrace, "'{' before script block")?;
+        self.with_depth(|parser| {
+            let mut statements = Vec::new();
+            if parser.at(&TokenKind::RightBrace) {
+                let close = parser.advance().clone();
+                return Ok(ScriptBlock {
+                    span: open.span.union(close.span),
+                    statements,
+                });
+            }
+            loop {
+                let statement = parser.parse_statement()?;
+                parser.check_collection_limit(
+                    statements.len() + 1,
+                    LimitKind::Statements,
+                    parser.limits.max_statements,
+                    statement.span(),
+                )?;
+                statements.push(statement);
+                if parser.eat(&TokenKind::Semicolon) {
+                    if parser.at(&TokenKind::RightBrace) {
+                        let close = parser.advance().clone();
+                        return Ok(ScriptBlock {
+                            span: open.span.union(close.span),
+                            statements,
+                        });
+                    }
+                    continue;
+                }
+                let close = parser.expect(&TokenKind::RightBrace, "'}' after script block")?;
+                return Ok(ScriptBlock {
+                    span: open.span.union(close.span),
+                    statements,
+                });
+            }
+        })
     }
 
     fn parse_create(&mut self) -> Result<CreateStatement, ParseError> {
@@ -2349,7 +2490,10 @@ impl<'a> Parser<'a> {
     }
 
     fn ensure_statement_boundary(&self) -> Result<(), ParseError> {
-        if self.at(&TokenKind::Semicolon) || self.at(&TokenKind::Eof) {
+        if self.at(&TokenKind::Semicolon)
+            || self.at(&TokenKind::RightBrace)
+            || self.at(&TokenKind::Eof)
+        {
             return Ok(());
         }
         if is_unsupported_clause(&self.peek().kind) {
@@ -2404,6 +2548,17 @@ impl<'a> Parser<'a> {
         }
         self.depth += 1;
         Ok(())
+    }
+
+    fn with_depth<T>(
+        &mut self,
+        action: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<T, ParseError> {
+        let span = self.tokens[self.position.saturating_sub(1)].span;
+        self.enter_depth(span)?;
+        let result = action(self);
+        self.leave_depth();
+        result
     }
 
     fn leave_depth(&mut self) {
@@ -2473,6 +2628,21 @@ impl<'a> Parser<'a> {
             ));
         }
         Err(self.unexpected_at(&token, expected))
+    }
+
+    fn expect_parameter(&mut self, expected: &'static str) -> Result<Identifier, ParseError> {
+        let token = self.peek().clone();
+        match token.kind {
+            TokenKind::Parameter(value) => {
+                self.position += 1;
+                Ok(Identifier::new(value, token.span))
+            }
+            TokenKind::Eof => Err(ParseError::new(
+                ParseErrorKind::UnexpectedEof { expected },
+                token.span,
+            )),
+            _ => Err(self.unexpected_at(&token, expected)),
+        }
     }
 
     fn expect_function_segment(
@@ -2843,21 +3013,21 @@ fn is_statement_start(kind: &TokenKind) -> bool {
             | TokenKind::Begin
             | TokenKind::Commit
             | TokenKind::Cancel
+            | TokenKind::Let
+            | TokenKind::Return
+            | TokenKind::If
+            | TokenKind::For
+            | TokenKind::Break
+            | TokenKind::Continue
+            | TokenKind::Throw
+            | TokenKind::Sleep
     ) || is_unsupported_statement(kind)
 }
 
 fn is_unsupported_statement(kind: &TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Let
-            | TokenKind::Info
-            | TokenKind::Use
-            | TokenKind::Live
-            | TokenKind::Show
-            | TokenKind::Sleep
-            | TokenKind::Throw
-            | TokenKind::For
-            | TokenKind::If
+        TokenKind::Info | TokenKind::Use | TokenKind::Live | TokenKind::Show
     )
 }
 
