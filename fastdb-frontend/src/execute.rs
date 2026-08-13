@@ -19,9 +19,9 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLockReadGuard;
 use turso_fastdb_parser::{
-    BinaryOperator, CreateData, Expr, ExprKind, IndexDefinitionSurface, IndexKindSyntax,
-    ProjectionList, RecordIdPart, RecordIdPartKind, ReturnKind, Span, Statement, TableKindSyntax,
-    TableMode, Target,
+    AssignmentOperator, BinaryOperator, CreateData, Expr, ExprKind, IndexDefinitionSurface,
+    IndexKindSyntax, InsertData, ProjectionList, RecordIdPart, RecordIdPartKind, ReturnKind, Span,
+    Statement, TableKindSyntax, TableMode, Target, UpdateData,
 };
 
 #[derive(Debug, Clone)]
@@ -153,10 +153,16 @@ pub(crate) fn run_statement(
             eval::validate_parameter_references(&statement, params)?;
             match statement {
                 Statement::Create(statement) => run_create(conn, execution, statement, params),
+                Statement::Insert(statement) => run_insert(conn, execution, statement, params),
                 Statement::Relate(statement) => run_relate(conn, execution, statement, params),
                 Statement::Select(statement) => run_select(conn, execution, statement, params)
                     .map(StatementExecution::read_only),
-                Statement::Update(statement) => run_update(conn, execution, statement, params),
+                Statement::Update(statement) => {
+                    run_update(conn, execution, statement, params, false)
+                }
+                Statement::Upsert(statement) => {
+                    run_update(conn, execution, statement, params, true)
+                }
                 Statement::Delete(statement) => run_delete(conn, execution, statement, params),
                 Statement::DefineTable(statement) => {
                     run_define_table(conn, execution, statement, source)
@@ -256,7 +262,8 @@ fn run_create(
         params,
     };
     let mut document = match &statement.data {
-        CreateData::Content(expression) => {
+        None => BTreeMap::new(),
+        Some(CreateData::Content(expression)) => {
             let value = eval::evaluate(expression, &context)?.into_projection();
             let Value::Object(document) = value else {
                 return Err(FastDbError::Schema(
@@ -265,7 +272,7 @@ fn run_create(
             };
             document
         }
-        CreateData::Set(assignments) => {
+        Some(CreateData::Set(assignments)) => {
             let evaluated = evaluate_assignments(assignments, &context)?;
             let mut document = BTreeMap::new();
             apply_assignments(&mut document, evaluated)?;
@@ -321,17 +328,250 @@ fn run_create(
     })?;
     mark_fts_dirty(execution, &table_name);
 
-    let returned = match statement.return_clause.map(|clause| clause.kind.value) {
-        Some(ReturnKind::None) => None,
-        Some(ReturnKind::Before) => Some(Value::Null),
-        Some(ReturnKind::After) | None => Some(value),
-    };
+    let returned = mutation_return(
+        statement.return_clause.as_ref(),
+        &Value::Null,
+        &value,
+        &id,
+        None,
+        params,
+    )?;
     let result = if statement.only.is_some() {
         StatementResult::Value(returned.unwrap_or(Value::Null))
     } else {
         StatementResult::Rows(returned.into_iter().collect())
     };
     StatementExecution::mutation(result, 1)
+}
+
+fn run_insert(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::InsertStatement,
+    params: &Params,
+) -> Result<StatementExecution> {
+    if statement.relation.is_some() {
+        return Err(FastDbError::Schema(
+            "INSERT RELATION is implemented with the graph-completion work; use RELATE for now"
+                .into(),
+        ));
+    }
+    let table_name = statement.table.value.clone();
+    let input_documents = evaluate_insert_documents(&statement.data, &table_name, params)?;
+    let table_was_missing = !catalog_for_read(conn, execution)?
+        .snapshot()
+        .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
+    let outcomes = with_create_mutation(conn, execution, table_was_missing, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        if !snapshot.tables.contains_key(&table_name) {
+            let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
+            catalog::persist_table(conn, &table)?;
+            conn.check_failpoint(Failpoint::AfterCatalogRow)?;
+            conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
+            conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
+            snapshot.tables.insert(table_name.clone(), table);
+        }
+        let table = snapshot
+            .tables
+            .get(&table_name)
+            .cloned()
+            .expect("insert table exists after registration");
+        if table.kind == TableKind::Relation {
+            return Err(FastDbError::Schema(
+                "relation tables require INSERT RELATION or RELATE".into(),
+            ));
+        }
+        let mut outcomes = Vec::new();
+        for input in &input_documents {
+            let (id, mut document) = normalize_insert_document(&table_name, input.clone())?;
+            let existing = read_candidates(
+                conn,
+                snapshot,
+                &table,
+                CandidateReadOptions {
+                    id: Some(&id.id),
+                    range: None,
+                    condition: None,
+                    params,
+                    allow_cache: false,
+                    fts: None,
+                    vector: None,
+                },
+            )?
+            .into_iter()
+            .next();
+            if let Some(candidate) = existing {
+                if statement.ignore.is_some() {
+                    continue;
+                }
+                if statement.on_duplicate.is_empty() {
+                    return Err(FastDbError::Constraint(
+                        "INSERT record ID already exists".into(),
+                    ));
+                }
+                let before = full_candidate_value(&candidate);
+                let mut scoped_params = params.clone();
+                let mut input_value = document.clone();
+                input_value.insert("id".into(), Value::RecordId(id.clone()));
+                scoped_params.insert("input".into(), Value::Object(input_value));
+                let context = EvalContext {
+                    document: &candidate.document,
+                    id: &candidate.id,
+                    endpoints: None,
+                    params: &scoped_params,
+                };
+                let assignments = evaluate_assignments(&statement.on_duplicate, &context)?;
+                document = candidate.document.clone();
+                apply_assignments(&mut document, assignments)?;
+                reject_stored_id(&document)?;
+                schema::validate_document(
+                    table.mode == TableMode::Schemafull,
+                    &table.fields,
+                    &mut document,
+                )?;
+                validate_index_values(&table, &document)?;
+                let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
+                let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
+                    &table.physical_name,
+                    &candidate.encoded_rid,
+                    &decode::encode_doc(&document)?,
+                    &derived_hidden,
+                )?;
+                contextual_constraint(
+                    conn.exec_bound(update, bindings),
+                    "INSERT ON DUPLICATE KEY violates a declared unique index",
+                )?;
+                outcomes.push((
+                    candidate.id.clone(),
+                    before,
+                    full_candidate_with_document(&candidate, &document),
+                ));
+                continue;
+            }
+
+            reject_stored_id(&document)?;
+            schema::validate_document(
+                table.mode == TableMode::Schemafull,
+                &table.fields,
+                &mut document,
+            )?;
+            validate_index_values(&table, &document)?;
+            let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
+            let encoded_rid = encode_rid(&id.id)?;
+            let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
+                &table.physical_name,
+                &encoded_rid,
+                &decode::encode_doc(&document)?,
+                &derived_hidden,
+            )?;
+            contextual_constraint(
+                conn.exec_bound(insert, bindings),
+                "INSERT violates a declared unique index",
+            )?;
+            outcomes.push((id.clone(), Value::Null, full_record_value(&id, &document)));
+        }
+        Ok(outcomes)
+    })?;
+    if !outcomes.is_empty() {
+        mark_fts_dirty(execution, &table_name);
+    }
+    let mutation_count = outcomes.len();
+    let rows = outcomes
+        .into_iter()
+        .filter_map(|(id, before, after)| {
+            mutation_return(
+                statement.return_clause.as_ref(),
+                &before,
+                &after,
+                &id,
+                None,
+                params,
+            )
+            .transpose()
+        })
+        .collect::<Result<Vec<_>>>()?;
+    StatementExecution::mutation(StatementResult::Rows(rows), mutation_count)
+}
+
+fn evaluate_insert_documents(
+    data: &InsertData,
+    table_name: &str,
+    params: &Params,
+) -> Result<Vec<BTreeMap<String, Value>>> {
+    let document = BTreeMap::new();
+    let id = RecordId::new(table_name, uuid::Uuid::now_v7());
+    let context = EvalContext {
+        document: &document,
+        id: &id,
+        endpoints: None,
+        params,
+    };
+    let values = match data {
+        InsertData::Expression(expression) => {
+            match eval::evaluate(expression, &context)?.into_projection() {
+                Value::Object(value) => vec![Value::Object(value)],
+                Value::Array(values) => values,
+                _ => {
+                    return Err(FastDbError::Schema(
+                        "INSERT data must be an object or array of objects".into(),
+                    ))
+                }
+            }
+        }
+        InsertData::Values { fields, rows } => rows
+            .iter()
+            .map(|row| {
+                fields
+                    .iter()
+                    .zip(row)
+                    .map(|(field, expression)| {
+                        Ok((
+                            field.value.clone(),
+                            eval::evaluate(expression, &context)?.into_projection(),
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()
+                    .map(Value::Object)
+            })
+            .collect::<Result<Vec<_>>>()?,
+    };
+    values
+        .into_iter()
+        .map(|value| match value {
+            Value::Object(document) => Ok(document),
+            _ => Err(FastDbError::Schema(
+                "INSERT array elements must be objects".into(),
+            )),
+        })
+        .collect()
+}
+
+fn normalize_insert_document(
+    table_name: &str,
+    mut document: BTreeMap<String, Value>,
+) -> Result<(RecordId, BTreeMap<String, Value>)> {
+    let id = match document.remove("id") {
+        None | Some(Value::None) | Some(Value::Null) => {
+            RecordId::new(table_name, uuid::Uuid::now_v7())
+        }
+        Some(Value::RecordId(record)) if record.table == table_name => record,
+        Some(Value::RecordId(_)) => {
+            return Err(FastDbError::Schema(
+                "INSERT id belongs to a different table".into(),
+            ))
+        }
+        Some(Value::Str(id)) => RecordId::new(table_name, id),
+        Some(Value::Integer(id)) => RecordId::new(table_name, id),
+        Some(Value::Uuid(id)) => RecordId::new(table_name, id),
+        Some(Value::Array(id)) => RecordId::new(table_name, RecordIdValue::Array(id)),
+        Some(Value::Object(id)) => RecordId::new(table_name, RecordIdValue::Object(id)),
+        Some(_) => {
+            return Err(FastDbError::Schema(
+                "INSERT id must be a record, string, integer, UUID, array, or object".into(),
+            ))
+        }
+    };
+    Ok((id, document))
 }
 
 fn run_relate(
@@ -478,11 +718,14 @@ fn run_relate(
     })?;
     mark_fts_dirty(execution, &relation_name);
 
-    let returned = match statement.return_clause.map(|clause| clause.kind.value) {
-        Some(ReturnKind::None) => None,
-        Some(ReturnKind::Before) => Some(Value::Null),
-        Some(ReturnKind::After) | None => Some(value),
-    };
+    let returned = mutation_return(
+        statement.return_clause.as_ref(),
+        &Value::Null,
+        &value,
+        &edge_id,
+        Some((&from, &to)),
+        params,
+    )?;
     let result = if statement.only.is_some() {
         StatementResult::Value(returned.unwrap_or(Value::Null))
     } else {
@@ -938,29 +1181,33 @@ fn run_update(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::UpdateStatement,
     params: &Params,
+    upsert: bool,
 ) -> Result<StatementExecution> {
-    let assignment_paths = statement
-        .assignments
-        .iter()
-        .map(|assignment| assignment_path(&assignment.path))
-        .collect::<Result<Vec<_>>>()?;
     let (table_name, selector) = target_parts(statement.target.clone())?;
-    let updates = data_mutation(conn, execution, || {
-        let catalog = catalog_for_read(conn, execution)?;
-        let Some(snapshot) = catalog.snapshot() else {
-            return Ok(Vec::new());
-        };
-        let Some(table) = snapshot.tables.get(&table_name).cloned() else {
-            return Ok(Vec::new());
-        };
-        if table.kind == TableKind::Relation
-            && assignment_paths.iter().any(|path| {
-                path.first()
-                    .is_some_and(|segment| matches!(segment.as_str(), "in" | "out"))
-            })
-        {
+    let table_was_missing = !catalog_for_read(conn, execution)?
+        .snapshot()
+        .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
+    let outcomes = with_create_mutation(conn, execution, upsert && table_was_missing, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        if !snapshot.tables.contains_key(&table_name) {
+            if !upsert {
+                return Ok(Vec::new());
+            }
+            let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
+            catalog::persist_table(conn, &table)?;
+            conn.check_failpoint(Failpoint::AfterCatalogRow)?;
+            conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
+            conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
+            snapshot.tables.insert(table_name.clone(), table);
+        }
+        let table = snapshot
+            .tables
+            .get(&table_name)
+            .cloned()
+            .expect("table exists after upsert registration");
+        if table.kind == TableKind::Relation {
             return Err(FastDbError::Schema(
-                "edge endpoints `in` and `out` are immutable".into(),
+                "relation records must be mutated through RELATE".into(),
             ));
         }
         let candidates = read_candidates(
@@ -977,43 +1224,71 @@ fn run_update(
                 vector: None,
             },
         )?;
-        let mut updates = Vec::new();
+        let mut matched = Vec::new();
         for candidate in candidates {
-            if !matches_condition(statement.condition.as_ref(), &candidate, params)? {
-                continue;
+            if matches_condition(statement.condition.as_ref(), &candidate, params)? {
+                matched.push(candidate);
             }
-            let context = candidate_context(&candidate, params);
-            let values = statement
-                .assignments
-                .iter()
-                .map(|assignment| eval::evaluate(&assignment.value, &context))
-                .collect::<Result<Vec<_>>>()?;
-            let mut document = candidate.document.clone();
-            apply_assignments(
-                &mut document,
-                assignment_paths.iter().cloned().zip(values).collect(),
-            )?;
-            if table.kind == TableKind::Relation {
-                reject_stored_edge_fields(&document)?;
-            } else {
-                reject_stored_id(&document)?;
-            }
+        }
+
+        if matched.is_empty() && upsert {
+            let id_value = match &selector {
+                TargetSelector::All => RecordIdValue::Uuid(uuid::Uuid::now_v7()),
+                TargetSelector::Record(id) => id.clone(),
+                TargetSelector::Range(_) => {
+                    return Err(FastDbError::Schema(
+                        "UPSERT cannot create a record from a record-range target".into(),
+                    ))
+                }
+            };
+            let id = RecordId::new(&table_name, id_value.clone());
+            let document = apply_update_data(&statement.data, BTreeMap::new(), &id, None, params)?;
+            let mut document = document;
+            reject_stored_id(&document)?;
             schema::validate_document(
                 table.mode == TableMode::Schemafull,
                 &table.fields,
                 &mut document,
             )?;
             validate_index_values(&table, &document)?;
-            updates.push((candidate, document));
+            let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
+            let encoded_rid = encode_rid(&id_value)?;
+            let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
+                &table.physical_name,
+                &encoded_rid,
+                &decode::encode_doc(&document)?,
+                &derived_hidden,
+            )?;
+            contextual_constraint(
+                conn.exec_bound(insert, bindings),
+                "UPSERT violates a declared unique index",
+            )?;
+            return Ok(vec![(id, None, Value::Null, Value::Object(document))]);
         }
 
+        let mut outcomes = Vec::new();
         conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
-        for (candidate, document) in &updates {
-            let derived_hidden = derived_hidden_values(snapshot, &table, document)?;
+        for candidate in matched.drain(..) {
+            let document = apply_update_data(
+                &statement.data,
+                candidate.document.clone(),
+                &candidate.id,
+                candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
+                params,
+            )?;
+            let mut document = document;
+            reject_stored_id(&document)?;
+            schema::validate_document(
+                table.mode == TableMode::Schemafull,
+                &table.fields,
+                &mut document,
+            )?;
+            validate_index_values(&table, &document)?;
+            let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
             let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
                 &table.physical_name,
                 &candidate.encoded_rid,
-                &decode::encode_doc(document)?,
+                &decode::encode_doc(&document)?,
                 &derived_hidden,
             )?;
             contextual_constraint(
@@ -1021,28 +1296,39 @@ fn run_update(
                 "UPDATE violates a declared unique index",
             )?;
             conn.check_failpoint(Failpoint::AfterUpdateMutation)?;
+            outcomes.push((
+                candidate.id.clone(),
+                candidate.endpoints.clone(),
+                full_candidate_value(&candidate),
+                full_candidate_with_document(&candidate, &document),
+            ));
         }
-        Ok(updates)
+        Ok(outcomes)
     })?;
-    if !updates.is_empty() {
+    if !outcomes.is_empty() {
         mark_fts_dirty(execution, &table_name);
     }
-    if matches!(
-        statement.return_clause.map(|clause| clause.kind.value),
-        Some(ReturnKind::None)
-    ) {
-        return StatementExecution::mutation(StatementResult::Rows(Vec::new()), updates.len());
-    }
-    let mutation_count = updates.len();
-    StatementExecution::mutation(
-        StatementResult::Rows(
-            updates
-                .into_iter()
-                .map(|(candidate, document)| full_candidate_with_document(&candidate, &document))
-                .collect(),
-        ),
-        mutation_count,
-    )
+    let mutation_count = outcomes.len();
+    let rows = outcomes
+        .into_iter()
+        .filter_map(|(id, endpoints, before, after)| {
+            mutation_return(
+                statement.return_clause.as_ref(),
+                &before,
+                &after,
+                &id,
+                endpoints.as_ref().map(|(from, to)| (from, to)),
+                params,
+            )
+            .transpose()
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let result = if statement.only.is_some() {
+        StatementResult::Value(rows.into_iter().next().unwrap_or(Value::Null))
+    } else {
+        StatementResult::Rows(rows)
+    };
+    StatementExecution::mutation(result, mutation_count)
 }
 
 fn run_delete(
@@ -1122,15 +1408,27 @@ fn run_delete(
         .checked_add(cascaded_edges)
         .ok_or_else(|| FastDbError::Engine("cascade mutation count overflowed usize".into()))?;
     if statement.return_clause.is_some() {
-        StatementExecution::mutation(
-            StatementResult::Rows(
-                deleted
-                    .into_iter()
-                    .map(|candidate| full_candidate_value(&candidate))
-                    .collect(),
-            ),
-            mutation_count,
-        )
+        let rows = deleted
+            .into_iter()
+            .filter_map(|candidate| {
+                let before = full_candidate_value(&candidate);
+                mutation_return(
+                    statement.return_clause.as_ref(),
+                    &before,
+                    &Value::Null,
+                    &candidate.id,
+                    candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
+                    params,
+                )
+                .transpose()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let result = if statement.only.is_some() {
+            StatementResult::Value(rows.into_iter().next().unwrap_or(Value::Null))
+        } else {
+            StatementResult::Rows(rows)
+        };
+        StatementExecution::mutation(result, mutation_count)
     } else {
         StatementExecution::mutation(StatementResult::Rows(Vec::new()), mutation_count)
     }
@@ -1168,12 +1466,13 @@ fn connected_edge_ids(
 fn evaluate_assignments(
     assignments: &[turso_fastdb_parser::Assignment],
     context: &EvalContext<'_>,
-) -> Result<Vec<(Vec<String>, EvalValue)>> {
+) -> Result<Vec<(Vec<String>, AssignmentOperator, EvalValue)>> {
     assignments
         .iter()
         .map(|assignment| {
             Ok((
                 assignment_path(&assignment.path)?,
+                assignment.operator.value,
                 eval::evaluate(&assignment.value, context)?,
             ))
         })
@@ -1190,17 +1489,188 @@ fn assignment_path(path: &turso_fastdb_parser::FieldPath) -> Result<Vec<String>>
     Ok(path)
 }
 
+fn apply_update_data(
+    data: &UpdateData,
+    mut document: BTreeMap<String, Value>,
+    id: &RecordId,
+    endpoints: Option<(&RecordId, &RecordId)>,
+    params: &Params,
+) -> Result<BTreeMap<String, Value>> {
+    let source_document = document.clone();
+    let context = EvalContext {
+        document: &source_document,
+        id,
+        endpoints,
+        params,
+    };
+    match data {
+        UpdateData::Content(expression) | UpdateData::Replace(expression) => {
+            let value = eval::evaluate(expression, &context)?.into_projection();
+            let Value::Object(replacement) = value else {
+                return Err(FastDbError::Schema(
+                    "CONTENT and REPLACE require an object".into(),
+                ));
+            };
+            document = replacement;
+        }
+        UpdateData::Merge(expression) => {
+            let value = eval::evaluate(expression, &context)?.into_projection();
+            let Value::Object(values) = value else {
+                return Err(FastDbError::Schema("MERGE requires an object".into()));
+            };
+            merge_objects(&mut document, values, 0)?;
+        }
+        UpdateData::Patch(expression) => {
+            let patch = eval::evaluate(expression, &context)?.into_projection();
+            let patched = crate::value_functions::patch(&Value::Object(document), &patch)?;
+            let Value::Object(patched) = patched else {
+                return Err(FastDbError::Schema(
+                    "PATCH must leave the record as an object".into(),
+                ));
+            };
+            document = patched;
+        }
+        UpdateData::Set(assignments) => {
+            let evaluated = evaluate_assignments(assignments, &context)?;
+            apply_assignments(&mut document, evaluated)?;
+        }
+        UpdateData::Unset(paths) => {
+            for path in paths {
+                let path = assignment_path(path)?;
+                crate::path::remove_path(&mut document, &path)?;
+            }
+        }
+    }
+    Ok(document)
+}
+
+fn merge_objects(
+    destination: &mut BTreeMap<String, Value>,
+    source: BTreeMap<String, Value>,
+    depth: usize,
+) -> Result<()> {
+    if depth > 64 {
+        return Err(FastDbError::ResourceLimit(
+            "MERGE nesting exceeds 64 levels".into(),
+        ));
+    }
+    for (key, value) in source {
+        match (destination.get_mut(&key), value) {
+            (Some(Value::Object(destination)), Value::Object(source)) => {
+                merge_objects(destination, source, depth + 1)?;
+            }
+            (_, value) => {
+                destination.insert(key, value);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn mutation_return(
+    clause: Option<&turso_fastdb_parser::ReturnClause>,
+    before: &Value,
+    after: &Value,
+    id: &RecordId,
+    endpoints: Option<(&RecordId, &RecordId)>,
+    params: &Params,
+) -> Result<Option<Value>> {
+    match clause.map(|clause| &clause.kind.value) {
+        Some(ReturnKind::None) => Ok(None),
+        Some(ReturnKind::Before) => Ok(Some(before.clone())),
+        Some(ReturnKind::Diff) => crate::value_functions::diff(before, after).map(Some),
+        Some(ReturnKind::Value(expression)) => {
+            let source = if matches!(after, Value::Object(_)) {
+                after
+            } else {
+                before
+            };
+            let mut document = match source {
+                Value::Object(document) => document.clone(),
+                _ => BTreeMap::new(),
+            };
+            document.remove("id");
+            document.remove("in");
+            document.remove("out");
+            let context = EvalContext {
+                document: &document,
+                id,
+                endpoints,
+                params,
+            };
+            Ok(Some(
+                eval::evaluate(expression, &context)?.into_projection(),
+            ))
+        }
+        Some(ReturnKind::After) | None => Ok(Some(after.clone())),
+    }
+}
+
 fn apply_assignments(
     document: &mut BTreeMap<String, Value>,
-    assignments: Vec<(Vec<String>, EvalValue)>,
+    assignments: Vec<(Vec<String>, AssignmentOperator, EvalValue)>,
 ) -> Result<()> {
-    for (path, value) in assignments {
+    for (path, operator, value) in assignments {
+        let value = match operator {
+            AssignmentOperator::Set => value,
+            AssignmentOperator::Add | AssignmentOperator::Subtract => {
+                apply_compound_assignment(document, &path, operator, value)?
+            }
+        };
         match value {
             EvalValue::Missing => crate::path::remove_path(document, &path)?,
             EvalValue::Present(value) => crate::path::set_path(document, &path, value)?,
         }
     }
     Ok(())
+}
+
+fn apply_compound_assignment(
+    document: &BTreeMap<String, Value>,
+    path: &[String],
+    operator: AssignmentOperator,
+    right: EvalValue,
+) -> Result<EvalValue> {
+    let left = crate::path::get_path(document, path).cloned();
+    let EvalValue::Present(right_value) = &right else {
+        return Ok(EvalValue::Missing);
+    };
+    if let Some(Value::Array(left)) = left.as_ref() {
+        return match operator {
+            AssignmentOperator::Add => {
+                let mut output = left.clone();
+                match right_value {
+                    Value::Array(values) => output.extend(values.iter().cloned()),
+                    value => output.push(value.clone()),
+                }
+                if output.len() > 65_536 {
+                    return Err(FastDbError::ResourceLimit(
+                        "compound array assignment exceeds 65,536 elements".into(),
+                    ));
+                }
+                Ok(EvalValue::Present(Value::Array(output)))
+            }
+            AssignmentOperator::Subtract => Ok(EvalValue::Present(Value::Array(
+                left.iter()
+                    .filter(|value| *value != right_value)
+                    .cloned()
+                    .collect(),
+            ))),
+            AssignmentOperator::Set => unreachable!(),
+        };
+    }
+    if left.is_none() && operator == AssignmentOperator::Add {
+        return Ok(right);
+    }
+    eval::evaluate_binary(
+        match operator {
+            AssignmentOperator::Add => BinaryOperator::Add,
+            AssignmentOperator::Subtract => BinaryOperator::Subtract,
+            AssignmentOperator::Set => unreachable!(),
+        },
+        left.map_or(EvalValue::Missing, EvalValue::Present),
+        right,
+    )
 }
 
 fn project_candidate(

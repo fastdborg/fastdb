@@ -9,7 +9,7 @@ fn assignments(source: &str) -> Vec<Expr> {
     let Statement::Create(statement) = parse_one(source).unwrap() else {
         panic!("expected CREATE")
     };
-    let CreateData::Set(assignments) = statement.data else {
+    let Some(CreateData::Set(assignments)) = statement.data else {
         panic!("expected SET")
     };
     assignments

@@ -114,3 +114,148 @@ fn p14_api_002_record_ranges_select_update_and_delete_by_typed_id_order() {
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p14_api_003_complete_update_data_and_return_modes_are_atomic() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "CREATE person:one SET n = 1, tags = ['old', 'keep'], nested = { x: 1 }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let response = connection
+            .query(
+                "UPDATE person:one SET n += 2, tags -= 'old' RETURN BEFORE; \
+                 UPDATE person:one MERGE { nested: { y: 2 } } RETURN DIFF; \
+                 UPDATE person:one PATCH [{ op: 'add', path: '/patched', 'value': true }]; \
+                 UPDATE person:one UNSET nested.x RETURN VALUE nested; \
+                 UPDATE ONLY person:one REPLACE { final: true } RETURN AFTER",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let StatementResult::Rows(before) = &response.statements[0] else {
+            panic!("expected rows")
+        };
+        assert!(matches!(
+            before[0],
+            Value::Object(ref value) if value.get("n") == Some(&Value::Integer(1))
+        ));
+        let StatementResult::Rows(diff) = &response.statements[1] else {
+            panic!("expected diff")
+        };
+        assert!(matches!(&diff[0], Value::Array(operations) if !operations.is_empty()));
+        let StatementResult::Rows(nested) = &response.statements[3] else {
+            panic!("expected value return")
+        };
+        assert!(matches!(
+            &nested[0],
+            Value::Object(value) if value.get("y") == Some(&Value::Integer(2))
+        ));
+        let StatementResult::Value(Value::Object(final_record)) = &response.statements[4] else {
+            panic!("expected ONLY value")
+        };
+        assert_eq!(final_record.get("final"), Some(&Value::Bool(true)));
+        assert!(!final_record.contains_key("n"));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_004_insert_and_upsert_cover_rows_duplicates_and_missing_records() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let inserted = connection
+            .query(
+                "INSERT INTO person [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]; \
+                 INSERT INTO person (id, name) VALUES ('c', 'C'), ('d', 'D')",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(inserted.mutation_count, 4);
+
+        let duplicate = connection
+            .query(
+                "INSERT INTO person { id: 'a', name: 'new' } \
+                 ON DUPLICATE KEY UPDATE name = $input.name RETURN BEFORE; \
+                 INSERT IGNORE INTO person { id: 'a', name: 'ignored' }; \
+                 UPSERT ONLY person:z SET name = 'Z' RETURN BEFORE; \
+                 UPSERT ONLY person:z SET count += 1 RETURN DIFF",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate.mutation_count, 3);
+        let StatementResult::Rows(before) = &duplicate.statements[0] else {
+            panic!("expected rows")
+        };
+        assert!(matches!(
+            before[0],
+            Value::Object(ref value) if value.get("name") == Some(&Value::Str("A".into()))
+        ));
+        let StatementResult::Rows(ignored) = &duplicate.statements[1] else {
+            panic!("expected rows")
+        };
+        assert!(ignored.is_empty());
+        assert!(matches!(
+            duplicate.statements[2],
+            StatementResult::Value(Value::Null)
+        ));
+        assert!(matches!(
+            duplicate.statements[3],
+            StatementResult::Value(Value::Array(ref operations)) if !operations.is_empty()
+        ));
+
+        let result = connection
+            .query("SELECT name, count FROM person:z", params! {})
+            .await
+            .unwrap();
+        let StatementResult::Rows(rows) = &result.statements[0] else {
+            panic!("expected rows")
+        };
+        assert!(matches!(
+            &rows[0],
+            Value::Object(value)
+                if value.get("name") == Some(&Value::Str("Z".into()))
+                    && value.get("count") == Some(&Value::Integer(1))
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_005_create_and_delete_complete_return_modes() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "CREATE ONLY item:empty RETURN VALUE id; \
+                 CREATE item:gone SET n = 1 RETURN DIFF; \
+                 DELETE ONLY item:gone RETURN AFTER",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.statements[0],
+            StatementResult::Value(Value::RecordId(ref id)) if id == &RecordId::new("item", "empty")
+        ));
+        assert!(matches!(
+            response.statements[1],
+            StatementResult::Rows(ref rows)
+                if matches!(&rows[0], Value::Array(operations) if !operations.is_empty())
+        ));
+        assert!(matches!(
+            response.statements[2],
+            StatementResult::Value(Value::Null)
+        ));
+        connection.close().await.unwrap();
+    });
+}

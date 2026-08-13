@@ -243,9 +243,11 @@ impl<'a> Parser<'a> {
                 Statement::DefineIndex(self.parse_create_index()?)
             }
             TokenKind::Create => Statement::Create(self.parse_create()?),
+            TokenKind::Insert => Statement::Insert(self.parse_insert()?),
+            TokenKind::Upsert => Statement::Upsert(self.parse_update(true)?),
             TokenKind::Relate => Statement::Relate(self.parse_relate()?),
             TokenKind::Select => Statement::Select(self.parse_select()?),
-            TokenKind::Update => Statement::Update(self.parse_update()?),
+            TokenKind::Update => Statement::Update(self.parse_update(false)?),
             TokenKind::Delete => Statement::Delete(self.parse_delete()?),
             TokenKind::Define => self.parse_define()?,
             TokenKind::Explain => Statement::Explain(self.parse_explain()?),
@@ -279,11 +281,11 @@ impl<'a> Parser<'a> {
         let only = self.take(&TokenKind::Only).map(|token| token.span);
         let target = self.parse_target()?;
         let data = if self.eat(&TokenKind::Content) {
-            CreateData::Content(self.parse_expression()?)
+            Some(CreateData::Content(self.parse_expression()?))
         } else if self.eat(&TokenKind::Set) {
-            CreateData::Set(self.parse_assignments()?)
+            Some(CreateData::Set(self.parse_assignments()?))
         } else {
-            return Err(self.unexpected("keyword CONTENT or SET"));
+            None
         };
         if self.at(&TokenKind::Content) || self.at(&TokenKind::Set) {
             return Err(ParseError::new(
@@ -307,6 +309,74 @@ impl<'a> Parser<'a> {
             only,
             target,
             data,
+            return_clause,
+        })
+    }
+
+    fn parse_insert(&mut self) -> Result<InsertStatement, ParseError> {
+        let start = self.expect(&TokenKind::Insert, "keyword INSERT")?.span;
+        let relation = self.take(&TokenKind::Relation).map(|token| token.span);
+        let ignore = self.take(&TokenKind::Ignore).map(|token| token.span);
+        self.expect(&TokenKind::Into, "keyword INTO")?;
+        let table = self.expect_identifier("a table name")?;
+        let data = if self.eat(&TokenKind::LeftParen) {
+            let mut fields = vec![self.expect_identifier("an inserted field")?];
+            while self.eat(&TokenKind::Comma) {
+                let field = self.expect_identifier("an inserted field")?;
+                self.check_element_count(fields.len() + 1, field.span)?;
+                fields.push(field);
+            }
+            self.expect(&TokenKind::RightParen, "')' after inserted fields")?;
+            self.expect(&TokenKind::Values, "keyword VALUES")?;
+            let mut rows = Vec::new();
+            loop {
+                let open = self.expect(&TokenKind::LeftParen, "'(' before inserted values")?;
+                let mut values = vec![self.parse_expression()?];
+                while self.eat(&TokenKind::Comma) {
+                    let value = self.parse_expression()?;
+                    self.check_element_count(values.len() + 1, value.span)?;
+                    values.push(value);
+                }
+                let close = self.expect(&TokenKind::RightParen, "')' after inserted values")?;
+                if values.len() != fields.len() {
+                    return Err(ParseError::new(
+                        ParseErrorKind::InvalidCombination {
+                            what: "each INSERT VALUES row must match the field count",
+                        },
+                        open.span.union(close.span),
+                    ));
+                }
+                self.check_element_count(rows.len() + 1, close.span)?;
+                rows.push(values);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            InsertData::Values { fields, rows }
+        } else {
+            InsertData::Expression(self.parse_expression()?)
+        };
+        let on_duplicate = if self.eat(&TokenKind::On) {
+            self.expect(&TokenKind::Duplicate, "keyword DUPLICATE")?;
+            self.expect(&TokenKind::Key, "keyword KEY")?;
+            self.expect(&TokenKind::Update, "keyword UPDATE")?;
+            self.parse_assignments()?
+        } else {
+            Vec::new()
+        };
+        let return_clause = if self.eat(&TokenKind::Return) {
+            Some(self.parse_return_clause(ReturnContext::Create)?)
+        } else {
+            None
+        };
+        let end = self.previous_end();
+        Ok(InsertStatement {
+            span: Span::new(start.offset, end - start.offset),
+            relation,
+            ignore,
+            table,
+            data,
+            on_duplicate,
             return_clause,
         })
     }
@@ -444,30 +514,16 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_update(&mut self) -> Result<UpdateStatement, ParseError> {
-        let start = self.expect(&TokenKind::Update, "keyword UPDATE")?.span;
-        if self.at(&TokenKind::Only) {
-            return Err(ParseError::unsupported(
-                "UPDATE ONLY is outside the MVP grammar",
-                self.peek().span,
-            ));
-        }
+    fn parse_update(&mut self, upsert: bool) -> Result<UpdateStatement, ParseError> {
+        let keyword = if upsert {
+            TokenKind::Upsert
+        } else {
+            TokenKind::Update
+        };
+        let start = self.expect(&keyword, "UPDATE or UPSERT")?.span;
+        let only = self.take(&TokenKind::Only).map(|token| token.span);
         let target = self.parse_target()?;
-        if matches!(
-            self.peek().kind,
-            TokenKind::Content
-                | TokenKind::Merge
-                | TokenKind::Patch
-                | TokenKind::Replace
-                | TokenKind::Unset
-        ) {
-            return Err(ParseError::unsupported(
-                "only UPDATE ... SET is in the MVP grammar",
-                self.peek().span,
-            ));
-        }
-        self.expect(&TokenKind::Set, "keyword SET")?;
-        let assignments = self.parse_assignments()?;
+        let data = self.parse_update_data()?;
         let condition = if self.eat(&TokenKind::Where) {
             Some(self.parse_expression()?)
         } else {
@@ -491,21 +547,42 @@ impl<'a> Parser<'a> {
         let end = self.previous_end();
         Ok(UpdateStatement {
             span: Span::new(start.offset, end - start.offset),
+            only,
             target,
-            assignments,
+            data,
             condition,
             return_clause,
         })
     }
 
+    fn parse_update_data(&mut self) -> Result<UpdateData, ParseError> {
+        if self.eat(&TokenKind::Content) {
+            Ok(UpdateData::Content(self.parse_expression()?))
+        } else if self.eat(&TokenKind::Merge) {
+            Ok(UpdateData::Merge(self.parse_expression()?))
+        } else if self.eat(&TokenKind::Patch) {
+            Ok(UpdateData::Patch(self.parse_expression()?))
+        } else if self.eat(&TokenKind::Replace) {
+            Ok(UpdateData::Replace(self.parse_expression()?))
+        } else if self.eat(&TokenKind::Set) {
+            Ok(UpdateData::Set(self.parse_assignments()?))
+        } else if self.eat(&TokenKind::Unset) {
+            let mut paths = vec![self.parse_field_path()?];
+            while self.eat(&TokenKind::Comma) {
+                let path = self.parse_field_path()?;
+                self.check_element_count(paths.len() + 1, path.span)?;
+                paths.push(path);
+            }
+            Ok(UpdateData::Unset(paths))
+        } else {
+            Err(self.unexpected("CONTENT, MERGE, PATCH, REPLACE, SET, or UNSET"))
+        }
+    }
+
     fn parse_delete(&mut self) -> Result<DeleteStatement, ParseError> {
         let start = self.expect(&TokenKind::Delete, "keyword DELETE")?.span;
-        if self.at(&TokenKind::From) || self.at(&TokenKind::Only) {
-            return Err(ParseError::unsupported(
-                "DELETE FROM and DELETE ONLY are outside the MVP grammar",
-                self.peek().span,
-            ));
-        }
+        self.eat(&TokenKind::From);
+        let only = self.take(&TokenKind::Only).map(|token| token.span);
         let target = self.parse_target()?;
         let condition = if self.eat(&TokenKind::Where) {
             Some(self.parse_expression()?)
@@ -530,6 +607,7 @@ impl<'a> Parser<'a> {
         let end = self.previous_end();
         Ok(DeleteStatement {
             span: Span::new(start.offset, end - start.offset),
+            only,
             target,
             condition,
             return_clause,
@@ -1032,11 +1110,25 @@ impl<'a> Parser<'a> {
 
     fn parse_assignment(&mut self) -> Result<Assignment, ParseError> {
         let path = self.parse_field_path()?;
-        self.expect(&TokenKind::Equal, "'='")?;
+        let first = self.advance().clone();
+        let (operator, operator_span) = match first.kind {
+            TokenKind::Equal => (AssignmentOperator::Set, first.span),
+            TokenKind::Plus | TokenKind::Minus if self.at(&TokenKind::Equal) => {
+                let equal = self.advance().span;
+                let operator = if matches!(first.kind, TokenKind::Plus) {
+                    AssignmentOperator::Add
+                } else {
+                    AssignmentOperator::Subtract
+                };
+                (operator, first.span.union(equal))
+            }
+            _ => return Err(self.unexpected_at(&first, "'=', '+=', or '-='")),
+        };
         let value = self.parse_expression()?;
         Ok(Assignment {
             span: path.span.union(value.span),
             path,
+            operator: Spanned::new(operator, operator_span),
             value,
         })
     }
@@ -1123,9 +1215,11 @@ impl<'a> Parser<'a> {
         let return_span = self.tokens[self.position - 1].span;
         let token = self.advance().clone();
         let kind = match token.kind {
-            TokenKind::After if context != ReturnContext::Delete => ReturnKind::After,
-            TokenKind::None if context != ReturnContext::Delete => ReturnKind::None,
-            TokenKind::Before if context != ReturnContext::Update => ReturnKind::Before,
+            TokenKind::After => ReturnKind::After,
+            TokenKind::None => ReturnKind::None,
+            TokenKind::Before => ReturnKind::Before,
+            TokenKind::Diff => ReturnKind::Diff,
+            TokenKind::Value => ReturnKind::Value(self.parse_expression()?),
             TokenKind::Eof => {
                 return Err(ParseError::new(
                     ParseErrorKind::UnexpectedEof {
@@ -1137,7 +1231,10 @@ impl<'a> Parser<'a> {
             _ => return Err(self.unexpected_at(&token, context.expected_returns())),
         };
         Ok(ReturnClause {
-            span: return_span.union(token.span),
+            span: return_span.union(match &kind {
+                ReturnKind::Value(expression) => expression.span,
+                _ => token.span,
+            }),
             kind: Spanned::new(kind, token.span),
         })
     }
@@ -1890,7 +1987,7 @@ impl<'a> Parser<'a> {
         }
         loop {
             let key_token = self.advance().clone();
-            let key_kind = match key_token.kind {
+            let key_kind = match key_token.kind.clone() {
                 TokenKind::Ident(value) => ObjectKeyKind::Identifier(value),
                 TokenKind::String(value) => ObjectKeyKind::String(value),
                 TokenKind::Eof => {
@@ -1901,7 +1998,14 @@ impl<'a> Parser<'a> {
                         key_token.span,
                     ));
                 }
-                _ => return Err(self.unexpected_at(&key_token, "an identifier or string key")),
+                kind => match keyword_object_key(&kind) {
+                    Some(value) => ObjectKeyKind::Identifier(value),
+                    None => {
+                        return Err(
+                            self.unexpected_at(&key_token, "an identifier, keyword, or string key")
+                        )
+                    }
+                },
             };
             self.expect(&TokenKind::Colon, "':' after object key")?;
             let value = self.parse_expression()?;
@@ -2151,11 +2255,8 @@ enum ReturnContext {
 
 impl ReturnContext {
     const fn expected_returns(self) -> &'static str {
-        match self {
-            Self::Create => "AFTER, NONE, or BEFORE",
-            Self::Update => "AFTER or NONE",
-            Self::Delete => "BEFORE",
-        }
+        let _ = self;
+        "AFTER, BEFORE, NONE, DIFF, or VALUE expression"
     }
 }
 
@@ -2262,6 +2363,14 @@ fn record_id_part_starts(token: &TokenKind) -> bool {
             | TokenKind::LeftBracket
             | TokenKind::LeftBrace
     )
+}
+
+fn keyword_object_key(token: &TokenKind) -> Option<String> {
+    let description = token.describe();
+    description
+        .strip_prefix("keyword ")
+        .or_else(|| description.strip_prefix("type "))
+        .map(str::to_ascii_lowercase)
 }
 
 fn parse_uuid(value: &str, span: Span) -> Result<uuid::Uuid, ParseError> {
@@ -2407,6 +2516,8 @@ fn is_statement_start(kind: &TokenKind) -> bool {
             | TokenKind::Relate
             | TokenKind::Select
             | TokenKind::Update
+            | TokenKind::Insert
+            | TokenKind::Upsert
             | TokenKind::Delete
             | TokenKind::Define
             | TokenKind::Explain
@@ -2421,9 +2532,7 @@ fn is_statement_start(kind: &TokenKind) -> bool {
 fn is_unsupported_statement(kind: &TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Insert
-            | TokenKind::Upsert
-            | TokenKind::Let
+        TokenKind::Let
             | TokenKind::Info
             | TokenKind::Use
             | TokenKind::Live

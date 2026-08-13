@@ -57,6 +57,8 @@ pub struct Script {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Create(CreateStatement),
+    Insert(InsertStatement),
+    Upsert(UpdateStatement),
     Relate(RelateStatement),
     Select(SelectStatement),
     Update(UpdateStatement),
@@ -77,6 +79,8 @@ impl Statement {
     pub const fn span(&self) -> Span {
         match self {
             Self::Create(stmt) => stmt.span,
+            Self::Insert(stmt) => stmt.span,
+            Self::Upsert(stmt) => stmt.span,
             Self::Relate(stmt) => stmt.span,
             Self::Select(stmt) => stmt.span,
             Self::Update(stmt) => stmt.span,
@@ -97,8 +101,28 @@ pub struct CreateStatement {
     pub span: Span,
     pub only: Option<Span>,
     pub target: Target,
-    pub data: CreateData,
+    pub data: Option<CreateData>,
     pub return_clause: Option<ReturnClause>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InsertStatement {
+    pub span: Span,
+    pub relation: Option<Span>,
+    pub ignore: Option<Span>,
+    pub table: Identifier,
+    pub data: InsertData,
+    pub on_duplicate: Vec<Assignment>,
+    pub return_clause: Option<ReturnClause>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InsertData {
+    Expression(Expr),
+    Values {
+        fields: Vec<Identifier>,
+        rows: Vec<Vec<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,15 +189,27 @@ pub struct NonnegativeInteger {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateStatement {
     pub span: Span,
+    pub only: Option<Span>,
     pub target: Target,
-    pub assignments: Vec<Assignment>,
+    pub data: UpdateData,
     pub condition: Option<Expr>,
     pub return_clause: Option<ReturnClause>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum UpdateData {
+    Content(Expr),
+    Merge(Expr),
+    Patch(Expr),
+    Replace(Expr),
+    Set(Vec<Assignment>),
+    Unset(Vec<FieldPath>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeleteStatement {
     pub span: Span,
+    pub only: Option<Span>,
     pub target: Target,
     pub condition: Option<Expr>,
     pub return_clause: Option<ReturnClause>,
@@ -183,7 +219,15 @@ pub struct DeleteStatement {
 pub struct Assignment {
     pub span: Span,
     pub path: FieldPath,
+    pub operator: Spanned<AssignmentOperator>,
     pub value: Expr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentOperator {
+    Set,
+    Add,
+    Subtract,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,11 +236,13 @@ pub struct ReturnClause {
     pub kind: Spanned<ReturnKind>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ReturnKind {
     After,
     None,
     Before,
+    Diff,
+    Value(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]

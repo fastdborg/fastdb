@@ -1037,16 +1037,31 @@ fn validate_statement_limits(
     params: &Params,
     limits: &ResourceLimits,
 ) -> Result<()> {
-    use turso_fastdb_parser::{CreateData, ProjectionList, SchemaTypeKind, Statement};
+    use turso_fastdb_parser::{
+        CreateData, InsertData, ProjectionList, ReturnKind, SchemaTypeKind, Statement, UpdateData,
+    };
 
     let mut expressions = Vec::new();
     match statement {
         Statement::Create(statement) => match &statement.data {
-            CreateData::Content(expression) => expressions.push(expression),
-            CreateData::Set(assignments) => {
+            Some(CreateData::Content(expression)) => expressions.push(expression),
+            Some(CreateData::Set(assignments)) => {
                 expressions.extend(assignments.iter().map(|assignment| &assignment.value));
             }
+            None => {}
         },
+        Statement::Insert(statement) => {
+            match &statement.data {
+                InsertData::Expression(expression) => expressions.push(expression),
+                InsertData::Values { rows, .. } => expressions.extend(rows.iter().flatten()),
+            }
+            expressions.extend(
+                statement
+                    .on_duplicate
+                    .iter()
+                    .map(|assignment| &assignment.value),
+            );
+        }
         Statement::Relate(statement) => {
             expressions.extend([&statement.from, &statement.to]);
             if let Some(data) = &statement.data {
@@ -1064,13 +1079,17 @@ fn validate_statement_limits(
             }
             expressions.extend(statement.condition.iter());
         }
-        Statement::Update(statement) => {
-            expressions.extend(
-                statement
-                    .assignments
-                    .iter()
-                    .map(|assignment| &assignment.value),
-            );
+        Statement::Update(statement) | Statement::Upsert(statement) => {
+            match &statement.data {
+                UpdateData::Content(expression)
+                | UpdateData::Merge(expression)
+                | UpdateData::Patch(expression)
+                | UpdateData::Replace(expression) => expressions.push(expression),
+                UpdateData::Set(assignments) => {
+                    expressions.extend(assignments.iter().map(|assignment| &assignment.value))
+                }
+                UpdateData::Unset(_) => {}
+            }
             expressions.extend(statement.condition.iter());
         }
         Statement::Delete(statement) => expressions.extend(statement.condition.iter()),
@@ -1101,6 +1120,19 @@ fn validate_statement_limits(
         | Statement::Begin(_)
         | Statement::Commit(_)
         | Statement::Cancel(_) => {}
+    }
+    let return_clause = match statement {
+        Statement::Create(statement) => statement.return_clause.as_ref(),
+        Statement::Insert(statement) => statement.return_clause.as_ref(),
+        Statement::Upsert(statement) | Statement::Update(statement) => {
+            statement.return_clause.as_ref()
+        }
+        Statement::Relate(statement) => statement.return_clause.as_ref(),
+        Statement::Delete(statement) => statement.return_clause.as_ref(),
+        _ => None,
+    };
+    if let Some(ReturnKind::Value(expression)) = return_clause.map(|clause| &clause.kind.value) {
+        expressions.push(expression);
     }
     for expression in expressions {
         validate_expression_limits(expression, params, limits)?;

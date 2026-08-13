@@ -77,35 +77,36 @@ pub(crate) struct EvalContext<'a> {
 pub(crate) fn validate_parameter_references(statement: &Statement, params: &Params) -> Result<()> {
     let mut names = Vec::new();
     match statement {
-        Statement::Create(statement) => match &statement.data {
-            turso_fastdb_parser::CreateData::Content(expression) => {
-                reject_unavailable_functions(expression)?;
-                collect_parameters(expression, &mut names)
+        Statement::Create(statement) => {
+            if let Some(data) = &statement.data {
+                collect_create_data_parameters(data, &mut names)?;
             }
-            turso_fastdb_parser::CreateData::Set(assignments) => {
-                for assignment in assignments {
-                    reject_unavailable_functions(&assignment.value)?;
-                    collect_parameters(&assignment.value, &mut names);
+            collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
+        }
+        Statement::Insert(statement) => {
+            match &statement.data {
+                turso_fastdb_parser::InsertData::Expression(expression) => {
+                    reject_unavailable_functions(expression)?;
+                    collect_parameters(expression, &mut names);
+                }
+                turso_fastdb_parser::InsertData::Values { rows, .. } => {
+                    for expression in rows.iter().flatten() {
+                        reject_unavailable_functions(expression)?;
+                        collect_parameters(expression, &mut names);
+                    }
                 }
             }
-        },
+            collect_assignment_parameters(&statement.on_duplicate, &mut names)?;
+            collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
+            names.retain(|name| *name != "input");
+        }
         Statement::Relate(statement) => {
             collect_parameters(&statement.from, &mut names);
             collect_parameters(&statement.to, &mut names);
             if let Some(data) = &statement.data {
-                match data {
-                    turso_fastdb_parser::CreateData::Content(expression) => {
-                        reject_unavailable_functions(expression)?;
-                        collect_parameters(expression, &mut names);
-                    }
-                    turso_fastdb_parser::CreateData::Set(assignments) => {
-                        for assignment in assignments {
-                            reject_unavailable_functions(&assignment.value)?;
-                            collect_parameters(&assignment.value, &mut names);
-                        }
-                    }
-                }
+                collect_create_data_parameters(data, &mut names)?;
             }
+            collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
         }
         Statement::Select(statement) => {
             if let turso_fastdb_parser::ProjectionList::Fields(projections) = &statement.projections
@@ -120,21 +121,20 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
                 collect_parameters(condition, &mut names);
             }
         }
-        Statement::Update(statement) => {
-            for assignment in &statement.assignments {
-                reject_unavailable_functions(&assignment.value)?;
-                collect_parameters(&assignment.value, &mut names);
-            }
+        Statement::Update(statement) | Statement::Upsert(statement) => {
+            collect_update_data_parameters(&statement.data, &mut names)?;
             if let Some(condition) = &statement.condition {
                 reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
+            collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
         }
         Statement::Delete(statement) => {
             if let Some(condition) = &statement.condition {
                 reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
+            collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
         }
         Statement::Explain(statement) => {
             if let turso_fastdb_parser::ProjectionList::Fields(projections) =
@@ -164,6 +164,66 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         return Err(FastDbError::Schema(format!(
             "missing value for parameter ${name}"
         )));
+    }
+    Ok(())
+}
+
+fn collect_create_data_parameters<'a>(
+    data: &'a turso_fastdb_parser::CreateData,
+    names: &mut Vec<&'a str>,
+) -> Result<()> {
+    match data {
+        turso_fastdb_parser::CreateData::Content(expression) => {
+            reject_unavailable_functions(expression)?;
+            collect_parameters(expression, names);
+        }
+        turso_fastdb_parser::CreateData::Set(assignments) => {
+            collect_assignment_parameters(assignments, names)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_assignment_parameters<'a>(
+    assignments: &'a [turso_fastdb_parser::Assignment],
+    names: &mut Vec<&'a str>,
+) -> Result<()> {
+    for assignment in assignments {
+        reject_unavailable_functions(&assignment.value)?;
+        collect_parameters(&assignment.value, names);
+    }
+    Ok(())
+}
+
+fn collect_update_data_parameters<'a>(
+    data: &'a turso_fastdb_parser::UpdateData,
+    names: &mut Vec<&'a str>,
+) -> Result<()> {
+    match data {
+        turso_fastdb_parser::UpdateData::Content(expression)
+        | turso_fastdb_parser::UpdateData::Merge(expression)
+        | turso_fastdb_parser::UpdateData::Patch(expression)
+        | turso_fastdb_parser::UpdateData::Replace(expression) => {
+            reject_unavailable_functions(expression)?;
+            collect_parameters(expression, names);
+        }
+        turso_fastdb_parser::UpdateData::Set(assignments) => {
+            collect_assignment_parameters(assignments, names)?;
+        }
+        turso_fastdb_parser::UpdateData::Unset(_) => {}
+    }
+    Ok(())
+}
+
+fn collect_return_parameters<'a>(
+    clause: Option<&'a turso_fastdb_parser::ReturnClause>,
+    names: &mut Vec<&'a str>,
+) -> Result<()> {
+    if let Some(turso_fastdb_parser::ReturnKind::Value(expression)) =
+        clause.map(|clause| &clause.kind.value)
+    {
+        reject_unavailable_functions(expression)?;
+        collect_parameters(expression, names);
     }
     Ok(())
 }
@@ -3263,7 +3323,7 @@ fn evaluate_unary(operator: UnaryOperator, value: EvalValue) -> Result<EvalValue
     }
 }
 
-fn evaluate_binary(
+pub(crate) fn evaluate_binary(
     operator: BinaryOperator,
     left: EvalValue,
     right: EvalValue,
