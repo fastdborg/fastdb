@@ -1687,6 +1687,9 @@ fn order_query_rows(
         rows.shuffle(&mut rand::rng());
         return Ok(());
     }
+    if statement.order_by.is_empty() {
+        return Ok(());
+    }
     let keyed = rows
         .iter()
         .map(|row| {
