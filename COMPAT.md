@@ -9,7 +9,7 @@ FastDB implements a documented SurrealQL-compatible subset. This file is the nor
 - **Planned**: reserved for parsed behavior that has not reached execution.
 - **Unsupported**: explicitly rejected and outside the MVP target.
 
-Phase 5 hardens the complete MVP expression, parameter, CRUD, result, ordered-script, schema, index, transaction, asynchronous Rust API, and CLI surface. Anything not listed as Supported or Partial remains explicitly outside this release candidate.
+Phase 5 hardened the MVP baseline. Phase 6 adds the evidenced scalar-expression projection and built-in B-tree maintenance subsets while keeping graph, FTS, vector, and function execution unavailable. Anything not listed as Supported or Partial remains explicitly outside the current phase.
 
 ## Values and record IDs
 
@@ -41,7 +41,7 @@ Phase 5 hardens the complete MVP expression, parameter, CRUD, result, ordered-sc
 | `OP-REL` | Partial | Execute `<`, `<=`, `>`, `>=` using the documented total type order. | `P1-EXPR-003` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P3-CRUD-002` |
 | `OP-EQ` | Partial | Execute recursive `=` and `!=`; `==` and `IS` are rejected. | `P1-EXPR-003`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P2-IDX-001` |
 | `OP-BOOL` | Partial | Execute short-circuit operand-returning `AND` and `OR`; symbolic boolean operators are rejected. | `P1-EXPR-003`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P3-IDX-001` |
-| `EXPR-EXCLUDED` | Unsupported | Functions, casts, subqueries, traversal, ranges, indexing, modulo, power, and broader operators fail explicitly. | `P1-EXPR-005` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions) | `P1-BRIDGE-003`, `P3-PARAM-001` |
+| `EXPR-EXCLUDED` | Unsupported | Function calls now have a bounded namespaced AST but remain explicit pre-execution errors; casts, subqueries, traversal, ranges, indexing, modulo, power, and broader operators also fail explicitly. | `P1-EXPR-005`, `P6-AST-001` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P6-LANG-002` |
 
 ## Statements and clauses
 
@@ -53,12 +53,13 @@ Phase 5 hardens the complete MVP expression, parameter, CRUD, result, ordered-sc
 | `STMT-DELETE` | Partial | Execute record or table DELETE with optional WHERE and `RETURN BEFORE`; other returns are rejected. | `P1-STMT-001`, `P1-STMT-004`, `P1-STMT-006` | [Return modes](docs/compat-research/phase3.md#return-modes-ordering-and-missing-targets) | `P3-CRUD-001`, `P3-ATOMIC-002` |
 | `CLAUSE-ONLY` | Supported | Execute CREATE ONLY and SELECT FROM ONLY record; SELECT ONLY table is rejected. | `P1-STMT-001`, `P1-STMT-004` | [Phase 3 results](docs/compat-research/phase3.md#result-and-projection-shapes) | `P3-RESULT-001` |
 | `CLAUSE-CONTENT-SET` | Partial | CREATE accepts CONTENT or SET; UPDATE accepts SET. RHS values use a document snapshot and later writes win. | `P1-STMT-001`, `P1-STMT-004`, `P1-LIMIT-004` | [SET evaluation](docs/compat-research/phase3.md#set-evaluation-and-conflicting-assignments) | `P3-CRUD-001`, `P2-BRIDGE-002` |
-| `CLAUSE-PROJECTION` | Partial | Execute `*` alone or comma-separated paths with optional aliases; aliases write top-level keys. | `P1-STMT-001`, `P1-STMT-002`, `P1-STMT-004` | [Phase 3 results](docs/compat-research/phase3.md#result-and-projection-shapes) | `P3-RESULT-001` |
+| `CLAUSE-PROJECTION` | Partial | Execute `*` alone, unaliased comma-separated paths, or supported scalar expressions with required `AS` aliases; aliases write top-level result keys without changing stored data. | `P1-STMT-001`, `P6-AST-002` | [Phase 3 results](docs/compat-research/phase3.md#result-and-projection-shapes), [Phase 6 projections](docs/compat-research/phase6.md#expression-projections) | `P3-RESULT-001`, `P6-LANG-001`, `P6-CLI-001` |
 | `CLAUSE-WHERE` | Partial | Execute all MVP expressions on SELECT, UPDATE, and DELETE; unsupported expressions fail explicitly. | `P1-STMT-001`, `P1-STMT-004` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-CRUD-001`, `P3-IDX-001` |
 | `CLAUSE-ORDER` | Partial | Execute comma-separated paths with optional ASC or DESC before pagination and projection. | `P1-STMT-001`, `P1-STMT-002` | [Ordering](docs/compat-research/phase3.md#return-modes-ordering-and-missing-targets) | `P3-CRUD-002` |
 | `CLAUSE-PAGE` | Partial | Execute LIMIT then START in `0..=i64::MAX`; reject negatives, fractions, overflow, duplicates, and reordering. | `P1-STMT-004`, `P1-STMT-006` | [Ordering](docs/compat-research/phase3.md#return-modes-ordering-and-missing-targets) | `P3-CRUD-002` |
 | `CLAUSE-RETURN` | Supported | Execute CREATE AFTER/NONE/BEFORE, UPDATE AFTER/NONE, DELETE BEFORE, plus statement defaults. | `P1-STMT-001`, `P1-STMT-006` | [Phase 3 results](docs/compat-research/phase3.md#result-and-projection-shapes) | `P3-RESULT-001`, `P3-CRUD-001` |
 | `SCRIPT-MULTI` | Supported | Lazily execute ordered nonempty statements with semicolon separators; stop at the first parse or runtime error. | `P1-STMT-003`, `P1-LIMIT-005` | [Explicit transactions](docs/compat-research/phase3.md#explicit-transactions) | `P3-PARSE-001`, `P3-PARSE-002`, `P3-PARSE-003`, `P3-SCRIPT-001` |
+| `STMT-EXPLAIN` | Partial | Execute prefix `EXPLAIN SELECT ...` and return ordinary `{ordinal, detail}` rows. `ANALYZE`, format selection, arbitrary values, and trailing SELECT EXPLAIN remain rejected. | `P6-AST-003` | [Phase 6 explain](docs/compat-research/phase6.md#explain) | `P6-INDEX-001`, `P6-CLI-001` |
 
 ## Schema and transactions
 
@@ -67,6 +68,8 @@ Phase 5 hardens the complete MVP expression, parameter, CRUD, result, ordered-sc
 | `SCHEMA-TABLE` | Supported | Execute exact DEFINE TABLE SCHEMALESS or SCHEMAFULL grammar, including explicit transactions. | `P1-STMT-001` | [Phase 2 definitions](docs/compat-research/phase2.md#nested-paths-and-duplicate-definitions) | `P2-SCHEMA-006`, `P3-TXN-001` |
 | `SCHEMA-FIELD` | Supported | Execute DEFINE FIELD on an existing table and validate all existing rows atomically. | `P1-STMT-001` | [Phase 2 fields](docs/compat-research/phase2.md#required-optional-null-and-numeric-coercion) | `P2-SCHEMA-005`, `P3-ATOMIC-003` |
 | `SCHEMA-INDEX` | Supported | Execute ordered scalar DEFINE INDEX fields with optional UNIQUE; excluded index kinds remain rejected. | `P1-STMT-001`, `P1-STMT-005` | [Phase 2 indexes](docs/compat-research/phase2.md#unique-null-missing-and-composite-indexes) | `P2-IDX-001`, `P3-IDX-001` |
+| `SCHEMA-INDEX-REMOVE` | Partial | Execute `REMOVE INDEX name ON [TABLE] table` atomically for built-in B-trees; reject `IF EXISTS` and other REMOVE resources. | `P6-AST-003` | [Phase 6 maintenance](docs/compat-research/phase6.md#index-removal-and-rebuild) | `P6-INDEX-001`, `P6-CLI-001` |
+| `SCHEMA-INDEX-REBUILD` | Partial | Execute blocking `REBUILD INDEX name ON [TABLE] table` atomically for built-in B-trees; reject `IF EXISTS` and `CONCURRENTLY`. | `P6-AST-003` | [Phase 6 maintenance](docs/compat-research/phase6.md#index-removal-and-rebuild) | `P6-INDEX-001`, `P6-CLI-001` |
 | `TYPE-BASE` | Supported | Enforce bool, int, float, number, string, object, array, and record; null belongs to no base type. | `P1-STMT-001` | [Phase 2 fields](docs/compat-research/phase2.md#required-optional-null-and-numeric-coercion) | `P2-SCHEMA-003`, `P3-CRUD-003` |
 | `TYPE-OPTION` | Supported | Enforce recursive option types: absence is permitted but null is not. | `P1-STMT-001`, `P1-LIMIT-003` | [Phase 2 fields](docs/compat-research/phase2.md#required-optional-null-and-numeric-coercion) | `P2-SCHEMA-003`, `P3-CRUD-003` |
 | `TXN-BEGIN` | Supported | Execute bare BEGIN through BEGIN IMMEDIATE; nested BEGIN is a transaction error. | `P1-STMT-001`, `P1-STMT-005` | [Explicit transactions](docs/compat-research/phase3.md#explicit-transactions) | `P3-TXN-001`, `P3-TXN-003` |
@@ -77,10 +80,10 @@ Phase 5 hardens the complete MVP expression, parameter, CRUD, result, ordered-sc
 
 | Feature ID | Status | Exact accepted / rejected syntax | Parser tests | Provenance | Execution / conformance |
 | --- | --- | --- | --- | --- | --- |
-| `EXCL-STMT` | Unsupported | INSERT, UPSERT, RELATE, LET, REMOVE, INFO, USE, LIVE, SHOW, SLEEP, THROW, FOR, and IF fail at their introducer. | `P1-STMT-005` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses) | `P1-BRIDGE-003`, `P3-SCRIPT-001` |
-| `EXCL-CLAUSE` | Unsupported | TIMEOUT, FETCH, GROUP, SPLIT, OMIT, EXPLAIN, WITH, VALUE, MERGE, PATCH, PARALLEL, and excluded index kinds fail explicitly. | `P1-STMT-005` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses) | `P1-BRIDGE-003`, `P3-PARAM-001` |
+| `EXCL-STMT` | Unsupported | INSERT, UPSERT, RELATE, LET, non-index REMOVE resources, INFO, USE, LIVE, SHOW, SLEEP, THROW, FOR, and IF fail explicitly. | `P1-STMT-005`, `P6-AST-003` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses) | `P1-BRIDGE-003`, `P3-SCRIPT-001`, `P6-INDEX-001` |
+| `EXCL-CLAUSE` | Unsupported | TIMEOUT, FETCH, GROUP, SPLIT, OMIT, trailing SELECT EXPLAIN, general WITH, VALUE, MERGE, PATCH, PARALLEL, and executable specialized index kinds fail explicitly. | `P1-STMT-005`, `P6-AST-004` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P3-PARAM-001`, `P6-LANG-002` |
 | `EXCL-GRAPH` | Unsupported | Graph traversal, relation statements, complex record IDs, and ranges are not accepted. | `P1-EXPR-005`, `P1-STMT-005` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions) | `P1-BRIDGE-003` |
-| `EXCL-ADVANCED` | Unsupported | Functions, casts, subqueries, permissions, users, namespaces, scopes, events, analyzers, views, live queries, and specialized indexes are outside the MVP. | `P1-EXPR-005`, `P1-STMT-005` | [Phase 1 exclusions](docs/compat-research/phase1.md#phase-1-interpretation) | `P1-BRIDGE-003` |
+| `EXCL-ADVANCED` | Unsupported | Namespaced functions, casts, subqueries, permissions, users, namespaces, scopes, events, analyzers, views, live queries, and specialized index execution remain unavailable. | `P6-AST-001`, `P1-STMT-005`, `P6-AST-004` | [Phase 1 exclusions](docs/compat-research/phase1.md#phase-1-interpretation), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P6-LANG-002`, `P6-CLI-002` |
 
 ## Phase 3 execution contracts
 

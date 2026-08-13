@@ -63,6 +63,9 @@ pub enum Statement {
     DefineTable(DefineTableStatement),
     DefineField(DefineFieldStatement),
     DefineIndex(DefineIndexStatement),
+    Explain(ExplainStatement),
+    RemoveIndex(IndexMaintenanceStatement),
+    RebuildIndex(IndexMaintenanceStatement),
     Begin(TransactionStatement),
     Commit(TransactionStatement),
     Cancel(TransactionStatement),
@@ -78,6 +81,8 @@ impl Statement {
             Self::DefineTable(stmt) => stmt.span,
             Self::DefineField(stmt) => stmt.span,
             Self::DefineIndex(stmt) => stmt.span,
+            Self::Explain(stmt) => stmt.span,
+            Self::RemoveIndex(stmt) | Self::RebuildIndex(stmt) => stmt.span,
             Self::Begin(stmt) | Self::Commit(stmt) | Self::Cancel(stmt) => stmt.span,
         }
     }
@@ -119,7 +124,7 @@ pub enum ProjectionList {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projection {
     pub span: Span,
-    pub path: FieldPath,
+    pub expression: Expr,
     pub alias: Option<Identifier>,
 }
 
@@ -209,6 +214,42 @@ pub struct DefineIndexStatement {
     pub table: Identifier,
     pub fields: Vec<FieldPath>,
     pub unique: Option<Span>,
+    pub kind: IndexKindSyntax,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndexKindSyntax {
+    Btree,
+    Fulltext {
+        span: Span,
+        analyzer: Identifier,
+    },
+    Provider {
+        span: Span,
+        name: Identifier,
+        options: Vec<IndexOption>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexOption {
+    pub span: Span,
+    pub key: Identifier,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExplainStatement {
+    pub span: Span,
+    pub select: SelectStatement,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexMaintenanceStatement {
+    pub span: Span,
+    pub name: Identifier,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -326,6 +367,10 @@ pub enum ExprKind {
     Parameter(String),
     RecordId(RecordId),
     FieldPath(FieldPath),
+    FunctionCall {
+        name: Vec<Identifier>,
+        arguments: Vec<Expr>,
+    },
     Unary {
         operator: Spanned<UnaryOperator>,
         operand: Box<Expr>,

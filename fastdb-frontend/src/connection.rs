@@ -109,10 +109,14 @@ impl Database {
     /// Open (or create) a file-backed database at `path`.
     pub fn open(path: &str) -> Result<Self> {
         let io = turso_core::Database::io_for_path(path)?;
-        Self::open_with_io_inner(path, io)
+        Self::open_with_io_inner(path, io, None)
     }
 
-    fn open_with_io_inner(path: &str, io: Arc<dyn turso_core::IO>) -> Result<Self> {
+    fn open_with_io_inner(
+        path: &str,
+        io: Arc<dyn turso_core::IO>,
+        catalog_failpoint: Option<Failpoint>,
+    ) -> Result<Self> {
         let flags = turso_core::OpenFlags::default();
         let file = io.open_file(path, flags, true)?;
         let db_file = Arc::new(turso_core::storage::database::DatabaseFile::new(file));
@@ -123,7 +127,7 @@ impl Database {
         let db = turso_core::Database::open(io, path, opts)?;
         let coordinator = coordinator_for_path(path)?;
         let database = Self { db, coordinator };
-        database.initialize_catalog()?;
+        database.initialize_catalog(catalog_failpoint)?;
         Ok(database)
     }
 
@@ -132,7 +136,15 @@ impl Database {
     #[cfg(feature = "testing")]
     #[doc(hidden)]
     pub fn open_with_io(path: &str, io: Arc<dyn turso_core::IO>) -> Result<Self> {
-        Self::open_with_io_inner(path, io)
+        Self::open_with_io_inner(path, io, None)
+    }
+
+    /// Open with one catalog failpoint armed before format migration starts.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn open_with_catalog_failpoint(path: &str, failpoint: Failpoint) -> Result<Self> {
+        let io = turso_core::Database::io_for_path(path)?;
+        Self::open_with_io_inner(path, io, Some(failpoint))
     }
 
     /// Open a private in-memory database (used by unit tests).
@@ -146,8 +158,14 @@ impl Database {
         Ok(Connection::new(conn, self.coordinator.clone()))
     }
 
-    fn initialize_catalog(&self) -> Result<()> {
+    fn initialize_catalog(&self, catalog_failpoint: Option<Failpoint>) -> Result<()> {
         let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+        #[cfg(feature = "testing")]
+        if let Some(failpoint) = catalog_failpoint {
+            connection.failpoints.arm(failpoint);
+        }
+        #[cfg(not(feature = "testing"))]
+        debug_assert!(catalog_failpoint.is_none());
         let _schema_guard =
             self.coordinator.schema_mutex.lock().map_err(|_| {
                 FastDbError::Transaction("database schema mutex is poisoned".into())
@@ -736,6 +754,79 @@ impl Connection {
             .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))
     }
 
+    /// Install a test-only hidden-column provider fixture. Both names are
+    /// opaque IDs; no logical identifier or source text reaches Turso.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn install_test_provider(&self, encoded_document: &str) -> Result<TestProviderHandle> {
+        let table = crate::names::physical_table_name(crate::names::CatalogId::new_random());
+        let hidden_column =
+            crate::names::physical_hidden_column_name(crate::names::CatalogId::new_random());
+        let derived = crate::provider::derive_test_hidden_value(encoded_document)?;
+        self.with_transaction(|| {
+            self.exec_bound(
+                crate::lower::test_provider_table_ddl(&table, &hidden_column)?,
+                vec![],
+            )?;
+            let (insert, bindings) = crate::lower::test_provider_insert_stmt(
+                &table,
+                &hidden_column,
+                encoded_document,
+                derived,
+            )?;
+            self.exec_bound(insert, bindings)
+        })?;
+        Ok(TestProviderHandle {
+            table,
+            hidden_column,
+        })
+    }
+
+    /// Update a test provider's document and derived state in one real
+    /// transaction, with a failure boundary between the physical writes.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn write_test_provider(
+        &self,
+        handle: &TestProviderHandle,
+        encoded_document: &str,
+    ) -> Result<()> {
+        let derived = crate::provider::derive_test_hidden_value(encoded_document)?;
+        self.with_transaction(|| {
+            let (update, bindings) =
+                crate::lower::test_provider_update_document_stmt(&handle.table, encoded_document)?;
+            self.exec_bound(update, bindings)?;
+            self.check_failpoint(Failpoint::AfterTestProviderDocument)?;
+            let (update, bindings) = crate::lower::test_provider_update_hidden_stmt(
+                &handle.table,
+                &handle.hidden_column,
+                derived,
+            )?;
+            self.exec_bound(update, bindings)
+        })
+    }
+
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn read_test_provider(&self, handle: &TestProviderHandle) -> Result<(String, i64)> {
+        let rows = self.collect_rows(
+            crate::lower::test_provider_select_stmt(&handle.table, &handle.hidden_column)?,
+            vec![],
+        )?;
+        let row = rows
+            .first()
+            .filter(|_| rows.len() == 1)
+            .ok_or_else(|| FastDbError::Engine("test provider row is missing".into()))?;
+        match row.as_slice() {
+            [turso_core::Value::Text(document), turso_core::Value::Numeric(turso_core::Numeric::Integer(derived))] => {
+                Ok((document.as_str().to_string(), *derived))
+            }
+            _ => Err(FastDbError::Engine(
+                "test provider returned an unexpected row shape".into(),
+            )),
+        }
+    }
+
     /// Explain the actual canonical composite filter lowering.
     #[cfg(feature = "testing")]
     #[doc(hidden)]
@@ -854,8 +945,7 @@ impl Drop for Connection {
     }
 }
 
-#[cfg(feature = "testing")]
-fn explain_statement(connection: &Connection, select_stmt: Stmt) -> Result<Vec<String>> {
+pub(crate) fn explain_statement(connection: &Connection, select_stmt: Stmt) -> Result<Vec<String>> {
     let explain_cmd = turso_parser::ast::Cmd::ExplainQueryPlan(select_stmt);
     let explain_sql = explain_cmd.to_string();
     let mut reparsed = turso_parser::parser::Parser::new(explain_sql.as_bytes())
@@ -1015,6 +1105,14 @@ pub struct CacheStats {
     pub prepared_misses: u64,
 }
 
+#[cfg(feature = "testing")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct TestProviderHandle {
+    table: String,
+    hidden_column: String,
+}
+
 fn scalar_kind(value: &crate::Value) -> Result<ScalarKind> {
     match value {
         crate::Value::Null => Ok(ScalarKind::Null),
@@ -1031,7 +1129,6 @@ fn scalar_kind(value: &crate::Value) -> Result<ScalarKind> {
 /// The SQLite parser annotates unaliased result expressions with their source
 /// text. Directly constructed AST omits that display-only metadata; it does
 /// not affect planning, so remove it before the test-only round-trip check.
-#[cfg(feature = "testing")]
 fn strip_parser_implicit_result_names(cmd: &mut turso_parser::ast::Cmd) {
     use turso_parser::ast::{As, Cmd, OneSelect, ResultColumn, Stmt};
 

@@ -60,6 +60,7 @@ pub enum TokenKind {
     Relate,
     Let,
     Remove,
+    Rebuild,
     Info,
     Use,
     Live,
@@ -75,6 +76,7 @@ pub enum TokenKind {
     Omit,
     Explain,
     With,
+    Using,
     Value,
     Merge,
     Patch,
@@ -90,6 +92,7 @@ pub enum TokenKind {
     Search,
     Analyzer,
     Parallel,
+    DoubleColon,
     Colon,
     Star,
     Dot,
@@ -191,6 +194,7 @@ impl TokenKind {
             Self::Relate => "keyword RELATE",
             Self::Let => "keyword LET",
             Self::Remove => "keyword REMOVE",
+            Self::Rebuild => "keyword REBUILD",
             Self::Info => "keyword INFO",
             Self::Use => "keyword USE",
             Self::Live => "keyword LIVE",
@@ -206,6 +210,7 @@ impl TokenKind {
             Self::Omit => "keyword OMIT",
             Self::Explain => "keyword EXPLAIN",
             Self::With => "keyword WITH",
+            Self::Using => "keyword USING",
             Self::Value => "keyword VALUE",
             Self::Merge => "keyword MERGE",
             Self::Patch => "keyword PATCH",
@@ -221,6 +226,7 @@ impl TokenKind {
             Self::Search => "keyword SEARCH",
             Self::Analyzer => "keyword ANALYZER",
             Self::Parallel => "keyword PARALLEL",
+            Self::DoubleColon => "'::'",
             Self::Colon => "':'",
             Self::Star => "'*'",
             Self::Dot => "'.'",
@@ -339,6 +345,11 @@ impl Lexer<'_> {
 
         let single = |kind| Ok(Token::new(kind, Span::new(start, 1)));
         match ch {
+            ':' if self.peek_next() == Some(':') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::DoubleColon, Span::new(start, 2)))
+            }
             ':' => {
                 self.bump();
                 single(TokenKind::Colon)
@@ -782,10 +793,12 @@ fn classify_identifier(value: &str) -> TokenKind {
         "object" => ObjectType, "array" => ArrayType, "record" => RecordType,
         "option" => OptionType, "transaction" => Transaction, "insert" => Insert,
         "upsert" => Upsert, "relate" => Relate, "let" => Let, "remove" => Remove,
+        "rebuild" => Rebuild,
         "info" => Info, "use" => Use, "live" => Live, "show" => Show, "sleep" => Sleep,
         "throw" => Throw, "for" => For, "if" => If, "timeout" => Timeout,
         "fetch" => Fetch, "group" => Group, "split" => Split, "omit" => Omit,
-        "explain" => Explain, "with" => With, "value" => Value, "merge" => Merge,
+        "explain" => Explain, "with" => With, "using" => Using, "value" => Value,
+        "merge" => Merge,
         "patch" => Patch, "replace" => Replace, "unset" => Unset,
         "permissions" => Permissions, "assert" => Assert, "default" => Default,
         "readonly" => Readonly, "changefeed" => Changefeed, "view" => View,

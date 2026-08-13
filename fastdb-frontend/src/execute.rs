@@ -14,8 +14,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLockReadGuard;
 use turso_fastdb_parser::{
-    BinaryOperator, CreateData, Expr, ExprKind, ProjectionList, RecordIdPart, RecordIdPartKind,
-    ReturnKind, Span, Statement, TableMode, Target,
+    BinaryOperator, CreateData, Expr, ExprKind, IndexKindSyntax, ProjectionList, RecordIdPart,
+    RecordIdPartKind, ReturnKind, Span, Statement, TableMode, Target,
 };
 
 #[derive(Debug, Clone)]
@@ -97,6 +97,14 @@ pub(crate) fn run_statement(
                 Statement::DefineIndex(statement) => {
                     run_define_index(conn, execution, statement, source)
                         .map(StatementExecution::read_only)
+                }
+                Statement::Explain(statement) => run_explain(conn, execution, statement, params)
+                    .map(StatementExecution::read_only),
+                Statement::RemoveIndex(statement) => {
+                    run_remove_index(conn, execution, statement).map(StatementExecution::read_only)
+                }
+                Statement::RebuildIndex(statement) => {
+                    run_rebuild_index(conn, execution, statement).map(StatementExecution::read_only)
                 }
                 Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {
                     unreachable!("transaction statements were handled above")
@@ -198,6 +206,7 @@ fn run_select(
     statement: turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<StatementResult> {
+    validate_projection_shapes(&statement.projections)?;
     if let Some(only) = statement.only {
         if !matches!(statement.target, Target::Record(_)) {
             return unsupported(only, "SELECT ONLY requires a record target");
@@ -283,6 +292,49 @@ fn run_select(
     } else {
         Ok(StatementResult::Rows(rows))
     }
+}
+
+fn validate_projection_shapes(projections: &ProjectionList) -> Result<()> {
+    if let ProjectionList::Fields(projections) = projections {
+        for projection in projections {
+            if projection.alias.is_none()
+                && !matches!(projection.expression.kind, ExprKind::FieldPath(_))
+            {
+                return Err(FastDbError::Schema(
+                    "non-field SELECT projections require an AS alias".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_explain(
+    conn: &Connection,
+    execution: &ExecutionState,
+    statement: turso_fastdb_parser::ExplainStatement,
+    params: &Params,
+) -> Result<StatementResult> {
+    validate_projection_shapes(&statement.select.projections)?;
+    let lowered = lower_select_scan_for_explain(conn, execution, statement.select, params)?;
+    let details = crate::connection::explain_statement(conn, lowered)?;
+    let rows =
+        details
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, detail)| {
+                Ok(Value::Object(BTreeMap::from([
+                    (
+                        "ordinal".to_string(),
+                        Value::Integer(i64::try_from(ordinal).map_err(|_| {
+                            FastDbError::Engine("explain row count overflow".into())
+                        })?),
+                    ),
+                    ("detail".to_string(), Value::Str(detail)),
+                ])))
+            })
+            .collect::<Result<Vec<_>>>()?;
+    Ok(StatementResult::Rows(rows))
 }
 
 fn run_update(
@@ -480,19 +532,14 @@ fn project_candidate(
     let context = candidate_context(candidate, params);
     let mut object = BTreeMap::new();
     for projection in projections {
-        let value = eval::evaluate(
-            &Expr::new(
-                ExprKind::FieldPath(projection.path.clone()),
-                projection.path.span,
-            ),
-            &context,
-        )?
-        .into_projection();
+        let value = eval::evaluate(&projection.expression, &context)?.into_projection();
         if let Some(alias) = &projection.alias {
             object.insert(alias.value.clone(), value);
         } else {
-            let path = projection
-                .path
+            let ExprKind::FieldPath(path) = &projection.expression.kind else {
+                unreachable!("non-field projections without aliases are prevalidated")
+            };
+            let path = path
                 .segments
                 .iter()
                 .map(|segment| segment.value.clone())
@@ -928,6 +975,18 @@ fn run_define_index(
     statement: turso_fastdb_parser::DefineIndexStatement,
     source: &str,
 ) -> Result<StatementResult> {
+    match &statement.kind {
+        IndexKindSyntax::Btree => {}
+        IndexKindSyntax::Fulltext { span, .. } => {
+            return unsupported(*span, "FULLTEXT indexes are unavailable until Phase 8")
+        }
+        IndexKindSyntax::Provider { span, .. } => {
+            return unsupported(
+                *span,
+                "provider-specific indexes are unavailable in Phase 6",
+            )
+        }
+    }
     let definition = source_slice(source, statement.span)?.to_string();
     let paths = statement
         .fields
@@ -965,12 +1024,8 @@ fn run_define_index(
         validate_existing_index(conn, table, &index)?;
         conn.check_failpoint(Failpoint::AfterIndexValidation)?;
         conn.exec_bound(
-            lower::physical_index_ddl(
-                &index.physical_name,
-                &table.physical_name,
-                &index.path_keys,
-                index.unique,
-            )?,
+            crate::provider::index_provider(&index)?
+                .create_statement(&index, &table.physical_name)?,
             vec![],
         )
         .map_err(|error| logical_index_constraint(error, &index.logical_name))?;
@@ -981,6 +1036,92 @@ fn run_define_index(
             .indexes
             .insert(statement.name.value.clone(), index.clone());
         Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn resolve_index_for_maintenance(
+    conn: &Connection,
+    execution: &ExecutionState,
+    table_name: &str,
+    index_name: &str,
+) -> Result<IndexDefinition> {
+    let catalog = catalog_for_read(conn, execution)?;
+    let table = catalog
+        .snapshot()
+        .and_then(|snapshot| snapshot.tables.get(table_name))
+        .ok_or_else(|| FastDbError::Schema(format!("table {table_name:?} is not defined")))?;
+    table.indexes.get(index_name).cloned().ok_or_else(|| {
+        FastDbError::Schema(format!(
+            "index {index_name:?} is not defined on table {table_name:?}"
+        ))
+    })
+}
+
+fn run_remove_index(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::IndexMaintenanceStatement,
+) -> Result<StatementResult> {
+    let table_name = statement.table.value;
+    let index_name = statement.name.value;
+    let resolved = resolve_index_for_maintenance(conn, execution, &table_name, &index_name)?;
+    with_schema_mutation(conn, execution, |state| {
+        let table = ready_snapshot_mut(state)?
+            .tables
+            .get_mut(&table_name)
+            .ok_or_else(|| FastDbError::Schema(format!("table {table_name:?} is not defined")))?;
+        let current = table.indexes.get(&index_name).ok_or_else(|| {
+            FastDbError::Schema(format!(
+                "index {index_name:?} is not defined on table {table_name:?}"
+            ))
+        })?;
+        if current.id != resolved.id {
+            return Err(FastDbError::Transaction(
+                "index changed while waiting for the schema lease".into(),
+            ));
+        }
+        conn.exec_bound(
+            crate::provider::index_provider(&resolved)?.drop_statement(&resolved)?,
+            vec![],
+        )?;
+        conn.check_failpoint(Failpoint::AfterIndexRemovePhysical)?;
+        catalog::remove_index(conn, &resolved)?;
+        conn.check_failpoint(Failpoint::AfterIndexRemoveCatalog)?;
+        table.indexes.remove(&index_name);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn run_rebuild_index(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::IndexMaintenanceStatement,
+) -> Result<StatementResult> {
+    let table_name = statement.table.value;
+    let index_name = statement.name.value;
+    let resolved = resolve_index_for_maintenance(conn, execution, &table_name, &index_name)?;
+    with_schema_mutation(conn, execution, |state| {
+        let current = ready_snapshot_mut(state)?
+            .tables
+            .get(&table_name)
+            .and_then(|table| table.indexes.get(&index_name))
+            .ok_or_else(|| {
+                FastDbError::Schema(format!(
+                    "index {index_name:?} is not defined on table {table_name:?}"
+                ))
+            })?;
+        if current.id != resolved.id {
+            return Err(FastDbError::Transaction(
+                "index changed while waiting for the schema lease".into(),
+            ));
+        }
+        conn.exec_bound(
+            crate::provider::index_provider(&resolved)?.rebuild_statement(&resolved)?,
+            vec![],
+        )?;
+        conn.check_failpoint(Failpoint::AfterIndexRebuild)
     })?;
     Ok(StatementResult::None)
 }
@@ -1151,22 +1292,15 @@ fn unsupported<T>(span: Span, message: &'static str) -> Result<T> {
     ))
 }
 
-#[cfg(feature = "testing")]
-pub(crate) fn lowered_select_for_explain(
+fn lower_select_scan_for_explain(
     conn: &Connection,
+    execution: &ExecutionState,
     statement: turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<turso_parser::ast::Stmt> {
     eval::validate_parameter_references(&Statement::Select(statement.clone()), params)?;
     let (table_name, id) = target_parts(statement.target)?;
-    conn.wait_for_catalog()?;
-    let catalog = conn
-        .coordinator
-        .catalog
-        .read()
-        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
-        .clone()
-        .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
+    let catalog = catalog_for_read(conn, execution)?;
     let table = catalog
         .snapshot()
         .and_then(|snapshot| snapshot.tables.get(&table_name))
@@ -1182,4 +1316,16 @@ pub(crate) fn lowered_select_for_explain(
         &predicates,
     )
     .map(|(statement, _)| statement)
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn lowered_select_for_explain(
+    conn: &Connection,
+    statement: turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<turso_parser::ast::Stmt> {
+    let execution = ExecutionState {
+        transaction: TransactionState::Idle,
+    };
+    lower_select_scan_for_explain(conn, &execution, statement, params)
 }

@@ -265,7 +265,6 @@ fn p1_expr_004_unary_and_parentheses_are_preserved() {
 #[test]
 fn p1_expr_005_invalid_and_excluded_expressions_fail_explicitly() {
     for input in [
-        "CREATE p CONTENT fn(1)",
         "CREATE p CONTENT item[0]",
         "CREATE p CONTENT 2 ** 3",
         "CREATE p CONTENT 2 % 1",

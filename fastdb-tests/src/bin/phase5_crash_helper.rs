@@ -48,6 +48,11 @@ fn main() {
             connection.close().unwrap();
             return;
         }
+        "migrate-format2" => {
+            // Opening the copied format-1 fixture performs and commits the
+            // format-2 migration. Exit without close to exercise recovery at
+            // the post-publication process boundary.
+        }
         _ => panic!("unknown crash point {point}"),
     }
     // Test-only abrupt process boundary: bypass Rust drops and engine close.

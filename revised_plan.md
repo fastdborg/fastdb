@@ -1,12 +1,12 @@
-# FastDB MVP Technical Plan and Roadmap
+# FastDB Core Technical Plan and Roadmap
 
-Status: engineering baseline; licensing and cloud boundary revised 2026-08-13
+Status: Phase 5 baseline complete; Core 1.0 roadmap revised 2026-08-13
 
 ## 1. Product Definition
 
-FastDB will be a clean-room, SurrealQL-compatible document database frontend built on a pinned fork of Turso. The MVP will be an embedded Rust library and a command-line shell operating on a local Turso database. It will provide a deliberately small, documented subset of SurrealQL rather than claiming full SurrealDB compatibility.
+FastDB is a clean-room, SurrealQL-compatible document database frontend built on a pinned fork of Turso. The completed MVP is an embedded Rust library and a command-line shell operating on a local Turso database. It provides a deliberately small, documented subset of SurrealQL rather than claiming full SurrealDB compatibility.
 
-The product goal is a low-latency database with SurrealDB-like document ergonomics and Turso's embedded storage model. Relational interoperability, graph traversal, direct key-value access, network serving, and edge synchronization are roadmap items; they are not part of the first release. FastDB Core is publicly developed as MIT-licensed open-source software. A future proprietary managed service at `cloud.fastdb.org` is a separate commercial product.
+The Core 1.0 goal is a production-ready embedded multimodel database with document CRUD, a bounded SurrealQL-compatible graph subset, dual-syntax full-text search, exact vector search, operational tooling, and opt-in parallel writers with snapshot isolation. Direct key-value access, a network server, non-Rust SDKs, recursive graph traversal, approximate-nearest-neighbor indexing, multiprocess access, and edge synchronization remain outside Core 1.0. FastDB Core is publicly developed as MIT-licensed open-source software. A future proprietary managed service at `cloud.fastdb.org` is a separate commercial product.
 
 For the MVP, "single file" means one durable `.fastdb` database artifact after a checkpoint and clean shutdown. WAL and shared-memory sidecars may exist while a database is open. A later synchronization mode may also create Turso-owned metadata sidecars. FastDB will not promise that a live database consists of exactly one filesystem entry.
 
@@ -14,7 +14,7 @@ For the MVP, "single file" means one durable `.fastdb` database artifact after a
 
 - Start engineering from Turso `main` commit [`977383ff40edc44ef410af062ed0d2322252a869`](https://github.com/tursodatabase/turso/commit/977383ff40edc44ef410af062ed0d2322252a869). Before implementation begins, audit the then-current `main`, run the relevant upstream tests, and either retain this commit or record a newer reviewed commit in the repository. Never build from a floating branch in CI or releases.
 - Use [SurrealDB `v3.1.5`](https://github.com/surrealdb/surrealdb/releases/tag/v3.1.5) as the behavioral reference for the compatibility matrix. Later SurrealDB behavior does not silently change the MVP contract.
-- Use stable Turso WAL with full durability as the default. Experimental MVCC and experimental multiprocess WAL are excluded until they are stable and pass FastDB's workload and recovery suites.
+- Use stable Turso WAL with full durability and serialized writers as the compatibility default. Experimental multiprocess WAL is outside Core 1.0. Parallel writers may become an opt-in 1.0 capability only through the Phase 11 audited-engine gate and must provide snapshot isolation without weakening the default.
 - Ship the embedded Rust API and CLI first. A server and non-Rust SDKs follow only after the local semantics and file format are stable.
 - Use this workspace as the FastDB monorepo. Preserve the Turso repository history, configure Turso as `upstream`, and add FastDB crates and service components directly to the same workspace; do not use a nested repository or hide the engine behind an unpinned submodule.
 
@@ -69,6 +69,28 @@ The MVP is complete only when all of the following are true:
 - Execution-plan tests prove that supported indexed predicates avoid full scans.
 - The embedded API and CLI expose the same statement ordering, values, errors, and transaction behavior.
 - Published benchmarks meet the gates in section 11 or clearly block release; no unmeasured absolute latency or "production-ready ACID" claim is made.
+
+### 1.5 Core 1.0 success criteria
+
+Core 1.0 is complete only after Phases 6–12 meet all of their recorded gates:
+
+- Format 1 databases migrate transactionally to frozen format 2 and remain
+  recoverable from committed fixtures.
+- Graph, FTS, and vector behavior executes through the public Rust API and CLI,
+  has clean-room conformance evidence, and uses verified physical access paths.
+- Backup, restore, integrity checking, bounded query resources, deterministic
+  close, provider rebuild, and upgrade/rollback procedures pass destructive
+  operational drills.
+- A stable audited Turso candidate supports opt-in parallel writers with
+  snapshot isolation, bounded memory, recovery, garbage collection, and
+  acceptable checkpoint behavior. If no candidate qualifies, the 1.0 roadmap
+  stops at Phase 11 rather than weakening the requirement.
+- Cross-platform CI, sustained fuzzing, deterministic simulation, failure
+  injection, crash recovery, migration, concurrency, provenance, security,
+  artifact, and rollback gates pass on the exact release candidate.
+- No “production-ready FastDB Core 1.0” claim, tag, package publication, or
+  artifact upload occurs before the applicable gate and separate explicit
+  release authorization.
 
 ## 2. Compatibility and Clean-Room Policy
 
@@ -157,6 +179,11 @@ CREATE TABLE <opaque_physical_name> (
 
 This SQL is illustrative internal DDL, never a user-facing translation. Keep Turso's `SqliteDialect` for persisted physical schema so definitions stored in `sqlite_schema` remain valid SQLite/Turso SQL. Store original FastDB definitions separately in the internal catalog.
 
+Format 2 may add opaque catalog-managed hidden typed columns for relation
+endpoints, FTS text, and native vector encodings. These columns are derived
+physical state, not user document fields. Their definitions and lifecycle are
+owned by a closed internal provider and every change is atomic with `doc`.
+
 Physical names are opaque and deterministic from immutable catalog IDs, for example a fixed prefix plus a lowercase encoding of a 128-bit table ID. User-provided identifiers are never interpolated into physical names. Catalog resolution is the only path from a logical name to a physical object.
 
 `rid` stores an immutable, versioned, type-tagged canonical encoding of the ID component so a string, integer, and UUID cannot collide and can be decoded losslessly. `doc` stores user content only and never duplicates `id`. The result decoder synthesizes a typed `RecordId { table, id }`. Generated IDs use UUIDv7. MVP record ID components may be bare UTF-8 identifiers, backtick-quoted UTF-8 text, signed integers where accepted by the grammar, adjacent typed UUID literals (`u'…'` or `u"…"`) containing canonical UUIDv4/UUIDv7 values, or generated UUIDv7 values. Array/object IDs are deferred.
@@ -179,6 +206,13 @@ Bootstrap internal catalogs atomically on first open. At minimum, persist:
 Catalog tables use a reserved prefix inaccessible through the FastDB grammar. Enforce uniqueness of logical names within their scope and use foreign keys or equivalent transactional checks for ownership.
 
 The format version is monotonic. Open must reject an unknown future format before any mutation. Migrations are transactional, forward-only, idempotence-tested, and backed by reopen fixtures from every released format. Downgrade is not supported unless a future export/import tool explicitly provides it.
+
+Phase 6 migrates format 1 to format 2 and extends these catalogs with table
+kind/relation metadata, analyzer definitions, index kind/provider/version/
+options/state, capability requirements, and catalog-managed hidden typed
+columns. Existing tables migrate as `NORMAL` and existing indexes as `BTREE`
+without rewriting records or renaming physical objects. Format 2 is not frozen
+for Core 1.0 until Phase 12.
 
 An undefined table referenced by a valid record mutation is atomically registered as `SCHEMALESS`. `SCHEMAFULL` tables reject unknown fields, missing required fields, and values that fail the declared type before storage changes are committed.
 
@@ -221,7 +255,13 @@ Specialized typed/indexed field
 
 Hidden typed columns and auxiliary tables use opaque catalog-derived names and are maintained in the same transaction as `doc`. The catalog records their provider, provider version, encoding version, options, and rebuild state. Reopen, rollback, migration, and corruption tests apply to them exactly as they do to ordinary indexes.
 
-This is the expected path for vectors, full-text search, and geospatial data. Exact vector distance can initially lower to Turso's native vector functions, but efficient approximate-nearest-neighbor search should wait for a stable Turso vector index or a production-quality FastDB index provider. A JSON array is not an acceptable production vector-index representation; use a native vector BLOB in a hidden typed column.
+This is the Phase 6–10 path for graph endpoints, full-text search, and vectors.
+Phase 8 normalizes both the characterized SurrealQL FTS subset and the labeled
+FastDB/Turso extension into one internal provider over hidden TEXT columns.
+Phase 9 keeps vectors as public arrays while storing fixed-dimension finite
+values in a native `vector64` BLOB hidden column for exact search. ANN remains
+outside Core 1.0 and must wait for a stable production-quality index; the
+pinned toy sparse-IVF method is explicitly rejected.
 
 A focused geospatial subset may later store canonical WKB/geometry values, expose selected predicates and distance functions, and add a spatial index. Full PostGIS compatibility is a separate major project: Turso's PostgreSQL syntax frontend does not provide PostgreSQL's extension ABI, geometric types, GiST/SP-GiST operator classes, planner hooks, or the PostGIS function surface. Do not place PostGIS compatibility on the normal extension roadmap unless Turso gains the required stable facilities and a separate specification is approved.
 
@@ -479,6 +519,185 @@ Exit gate:
 
 - All MVP acceptance and performance gates pass in the recorded local matrix. Crash injection reveals no partial logical state, every index has a plan test, fuzzing has no known crash, and release documentation states measured limitations without broader durability or compatibility claims. GitHub Actions is not required for the first public alpha; any later remote CI policy is a separate decision.
 
+### Phase 6 — Format 2 and multimodel foundation
+
+The authoritative implementation contract is
+[`plan-phase6.md`](plan-phase6.md).
+
+Deliverables:
+
+- Retain the current Turso pin and record a read-only audit of its translated
+  AST, FTS, vector, custom-index, explain, integrity, checkpoint, backup, and
+  maintenance facilities. Perform the required read-only upstream comparison
+  through the upstream-sync workflow, but do not merge or change the pin.
+- Add independent AST/planner support for namespaced function calls,
+  expression projections and aliases, structured provider options, `EXPLAIN`,
+  `REMOVE INDEX`, and `REBUILD INDEX`. Unknown functions/providers/options fail
+  before mutation.
+- Transactionally migrate format 1 to format 2. Extend catalogs with table
+  kind/relation metadata, analyzers, provider/version/options/state, capability
+  requirements, and hidden typed columns. Migrate existing tables as `NORMAL`
+  and indexes as built-in `BTREE` without rewriting documents.
+- Introduce only a sealed internal provider contract. Do not expose dynamic
+  native code, a public plugin ABI, generated user SQL, or logical-name
+  interpolation.
+
+Exit gate:
+
+- Format 1 fixtures migrate, reopen, and remain usable; every injected
+  migration failure rolls back; ordinary CRUD and index plans are unchanged;
+  incompatible providers fail before mutation; executable Phase 6 additions
+  have public-boundary evidence; and every Phase 5 technical gate still passes.
+
+### Phase 7 — Graph records and bounded traversal
+
+Deliverables:
+
+- Implement the characterized SurrealDB `v3.1.5` subset of `DEFINE TABLE ...
+  TYPE RELATION [IN|FROM table] [OUT|TO table] [ENFORCED]`.
+- Add `RELATE [ONLY] record->relation->record [CONTENT|SET] [RETURN ...]` for
+  record literals and bound record parameters, generated UUIDv7 edge IDs, and
+  atomic registration of an absent schemaless relation table.
+- Store edge user content in `doc`; store immutable endpoint table IDs and
+  encoded RIDs in hidden typed columns; synthesize typed `id`, `in`, and `out`
+  values while decoding.
+- Maintain mandatory forward and reverse adjacency indexes and support chained
+  fixed-depth `->`, `<-`, and `<->` traversal in `SELECT` projections, returning
+  endpoint IDs or `.*` document materialization.
+- Match the reference's dangling-edge default, validate endpoint existence for
+  `ENFORCED`, and cascade-delete connected edges atomically when deleting a
+  node.
+
+Deferred: array/cartesian RELATE targets, explicit complex edge IDs, `OR
+UPDATE`, edge-path filters, recursive paths, and standalone traversal
+expressions.
+
+Exit gate:
+
+- Model, schemafull edge, reopen, abrupt-exit, cascade failure-injection, and
+  conformance tests pass; execution plans prove both adjacency directions avoid
+  scans; and cross-feature document behavior remains transactional.
+
+### Phase 8 — Full-text search
+
+Deliverables:
+
+- Normalize two documented surfaces into one cataloged FTS provider: the
+  characterized SurrealQL subset (`DEFINE ANALYZER`, single-field `FULLTEXT
+  ANALYZER` indexes, `@@`/`@n@`, and selected `search::*` functions) and a
+  labeled FastDB/Turso extension (`CREATE INDEX ... USING fts (...) WITH (...)`,
+  `fts_match`, `fts_score`, and `fts_highlight`).
+- Initially accept only Surreal analyzer configurations proven behaviorally
+  equivalent, starting with the `blank` tokenizer and no function/filter
+  pipeline. Expose Turso default/raw/simple/whitespace/ngram tokenizers and
+  weights only through the extension surface.
+- Maintain hidden TEXT and Turso FTS state atomically with documents. Keep the
+  characterized Surreal scoring/highlighting contract distinct from Turso's
+  native extension behavior.
+- Map `REBUILD INDEX` to audited FTS optimization/segment maintenance. After an
+  indexed write in an explicit transaction, reject a query touching that FTS
+  index until commit instead of returning a stale pre-transaction view.
+
+Exit gate:
+
+- Actual FTS plan selection, churn, rollback, reopen, abrupt-exit, corruption,
+  bounded-memory, ranking, highlighting, and rebuild tests pass. Unsupported
+  WASM targets expose an explicit capability error rather than partial FTS.
+
+### Phase 9 — Exact vector search and alpha-candidate surface
+
+Deliverables:
+
+- Add fixed-size `array<float, N>` fields. Preserve public arrays while
+  maintaining a catalog-managed native `vector64` BLOB alongside JSON.
+- Support exact `COSINE` and `EUCLIDEAN` KNN operator forms, corresponding
+  `vector::` distance/similarity functions, bound vectors, ordinary predicate
+  filtering before top-k selection, and distance projection.
+- Require finite values and equal dimensions; enforce Turso's 65,536-dimension
+  ceiling and `K <= 10,000`. Source literals keep the ordinary collection
+  limit; larger embeddings must be bound parameters.
+- Use bounded top-k memory, expose the exact scan through structured `EXPLAIN`,
+  and reject HNSW, DiskANN, and the pinned `toy_vector_sparse_ivf` method.
+
+Exit gate:
+
+- Results match independent calculations, filtered top-k semantics are exact,
+  document/BLOB state is atomic through rollback and reopen, and scan/storage
+  benchmarks are within the native-equivalent gate. This surface is a `0.1`
+  alpha candidate only; publishing still requires explicit authorization.
+
+### Phase 10 — Operational readiness
+
+Deliverables:
+
+- Add bounded `QueryOptions` and `ResourceLimits`,
+  `query_with_options`/`execute_with_options`, deterministic `Database::close`,
+  consistent `Database::backup_to`, and CLI `check`, `backup`, `restore`, and
+  index-rebuild commands.
+- Bound time, output rows/bytes, graph hops, vector dimensions, and FTS query
+  work without logging query source or parameter values.
+- Provide one supported check path for catalogs, hidden columns, adjacency
+  indexes, FTS state, vector encodings, and engine integrity.
+- Document and test backup consistency, restore validation, interrupted
+  backups, tracing/metrics hooks, graceful checkpointing, busy behavior, and
+  upgrade/rollback procedures.
+
+Exit gate:
+
+- Randomized backup/restore hashes match, every provider index rebuilds from
+  documents, limits fail without partial state, and clean/abrupt shutdown tests
+  retain every acknowledged commit.
+
+### Phase 11 — Parallel writers and snapshot isolation
+
+Begin with a mandatory upstream audit. The pinned MVCC implementation is
+experimental and is not a production candidate. If no exact stable Turso
+candidate proves recovery, garbage collection, bounded memory, and acceptable
+checkpoint behavior, stop the Core 1.0 roadmap at this gate.
+
+Deliverables, only after a candidate qualifies:
+
+- Integrate one exact audited SHA through the repository's mandatory
+  upstream-sync workflow, updating every pin and evidence record atomically.
+- Add `ConcurrencyMode::{Serialized, ParallelWrites}` and
+  `Builder::concurrency_mode`; retain stable WAL/serialized writers as the
+  compatibility default and make parallel mode an opt-in supported capability.
+- Guarantee snapshot isolation. Add `ErrorCategory::Conflict` and
+  `Error::is_retryable`; return conflicts after rollback without implicit
+  transaction replay.
+- Keep schema/catalog work serialized while allowing non-conflicting data
+  transactions to write concurrently. Cross-process access remains excluded.
+
+Exit gate:
+
+- Graph, B-tree, FTS, vector-derived state, backup, schema publication,
+  conflicts, long readers, checkpoints, crash recovery, starvation, and memory
+  growth pass under parallel writers. Public feature claims cannot waive the
+  exact checked-out implementation audit. Passing this phase defines the `0.9`
+  beta-candidate surface; publishing remains separately authorized.
+
+### Phase 12 — Core 1.0 hardening and release gate
+
+Deliverables:
+
+- Freeze format 2, the Rust API, error categories, strict CLI JSON envelope,
+  compatibility matrix, and migration policy.
+- Run cross-platform CI, sustained parser/graph/FTS/vector fuzzing,
+  deterministic simulation, failure injection, recovery, integrity, migration,
+  concurrency, and unchanged upstream regression suites.
+- Require graph, FTS, and vector p95 overhead no worse than 2x equivalent
+  native Turso physical workloads; preserve raw data and prove every declared
+  index through execution plans.
+- Complete the security and vulnerability-reporting policies,
+  dependency/provenance audit, signed artifacts/checksums, backup/restore
+  drills, contribution policy, support window, and release rollback procedure.
+
+Exit gate:
+
+- Every Phase 6–12 gate passes on the exact candidate and the recorded evidence
+  supports the “production-ready FastDB Core 1.0” claim. Tagging, publishing,
+  signing, and uploading are separate operations requiring explicit approval.
+
 ## 8. Verification Strategy
 
 ### 8.1 Test layers
@@ -491,6 +710,14 @@ Exit gate:
 - **Fuzz:** arbitrary bytes into parser and structured AST/value sequences into planning/execution.
 - **Failure injection:** I/O and transaction failures at catalog/schema/data boundaries.
 - **Crash/recovery:** kill/reopen around WAL writes, commits, checkpoints, and schema operations.
+- **Provider/model:** graph adjacency and cascade models, FTS ranking/highlight
+  cases, independent vector-distance/top-k calculations, and document/derived
+  storage atomicity.
+- **Operations:** randomized backup/restore hashes, interrupted maintenance,
+  resource ceilings, deterministic close, and upgrade/rollback drills.
+- **Concurrency:** serialized and opt-in parallel modes, snapshot visibility,
+  conflicts, long readers, starvation, checkpoint progress, crash recovery,
+  and bounded memory after the Phase 11 gate.
 - **Upstream regression:** relevant unmodified Turso core, parser, JSONB, index, WAL, and simulator suites.
 - **Performance:** criterion or equivalent microbenchmarks plus repeatable process-level workload benchmarks.
 
@@ -504,10 +731,17 @@ Exit gate:
 - The expression used to create an index is structurally identical to the expression used by matching filters.
 - An explicit transaction either commits all catalog/schema/data changes or none.
 - Unknown database format versions cause a read-before-write open failure.
+- Unknown or incompatible providers, encodings, or catalog states cause a
+  read-before-write failure and never silently skip derived data.
+- Relation endpoints are immutable; both adjacency indexes and cascade cleanup
+  commit or roll back with the edge/node mutation.
+- FTS text and vector BLOBs remain derived from the same committed document;
+  provider rebuild can recover them without changing the logical document.
 
 ## 9. Durability, Concurrency, and File Semantics
 
-MVP defaults favor known behavior over maximum write concurrency:
+The compatibility default favors known behavior over maximum write
+concurrency:
 
 - Use stable WAL and the strongest supported synchronous/full-durability configuration established by the audited Turso baseline.
 - Support the audited single-writer behavior; return a stable busy/transaction error rather than inventing retries that could duplicate statements.
@@ -518,9 +752,21 @@ MVP defaults favor known behavior over maximum write concurrency:
 
 Turso facilities and defaults can change. Re-audit these choices whenever the pinned engine commit changes; do not infer safety from a feature name alone.
 
+Phase 11 may add opt-in parallel writers only after an exact upstream candidate
+proves snapshot isolation, recovery, garbage collection, bounded memory, and
+checkpoint behavior under FastDB's full multimodel workload. Serialized writers
+remain the default. Conflicts are explicit retryable errors after rollback;
+FastDB never replays an application transaction implicitly. Catalog and schema
+operations remain serialized, and Core 1.0 does not support cross-process
+concurrent access.
+
 ## 10. FastDB Cloud Architecture and Economics
 
-Cloud research runs alongside Core because identifiers, logical mutation logging, CDC, sync metadata, and format choices can constrain a future service. Cloud implementation does not delay the embedded MVP and must not make local Core depend on a network service.
+Cloud research may inform durable Core boundaries because identifiers, logical
+mutation logging, CDC, sync metadata, and format choices can constrain a future
+service. Cloud implementation is not part of Phases 6–12, is inactive without
+a separately approved cloud plan, and must never make local Core depend on a
+network service.
 
 ### 10.1 Cloud architecture principles
 
@@ -607,15 +853,20 @@ Cloud invariants include:
 
 ### 10.2 Staged cloud delivery
 
-#### August 2026 acceleration rule
+#### Activation rule
 
-Cloud work begins in parallel with the end of Core Phase 3, but it does not broaden or modify the Phase 3 Core contract. This month's deliverable is C0 evidence plus an internal or explicitly invited single-region technical preview, not a production launch, multi-region service, durability SLA, or unlimited public signup.
+Cloud implementation does not begin merely because a Core phase completes. It
+requires separate scope and authorization and may not broaden or modify the
+active Core phase. An initial deliverable is C0 evidence plus an internal or
+explicitly invited single-region technical preview, not a production launch,
+multi-region service, durability SLA, or unlimited public signup.
 
 Parallel work may build the separate Worker gateway, container image, database provisioning, credentials, metering in shadow mode, Durable Object journal, R2 archival path, recovery harness, and a provisional SDK. The cloud adapter consumes the same reviewed FastDB frontend boundary as local use and must not introduce network-only semantics into Core. External charging and durability claims remain blocked until the applicable C0/C1 exit gates pass.
 
 #### Cloud C0 — Architecture and cost feasibility
 
-Run immediately during the end of Core Phase 3 and Phase 4 without shipping a generally available service:
+Run only under a separately approved Cloud C0 plan and without shipping a
+generally available service:
 
 - Specify global database IDs, log sequence/epoch rules, mutation IDs, and CDC/sync metadata.
 - Determine which Turso sync/log facilities are stable and reusable at the pinned commit.
@@ -633,7 +884,8 @@ Exit gate: a reviewed design demonstrates a recoverable journal/log and database
 
 #### Cloud C1 — Private Cloudflare native-container alpha
 
-Start after the C0 protocol gate and Core Phase 3; it may overlap Phase 4 behind an invite-only boundary:
+Start only after the C0 protocol gate and separate authorization, behind an
+invite-only boundary:
 
 - Add a Cloudflare Worker HTTP/WebSocket gateway, authentication, organizations/projects, database provisioning, SDK credentials, quotas, and usage metering.
 - Route each database to a named container-backed Durable Object that owns writer fencing, request idempotency, the bounded authoritative recent recovery journal, archive watermark, and native FastDB Container lifecycle.
@@ -726,8 +978,16 @@ Release gates:
 - Indexed field filters: p95 no worse than 2x the equivalent native Turso expression-index query.
 - Document writes: p95 no worse than 2x the equivalent native Turso JSONB write.
 - Persistent size after checkpoint and clean shutdown: no more than 1.5x the equivalent Turso JSONB dataset, excluding temporary WAL files.
+- Graph traversal, FTS query, and exact vector search: p95 no worse than 2x
+  equivalent native Turso workloads over the same physical endpoint columns,
+  FTS index, or native vector representation and with equivalent result
+  materialization.
 - Every declared index is exercised by a result-correctness and execution-plan test.
 - Explicit transactions are all-or-nothing across catalog, physical schema, and data changes.
+- Provider-derived storage and provider rebuilds preserve logical document
+  hashes across failure, reopen, backup, and restore.
+- Parallel mode, if enabled, passes snapshot, conflict, recovery, checkpoint,
+  starvation, and bounded-memory gates without regressing serialized mode.
 
 Benchmarks are regression gates, not marketing claims. Do not publish absolute latency, scalability, edge, or "production-ready ACID" claims until the associated benchmark, concurrency, and crash-test reports are public.
 
@@ -747,6 +1007,10 @@ Maintain a separate, non-gating competitive suite against the pinned SurrealDB b
 | Performance target is missed | Profile parsing, planning, JSON encoding, and decoding separately | A release gate fails on the published benchmark harness |
 | Specialized values cannot be indexed from JSONB efficiently | Use versioned hidden typed columns or auxiliary index tables | Vector, full-text, or geo prototype requires per-row conversion or a full scan |
 | Experimental Turso index/extension APIs change | Keep providers internal and versioned; do not freeze a public ABI | Upstream API churn breaks reopen, maintenance, or planner matching |
+| FTS transactional visibility returns stale results | Track indexed writes and reject affected FTS reads until commit | Any explicit transaction can observe a stale or partially maintained FTS view |
+| Exact vector search becomes an accidental ANN claim | Expose the bounded linear scan in `EXPLAIN`; reject toy/ANN methods | Documentation, planner output, or benchmarks imply an unavailable production ANN index |
+| Relation cascade or adjacency state diverges | Hidden immutable endpoints, mandatory two-way indexes, atomic failure injection | A committed edge is missing from one direction or a deleted node leaves an unintended connected edge |
+| Parallel writers depend on experimental MVCC | Mandatory exact-SHA audit and Phase 11 hard stop | Recovery, garbage collection, memory, checkpoint, or snapshot-isolation evidence is absent |
 | Object presence is mistaken for database durability | Specify ordered log, manifest, fencing, and acknowledgement invariants; inject failures | An acknowledged commit is absent or duplicated after worker loss/replay |
 | Cloudflare Worker storage is treated as a persistent filesystem | Keep Workers at the edge; run native FastDB in a Container and persist recovery artifacts before acknowledgement | Any correctness path depends on Worker `/tmp`, isolate lifetime, or in-memory state |
 | Ephemeral Container disk is mistaken for durable state | Reconstruct from R2 generations, archived log batches, and the committed Durable Object journal tail; continuously kill Containers in recovery tests | Forced sleep/replacement loses an acknowledged commit or requires manual repair |
@@ -761,31 +1025,54 @@ Maintain a separate, non-gating competitive suite against the pinned SurrealDB b
 
 Any failed Phase 0 feasibility assumption is a design decision point, not permission to add a hidden core fork or relax correctness criteria.
 
-## 13. Post-MVP Roadmap
+## 13. Core 1.0 scope and later roadmap
 
-1. **Complete CRUD compatibility.** Add additional return modes, `TIMEOUT`, richer update operators, `UPSERT`, `INSERT`, functions, more value and record-ID forms, and broader `SELECT` clauses. Extend the matrix one independently tested feature at a time.
-2. **Private Cloudflare C1 alpha.** Add the Worker HTTP/WebSocket gateway, authentication, a JavaScript SDK, database provisioning, resource limits, and shadow metering. Route each database through a container-backed Durable Object to a native FastDB Container, finalize deterministic recovery artifacts in the bounded Durable Object journal before acknowledgement, pack verified ranges into R2, and continuously test reconstruction after ephemeral-disk loss. Preserve embedded semantics as the reference behavior; charge customers only after the C0/C1 gates pass.
-3. **Experimental Turso Sync.** Reuse Turso's explicit `push`, `pull`, and `checkpoint` model where the audit shows it is suitable. Treat the remote database as the source of truth. Push local row-level logical mutations and pull physical updates. Follow Turso's Last-Push-Wins default, with an optional documented transform/conflict hook. Initially require schema and index definitions to execute against the authoritative remote; offline writes apply only to record data. Do not design independent peer-to-peer replication.
-4. **Specialized extensions.** Stabilize the internal type/function/index-provider contract, then add exact vector operations, production vector indexing when available, full-text indexing, and a focused geospatial subset. Do not claim PostGIS compatibility from PostgreSQL syntax compatibility.
-5. **Object-backed C2/C3 or regional-shard fallback.** Add lazy R2 segments, bounded disposable Container caches, immutable generations, carefully bounded durable-log batching, branching, point-in-time restore, automated placement/maintenance, and production object-native durability after all section 10 gates pass. If the Cloudflare-native journal fails its gates, retain the Cloudflare edge while moving authoritative execution to regional multi-tenant shards with cross-database group commit; do not attempt a complete Turso Cloud clone before that focused prototype passes.
-6. **Graph records.** Introduce typed relation tables with `in` and `out` record IDs, `RELATE`, adjacency indexes, and traversal syntax. Define storage and query-plan gates before claiming graph support.
-7. **Additional models and services.** Add direct key-value APIs, live queries/changefeeds, permissions, namespaces, WASM/mobile targets, partial sync, backups, and broader managed-cloud tooling.
-8. **Concurrent writes.** Enable MVCC or multiprocess modes only after the corresponding Turso facilities are stable and pass FastDB's correctness, recovery, and performance workload suite.
+Phases 6–12 are the ordered Core 1.0 track. Phase 9 defines a `0.1`
+alpha-candidate surface and Phase 11 defines a `0.9` beta-candidate surface,
+but neither milestone authorizes publishing. Each phase updates `COMPAT.md` only
+for executable, evidenced behavior and updates format, migration, reopen,
+failure, benchmark, and release records when relevant.
 
-Each roadmap item must update the format policy and `COMPAT.md`, add migration/reopen coverage where storage changes, and define an acceptance gate before implementation is considered complete.
+Core 1.0 includes only the embedded Rust API and CLI. Its graph scope is fixed
+depth, its FTS compatibility is a characterized subset plus a clearly labeled
+FastDB extension, its vector search is exact, and its parallel writers are
+single-process and opt-in. Public graph relations reuse `RecordId` and object
+values; synthesized `in` and `out` are immutable record IDs. Vectors remain
+public arrays. `EXPLAIN` returns ordinary structured result values.
+
+After Core 1.0, separately plan and gate:
+
+1. Recursive/filtered graph paths, cartesian relation targets, and broader
+   relation mutation forms.
+2. Production ANN only after a stable audited index qualifies; broader analyzer
+   compatibility and multi-field FTS.
+3. Additional CRUD/value/function compatibility, direct key-value APIs,
+   live queries/changefeeds, permissions, namespaces, WASM/mobile support, and
+   non-Rust SDKs.
+4. A network server and self-hosted service boundary.
+5. Experimental Turso Sync using an authoritative remote and explicit
+   push/pull/checkpoint semantics, never independently invented peer-to-peer
+   replication.
+6. Cloud C0–C3 and any regional-shard fallback under the independent recovery,
+   isolation, security, and economics gates in section 10.
+7. A focused geospatial model; full PostGIS compatibility remains a separate
+   major project.
+8. Cross-process or multiprocess access only after a stable audited engine
+   facility passes a new correctness and recovery phase.
 
 ## 14. Immediate Engineering Checklist
 
-1. Finish the authoritative Core Phase 3 gates and report without adding Cloudflare types, network behavior, or cloud recovery semantics to the Phase 3 crates.
-2. Create a separate Cloud C0 design note that specifies database identity, epoch/sequence allocation, mutation identity, deterministic inputs, journal state transitions, idempotent results, archive watermark, checkpoint/generation format, fencing, backlog admission control, and deletion/retention semantics.
-3. Audit the pinned Turso WAL, sync, CDC, checkpoint, and failure-injection facilities and select the smallest replay artifact that can reconstruct a committed FastDB transaction without generated SQL or copied Turso Cloud implementation details.
-4. Build a minimal native Container server around the reviewed FastDB frontend boundary, then deploy a single-region Worker -> named container-backed Durable Object -> Container path with authentication limited to internal/invited accounts.
-5. Implement the SQLite-backed Durable Object journal prototype with explicit write serialization across Container and R2 I/O. Keep user documents exclusively in FastDB; store only bounded intents, recovery artifacts, protocol state, and idempotency outcomes in the journal.
-6. Implement R2 packing of contiguous journal ranges, fenced archive-watermark/manifest publication, a simple full or coarse checkpoint, verified truncation, and reconstruction from generation + R2 batches + Durable Object tail.
-7. Run deterministic failure injection after every protocol transition, including Durable Object restart, Container commit before journal finalization, lost responses, duplicated requests, interrupted R2 upload, stale fences, archive publication before truncation, R2 outage, journal-pressure admission control, and total Container disk loss.
-8. Benchmark warm and cold end-to-end latency, Worker/DO/Container hops, DO duration and row operations, Container active time, R2 operations per logical commit, packing delay, backlog growth, hydration, checkpointing, and randomized restore. Preserve raw measurements and the dated provider price sheets.
-9. Build the first `$5 / $20 / $100` cost model with bounded hypothetical quotas and shadow metering. Do not publish quotas or enable uncapped overages until p95 included usage has positive variable gross margin and the spend cap is proven.
-10. Compare the Cloudflare-native result with a focused regional multi-tenant group-commit prototype. Proceed to an invite-only C1 preview only if recovery, isolation, latency, backlog, and economics gates pass; otherwise retain the Worker edge and adopt the regional-shard data plane before taking payment.
+1. Review the completed `plan-phase6.md` implementation and the local evidence
+   in `docs/phase6-report.md`; do not treat phase completion as release
+   authorization.
+2. Author and review `plan-phase7.md` before implementing graph tables,
+   `RELATE`, adjacency storage, traversal, or cascade behavior.
+3. Base Phase 7 characterization on the immutable SurrealDB `v3.1.5`
+   behavioral reference and clean-room public/black-box evidence.
+4. Preserve format 2, the sealed provider boundary, direct translated AST,
+   opaque physical names, and all Phase 6 verification/benchmark gates.
+5. Keep FTS, vectors, operational tooling, parallel writers, server, and cloud
+   implementation outside Phase 7.
 
 ## 15. References
 
@@ -801,6 +1088,9 @@ Each roadmap item must update the format policy and `COMPAT.md`, add migration/r
 - [Turso PostgreSQL frontend session implementation](https://github.com/tursodatabase/turso/blob/main/postgres/frontend/session.rs)
 - [Initial pinned Turso commit](https://github.com/tursodatabase/turso/commit/977383ff40edc44ef410af062ed0d2322252a869)
 - [Turso native extensions](https://docs.turso.tech/sql-reference/extensions)
+- [Turso full-text search functions and limitations](https://docs.turso.tech/sql-reference/functions/fts)
+- [Turso vector search](https://docs.turso.tech/guides/vector-search)
+- [Turso concurrent writes](https://docs.turso.tech/tursodb/concurrent-writes)
 - [Turso Cloud durability architecture](https://docs.turso.tech/cloud/durability)
 - [Turso Cloud S3-native architecture](https://turso.tech/blog/turso-cloud-goes-diskless)
 - [Turso Cloud pricing](https://turso.tech/pricing)
@@ -830,6 +1120,11 @@ Each roadmap item must update the format policy and `COMPAT.md`, add migration/r
 - [`DELETE` statement](https://surrealdb.com/docs/reference/query-language/statements/delete)
 - [`DEFINE TABLE` statement](https://surrealdb.com/docs/reference/query-language/statements/define/table)
 - [`DEFINE INDEX` statement](https://surrealdb.com/docs/reference/query-language/statements/define/indexes)
+- [`RELATE` statement](https://surrealdb.com/docs/reference/query-language/statements/relate)
+- [Graph model](https://surrealdb.com/docs/learn/data-models/graph/overview)
+- [Graph traversal](https://surrealdb.com/docs/learn/data-models/graph/graph-traversal)
+- [Full-text search overview](https://surrealdb.com/docs/learn/data-models/full-text-search/overview)
+- [Vector search overview](https://surrealdb.com/docs/learn/data-models/vector-search/overview)
 - [SurrealDB repository and license notice](https://github.com/surrealdb/surrealdb)
 - [SurrealDB architecture and storage backends](https://surrealdb.com/docs/architecture)
 - [SurrealDB Cloud pricing](https://surrealdb.com/pricing)

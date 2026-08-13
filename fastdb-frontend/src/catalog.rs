@@ -1,4 +1,4 @@
-//! Stable format-1 catalogs, open-time validation, and catalog snapshots.
+//! Format-2 catalogs, transactional format-1 migration, and validation.
 
 use crate::connection::Connection;
 use crate::error::{FastDbError, Result};
@@ -17,11 +17,37 @@ pub const META_TABLE: &str = "__fastdb_meta";
 pub const TABLES_TABLE: &str = "__fastdb_tables";
 pub const FIELDS_TABLE: &str = "__fastdb_fields";
 pub const INDEXES_TABLE: &str = "__fastdb_indexes";
+pub const ANALYZERS_TABLE: &str = "__fastdb_analyzers";
+pub const HIDDEN_COLUMNS_TABLE: &str = "__fastdb_hidden_columns";
+pub const CAPABILITIES_TABLE: &str = "__fastdb_capabilities";
 
-pub const FORMAT_VERSION: i64 = 1;
+pub const FORMAT_VERSION: i64 = 2;
 pub const DIALECT_VERSION: i64 = 1;
-pub const LAST_MIGRATION: i64 = 1;
+pub const LAST_MIGRATION: i64 = 2;
 pub const EXPRESSION_VERSION: i64 = 1;
+pub const BUILTIN_BTREE_PROVIDER_VERSION: i64 = 1;
+pub const BUILTIN_BTREE_ENCODING_VERSION: i64 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableKind {
+    Normal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexKind {
+    Btree,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    BuiltinBtree,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderState {
+    Ready,
+    RebuildRequired,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
@@ -40,6 +66,12 @@ pub struct IndexDefinition {
     pub unique: bool,
     pub expression_version: i64,
     pub definition: String,
+    pub kind: IndexKind,
+    pub provider: Provider,
+    pub provider_version: i64,
+    pub options_json: String,
+    pub state: ProviderState,
+    pub encoding_version: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +81,10 @@ pub struct TableDefinition {
     pub physical_name: String,
     pub mode: TableMode,
     pub definition: Option<String>,
+    pub kind: TableKind,
+    pub relation_in_table_id: Option<CatalogId>,
+    pub relation_out_table_id: Option<CatalogId>,
+    pub relation_enforced: bool,
     pub fields: BTreeMap<String, FieldRule>,
     pub indexes: BTreeMap<String, IndexDefinition>,
 }
@@ -57,6 +93,29 @@ pub struct TableDefinition {
 pub struct CatalogSnapshot {
     pub metadata: Metadata,
     pub tables: BTreeMap<String, TableDefinition>,
+    pub analyzers: BTreeMap<String, AnalyzerDefinition>,
+    pub hidden_columns: BTreeMap<CatalogId, HiddenColumnDefinition>,
+    pub capabilities: BTreeMap<String, CapabilityRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyzerDefinition {
+    pub id: CatalogId,
+    pub logical_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HiddenColumnDefinition {
+    pub id: CatalogId,
+    pub table_id: CatalogId,
+    pub physical_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityRequirement {
+    pub provider: String,
+    pub min_provider_version: i64,
+    pub min_encoding_version: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +162,10 @@ pub fn allocate_table(
         physical_name: physical_table_name(id),
         mode,
         definition,
+        kind: TableKind::Normal,
+        relation_in_table_id: None,
+        relation_out_table_id: None,
+        relation_enforced: false,
         fields: BTreeMap::new(),
         indexes: BTreeMap::new(),
     })
@@ -133,6 +196,12 @@ pub fn allocate_index(
         unique,
         expression_version: EXPRESSION_VERSION,
         definition,
+        kind: IndexKind::Btree,
+        provider: Provider::BuiltinBtree,
+        provider_version: BUILTIN_BTREE_PROVIDER_VERSION,
+        options_json: "{}".to_string(),
+        state: ProviderState::Ready,
+        encoding_version: BUILTIN_BTREE_ENCODING_VERSION,
     })
 }
 
@@ -141,6 +210,9 @@ pub fn bootstrap(conn: &Connection) -> Result<CatalogSnapshot> {
     conn.exec_bound(lower::catalog_tables_ddl(), vec![])?;
     conn.exec_bound(lower::catalog_fields_ddl(), vec![])?;
     conn.exec_bound(lower::catalog_indexes_ddl(), vec![])?;
+    conn.exec_bound(lower::catalog_analyzers_ddl(), vec![])?;
+    conn.exec_bound(lower::catalog_hidden_columns_ddl(), vec![])?;
+    conn.exec_bound(lower::catalog_capabilities_ddl(), vec![])?;
     let database_id = format!("{:032x}", rand::random::<u128>());
     let creation_version = env!("CARGO_PKG_VERSION").to_string();
     let (statement, bindings) = lower::meta_insert(&database_id, &creation_version, LAST_MIGRATION);
@@ -152,6 +224,9 @@ pub fn bootstrap(conn: &Connection) -> Result<CatalogSnapshot> {
             last_migration: LAST_MIGRATION,
         },
         tables: BTreeMap::new(),
+        analyzers: BTreeMap::new(),
+        hidden_columns: BTreeMap::new(),
+        capabilities: BTreeMap::new(),
     })
 }
 
@@ -201,8 +276,13 @@ pub fn persist_index(
     conn.exec_bound(statement, bindings)
 }
 
+pub fn remove_index(conn: &Connection, index: &IndexDefinition) -> Result<()> {
+    let (statement, bindings) = lower::index_delete(&index.id.to_hex());
+    conn.exec_bound(statement, bindings)
+}
+
 pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
-    let schema = read_schema(conn)?;
+    let mut schema = read_schema(conn)?;
     let meta = schema
         .iter()
         .find(|object| object.object_type == "table" && object.name == META_TABLE);
@@ -222,16 +302,45 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     let format = singleton_integer(&format_rows, "format_version")?;
     if format == 0 {
         return Err(FastDbError::format(
-            "disposable FastDB format 0 cannot be opened as stable format 1",
+            "disposable FastDB format 0 cannot be opened as stable format 2",
         ));
     }
-    if format != FORMAT_VERSION {
-        return Err(FastDbError::format(format!(
-            "unknown FastDB format version {format}; supported version is {FORMAT_VERSION}"
-        )));
+    match format {
+        1 => {
+            migrate_format_one(conn, &schema)?;
+            schema = read_schema(conn)?;
+        }
+        FORMAT_VERSION => {}
+        _ => {
+            return Err(FastDbError::format(format!(
+                "unknown FastDB format version {format}; supported versions are 1 and \
+                 {FORMAT_VERSION}"
+            )))
+        }
     }
 
     validate_catalog_schema(&schema)?;
+    let metadata = load_metadata(conn)?;
+    if metadata.last_migration != LAST_MIGRATION {
+        return Err(FastDbError::format(format!(
+            "unknown FastDB migration level {}",
+            metadata.last_migration
+        )));
+    }
+    let mut snapshot = CatalogSnapshot {
+        metadata,
+        tables: load_tables(conn)?,
+        analyzers: load_analyzers(conn)?,
+        hidden_columns: load_hidden_columns(conn)?,
+        capabilities: load_capabilities(conn)?,
+    };
+    load_fields(conn, &mut snapshot)?;
+    load_indexes(conn, &mut snapshot)?;
+    validate_physical_objects(&schema, &snapshot, true)?;
+    Ok(CatalogState::Ready(snapshot))
+}
+
+fn load_metadata(conn: &Connection) -> Result<Metadata> {
     let metadata_rows = conn.collect_rows(lower::meta_stmt(), vec![])?;
     let metadata_row = singleton_row(&metadata_rows, "metadata")?;
     let persisted_format = format_integer(&metadata_row[0], "format_version")?;
@@ -250,32 +359,91 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     if creation_version.is_empty() {
         return Err(FastDbError::format("metadata creation version is empty"));
     }
-    let mut last_migration = format_integer(&metadata_row[4], "last_migration")?;
-    if !(0..=LAST_MIGRATION).contains(&last_migration) {
+    Ok(Metadata {
+        database_id,
+        creation_version,
+        last_migration: format_integer(&metadata_row[4], "last_migration")?,
+    })
+}
+
+fn migrate_format_one(conn: &Connection, schema: &[SchemaObject]) -> Result<()> {
+    validate_catalog_schema_v1(schema)?;
+    let metadata_rows = conn.collect_rows(lower::meta_stmt(), vec![])?;
+    let metadata_row = singleton_row(&metadata_rows, "metadata")?;
+    if format_integer(&metadata_row[0], "format_version")? != 1 {
+        return Err(FastDbError::format(
+            "format changed while preparing migration",
+        ));
+    }
+    if format_integer(&metadata_row[1], "dialect_version")? != DIALECT_VERSION {
+        return Err(FastDbError::format("format-1 dialect is unsupported"));
+    }
+    let database_id = format_text(&metadata_row[2], "database_id")?;
+    CatalogId::from_hex(&database_id)?;
+    let creation_version = format_text(&metadata_row[3], "creation_version")?;
+    if creation_version.is_empty() {
+        return Err(FastDbError::format("metadata creation version is empty"));
+    }
+    let last_migration = format_integer(&metadata_row[4], "last_migration")?;
+    if !matches!(last_migration, 0 | 1) {
         return Err(FastDbError::format(format!(
-            "unknown FastDB migration level {last_migration}"
+            "unknown format-1 migration level {last_migration}"
         )));
     }
-    if last_migration == 0 {
-        conn.with_transaction(|| {
-            conn.exec_bound(lower::migrate_to_one_stmt(), vec![])?;
-            conn.check_failpoint(crate::Failpoint::AfterMigration)
-        })?;
-        last_migration = 1;
-    }
 
-    let mut snapshot = CatalogSnapshot {
+    let mut prior = CatalogSnapshot {
         metadata: Metadata {
             database_id,
             creation_version,
             last_migration,
         },
-        tables: load_tables(conn)?,
+        tables: load_tables_v1(conn)?,
+        analyzers: BTreeMap::new(),
+        hidden_columns: BTreeMap::new(),
+        capabilities: BTreeMap::new(),
     };
-    load_fields(conn, &mut snapshot)?;
-    load_indexes(conn, &mut snapshot)?;
-    validate_physical_objects(&schema, &snapshot)?;
-    Ok(CatalogState::Ready(snapshot))
+    load_fields(conn, &mut prior)?;
+    load_indexes_v1(conn, &mut prior)?;
+    validate_physical_objects(schema, &prior, false)?;
+
+    conn.with_transaction(|| {
+        if last_migration == 0 {
+            conn.exec_bound(lower::migrate_to_one_stmt(), vec![])?;
+        }
+        for column in lower::format2_table_columns() {
+            conn.exec_bound(lower::add_catalog_column(TABLES_TABLE, column), vec![])?;
+        }
+        conn.check_failpoint(crate::Failpoint::AfterFormat2TableColumns)?;
+        for column in lower::format2_index_columns() {
+            conn.exec_bound(lower::add_catalog_column(INDEXES_TABLE, column), vec![])?;
+        }
+        conn.check_failpoint(crate::Failpoint::AfterFormat2IndexColumns)?;
+        conn.exec_bound(lower::catalog_analyzers_ddl(), vec![])?;
+        conn.exec_bound(lower::catalog_hidden_columns_ddl(), vec![])?;
+        conn.exec_bound(lower::catalog_capabilities_ddl(), vec![])?;
+        conn.check_failpoint(crate::Failpoint::AfterFormat2Catalogs)?;
+
+        let migrated_schema = read_schema(conn)?;
+        validate_catalog_schema(&migrated_schema)?;
+        let mut migrated = CatalogSnapshot {
+            metadata: prior.metadata.clone(),
+            tables: load_tables(conn)?,
+            analyzers: load_analyzers(conn)?,
+            hidden_columns: load_hidden_columns(conn)?,
+            capabilities: load_capabilities(conn)?,
+        };
+        load_fields(conn, &mut migrated)?;
+        load_indexes(conn, &mut migrated)?;
+        validate_physical_objects(&migrated_schema, &migrated, true)?;
+        if migrated.tables != prior.tables {
+            return Err(FastDbError::format(
+                "format-2 migration changed logical table or index ownership",
+            ));
+        }
+        conn.check_failpoint(crate::Failpoint::AfterFormat2Validation)?;
+        conn.exec_bound(lower::migrate_to_two_stmt(), vec![])?;
+        conn.check_failpoint(crate::Failpoint::AfterMigration)
+    })
 }
 
 pub fn catalog_exists(conn: &Connection, name: &str) -> Result<bool> {
@@ -290,12 +458,23 @@ pub fn ensure_catalog_compatible(conn: &Connection) -> Result<()> {
 }
 
 fn load_tables(conn: &Connection) -> Result<BTreeMap<String, TableDefinition>> {
-    let rows = conn.collect_rows(lower::tables_stmt(), vec![])?;
+    load_table_rows(conn.collect_rows(lower::tables_stmt(), vec![])?, true)
+}
+
+fn load_tables_v1(conn: &Connection) -> Result<BTreeMap<String, TableDefinition>> {
+    load_table_rows(conn.collect_rows(lower::tables_v1_stmt(), vec![])?, false)
+}
+
+fn load_table_rows(
+    rows: Vec<Vec<Value>>,
+    format_two: bool,
+) -> Result<BTreeMap<String, TableDefinition>> {
     let mut tables = BTreeMap::new();
     let mut ids = BTreeSet::new();
     let mut physical_names = BTreeSet::new();
     for row in rows {
-        if row.len() != 5 {
+        let expected_width = if format_two { 9 } else { 5 };
+        if row.len() != expected_width {
             return Err(FastDbError::format("table catalog row has wrong width"));
         }
         let id_text = format_text(&row[0], "table_id")?;
@@ -319,6 +498,28 @@ fn load_tables(conn: &Connection) -> Result<BTreeMap<String, TableDefinition>> {
             _ => return Err(FastDbError::format("table catalog has unknown mode")),
         };
         let definition = format_optional_text(&row[4], "definition")?;
+        let (kind, relation_in_table_id, relation_out_table_id, relation_enforced) = if format_two {
+            let kind = match format_text(&row[5], "kind")?.as_str() {
+                "NORMAL" => TableKind::Normal,
+                "RELATION" => {
+                    return Err(FastDbError::format(
+                        "relation tables require the unavailable graph capability",
+                    ))
+                }
+                _ => return Err(FastDbError::format("table catalog has unknown kind")),
+            };
+            let relation_in = format_optional_catalog_id(&row[6], "relation_in_table_id")?;
+            let relation_out = format_optional_catalog_id(&row[7], "relation_out_table_id")?;
+            let enforced = format_boolean_integer(&row[8], "relation_enforced")?;
+            if relation_in.is_some() || relation_out.is_some() || enforced {
+                return Err(FastDbError::format(
+                    "normal table has relation-only metadata",
+                ));
+            }
+            (kind, relation_in, relation_out, enforced)
+        } else {
+            (TableKind::Normal, None, None, false)
+        };
         if !ids.insert(id)
             || !physical_names.insert(physical_name.clone())
             || tables
@@ -330,6 +531,10 @@ fn load_tables(conn: &Connection) -> Result<BTreeMap<String, TableDefinition>> {
                         physical_name,
                         mode,
                         definition,
+                        kind,
+                        relation_in_table_id,
+                        relation_out_table_id,
+                        relation_enforced,
                         fields: BTreeMap::new(),
                         indexes: BTreeMap::new(),
                     },
@@ -383,10 +588,31 @@ fn load_fields(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> 
 }
 
 fn load_indexes(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> {
+    load_index_rows(
+        conn.collect_rows(lower::indexes_stmt(), vec![])?,
+        snapshot,
+        true,
+    )
+}
+
+fn load_indexes_v1(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> {
+    load_index_rows(
+        conn.collect_rows(lower::indexes_v1_stmt(), vec![])?,
+        snapshot,
+        false,
+    )
+}
+
+fn load_index_rows(
+    rows: Vec<Vec<Value>>,
+    snapshot: &mut CatalogSnapshot,
+    format_two: bool,
+) -> Result<()> {
     let mut ids = BTreeSet::new();
     let mut physical_names = BTreeSet::new();
-    for row in conn.collect_rows(lower::indexes_stmt(), vec![])? {
-        if row.len() != 8 {
+    for row in rows {
+        let expected_width = if format_two { 14 } else { 8 };
+        if row.len() != expected_width {
             return Err(FastDbError::format("index catalog row has wrong width"));
         }
         let id = CatalogId::from_hex(&format_text(&row[0], "index_id")?)?;
@@ -426,6 +652,66 @@ fn load_indexes(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()>
             )));
         }
         let definition = format_text(&row[7], "definition")?;
+        let (kind, provider, provider_version, options_json, state, encoding_version) =
+            if format_two {
+                let kind = match format_text(&row[8], "index_kind")?.as_str() {
+                    "BTREE" => IndexKind::Btree,
+                    _ => return Err(FastDbError::format("index catalog has unknown kind")),
+                };
+                let provider = match format_text(&row[9], "provider")?.as_str() {
+                    "BUILTIN_BTREE" => Provider::BuiltinBtree,
+                    _ => {
+                        return Err(FastDbError::format(
+                            "index requires an unknown or unavailable provider",
+                        ))
+                    }
+                };
+                let provider_version = format_integer(&row[10], "provider_version")?;
+                if provider_version != BUILTIN_BTREE_PROVIDER_VERSION {
+                    return Err(FastDbError::format(format!(
+                        "unsupported built-in B-tree provider version {provider_version}"
+                    )));
+                }
+                let options_json = format_text(&row[11], "options_json")?;
+                if options_json != "{}" {
+                    return Err(FastDbError::format(
+                        "built-in B-tree options are not canonical or supported",
+                    ));
+                }
+                let state = match format_text(&row[12], "state")?.as_str() {
+                    "READY" => ProviderState::Ready,
+                    "REBUILD_REQUIRED" => ProviderState::RebuildRequired,
+                    _ => return Err(FastDbError::format("index has unknown lifecycle state")),
+                };
+                if state != ProviderState::Ready {
+                    return Err(FastDbError::format(
+                        "built-in B-tree index cannot require provider rebuild",
+                    ));
+                }
+                let encoding_version = format_integer(&row[13], "encoding_version")?;
+                if encoding_version != BUILTIN_BTREE_ENCODING_VERSION {
+                    return Err(FastDbError::format(format!(
+                        "unsupported built-in B-tree encoding version {encoding_version}"
+                    )));
+                }
+                (
+                    kind,
+                    provider,
+                    provider_version,
+                    options_json,
+                    state,
+                    encoding_version,
+                )
+            } else {
+                (
+                    IndexKind::Btree,
+                    Provider::BuiltinBtree,
+                    BUILTIN_BTREE_PROVIDER_VERSION,
+                    "{}".to_string(),
+                    ProviderState::Ready,
+                    BUILTIN_BTREE_ENCODING_VERSION,
+                )
+            };
         let index = IndexDefinition {
             id,
             logical_name: logical_name.clone(),
@@ -435,7 +721,14 @@ fn load_indexes(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()>
             unique,
             expression_version,
             definition,
+            kind,
+            provider,
+            provider_version,
+            options_json,
+            state,
+            encoding_version,
         };
+        crate::provider::index_provider(&index)?;
         if !ids.insert(id)
             || !physical_names.insert(physical_name)
             || table.indexes.insert(logical_name, index).is_some()
@@ -444,6 +737,36 @@ fn load_indexes(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()>
         }
     }
     Ok(())
+}
+
+fn load_analyzers(conn: &Connection) -> Result<BTreeMap<String, AnalyzerDefinition>> {
+    let rows = conn.collect_rows(lower::analyzers_stmt(), vec![])?;
+    if rows.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    Err(FastDbError::format(
+        "analyzer catalog requires the unavailable FTS capability",
+    ))
+}
+
+fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenColumnDefinition>> {
+    let rows = conn.collect_rows(lower::hidden_columns_stmt(), vec![])?;
+    if rows.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    Err(FastDbError::format(
+        "hidden typed columns require an unavailable provider",
+    ))
+}
+
+fn load_capabilities(conn: &Connection) -> Result<BTreeMap<String, CapabilityRequirement>> {
+    let rows = conn.collect_rows(lower::capabilities_stmt(), vec![])?;
+    if rows.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    Err(FastDbError::format(
+        "database requires an unknown or unavailable capability",
+    ))
 }
 
 fn read_schema(conn: &Connection) -> Result<Vec<SchemaObject>> {
@@ -469,19 +792,45 @@ fn validate_catalog_schema(schema: &[SchemaObject]) -> Result<()> {
         (TABLES_TABLE, lower::catalog_tables_ddl()),
         (FIELDS_TABLE, lower::catalog_fields_ddl()),
         (INDEXES_TABLE, lower::catalog_indexes_ddl()),
+        (ANALYZERS_TABLE, lower::catalog_analyzers_ddl()),
+        (HIDDEN_COLUMNS_TABLE, lower::catalog_hidden_columns_ddl()),
+        (CAPABILITIES_TABLE, lower::catalog_capabilities_ddl()),
     ] {
         require_exact_schema(schema, "table", name, name, &statement.to_string())?;
     }
     Ok(())
 }
 
-fn validate_physical_objects(schema: &[SchemaObject], snapshot: &CatalogSnapshot) -> Result<()> {
+fn validate_catalog_schema_v1(schema: &[SchemaObject]) -> Result<()> {
+    for (name, statement) in [
+        (META_TABLE, lower::catalog_meta_ddl()),
+        (TABLES_TABLE, lower::catalog_tables_v1_ddl()),
+        (FIELDS_TABLE, lower::catalog_fields_ddl()),
+        (INDEXES_TABLE, lower::catalog_indexes_v1_ddl()),
+    ] {
+        require_exact_schema(schema, "table", name, name, &statement.to_string())?;
+    }
+    Ok(())
+}
+
+fn validate_physical_objects(
+    schema: &[SchemaObject],
+    snapshot: &CatalogSnapshot,
+    format_two: bool,
+) -> Result<()> {
     let mut expected_reserved = BTreeSet::from([
         META_TABLE.to_string(),
         TABLES_TABLE.to_string(),
         FIELDS_TABLE.to_string(),
         INDEXES_TABLE.to_string(),
     ]);
+    if format_two {
+        expected_reserved.extend([
+            ANALYZERS_TABLE.to_string(),
+            HIDDEN_COLUMNS_TABLE.to_string(),
+            CAPABILITIES_TABLE.to_string(),
+        ]);
+    }
     for table in snapshot.tables.values() {
         expected_reserved.insert(table.physical_name.clone());
         require_exact_schema(
@@ -493,18 +842,15 @@ fn validate_physical_objects(schema: &[SchemaObject], snapshot: &CatalogSnapshot
         )?;
         for index in table.indexes.values() {
             expected_reserved.insert(index.physical_name.clone());
+            let provider = crate::provider::index_provider(index)?;
             require_exact_schema(
                 schema,
                 "index",
                 &index.physical_name,
                 &table.physical_name,
-                &lower::physical_index_ddl(
-                    &index.physical_name,
-                    &table.physical_name,
-                    &index.path_keys,
-                    index.unique,
-                )?
-                .to_string(),
+                &provider
+                    .create_statement(index, &table.physical_name)?
+                    .to_string(),
             )?;
         }
     }
@@ -532,7 +878,12 @@ fn require_exact_schema(
         .ok_or_else(|| {
             FastDbError::format(format!("required physical object {name:?} is missing"))
         })?;
-    if object.table_name != table_name || object.sql.as_deref() != Some(expected_sql) {
+    let actual_sql = object.sql.as_deref();
+    let sql_matches = actual_sql.is_some_and(|actual| {
+        actual == expected_sql
+            || actual.replace("CHECK (", "CHECK(") == expected_sql.replace("CHECK (", "CHECK(")
+    });
+    if object.table_name != table_name || !sql_matches {
         return Err(FastDbError::format(format!(
             "physical object {name:?} has an unexpected structure"
         )));
@@ -574,6 +925,12 @@ fn format_optional_text(value: &Value, field: &str) -> Result<Option<String>> {
             "catalog field {field} is neither TEXT nor NULL"
         ))),
     }
+}
+
+fn format_optional_catalog_id(value: &Value, field: &str) -> Result<Option<CatalogId>> {
+    format_optional_text(value, field)?
+        .map(|value| CatalogId::from_hex(&value))
+        .transpose()
 }
 
 fn format_integer(value: &Value, field: &str) -> Result<i64> {

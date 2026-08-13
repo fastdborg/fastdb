@@ -55,12 +55,12 @@ fn quoted_semicolon_value_stored_literally_and_schema_unchanged() {
         rows[0][0]
     );
 
-    // Schema unchanged: four stable catalogs and one opaque physical table —
+    // Schema unchanged: seven format-2 catalogs and one opaque physical table —
     // no injected table and nothing dropped.
     let tables = common::native_rows(native, "SELECT name FROM sqlite_schema WHERE type='table'");
     assert_eq!(
         tables.len(),
-        5,
+        8,
         "no injected/dropped tables, got: {tables:?}"
     );
     assert_eq!(common::integrity_check(native), "ok");

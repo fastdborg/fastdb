@@ -34,6 +34,7 @@ pub mod execute;
 pub mod lower;
 pub mod names;
 pub mod path;
+mod provider;
 pub mod schema;
 pub mod test_failpoints;
 

@@ -244,6 +244,9 @@ impl<'a> Parser<'a> {
             TokenKind::Update => Statement::Update(self.parse_update()?),
             TokenKind::Delete => Statement::Delete(self.parse_delete()?),
             TokenKind::Define => self.parse_define()?,
+            TokenKind::Explain => Statement::Explain(self.parse_explain()?),
+            TokenKind::Remove => Statement::RemoveIndex(self.parse_index_maintenance(false)?),
+            TokenKind::Rebuild => Statement::RebuildIndex(self.parse_index_maintenance(true)?),
             TokenKind::Begin => Statement::Begin(self.parse_transaction(TokenKind::Begin)?),
             TokenKind::Commit => Statement::Commit(self.parse_transaction(TokenKind::Commit)?),
             TokenKind::Cancel => Statement::Cancel(self.parse_transaction(TokenKind::Cancel)?),
@@ -479,6 +482,44 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_explain(&mut self) -> Result<ExplainStatement, ParseError> {
+        let start = self.expect(&TokenKind::Explain, "keyword EXPLAIN")?.span;
+        if !self.at(&TokenKind::Select) {
+            return Err(ParseError::unsupported(
+                "Phase 6 EXPLAIN accepts SELECT only",
+                self.peek().span,
+            ));
+        }
+        let select = self.parse_select()?;
+        Ok(ExplainStatement {
+            span: start.union(select.span),
+            select,
+        })
+    }
+
+    fn parse_index_maintenance(
+        &mut self,
+        rebuild: bool,
+    ) -> Result<IndexMaintenanceStatement, ParseError> {
+        let keyword = if rebuild {
+            TokenKind::Rebuild
+        } else {
+            TokenKind::Remove
+        };
+        let start = self.expect(&keyword, "index maintenance statement")?.span;
+        self.expect(&TokenKind::Index, "keyword INDEX")?;
+        let name = self.expect_identifier("an index name")?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("a table name")?;
+        Ok(IndexMaintenanceStatement {
+            span: start.union(table.span),
+            name,
+            table_keyword,
+            table,
+        })
+    }
+
     fn parse_define_table(&mut self, start: Span) -> Result<DefineTableStatement, ParseError> {
         self.expect(&TokenKind::Table, "keyword TABLE")?;
         let name = self.expect_identifier("a table name")?;
@@ -526,7 +567,43 @@ impl<'a> Parser<'a> {
             fields.push(field);
         }
         let unique = self.take(&TokenKind::Unique).map(|token| token.span);
-        let end = unique.map_or_else(|| fields.last().expect("one field").span.end(), Span::end);
+        let kind = if let Some(fulltext) = self.take(&TokenKind::Fulltext) {
+            if !self.eat(&TokenKind::Analyzer) {
+                return Err(ParseError::unsupported(
+                    "FULLTEXT indexes require an ANALYZER clause",
+                    self.peek().span,
+                ));
+            }
+            let analyzer = self.expect_identifier("an analyzer name")?;
+            IndexKindSyntax::Fulltext {
+                span: fulltext.span.union(analyzer.span),
+                analyzer,
+            }
+        } else if let Some(using) = self.take(&TokenKind::Using) {
+            let name = self.expect_identifier("an index provider name")?;
+            let options = if self.eat(&TokenKind::With) {
+                self.parse_index_options()?
+            } else {
+                Vec::new()
+            };
+            let end = options.last().map_or(name.span, |option| option.span);
+            IndexKindSyntax::Provider {
+                span: using.span.union(end),
+                name,
+                options,
+            }
+        } else {
+            IndexKindSyntax::Btree
+        };
+        let kind_end = match &kind {
+            IndexKindSyntax::Btree => None,
+            IndexKindSyntax::Fulltext { span, .. } | IndexKindSyntax::Provider { span, .. } => {
+                Some(span.end())
+            }
+        };
+        let end = kind_end.unwrap_or_else(|| {
+            unique.map_or_else(|| fields.last().expect("one field").span.end(), Span::end)
+        });
         Ok(DefineIndexStatement {
             span: Span::new(start.offset, end - start.offset),
             name,
@@ -534,7 +611,31 @@ impl<'a> Parser<'a> {
             table,
             fields,
             unique,
+            kind,
         })
+    }
+
+    fn parse_index_options(&mut self) -> Result<Vec<IndexOption>, ParseError> {
+        self.expect(&TokenKind::LeftParen, "'(' after WITH")?;
+        let mut options = Vec::new();
+        if self.eat(&TokenKind::RightParen) {
+            return Ok(options);
+        }
+        loop {
+            let key = self.expect_identifier("an index option name")?;
+            self.expect(&TokenKind::Equal, "'=' after index option name")?;
+            let value = self.parse_expression()?;
+            let span = key.span.union(value.span);
+            self.check_element_count(options.len() + 1, span)?;
+            options.push(IndexOption { span, key, value });
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(&TokenKind::RightParen, "')' after index options")?;
+                return Ok(options);
+            }
+            if self.eat(&TokenKind::RightParen) {
+                return Ok(options);
+            }
+        }
     }
 
     fn parse_transaction(
@@ -691,7 +792,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_projection(&mut self) -> Result<Projection, ParseError> {
-        let path = self.parse_field_path()?;
+        let expression = self.parse_expression()?;
         let alias = if self.eat(&TokenKind::As) {
             Some(self.expect_identifier("an alias")?)
         } else {
@@ -699,8 +800,12 @@ impl<'a> Parser<'a> {
         };
         let span = alias
             .as_ref()
-            .map_or(path.span, |alias| path.span.union(alias.span));
-        Ok(Projection { span, path, alias })
+            .map_or(expression.span, |alias| expression.span.union(alias.span));
+        Ok(Projection {
+            span,
+            expression,
+            alias,
+        })
     }
 
     fn parse_order_by(&mut self) -> Result<Vec<OrderBy>, ParseError> {
@@ -946,7 +1051,7 @@ impl<'a> Parser<'a> {
                 self.position += 1;
                 Ok(Expr::new(ExprKind::Parameter(value), token.span))
             }
-            TokenKind::Ident(_) => self.parse_identifier_expression(),
+            TokenKind::Ident(_) | TokenKind::Search => self.parse_identifier_expression(),
             TokenKind::LeftParen => self.parse_parenthesized_expression(),
             TokenKind::LeftBracket => self.parse_array_expression(),
             TokenKind::LeftBrace => self.parse_object_expression(),
@@ -973,27 +1078,59 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_identifier_expression(&mut self) -> Result<Expr, ParseError> {
-        let table_or_first = self.expect_identifier("an identifier")?;
+        let first = self.expect_function_segment("an identifier")?;
+        if self.at(&TokenKind::DoubleColon) || self.at(&TokenKind::LeftParen) {
+            return self.parse_function_call(first);
+        }
         if self.eat(&TokenKind::Colon) {
             let id = self.parse_record_id_part()?;
-            let span = table_or_first.span.union(id.span);
+            let span = first.span.union(id.span);
             return Ok(Expr::new(
                 ExprKind::RecordId(RecordId {
                     span,
-                    table: table_or_first,
+                    table: first,
                     id,
                 }),
                 span,
             ));
         }
-        let path = self.parse_field_path_tail(table_or_first)?;
-        if self.at(&TokenKind::LeftParen) {
-            return Err(ParseError::unsupported(
-                "function calls are outside the MVP expression grammar",
-                self.peek().span,
-            ));
-        }
+        let path = self.parse_field_path_tail(first)?;
         Ok(Expr::new(ExprKind::FieldPath(path.clone()), path.span))
+    }
+
+    fn parse_function_call(&mut self, first: Identifier) -> Result<Expr, ParseError> {
+        let mut name = vec![first];
+        while self.eat(&TokenKind::DoubleColon) {
+            let segment = self.expect_function_segment("a function name after '::'")?;
+            self.check_element_count(name.len() + 1, segment.span)?;
+            name.push(segment);
+        }
+        self.expect(&TokenKind::LeftParen, "'(' after function name")?;
+        self.enter_depth(name[0].span)?;
+        let arguments_result = self.parse_function_arguments();
+        self.leave_depth();
+        let (arguments, close) = arguments_result?;
+        let span = name[0].span.union(close);
+        Ok(Expr::new(ExprKind::FunctionCall { name, arguments }, span))
+    }
+
+    fn parse_function_arguments(&mut self) -> Result<(Vec<Expr>, Span), ParseError> {
+        let mut arguments = Vec::new();
+        if let Some(close) = self.take(&TokenKind::RightParen) {
+            return Ok((arguments, close.span));
+        }
+        loop {
+            let argument = self.parse_expression()?;
+            self.check_element_count(arguments.len() + 1, argument.span)?;
+            arguments.push(argument);
+            if !self.eat(&TokenKind::Comma) {
+                let close = self.expect(&TokenKind::RightParen, "')'")?.span;
+                return Ok((arguments, close));
+            }
+            if let Some(close) = self.take(&TokenKind::RightParen) {
+                return Ok((arguments, close.span));
+            }
+        }
     }
 
     fn parse_parenthesized_expression(&mut self) -> Result<Expr, ParseError> {
@@ -1223,6 +1360,26 @@ impl<'a> Parser<'a> {
         Err(self.unexpected_at(&token, expected))
     }
 
+    fn expect_function_segment(
+        &mut self,
+        expected: &'static str,
+    ) -> Result<Identifier, ParseError> {
+        let token = self.peek().clone();
+        let value = match token.kind {
+            TokenKind::Ident(value) => value,
+            TokenKind::Search => "search".to_string(),
+            TokenKind::Eof => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof { expected },
+                    token.span,
+                ));
+            }
+            _ => return Err(self.unexpected(expected)),
+        };
+        self.position += 1;
+        Ok(Identifier::new(value, token.span))
+    }
+
     fn advance(&mut self) -> &Token {
         let index = self.position;
         if !matches!(self.tokens[index].kind, TokenKind::Eof) {
@@ -1434,6 +1591,9 @@ fn is_statement_start(kind: &TokenKind) -> bool {
             | TokenKind::Update
             | TokenKind::Delete
             | TokenKind::Define
+            | TokenKind::Explain
+            | TokenKind::Remove
+            | TokenKind::Rebuild
             | TokenKind::Begin
             | TokenKind::Commit
             | TokenKind::Cancel
@@ -1447,7 +1607,6 @@ fn is_unsupported_statement(kind: &TokenKind) -> bool {
             | TokenKind::Upsert
             | TokenKind::Relate
             | TokenKind::Let
-            | TokenKind::Remove
             | TokenKind::Info
             | TokenKind::Use
             | TokenKind::Live
@@ -1467,8 +1626,8 @@ fn is_unsupported_clause(kind: &TokenKind) -> bool {
             | TokenKind::Group
             | TokenKind::Split
             | TokenKind::Omit
-            | TokenKind::Explain
             | TokenKind::With
+            | TokenKind::Using
             | TokenKind::Value
             | TokenKind::Merge
             | TokenKind::Patch

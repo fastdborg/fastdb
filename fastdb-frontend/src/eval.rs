@@ -47,35 +47,64 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
     match statement {
         Statement::Create(statement) => match &statement.data {
             turso_fastdb_parser::CreateData::Content(expression) => {
+                reject_unavailable_functions(expression)?;
                 collect_parameters(expression, &mut names)
             }
             turso_fastdb_parser::CreateData::Set(assignments) => {
                 for assignment in assignments {
+                    reject_unavailable_functions(&assignment.value)?;
                     collect_parameters(&assignment.value, &mut names);
                 }
             }
         },
         Statement::Select(statement) => {
+            if let turso_fastdb_parser::ProjectionList::Fields(projections) = &statement.projections
+            {
+                for projection in projections {
+                    reject_unavailable_functions(&projection.expression)?;
+                    collect_parameters(&projection.expression, &mut names);
+                }
+            }
             if let Some(condition) = &statement.condition {
+                reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
         }
         Statement::Update(statement) => {
             for assignment in &statement.assignments {
+                reject_unavailable_functions(&assignment.value)?;
                 collect_parameters(&assignment.value, &mut names);
             }
             if let Some(condition) = &statement.condition {
+                reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
         }
         Statement::Delete(statement) => {
             if let Some(condition) = &statement.condition {
+                reject_unavailable_functions(condition)?;
+                collect_parameters(condition, &mut names);
+            }
+        }
+        Statement::Explain(statement) => {
+            if let turso_fastdb_parser::ProjectionList::Fields(projections) =
+                &statement.select.projections
+            {
+                for projection in projections {
+                    reject_unavailable_functions(&projection.expression)?;
+                    collect_parameters(&projection.expression, &mut names);
+                }
+            }
+            if let Some(condition) = &statement.select.condition {
+                reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
         }
         Statement::DefineTable(_)
         | Statement::DefineField(_)
         | Statement::DefineIndex(_)
+        | Statement::RemoveIndex(_)
+        | Statement::RebuildIndex(_)
         | Statement::Begin(_)
         | Statement::Commit(_)
         | Statement::Cancel(_) => {}
@@ -108,6 +137,11 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
             collect_parameters(left, names);
             collect_parameters(right, names);
         }
+        ExprKind::FunctionCall { arguments, .. } => {
+            for argument in arguments {
+                collect_parameters(argument, names);
+            }
+        }
         ExprKind::Null
         | ExprKind::Bool(_)
         | ExprKind::Integer(_)
@@ -115,6 +149,50 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
         | ExprKind::String(_)
         | ExprKind::RecordId(_)
         | ExprKind::FieldPath(_) => {}
+    }
+}
+
+fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
+    match &expression.kind {
+        ExprKind::FunctionCall { name, arguments } => {
+            for argument in arguments {
+                reject_unavailable_functions(argument)?;
+            }
+            let _ = name;
+            Err(FastDbError::UnsupportedSyntax(
+                turso_fastdb_parser::ParseError::unsupported(
+                    "function execution is unavailable in Phase 6",
+                    expression.span,
+                ),
+            ))
+        }
+        ExprKind::Array(values) => {
+            for value in values {
+                reject_unavailable_functions(value)?;
+            }
+            Ok(())
+        }
+        ExprKind::Object(fields) => {
+            for field in fields {
+                reject_unavailable_functions(&field.value)?;
+            }
+            Ok(())
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
+            reject_unavailable_functions(operand)
+        }
+        ExprKind::Binary { left, right, .. } => {
+            reject_unavailable_functions(left)?;
+            reject_unavailable_functions(right)
+        }
+        ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Integer(_)
+        | ExprKind::Float(_)
+        | ExprKind::String(_)
+        | ExprKind::Parameter(_)
+        | ExprKind::RecordId(_)
+        | ExprKind::FieldPath(_) => Ok(()),
     }
 }
 
@@ -164,6 +242,13 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
             },
         )))),
         ExprKind::FieldPath(path) => Ok(read_path(path, context)),
+        ExprKind::FunctionCall { name, .. } => Err(FastDbError::Schema(format!(
+            "function {} is not available in Phase 6",
+            name.iter()
+                .map(|segment| segment.value.as_str())
+                .collect::<Vec<_>>()
+                .join("::")
+        ))),
         ExprKind::Parenthesized(inner) => evaluate(inner, context),
         ExprKind::Unary { operator, operand } => {
             let value = evaluate(operand, context)?;

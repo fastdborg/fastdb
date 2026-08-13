@@ -121,4 +121,5 @@ dhat-heap.json
 
 # pgregress actual output and diffs
 postgres/regress/results/
-docs/benchmarks
+docs/benchmarks/*
+!docs/benchmarks/phase6-phase5-regression.json

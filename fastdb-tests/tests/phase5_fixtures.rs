@@ -55,7 +55,7 @@ fn p5_fixture_001_format_one_and_level_zero_migrate_reopen_mutate_and_use_index(
         let path = directory.path().join(name);
         std::fs::write(&path, bytes).unwrap();
         let path = path.to_str().unwrap();
-        assert_fixture(path, 1);
+        assert_fixture(path, 2);
 
         let database = Database::open(path).unwrap();
         let connection = database.connect().unwrap();
@@ -63,7 +63,7 @@ fn p5_fixture_001_format_one_and_level_zero_migrate_reopen_mutate_and_use_index(
             connection.native(),
             "SELECT format_version, dialect_version, last_migration FROM __fastdb_meta",
         );
-        assert_eq!(metadata, vec![vec!["1", "1", "1"]]);
+        assert_eq!(metadata, vec![vec!["2", "1", "2"]]);
         let response = connection.execute("SELECT * FROM person:three").unwrap();
         let StatementResult::Rows(rows) = &response.statements[0] else {
             panic!("expected rows")

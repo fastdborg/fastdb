@@ -15,6 +15,14 @@ pub enum Failpoint {
     AfterBootstrap,
     /// After the no-op migration row update, before commit.
     AfterMigration,
+    /// After format-2 table metadata columns are added.
+    AfterFormat2TableColumns,
+    /// After format-2 index metadata columns are added.
+    AfterFormat2IndexColumns,
+    /// After the new format-2 catalogs are created.
+    AfterFormat2Catalogs,
+    /// After migrated format-2 ownership validates, before header publication.
+    AfterFormat2Validation,
     /// After the logical-table catalog row is inserted.
     AfterCatalogRow,
     /// After the hidden physical table is created.
@@ -29,6 +37,14 @@ pub enum Failpoint {
     AfterIndexPhysicalDdl,
     /// After an index catalog row is written.
     AfterIndexCatalogRow,
+    /// After the physical B-tree is dropped, before its catalog row is removed.
+    AfterIndexRemovePhysical,
+    /// After the B-tree catalog row is removed, before commit.
+    AfterIndexRemoveCatalog,
+    /// After the engine rebuilds a B-tree, before commit.
+    AfterIndexRebuild,
+    /// After a test provider updates `doc`, before its derived column update.
+    AfterTestProviderDocument,
     /// After the record INSERT is prepared, before it is executed.
     AfterRecordPrepare,
     /// After the record is inserted, before COMMIT.
@@ -55,6 +71,10 @@ pub enum Failpoint {
 pub struct Failpoints {
     after_bootstrap: AtomicBool,
     after_migration: AtomicBool,
+    after_format2_table_columns: AtomicBool,
+    after_format2_index_columns: AtomicBool,
+    after_format2_catalogs: AtomicBool,
+    after_format2_validation: AtomicBool,
     after_catalog_row: AtomicBool,
     after_physical_ddl: AtomicBool,
     after_field_validation: AtomicBool,
@@ -62,6 +82,10 @@ pub struct Failpoints {
     after_index_validation: AtomicBool,
     after_index_physical_ddl: AtomicBool,
     after_index_catalog_row: AtomicBool,
+    after_index_remove_physical: AtomicBool,
+    after_index_remove_catalog: AtomicBool,
+    after_index_rebuild: AtomicBool,
+    after_test_provider_document: AtomicBool,
     after_record_prepare: AtomicBool,
     after_record_insert: AtomicBool,
     before_update_mutations: AtomicBool,
@@ -79,6 +103,16 @@ impl Failpoints {
         let armed = match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.load(Ordering::SeqCst),
             Failpoint::AfterMigration => self.after_migration.load(Ordering::SeqCst),
+            Failpoint::AfterFormat2TableColumns => {
+                self.after_format2_table_columns.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2IndexColumns => {
+                self.after_format2_index_columns.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2Catalogs => self.after_format2_catalogs.load(Ordering::SeqCst),
+            Failpoint::AfterFormat2Validation => {
+                self.after_format2_validation.load(Ordering::SeqCst)
+            }
             Failpoint::AfterCatalogRow => self.after_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.load(Ordering::SeqCst),
             Failpoint::AfterFieldValidation => self.after_field_validation.load(Ordering::SeqCst),
@@ -88,6 +122,16 @@ impl Failpoints {
                 self.after_index_physical_ddl.load(Ordering::SeqCst)
             }
             Failpoint::AfterIndexCatalogRow => self.after_index_catalog_row.load(Ordering::SeqCst),
+            Failpoint::AfterIndexRemovePhysical => {
+                self.after_index_remove_physical.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexRemoveCatalog => {
+                self.after_index_remove_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexRebuild => self.after_index_rebuild.load(Ordering::SeqCst),
+            Failpoint::AfterTestProviderDocument => {
+                self.after_test_provider_document.load(Ordering::SeqCst)
+            }
             Failpoint::AfterRecordPrepare => self.after_record_prepare.load(Ordering::SeqCst),
             Failpoint::AfterRecordInsert => self.after_record_insert.load(Ordering::SeqCst),
             Failpoint::BeforeUpdateMutations => self.before_update_mutations.load(Ordering::SeqCst),
@@ -110,6 +154,18 @@ impl Failpoints {
         match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.store(true, Ordering::SeqCst),
             Failpoint::AfterMigration => self.after_migration.store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat2TableColumns => self
+                .after_format2_table_columns
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat2IndexColumns => self
+                .after_format2_index_columns
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat2Catalogs => {
+                self.after_format2_catalogs.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2Validation => {
+                self.after_format2_validation.store(true, Ordering::SeqCst)
+            }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(true, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(true, Ordering::SeqCst),
             Failpoint::AfterFieldValidation => {
@@ -127,6 +183,16 @@ impl Failpoints {
             Failpoint::AfterIndexCatalogRow => {
                 self.after_index_catalog_row.store(true, Ordering::SeqCst)
             }
+            Failpoint::AfterIndexRemovePhysical => self
+                .after_index_remove_physical
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterIndexRemoveCatalog => self
+                .after_index_remove_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterIndexRebuild => self.after_index_rebuild.store(true, Ordering::SeqCst),
+            Failpoint::AfterTestProviderDocument => self
+                .after_test_provider_document
+                .store(true, Ordering::SeqCst),
             Failpoint::AfterRecordPrepare => {
                 self.after_record_prepare.store(true, Ordering::SeqCst)
             }
@@ -153,6 +219,18 @@ impl Failpoints {
         match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.store(false, Ordering::SeqCst),
             Failpoint::AfterMigration => self.after_migration.store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat2TableColumns => self
+                .after_format2_table_columns
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat2IndexColumns => self
+                .after_format2_index_columns
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat2Catalogs => {
+                self.after_format2_catalogs.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2Validation => {
+                self.after_format2_validation.store(false, Ordering::SeqCst)
+            }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(false, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(false, Ordering::SeqCst),
             Failpoint::AfterFieldValidation => {
@@ -170,6 +248,16 @@ impl Failpoints {
             Failpoint::AfterIndexCatalogRow => {
                 self.after_index_catalog_row.store(false, Ordering::SeqCst)
             }
+            Failpoint::AfterIndexRemovePhysical => self
+                .after_index_remove_physical
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterIndexRemoveCatalog => self
+                .after_index_remove_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterIndexRebuild => self.after_index_rebuild.store(false, Ordering::SeqCst),
+            Failpoint::AfterTestProviderDocument => self
+                .after_test_provider_document
+                .store(false, Ordering::SeqCst),
             Failpoint::AfterRecordPrepare => {
                 self.after_record_prepare.store(false, Ordering::SeqCst)
             }
@@ -196,6 +284,10 @@ impl Failpoints {
         for fp in [
             Failpoint::AfterBootstrap,
             Failpoint::AfterMigration,
+            Failpoint::AfterFormat2TableColumns,
+            Failpoint::AfterFormat2IndexColumns,
+            Failpoint::AfterFormat2Catalogs,
+            Failpoint::AfterFormat2Validation,
             Failpoint::AfterCatalogRow,
             Failpoint::AfterPhysicalDdl,
             Failpoint::AfterFieldValidation,
@@ -203,6 +295,10 @@ impl Failpoints {
             Failpoint::AfterIndexValidation,
             Failpoint::AfterIndexPhysicalDdl,
             Failpoint::AfterIndexCatalogRow,
+            Failpoint::AfterIndexRemovePhysical,
+            Failpoint::AfterIndexRemoveCatalog,
+            Failpoint::AfterIndexRebuild,
+            Failpoint::AfterTestProviderDocument,
             Failpoint::AfterRecordPrepare,
             Failpoint::AfterRecordInsert,
             Failpoint::BeforeUpdateMutations,

@@ -5,6 +5,7 @@ use crate::error::FastDbError;
 
 pub const TABLE_NAME_PREFIX: &str = "__fastdb_t_";
 pub const INDEX_NAME_PREFIX: &str = "__fastdb_i_";
+pub const HIDDEN_COLUMN_NAME_PREFIX: &str = "__fastdb_h_";
 pub const HEX_LEN: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -48,6 +49,10 @@ pub fn physical_table_name(id: TableId) -> String {
 
 pub fn physical_index_name(id: IndexId) -> String {
     format!("{INDEX_NAME_PREFIX}{}", id.to_hex())
+}
+
+pub fn physical_hidden_column_name(id: CatalogId) -> String {
+    format!("{HIDDEN_COLUMN_NAME_PREFIX}{}", id.to_hex())
 }
 
 pub fn validate_physical_name(name: &str, prefix: &str) -> Result<(), FastDbError> {

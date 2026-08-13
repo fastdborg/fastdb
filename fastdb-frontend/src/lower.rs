@@ -2,6 +2,8 @@
 
 use crate::decode::Value as FastValue;
 use crate::error::FastDbError;
+#[cfg(feature = "testing")]
+use crate::names::HIDDEN_COLUMN_NAME_PREFIX;
 use crate::names::{validate_physical_name, INDEX_NAME_PREFIX, TABLE_NAME_PREFIX};
 use std::num::NonZeroU32;
 use turso_core::Value;
@@ -107,6 +109,13 @@ fn unique() -> NamedColumnConstraint {
     }
 }
 
+fn default(expression: Expr) -> NamedColumnConstraint {
+    NamedColumnConstraint {
+        name: None,
+        constraint: ColumnConstraint::Default(Box::new(expression)),
+    }
+}
+
 fn check(expression: Expr) -> NamedColumnConstraint {
     NamedColumnConstraint {
         name: None,
@@ -207,6 +216,28 @@ pub fn catalog_meta_ddl() -> Stmt {
     )
 }
 
+pub fn catalog_tables_v1_ddl() -> Stmt {
+    let mode_check = Expr::InList {
+        lhs: Box::new(id("mode")),
+        not: false,
+        rhs: vec![
+            Box::new(strlit("SCHEMALESS")),
+            Box::new(strlit("SCHEMAFULL")),
+        ],
+    };
+    create_table(
+        crate::catalog::TABLES_TABLE,
+        vec![
+            column("table_id", "TEXT", vec![primary_key()]),
+            column("logical_name", "TEXT", vec![not_null(), unique()]),
+            column("physical_name", "TEXT", vec![not_null(), unique()]),
+            column("mode", "TEXT", vec![not_null(), check(mode_check)]),
+            column("definition", "TEXT", vec![]),
+        ],
+        vec![],
+    )
+}
+
 pub fn catalog_tables_ddl() -> Stmt {
     let mode_check = Expr::InList {
         lhs: Box::new(id("mode")),
@@ -224,6 +255,14 @@ pub fn catalog_tables_ddl() -> Stmt {
             column("physical_name", "TEXT", vec![not_null(), unique()]),
             column("mode", "TEXT", vec![not_null(), check(mode_check)]),
             column("definition", "TEXT", vec![]),
+            column("kind", "TEXT", vec![not_null(), default(strlit("NORMAL"))]),
+            column("relation_in_table_id", "TEXT", vec![]),
+            column("relation_out_table_id", "TEXT", vec![]),
+            column(
+                "relation_enforced",
+                "INTEGER",
+                vec![not_null(), default(numlit(0))],
+            ),
         ],
         vec![],
     )
@@ -254,7 +293,7 @@ pub fn catalog_fields_ddl() -> Stmt {
     )
 }
 
-pub fn catalog_indexes_ddl() -> Stmt {
+pub fn catalog_indexes_v1_ddl() -> Stmt {
     create_table(
         crate::catalog::INDEXES_TABLE,
         vec![
@@ -282,6 +321,159 @@ pub fn catalog_indexes_ddl() -> Stmt {
     )
 }
 
+pub fn catalog_indexes_ddl() -> Stmt {
+    create_table(
+        crate::catalog::INDEXES_TABLE,
+        vec![
+            column("index_id", "TEXT", vec![primary_key()]),
+            column("table_id", "TEXT", vec![not_null()]),
+            column("logical_name", "TEXT", vec![not_null()]),
+            column("physical_name", "TEXT", vec![not_null(), unique()]),
+            column("paths_json", "TEXT", vec![not_null()]),
+            column(
+                "unique_flag",
+                "INTEGER",
+                vec![
+                    not_null(),
+                    check(Expr::InList {
+                        lhs: Box::new(id("unique_flag")),
+                        not: false,
+                        rhs: vec![Box::new(numlit(0)), Box::new(numlit(1))],
+                    }),
+                ],
+            ),
+            column("expression_version", "INTEGER", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+            column(
+                "index_kind",
+                "TEXT",
+                vec![not_null(), default(strlit("BTREE"))],
+            ),
+            column(
+                "provider",
+                "TEXT",
+                vec![not_null(), default(strlit("BUILTIN_BTREE"))],
+            ),
+            column(
+                "provider_version",
+                "INTEGER",
+                vec![not_null(), default(numlit(1))],
+            ),
+            column(
+                "options_json",
+                "TEXT",
+                vec![not_null(), default(strlit("{}"))],
+            ),
+            column("state", "TEXT", vec![not_null(), default(strlit("READY"))]),
+            column(
+                "encoding_version",
+                "INTEGER",
+                vec![not_null(), default(numlit(1))],
+            ),
+        ],
+        vec![table_unique(&["table_id", "logical_name"])],
+    )
+}
+
+pub fn catalog_analyzers_ddl() -> Stmt {
+    create_table(
+        crate::catalog::ANALYZERS_TABLE,
+        vec![
+            column("analyzer_id", "TEXT", vec![primary_key()]),
+            column("logical_name", "TEXT", vec![not_null(), unique()]),
+            column("provider", "TEXT", vec![not_null()]),
+            column("provider_version", "INTEGER", vec![not_null()]),
+            column("options_json", "TEXT", vec![not_null()]),
+            column("definition", "TEXT", vec![not_null()]),
+        ],
+        vec![],
+    )
+}
+
+pub fn catalog_hidden_columns_ddl() -> Stmt {
+    create_table(
+        crate::catalog::HIDDEN_COLUMNS_TABLE,
+        vec![
+            column("column_id", "TEXT", vec![primary_key()]),
+            column("table_id", "TEXT", vec![not_null()]),
+            column("index_id", "TEXT", vec![]),
+            column("field_path_key", "TEXT", vec![]),
+            column("physical_name", "TEXT", vec![not_null(), unique()]),
+            column("provider", "TEXT", vec![not_null()]),
+            column("provider_version", "INTEGER", vec![not_null()]),
+            column("physical_encoding", "TEXT", vec![not_null()]),
+            column("dimension", "INTEGER", vec![]),
+            column("options_json", "TEXT", vec![not_null()]),
+            column("state", "TEXT", vec![not_null()]),
+            column("encoding_version", "INTEGER", vec![not_null()]),
+        ],
+        vec![],
+    )
+}
+
+pub fn catalog_capabilities_ddl() -> Stmt {
+    create_table(
+        crate::catalog::CAPABILITIES_TABLE,
+        vec![
+            column("provider", "TEXT", vec![primary_key()]),
+            column("min_provider_version", "INTEGER", vec![not_null()]),
+            column("min_encoding_version", "INTEGER", vec![not_null()]),
+        ],
+        vec![],
+    )
+}
+
+pub fn add_catalog_column(table: &str, definition: ColumnDefinition) -> Stmt {
+    Stmt::AlterTable(AlterTable {
+        name: qnm(table),
+        body: AlterTableBody::AddColumn(definition),
+    })
+}
+
+pub fn format2_table_columns() -> Vec<ColumnDefinition> {
+    vec![
+        column("kind", "TEXT", vec![not_null(), default(strlit("NORMAL"))]),
+        column("relation_in_table_id", "TEXT", vec![]),
+        column("relation_out_table_id", "TEXT", vec![]),
+        column(
+            "relation_enforced",
+            "INTEGER",
+            vec![not_null(), default(numlit(0))],
+        ),
+    ]
+}
+
+pub fn format2_index_columns() -> Vec<ColumnDefinition> {
+    vec![
+        column(
+            "index_kind",
+            "TEXT",
+            vec![not_null(), default(strlit("BTREE"))],
+        ),
+        column(
+            "provider",
+            "TEXT",
+            vec![not_null(), default(strlit("BUILTIN_BTREE"))],
+        ),
+        column(
+            "provider_version",
+            "INTEGER",
+            vec![not_null(), default(numlit(1))],
+        ),
+        column(
+            "options_json",
+            "TEXT",
+            vec![not_null(), default(strlit("{}"))],
+        ),
+        column("state", "TEXT", vec![not_null(), default(strlit("READY"))]),
+        column(
+            "encoding_version",
+            "INTEGER",
+            vec![not_null(), default(numlit(1))],
+        ),
+    ]
+}
+
 pub fn physical_table_ddl(opaque_name: &str) -> Result<Stmt, FastDbError> {
     validate_physical_name(opaque_name, TABLE_NAME_PREFIX)?;
     Ok(create_table(
@@ -291,6 +483,120 @@ pub fn physical_table_ddl(opaque_name: &str) -> Result<Stmt, FastDbError> {
             column("doc", "BLOB", vec![not_null()]),
         ],
         vec![],
+    ))
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn test_provider_table_ddl(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(opaque_hidden_column, HIDDEN_COLUMN_NAME_PREFIX)?;
+    Ok(create_table(
+        opaque_table,
+        vec![
+            column("rid", "TEXT", vec![primary_key()]),
+            column("doc", "BLOB", vec![not_null()]),
+            column(opaque_hidden_column, "INTEGER", vec![not_null()]),
+        ],
+        vec![],
+    ))
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn test_provider_insert_stmt(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+    encoded_document: &str,
+    derived: i64,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(opaque_hidden_column, HIDDEN_COLUMN_NAME_PREFIX)?;
+    Ok(insert_values(
+        opaque_table,
+        &["rid", "doc", opaque_hidden_column],
+        vec![strlit("test"), fcall("jsonb", vec![var(1)]), var(2)],
+        vec![text(encoded_document), Value::from_i64(derived)],
+    ))
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn test_provider_update_document_stmt(
+    opaque_table: &str,
+    encoded_document: &str,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    Ok((
+        Stmt::Update(Update {
+            with: None,
+            or_conflict: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            sets: vec![Set {
+                col_names: vec![nm("doc")],
+                expr: Box::new(fcall("jsonb", vec![var(1)])),
+            }],
+            from: None,
+            where_clause: Some(Box::new(Expr::binary(
+                id("rid"),
+                Operator::Equals,
+                strlit("test"),
+            ))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        }),
+        vec![text(encoded_document)],
+    ))
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn test_provider_update_hidden_stmt(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+    derived: i64,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(opaque_hidden_column, HIDDEN_COLUMN_NAME_PREFIX)?;
+    Ok((
+        Stmt::Update(Update {
+            with: None,
+            or_conflict: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            sets: vec![Set {
+                col_names: vec![nm(opaque_hidden_column)],
+                expr: Box::new(var(1)),
+            }],
+            from: None,
+            where_clause: Some(Box::new(Expr::binary(
+                id("rid"),
+                Operator::Equals,
+                strlit("test"),
+            ))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        }),
+        vec![Value::from_i64(derived)],
+    ))
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn test_provider_select_stmt(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(opaque_hidden_column, HIDDEN_COLUMN_NAME_PREFIX)?;
+    Ok(one_select(
+        vec![
+            ResultColumn::Expr(Box::new(fcall("json", vec![id("doc")])), None),
+            ResultColumn::Expr(Box::new(id(opaque_hidden_column)), None),
+        ],
+        opaque_table,
+        Some(Expr::binary(id("rid"), Operator::Equals, strlit("test"))),
     ))
 }
 
@@ -373,6 +679,10 @@ pub fn tables_stmt() -> Stmt {
             "physical_name",
             "mode",
             "definition",
+            "kind",
+            "relation_in_table_id",
+            "relation_out_table_id",
+            "relation_enforced",
         ]
         .into_iter()
         .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
@@ -404,11 +714,107 @@ pub fn indexes_stmt() -> Stmt {
             "unique_flag",
             "expression_version",
             "definition",
+            "index_kind",
+            "provider",
+            "provider_version",
+            "options_json",
+            "state",
+            "encoding_version",
         ]
         .into_iter()
         .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
         .collect(),
         crate::catalog::INDEXES_TABLE,
+        None,
+    )
+}
+
+pub fn tables_v1_stmt() -> Stmt {
+    one_select(
+        [
+            "table_id",
+            "logical_name",
+            "physical_name",
+            "mode",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::TABLES_TABLE,
+        None,
+    )
+}
+
+pub fn indexes_v1_stmt() -> Stmt {
+    one_select(
+        [
+            "index_id",
+            "table_id",
+            "logical_name",
+            "physical_name",
+            "paths_json",
+            "unique_flag",
+            "expression_version",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::INDEXES_TABLE,
+        None,
+    )
+}
+
+pub fn analyzers_stmt() -> Stmt {
+    one_select(
+        [
+            "analyzer_id",
+            "logical_name",
+            "provider",
+            "provider_version",
+            "options_json",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::ANALYZERS_TABLE,
+        None,
+    )
+}
+
+pub fn hidden_columns_stmt() -> Stmt {
+    one_select(
+        [
+            "column_id",
+            "table_id",
+            "index_id",
+            "field_path_key",
+            "physical_name",
+            "provider",
+            "provider_version",
+            "physical_encoding",
+            "dimension",
+            "options_json",
+            "state",
+            "encoding_version",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::HIDDEN_COLUMNS_TABLE,
+        None,
+    )
+}
+
+pub fn capabilities_stmt() -> Stmt {
+    one_select(
+        ["provider", "min_provider_version", "min_encoding_version"]
+            .into_iter()
+            .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+            .collect(),
+        crate::catalog::CAPABILITIES_TABLE,
         None,
     )
 }
@@ -430,8 +836,8 @@ pub fn meta_insert(
         ],
         vec![
             numlit(1),
-            numlit(1),
-            numlit(1),
+            numlit(crate::catalog::FORMAT_VERSION),
+            numlit(crate::catalog::DIALECT_VERSION),
             var(1),
             var(2),
             numlit(last_migration),
@@ -455,6 +861,34 @@ pub fn migrate_to_one_stmt() -> Stmt {
             Expr::binary(id("singleton"), Operator::Equals, numlit(1)),
             Operator::And,
             Expr::binary(id("last_migration"), Operator::Equals, numlit(0)),
+        ))),
+        returning: vec![],
+        order_by: vec![],
+        limit: None,
+    })
+}
+
+pub fn migrate_to_two_stmt() -> Stmt {
+    Stmt::Update(Update {
+        with: None,
+        or_conflict: None,
+        tbl_name: qnm(crate::catalog::META_TABLE),
+        indexed: None,
+        sets: vec![
+            Set {
+                col_names: vec![nm("last_migration")],
+                expr: Box::new(numlit(crate::catalog::LAST_MIGRATION)),
+            },
+            Set {
+                col_names: vec![nm("format_version")],
+                expr: Box::new(numlit(crate::catalog::FORMAT_VERSION)),
+            },
+        ],
+        from: None,
+        where_clause: Some(Box::new(Expr::binary(
+            Expr::binary(id("singleton"), Operator::Equals, numlit(1)),
+            Operator::And,
+            Expr::binary(id("format_version"), Operator::Equals, numlit(1)),
         ))),
         returning: vec![],
         order_by: vec![],
@@ -557,6 +991,40 @@ pub fn index_insert(
             text(definition),
         ],
     )
+}
+
+pub fn index_delete(index_id: &str) -> (Stmt, Bindings) {
+    (
+        Stmt::Delete {
+            with: None,
+            tbl_name: qnm(crate::catalog::INDEXES_TABLE),
+            indexed: None,
+            where_clause: Some(Box::new(Expr::binary(
+                id("index_id"),
+                Operator::Equals,
+                var(1),
+            ))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        },
+        vec![text(index_id)],
+    )
+}
+
+pub fn physical_drop_index_ddl(opaque_index: &str) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_index, INDEX_NAME_PREFIX)?;
+    Ok(Stmt::DropIndex {
+        if_exists: false,
+        idx_name: qnm(opaque_index),
+    })
+}
+
+pub fn physical_rebuild_index_stmt(opaque_index: &str) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_index, INDEX_NAME_PREFIX)?;
+    Ok(Stmt::Reindex {
+        name: Some(qnm(opaque_index)),
+    })
 }
 
 pub fn physical_insert_content_stmt(

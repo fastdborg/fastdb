@@ -56,7 +56,7 @@ fn validate_statement(statement: &Statement, source_len: usize) {
                 ProjectionList::Fields(projections) => {
                     for projection in projections {
                         child(parent, projection.span, source_len);
-                        validate_path(projection.span, &projection.path, source_len);
+                        validate_expr(projection.span, &projection.expression, source_len);
                         if let Some(alias) = &projection.alias {
                             child(projection.span, alias.span, source_len);
                         }
@@ -81,6 +81,17 @@ fn validate_statement(statement: &Statement, source_len: usize) {
             if let Some(start) = &statement.start {
                 child(parent, start.span, source_len);
             }
+        }
+        Statement::Explain(statement) => {
+            child(parent, statement.select.span, source_len);
+            validate_statement(&Statement::Select(statement.select.clone()), source_len);
+        }
+        Statement::RemoveIndex(statement) | Statement::RebuildIndex(statement) => {
+            child(parent, statement.name.span, source_len);
+            if let Some(table_keyword) = statement.table_keyword {
+                child(parent, table_keyword, source_len);
+            }
+            child(parent, statement.table.span, source_len);
         }
         Statement::Update(statement) => {
             validate_target(parent, &statement.target, source_len);
@@ -130,6 +141,26 @@ fn validate_statement(statement: &Statement, source_len: usize) {
             }
             if let Some(span) = statement.unique {
                 child(parent, span, source_len);
+            }
+            match &statement.kind {
+                turso_fastdb_parser::IndexKindSyntax::Btree => {}
+                turso_fastdb_parser::IndexKindSyntax::Fulltext { span, analyzer } => {
+                    child(parent, *span, source_len);
+                    child(*span, analyzer.span, source_len);
+                }
+                turso_fastdb_parser::IndexKindSyntax::Provider {
+                    span,
+                    name,
+                    options,
+                } => {
+                    child(parent, *span, source_len);
+                    child(*span, name.span, source_len);
+                    for option in options {
+                        child(*span, option.span, source_len);
+                        child(option.span, option.key.span, source_len);
+                        validate_expr(option.span, &option.value, source_len);
+                    }
+                }
             }
         }
         Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {}
@@ -182,6 +213,14 @@ fn validate_expr(parent: Span, expression: &Expr, source_len: usize) {
             child(record.span, record.id.span, source_len);
         }
         ExprKind::FieldPath(path) => validate_path(expression.span, path, source_len),
+        ExprKind::FunctionCall { name, arguments } => {
+            for segment in name {
+                child(expression.span, segment.span, source_len);
+            }
+            for argument in arguments {
+                validate_expr(expression.span, argument, source_len);
+            }
+        }
         ExprKind::Unary { operator, operand } => {
             child(expression.span, operator.span, source_len);
             validate_expr(expression.span, operand, source_len);

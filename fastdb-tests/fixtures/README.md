@@ -10,9 +10,16 @@ SurrealDB source, tests, fixtures, expected output, or fuzz corpus.
   artifact, then changes only `__fastdb_meta.last_migration` from 1 to 0 via
   the pinned Turso CLI. Opening it exercises FastDB's transactional 0-to-1
   migration.
+- `phase6-format2.fastdb` starts from `phase3-format1.fastdb` and was upgraded
+  by the Phase 6 FastDB frontend at commit `998354ed8` plus the uncommitted
+  Phase 6 implementation. It preserves the same independently authored table,
+  index, and record data while recording format/migration version 2 and the
+  three empty provider catalogs.
 
 Generation date: 2026-08-13. Behavioral data and expected assertions were
 written for FastDB and are not adapted from another implementation. SHA-256
 digests are recorded in `SHA256SUMS` and checked by the Phase 5 verification
 and CI provenance step. `P5-FIXTURE-001` checks open/migration/reopen,
 mutation, integrity, and actual expression-index selection.
+`P6-FMT-004` performs the equivalent reopen, mutation, integrity, and plan
+checks against the committed format-2 artifact.
