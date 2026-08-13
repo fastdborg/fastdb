@@ -4,6 +4,7 @@
 use fastdb::{json, params, Builder, RecordId, RecordIdValue, StatementResult, Value};
 use futures::executor::block_on;
 use std::collections::BTreeMap;
+use tempfile::tempdir;
 
 #[test]
 fn p14_api_001_complex_record_ids_round_trip_without_collisions() {
@@ -487,6 +488,79 @@ fn p14_api_010_insert_relation_maintains_both_adjacency_directions() {
                 matches!(&rows[0], Value::Object(row) if matches!(row.values().next(), Some(Value::Array(ids)) if ids.len() == 1))
             );
         }
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_011_disk_reopen_and_explicit_transaction_poison_preserve_atomicity() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("phase14.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        connection
+            .execute(
+                "INSERT INTO item [{ id: 'a', n: 1 }, { id: 'b', n: 2 }]",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("UPDATE item:a SET n = 9", params! {})
+            .await
+            .unwrap();
+        assert!(transaction
+            .execute("INSERT INTO item [{ id: 'c' }, { id: 'c' }]", params! {},)
+            .await
+            .is_err());
+        drop(transaction);
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query("SELECT * FROM ONLY item LIMIT 1", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.statements[0],
+            StatementResult::Value(Value::Object(_))
+        ));
+        let unchanged = connection
+            .query("SELECT n FROM item:a; SELECT * FROM item:c", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &unchanged.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(row) if row.get("n") == Some(&Value::Integer(1)))
+        ));
+        assert!(matches!(&unchanged.statements[1], StatementResult::Rows(rows) if rows.is_empty()));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p14_api_012_group_all_empty_input_returns_zero_count() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute("DEFINE TABLE empty SCHEMALESS", params! {})
+            .await
+            .unwrap();
+        let response = connection
+            .query("SELECT count() AS count FROM empty GROUP ALL", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &response.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(row) if row.get("count") == Some(&Value::Integer(0)))
+        ));
         connection.close().await.unwrap();
     });
 }

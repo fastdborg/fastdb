@@ -1105,8 +1105,16 @@ fn run_select(
         return run_multi_target_select(conn, execution, statement, params);
     }
     if let Some(only) = statement.only {
-        if !matches!(statement.target, SelectTarget::Target(Target::Record(_))) {
-            return unsupported(only, "SELECT ONLY requires a record target");
+        let single_record = matches!(statement.target, SelectTarget::Target(Target::Record(_)));
+        let bounded_table = statement
+            .limit
+            .as_ref()
+            .is_some_and(|limit| limit.value == 1);
+        if !single_record && !bounded_table {
+            return unsupported(
+                only,
+                "SELECT ONLY requires a record target or an exact LIMIT 1",
+            );
         }
     }
     let (table_name, selector) = select_target_parts(&statement.target)?;
