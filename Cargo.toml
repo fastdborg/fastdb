@@ -62,6 +62,7 @@ members = [
     "fastdb-benchmarks",
     "fastdb-api",
     "fastdb-cli",
+    "fastdb-compat",
 ]
 exclude = ["perf/latency/limbo"]
 

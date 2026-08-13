@@ -7469,11 +7469,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "turso_fastdb_compat"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "toml 0.8.22",
+]
+
+[[package]]
 name = "turso_fastdb_parser"
 version = "0.0.0"
 dependencies = [
  "miette",
  "thiserror 2.0.16",
+ "turso_fastdb_compat",
  "uuid",
 ]
 
