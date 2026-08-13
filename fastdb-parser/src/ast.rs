@@ -449,6 +449,9 @@ pub enum ExprKind {
         name: Vec<Identifier>,
         arguments: Vec<Expr>,
     },
+    NamespacedValue {
+        name: Vec<Identifier>,
+    },
     Knn(KnnExpr),
     Traversal(TraversalExpr),
     Unary {

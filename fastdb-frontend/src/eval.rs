@@ -1,5 +1,6 @@
 //! Authoritative FastDB expression evaluation over decoded documents.
 
+use crate::builtins::{self, Builtin, BuiltinClass, BuiltinSyntax, MathConstant, MathUnary};
 use crate::decode::{
     canonical_value_cmp, DatetimeValue, DecimalValue, DurationValue, FileValue, RangeBound,
     RangeValue, RecordId, RecordIdValue, RegexValue, SetValue, TableValue, Value,
@@ -69,13 +70,11 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
     match statement {
         Statement::Create(statement) => match &statement.data {
             turso_fastdb_parser::CreateData::Content(expression) => {
-                reject_all_functions(expression)?;
                 reject_unavailable_functions(expression)?;
                 collect_parameters(expression, &mut names)
             }
             turso_fastdb_parser::CreateData::Set(assignments) => {
                 for assignment in assignments {
-                    reject_all_functions(&assignment.value)?;
                     reject_unavailable_functions(&assignment.value)?;
                     collect_parameters(&assignment.value, &mut names);
                 }
@@ -87,13 +86,11 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
             if let Some(data) = &statement.data {
                 match data {
                     turso_fastdb_parser::CreateData::Content(expression) => {
-                        reject_all_functions(expression)?;
                         reject_unavailable_functions(expression)?;
                         collect_parameters(expression, &mut names);
                     }
                     turso_fastdb_parser::CreateData::Set(assignments) => {
                         for assignment in assignments {
-                            reject_all_functions(&assignment.value)?;
                             reject_unavailable_functions(&assignment.value)?;
                             collect_parameters(&assignment.value, &mut names);
                         }
@@ -116,7 +113,6 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         }
         Statement::Update(statement) => {
             for assignment in &statement.assignments {
-                reject_all_functions(&assignment.value)?;
                 reject_unavailable_functions(&assignment.value)?;
                 collect_parameters(&assignment.value, &mut names);
             }
@@ -201,6 +197,7 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
                 collect_parameters(argument, names);
             }
         }
+        ExprKind::NamespacedValue { .. } => {}
         ExprKind::Knn(knn) => {
             collect_parameters(&knn.field, names);
             collect_parameters(&knn.query, names);
@@ -238,10 +235,29 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
             for argument in arguments {
                 reject_unavailable_functions(argument)?;
             }
-            let normalized = name
-                .iter()
-                .map(|segment| segment.value.to_ascii_lowercase())
-                .collect::<Vec<_>>();
+            let normalized = normalized_function_segments(name);
+            let canonical = normalized.join("::");
+            if let Some(spec) = builtins::lookup(&canonical) {
+                if spec.class != BuiltinClass::Pure || spec.implementation_version != 1 {
+                    return Err(FastDbError::Engine(
+                        "built-in registry contains an unsupported implementation class".into(),
+                    ));
+                }
+                if !(spec.min_arity..=spec.max_arity).contains(&arguments.len()) {
+                    return Err(FastDbError::Schema(format!(
+                        "{} requires {} argument(s)",
+                        spec.name,
+                        arity_description(spec.min_arity, spec.max_arity)
+                    )));
+                }
+                if spec.syntax != BuiltinSyntax::Function {
+                    return Err(FastDbError::Schema(format!(
+                        "{} is a constant and must not use parentheses",
+                        spec.name
+                    )));
+                }
+                return Ok(());
+            }
             if matches!(
                 normalized.as_slice(),
                 [name] if matches!(name.as_str(), "fts_match" | "fts_score" | "fts_highlight")
@@ -264,13 +280,29 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
             } else {
                 Err(FastDbError::UnsupportedSyntax(
                     turso_fastdb_parser::ParseError::unsupported(
-                        "function is outside the Phase 8 FTS subset",
+                        "unknown or unavailable built-in function",
                         expression.span,
                     ),
                 ))
             }
         }
         ExprKind::Traversal(_) => Ok(()),
+        ExprKind::NamespacedValue { name } => {
+            let canonical = normalized_function_segments(name).join("::");
+            match builtins::lookup(&canonical) {
+                Some(spec) if spec.syntax == BuiltinSyntax::Constant => Ok(()),
+                Some(spec) => Err(FastDbError::Schema(format!(
+                    "{} is a function and requires parentheses",
+                    spec.name
+                ))),
+                None => Err(FastDbError::UnsupportedSyntax(
+                    turso_fastdb_parser::ParseError::unsupported(
+                        "unknown or unavailable namespaced value",
+                        expression.span,
+                    ),
+                )),
+            }
+        }
         ExprKind::Knn(knn) => {
             reject_unavailable_functions(&knn.field)?;
             reject_unavailable_functions(&knn.query)
@@ -320,6 +352,20 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
     }
 }
 
+fn normalized_function_segments(name: &[turso_fastdb_parser::Identifier]) -> Vec<String> {
+    name.iter()
+        .map(|segment| segment.value.to_ascii_lowercase())
+        .collect()
+}
+
+fn arity_description(minimum: usize, maximum: usize) -> String {
+    if minimum == maximum {
+        minimum.to_string()
+    } else {
+        format!("between {minimum} and {maximum}")
+    }
+}
+
 fn reject_accessor_functions(accessor: &Accessor) -> Result<()> {
     match accessor {
         Accessor::Field(_) | Accessor::Last(_) => Ok(()),
@@ -333,69 +379,6 @@ fn reject_accessor_functions(accessor: &Accessor) -> Result<()> {
             }
             Ok(())
         }
-    }
-}
-
-fn reject_all_functions(expression: &Expr) -> Result<()> {
-    match &expression.kind {
-        ExprKind::FunctionCall { .. } => Err(FastDbError::UnsupportedSyntax(
-            turso_fastdb_parser::ParseError::unsupported(
-                "function calls are unavailable in mutation values",
-                expression.span,
-            ),
-        )),
-        ExprKind::Knn(_) => Err(FastDbError::UnsupportedSyntax(
-            turso_fastdb_parser::ParseError::unsupported(
-                "KNN predicates are available only in SELECT WHERE clauses",
-                expression.span,
-            ),
-        )),
-        ExprKind::Array(values) => {
-            for value in values {
-                reject_all_functions(value)?;
-            }
-            Ok(())
-        }
-        ExprKind::Object(fields) => {
-            for field in fields {
-                reject_all_functions(&field.value)?;
-            }
-            Ok(())
-        }
-        ExprKind::Access { target, accessor } => {
-            reject_all_functions(target)?;
-            match accessor {
-                Accessor::Field(_) | Accessor::Last(_) => Ok(()),
-                Accessor::Index(index) => reject_all_functions(index),
-                Accessor::Slice { start, end, .. } => {
-                    if let Some(start) = start {
-                        reject_all_functions(start)?;
-                    }
-                    if let Some(end) = end {
-                        reject_all_functions(end)?;
-                    }
-                    Ok(())
-                }
-            }
-        }
-        ExprKind::Cast { value, .. } => reject_all_functions(value),
-        ExprKind::Range(range) => {
-            if let Some(start) = &range.start {
-                reject_all_functions(start)?;
-            }
-            if let Some(end) = &range.end {
-                reject_all_functions(end)?;
-            }
-            Ok(())
-        }
-        ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
-            reject_all_functions(operand)
-        }
-        ExprKind::Binary { left, right, .. } => {
-            reject_all_functions(left)?;
-            reject_all_functions(right)
-        }
-        _ => Ok(()),
     }
 }
 
@@ -474,13 +457,26 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
                 start, end,
             ))))
         }
-        ExprKind::FunctionCall { name, .. } => Err(FastDbError::Schema(format!(
-            "function {} is not available in Phase 6",
-            name.iter()
-                .map(|segment| segment.value.as_str())
-                .collect::<Vec<_>>()
-                .join("::")
-        ))),
+        ExprKind::FunctionCall { name, arguments } => {
+            let canonical = normalized_function_segments(name).join("::");
+            let Some(spec) = builtins::lookup(&canonical) else {
+                return Err(FastDbError::Schema(format!(
+                    "function {canonical} requires a specialized query context"
+                )));
+            };
+            let arguments = arguments
+                .iter()
+                .map(|argument| evaluate(argument, context).map(EvalValue::into_function_value))
+                .collect::<Result<Vec<_>>>()?;
+            evaluate_builtin(spec.function, arguments).map(EvalValue::Present)
+        }
+        ExprKind::NamespacedValue { name } => {
+            let canonical = normalized_function_segments(name).join("::");
+            let spec = builtins::lookup(&canonical).ok_or_else(|| {
+                FastDbError::Schema(format!("unknown namespaced value {canonical}"))
+            })?;
+            evaluate_builtin(spec.function, Vec::new()).map(EvalValue::Present)
+        }
         ExprKind::Knn(_) => Err(FastDbError::Schema(
             "KNN predicate requires exact vector SELECT context".into(),
         )),
@@ -522,6 +518,13 @@ impl EvalValue {
             self,
             Self::Missing | Self::Present(Value::None | Value::Null)
         )
+    }
+
+    fn into_function_value(self) -> Value {
+        match self {
+            Self::Missing => Value::None,
+            Self::Present(value) => value,
+        }
     }
 }
 
@@ -948,6 +951,682 @@ fn render_string(value: Value) -> Result<String> {
         }
         Value::Float(_) => return Err(FastDbError::Schema("non-finite float value".into())),
     })
+}
+
+fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
+    use Builtin::*;
+    match function {
+        ArrayAdd => {
+            let mut values = take_array(&arguments[0], "array::add")?;
+            push_unique(&mut values, arguments[1].clone())?;
+            Ok(Value::Array(values))
+        }
+        ArrayAppend => {
+            let mut values = take_array(&arguments[0], "array append")?;
+            push_bounded(&mut values, arguments[1].clone())?;
+            Ok(Value::Array(values))
+        }
+        ArrayPrepend => {
+            let mut values = take_array(&arguments[0], "array::prepend")?;
+            ensure_collection_growth(values.len(), 1)?;
+            values.insert(0, arguments[1].clone());
+            Ok(Value::Array(values))
+        }
+        ArrayAt => Ok(array_at(
+            collection_slice(&arguments[0], "array::at")?,
+            expect_integer(&arguments[1], "array::at index")?,
+        )),
+        ArrayPop => Ok(take_array(&arguments[0], "array::pop")?
+            .pop()
+            .unwrap_or(Value::None)),
+        ArrayFirst | ArrayLast | ArrayMax | ArrayMin => {
+            let values = collection_slice(&arguments[0], "array function")?;
+            let selected = match function {
+                ArrayFirst => values.first(),
+                ArrayLast => values.last(),
+                ArrayMax => values
+                    .iter()
+                    .max_by(|left, right| canonical_value_cmp(left, right)),
+                ArrayMin => values
+                    .iter()
+                    .min_by(|left, right| canonical_value_cmp(left, right)),
+                _ => unreachable!(),
+            };
+            Ok(selected.cloned().unwrap_or(Value::None))
+        }
+        ArrayLen => Ok(Value::Integer(collection_len(&arguments[0], "array::len")?)),
+        ArrayIsEmpty => Ok(Value::Bool(
+            collection_slice(&arguments[0], "array::is_empty")?.is_empty(),
+        )),
+        ArrayConcat => {
+            let mut output = Vec::new();
+            for value in &arguments {
+                let values = collection_slice(value, "array::concat")?;
+                ensure_collection_growth(output.len(), values.len())?;
+                output.extend_from_slice(values);
+            }
+            Ok(Value::Array(output))
+        }
+        ArrayDistinct => {
+            let mut output = Vec::new();
+            for value in collection_slice(&arguments[0], "array::distinct")? {
+                push_unique(&mut output, value.clone())?;
+            }
+            Ok(Value::Array(output))
+        }
+        ArrayReverse => {
+            let mut values = take_array(&arguments[0], "array::reverse")?;
+            values.reverse();
+            Ok(Value::Array(values))
+        }
+        ArraySlice => Ok(Value::Array(slice_collection(
+            collection_slice(&arguments[0], "array::slice")?,
+            expect_integer(&arguments[1], "array::slice start")?,
+            arguments
+                .get(2)
+                .map(|value| expect_integer(value, "array::slice end"))
+                .transpose()?,
+        ))),
+        ArrayIncludes => Ok(Value::Bool(value_in_collection(
+            &arguments[1],
+            collection_slice(&arguments[0], "array::includes")?,
+        ))),
+        ArrayIndexOf => Ok(collection_slice(&arguments[0], "array::index_of")?
+            .iter()
+            .position(|value| values_equal(value, &arguments[1]))
+            .map(|index| Value::Integer(index as i64))
+            .unwrap_or(Value::None)),
+        ArrayUnion | ArrayIntersect | ArrayDifference | ArrayComplement => {
+            evaluate_array_set_operation(function, &arguments[0], &arguments[1])
+        }
+        ArrayRemove => {
+            let mut values = take_array(&arguments[0], "array::remove")?;
+            if let Some(index) = relative_index(
+                expect_integer(&arguments[1], "array::remove index")?,
+                values.len(),
+            ) {
+                values.remove(index);
+            }
+            Ok(Value::Array(values))
+        }
+        ArrayRepeat => {
+            let count = expect_nonnegative_usize(&arguments[1], "array::repeat count")?;
+            ensure_collection_growth(0, count)?;
+            Ok(Value::Array(vec![arguments[0].clone(); count]))
+        }
+        ArrayRange => evaluate_array_range(&arguments),
+        ArraySort | ArraySortAsc | ArraySortDesc => {
+            let mut values = take_array(&arguments[0], "array::sort")?;
+            let descending = match function {
+                ArraySortDesc => true,
+                ArraySortAsc => false,
+                ArraySort => arguments.get(1).is_some_and(|value| {
+                    matches!(value, Value::Bool(false))
+                        || matches!(value, Value::Str(value) if value.eq_ignore_ascii_case("desc"))
+                }),
+                _ => unreachable!(),
+            };
+            values.sort_by(canonical_value_cmp);
+            if descending {
+                values.reverse();
+            }
+            Ok(Value::Array(values))
+        }
+        ArrayJoin => join_collection(&arguments[0], &arguments[1]),
+        BytesLen => match &arguments[0] {
+            Value::Bytes(value) => Ok(Value::Integer(value.len() as i64)),
+            _ => Err(argument_type("bytes::len", "bytes")),
+        },
+        ObjectEntries => {
+            let object = expect_object(&arguments[0], "object::entries")?;
+            Ok(Value::Array(
+                object
+                    .iter()
+                    .map(|(key, value)| Value::Array(vec![Value::Str(key.clone()), value.clone()]))
+                    .collect(),
+            ))
+        }
+        ObjectKeys => Ok(Value::Array(
+            expect_object(&arguments[0], "object::keys")?
+                .keys()
+                .cloned()
+                .map(Value::Str)
+                .collect(),
+        )),
+        ObjectValues => Ok(Value::Array(
+            expect_object(&arguments[0], "object::values")?
+                .values()
+                .cloned()
+                .collect(),
+        )),
+        ObjectLen => Ok(Value::Integer(
+            expect_object(&arguments[0], "object::len")?.len() as i64,
+        )),
+        ObjectIsEmpty => Ok(Value::Bool(
+            expect_object(&arguments[0], "object::is_empty")?.is_empty(),
+        )),
+        ObjectExtend => {
+            let mut output = expect_object(&arguments[0], "object::extend")?.clone();
+            output.extend(expect_object(&arguments[1], "object::extend")?.clone());
+            Ok(Value::Object(output))
+        }
+        ObjectFromEntries => object_from_entries(&arguments[0]),
+        ObjectRemove => {
+            let mut output = expect_object(&arguments[0], "object::remove")?.clone();
+            for value in &arguments[1..] {
+                output.remove(expect_string(value, "object::remove key")?);
+            }
+            Ok(Value::Object(output))
+        }
+        SetAdd => {
+            let mut values = take_set(&arguments[0], "set::add")?;
+            values.push(arguments[1].clone());
+            SetValue::new(values).map(Value::Set)
+        }
+        SetAt => Ok(array_at(
+            set_slice(&arguments[0], "set::at")?,
+            expect_integer(&arguments[1], "set::at index")?,
+        )),
+        SetContains => Ok(Value::Bool(value_in_collection(
+            &arguments[1],
+            set_slice(&arguments[0], "set::contains")?,
+        ))),
+        SetFirst | SetLast | SetMax | SetMin => {
+            let values = set_slice(&arguments[0], "set function")?;
+            let selected = match function {
+                SetFirst | SetMin => values.first(),
+                SetLast | SetMax => values.last(),
+                _ => unreachable!(),
+            };
+            Ok(selected.cloned().unwrap_or(Value::None))
+        }
+        SetLen => Ok(Value::Integer(
+            set_slice(&arguments[0], "set::len")?.len() as i64
+        )),
+        SetIsEmpty => Ok(Value::Bool(
+            set_slice(&arguments[0], "set::is_empty")?.is_empty(),
+        )),
+        SetJoin => join_collection(&arguments[0], &arguments[1]),
+        SetRemove => {
+            let mut values = take_set(&arguments[0], "set::remove")?;
+            values.retain(|value| !values_equal(value, &arguments[1]));
+            SetValue::new(values).map(Value::Set)
+        }
+        SetSlice => SetValue::new(slice_collection(
+            set_slice(&arguments[0], "set::slice")?,
+            expect_integer(&arguments[1], "set::slice start")?,
+            arguments
+                .get(2)
+                .map(|value| expect_integer(value, "set::slice end"))
+                .transpose()?,
+        ))
+        .map(Value::Set),
+        SetUnion | SetIntersect | SetDifference | SetComplement => {
+            evaluate_set_operation(function, &arguments[0], &arguments[1])
+        }
+        MathConstant(constant) => Ok(Value::Float(math_constant(constant))),
+        MathUnary(operation) => evaluate_math_unary(operation, &arguments[0]),
+        MathClamp => {
+            let value = numeric_f64(&arguments[0], "math::clamp")?;
+            let minimum = numeric_f64(&arguments[1], "math::clamp")?;
+            let maximum = numeric_f64(&arguments[2], "math::clamp")?;
+            if minimum > maximum {
+                return Err(FastDbError::Schema(
+                    "math::clamp minimum exceeds maximum".into(),
+                ));
+            }
+            Ok(if value < minimum {
+                arguments[1].clone()
+            } else if value > maximum {
+                arguments[2].clone()
+            } else {
+                arguments[0].clone()
+            })
+        }
+        MathLerp => finite_float(
+            numeric_f64(&arguments[0], "math::lerp")?
+                + (numeric_f64(&arguments[1], "math::lerp")?
+                    - numeric_f64(&arguments[0], "math::lerp")?)
+                    * numeric_f64(&arguments[2], "math::lerp")?,
+            "math::lerp",
+        ),
+        MathLog => finite_float(
+            numeric_f64(&arguments[0], "math::log")?.log(numeric_f64(&arguments[1], "math::log")?),
+            "math::log",
+        ),
+        MathPow => arithmetic(
+            BinaryOperator::Power,
+            EvalValue::Present(arguments[0].clone()),
+            EvalValue::Present(arguments[1].clone()),
+        )
+        .map(EvalValue::into_function_value),
+        MathMax | MathMin => {
+            let values = collection_slice(&arguments[0], "math min/max")?;
+            let value = if function == MathMax {
+                values
+                    .iter()
+                    .max_by(|left, right| canonical_value_cmp(left, right))
+            } else {
+                values
+                    .iter()
+                    .min_by(|left, right| canonical_value_cmp(left, right))
+            };
+            Ok(value.cloned().unwrap_or(Value::None))
+        }
+        MathSum | MathProduct => {
+            let values = collection_slice(&arguments[0], "math aggregate")?;
+            let identity = if function == MathSum { 0 } else { 1 };
+            let operator = if function == MathSum {
+                BinaryOperator::Add
+            } else {
+                BinaryOperator::Multiply
+            };
+            let mut result = Value::Integer(identity);
+            for value in values {
+                result = arithmetic(
+                    operator,
+                    EvalValue::Present(result),
+                    EvalValue::Present(value.clone()),
+                )?
+                .into_function_value();
+            }
+            Ok(result)
+        }
+        MathMean => {
+            let values = collection_slice(&arguments[0], "math::mean")?;
+            if values.is_empty() {
+                return Ok(Value::None);
+            }
+            let sum = values.iter().try_fold(0.0, |sum, value| {
+                Ok::<_, FastDbError>(sum + numeric_f64(value, "math::mean")?)
+            })?;
+            finite_float(sum / values.len() as f64, "math::mean")
+        }
+        MathSpread => {
+            let values = collection_slice(&arguments[0], "math::spread")?;
+            let Some(minimum) = values
+                .iter()
+                .min_by(|left, right| canonical_value_cmp(left, right))
+            else {
+                return Ok(Value::None);
+            };
+            let maximum = values
+                .iter()
+                .max_by(|left, right| canonical_value_cmp(left, right))
+                .expect("nonempty values have maximum");
+            arithmetic(
+                BinaryOperator::Subtract,
+                EvalValue::Present(maximum.clone()),
+                EvalValue::Present(minimum.clone()),
+            )
+            .map(EvalValue::into_function_value)
+        }
+    }
+}
+
+const MAX_FUNCTION_COLLECTION: usize = 65_536;
+
+fn take_array(value: &Value, function: &str) -> Result<Vec<Value>> {
+    match value {
+        Value::Array(values) => Ok(values.clone()),
+        _ => Err(argument_type(function, "array")),
+    }
+}
+
+fn collection_slice<'a>(value: &'a Value, function: &str) -> Result<&'a [Value]> {
+    match value {
+        Value::Array(values) => Ok(values),
+        _ => Err(argument_type(function, "array")),
+    }
+}
+
+fn take_set(value: &Value, function: &str) -> Result<Vec<Value>> {
+    match value {
+        Value::Set(values) => Ok(values.as_slice().to_vec()),
+        _ => Err(argument_type(function, "set")),
+    }
+}
+
+fn set_slice<'a>(value: &'a Value, function: &str) -> Result<&'a [Value]> {
+    match value {
+        Value::Set(values) => Ok(values.as_slice()),
+        _ => Err(argument_type(function, "set")),
+    }
+}
+
+fn collection_len(value: &Value, function: &str) -> Result<i64> {
+    Ok(i64::try_from(collection_slice(value, function)?.len())
+        .expect("bounded collection length fits i64"))
+}
+
+fn expect_object<'a>(value: &'a Value, function: &str) -> Result<&'a BTreeMap<String, Value>> {
+    match value {
+        Value::Object(value) => Ok(value),
+        _ => Err(argument_type(function, "object")),
+    }
+}
+
+fn expect_integer(value: &Value, name: &str) -> Result<i64> {
+    match value {
+        Value::Integer(value) => Ok(*value),
+        _ => Err(argument_type(name, "integer")),
+    }
+}
+
+fn expect_nonnegative_usize(value: &Value, name: &str) -> Result<usize> {
+    usize::try_from(expect_integer(value, name)?)
+        .map_err(|_| FastDbError::Schema(format!("{name} must be nonnegative")))
+}
+
+fn expect_string<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
+    match value {
+        Value::Str(value) => Ok(value),
+        _ => Err(argument_type(name, "string")),
+    }
+}
+
+fn argument_type(function: &str, expected: &str) -> FastDbError {
+    FastDbError::Schema(format!("{function} requires {expected} arguments"))
+}
+
+fn values_equal(left: &Value, right: &Value) -> bool {
+    canonical_value_cmp(left, right) == Ordering::Equal
+}
+
+fn value_in_collection(value: &Value, values: &[Value]) -> bool {
+    values
+        .iter()
+        .any(|candidate| values_equal(candidate, value))
+}
+
+fn ensure_collection_growth(length: usize, additional: usize) -> Result<()> {
+    if length.saturating_add(additional) > MAX_FUNCTION_COLLECTION {
+        Err(FastDbError::ResourceLimit(
+            "function result exceeds the collection limit".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn push_bounded(values: &mut Vec<Value>, value: Value) -> Result<()> {
+    ensure_collection_growth(values.len(), 1)?;
+    values.push(value);
+    Ok(())
+}
+
+fn push_unique(values: &mut Vec<Value>, value: Value) -> Result<()> {
+    if !value_in_collection(&value, values) {
+        push_bounded(values, value)?;
+    }
+    Ok(())
+}
+
+fn relative_index(index: i64, length: usize) -> Option<usize> {
+    let length = i64::try_from(length).ok()?;
+    let index = if index < 0 {
+        length.checked_add(index)?
+    } else {
+        index
+    };
+    usize::try_from(index)
+        .ok()
+        .filter(|index| *index < length as usize)
+}
+
+fn array_at(values: &[Value], index: i64) -> Value {
+    relative_index(index, values.len())
+        .and_then(|index| values.get(index))
+        .cloned()
+        .unwrap_or(Value::None)
+}
+
+fn slice_collection(values: &[Value], start: i64, end: Option<i64>) -> Vec<Value> {
+    let length = values.len() as i64;
+    let normalize = |index: i64| {
+        if index < 0 {
+            length.saturating_add(index)
+        } else {
+            index
+        }
+        .clamp(0, length) as usize
+    };
+    let start = normalize(start);
+    let end = normalize(end.unwrap_or(length));
+    if start > end {
+        Vec::new()
+    } else {
+        values[start..end].to_vec()
+    }
+}
+
+fn evaluate_array_set_operation(function: Builtin, left: &Value, right: &Value) -> Result<Value> {
+    let left = collection_slice(left, "array set operation")?;
+    let right = collection_slice(right, "array set operation")?;
+    let mut output = Vec::new();
+    match function {
+        Builtin::ArrayUnion => {
+            for value in left.iter().chain(right) {
+                push_unique(&mut output, value.clone())?;
+            }
+        }
+        Builtin::ArrayIntersect => {
+            for value in left {
+                if value_in_collection(value, right) {
+                    push_unique(&mut output, value.clone())?;
+                }
+            }
+        }
+        Builtin::ArrayComplement => {
+            for value in left {
+                if !value_in_collection(value, right) {
+                    push_unique(&mut output, value.clone())?;
+                }
+            }
+        }
+        Builtin::ArrayDifference => {
+            for value in left {
+                if !value_in_collection(value, right) {
+                    push_unique(&mut output, value.clone())?;
+                }
+            }
+            for value in right {
+                if !value_in_collection(value, left) {
+                    push_unique(&mut output, value.clone())?;
+                }
+            }
+        }
+        _ => unreachable!(),
+    }
+    Ok(Value::Array(output))
+}
+
+fn evaluate_set_operation(function: Builtin, left: &Value, right: &Value) -> Result<Value> {
+    let left = set_slice(left, "set operation")?;
+    let right = set_slice(right, "set operation")?;
+    let values = match function {
+        Builtin::SetUnion => left.iter().chain(right).cloned().collect::<Vec<_>>(),
+        Builtin::SetIntersect => left
+            .iter()
+            .filter(|value| value_in_collection(value, right))
+            .cloned()
+            .collect(),
+        Builtin::SetComplement => left
+            .iter()
+            .filter(|value| !value_in_collection(value, right))
+            .cloned()
+            .collect(),
+        Builtin::SetDifference => left
+            .iter()
+            .filter(|value| !value_in_collection(value, right))
+            .chain(
+                right
+                    .iter()
+                    .filter(|value| !value_in_collection(value, left)),
+            )
+            .cloned()
+            .collect(),
+        _ => unreachable!(),
+    };
+    SetValue::new(values).map(Value::Set)
+}
+
+fn evaluate_array_range(arguments: &[Value]) -> Result<Value> {
+    let start = expect_integer(&arguments[0], "array::range start")?;
+    let end = expect_integer(&arguments[1], "array::range end")?;
+    let step = arguments
+        .get(2)
+        .map(|value| expect_integer(value, "array::range step"))
+        .transpose()?
+        .unwrap_or(if start <= end { 1 } else { -1 });
+    if step == 0 {
+        return Err(FastDbError::Schema(
+            "array::range step cannot be zero".into(),
+        ));
+    }
+    let mut output = Vec::new();
+    let mut value = start;
+    while (step > 0 && value < end) || (step < 0 && value > end) {
+        push_bounded(&mut output, Value::Integer(value))?;
+        value = value
+            .checked_add(step)
+            .ok_or_else(|| FastDbError::Schema("array::range overflow".into()))?;
+    }
+    Ok(Value::Array(output))
+}
+
+fn join_collection(collection: &Value, separator: &Value) -> Result<Value> {
+    let separator = expect_string(separator, "join separator")?;
+    let values = match collection {
+        Value::Array(values) => values.as_slice(),
+        Value::Set(values) => values.as_slice(),
+        _ => return Err(argument_type("join", "array or set")),
+    };
+    let mut output = String::new();
+    for (index, value) in values.iter().cloned().enumerate() {
+        if index > 0 {
+            output.push_str(separator);
+        }
+        output.push_str(&render_string(value)?);
+        if output.len() > 16 * 1024 * 1024 {
+            return Err(FastDbError::ResourceLimit(
+                "joined string exceeds the output limit".into(),
+            ));
+        }
+    }
+    Ok(Value::Str(output))
+}
+
+fn object_from_entries(value: &Value) -> Result<Value> {
+    let entries = collection_slice(value, "object::from_entries")?;
+    let mut output = BTreeMap::new();
+    for entry in entries {
+        let pair = collection_slice(entry, "object::from_entries entry")?;
+        if pair.len() != 2 {
+            return Err(FastDbError::Schema(
+                "object::from_entries entries require exactly two values".into(),
+            ));
+        }
+        output.insert(
+            expect_string(&pair[0], "object::from_entries key")?.to_string(),
+            pair[1].clone(),
+        );
+    }
+    Ok(Value::Object(output))
+}
+
+fn math_constant(constant: MathConstant) -> f64 {
+    match constant {
+        MathConstant::E => std::f64::consts::E,
+        MathConstant::Frac1Pi => std::f64::consts::FRAC_1_PI,
+        MathConstant::Frac1Sqrt2 => std::f64::consts::FRAC_1_SQRT_2,
+        MathConstant::Frac2Pi => std::f64::consts::FRAC_2_PI,
+        MathConstant::Frac2SqrtPi => std::f64::consts::FRAC_2_SQRT_PI,
+        MathConstant::FracPi2 => std::f64::consts::FRAC_PI_2,
+        MathConstant::FracPi3 => std::f64::consts::FRAC_PI_3,
+        MathConstant::FracPi4 => std::f64::consts::FRAC_PI_4,
+        MathConstant::FracPi6 => std::f64::consts::FRAC_PI_6,
+        MathConstant::FracPi8 => std::f64::consts::FRAC_PI_8,
+        MathConstant::Ln2 => std::f64::consts::LN_2,
+        MathConstant::Ln10 => std::f64::consts::LN_10,
+        MathConstant::Log2E => std::f64::consts::LOG2_E,
+        MathConstant::Log2Ten => std::f64::consts::LOG2_10,
+        MathConstant::Log10E => std::f64::consts::LOG10_E,
+        MathConstant::Log10Two => std::f64::consts::LOG10_2,
+        MathConstant::Pi => std::f64::consts::PI,
+        MathConstant::Sqrt2 => std::f64::consts::SQRT_2,
+        MathConstant::Tau => std::f64::consts::TAU,
+    }
+}
+
+fn evaluate_math_unary(operation: MathUnary, value: &Value) -> Result<Value> {
+    if operation == MathUnary::Abs {
+        return match value {
+            Value::Integer(value) => value
+                .checked_abs()
+                .map(Value::Integer)
+                .ok_or_else(|| FastDbError::Schema("math::abs overflow".into())),
+            Value::Decimal(value) => {
+                DecimalValue::parse(&value.as_decimal().abs().to_string()).map(Value::Decimal)
+            }
+            _ => finite_float(numeric_f64(value, "math::abs")?.abs(), "math::abs"),
+        };
+    }
+    if operation == MathUnary::Sign {
+        let value = numeric_f64(value, "math::sign")?;
+        return Ok(Value::Integer(if value < 0.0 {
+            -1
+        } else if value > 0.0 {
+            1
+        } else {
+            0
+        }));
+    }
+    let value = numeric_f64(value, "math function")?;
+    let output = match operation {
+        MathUnary::Acos => value.acos(),
+        MathUnary::Acot => std::f64::consts::FRAC_PI_2 - value.atan(),
+        MathUnary::Asin => value.asin(),
+        MathUnary::Atan => value.atan(),
+        MathUnary::Ceil => value.ceil(),
+        MathUnary::Cos => value.cos(),
+        MathUnary::Cot => 1.0 / value.tan(),
+        MathUnary::DegToRad => value.to_radians(),
+        MathUnary::Floor => value.floor(),
+        MathUnary::Ln => value.ln(),
+        MathUnary::Log10 => value.log10(),
+        MathUnary::Log2 => value.log2(),
+        MathUnary::RadToDeg => value.to_degrees(),
+        MathUnary::Round => value.round(),
+        MathUnary::Sin => value.sin(),
+        MathUnary::Sqrt => value.sqrt(),
+        MathUnary::Tan => value.tan(),
+        MathUnary::Abs | MathUnary::Sign => unreachable!(),
+    };
+    finite_float(output, "math function")
+}
+
+fn numeric_f64(value: &Value, function: &str) -> Result<f64> {
+    match value {
+        Value::Integer(value) => Ok(*value as f64),
+        Value::Float(value) if value.is_finite() => Ok(*value),
+        Value::Decimal(value) => value
+            .as_decimal()
+            .to_f64()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| argument_type(function, "finite numeric")),
+        _ => Err(argument_type(function, "numeric")),
+    }
+}
+
+fn finite_float(value: f64, function: &str) -> Result<Value> {
+    if value.is_finite() {
+        Ok(Value::Float(value))
+    } else {
+        Err(FastDbError::Schema(format!(
+            "{function} produced a non-finite result"
+        )))
+    }
 }
 
 fn read_path(path: &FieldPath, context: &EvalContext<'_>) -> EvalValue {

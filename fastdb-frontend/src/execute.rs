@@ -1237,7 +1237,16 @@ fn evaluate_special_projection(
         };
         return Ok(Value::Float(value));
     }
-    evaluate_fts_projection(expression, candidate, params)
+    if function_name_is(name, &["search", "score"])
+        || function_name_is(name, &["search", "highlight"])
+        || function_name_is(name, &["fts_match"])
+        || function_name_is(name, &["fts_score"])
+        || function_name_is(name, &["fts_highlight"])
+    {
+        evaluate_fts_projection(expression, candidate, params)
+    } else {
+        Ok(eval::evaluate(expression, &candidate_context(candidate, params))?.into_projection())
+    }
 }
 
 fn projection_vector(
@@ -1637,6 +1646,24 @@ fn expression_needs_document(expression: &Expr) -> bool {
         ExprKind::Object(fields) => fields
             .iter()
             .any(|field| expression_needs_document(&field.value)),
+        ExprKind::Access { target, accessor } => {
+            expression_needs_document(target)
+                || match accessor {
+                    turso_fastdb_parser::Accessor::Field(_)
+                    | turso_fastdb_parser::Accessor::Last(_) => false,
+                    turso_fastdb_parser::Accessor::Index(index) => expression_needs_document(index),
+                    turso_fastdb_parser::Accessor::Slice { start, end, .. } => start
+                        .iter()
+                        .chain(end.iter())
+                        .any(|bound| expression_needs_document(bound)),
+                }
+        }
+        ExprKind::Cast { value, .. } => expression_needs_document(value),
+        ExprKind::Range(range) => range
+            .start
+            .iter()
+            .chain(range.end.iter())
+            .any(|bound| expression_needs_document(bound)),
         ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
             expression_needs_document(operand)
         }

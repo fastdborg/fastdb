@@ -87,3 +87,73 @@ by an integer were accepted, while duration modulo was rejected. Negative
 power exponents and integer power overflow produced errors. FastDB uses
 checked arithmetic and bounded allocations for the corresponding supported
 forms.
+
+## Collection and object function batch
+
+The first function batch was probed one call per statement so an unknown name
+could not hide later results. Representative inputs included:
+
+```surql
+RETURN array::add([1,2],2);
+RETURN array::at([1,2],-1);
+RETURN array::difference([2,1],[2,3]);
+RETURN array::repeat([1,2],2);
+RETURN array::range(1,4);
+RETURN array::slice([1,2,3],1,2);
+RETURN object::entries({b:2,a:1});
+RETURN object::extend({a:1},{b:2,a:3});
+RETURN set::difference(<set>[2,1],<set>[2,3]);
+RETURN set::slice(<set>[1,2,3],1,2);
+```
+
+Observed results established duplicate suppression for `array::add`,
+from-the-end negative `array::at`, symmetric `difference`, whole-value
+repetition (`[[1,2],[1,2]]`), an exclusive range end, an exclusive slice end,
+lexicographically ordered object entries, right-biased object extension,
+canonical set ordering, and set slice output. `array::union` preserves the
+left collection's order before new right-side members; set functions require a
+typed set rather than accepting an array.
+
+The fixed binary returned “unknown function” for `array::includes` and
+`array::index_of`, although those atomic names occur in the locked inventory
+derived from the public function catalog. FastDB implements both as bounded
+closed-registry collection helpers but does not use their availability as
+evidence about other `v3.1.5` functions. This reference/catalog mismatch must
+be resolved before the Phase 13 checkpoint decides their final compatibility
+classification.
+
+## Math functions and constants
+
+Constants were confirmed to be namespaced values without parentheses:
+
+```surql
+RETURN math::pi;
+RETURN math::e;
+RETURN math::sqrt_2;
+```
+
+The fixed binary returned finite floats. Calling `math::pi()` was not accepted
+as the constant form, so FastDB represents namespaced constants separately
+from function calls in its AST and registry.
+
+Representative scalar and aggregate probes produced:
+
+```text
+math::abs(-2)          => 2
+math::ceil(1.2)        => 2f
+math::sign(-2)         => -1
+math::sqrt(4)          => 2f
+math::max([1,2.5])     => 2.5f
+math::sum([1,2,3])     => 6
+math::product([2,3])   => 6
+math::mean([1,2])      => 1.5f
+math::spread([1,4])    => 3
+math::clamp(5,1,3)     => 3
+math::lerp(0,10,0.25)  => 2.5f
+math::log(8,2)         => 3f
+math::pow(2,3)         => 8
+```
+
+FastDB preserves exact integer results where the reference does, returns
+finite floats for transcendental operations, and rejects domain errors or
+non-finite output rather than persisting an invalid numeric value.

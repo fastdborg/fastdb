@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 #![deny(warnings)]
 
+mod builtins;
 pub mod catalog;
 pub mod connection;
 pub mod decode;

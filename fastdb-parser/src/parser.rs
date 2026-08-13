@@ -1382,6 +1382,11 @@ impl<'a> Parser<'a> {
 
     fn parse_prefix_expression(&mut self) -> Result<Expr, ParseError> {
         let token = self.peek().clone();
+        if (self.at_offset(1, &TokenKind::DoubleColon) || self.at_offset(1, &TokenKind::LeftParen))
+            && function_segment_value(&token.kind).is_some()
+        {
+            return self.parse_identifier_expression();
+        }
         match token.kind {
             TokenKind::Not | TokenKind::Plus | TokenKind::Minus => {
                 self.position += 1;
@@ -1640,7 +1645,10 @@ impl<'a> Parser<'a> {
 
     fn parse_identifier_expression(&mut self) -> Result<Expr, ParseError> {
         let first = self.expect_function_segment("an identifier")?;
-        if self.at(&TokenKind::DoubleColon) || self.at(&TokenKind::LeftParen) {
+        if self.at(&TokenKind::DoubleColon) {
+            return self.parse_namespaced_expression(first);
+        }
+        if self.at(&TokenKind::LeftParen) {
             return self.parse_function_call(first);
         }
         if self.eat(&TokenKind::Colon) {
@@ -1660,12 +1668,26 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function_call(&mut self, first: Identifier) -> Result<Expr, ParseError> {
+        self.parse_function_call_name(vec![first])
+    }
+
+    fn parse_namespaced_expression(&mut self, first: Identifier) -> Result<Expr, ParseError> {
         let mut name = vec![first];
         while self.eat(&TokenKind::DoubleColon) {
             let segment = self.expect_function_segment("a function name after '::'")?;
             self.check_element_count(name.len() + 1, segment.span)?;
             name.push(segment);
         }
+        if self.at(&TokenKind::LeftParen) {
+            return self.parse_function_call_name(name);
+        }
+        let span = name[0]
+            .span
+            .union(name.last().expect("name is nonempty").span);
+        Ok(Expr::new(ExprKind::NamespacedValue { name }, span))
+    }
+
+    fn parse_function_call_name(&mut self, name: Vec<Identifier>) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::LeftParen, "'(' after function name")?;
         self.enter_depth(name[0].span)?;
         let arguments_result = self.parse_function_arguments();
@@ -1932,18 +1954,15 @@ impl<'a> Parser<'a> {
         expected: &'static str,
     ) -> Result<Identifier, ParseError> {
         let token = self.peek().clone();
-        let value = match token.kind {
-            TokenKind::Ident(value) => value,
-            TokenKind::Search => "search".to_string(),
-            TokenKind::In => "in".to_string(),
-            TokenKind::Out => "out".to_string(),
-            TokenKind::Eof => {
+        let value = match function_segment_value(&token.kind) {
+            Some(value) => value,
+            None if matches!(token.kind, TokenKind::Eof) => {
                 return Err(ParseError::new(
                     ParseErrorKind::UnexpectedEof { expected },
                     token.span,
                 ));
             }
-            _ => return Err(self.unexpected(expected)),
+            None => return Err(self.unexpected(expected)),
         };
         self.position += 1;
         Ok(Identifier::new(value, token.span))
@@ -2161,6 +2180,53 @@ fn binary_binding_power(kind: &TokenKind) -> Option<(BinaryOperator, u8, u8)> {
         _ => return None,
     };
     Some((operator, power, power + 1))
+}
+
+fn function_segment_value(kind: &TokenKind) -> Option<String> {
+    let value = match kind {
+        TokenKind::Ident(value) => return Some(value.clone()),
+        TokenKind::Search => "search",
+        TokenKind::In => "in",
+        TokenKind::Out => "out",
+        TokenKind::Is => "is",
+        TokenKind::Not => "not",
+        TokenKind::Contains => "contains",
+        TokenKind::Set => "set",
+        TokenKind::Value => "value",
+        TokenKind::Type => "type",
+        TokenKind::Field => "field",
+        TokenKind::Fields => "fields",
+        TokenKind::Table => "table",
+        TokenKind::Asc => "asc",
+        TokenKind::Desc => "desc",
+        TokenKind::Sleep => "sleep",
+        TokenKind::Delete => "delete",
+        TokenKind::Remove => "remove",
+        TokenKind::Patch => "patch",
+        TokenKind::Replace => "replace",
+        TokenKind::Split => "split",
+        TokenKind::Group => "group",
+        TokenKind::Timeout => "timeout",
+        TokenKind::BoolType => "bool",
+        TokenKind::IntType => "int",
+        TokenKind::FloatType => "float",
+        TokenKind::NumberType => "number",
+        TokenKind::DecimalType => "decimal",
+        TokenKind::StringType => "string",
+        TokenKind::BytesType => "bytes",
+        TokenKind::DatetimeType => "datetime",
+        TokenKind::DurationType => "duration",
+        TokenKind::UuidType => "uuid",
+        TokenKind::RegexType => "regex",
+        TokenKind::FileType => "file",
+        TokenKind::RangeType => "range",
+        TokenKind::ObjectType => "object",
+        TokenKind::ArrayType => "array",
+        TokenKind::RecordType => "record",
+        TokenKind::OptionType => "option",
+        _ => return None,
+    };
+    Some(value.to_string())
 }
 
 fn excluded_operator_description(operator: &str) -> &'static str {

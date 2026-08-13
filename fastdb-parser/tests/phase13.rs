@@ -150,3 +150,17 @@ fn p13_parse_003_compound_and_symbolic_forms_share_operators() {
         ExprKind::Binary { operator: ref op, .. } if op.value == BinaryOperator::Modulo
     ));
 }
+
+#[test]
+fn p13_parse_004_keyword_namespaces_remain_structured_function_segments() {
+    let values = assignments(
+        "CREATE calc:one SET \
+         a = array::sort::desc([2,1]), b = object::keys({x: 1}), \
+         c = set::len(<set>[1]), d = bytes::len(<bytes>'x'), \
+         e = type::is::array([]), f = record::table(person:one), g = math::pi",
+    );
+    for value in &values[..6] {
+        assert!(matches!(value.kind, ExprKind::FunctionCall { .. }));
+    }
+    assert!(matches!(values[6].kind, ExprKind::NamespacedValue { .. }));
+}

@@ -1201,6 +1201,7 @@ fn validate_expression_limits(
         }
         ExprKind::None
         | ExprKind::Null
+        | ExprKind::NamespacedValue { .. }
         | ExprKind::Bool(_)
         | ExprKind::Integer(_)
         | ExprKind::Float(_)
