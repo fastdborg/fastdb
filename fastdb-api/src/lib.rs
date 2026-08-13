@@ -1177,6 +1177,9 @@ fn validate_expression_limits(
             validate_expression_limits(&knn.field, params, limits)?;
             validate_expression_limits(&knn.query, params, limits)?;
         }
+        ExprKind::Closure(closure) => {
+            validate_expression_limits(&closure.body, params, limits)?;
+        }
         ExprKind::Traversal(traversal) => {
             if traversal.hops.len() > limits.graph_hops {
                 return Err(Error::new(
