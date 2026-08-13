@@ -875,7 +875,55 @@ impl<'a> Parser<'a> {
                 name: table,
             }));
         }
+        if matches!(
+            self.peek().kind,
+            TokenKind::Range | TokenKind::RangeInclusive
+        ) {
+            let operator = self.advance().clone();
+            let inclusive = matches!(operator.kind, TokenKind::RangeInclusive);
+            let end = if record_id_part_starts(&self.peek().kind) {
+                Some(self.parse_record_id_part()?)
+            } else {
+                None
+            };
+            let span = end.as_ref().map_or_else(
+                || table.span.union(operator.span),
+                |end| table.span.union(end.span),
+            );
+            return Ok(Target::RecordRange(RecordRangeTarget {
+                span,
+                table,
+                start: None,
+                end,
+                inclusive,
+                operator_span: operator.span,
+            }));
+        }
         let id = self.parse_record_id_part()?;
+        if matches!(
+            self.peek().kind,
+            TokenKind::Range | TokenKind::RangeInclusive
+        ) {
+            let operator = self.advance().clone();
+            let inclusive = matches!(operator.kind, TokenKind::RangeInclusive);
+            let end = if record_id_part_starts(&self.peek().kind) {
+                Some(self.parse_record_id_part()?)
+            } else {
+                None
+            };
+            let span = end.as_ref().map_or_else(
+                || table.span.union(operator.span),
+                |end| table.span.union(end.span),
+            );
+            return Ok(Target::RecordRange(RecordRangeTarget {
+                span,
+                table,
+                start: Some(id),
+                end,
+                inclusive,
+                operator_span: operator.span,
+            }));
+        }
         let span = table.span.union(id.span);
         Ok(Target::Record(RecordId { span, table, id }))
     }
@@ -2201,6 +2249,19 @@ fn is_complex_record_id_expression(expression: &Expr) -> bool {
         ExprKind::Parenthesized(value) => is_complex_record_id_expression(value),
         _ => false,
     }
+}
+
+fn record_id_part_starts(token: &TokenKind) -> bool {
+    matches!(
+        token,
+        TokenKind::Ident(_)
+            | TokenKind::QuotedIdent(_)
+            | TokenKind::Number(_)
+            | TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::LeftBracket
+            | TokenKind::LeftBrace
+    )
 }
 
 fn parse_uuid(value: &str, span: Span) -> Result<uuid::Uuid, ParseError> {

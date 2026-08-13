@@ -1305,7 +1305,7 @@ fn record_cmp(left: &RecordId, right: &RecordId) -> Ordering {
         .then_with(|| record_component_cmp(&left.id, &right.id))
 }
 
-fn record_component_cmp(left: &RecordIdValue, right: &RecordIdValue) -> Ordering {
+pub(crate) fn record_component_cmp(left: &RecordIdValue, right: &RecordIdValue) -> Ordering {
     let rank = |value: &RecordIdValue| match value {
         RecordIdValue::Integer(_) => 0,
         RecordIdValue::String(_) => 1,

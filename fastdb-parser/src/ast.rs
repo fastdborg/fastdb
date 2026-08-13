@@ -348,6 +348,7 @@ pub struct TransactionStatement {
 pub enum Target {
     Table(TableTarget),
     Record(RecordId),
+    RecordRange(RecordRangeTarget),
 }
 
 impl Target {
@@ -355,6 +356,7 @@ impl Target {
         match self {
             Self::Table(target) => target.span,
             Self::Record(target) => target.span,
+            Self::RecordRange(target) => target.span,
         }
     }
 
@@ -362,6 +364,7 @@ impl Target {
         match self {
             Self::Table(target) => &target.name,
             Self::Record(target) => &target.table,
+            Self::RecordRange(target) => &target.table,
         }
     }
 }
@@ -377,6 +380,16 @@ pub struct RecordId {
     pub span: Span,
     pub table: Identifier,
     pub id: RecordIdPart,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordRangeTarget {
+    pub span: Span,
+    pub table: Identifier,
+    pub start: Option<RecordIdPart>,
+    pub end: Option<RecordIdPart>,
+    pub inclusive: bool,
+    pub operator_span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

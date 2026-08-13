@@ -58,11 +58,42 @@ struct FtsCandidateContext {
 
 struct CandidateReadOptions<'a> {
     id: Option<&'a RecordIdValue>,
+    range: Option<&'a ResolvedRecordRange>,
     condition: Option<&'a Expr>,
     params: &'a Params,
     allow_cache: bool,
     fts: Option<&'a ResolvedFtsQuery>,
     vector: Option<&'a ResolvedVectorQuery>,
+}
+
+#[derive(Debug, Clone)]
+enum TargetSelector {
+    All,
+    Record(RecordIdValue),
+    Range(ResolvedRecordRange),
+}
+
+impl TargetSelector {
+    fn id(&self) -> Option<&RecordIdValue> {
+        match self {
+            Self::Record(id) => Some(id),
+            Self::All | Self::Range(_) => None,
+        }
+    }
+
+    fn range(&self) -> Option<&ResolvedRecordRange> {
+        match self {
+            Self::Range(range) => Some(range),
+            Self::All | Self::Record(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedRecordRange {
+    start: Option<RecordIdValue>,
+    end: Option<RecordIdValue>,
+    inclusive: bool,
 }
 
 pub(crate) struct StatementExecution {
@@ -206,8 +237,16 @@ fn run_create(
     statement: turso_fastdb_parser::CreateStatement,
     params: &Params,
 ) -> Result<StatementExecution> {
-    let (table_name, parsed_id) = target_parts(statement.target)?;
-    let id_value = parsed_id.unwrap_or_else(|| RecordIdValue::Uuid(uuid::Uuid::now_v7()));
+    let (table_name, selector) = target_parts(statement.target)?;
+    let id_value = match selector {
+        TargetSelector::All => RecordIdValue::Uuid(uuid::Uuid::now_v7()),
+        TargetSelector::Record(id) => id,
+        TargetSelector::Range(_) => {
+            return Err(FastDbError::Schema(
+                "CREATE record ranges require the bounded batch-create form".into(),
+            ))
+        }
+    };
     let id = RecordId::new(table_name.clone(), id_value.clone());
     let empty = BTreeMap::new();
     let context = EvalContext {
@@ -492,7 +531,7 @@ fn run_select(
             return unsupported(only, "SELECT ONLY requires a record target");
         }
     }
-    let (table_name, id) = target_parts(statement.target.clone())?;
+    let (table_name, selector) = target_parts(statement.target.clone())?;
     let catalog = catalog_for_read(conn, execution)?;
     let Some(snapshot) = catalog.snapshot() else {
         return Ok(if statement.only.is_some() {
@@ -530,7 +569,8 @@ fn run_select(
         snapshot,
         table,
         CandidateReadOptions {
-            id: id.as_ref(),
+            id: selector.id(),
+            range: selector.range(),
             condition: statement.condition.as_ref(),
             params,
             allow_cache: !matches!(execution.transaction, TransactionState::Active(_)),
@@ -705,7 +745,7 @@ fn lower_vector_scan_for_explain(
     select: &turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<Option<(turso_parser::ast::Stmt, String)>> {
-    let (table_name, id) = target_parts(select.target.clone())?;
+    let (table_name, selector) = target_parts(select.target.clone())?;
     let catalog = catalog_for_read(conn, execution)?;
     let Some(snapshot) = catalog.snapshot() else {
         return Ok(None);
@@ -729,7 +769,12 @@ fn lower_vector_scan_for_explain(
     } else {
         Vec::new()
     };
-    let encoded_id = id.as_ref().map(encode_rid).transpose()?;
+    if selector.range().is_some() {
+        return Err(FastDbError::Schema(
+            "record ranges cannot be combined with KNN search".into(),
+        ));
+    }
+    let encoded_id = selector.id().map(encode_rid).transpose()?;
     let (lowered, _) = lower::physical_vector_select_stmt(
         &table.physical_name,
         &vector.column.physical_name,
@@ -774,7 +819,7 @@ fn lower_fts_scan_for_explain(
     select: &turso_fastdb_parser::SelectStatement,
     params: &Params,
 ) -> Result<Option<turso_parser::ast::Stmt>> {
-    let (table_name, id) = target_parts(select.target.clone())?;
+    let (table_name, selector) = target_parts(select.target.clone())?;
     let catalog = catalog_for_read(conn, execution)?;
     let Some(snapshot) = catalog.snapshot() else {
         return Ok(None);
@@ -801,7 +846,12 @@ fn lower_fts_scan_for_explain(
     } else {
         Vec::new()
     };
-    let encoded_id = id.as_ref().map(encode_rid).transpose()?;
+    if selector.range().is_some() {
+        return Err(FastDbError::Schema(
+            "record ranges cannot be combined with full-text search".into(),
+        ));
+    }
+    let encoded_id = selector.id().map(encode_rid).transpose()?;
     let (statement, _) = lower::physical_fts_select_stmt(
         &table.physical_name,
         &fts.index.physical_columns,
@@ -894,7 +944,7 @@ fn run_update(
         .iter()
         .map(|assignment| assignment_path(&assignment.path))
         .collect::<Result<Vec<_>>>()?;
-    let (table_name, id) = target_parts(statement.target.clone())?;
+    let (table_name, selector) = target_parts(statement.target.clone())?;
     let updates = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
         let Some(snapshot) = catalog.snapshot() else {
@@ -918,7 +968,8 @@ fn run_update(
             snapshot,
             &table,
             CandidateReadOptions {
-                id: id.as_ref(),
+                id: selector.id(),
+                range: selector.range(),
                 condition: statement.condition.as_ref(),
                 params,
                 allow_cache: false,
@@ -1000,7 +1051,7 @@ fn run_delete(
     statement: turso_fastdb_parser::DeleteStatement,
     params: &Params,
 ) -> Result<StatementExecution> {
-    let (table_name, id) = target_parts(statement.target.clone())?;
+    let (table_name, selector) = target_parts(statement.target.clone())?;
     let (deleted, cascaded_edges) = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
         let Some(snapshot) = catalog.snapshot() else {
@@ -1014,7 +1065,8 @@ fn run_delete(
             snapshot,
             &table,
             CandidateReadOptions {
-                id: id.as_ref(),
+                id: selector.id(),
+                range: selector.range(),
                 condition: statement.condition.as_ref(),
                 params,
                 allow_cache: false,
@@ -2208,10 +2260,21 @@ fn reject_stored_edge_fields(document: &BTreeMap<String, Value>) -> Result<()> {
     Ok(())
 }
 
-fn target_parts(target: Target) -> Result<(String, Option<RecordIdValue>)> {
+fn target_parts(target: Target) -> Result<(String, TargetSelector)> {
     match target {
-        Target::Table(table) => Ok((table.name.value, None)),
-        Target::Record(record) => Ok((record.table.value, Some(record_id_value(record.id)?))),
+        Target::Table(table) => Ok((table.name.value, TargetSelector::All)),
+        Target::Record(record) => Ok((
+            record.table.value,
+            TargetSelector::Record(record_id_value(record.id)?),
+        )),
+        Target::RecordRange(range) => Ok((
+            range.table.value,
+            TargetSelector::Range(ResolvedRecordRange {
+                start: range.start.map(record_id_value).transpose()?,
+                end: range.end.map(record_id_value).transpose()?,
+                inclusive: range.inclusive,
+            }),
+        )),
     }
 }
 
@@ -2288,12 +2351,18 @@ fn read_candidates(
 ) -> Result<Vec<Candidate>> {
     let CandidateReadOptions {
         id,
+        range,
         condition,
         params,
         allow_cache,
         fts,
         vector,
     } = options;
+    if range.is_some() && (fts.is_some() || vector.is_some()) {
+        return Err(FastDbError::Schema(
+            "record ranges cannot be combined with FTS or KNN search".into(),
+        ));
+    }
     let predicates = condition
         .map(|condition| safe_pushdowns(condition, params, table))
         .unwrap_or_default();
@@ -2509,6 +2578,9 @@ fn read_candidates(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    if let Some(range) = range {
+        candidates.retain(|candidate| record_id_in_range(&candidate.id.id, range));
+    }
     if let Some(fts) = fts.filter(|fts| fts.options.surface == "surreal") {
         let scores = surreal_blank_scores(conn, table, fts)?;
         for candidate in &mut candidates {
@@ -2518,6 +2590,18 @@ fn read_candidates(
         }
     }
     Ok(candidates)
+}
+
+fn record_id_in_range(id: &RecordIdValue, range: &ResolvedRecordRange) -> bool {
+    let after_start = range
+        .start
+        .as_ref()
+        .is_none_or(|start| decode::record_component_cmp(id, start) != Ordering::Less);
+    let before_end = range.end.as_ref().is_none_or(|end| {
+        let ordering = decode::record_component_cmp(id, end);
+        ordering == Ordering::Less || (range.inclusive && ordering == Ordering::Equal)
+    });
+    after_start && before_end
 }
 
 fn surreal_blank_scores(
@@ -3891,7 +3975,7 @@ fn lower_select_scan_for_explain(
     params: &Params,
 ) -> Result<turso_parser::ast::Stmt> {
     eval::validate_parameter_references(&Statement::Select(statement.clone()), params)?;
-    let (table_name, id) = target_parts(statement.target)?;
+    let (table_name, selector) = target_parts(statement.target)?;
     let catalog = catalog_for_read(conn, execution)?;
     let table = catalog
         .snapshot()
@@ -3902,7 +3986,7 @@ fn lower_select_scan_for_explain(
         .as_ref()
         .map(|condition| safe_pushdowns(condition, params, table))
         .unwrap_or_default();
-    let encoded_id = id.as_ref().map(encode_rid).transpose()?;
+    let encoded_id = selector.id().map(encode_rid).transpose()?;
     lower::physical_select_predicates_stmt(&table.physical_name, encoded_id.as_deref(), &predicates)
         .map(|(statement, _)| statement)
 }
