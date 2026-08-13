@@ -1,8 +1,9 @@
 # FastDB pre-1.0 and Core 1.0 release-readiness gates
 
-Status: Phase 11 stopped at its mandatory MVCC audit. Phase 12 begins the
-approved broad-compatibility pre-1.0 track on serialized stable WAL. No alpha,
-beta, pre-1.0 package publication, or Core 1.0 release is authorized.
+Status: Phase 11 stopped at its mandatory MVCC audit. Phase 12 is technically
+complete locally; Phase 13 planning is next on the serialized stable-WAL
+pre-1.0 track. No alpha, beta, pre-1.0 package publication, or Core 1.0 release
+is authorized.
 
 This checklist is the durable release gate. Phase plans and reports preserve
 execution details and evidence. Completing a development phase does not itself
@@ -34,14 +35,14 @@ rewritten to imply the new roadmap existed when they ran.
 
 ## Active compatibility contract
 
-- [ ] Lock `compat/surrealdb-v3.1.5.toml` before executable Phase 12 expansion
+- [x] Lock `compat/surrealdb-v3.1.5.toml` before executable Phase 12 expansion
       and keep `COMPAT.md` mechanically synchronized with it.
-- [ ] Assign every atomic non-excluded `v3.1.5` capability to Phases 12–20.
+- [x] Assign every atomic non-excluded `v3.1.5` capability to Phases 12–20.
 - [ ] Promote an entry to Supported only after execution and conformance
       evidence. Partial is allowed only while a phase is in progress.
 - [ ] At Phase 22, resolve every non-excluded entry to Supported or an approved
       architecture stop report; no Partial entry remains.
-- [ ] Use only public documentation and independently authored black-box probes
+- [x] Use only public documentation and independently authored black-box probes
       against the unmodified official `v3.1.5` binary. Do not inspect or adapt
       SurrealDB source, tests, fixtures, expected outputs, or fuzz corpora.
 
@@ -56,14 +57,14 @@ compatibility.
 
 ### Phase 12 — Inventory and format 3
 
-- [ ] Commit the authoritative Phase 12 plan before executable changes.
-- [ ] Lock the atomic compatibility inventory and mechanical matrix check.
-- [ ] Transactionally migrate format 2 to format 3 while preserving format 1
+- [x] Commit the authoritative Phase 12 plan before executable changes.
+- [x] Lock the atomic compatibility inventory and mechanical matrix check.
+- [x] Transactionally migrate format 2 to format 3 while preserving format 1
       and 2 fixtures, IDs, documents, physical objects, and provider state.
-- [ ] Add collision-safe non-geospatial value representations for bytes,
+- [x] Add collision-safe non-geospatial value representations for bytes,
       datetime, duration, decimal-compatible numbers, sets, ranges, and richer
       typed collections.
-- [ ] Pass migration rollback, reopen, backup/restore, unknown-version,
+- [x] Pass migration rollback, reopen, backup/restore, unknown-version,
       corruption, failure-injection, and unchanged Phase 6–10 gates.
 
 ### Phase 13 — Expressions and functions
@@ -165,7 +166,7 @@ compatibility.
 
 ## Commit and release authorization
 
-- [ ] Commit the roadmap reset as an isolated rollback point.
+- [x] Commit the roadmap reset as an isolated rollback point.
 - [ ] Commit every authoritative `plan-phaseN.md` before implementing that
       phase.
 - [ ] Finish every phase with a report/checkpoint commit recording its starting

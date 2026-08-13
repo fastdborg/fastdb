@@ -1,8 +1,10 @@
 # FastDB Phase 12 — Roadmap reset, compatibility inventory, and format 3
 
-Status: authoritative implementation plan; implementation not started
+Status: technically complete locally on 2026-08-13; see
+[`docs/phase12-report.md`](docs/phase12-report.md)
 
 Starting checkpoint: `aec1da0aa`
+Ending implementation checkpoint: `6d193d816`
 
 ## 1. Purpose and boundaries
 

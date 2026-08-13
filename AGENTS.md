@@ -8,13 +8,15 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. Phase 10 operational readiness is the
-   completed implementation baseline. Phase 11 stopped at its mandatory MVCC
+3. Read the plan for the active phase. Phase 11 stopped at its mandatory MVCC
    audit; [`plan-phase11.md`](plan-phase11.md) and
    [`docs/phase11-mvcc-audit.md`](docs/phase11-mvcc-audit.md) preserve the stop
-   evidence. Phase 12 begins the approved broad-compatibility pre-1.0 track;
-   read [`plan-phase12.md`](plan-phase12.md) before executable changes. Earlier
-   plans and reports remain historical evidence.
+   evidence. Phase 12 completed the compatibility inventory and format-3
+   foundation; [`plan-phase12.md`](plan-phase12.md) and
+   [`docs/phase12-report.md`](docs/phase12-report.md) preserve its contract and
+   evidence. Author the authoritative Phase 13 plan before executable
+   expression/function expansion. Earlier plans and reports remain historical
+   evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -41,11 +43,11 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Durability default: stable Turso WAL with full durability.
 - Active delivery surfaces: the embedded Rust library and `fastdb` CLI, later
   extended by the Phase 19 server and Phase 21 Rust/TypeScript/Go/PHP SDKs.
-- Current implementation stage: Phase 10 operational readiness is technically
-  complete locally. Phase 11 stopped because no stable parallel-writer
-  candidate qualified. Phase 12 is active. The implemented on-disk format
-  remains version 2 until Phase 12 migration passes; serialized stable WAL
-  remains the only supported concurrency mode through Phase 22.
+- Current implementation stage: Phase 11 stopped because no stable
+  parallel-writer candidate qualified. Phase 12 is technically complete
+  locally and Phase 13 planning is next. The implemented on-disk format is
+  version 3; serialized stable WAL remains the only supported concurrency mode
+  through Phase 22.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.
@@ -92,9 +94,11 @@ The SQL above is a storage illustration, not a user-input translation template.
 
 - Physical table and index names are deterministic, opaque names derived from immutable catalog IDs. Never interpolate logical user identifiers into physical SQL names.
 - `rid` contains the immutable canonical record identifier. `doc` contains user content only; synthesize the typed `id` field while decoding results.
-- Format 2 may add opaque catalog-managed hidden typed columns for relation
-  endpoints, FTS text, and native vectors. They are derived state, remain
-  invisible in public documents, and must change atomically with `doc`.
+- Format 3 retains opaque catalog-managed hidden typed columns for relation
+  endpoints, FTS text, and native vectors, and adds sealed catalogs for later
+  functions, parameters, views, events, permissions, users, and accesses. All
+  derived state remains invisible in public documents and must change
+  atomically with `doc`.
 - Catalogs and format metadata are versioned. Refuse unknown future versions before mutation.
 - First-use bootstrap, implicit schemaless table registration, physical table creation, and the associated record mutation must be atomic.
 - Schema changes use a database-level schema mutex while preserving transaction rollback.
@@ -118,7 +122,7 @@ It must not copy, translate, adapt, or vendor SurrealDB source code, test files,
 `compat/surrealdb-v3.1.5.toml` is the locked machine-readable inventory and
 `COMPAT.md` is its normative public view. Every atomic item must be labeled
 supported, partial, unsupported, or planned and both representations must stay
-mechanically synchronized. Partial is temporary during Phases 12–21; Phase 22
+mechanically synchronized. Partial is temporary during Phases 13–21; Phase 22
 permits only Supported or an approved Unsupported architecture stop.
 “SurrealQL-compatible subset” does not mean sponsorship, certification, or
 complete compatibility.
@@ -197,7 +201,8 @@ Phase 7 added graph records and bounded traversal, Phase 8 added dual-syntax
 full-text search, Phase 9 added exact native vector scans, and Phase 10 added
 bounded resource controls plus backup, restore, check, rebuild, lifecycle, and
 observability tooling. Phase 11 completed its audit but stopped before
-implementation. Phase 9 remains a historical alpha-candidate milestone and
+implementation, and Phase 12 locked the inventory, established format 3, and
+added richer collision-safe values. Phase 9 remains a historical alpha-candidate milestone and
 Phase 11 remains a stopped audit, not a beta. Phases 12–22 form the approved
 pre-1.0 compatibility track; Phase 23 is the dormant Core 1.0 gate. None
 authorizes publishing. The proprietary cloud service remains separately scoped
