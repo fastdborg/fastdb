@@ -204,3 +204,18 @@ FastDB's currently declared year `1..=9999` datetime domain. They remain
 Unsupported until the datetime domain is deliberately expanded with storage,
 migration, and client-format evidence; the supported `time::min` and
 `time::max` functions operate on in-domain datetime collections.
+
+## Encoding and digest functions
+
+The reference encoded `<bytes>'hello'` as unpadded standard base64
+`aGVsbG8`, while its decoder accepted the padded form `aGVsbG8=`. JSON
+encoding of `{a:1,b:[2]}` produced the compact object
+`{"a":1,"b":[2]}`. JSON and CBOR round trips retained typed FastDB values;
+FastDB therefore routes both formats through its collision-safe format-3
+public value mapping and applies a 16 MiB input/output ceiling.
+
+Public digest vectors for the UTF-8 string `hello` matched MD5, SHA-1,
+SHA-256, SHA-512, and BLAKE3 reference outputs. `crypto::joaat('hello')`
+returned the unsigned 32-bit value `3372029979`. The same functions accept
+bytes without string re-encoding, reject other value categories, and do not
+include source or input values in errors.

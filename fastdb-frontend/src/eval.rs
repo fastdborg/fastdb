@@ -1,15 +1,17 @@
 //! Authoritative FastDB expression evaluation over decoded documents.
 
 use crate::builtins::{
-    self, Builtin, BuiltinClass, BuiltinSyntax, DurationUnit, MathConstant, MathUnary, TimePart,
-    TimeTruncate, TypeCast, TypeKind,
+    self, Builtin, BuiltinClass, BuiltinSyntax, CryptoDigest, DurationUnit, MathConstant,
+    MathUnary, TimePart, TimeTruncate, TypeCast, TypeKind,
 };
 use crate::decode::{
-    canonical_value_cmp, DatetimeValue, DecimalValue, DurationValue, FileValue, RangeBound,
-    RangeValue, RecordId, RecordIdValue, RegexValue, SetValue, TableValue, Value,
+    canonical_value_cmp, decode_value, encode_value, DatetimeValue, DecimalValue, DurationValue,
+    FileValue, RangeBound, RangeValue, RecordId, RecordIdValue, RegexValue, SetValue, TableValue,
+    Value,
 };
 use crate::error::{FastDbError, Result};
 use crate::Params;
+use base64::Engine as _;
 use chrono::{Datelike as _, Local, Timelike as _, Utc};
 use rust_decimal::prelude::ToPrimitive as _;
 use std::cmp::Ordering;
@@ -921,7 +923,7 @@ fn expand_integer_range(range: &RangeValue) -> Result<Vec<Value>> {
         }
     };
     let length = end.saturating_sub(start);
-    if length < 0 || length > 65_536 {
+    if !(0..=65_536).contains(&length) {
         return Err(FastDbError::Schema(
             "range expansion exceeds the collection limit".into(),
         ));
@@ -1375,6 +1377,85 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
         }
         TimeSet(part) => evaluate_time_set(part, &arguments[0], &arguments[1]),
         TimeTruncate(mode) => evaluate_time_truncate(mode, &arguments[0], &arguments[1]),
+        EncodingBase64Encode => match &arguments[0] {
+            Value::Bytes(value) => Ok(Value::Str(
+                base64::engine::general_purpose::STANDARD_NO_PAD.encode(value),
+            )),
+            _ => Err(argument_type("encoding::base64::encode", "bytes")),
+        },
+        EncodingBase64Decode => {
+            let value = expect_string(&arguments[0], "encoding::base64::decode")?;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(value)
+                .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(value))
+                .map_err(|_| FastDbError::Schema("invalid base64 input".into()))?;
+            if decoded.len() > 16 * 1024 * 1024 {
+                return Err(FastDbError::ResourceLimit(
+                    "decoded base64 exceeds the byte limit".into(),
+                ));
+            }
+            Ok(Value::Bytes(decoded))
+        }
+        EncodingJsonEncode => {
+            let encoded = serde_json::to_string(&encode_value(&arguments[0])?)
+                .map_err(|error| FastDbError::Schema(error.to_string()))?;
+            if encoded.len() > 16 * 1024 * 1024 {
+                return Err(FastDbError::ResourceLimit(
+                    "encoded JSON exceeds the output limit".into(),
+                ));
+            }
+            Ok(Value::Str(encoded))
+        }
+        EncodingJsonDecode => {
+            let value = expect_string(&arguments[0], "encoding::json::decode")?;
+            if value.len() > 16 * 1024 * 1024 {
+                return Err(FastDbError::ResourceLimit(
+                    "JSON input exceeds the byte limit".into(),
+                ));
+            }
+            let decoded = serde_json::from_str(value)
+                .map_err(|error| FastDbError::Schema(format!("invalid JSON: {error}")))?;
+            decode_value(decoded)
+        }
+        EncodingCborEncode => {
+            let encoded = encode_value(&arguments[0])?;
+            let mut output = Vec::new();
+            ciborium::into_writer(&encoded, &mut output)
+                .map_err(|error| FastDbError::Schema(format!("CBOR encoding failed: {error}")))?;
+            if output.len() > 16 * 1024 * 1024 {
+                return Err(FastDbError::ResourceLimit(
+                    "encoded CBOR exceeds the output limit".into(),
+                ));
+            }
+            Ok(Value::Bytes(output))
+        }
+        EncodingCborDecode => {
+            let Value::Bytes(value) = &arguments[0] else {
+                return Err(argument_type("encoding::cbor::decode", "bytes"));
+            };
+            if value.len() > 16 * 1024 * 1024 {
+                return Err(FastDbError::ResourceLimit(
+                    "CBOR input exceeds the byte limit".into(),
+                ));
+            }
+            let decoded: serde_json::Value = ciborium::from_reader(value.as_slice())
+                .map_err(|error| FastDbError::Schema(format!("invalid CBOR: {error}")))?;
+            decode_value(decoded)
+        }
+        CryptoDigest(digest) => evaluate_crypto_digest(digest, &arguments[0]),
+        CryptoJoaat => {
+            let bytes = crypto_input(&arguments[0])?;
+            let mut hash = 0_u32;
+            for byte in bytes {
+                hash = hash.wrapping_add(u32::from(*byte));
+                hash = hash.wrapping_add(hash << 10);
+                hash ^= hash >> 6;
+            }
+            hash = hash.wrapping_add(hash << 3);
+            hash ^= hash >> 11;
+            hash = hash.wrapping_add(hash << 15);
+            Ok(Value::Integer(i64::from(hash)))
+        }
     }
 }
 
@@ -1891,6 +1972,38 @@ fn finite_float(value: f64, function: &str) -> Result<Value> {
     }
 }
 
+fn crypto_input(value: &Value) -> Result<&[u8]> {
+    match value {
+        Value::Str(value) => Ok(value.as_bytes()),
+        Value::Bytes(value) => Ok(value),
+        _ => Err(argument_type("crypto digest", "string or bytes")),
+    }
+}
+
+fn evaluate_crypto_digest(digest: CryptoDigest, value: &Value) -> Result<Value> {
+    let input = crypto_input(value)?;
+    let output = match digest {
+        CryptoDigest::Blake3 => blake3::hash(input).to_hex().to_string(),
+        CryptoDigest::Md5 => {
+            use md5::Digest as _;
+            hex::encode(md5::Md5::digest(input))
+        }
+        CryptoDigest::Sha1 => {
+            use sha1::Digest as _;
+            hex::encode(sha1::Sha1::digest(input))
+        }
+        CryptoDigest::Sha256 => {
+            use sha2::Digest as _;
+            hex::encode(sha2::Sha256::digest(input))
+        }
+        CryptoDigest::Sha512 => {
+            use sha2::Digest as _;
+            hex::encode(sha2::Sha512::digest(input))
+        }
+    };
+    Ok(Value::Str(output))
+}
+
 fn evaluate_type_cast(cast: TypeCast, arguments: &[Value]) -> Result<Value> {
     match cast {
         TypeCast::Array => cast_array(arguments[0].clone()).map(Value::Array),
@@ -1906,7 +2019,7 @@ fn evaluate_type_cast(cast: TypeCast, arguments: &[Value]) -> Result<Value> {
             _ => Err(argument_type("type::bytes", "string or bytes")),
         },
         TypeCast::Datetime => match &arguments[0] {
-            Value::Datetime(value) => Ok(Value::Datetime(value.clone())),
+            Value::Datetime(value) => Ok(Value::Datetime(*value)),
             Value::Str(value) => DatetimeValue::parse(value).map(Value::Datetime),
             _ => Err(argument_type(
                 "type::datetime",
@@ -1915,7 +2028,7 @@ fn evaluate_type_cast(cast: TypeCast, arguments: &[Value]) -> Result<Value> {
         },
         TypeCast::Decimal => cast_decimal(arguments[0].clone()).map(Value::Decimal),
         TypeCast::Duration => match &arguments[0] {
-            Value::Duration(value) => Ok(Value::Duration(value.clone())),
+            Value::Duration(value) => Ok(Value::Duration(*value)),
             Value::Str(value) => DurationValue::parse(value).map(Value::Duration),
             _ => Err(argument_type(
                 "type::duration",

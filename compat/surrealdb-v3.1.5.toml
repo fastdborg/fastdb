@@ -1833,11 +1833,11 @@ area = "Functions — Bytes and encoding"
 title = "encoding::base64::decode function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`encoding::base64::decode(...)` executes with characterized overloads and bounded inputs."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/encoding"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -1846,11 +1846,11 @@ area = "Functions — Bytes and encoding"
 title = "encoding::base64::encode function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`encoding::base64::encode(...)` executes with characterized overloads and bounded inputs."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/encoding"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -1859,11 +1859,11 @@ area = "Functions — Bytes and encoding"
 title = "encoding::cbor::decode function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`encoding::cbor::decode(...)` executes with characterized overloads and bounded inputs."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/encoding"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -1872,11 +1872,11 @@ area = "Functions — Bytes and encoding"
 title = "encoding::cbor::encode function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`encoding::cbor::encode(...)` executes with characterized overloads and bounded inputs."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/encoding"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -1885,11 +1885,11 @@ area = "Functions — Bytes and encoding"
 title = "encoding::json::decode function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`encoding::json::decode(...)` executes with characterized overloads and bounded inputs."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/encoding"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -1898,11 +1898,11 @@ area = "Functions — Bytes and encoding"
 title = "encoding::json::encode function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`encoding::json::encode(...)` executes with characterized overloads and bounded inputs."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/encoding"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 [[capability]]
 id = "FN-CRYPTO-ARGON2-COMPARE"
@@ -1962,11 +1962,11 @@ area = "Functions — Crypto"
 title = "crypto::blake3 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::blake3(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -1975,11 +1975,11 @@ area = "Functions — Crypto"
 title = "crypto::joaat function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::joaat(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -1988,11 +1988,11 @@ area = "Functions — Crypto"
 title = "crypto::md5 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::md5(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -2053,11 +2053,11 @@ area = "Functions — Crypto"
 title = "crypto::sha1 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::sha1(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -2066,11 +2066,11 @@ area = "Functions — Crypto"
 title = "crypto::sha256 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::sha256(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 
 [[capability]]
@@ -2079,11 +2079,11 @@ area = "Functions — Crypto"
 title = "crypto::sha512 function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`crypto::sha512(...)` executes with characterized bounded work factors and redacted inputs/results."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/crypto"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-013", "P13-FN-014"]
 stop_report = ""
 [[capability]]
 id = "FN-DURATION-DAYS"

@@ -99,6 +99,23 @@ pub(crate) enum Builtin {
     TimeSet(TimePart),
     TimeTruncate(TimeTruncate),
     TimeFromUuid,
+    EncodingBase64Encode,
+    EncodingBase64Decode,
+    EncodingJsonEncode,
+    EncodingJsonDecode,
+    EncodingCborEncode,
+    EncodingCborDecode,
+    CryptoDigest(CryptoDigest),
+    CryptoJoaat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CryptoDigest {
+    Blake3,
+    Md5,
+    Sha1,
+    Sha256,
+    Sha512,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -661,6 +678,30 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure_value!(Builtin::TimeTruncate(TimeTruncate::Ceil), "time::ceil", 2),
     pure_value!(Builtin::TimeTruncate(TimeTruncate::Round), "time::round", 2),
     pure_value!(Builtin::TimeTruncate(TimeTruncate::Floor), "time::group", 2),
+    pure!(EncodingBase64Encode, "encoding::base64::encode", 1),
+    pure!(EncodingBase64Decode, "encoding::base64::decode", 1),
+    pure!(EncodingJsonEncode, "encoding::json::encode", 1),
+    pure!(EncodingJsonDecode, "encoding::json::decode", 1),
+    pure!(EncodingCborEncode, "encoding::cbor::encode", 1),
+    pure!(EncodingCborDecode, "encoding::cbor::decode", 1),
+    pure_value!(
+        Builtin::CryptoDigest(CryptoDigest::Blake3),
+        "crypto::blake3",
+        1
+    ),
+    pure_value!(Builtin::CryptoDigest(CryptoDigest::Md5), "crypto::md5", 1),
+    pure_value!(Builtin::CryptoDigest(CryptoDigest::Sha1), "crypto::sha1", 1),
+    pure_value!(
+        Builtin::CryptoDigest(CryptoDigest::Sha256),
+        "crypto::sha256",
+        1
+    ),
+    pure_value!(
+        Builtin::CryptoDigest(CryptoDigest::Sha512),
+        "crypto::sha512",
+        1
+    ),
+    pure!(CryptoJoaat, "crypto::joaat", 1),
 ];
 
 pub(crate) fn lookup(name: &str) -> Option<&'static BuiltinSpec> {
