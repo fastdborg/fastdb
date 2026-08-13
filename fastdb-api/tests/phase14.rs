@@ -490,6 +490,37 @@ fn p14_api_013_multi_target_mutations_are_atomic_and_statement_timeouts_are_boun
 }
 
 #[test]
+fn p14_api_014_phase13_expressions_execute_as_authoritative_where_filters() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "CREATE item:a SET n = 2, tags = ['x', 'y']; \
+                 CREATE item:b SET n = 3, tags = ['z']",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let response = connection
+            .query(
+                "SELECT id FROM item \
+                 WHERE tags[0] = 'x' AND n ** 2 = 4 AND type::is::number(n) \
+                 ORDER BY id",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let StatementResult::Rows(rows) = &response.statements[0] else {
+            panic!("expected rows")
+        };
+        assert!(matches!(&rows[..], [Value::Object(row)]
+            if row.get("id") == Some(&Value::RecordId(RecordId::new("item", "a")))));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
 fn p14_api_009_batch_create_count_and_integer_ranges_are_one_atomic_statement() {
     block_on(async {
         let database = Builder::new_memory().build().await.unwrap();

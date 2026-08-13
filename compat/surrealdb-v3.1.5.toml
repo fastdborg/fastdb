@@ -2,9 +2,9 @@
 schema_version = 1
 reference = "SurrealDB v3.1.5"
 reference_version = "3.1.5"
-active_phase = 13
+active_phase = 14
 granularity_locked = true
-inventory_date = "2026-08-13"
+inventory_date = "2026-08-14"
 binary_url = "https://github.com/surrealdb/surrealdb/releases/download/v3.1.5/surreal-v3.1.5.linux-amd64.tgz"
 binary_version = "3.1.5 for linux on x86_64"
 binary_sha256 = "f7d515203ba0010bde3fc6a5706ce7327d356aca293fbba8424d442f5dcb5002"
@@ -341,11 +341,11 @@ area = "Values and types"
 title = "record ID ranges"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Record ranges select characterized bounded and unbounded targets."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-003"]
+execution_evidence = ["P14-API-002"]
 stop_report = ""
 
 [[capability]]
@@ -354,11 +354,11 @@ area = "Values and types"
 title = "complex record IDs"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Array and object record-ID components use canonical typed encodings."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-001", "P14-PARSE-002"]
+execution_evidence = ["P14-API-001"]
 stop_report = ""
 
 [[capability]]
@@ -6778,11 +6778,11 @@ area = "CRUD and query"
 title = "DIFF return or mutation mode"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "DIFF returns characterized change output."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004"]
+execution_evidence = ["P14-API-003", "P14-API-004"]
 stop_report = ""
 
 [[capability]]
@@ -6791,11 +6791,11 @@ area = "CRUD and query"
 title = "FETCH clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "FETCH expands characterized record paths with bounded materialization."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006"]
 stop_report = ""
 
 [[capability]]
@@ -6804,11 +6804,11 @@ area = "CRUD and query"
 title = "GROUP BY clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Grouping and aggregate output follow characterized semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006", "P14-API-012"]
 stop_report = ""
 
 [[capability]]
@@ -6817,11 +6817,11 @@ area = "CRUD and query"
 title = "MERGE mutation clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "MERGE recursively applies characterized object updates."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004"]
+execution_evidence = ["P14-API-003"]
 stop_report = ""
 
 [[capability]]
@@ -6830,11 +6830,11 @@ area = "CRUD and query"
 title = "OMIT clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "OMIT removes characterized projection paths."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006"]
 stop_report = ""
 
 [[capability]]
@@ -6869,11 +6869,11 @@ area = "CRUD and query"
 title = "complete ORDER BY"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Multiple expressions, collation modes, random order, and characterized tie behavior execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-007"]
 stop_report = ""
 
 [[capability]]
@@ -6895,11 +6895,11 @@ area = "CRUD and query"
 title = "complete LIMIT and START"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Characterized expression pagination and validation execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006"]
 stop_report = ""
 
 [[capability]]
@@ -6908,11 +6908,11 @@ area = "CRUD and query"
 title = "PATCH mutation clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "JSON Patch operations execute atomically with bounded paths."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004"]
+execution_evidence = ["P14-API-003"]
 stop_report = ""
 
 [[capability]]
@@ -6921,11 +6921,11 @@ area = "CRUD and query"
 title = "REPLACE mutation clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "REPLACE applies characterized document replacement."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004"]
+execution_evidence = ["P14-API-003"]
 stop_report = ""
 
 [[capability]]
@@ -6947,11 +6947,11 @@ area = "CRUD and query"
 title = "RETURN BEFORE"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Mutations return pre-mutation values."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004"]
+execution_evidence = ["P14-API-003", "P14-API-004"]
 stop_report = ""
 
 [[capability]]
@@ -6973,11 +6973,11 @@ area = "CRUD and query"
 title = "RETURN VALUE"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Mutations return a characterized scalar expression."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004"]
+execution_evidence = ["P14-API-003", "P14-API-005"]
 stop_report = ""
 
 [[capability]]
@@ -6999,11 +6999,11 @@ area = "CRUD and query"
 title = "SPLIT clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "SPLIT expands characterized collection paths with bounded output."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006"]
 stop_report = ""
 
 [[capability]]
@@ -7012,11 +7012,11 @@ area = "CRUD and query"
 title = "UNSET mutation clause"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "UNSET removes canonical fields atomically."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004"]
+execution_evidence = ["P14-API-003"]
 stop_report = ""
 
 [[capability]]
@@ -7038,11 +7038,11 @@ area = "CRUD and query"
 title = "complete WHERE expressions"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "All Phase 13 bounded expressions execute as authorization-ready filters."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-001", "P13-PARSE-002", "P13-PARSE-003", "P13-PARSE-004"]
+execution_evidence = ["P14-API-014"]
 stop_report = ""
 
 [[capability]]
@@ -7064,11 +7064,11 @@ area = "CRUD and query"
 title = "EXPLAIN FULL and ANALYZE"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Execution analysis returns bounded structured plan and runtime detail."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-008"]
 stop_report = ""
 
 [[capability]]
@@ -7077,11 +7077,11 @@ area = "CRUD and query"
 title = "aggregate projections"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Characterized aggregate functions execute with grouping and empty-set semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006", "P14-API-012"]
 stop_report = ""
 
 [[capability]]
@@ -7103,11 +7103,11 @@ area = "CRUD and query"
 title = "projection destructuring"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Destructuring projections preserve characterized nested shapes."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006"]
 stop_report = ""
 
 [[capability]]
@@ -7116,11 +7116,11 @@ area = "CRUD and query"
 title = "multiple SELECT targets"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Multiple tables, records, arrays, objects, and subquery targets execute with bounded materialization."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-007"]
 stop_report = ""
 
 [[capability]]
@@ -7155,11 +7155,11 @@ area = "CRUD and query"
 title = "SELECT VALUE"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "VALUE projections return characterized scalar collections."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-005"]
+execution_evidence = ["P14-API-006"]
 stop_report = ""
 
 [[capability]]
@@ -7223,9 +7223,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "Multiple targets, expressions, duplicate handling, timeout or version clauses, and all return modes execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P14-PARSE-004", "P14-PARSE-006"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase14-architecture-stops.md#versioned-create-clause"
 
 [[capability]]
 id = "STMT-DELETE-BASIC"
@@ -7246,11 +7246,11 @@ area = "CRUD and query"
 title = "complete DELETE"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Multiple targets, ONLY, timeout, and all return modes execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004", "P14-PARSE-006"]
+execution_evidence = ["P14-API-005", "P14-API-013"]
 stop_report = ""
 
 [[capability]]
@@ -7259,11 +7259,11 @@ area = "CRUD and query"
 title = "INSERT statement"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "Single and bulk INSERT, duplicate handling, relation insertion, and return modes execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004", "P14-PARSE-006"]
+execution_evidence = ["P14-API-004", "P14-API-010"]
 stop_report = ""
 
 [[capability]]
@@ -7298,11 +7298,11 @@ area = "CRUD and query"
 title = "complete UPDATE"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "CONTENT, MERGE, PATCH, REPLACE, UNSET, VALUE, DIFF, ONLY, timeout, and all return modes execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004", "P14-PARSE-006"]
+execution_evidence = ["P14-API-003", "P14-API-013"]
 stop_report = ""
 
 [[capability]]
@@ -7311,11 +7311,11 @@ area = "CRUD and query"
 title = "UPSERT statement"
 phase = 14
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "UPSERT creates or updates characterized targets with every mutation and return mode."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P14-PARSE-004", "P14-PARSE-006"]
+execution_evidence = ["P14-API-004", "P14-API-013"]
 stop_report = ""
 [[capability]]
 id = "SCHEMA-ALTER-ACCESS"

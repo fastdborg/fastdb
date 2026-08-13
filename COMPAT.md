@@ -4,12 +4,12 @@
 
 FastDB implements a clean-room SurrealQL-compatible subset pinned to SurrealDB `v3.1.5`. Parser acceptance alone does not mean execution support, and compatibility does not imply sponsorship or certification. See `CLEAN_ROOM.md`.
 
-The locked inventory contains 756 atomic capabilities: 479 Supported, 0 Partial, and 277 Unsupported. `Partial` is allowed only for the active Phase 13; all future-phase targets remain Unsupported until their implementation phase.
+The locked inventory contains 756 atomic capabilities: 504 Supported, 0 Partial, and 252 Unsupported. `Partial` is allowed only for the active Phase 14; all future-phase targets remain Unsupported until their implementation phase.
 
 ## Status legend
 
 - **Supported**: executable behavior has conformance evidence.
-- **Partial**: an atomic Phase 13 capability is actively being implemented.
+- **Partial**: an atomic Phase 14 capability is actively being implemented.
 - **Unsupported**: unavailable, excluded, dormant, or awaiting its assigned phase.
 
 Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as SurrealQL compatibility. Geospatial/geometry, history/changefeeds/time-series retention, Realtime/LIVE/KILL, GraphQL, GQL, multiprocess access, and parallel writers are advertised as unavailable.
@@ -41,8 +41,8 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `TYPE-UUID` | Supported | Phase 12 | UUID values | Standalone UUID values retain canonical versioned bytes. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types | P12-PARSE-001<br>P12-VALUE-001<br>P12-VALUE-004<br>P12-VALUE-005 |
 | `VALUE-ARRAY` | Supported | Phase 12 | array literals and parameters | Recursively bounded arrays accept one optional trailing comma and round-trip through parameters. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types<br>docs/compat-research/phase3.md#parameter-map-contract | P1-EXPR-001<br>P1-STMT-004<br>P3-EXPR-001<br>P3-PARAM-001 |
 | `VALUE-COLLISION-ESCAPE` | Supported | Phase 12 | collision-safe typed envelopes | Typed values and adversarial user objects containing $fastdb round-trip without collisions. | docs/compat-research/phase12.md | P1-EXPR-001<br>P12-VALUE-001<br>P12-VALUE-002<br>P12-API-001 |
-| `VALUE-RANGE-RECORD` | Unsupported | Phase 14 | record ID ranges | Record ranges select characterized bounded and unbounded targets. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types | — |
-| `VALUE-RECORD-COMPLEX` | Unsupported | Phase 14 | complex record IDs | Array and object record-ID components use canonical typed encodings. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types | — |
+| `VALUE-RANGE-RECORD` | Supported | Phase 14 | record ID ranges | Record ranges select characterized bounded and unbounded targets. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types | P14-PARSE-003<br>P14-API-002 |
+| `VALUE-RECORD-COMPLEX` | Supported | Phase 14 | complex record IDs | Array and object record-ID components use canonical typed encodings. | https://surrealdb.com/docs/reference/query-language/language-primitives/data-types | P14-PARSE-001<br>P14-PARSE-002<br>P14-API-001 |
 | `VALUE-RECORD-GENERATED` | Supported | Phase 14 | generated record IDs | Omitted CREATE and RELATE IDs generate source-addressable UUIDv7 components. | docs/compat-research/phase2.md#uuid-record-ids-objects-and-reserved-id | P1-STMT-001<br>P3-RESULT-001<br>P7-GRAPH-001 |
 | `VALUE-RECORD-INTEGER` | Supported | Phase 14 | integer record IDs | Signed i64 record components retain both boundaries and reject overflow. | docs/compat-research/phase1.md#record-id-components | P1-EXPR-002<br>P1-EXPR-005<br>P3-CRUD-002 |
 | `VALUE-RECORD-QUOTED` | Supported | Phase 14 | quoted record IDs | Backtick-quoted record components preserve UTF-8 spelling. | docs/compat-research/phase1.md#record-id-components | P1-EXPR-002<br>P3-PARAM-001 |
@@ -581,48 +581,48 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | Capability ID | Status | Delivery | Capability | Exact surface | Provenance | Evidence / stop report |
 | --- | --- | --- | --- | --- | --- | --- |
 | `CLAUSE-CONTENT` | Supported | Phase 14 | CONTENT mutation clause | CONTENT replaces a document in currently supported CREATE and RELATE forms. | docs/compat-research/phase3.md | P1-STMT-001<br>P3-RESULT-001<br>P7-GRAPH-001 |
-| `CLAUSE-DIFF` | Unsupported | Phase 14 | DIFF return or mutation mode | DIFF returns characterized change output. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `CLAUSE-FETCH` | Unsupported | Phase 14 | FETCH clause | FETCH expands characterized record paths with bounded materialization. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `CLAUSE-GROUP` | Unsupported | Phase 14 | GROUP BY clause | Grouping and aggregate output follow characterized semantics. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `CLAUSE-MERGE` | Unsupported | Phase 14 | MERGE mutation clause | MERGE recursively applies characterized object updates. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `CLAUSE-OMIT` | Unsupported | Phase 14 | OMIT clause | OMIT removes characterized projection paths. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `CLAUSE-DIFF` | Supported | Phase 14 | DIFF return or mutation mode | DIFF returns characterized change output. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-API-003<br>P14-API-004 |
+| `CLAUSE-FETCH` | Supported | Phase 14 | FETCH clause | FETCH expands characterized record paths with bounded materialization. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006 |
+| `CLAUSE-GROUP` | Supported | Phase 14 | GROUP BY clause | Grouping and aggregate output follow characterized semantics. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006<br>P14-API-012 |
+| `CLAUSE-MERGE` | Supported | Phase 14 | MERGE mutation clause | MERGE recursively applies characterized object updates. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-API-003 |
+| `CLAUSE-OMIT` | Supported | Phase 14 | OMIT clause | OMIT removes characterized projection paths. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006 |
 | `CLAUSE-ONLY` | Supported | Phase 14 | ONLY result cardinality | ONLY enforces one-record result shape for supported mutations. | docs/compat-research/phase3.md#result-and-projection-shapes | P1-STMT-001<br>P3-RESULT-001 |
 | `CLAUSE-ORDER-BASIC` | Supported | Phase 14 | basic ORDER BY | One scalar path orders ascending or descending with bounded result materialization. | docs/compat-research/phase3.md | P1-STMT-003<br>P3-CRUD-002 |
-| `CLAUSE-ORDER-COMPLETE` | Unsupported | Phase 14 | complete ORDER BY | Multiple expressions, collation modes, random order, and characterized tie behavior execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `CLAUSE-ORDER-COMPLETE` | Supported | Phase 14 | complete ORDER BY | Multiple expressions, collation modes, random order, and characterized tie behavior execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-007 |
 | `CLAUSE-PAGINATION-BASIC` | Supported | Phase 14 | basic LIMIT and START | Literal LIMIT and START execute within collection limits. | docs/compat-research/phase3.md | P1-STMT-003<br>P3-CRUD-002 |
-| `CLAUSE-PAGINATION-COMPLETE` | Unsupported | Phase 14 | complete LIMIT and START | Characterized expression pagination and validation execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `CLAUSE-PATCH` | Unsupported | Phase 14 | PATCH mutation clause | JSON Patch operations execute atomically with bounded paths. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `CLAUSE-REPLACE` | Unsupported | Phase 14 | REPLACE mutation clause | REPLACE applies characterized document replacement. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `CLAUSE-PAGINATION-COMPLETE` | Supported | Phase 14 | complete LIMIT and START | Characterized expression pagination and validation execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006 |
+| `CLAUSE-PATCH` | Supported | Phase 14 | PATCH mutation clause | JSON Patch operations execute atomically with bounded paths. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-API-003 |
+| `CLAUSE-REPLACE` | Supported | Phase 14 | REPLACE mutation clause | REPLACE applies characterized document replacement. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-API-003 |
 | `CLAUSE-RETURN-AFTER` | Supported | Phase 14 | RETURN AFTER | Supported mutations return post-mutation values. | docs/compat-research/phase3.md#result-and-projection-shapes | P1-STMT-001<br>P3-RESULT-001 |
-| `CLAUSE-RETURN-BEFORE` | Unsupported | Phase 14 | RETURN BEFORE | Mutations return pre-mutation values. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `CLAUSE-RETURN-BEFORE` | Supported | Phase 14 | RETURN BEFORE | Mutations return pre-mutation values. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-API-003<br>P14-API-004 |
 | `CLAUSE-RETURN-NONE` | Supported | Phase 14 | RETURN NONE | Supported mutations return no value while preserving mutation counts. | docs/compat-research/phase3.md#result-and-projection-shapes | P1-STMT-001<br>P3-RESULT-001 |
-| `CLAUSE-RETURN-VALUE` | Unsupported | Phase 14 | RETURN VALUE | Mutations return a characterized scalar expression. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `CLAUSE-RETURN-VALUE` | Supported | Phase 14 | RETURN VALUE | Mutations return a characterized scalar expression. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-API-003<br>P14-API-005 |
 | `CLAUSE-SET` | Supported | Phase 14 | SET mutation clause | Ordered SET assignments execute with canonical nested paths. | docs/compat-research/phase3.md#set-evaluation-and-conflicting-assignments | P1-STMT-001<br>P3-CRUD-001 |
-| `CLAUSE-SPLIT` | Unsupported | Phase 14 | SPLIT clause | SPLIT expands characterized collection paths with bounded output. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `CLAUSE-UNSET` | Unsupported | Phase 14 | UNSET mutation clause | UNSET removes canonical fields atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `CLAUSE-SPLIT` | Supported | Phase 14 | SPLIT clause | SPLIT expands characterized collection paths with bounded output. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006 |
+| `CLAUSE-UNSET` | Supported | Phase 14 | UNSET mutation clause | UNSET removes canonical fields atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-API-003 |
 | `CLAUSE-WHERE-BASIC` | Supported | Phase 14 | basic WHERE filters | Supported scalar predicates execute with safe index pushdown. | docs/compat-research/phase3.md | P1-STMT-003<br>P3-IDX-001 |
-| `CLAUSE-WHERE-COMPLETE` | Unsupported | Phase 14 | complete WHERE expressions | All Phase 13 bounded expressions execute as authorization-ready filters. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `CLAUSE-WHERE-COMPLETE` | Supported | Phase 14 | complete WHERE expressions | All Phase 13 bounded expressions execute as authorization-ready filters. | https://surrealdb.com/docs/reference/query-language/statements/overview | P13-PARSE-001<br>P13-PARSE-002<br>P13-PARSE-003<br>P13-PARSE-004<br>P14-API-014 |
 | `QUERY-EXPLAIN` | Supported | Phase 14 | EXPLAIN query | FastDB returns structured plan rows for supported SELECT forms. | docs/compat-research/phase6.md | P6-AST-002<br>P6-LANG-001 |
-| `QUERY-EXPLAIN-FULL` | Unsupported | Phase 14 | EXPLAIN FULL and ANALYZE | Execution analysis returns bounded structured plan and runtime detail. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SELECT-AGGREGATES` | Unsupported | Phase 14 | aggregate projections | Characterized aggregate functions execute with grouping and empty-set semantics. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `QUERY-EXPLAIN-FULL` | Supported | Phase 14 | EXPLAIN FULL and ANALYZE | Execution analysis returns bounded structured plan and runtime detail. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-008 |
+| `SELECT-AGGREGATES` | Supported | Phase 14 | aggregate projections | Characterized aggregate functions execute with grouping and empty-set semantics. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006<br>P14-API-012 |
 | `SELECT-BASIC` | Supported | Phase 14 | basic SELECT | Single-table SELECT supports current projections, filters, ordering, and pagination. | docs/compat-research/phase3.md | P1-STMT-003<br>P3-CRUD-002 |
-| `SELECT-DESTRUCTURE` | Unsupported | Phase 14 | projection destructuring | Destructuring projections preserve characterized nested shapes. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SELECT-MULTI-TARGET` | Unsupported | Phase 14 | multiple SELECT targets | Multiple tables, records, arrays, objects, and subquery targets execute with bounded materialization. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `SELECT-DESTRUCTURE` | Supported | Phase 14 | projection destructuring | Destructuring projections preserve characterized nested shapes. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006 |
+| `SELECT-MULTI-TARGET` | Supported | Phase 14 | multiple SELECT targets | Multiple tables, records, arrays, objects, and subquery targets execute with bounded materialization. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-007 |
 | `SELECT-PROJECTION-EXPR` | Supported | Phase 14 | expression projections | Supported scalar expressions project through explicit aliases. | docs/compat-research/phase6.md | P6-AST-001<br>P6-LANG-001 |
 | `SELECT-PROJECTION-FIELD` | Supported | Phase 14 | field projections | Field paths and star projections preserve nested shape. | docs/compat-research/phase3.md#result-and-projection-shapes | P1-STMT-003<br>P3-CRUD-002 |
-| `SELECT-VALUE` | Unsupported | Phase 14 | SELECT VALUE | VALUE projections return characterized scalar collections. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `SELECT-VALUE` | Supported | Phase 14 | SELECT VALUE | VALUE projections return characterized scalar collections. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-005<br>P14-API-006 |
 | `STMT-BEGIN` | Supported | Phase 14 | BEGIN transaction | BEGIN starts one explicit serialized transaction. | docs/compat-research/phase3.md | P1-STMT-005<br>P3-TXN-001 |
 | `STMT-CANCEL` | Supported | Phase 14 | CANCEL transaction | CANCEL rolls back the complete explicit transaction. | docs/compat-research/phase3.md | P1-STMT-005<br>P3-TXN-001 |
 | `STMT-COMMIT` | Supported | Phase 14 | COMMIT transaction | COMMIT atomically publishes a healthy explicit transaction. | docs/compat-research/phase3.md | P1-STMT-005<br>P3-TXN-001 |
 | `STMT-CREATE-BASIC` | Supported | Phase 14 | basic CREATE | CREATE ONLY with one table or record target and CONTENT or SET executes. | docs/compat-research/phase3.md | P1-STMT-001<br>P3-CRUD-001 |
-| `STMT-CREATE-COMPLETE` | Unsupported | Phase 14 | complete CREATE | Multiple targets, expressions, duplicate handling, timeout or version clauses, and all return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `STMT-CREATE-COMPLETE` | Unsupported | Phase 14 | complete CREATE | Multiple targets, expressions, duplicate handling, timeout or version clauses, and all return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-PARSE-006<br>docs/phase14-architecture-stops.md#versioned-create-clause |
 | `STMT-DELETE-BASIC` | Supported | Phase 14 | basic DELETE | DELETE one table or record target with supported filter and result clauses executes. | docs/compat-research/phase3.md | P1-STMT-003<br>P3-CRUD-001 |
-| `STMT-DELETE-COMPLETE` | Unsupported | Phase 14 | complete DELETE | Multiple targets, ONLY, timeout, and all return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `STMT-INSERT` | Unsupported | Phase 14 | INSERT statement | Single and bulk INSERT, duplicate handling, relation insertion, and return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `STMT-DELETE-COMPLETE` | Supported | Phase 14 | complete DELETE | Multiple targets, ONLY, timeout, and all return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-PARSE-006<br>P14-API-005<br>P14-API-013 |
+| `STMT-INSERT` | Supported | Phase 14 | INSERT statement | Single and bulk INSERT, duplicate handling, relation insertion, and return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-PARSE-006<br>P14-API-004<br>P14-API-010 |
 | `STMT-MULTI` | Supported | Phase 14 | multi-statement scripts | Semicolon-separated supported statements execute in order with bounded statement count. | docs/compat-research/phase3.md | P1-STMT-004<br>P3-TXN-001 |
 | `STMT-UPDATE-BASIC` | Supported | Phase 14 | basic UPDATE | UPDATE one table or record target with SET and supported clauses executes. | docs/compat-research/phase3.md | P1-STMT-003<br>P3-CRUD-001 |
-| `STMT-UPDATE-COMPLETE` | Unsupported | Phase 14 | complete UPDATE | CONTENT, MERGE, PATCH, REPLACE, UNSET, VALUE, DIFF, ONLY, timeout, and all return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `STMT-UPSERT` | Unsupported | Phase 14 | UPSERT statement | UPSERT creates or updates characterized targets with every mutation and return mode. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `STMT-UPDATE-COMPLETE` | Supported | Phase 14 | complete UPDATE | CONTENT, MERGE, PATCH, REPLACE, UNSET, VALUE, DIFF, ONLY, timeout, and all return modes execute. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-PARSE-006<br>P14-API-003<br>P14-API-013 |
+| `STMT-UPSERT` | Supported | Phase 14 | UPSERT statement | UPSERT creates or updates characterized targets with every mutation and return mode. | https://surrealdb.com/docs/reference/query-language/statements/overview | P14-PARSE-004<br>P14-PARSE-006<br>P14-API-004<br>P14-API-013 |
 ## Scripting and schema
 
 | Capability ID | Status | Delivery | Capability | Exact surface | Provenance | Evidence / stop report |
