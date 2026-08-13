@@ -1194,6 +1194,43 @@ fn run_select(
             matched.push(candidate);
         }
     }
+    if statement.split.is_empty()
+        && statement.group.is_none()
+        && statement.omit.is_empty()
+        && statement.fetch.is_empty()
+        && statement.order_by.is_empty()
+        && statement.order_random.is_none()
+    {
+        let start = resolve_pagination(
+            statement.start.as_ref(),
+            statement.start_expression.as_ref(),
+            params,
+            "START",
+        )?
+        .unwrap_or(0);
+        let limit = resolve_pagination(
+            statement.limit.as_ref(),
+            statement.limit_expression.as_ref(),
+            params,
+            "LIMIT",
+        )?
+        .unwrap_or(usize::MAX);
+        let rows = matched
+            .into_iter()
+            .skip(start)
+            .take(limit)
+            .map(|candidate| {
+                project_select_candidate(conn, snapshot, &candidate, &statement, params)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return if statement.only.is_some() {
+            Ok(StatementResult::Value(
+                rows.into_iter().next().unwrap_or(Value::Null),
+            ))
+        } else {
+            Ok(StatementResult::Rows(rows))
+        };
+    }
     let candidates = split_candidates(matched, &statement.split)?;
     let mut rows = if let Some(group) = &statement.group {
         project_grouped_candidates(conn, snapshot, &candidates, group, &statement, params)?
