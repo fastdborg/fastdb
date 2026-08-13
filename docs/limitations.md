@@ -31,7 +31,7 @@ Format/dialect version 1 is stable, but only the explicit migration level
 online backup API, replication, encryption contract, or cross-version release
 promise beyond `docs/format-v1.md`.
 
-The crates remain version `0.0.0`, `publish = false`, and source-available
-pending remote CI and counsel-approved license, CLA, entity, and trademark
-materials. Local tests and benchmarks are not a production-readiness or ACID
+FastDB Core is MIT licensed. The crates remain version `0.0.0` and
+`publish = false` while compatibility work continues toward the first public
+alpha. Local tests and benchmarks are not a production-readiness or ACID
 certification claim.

@@ -37,9 +37,9 @@ Do not read SurrealDB source to guide FastDB implementation. If you have
 read it, recuse yourself from the corresponding FastDB code and document
 the recusal.
 
-SurrealDB's core is distributed under Business Source License 1.1; legal
-review is required before public compatibility claims, naming, or
-trademark use.
+SurrealDB is an independent project with its own licenses and trademarks.
+FastDB's project owner has approved the current product name and the precise
+compatibility wording below; this does not grant rights in third-party marks.
 
 ## Provenance-note format
 
@@ -82,5 +82,5 @@ It does **not** imply:
 - complete or guaranteed compatibility.
 
 Use "SurrealQL-compatible subset" (not "SurrealDB-compatible") where
-precision matters. Do not use SurrealDB trademarks in product names,
-domain names, or marketing without counsel approval.
+precision matters. Do not use SurrealDB names or marks in a way that implies
+sponsorship, affiliation, certification, or ownership.

@@ -2,6 +2,13 @@
 
 Status: authoritative execution plan, 2026-08-13
 
+Historical status note (2026-08-13): Phase 5 completed under this plan. The
+project owner subsequently selected MIT for FastDB Core, approved the current
+name/compatibility wording, separated future proprietary Cloud code, and
+waived GitHub Actions as an alpha gate in favor of local verification. Those
+decisions supersede this plan's legal and remote-CI release stop; its local
+technical gates remain the Phase 5 evidence baseline.
+
 ## 1. Objective and boundary
 
 Phase 5 starts from Phase 4 commit `932f90ce5` and hardens the local MVP for

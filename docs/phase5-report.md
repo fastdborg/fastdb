@@ -1,5 +1,11 @@
 # Stop for release review
 
+> Policy update, 2026-08-13: this heading and the external stop below record
+> the state at Phase 5 completion. They were subsequently superseded by the
+> project owner's MIT Core, separate proprietary Cloud, product-name, and
+> local-first verification decisions. Core feature development is unblocked;
+> see `docs/licensing.md` and `docs/release-readiness.md` for current policy.
+
 FastDB Phase 5 completes the local release-hardening candidate on branch
 `phase-next` immediately after the Phase 4 commit `932f90ce5`. Every local
 command in the `plan-phase5.md` gate matrix passes without a Turso
@@ -176,15 +182,15 @@ Environment: Linux x86-64 (`7.0.0-29-generic`), Rust 1.88.0 stable and
 
 ## CI and documentation
 
-A single FastDB-only GitHub Actions workflow (`.github/workflows/fastdb.yml`)
-covers formatting, linting, tests/docs, release CLI and benchmark builds, a
-Linux/macOS/Windows filesystem and CLI matrix, fixture-digest verification,
-pinned-engine recording, a non-publishing assertion, and bounded fuzz smoke
-runs. It contains no publish, upload-artifact, deploy, secret, or release
-operation. `COMPAT.md`, `docs/limitations.md`, `docs/format-v1.md`,
-`docs/api.md`, `docs/benchmarks/phase5.md`, `docs/phase5-clean-room.md`, and
-`docs/release-readiness.md` are current. Every FastDB package remains version
-`0.0.0` and `publish = false` with no `license` field pending counsel.
+At Phase 5 completion, a FastDB-only GitHub Actions workflow
+(`.github/workflows/fastdb.yml`) covered formatting, linting, tests/docs,
+release CLI and benchmark builds, a Linux/macOS/Windows filesystem and CLI
+matrix, fixture-digest verification, pinned-engine recording, a
+non-publishing assertion, and bounded fuzz smoke runs. It contained no
+publish, upload-artifact, deploy, secret, or release operation. The later
+owner decision removed that workflow and made local verification
+authoritative through the first alpha. FastDB packages remain version `0.0.0`
+and `publish = false`, and now record `license = "MIT"`.
 
 ## Provenance and risk review
 
@@ -202,9 +208,9 @@ cache key carries no bound value. No unsafe code, external message, release,
 publishing action, workflow publishing step, format change, or cloud surface
 was introduced.
 
-## Remaining external blockers
+## External blockers recorded at Phase 5 completion (superseded)
 
-Release remains stopped pending:
+At Phase 5 completion, release was stopped pending:
 
 - the committed GitHub Actions workflow passing on Linux, macOS, and Windows
   at the exact candidate commit;

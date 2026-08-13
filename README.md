@@ -26,7 +26,8 @@ See [the embedded API](docs/api.md), [CLI contract](docs/cli.md),
 [compatibility matrix](COMPAT.md), [format policy](docs/format-v1.md), and
 [clean-room policy](CLEAN_ROOM.md).
 
-FastDB-authored crates remain version `0.0.0`, `publish = false`, and
-source-available pending counsel-approved license, CLA, entity, and trademark
-materials. Local hardening evidence does not authorize a release or a
-production-readiness claim; see [the release-readiness checklist](docs/release-readiness.md).
+FastDB Core is open-source software under the [MIT License](LICENSE.md).
+FastDB-authored crates remain version `0.0.0` and `publish = false` until the
+first public alpha is deliberately packaged. Local hardening evidence is not
+a production-readiness claim; see the [licensing decision](docs/licensing.md)
+and [release-readiness checklist](docs/release-readiness.md).

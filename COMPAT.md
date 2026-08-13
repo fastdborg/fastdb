@@ -103,7 +103,7 @@ Phase 5 hardens the complete MVP expression, parameter, CRUD, result, ordered-sc
 - Successful parse caching is bounded to 128 entries/4 MiB and excludes sources over 64 KiB. Prepared SELECT caching is bounded to 64 value-free candidate keys and is disabled across explicit transaction execution.
 - Committed format-1 and migration-level-0 fixtures prove reopen, transactional migration, further mutation, integrity, and actual expression-index selection.
 - The release benchmark compares the public async API with an equivalent native Turso worker under identical values, durability, indexes, and result materialization. Raw samples and percentile ratios are committed.
-- The release candidate remains source-available, version `0.0.0`, `publish = false`, and blocked from release pending remote cross-platform CI and legal approval.
+- FastDB Core is MIT licensed. Crates remain version `0.0.0` and `publish = false` while compatibility work continues toward the first public alpha; the alpha gate is the recorded local verification matrix, not remote CI.
 
 ## Maintenance rule
 
