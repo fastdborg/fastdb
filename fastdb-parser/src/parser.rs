@@ -933,6 +933,9 @@ impl<'a> Parser<'a> {
             )),
             TokenKind::Index => Ok(Statement::DefineIndex(self.parse_define_index(start)?)),
             TokenKind::Param => Ok(Statement::DefineParam(self.parse_define_param(start)?)),
+            TokenKind::Function => Ok(Statement::DefineFunction(
+                self.parse_define_function(start)?,
+            )),
             _ => Err(ParseError::unsupported(
                 "this DEFINE target is outside the active FastDB grammar",
                 self.peek().span,
@@ -982,11 +985,127 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_define_function(
+        &mut self,
+        start: Span,
+    ) -> Result<DefineFunctionStatement, ParseError> {
+        self.expect(&TokenKind::Function, "keyword FUNCTION")?;
+        let if_not_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            self.expect(&TokenKind::Not, "keyword NOT after IF")?;
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF NOT")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let overwrite = self.take(&TokenKind::Overwrite).map(|token| token.span);
+        if let (Some(_), Some(overwrite_span)) = (if_not_exists, overwrite) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "DEFINE FUNCTION cannot combine IF NOT EXISTS and OVERWRITE",
+                },
+                overwrite_span,
+            ));
+        }
+        let name = self.parse_custom_function_name()?;
+        self.expect(&TokenKind::LeftParen, "'(' after function name")?;
+        let mut arguments = Vec::new();
+        if !self.eat(&TokenKind::RightParen) {
+            loop {
+                let name = self.expect_parameter("a typed function argument")?;
+                if arguments
+                    .iter()
+                    .any(|argument: &FunctionArgument| argument.name.value == name.value)
+                {
+                    return Err(ParseError::new(
+                        ParseErrorKind::InvalidCombination {
+                            what: "duplicate function argument",
+                        },
+                        name.span,
+                    ));
+                }
+                self.expect(&TokenKind::Colon, "':' after function argument")?;
+                let ty = self.parse_schema_type()?;
+                let span = name.span.union(ty.span);
+                arguments.push(FunctionArgument { span, name, ty });
+                self.check_element_count(arguments.len(), span)?;
+                if !self.eat(&TokenKind::Comma) {
+                    self.expect(&TokenKind::RightParen, "')' after function arguments")?;
+                    break;
+                }
+            }
+        }
+        let body = self.parse_script_block()?;
+        let permissions = self
+            .parse_schema_permissions()?
+            .unwrap_or(SchemaPermissions::Full);
+        Ok(DefineFunctionStatement {
+            span: Span::new(start.offset, self.previous_end() - start.offset),
+            if_not_exists,
+            overwrite,
+            name,
+            arguments,
+            body,
+            permissions,
+        })
+    }
+
+    fn parse_custom_function_name(&mut self) -> Result<Vec<Identifier>, ParseError> {
+        let first = self.expect_function_segment("function namespace fn")?;
+        if !first.value.eq_ignore_ascii_case("fn") {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "custom function names must begin with fn::",
+                },
+                first.span,
+            ));
+        }
+        self.expect(&TokenKind::DoubleColon, "'::' after fn")?;
+        let mut name = vec![first];
+        loop {
+            let segment = self.expect_function_segment("a custom function name segment")?;
+            self.check_element_count(name.len() + 1, segment.span)?;
+            name.push(segment);
+            if !self.eat(&TokenKind::DoubleColon) {
+                break;
+            }
+        }
+        Ok(name)
+    }
+
+    fn parse_schema_permissions(&mut self) -> Result<Option<SchemaPermissions>, ParseError> {
+        if !self.eat(&TokenKind::Permissions) {
+            return Ok(None);
+        }
+        if self.eat(&TokenKind::Full) {
+            Ok(Some(SchemaPermissions::Full))
+        } else if self.eat(&TokenKind::None) {
+            Ok(Some(SchemaPermissions::None))
+        } else {
+            Err(self.unexpected("FULL or NONE after PERMISSIONS"))
+        }
+    }
+
     fn parse_alter(&mut self) -> Result<Statement, ParseError> {
         let start = self.expect(&TokenKind::Alter, "keyword ALTER")?.span;
+        if self.eat(&TokenKind::Function) {
+            let name = self.parse_custom_function_name()?;
+            let permissions = self.parse_schema_permissions()?.ok_or_else(|| {
+                ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "ALTER FUNCTION requires PERMISSIONS",
+                    },
+                    name.last().expect("name is nonempty").span,
+                )
+            })?;
+            return Ok(Statement::AlterFunction(AlterFunctionStatement {
+                span: Span::new(start.offset, self.previous_end() - start.offset),
+                name,
+                permissions,
+            }));
+        }
         if !self.eat(&TokenKind::Param) {
             return Err(ParseError::unsupported(
-                "Phase 15 ALTER currently supports PARAM",
+                "Phase 15 ALTER currently supports PARAM and FUNCTION",
                 self.peek().span,
             ));
         }
@@ -1024,11 +1143,32 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_remove(&mut self) -> Result<Statement, ParseError> {
+        if self.at_offset(1, &TokenKind::Function) {
+            return self.parse_remove_function().map(Statement::RemoveFunction);
+        }
         if self.at_offset(1, &TokenKind::Param) {
             return self.parse_remove_param().map(Statement::RemoveParam);
         }
         self.parse_index_maintenance(false)
             .map(Statement::RemoveIndex)
+    }
+
+    fn parse_remove_function(&mut self) -> Result<RemoveFunctionStatement, ParseError> {
+        let start = self.expect(&TokenKind::Remove, "keyword REMOVE")?.span;
+        self.expect(&TokenKind::Function, "keyword FUNCTION")?;
+        let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let name = self.parse_custom_function_name()?;
+        let end = name.last().expect("name is nonempty").span;
+        Ok(RemoveFunctionStatement {
+            span: start.union(end),
+            if_exists,
+            name,
+        })
     }
 
     fn parse_remove_param(&mut self) -> Result<RemoveParamStatement, ParseError> {

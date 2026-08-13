@@ -1405,6 +1405,25 @@ pub fn parameters_stmt() -> Stmt {
     )
 }
 
+pub fn functions_stmt() -> Stmt {
+    one_select(
+        [
+            "function_id",
+            "logical_name",
+            "arguments_ast",
+            "body_source",
+            "ast_version",
+            "limits_json",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::FUNCTIONS_TABLE,
+        None,
+    )
+}
+
 pub fn capabilities_stmt() -> Stmt {
     one_select(
         ["provider", "min_provider_version", "min_encoding_version"]
@@ -1747,6 +1766,65 @@ pub fn parameter_insert(
             text(value_json),
             text(definition),
         ],
+    )
+}
+
+pub fn function_insert(
+    function_id: &str,
+    logical_name: &str,
+    arguments_ast: &str,
+    body_source: &str,
+    ast_version: i64,
+    limits_json: &str,
+    definition: &str,
+) -> (Stmt, Bindings) {
+    insert_values(
+        crate::catalog::FUNCTIONS_TABLE,
+        &[
+            "function_id",
+            "logical_name",
+            "arguments_ast",
+            "body_source",
+            "ast_version",
+            "limits_json",
+            "definition",
+        ],
+        vec![
+            var(1),
+            var(2),
+            var(3),
+            var(4),
+            numlit(ast_version),
+            var(5),
+            var(6),
+        ],
+        vec![
+            text(function_id),
+            text(logical_name),
+            text(arguments_ast),
+            text(body_source),
+            text(limits_json),
+            text(definition),
+        ],
+    )
+}
+
+pub fn function_delete(function_id: &str) -> (Stmt, Bindings) {
+    (
+        Stmt::Delete {
+            with: None,
+            tbl_name: qnm(crate::catalog::FUNCTIONS_TABLE),
+            indexed: None,
+            where_clause: Some(Box::new(Expr::binary(
+                id("function_id"),
+                Operator::Equals,
+                var(1),
+            ))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        },
+        vec![text(function_id)],
     )
 }
 

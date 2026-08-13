@@ -372,3 +372,381 @@ fn p15_api_007_parameter_catalog_changes_roll_back_with_explicit_transactions() 
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_008_custom_functions_persist_mutate_and_have_a_complete_lifecycle() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("functions.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE PARAM $offset VALUE 1; \
+                 DEFINE FUNCTION fn::write($x: int) { \
+                    CREATE item CONTENT { n: $x }; RETURN $x + $offset; \
+                 }; \
+                 LET $offset = 3; RETURN fn::write(4); \
+                 SELECT VALUE n FROM item; INFO FOR DB",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 1);
+        assert_eq!(
+            response.statements[3],
+            StatementResult::Value(Value::Integer(7))
+        );
+        assert!(matches!(
+            &response.statements[4],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(4)]
+        ));
+        assert!(matches!(
+            &response.statements[5],
+            StatementResult::Value(Value::Object(info))
+                if matches!(info.get("functions"), Some(Value::Object(functions))
+                    if matches!(functions.get("write"), Some(Value::Str(definition))
+                        if definition.contains("DEFINE FUNCTION fn::write($x: int)")
+                            && definition.ends_with("PERMISSIONS FULL")))
+        ));
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "RETURN fn::write(5); SELECT VALUE n FROM item ORDER BY n",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.statements[0],
+            StatementResult::Value(Value::Integer(6))
+        );
+        assert!(matches!(
+            &response.statements[1],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::Integer(4), Value::Integer(5)]
+        ));
+        let row_side_effect = connection
+            .query(
+                "CREATE source:a SET n = 2; \
+                 SELECT fn::write(n) AS copied FROM source; \
+                 DELETE source; DELETE item WHERE n = 2",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(row_side_effect.mutation_count, 4);
+        assert!(
+            matches!(
+                &row_side_effect.statements[1],
+                StatementResult::Rows(rows)
+                    if matches!(&rows[0], Value::Object(value)
+                        if value.get("copied") == Some(&Value::Integer(3)))
+            ),
+            "{:?}",
+            row_side_effect.statements
+        );
+
+        let predicate_side_effect = connection
+            .query(
+                "DEFINE FUNCTION fn::predicate($x: int) { \
+                    CREATE audit CONTENT { n: $x }; RETURN true; \
+                 }; \
+                 CREATE source:a SET n = 9; \
+                 SELECT VALUE n FROM source WHERE fn::predicate(n); \
+                 DELETE source; DELETE audit; REMOVE FUNCTION fn::predicate",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(predicate_side_effect.mutation_count, 4);
+        assert!(matches!(
+            &predicate_side_effect.statements[2],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(9)]
+        ));
+
+        assert_eq!(
+            connection
+                .query("RETURN fn::write('bad')", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        assert_eq!(
+            connection
+                .query("RETURN fn::write()", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        connection
+            .execute("ALTER FUNCTION fn::write PERMISSIONS NONE", params! {})
+            .await
+            .unwrap();
+        connection
+            .execute(
+                "DEFINE FUNCTION IF NOT EXISTS fn::write($x: int) { RETURN 0; }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection
+            .execute(
+                "DEFINE FUNCTION OVERWRITE fn::write($x: int) { RETURN $x * 2; }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .query("RETURN fn::write(6) + fn::write(1)", params! {})
+                .await
+                .unwrap()
+                .statements,
+            vec![StatementResult::Value(Value::Integer(14))]
+        );
+        assert_eq!(
+            connection
+                .query("RETURN array::map([1, 2], |$x| fn::write($x))", params! {})
+                .await
+                .unwrap()
+                .statements,
+            vec![StatementResult::Value(Value::Array(vec![
+                Value::Integer(2),
+                Value::Integer(4),
+            ]))]
+        );
+        let projected = connection
+            .query(
+                "SELECT fn::write(n) AS doubled FROM item ORDER BY n",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &projected.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(value)
+                    if value.get("doubled") == Some(&Value::Integer(8)))
+                && matches!(&rows[1], Value::Object(value)
+                    if value.get("doubled") == Some(&Value::Integer(10)))
+        ));
+        assert!(matches!(
+            &connection
+                .query(
+                    "SELECT VALUE n FROM item WHERE fn::write(n) = 8",
+                    params! {},
+                )
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(4)]
+        ));
+        connection
+            .execute(
+                "REMOVE FUNCTION fn::write; REMOVE FUNCTION IF EXISTS fn::write",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .query("RETURN fn::write(1)", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        connection
+            .execute(
+                "DEFINE FUNCTION fn::loop($x: int) { RETURN fn::loop($x); }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .query("RETURN fn::loop(1)", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::ResourceLimit
+        );
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_009_function_catalog_changes_and_side_effects_share_transactions() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE FUNCTION fn::write($x: int) { CREATE item CONTENT { n: $x }; RETURN $x; }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection
+            .execute(
+                "DEFINE FUNCTION fn::partial() { \
+                    CREATE atomic:a SET n = 1; CREATE atomic:a SET n = 2; RETURN 1; \
+                 }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .query("RETURN fn::partial()", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM atomic:a", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.is_empty()
+        ));
+        connection
+            .execute(
+                "DEFINE FUNCTION fn::content($x: int) { \
+                    CREATE audit CONTENT { n: $x }; RETURN { n: $x }; \
+                 }; \
+                 DEFINE FUNCTION fn::bad_content() { \
+                    CREATE audit CONTENT { n: 99 }; RETURN 'not-an-object'; \
+                 }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let content = connection
+            .execute("CREATE made CONTENT fn::content(7)", params! {})
+            .await
+            .unwrap();
+        assert_eq!(content.mutation_count, 2);
+        assert_eq!(
+            connection
+                .execute("CREATE made CONTENT fn::bad_content()", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        let audit = connection
+            .query("SELECT VALUE n FROM audit ORDER BY n", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &audit.statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(7)]
+        ));
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .query("RETURN fn::write(1)", params! {})
+            .await
+            .unwrap();
+        transaction
+            .execute("THROW 'rollback'", params! {})
+            .await
+            .unwrap_err();
+        drop(transaction);
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM item", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.is_empty()
+        ));
+
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("DEFINE FUNCTION fn::temporary() { RETURN 1; }", params! {})
+            .await
+            .unwrap();
+        transaction.rollback().await.unwrap();
+        assert_eq!(
+            connection
+                .query("RETURN fn::temporary()", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_010_function_dependencies_block_dangling_catalog_state() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "DEFINE FUNCTION fn::broken($x: int) { RETURN fn::missing($x); }",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        connection
+            .execute(
+                "DEFINE FUNCTION fn::base($x: int) { RETURN $x + 1; }; \
+                 DEFINE FUNCTION fn::dependent($x: int) { RETURN fn::base($x); }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE FUNCTION fn::base", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        assert_eq!(
+            connection
+                .execute(
+                    "DEFINE FUNCTION OVERWRITE fn::base($x: int, $y: int) { RETURN $x + $y; }",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        let result = connection
+            .query("RETURN fn::dependent(4)", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            result.statements,
+            vec![StatementResult::Value(Value::Integer(5))]
+        );
+        connection
+            .execute(
+                "REMOVE FUNCTION fn::dependent; REMOVE FUNCTION fn::base",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+    });
+}

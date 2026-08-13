@@ -146,6 +146,44 @@ Stored values use the collision-safe format-3 value envelope and remain
 authoritative after reopen; their canonical definition is independently
 parsed and ownership-checked during catalog loading.
 
-Custom-function observations remain candidates only. FastDB does not mark the
-locked function rows Supported until their catalog lifecycle, invocation,
-reopen, rollback, recursion limits, and executable conformance tests pass.
+## Custom functions
+
+The typed `fn::` definition above was extended with independent probes for
+lifecycle and execution contexts. `DEFINE FUNCTION IF NOT EXISTS` retained the
+existing body, while `DEFINE FUNCTION OVERWRITE` replaced it. `ALTER FUNCTION
+fn::f PERMISSIONS NONE` preserved the body and changed the canonical entry in
+the `functions` object returned by `INFO FOR DB`. `REMOVE FUNCTION` removed the
+call target; a later invocation returned a not-found error. Untyped arguments,
+default argument syntax, wrong arity, and calls to an absent function were
+rejected by the fixed binary.
+
+Function bodies could read a database parameter and the ambient LET binding,
+and arguments shadowed those values in the call frame. Calls worked inside
+larger expressions and SELECT row projections. This probe also established
+that a function invoked for a SELECT row may execute a data statement:
+
+```surql
+DEFINE FUNCTION fn::write($x: int) {
+    CREATE sink CONTENT { n: $x };
+    RETURN $x;
+};
+CREATE source:a SET n = 1;
+SELECT fn::write(n) AS v FROM source;
+SELECT * FROM sink;
+```
+
+The projection returned `{ v: 1 }` and the final query found one sink record.
+FastDB consequently routes function data statements through the same frontend
+and active transaction in script, projection, predicate, and CREATE-content
+contexts. A standalone statement containing a custom call receives one
+implicit statement transaction, so a later body error rolls back earlier body
+writes. An existing explicit transaction remains authoritative and is never
+implicitly replayed.
+
+FastDB stores typed arguments, the independently parsed body, AST and limit
+versions, permissions, and the public definition in the sealed format-3
+function catalog. Reopen validates canonical encodings and ownership before
+execution. Calls share a 10,000-call ceiling, a depth limit of 32, the caller's
+script/deadline budget, typed argument normalization, and redacted THROW
+behavior. Replacement and removal validate stored function call sites so they
+cannot publish a dangling or wrong-arity dependency.

@@ -7427,11 +7427,11 @@ area = "Scripting and schema"
 title = "ALTER FUNCTION"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Characterized ALTER FUNCTION clauses update canonical metadata atomically."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "ALTER FUNCTION atomically updates canonical permissions while preserving the validated body and rejects call-site-invalidating replacement signatures."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#custom-functions"]
+parser_evidence = ["P15-PARSE-005"]
+execution_evidence = ["P15-API-008", "P15-API-010"]
 stop_report = ""
 
 [[capability]]
@@ -7622,11 +7622,11 @@ area = "Scripting and schema"
 title = "DEFINE FUNCTION"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Bounded custom SurrealQL functions execute from canonical definitions."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "Typed canonical custom functions execute bounded scripts, nested calls, query projections and predicates, and transactionally atomic data statements."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#custom-functions"]
+parser_evidence = ["P15-PARSE-005"]
+execution_evidence = ["P15-API-008", "P15-API-009", "P15-API-010", "P15-CATALOG-002"]
 stop_report = ""
 
 [[capability]]
@@ -7804,11 +7804,11 @@ area = "Scripting and schema"
 title = "INFO FUNCTION"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "INFO FUNCTION returns structured authorized definitions."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "INFO FOR DB returns the characterized functions object of canonical definitions; v3.1.5 exposes function information through this database surface."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#custom-functions"]
+parser_evidence = ["P15-PARSE-005"]
+execution_evidence = ["P15-API-008"]
 stop_report = ""
 
 [[capability]]
@@ -7986,11 +7986,11 @@ area = "Scripting and schema"
 title = "complete REMOVE FUNCTION"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "REMOVE FUNCTION executes atomically with dependency validation."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "REMOVE FUNCTION atomically deletes canonical state, supports IF EXISTS, rolls back with transactions, and rejects dangling stored-function dependencies."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#custom-functions"]
+parser_evidence = ["P15-PARSE-005"]
+execution_evidence = ["P15-API-008", "P15-API-009", "P15-API-010"]
 stop_report = ""
 
 [[capability]]

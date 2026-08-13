@@ -1177,6 +1177,23 @@ fn validate_statement_limits(
                 validate_statement_limits(nested, params, limits)?;
             }
         }
+        Statement::DefineFunction(statement) => {
+            for argument in &statement.arguments {
+                let mut ty = &argument.ty.kind;
+                while let SchemaTypeKind::Option(inner) = ty {
+                    ty = &inner.kind;
+                }
+                if let SchemaTypeKind::FixedFloatArray(dimension) = ty {
+                    check_vector_dimension(
+                        usize::try_from(dimension.value).unwrap_or(usize::MAX),
+                        limits,
+                    )?;
+                }
+            }
+            for nested in &statement.body.statements {
+                validate_statement_limits(nested, params, limits)?;
+            }
+        }
         Statement::DefineTable(_)
         | Statement::DefineAnalyzer(_)
         | Statement::RemoveIndex(_)
@@ -1184,6 +1201,8 @@ fn validate_statement_limits(
         | Statement::Break(_)
         | Statement::Continue(_)
         | Statement::RemoveParam(_)
+        | Statement::AlterFunction(_)
+        | Statement::RemoveFunction(_)
         | Statement::InfoDatabase(_)
         | Statement::Begin(_)
         | Statement::Commit(_)

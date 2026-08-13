@@ -133,6 +133,8 @@ impl StatementExecution {
 const MAX_SCRIPT_STEPS: usize = 100_000;
 const MAX_LOOP_ITERATIONS: usize = 10_000;
 const MAX_SLEEP: Duration = Duration::from_secs(5);
+const MAX_FUNCTION_CALLS: usize = 10_000;
+const MAX_FUNCTION_RECURSION: usize = 32;
 
 pub(crate) struct ScriptRuntime {
     bindings: Params,
@@ -141,6 +143,9 @@ pub(crate) struct ScriptRuntime {
     scopes: Vec<Vec<(String, Option<Value>)>>,
     steps: usize,
     loop_depth: usize,
+    function_calls: usize,
+    function_depth: usize,
+    function_mutations: u64,
     deadline: Option<Instant>,
     cancellation: Option<Arc<AtomicBool>>,
 }
@@ -160,6 +165,9 @@ impl ScriptRuntime {
             scopes: Vec::new(),
             steps: 0,
             loop_depth: 0,
+            function_calls: 0,
+            function_depth: 0,
+            function_mutations: 0,
             deadline: (!timeout.is_zero())
                 .then(|| Instant::now().checked_add(timeout))
                 .flatten(),
@@ -271,12 +279,47 @@ pub(crate) fn run_statement(
     source: &str,
     script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
-    let outcome = run_script_statement(conn, execution, statement, source, script)?;
+    let implicit_function_transaction = matches!(execution.transaction, TransactionState::Idle)
+        && statement_invokes_custom_function(&statement);
+    if implicit_function_transaction {
+        conn.begin_explicit(execution)?;
+    }
+    let outcome = run_script_statement(conn, execution, statement, source, script);
+    let mut outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if implicit_function_transaction {
+                let _ = conn.cancel_explicit(execution);
+            }
+            return Err(error);
+        }
+    };
+    if implicit_function_transaction
+        && matches!(outcome.flow, ScriptFlow::Break | ScriptFlow::Continue)
+    {
+        let _ = conn.cancel_explicit(execution);
+        return Err(FastDbError::Schema(
+            "loop control escaped its enclosing FOR statement".into(),
+        ));
+    }
+    if implicit_function_transaction {
+        if let Err(error) = conn.commit_explicit(execution) {
+            let _ = conn.cancel_explicit(execution);
+            return Err(error);
+        }
+    }
+    let function_mutations = std::mem::take(&mut script.function_mutations);
+    outcome.execution.mutation_count = outcome
+        .execution
+        .mutation_count
+        .checked_add(function_mutations)
+        .ok_or_else(|| FastDbError::Engine("function mutation count overflowed u64".into()))?;
     match outcome.flow {
         ScriptFlow::Normal => Ok(outcome.execution),
-        ScriptFlow::Return(value) => {
-            Ok(StatementExecution::read_only(StatementResult::Value(value)))
-        }
+        ScriptFlow::Return(value) => Ok(StatementExecution {
+            result: StatementResult::Value(value),
+            mutation_count: outcome.execution.mutation_count,
+        }),
         ScriptFlow::Break => Err(FastDbError::Schema(
             "BREAK is only valid inside a FOR loop".into(),
         )),
@@ -284,6 +327,20 @@ pub(crate) fn run_statement(
             "CONTINUE is only valid inside a FOR loop".into(),
         )),
     }
+}
+
+fn statement_invokes_custom_function(statement: &Statement) -> bool {
+    if matches!(
+        statement,
+        Statement::DefineFunction(_) | Statement::AlterFunction(_) | Statement::RemoveFunction(_)
+    ) {
+        return false;
+    }
+    let block = turso_fastdb_parser::ScriptBlock {
+        span: statement.span(),
+        statements: vec![statement.clone()],
+    };
+    !function_dependencies(&block).is_empty()
 }
 
 fn run_script_statement(
@@ -309,14 +366,14 @@ fn run_script_statement(
 
     match statement {
         Statement::Let(statement) => {
-            let value = evaluate_script_expression(&statement.value, &script.bindings)?;
+            let value = evaluate_script_expression(conn, execution, &statement.value, script)?;
             script.bind(statement.name.value, value);
             Ok(ScriptOutcome::normal(StatementExecution::read_only(
                 StatementResult::None,
             )))
         }
         Statement::ScriptReturn(statement) => {
-            let value = evaluate_script_expression(&statement.value, &script.bindings)?;
+            let value = evaluate_script_expression(conn, execution, &statement.value, script)?;
             Ok(ScriptOutcome {
                 execution: StatementExecution::read_only(StatementResult::None),
                 flow: ScriptFlow::Return(value),
@@ -350,7 +407,7 @@ fn run_script_statement(
             "script THROW aborted execution (payload redacted)".into(),
         )),
         Statement::Sleep(statement) => {
-            run_script_sleep(&statement.value, script)?;
+            run_script_sleep(conn, execution, &statement.value, script)?;
             Ok(ScriptOutcome::normal(StatementExecution::read_only(
                 StatementResult::None,
             )))
@@ -366,6 +423,17 @@ fn run_script_statement(
                 .map(ScriptOutcome::normal)
         }
         Statement::RemoveParam(statement) => run_remove_param(conn, execution, statement, script)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::DefineFunction(statement) => {
+            run_define_function(conn, execution, statement, source)
+                .map(StatementExecution::read_only)
+                .map(ScriptOutcome::normal)
+        }
+        Statement::AlterFunction(statement) => run_alter_function(conn, execution, statement)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::RemoveFunction(statement) => run_remove_function(conn, execution, statement)
             .map(StatementExecution::read_only)
             .map(ScriptOutcome::normal),
         Statement::InfoDatabase(_) => run_info_database(conn, execution)
@@ -385,20 +453,24 @@ fn run_script_statement(
             .map(ScriptOutcome::normal),
         statement => {
             eval::validate_parameter_references(&statement, &script.bindings)?;
-            let params = &script.bindings;
+            let params = script.bindings.clone();
             let execution = match statement {
-                Statement::Create(statement) => run_create(conn, execution, statement, params),
-                Statement::Insert(statement) => run_insert(conn, execution, statement, params),
-                Statement::Relate(statement) => run_relate(conn, execution, statement, params),
-                Statement::Select(statement) => run_select(conn, execution, statement, params)
-                    .map(StatementExecution::read_only),
+                Statement::Create(statement) => {
+                    run_create(conn, execution, statement, &params, script)
+                }
+                Statement::Insert(statement) => run_insert(conn, execution, statement, &params),
+                Statement::Relate(statement) => run_relate(conn, execution, statement, &params),
+                Statement::Select(statement) => {
+                    run_select(conn, execution, statement, &params, script)
+                        .map(StatementExecution::read_only)
+                }
                 Statement::Update(statement) => {
-                    run_update(conn, execution, statement, params, false)
+                    run_update(conn, execution, statement, &params, false)
                 }
                 Statement::Upsert(statement) => {
-                    run_update(conn, execution, statement, params, true)
+                    run_update(conn, execution, statement, &params, true)
                 }
-                Statement::Delete(statement) => run_delete(conn, execution, statement, params),
+                Statement::Delete(statement) => run_delete(conn, execution, statement, &params),
                 Statement::DefineTable(statement) => {
                     run_define_table(conn, execution, statement, source)
                         .map(StatementExecution::read_only)
@@ -415,8 +487,10 @@ fn run_script_statement(
                     run_define_index(conn, execution, statement, source)
                         .map(StatementExecution::read_only)
                 }
-                Statement::Explain(statement) => run_explain(conn, execution, statement, params)
-                    .map(StatementExecution::read_only),
+                Statement::Explain(statement) => {
+                    run_explain(conn, execution, statement, &params, script)
+                        .map(StatementExecution::read_only)
+                }
                 Statement::RemoveIndex(statement) => {
                     run_remove_index(conn, execution, statement).map(StatementExecution::read_only)
                 }
@@ -437,6 +511,9 @@ fn run_script_statement(
                 | Statement::DefineParam(_)
                 | Statement::AlterParam(_)
                 | Statement::RemoveParam(_)
+                | Statement::DefineFunction(_)
+                | Statement::AlterFunction(_)
+                | Statement::RemoveFunction(_)
                 | Statement::InfoDatabase(_) => {
                     unreachable!("script statements were handled above")
                 }
@@ -446,19 +523,346 @@ fn run_script_statement(
     }
 }
 
-fn evaluate_script_expression(expression: &Expr, params: &Params) -> Result<Value> {
+fn evaluate_script_expression(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    expression: &Expr,
+    script: &mut ScriptRuntime,
+) -> Result<Value> {
+    let functions = catalog_for_read(conn, execution)?
+        .snapshot()
+        .map(|snapshot| snapshot.functions.clone())
+        .unwrap_or_default();
+    let mut expression = expression.clone();
+    let mut temporary = Params::new();
     let document = BTreeMap::new();
     let id = RecordId::new("__script", "context");
+    let context = FunctionExpressionContext {
+        document: &document,
+        id: &id,
+        endpoints: None,
+        functions: Some(&functions),
+    };
+    resolve_custom_function_calls(
+        conn,
+        execution,
+        &mut expression,
+        script,
+        &mut temporary,
+        &context,
+    )?;
+    let mut params = script.bindings.clone();
+    params.extend(temporary);
     eval::evaluate(
-        expression,
+        &expression,
         &EvalContext {
             document: &document,
             id: &id,
             endpoints: None,
-            params,
+            params: &params,
+            functions: Some(&functions),
+            function_calls: None,
+            function_depth: 0,
         },
     )
     .map(EvalValue::into_projection)
+}
+
+struct FunctionExpressionContext<'a> {
+    document: &'a BTreeMap<String, Value>,
+    id: &'a RecordId,
+    endpoints: Option<(&'a RecordId, &'a RecordId)>,
+    functions: Option<&'a BTreeMap<String, catalog::FunctionDefinition>>,
+}
+
+fn resolve_custom_function_calls(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    expression: &mut Expr,
+    script: &mut ScriptRuntime,
+    temporary: &mut Params,
+    context: &FunctionExpressionContext<'_>,
+) -> Result<()> {
+    match &mut expression.kind {
+        ExprKind::FunctionCall { name, arguments } => {
+            for argument in arguments.iter_mut() {
+                resolve_custom_function_calls(
+                    conn, execution, argument, script, temporary, context,
+                )?;
+            }
+            let Some(logical_name) = custom_function_name(name) else {
+                return Ok(());
+            };
+            let mut params = script.bindings.clone();
+            params.extend(temporary.clone());
+            let values = arguments
+                .iter()
+                .map(|argument| {
+                    eval::evaluate(
+                        argument,
+                        &EvalContext {
+                            document: context.document,
+                            id: context.id,
+                            endpoints: context.endpoints,
+                            params: &params,
+                            functions: context.functions,
+                            function_calls: None,
+                            function_depth: 0,
+                        },
+                    )
+                    .map(EvalValue::into_projection)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let value = invoke_custom_function(conn, execution, &logical_name, values, script)?;
+            let parameter = format!("__fastdb_function_result_{}", temporary.len());
+            temporary.insert(parameter.clone(), value);
+            expression.kind = ExprKind::Parameter(parameter);
+        }
+        ExprKind::Array(values) | ExprKind::DestructureList(values) => {
+            for value in values {
+                resolve_custom_function_calls(conn, execution, value, script, temporary, context)?;
+            }
+        }
+        ExprKind::Object(fields) => {
+            for field in fields {
+                resolve_custom_function_calls(
+                    conn,
+                    execution,
+                    &mut field.value,
+                    script,
+                    temporary,
+                    context,
+                )?;
+            }
+        }
+        ExprKind::Destructure { target, .. }
+        | ExprKind::Cast { value: target, .. }
+        | ExprKind::Unary {
+            operand: target, ..
+        }
+        | ExprKind::Parenthesized(target) => {
+            resolve_custom_function_calls(conn, execution, target, script, temporary, context)?;
+        }
+        ExprKind::Access { target, accessor } => {
+            resolve_custom_function_calls(conn, execution, target, script, temporary, context)?;
+            match accessor {
+                turso_fastdb_parser::Accessor::Index(index) => {
+                    resolve_custom_function_calls(
+                        conn, execution, index, script, temporary, context,
+                    )?;
+                }
+                turso_fastdb_parser::Accessor::Slice { start, end, .. } => {
+                    if let Some(start) = start {
+                        resolve_custom_function_calls(
+                            conn, execution, start, script, temporary, context,
+                        )?;
+                    }
+                    if let Some(end) = end {
+                        resolve_custom_function_calls(
+                            conn, execution, end, script, temporary, context,
+                        )?;
+                    }
+                }
+                turso_fastdb_parser::Accessor::Field(_)
+                | turso_fastdb_parser::Accessor::Last(_) => {}
+            }
+        }
+        ExprKind::Range(range) => {
+            if let Some(start) = &mut range.start {
+                resolve_custom_function_calls(conn, execution, start, script, temporary, context)?;
+            }
+            if let Some(end) = &mut range.end {
+                resolve_custom_function_calls(conn, execution, end, script, temporary, context)?;
+            }
+        }
+        ExprKind::Closure(_) => {}
+        ExprKind::Knn(knn) => {
+            resolve_custom_function_calls(
+                conn,
+                execution,
+                &mut knn.field,
+                script,
+                temporary,
+                context,
+            )?;
+            resolve_custom_function_calls(
+                conn,
+                execution,
+                &mut knn.query,
+                script,
+                temporary,
+                context,
+            )?;
+        }
+        ExprKind::Binary { left, right, .. } => {
+            resolve_custom_function_calls(conn, execution, left, script, temporary, context)?;
+            resolve_custom_function_calls(conn, execution, right, script, temporary, context)?;
+        }
+        ExprKind::None
+        | ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Integer(_)
+        | ExprKind::Float(_)
+        | ExprKind::Duration(_)
+        | ExprKind::String(_)
+        | ExprKind::Parameter(_)
+        | ExprKind::RecordId(_)
+        | ExprKind::FieldPath(_)
+        | ExprKind::NamespacedValue { .. }
+        | ExprKind::Traversal(_) => {}
+    }
+    Ok(())
+}
+
+fn script_value_truthy(value: &Value) -> bool {
+    match value {
+        Value::None | Value::Null | Value::Bool(false) | Value::Integer(0) => false,
+        Value::Float(value) if *value == 0.0 => false,
+        Value::Decimal(value) if value.is_zero() => false,
+        Value::Str(value) => !value.is_empty(),
+        Value::Bytes(value) => !value.is_empty(),
+        Value::Array(value) => !value.is_empty(),
+        Value::Object(value) => !value.is_empty(),
+        Value::Set(value) => !value.as_slice().is_empty(),
+        _ => true,
+    }
+}
+
+fn custom_function_name(name: &[turso_fastdb_parser::Identifier]) -> Option<String> {
+    (name.len() >= 2 && name[0].value.eq_ignore_ascii_case("fn")).then(|| {
+        name.iter()
+            .skip(1)
+            .map(|segment| segment.value.as_str())
+            .collect::<Vec<_>>()
+            .join("::")
+    })
+}
+
+fn expression_invokes_custom_function(expression: &Expr) -> bool {
+    let mut dependencies = Vec::new();
+    collect_function_expression_dependencies(expression, &mut dependencies);
+    !dependencies.is_empty()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_expression_with_custom_functions(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    document: &BTreeMap<String, Value>,
+    id: &RecordId,
+    endpoints: Option<(&RecordId, &RecordId)>,
+    expression: &Expr,
+    params: &Params,
+    functions: &BTreeMap<String, catalog::FunctionDefinition>,
+    script: &mut ScriptRuntime,
+) -> Result<Value> {
+    let mut expression = expression.clone();
+    let mut temporary = Params::new();
+    let context = FunctionExpressionContext {
+        document,
+        id,
+        endpoints,
+        functions: Some(functions),
+    };
+    resolve_custom_function_calls(
+        conn,
+        execution,
+        &mut expression,
+        script,
+        &mut temporary,
+        &context,
+    )?;
+    let mut params = params.clone();
+    params.extend(temporary);
+    let calls = std::cell::Cell::new(0);
+    eval::evaluate(
+        &expression,
+        &EvalContext {
+            document,
+            id,
+            endpoints,
+            params: &params,
+            functions: Some(functions),
+            function_calls: Some(&calls),
+            function_depth: 0,
+        },
+    )
+    .map(EvalValue::into_projection)
+}
+
+fn invoke_custom_function(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    logical_name: &str,
+    arguments: Vec<Value>,
+    script: &mut ScriptRuntime,
+) -> Result<Value> {
+    if script.function_calls == MAX_FUNCTION_CALLS {
+        return Err(FastDbError::ResourceLimit(format!(
+            "custom function calls exceed {MAX_FUNCTION_CALLS}"
+        )));
+    }
+    if script.function_depth == MAX_FUNCTION_RECURSION {
+        return Err(FastDbError::ResourceLimit(format!(
+            "custom function recursion exceeds {MAX_FUNCTION_RECURSION}"
+        )));
+    }
+    let function = {
+        let catalog = catalog_for_read(conn, execution)?;
+        catalog
+            .snapshot()
+            .and_then(|snapshot| snapshot.functions.get(logical_name))
+            .cloned()
+            .ok_or_else(|| {
+                FastDbError::Schema(format!("function fn::{logical_name} is not defined"))
+            })?
+    };
+    if arguments.len() != function.arguments.len() {
+        return Err(FastDbError::Schema(format!(
+            "function fn::{logical_name} expects {} arguments but received {}",
+            function.arguments.len(),
+            arguments.len()
+        )));
+    }
+    let mut arguments = arguments;
+    for (argument, value) in function.arguments.iter().zip(&mut arguments) {
+        schema::validate_standalone_value(
+            &FieldType::parse_canonical(&argument.ty)?,
+            value,
+            &format!("function argument ${}", argument.name),
+        )?;
+    }
+    script.function_calls += 1;
+    script.function_depth += 1;
+    script.push_scope();
+    for (argument, value) in function.arguments.iter().zip(arguments) {
+        script.bind(argument.name.clone(), value);
+    }
+    let outcome = run_script_block(
+        conn,
+        execution,
+        function.body.clone(),
+        &function.definition,
+        script,
+    );
+    script.pop_scope();
+    script.function_depth -= 1;
+    let outcome = outcome?;
+    script.function_mutations = script
+        .function_mutations
+        .checked_add(outcome.execution.mutation_count)
+        .ok_or_else(|| FastDbError::Engine("function mutation count overflowed u64".into()))?;
+    match outcome.flow {
+        ScriptFlow::Return(value) => Ok(value),
+        ScriptFlow::Normal => match outcome.execution.result {
+            StatementResult::Value(value) => Ok(value),
+            StatementResult::Rows(values) => Ok(Value::Array(values)),
+            StatementResult::None => Ok(Value::None),
+        },
+        ScriptFlow::Break | ScriptFlow::Continue => Err(FastDbError::Schema(
+            "function body leaked loop control".into(),
+        )),
+    }
 }
 
 fn run_script_block(
@@ -502,17 +906,9 @@ fn run_script_if(
 ) -> Result<ScriptOutcome> {
     let mut selected = None;
     for (condition, block) in statement.branches {
-        if eval::evaluate(
-            &condition,
-            &EvalContext {
-                document: &BTreeMap::new(),
-                id: &RecordId::new("__script", "context"),
-                endpoints: None,
-                params: &script.bindings,
-            },
-        )?
-        .truthy()
-        {
+        if script_value_truthy(&evaluate_script_expression(
+            conn, execution, &condition, script,
+        )?) {
             selected = Some(block);
             break;
         }
@@ -538,7 +934,7 @@ fn run_script_for(
     source: &str,
     script: &mut ScriptRuntime,
 ) -> Result<ScriptOutcome> {
-    let iterable = evaluate_script_expression(&statement.iterable, &script.bindings)?;
+    let iterable = evaluate_script_expression(conn, execution, &statement.iterable, script)?;
     let values = script_iterable_values(iterable)?;
     let mut result = StatementExecution::read_only(StatementResult::None);
     for value in values {
@@ -652,8 +1048,14 @@ fn script_iterable_values(value: Value) -> Result<Vec<Value>> {
     Ok(values)
 }
 
-fn run_script_sleep(expression: &Expr, script: &ScriptRuntime) -> Result<()> {
-    let Value::Duration(value) = evaluate_script_expression(expression, &script.bindings)? else {
+fn run_script_sleep(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    expression: &Expr,
+    script: &mut ScriptRuntime,
+) -> Result<()> {
+    let Value::Duration(value) = evaluate_script_expression(conn, execution, expression, script)?
+    else {
         return Err(FastDbError::Schema("SLEEP requires a duration".into()));
     };
     let duration = Duration::new(value.seconds(), value.nanoseconds());
@@ -687,7 +1089,7 @@ fn run_define_param(
     source: &str,
     script: &mut ScriptRuntime,
 ) -> Result<StatementResult> {
-    let value = evaluate_script_expression(&statement.value, &script.bindings)?;
+    let value = evaluate_script_expression(conn, execution, &statement.value, script)?;
     let value_source = source_slice(source, statement.value.span)?;
     let definition =
         canonical_parameter_definition(&statement.name.value, value_source, statement.permissions);
@@ -738,7 +1140,7 @@ fn run_alter_param(
     let evaluated = statement
         .value
         .as_ref()
-        .map(|expression| evaluate_script_expression(expression, &script.bindings))
+        .map(|expression| evaluate_script_expression(conn, execution, expression, script))
         .transpose()?;
     let value_source = statement
         .value
@@ -819,6 +1221,425 @@ fn run_remove_param(
     Ok(StatementResult::None)
 }
 
+fn function_logical_name(name: &[turso_fastdb_parser::Identifier]) -> String {
+    name.iter()
+        .skip(1)
+        .map(|segment| segment.value.as_str())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn run_define_function(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::DefineFunctionStatement,
+    source: &str,
+) -> Result<StatementResult> {
+    validate_function_block(&statement.body)?;
+    let logical_name = function_logical_name(&statement.name);
+    let arguments = statement
+        .arguments
+        .iter()
+        .map(|argument| catalog::FunctionArgumentDefinition {
+            name: argument.name.value.clone(),
+            ty: FieldType::from_parser(&argument.ty).canonical(),
+        })
+        .collect::<Vec<_>>();
+    let body_source = source_slice(source, statement.body.span)?
+        .trim()
+        .to_string();
+    let definition = catalog::canonical_function_definition(
+        &logical_name,
+        &arguments,
+        &body_source,
+        statement.permissions,
+    );
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        validate_function_dependencies(snapshot, &logical_name, arguments.len(), &statement.body)?;
+        validate_function_call_sites(snapshot, &logical_name, arguments.len())?;
+        if let Some(existing) = snapshot.functions.get(&logical_name).cloned() {
+            if statement.if_not_exists.is_some() {
+                return Ok(());
+            }
+            if statement.overwrite.is_none() {
+                return Err(FastDbError::Constraint(format!(
+                    "function fn::{logical_name} is already defined"
+                )));
+            }
+            catalog::remove_function(conn, &existing)?;
+            snapshot.functions.remove(&logical_name);
+        }
+        let function = catalog::allocate_function(
+            &logical_name,
+            arguments,
+            statement.body.clone(),
+            body_source,
+            statement.permissions,
+            definition,
+        )?;
+        catalog::persist_function(conn, &function)?;
+        snapshot.functions.insert(logical_name.clone(), function);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn run_alter_function(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::AlterFunctionStatement,
+) -> Result<StatementResult> {
+    let logical_name = function_logical_name(&statement.name);
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(existing) = snapshot.functions.get(&logical_name).cloned() else {
+            return Err(FastDbError::Schema(format!(
+                "function fn::{logical_name} is not defined"
+            )));
+        };
+        let mut replacement = existing.clone();
+        replacement.permissions = statement.permissions;
+        replacement.definition = catalog::canonical_function_definition(
+            &logical_name,
+            &replacement.arguments,
+            &replacement.body_source,
+            statement.permissions,
+        );
+        catalog::remove_function(conn, &existing)?;
+        catalog::persist_function(conn, &replacement)?;
+        snapshot.functions.insert(logical_name.clone(), replacement);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn run_remove_function(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::RemoveFunctionStatement,
+) -> Result<StatementResult> {
+    let logical_name = function_logical_name(&statement.name);
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(function) = snapshot.functions.get(&logical_name).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "function fn::{logical_name} is not defined"
+            )));
+        };
+        if let Some(dependent) = snapshot.functions.iter().find_map(|(name, candidate)| {
+            (name != &logical_name
+                && function_dependencies(&candidate.body)
+                    .iter()
+                    .any(|(dependency, _)| dependency == &logical_name))
+            .then_some(name)
+        }) {
+            return Err(FastDbError::Constraint(format!(
+                "function fn::{logical_name} is required by fn::{dependent}"
+            )));
+        }
+        catalog::remove_function(conn, &function)?;
+        snapshot.functions.remove(&logical_name);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn validate_function_block(block: &turso_fastdb_parser::ScriptBlock) -> Result<()> {
+    for statement in &block.statements {
+        match statement {
+            Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {
+                return Err(FastDbError::Schema(
+                    "custom functions cannot control transactions".into(),
+                ));
+            }
+            Statement::If(statement) => {
+                for (_, block) in &statement.branches {
+                    validate_function_block(block)?;
+                }
+                if let Some(block) = &statement.otherwise {
+                    validate_function_block(block)?;
+                }
+            }
+            Statement::For(statement) => validate_function_block(&statement.body)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_function_dependencies(
+    snapshot: &CatalogSnapshot,
+    logical_name: &str,
+    argument_count: usize,
+    body: &turso_fastdb_parser::ScriptBlock,
+) -> Result<()> {
+    for (dependency, arity) in function_dependencies(body) {
+        let expected = if dependency == logical_name {
+            argument_count
+        } else {
+            snapshot
+                .functions
+                .get(&dependency)
+                .map(|function| function.arguments.len())
+                .ok_or_else(|| {
+                    FastDbError::Schema(format!(
+                        "function fn::{logical_name} references undefined function fn::{dependency}"
+                    ))
+                })?
+        };
+        if arity != expected {
+            return Err(FastDbError::Schema(format!(
+                "function fn::{logical_name} calls fn::{dependency} with {arity} arguments; {expected} required"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_function_call_sites(
+    snapshot: &CatalogSnapshot,
+    logical_name: &str,
+    argument_count: usize,
+) -> Result<()> {
+    for (name, function) in &snapshot.functions {
+        if name == logical_name {
+            continue;
+        }
+        for (dependency, arity) in function_dependencies(&function.body) {
+            if dependency == logical_name && arity != argument_count {
+                return Err(FastDbError::Constraint(format!(
+                    "changing fn::{logical_name} would invalidate fn::{name}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn function_dependencies(block: &turso_fastdb_parser::ScriptBlock) -> Vec<(String, usize)> {
+    let mut dependencies = Vec::new();
+    collect_function_block_dependencies(block, &mut dependencies);
+    dependencies.sort();
+    dependencies.dedup();
+    dependencies
+}
+
+fn collect_function_block_dependencies(
+    block: &turso_fastdb_parser::ScriptBlock,
+    dependencies: &mut Vec<(String, usize)>,
+) {
+    for statement in &block.statements {
+        match statement {
+            Statement::Let(statement) => {
+                collect_function_expression_dependencies(&statement.value, dependencies)
+            }
+            Statement::ScriptReturn(statement)
+            | Statement::Throw(statement)
+            | Statement::Sleep(statement) => {
+                collect_function_expression_dependencies(&statement.value, dependencies)
+            }
+            Statement::If(statement) => {
+                for (condition, block) in &statement.branches {
+                    collect_function_expression_dependencies(condition, dependencies);
+                    collect_function_block_dependencies(block, dependencies);
+                }
+                if let Some(block) = &statement.otherwise {
+                    collect_function_block_dependencies(block, dependencies);
+                }
+            }
+            Statement::For(statement) => {
+                collect_function_expression_dependencies(&statement.iterable, dependencies);
+                collect_function_block_dependencies(&statement.body, dependencies);
+            }
+            Statement::Create(statement) => {
+                if let Target::Expression(expression) = &statement.target {
+                    collect_function_expression_dependencies(expression, dependencies);
+                }
+                if let Some(data) = &statement.data {
+                    collect_create_data_function_dependencies(data, dependencies);
+                }
+            }
+            Statement::Insert(statement) => {
+                match &statement.data {
+                    InsertData::Expression(expression) => {
+                        collect_function_expression_dependencies(expression, dependencies)
+                    }
+                    InsertData::Values { rows, .. } => {
+                        for expression in rows.iter().flatten() {
+                            collect_function_expression_dependencies(expression, dependencies);
+                        }
+                    }
+                }
+                for assignment in &statement.on_duplicate {
+                    collect_function_expression_dependencies(&assignment.value, dependencies);
+                }
+            }
+            Statement::Relate(statement) => {
+                collect_function_expression_dependencies(&statement.from, dependencies);
+                collect_function_expression_dependencies(&statement.to, dependencies);
+                if let Some(data) = &statement.data {
+                    collect_create_data_function_dependencies(data, dependencies);
+                }
+            }
+            Statement::Select(statement) => {
+                if let ProjectionList::Fields(projections) = &statement.projections {
+                    for projection in projections {
+                        collect_function_expression_dependencies(
+                            &projection.expression,
+                            dependencies,
+                        );
+                    }
+                }
+                if let Some(condition) = &statement.condition {
+                    collect_function_expression_dependencies(condition, dependencies);
+                }
+            }
+            Statement::Update(statement) | Statement::Upsert(statement) => {
+                match &statement.data {
+                    UpdateData::Content(expression)
+                    | UpdateData::Merge(expression)
+                    | UpdateData::Patch(expression)
+                    | UpdateData::Replace(expression) => {
+                        collect_function_expression_dependencies(expression, dependencies)
+                    }
+                    UpdateData::Set(assignments) => {
+                        for assignment in assignments {
+                            collect_function_expression_dependencies(
+                                &assignment.value,
+                                dependencies,
+                            );
+                        }
+                    }
+                    UpdateData::Unset(_) => {}
+                }
+                if let Some(condition) = &statement.condition {
+                    collect_function_expression_dependencies(condition, dependencies);
+                }
+            }
+            Statement::Delete(statement) => {
+                if let Some(condition) = &statement.condition {
+                    collect_function_expression_dependencies(condition, dependencies);
+                }
+            }
+            Statement::DefineParam(statement) => {
+                collect_function_expression_dependencies(&statement.value, dependencies)
+            }
+            Statement::AlterParam(statement) => {
+                if let Some(value) = &statement.value {
+                    collect_function_expression_dependencies(value, dependencies);
+                }
+            }
+            Statement::DefineFunction(statement) => {
+                collect_function_block_dependencies(&statement.body, dependencies)
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_create_data_function_dependencies(
+    data: &CreateData,
+    dependencies: &mut Vec<(String, usize)>,
+) {
+    match data {
+        CreateData::Content(expression) => {
+            collect_function_expression_dependencies(expression, dependencies)
+        }
+        CreateData::Set(assignments) => {
+            for assignment in assignments {
+                collect_function_expression_dependencies(&assignment.value, dependencies);
+            }
+        }
+    }
+}
+
+fn collect_function_expression_dependencies(
+    expression: &Expr,
+    dependencies: &mut Vec<(String, usize)>,
+) {
+    match &expression.kind {
+        ExprKind::FunctionCall { name, arguments } => {
+            if let Some(name) = custom_function_name(name) {
+                dependencies.push((name, arguments.len()));
+            }
+            for argument in arguments {
+                collect_function_expression_dependencies(argument, dependencies);
+            }
+        }
+        ExprKind::Array(values) | ExprKind::DestructureList(values) => {
+            for value in values {
+                collect_function_expression_dependencies(value, dependencies);
+            }
+        }
+        ExprKind::Object(fields) => {
+            for field in fields {
+                collect_function_expression_dependencies(&field.value, dependencies);
+            }
+        }
+        ExprKind::Destructure { target, .. }
+        | ExprKind::Cast { value: target, .. }
+        | ExprKind::Unary {
+            operand: target, ..
+        }
+        | ExprKind::Parenthesized(target) => {
+            collect_function_expression_dependencies(target, dependencies)
+        }
+        ExprKind::Access { target, accessor } => {
+            collect_function_expression_dependencies(target, dependencies);
+            match accessor {
+                turso_fastdb_parser::Accessor::Index(index) => {
+                    collect_function_expression_dependencies(index, dependencies)
+                }
+                turso_fastdb_parser::Accessor::Slice { start, end, .. } => {
+                    if let Some(start) = start {
+                        collect_function_expression_dependencies(start, dependencies);
+                    }
+                    if let Some(end) = end {
+                        collect_function_expression_dependencies(end, dependencies);
+                    }
+                }
+                turso_fastdb_parser::Accessor::Field(_)
+                | turso_fastdb_parser::Accessor::Last(_) => {}
+            }
+        }
+        ExprKind::Range(range) => {
+            if let Some(start) = &range.start {
+                collect_function_expression_dependencies(start, dependencies);
+            }
+            if let Some(end) = &range.end {
+                collect_function_expression_dependencies(end, dependencies);
+            }
+        }
+        ExprKind::Closure(closure) => {
+            collect_function_expression_dependencies(&closure.body, dependencies)
+        }
+        ExprKind::Knn(knn) => {
+            collect_function_expression_dependencies(&knn.field, dependencies);
+            collect_function_expression_dependencies(&knn.query, dependencies);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_function_expression_dependencies(left, dependencies);
+            collect_function_expression_dependencies(right, dependencies);
+        }
+        ExprKind::None
+        | ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Integer(_)
+        | ExprKind::Float(_)
+        | ExprKind::Duration(_)
+        | ExprKind::String(_)
+        | ExprKind::Parameter(_)
+        | ExprKind::RecordId(_)
+        | ExprKind::FieldPath(_)
+        | ExprKind::NamespacedValue { .. }
+        | ExprKind::Traversal(_) => {}
+    }
+}
+
 fn run_info_database(conn: &Connection, execution: &ExecutionState) -> Result<StatementResult> {
     let catalog = catalog_for_read(conn, execution)?;
     let snapshot = catalog.snapshot();
@@ -846,6 +1667,12 @@ fn run_info_database(conn: &Connection, execution: &ExecutionState) -> Result<St
             .map(|(name, parameter)| (name.clone(), Value::Str(parameter.definition.clone())))
             .collect();
         root.insert("params".into(), Value::Object(params));
+        let functions = snapshot
+            .functions
+            .iter()
+            .map(|(name, function)| (name.clone(), Value::Str(function.definition.clone())))
+            .collect();
+        root.insert("functions".into(), Value::Object(functions));
         let tables = snapshot
             .tables
             .iter()
@@ -918,6 +1745,7 @@ fn run_create(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::CreateStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
     let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
     let targets = resolve_create_ids(statement.target, params)?;
@@ -933,6 +1761,24 @@ fn run_create(
             .iter()
             .any(|(table, _)| !snapshot.is_some_and(|snapshot| snapshot.tables.contains_key(table)))
     };
+    let functions = catalog_for_read(conn, execution)?
+        .snapshot()
+        .map(|snapshot| snapshot.functions.clone())
+        .unwrap_or_default();
+    let mut prepared = BTreeMap::new();
+    for (table_name, id_value) in &targets {
+        let id = RecordId::new(table_name, id_value.clone());
+        let document = evaluate_create_document_with_custom_functions(
+            conn,
+            execution,
+            statement.data.as_ref(),
+            &id,
+            params,
+            &functions,
+            script,
+        )?;
+        prepared.insert((table_name.clone(), encode_rid(id_value)?), document);
+    }
     let values = with_create_mutation(conn, execution, table_was_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
         let mut values = Vec::with_capacity(targets.len());
@@ -956,7 +1802,9 @@ fn run_create(
                 ));
             }
             let id = RecordId::new(table_name, id_value.clone());
-            let mut document = evaluate_create_document(statement.data.as_ref(), &id, params)?;
+            let mut document = prepared
+                .remove(&(table_name.clone(), encode_rid(id_value)?))
+                .ok_or_else(|| FastDbError::Engine("prepared CREATE document is missing".into()))?;
             reject_stored_id(&document)?;
             schema::validate_document(
                 table.mode == TableMode::Schemafull,
@@ -1013,22 +1861,22 @@ fn run_create(
     StatementExecution::mutation(result, mutation_count)
 }
 
-fn evaluate_create_document(
+fn evaluate_create_document_with_custom_functions(
+    conn: &Connection,
+    execution: &mut ExecutionState,
     data: Option<&CreateData>,
     id: &RecordId,
     params: &Params,
+    functions: &BTreeMap<String, catalog::FunctionDefinition>,
+    script: &mut ScriptRuntime,
 ) -> Result<BTreeMap<String, Value>> {
     let empty = BTreeMap::new();
-    let context = EvalContext {
-        document: &empty,
-        id,
-        endpoints: None,
-        params,
-    };
     match data {
         None => Ok(BTreeMap::new()),
         Some(CreateData::Content(expression)) => {
-            let value = eval::evaluate(expression, &context)?.into_projection();
+            let value = evaluate_expression_with_custom_functions(
+                conn, execution, &empty, id, None, expression, params, functions, script,
+            )?;
             let Value::Object(document) = value else {
                 return Err(FastDbError::Schema(
                     "CREATE CONTENT must evaluate to an object".into(),
@@ -1037,7 +1885,38 @@ fn evaluate_create_document(
             Ok(document)
         }
         Some(CreateData::Set(assignments)) => {
-            let evaluated = evaluate_assignments(assignments, &context)?;
+            let mut evaluated = Vec::with_capacity(assignments.len());
+            let context = EvalContext {
+                document: &empty,
+                id,
+                endpoints: None,
+                params,
+                functions: Some(functions),
+                function_calls: None,
+                function_depth: 0,
+            };
+            for assignment in assignments {
+                let value = if expression_invokes_custom_function(&assignment.value) {
+                    EvalValue::Present(evaluate_expression_with_custom_functions(
+                        conn,
+                        execution,
+                        &empty,
+                        id,
+                        None,
+                        &assignment.value,
+                        params,
+                        functions,
+                        script,
+                    )?)
+                } else {
+                    eval::evaluate(&assignment.value, &context)?
+                };
+                evaluated.push((
+                    assignment_path(&assignment.path)?,
+                    assignment.operator.value,
+                    value,
+                ));
+            }
             let mut document = BTreeMap::new();
             apply_assignments(&mut document, evaluated)?;
             Ok(document)
@@ -1211,6 +2090,9 @@ fn run_insert(
                     id: &candidate.id,
                     endpoints: None,
                     params: &scoped_params,
+                    functions: None,
+                    function_calls: None,
+                    function_depth: 0,
                 };
                 let assignments = evaluate_assignments(&statement.on_duplicate, &context)?;
                 document = candidate.document.clone();
@@ -1297,6 +2179,9 @@ fn evaluate_insert_documents(
         id: &id,
         endpoints: None,
         params,
+        functions: None,
+        function_calls: None,
+        function_depth: 0,
     };
     let values = match data {
         InsertData::Expression(expression) => {
@@ -1484,6 +2369,9 @@ fn run_insert_relation(
                     id: &candidate.id,
                     endpoints: Some((from, to)),
                     params: &scoped_params,
+                    functions: None,
+                    function_calls: None,
+                    function_depth: 0,
                 };
                 let assignments = evaluate_assignments(&statement.on_duplicate, &context)?;
                 let mut document = candidate.document.clone();
@@ -1609,6 +2497,9 @@ fn run_relate(
         id: &edge_id,
         endpoints: Some((&from, &to)),
         params,
+        functions: None,
+        function_calls: None,
+        function_depth: 0,
     };
     let mut document = match &statement.data {
         None => BTreeMap::new(),
@@ -1783,15 +2674,16 @@ fn record_exists(conn: &Connection, table: &TableDefinition, id: &RecordIdValue)
 
 fn run_select(
     conn: &Connection,
-    execution: &ExecutionState,
+    execution: &mut ExecutionState,
     statement: turso_fastdb_parser::SelectStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementResult> {
     validate_projection_shapes(&statement.projections, statement.value.is_some())?;
     if !statement.additional_targets.is_empty()
         || !matches!(statement.target, SelectTarget::Target(_))
     {
-        return run_multi_target_select(conn, execution, statement, params);
+        return run_multi_target_select(conn, execution, statement, params, script);
     }
     if let Some(only) = statement.only {
         let single_record = matches!(statement.target, SelectTarget::Target(Target::Record(_)));
@@ -1808,13 +2700,14 @@ fn run_select(
     }
     let (table_name, selector) = select_target_parts(&statement.target)?;
     let catalog = catalog_for_read(conn, execution)?;
-    let Some(snapshot) = catalog.snapshot() else {
+    let Some(snapshot) = catalog.snapshot().cloned() else {
         return Ok(if statement.only.is_some() {
             StatementResult::Value(Value::Null)
         } else {
             StatementResult::Rows(Vec::new())
         });
     };
+    drop(catalog);
     let Some(table) = snapshot.tables.get(&table_name) else {
         return Ok(if statement.only.is_some() {
             StatementResult::Value(Value::Null)
@@ -1823,7 +2716,7 @@ fn run_select(
         });
     };
     let fts = resolve_fts_query(&statement, table, params)?;
-    let vector = resolve_vector_query(&statement, snapshot, table, params)?;
+    let vector = resolve_vector_query(&statement, &snapshot, table, params)?;
     if fts.is_some() && vector.is_some() {
         return Err(FastDbError::Schema(
             "FTS and KNN predicates cannot be combined in one Phase 9 SELECT".into(),
@@ -1841,7 +2734,7 @@ fn run_select(
     }
     let candidates = read_candidates(
         conn,
-        snapshot,
+        &snapshot,
         table,
         CandidateReadOptions {
             id: selector.id(),
@@ -1856,7 +2749,15 @@ fn run_select(
     let mut matched = Vec::new();
     for candidate in candidates {
         if vector.is_some()
-            || matches_condition_with_fts(statement.condition.as_ref(), &candidate, params)?
+            || matches_condition_with_fts(
+                conn,
+                execution,
+                statement.condition.as_ref(),
+                &candidate,
+                params,
+                &snapshot,
+                script,
+            )?
         {
             matched.push(candidate);
         }
@@ -1887,7 +2788,9 @@ fn run_select(
             .skip(start)
             .take(limit)
             .map(|candidate| {
-                project_select_candidate(conn, snapshot, &candidate, &statement, params)
+                project_select_candidate(
+                    conn, execution, &snapshot, &candidate, &statement, params, script,
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         return if statement.only.is_some() {
@@ -1900,13 +2803,23 @@ fn run_select(
     }
     let candidates = split_candidates(matched, &statement.split)?;
     let mut rows = if let Some(group) = &statement.group {
-        project_grouped_candidates(conn, snapshot, &candidates, group, &statement, params)?
+        project_grouped_candidates(
+            conn,
+            execution,
+            &snapshot,
+            &candidates,
+            group,
+            &statement,
+            params,
+            script,
+        )?
     } else {
         candidates
             .into_iter()
             .map(|candidate| {
-                let value =
-                    project_select_candidate(conn, snapshot, &candidate, &statement, params)?;
+                let value = project_select_candidate(
+                    conn, execution, &snapshot, &candidate, &statement, params, script,
+                )?;
                 Ok(QueryRow {
                     value,
                     source: Some(candidate),
@@ -1916,7 +2829,7 @@ fn run_select(
     };
     for row in &mut rows {
         apply_omit(&mut row.value, &statement.omit)?;
-        apply_fetch(conn, snapshot, &mut row.value, &statement.fetch)?;
+        apply_fetch(conn, &snapshot, &mut row.value, &statement.fetch)?;
     }
     order_query_rows(&mut rows, &statement, params)?;
     let start = resolve_pagination(
@@ -1950,9 +2863,10 @@ fn run_select(
 
 fn run_multi_target_select(
     conn: &Connection,
-    execution: &ExecutionState,
+    execution: &mut ExecutionState,
     statement: turso_fastdb_parser::SelectStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementResult> {
     if statement.value.is_some()
         || !matches!(statement.projections, ProjectionList::All(_))
@@ -1983,7 +2897,8 @@ fn run_multi_target_select(
                 nested.limit_expression = None;
                 nested.start = None;
                 nested.start_expression = None;
-                let StatementResult::Rows(values) = run_select(conn, execution, nested, params)?
+                let StatementResult::Rows(values) =
+                    run_select(conn, execution, nested, params, script)?
                 else {
                     unreachable!("nested multi-target SELECT is not ONLY")
                 };
@@ -2000,6 +2915,9 @@ fn run_multi_target_select(
                     id: &id,
                     endpoints: None,
                     params,
+                    functions: None,
+                    function_calls: None,
+                    function_depth: 0,
                 };
                 let value = eval::evaluate(&expression, &context)?.into_projection();
                 let values = match value {
@@ -2012,7 +2930,7 @@ fn run_multi_target_select(
                 }));
             }
             SelectTarget::Subquery(select) => {
-                let result = run_select(conn, execution, *select, params)?;
+                let result = run_select(conn, execution, *select, params, script)?;
                 match result {
                     StatementResult::Rows(values) => {
                         rows.extend(values.into_iter().map(|value| QueryRow {
@@ -2088,19 +3006,23 @@ fn split_candidates(
 
 fn project_select_candidate(
     conn: &Connection,
+    execution: &mut ExecutionState,
     snapshot: &CatalogSnapshot,
     candidate: &Candidate,
     statement: &turso_fastdb_parser::SelectStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<Value> {
     if statement.value.is_none() {
         return project_candidate(
             conn,
+            execution,
             snapshot,
             candidate,
             &statement.projections,
             statement.include_all,
             params,
+            script,
         );
     }
     let ProjectionList::Fields(projections) = &statement.projections else {
@@ -2115,20 +3037,25 @@ fn project_select_candidate(
     }
     evaluate_projection_expression(
         conn,
+        execution,
         snapshot,
         candidate,
         &projections[0].expression,
         params,
+        script,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_grouped_candidates(
     conn: &Connection,
+    execution: &mut ExecutionState,
     snapshot: &CatalogSnapshot,
     candidates: &[Candidate],
     group: &GroupClause,
     statement: &turso_fastdb_parser::SelectStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<Vec<QueryRow>> {
     let mut groups: Vec<(Vec<Value>, Vec<Candidate>)> = Vec::new();
     if matches!(group, GroupClause::All(_)) && candidates.is_empty() {
@@ -2140,8 +3067,9 @@ fn project_grouped_candidates(
             GroupClause::By(expressions) => expressions
                 .iter()
                 .map(|expression| {
-                    eval::evaluate(expression, &candidate_context(candidate, params))
-                        .map(EvalValue::into_projection)
+                    evaluate_projection_expression(
+                        conn, execution, snapshot, candidate, expression, params, script,
+                    )
                 })
                 .collect::<Result<Vec<_>>>()?,
         };
@@ -2159,7 +3087,16 @@ fn project_grouped_candidates(
     groups
         .into_iter()
         .map(|(_, candidates)| {
-            let value = project_group(conn, snapshot, &candidates, group, statement, params)?;
+            let value = project_group(
+                conn,
+                execution,
+                snapshot,
+                &candidates,
+                group,
+                statement,
+                params,
+                script,
+            )?;
             Ok(QueryRow {
                 value,
                 source: None,
@@ -2168,13 +3105,16 @@ fn project_grouped_candidates(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_group(
     conn: &Connection,
+    execution: &mut ExecutionState,
     snapshot: &CatalogSnapshot,
     candidates: &[Candidate],
     group: &GroupClause,
     statement: &turso_fastdb_parser::SelectStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<Value> {
     let ProjectionList::Fields(projections) = &statement.projections else {
         return Err(FastDbError::Schema(
@@ -2189,22 +3129,26 @@ fn project_group(
         }
         return evaluate_group_expression(
             conn,
+            execution,
             snapshot,
             candidates,
             group,
             &projections[0].expression,
             params,
+            script,
         );
     }
     let mut object = BTreeMap::new();
     for projection in projections {
         let value = evaluate_group_expression(
             conn,
+            execution,
             snapshot,
             candidates,
             group,
             &projection.expression,
             params,
+            script,
         )?;
         if let Some(alias) = &projection.alias {
             object.insert(alias.value.clone(), value);
@@ -2224,13 +3168,16 @@ fn project_group(
     Ok(Value::Object(object))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate_group_expression(
     conn: &Connection,
+    execution: &mut ExecutionState,
     snapshot: &CatalogSnapshot,
     candidates: &[Candidate],
     group: &GroupClause,
     expression: &Expr,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<Value> {
     if let ExprKind::FunctionCall { name, arguments } = &expression.kind {
         if function_name_is(name, &["count"]) && arguments.is_empty() {
@@ -2242,7 +3189,15 @@ fn evaluate_group_expression(
             let values = candidates
                 .iter()
                 .map(|candidate| {
-                    evaluate_projection_expression(conn, snapshot, candidate, &arguments[0], params)
+                    evaluate_projection_expression(
+                        conn,
+                        execution,
+                        snapshot,
+                        candidate,
+                        &arguments[0],
+                        params,
+                        script,
+                    )
                 })
                 .collect::<Result<Vec<_>>>()?;
             if function_name_is(name, &["array", "group"]) {
@@ -2269,6 +3224,9 @@ fn evaluate_group_expression(
                     id: &id,
                     endpoints: None,
                     params: &aggregate_params,
+                    functions: None,
+                    function_calls: None,
+                    function_depth: 0,
                 },
             )
             .map(EvalValue::into_projection);
@@ -2280,7 +3238,9 @@ fn evaluate_group_expression(
     let values = candidates
         .iter()
         .map(|candidate| {
-            evaluate_projection_expression(conn, snapshot, candidate, expression, params)
+            evaluate_projection_expression(
+                conn, execution, snapshot, candidate, expression, params, script,
+            )
         })
         .collect::<Result<Vec<_>>>()?;
     let is_group_key = match group {
@@ -2320,18 +3280,31 @@ fn is_aggregate_function(name: &[turso_fastdb_parser::Identifier]) -> bool {
 
 fn evaluate_projection_expression(
     conn: &Connection,
+    execution: &mut ExecutionState,
     snapshot: &CatalogSnapshot,
     candidate: &Candidate,
     expression: &Expr,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<Value> {
     if let ExprKind::Traversal(traversal) = &expression.kind {
         traverse_graph(conn, snapshot, &candidate.id, traversal)
-    } else if matches!(expression.kind, ExprKind::FunctionCall { .. }) {
+    } else if matches!(&expression.kind, ExprKind::FunctionCall { name, .. }
+        if custom_function_name(name).is_none())
+    {
         evaluate_special_projection(expression, candidate, params)
     } else {
-        eval::evaluate(expression, &candidate_context(candidate, params))
-            .map(EvalValue::into_projection)
+        evaluate_expression_with_custom_functions(
+            conn,
+            execution,
+            &candidate.document,
+            &candidate.id,
+            candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
+            expression,
+            params,
+            &snapshot.functions,
+            script,
+        )
     }
 }
 
@@ -2545,6 +3518,9 @@ fn resolve_pagination(
             id: &id,
             endpoints: None,
             params,
+            functions: None,
+            function_calls: None,
+            function_depth: 0,
         },
     )?
     .into_projection();
@@ -2576,9 +3552,10 @@ fn validate_projection_shapes(projections: &ProjectionList, select_value: bool) 
 
 fn run_explain(
     conn: &Connection,
-    execution: &ExecutionState,
+    execution: &mut ExecutionState,
     statement: turso_fastdb_parser::ExplainStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementResult> {
     validate_projection_shapes(
         &statement.select.projections,
@@ -2586,7 +3563,7 @@ fn run_explain(
     )?;
     let analyzed = if statement.analyze.is_some() {
         let started = std::time::Instant::now();
-        let result = run_select(conn, execution, statement.select.clone(), params)?;
+        let result = run_select(conn, execution, statement.select.clone(), params, script)?;
         let row_count = match &result {
             StatementResult::Rows(rows) => rows.len(),
             StatementResult::Value(Value::Null) | StatementResult::None => 0,
@@ -2961,7 +3938,7 @@ fn run_update(
             )?;
             let mut matched = Vec::new();
             for candidate in candidates {
-                if matches_condition(statement.condition.as_ref(), &candidate, params)? {
+                if matches_condition(statement.condition.as_ref(), &candidate, params, snapshot)? {
                     matched.push(candidate);
                 }
             }
@@ -3146,7 +4123,7 @@ fn run_delete(
                 },
             )?;
             for candidate in candidates {
-                if matches_condition(statement.condition.as_ref(), &candidate, params)?
+                if matches_condition(statement.condition.as_ref(), &candidate, params, snapshot)?
                     && seen.insert((table_name.clone(), candidate.encoded_rid.clone()))
                 {
                     deleted.push((table.clone(), candidate));
@@ -3298,6 +4275,9 @@ fn apply_update_data(
         id,
         endpoints,
         params,
+        functions: None,
+        function_calls: None,
+        function_depth: 0,
     };
     match data {
         UpdateData::Content(expression) | UpdateData::Replace(expression) => {
@@ -3393,6 +4373,9 @@ fn mutation_return(
                 id,
                 endpoints,
                 params,
+                functions: None,
+                function_calls: None,
+                function_depth: 0,
             };
             Ok(Some(
                 eval::evaluate(expression, &context)?.into_projection(),
@@ -3469,13 +4452,16 @@ fn apply_compound_assignment(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_candidate(
     conn: &Connection,
+    execution: &mut ExecutionState,
     snapshot: &CatalogSnapshot,
     candidate: &Candidate,
     projections: &ProjectionList,
     include_all: bool,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<Value> {
     if matches!(projections, ProjectionList::All(_)) {
         return Ok(full_candidate_value(candidate));
@@ -3483,7 +4469,6 @@ fn project_candidate(
     let ProjectionList::Fields(projections) = projections else {
         unreachable!()
     };
-    let context = candidate_context(candidate, params);
     let mut object = if include_all {
         match full_candidate_value(candidate) {
             Value::Object(object) => object,
@@ -3493,13 +4478,15 @@ fn project_candidate(
         BTreeMap::new()
     };
     for projection in projections {
-        let value = if let ExprKind::Traversal(traversal) = &projection.expression.kind {
-            traverse_graph(conn, snapshot, &candidate.id, traversal)?
-        } else if matches!(projection.expression.kind, ExprKind::FunctionCall { .. }) {
-            evaluate_special_projection(&projection.expression, candidate, params)?
-        } else {
-            eval::evaluate(&projection.expression, &context)?.into_projection()
-        };
+        let value = evaluate_projection_expression(
+            conn,
+            execution,
+            snapshot,
+            candidate,
+            &projection.expression,
+            params,
+            script,
+        )?;
         if let Some(alias) = &projection.alias {
             object.insert(alias.value.clone(), value);
         } else {
@@ -3865,11 +4852,25 @@ fn matches_condition(
     condition: Option<&Expr>,
     candidate: &Candidate,
     params: &Params,
+    snapshot: &CatalogSnapshot,
 ) -> Result<bool> {
     let Some(condition) = condition else {
         return Ok(true);
     };
-    Ok(eval::evaluate(condition, &candidate_context(candidate, params))?.truthy())
+    let calls = std::cell::Cell::new(0);
+    Ok(eval::evaluate(
+        condition,
+        &EvalContext {
+            document: &candidate.document,
+            id: &candidate.id,
+            endpoints: candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
+            params,
+            functions: Some(&snapshot.functions),
+            function_calls: Some(&calls),
+            function_depth: 0,
+        },
+    )?
+    .truthy())
 }
 
 fn resolve_vector_query(
@@ -4424,25 +5425,48 @@ fn validate_fts_projection_expression(
 }
 
 fn matches_condition_with_fts(
+    conn: &Connection,
+    execution: &mut ExecutionState,
     condition: Option<&Expr>,
     candidate: &Candidate,
     params: &Params,
+    snapshot: &CatalogSnapshot,
+    script: &mut ScriptRuntime,
 ) -> Result<bool> {
     let Some(condition) = condition else {
         return Ok(true);
     };
     match &condition.kind {
-        ExprKind::Parenthesized(inner) => {
-            matches_condition_with_fts(Some(inner), candidate, params)
-        }
+        ExprKind::Parenthesized(inner) => matches_condition_with_fts(
+            conn,
+            execution,
+            Some(inner),
+            candidate,
+            params,
+            snapshot,
+            script,
+        ),
         ExprKind::Binary {
             left,
             operator,
             right,
-        } if operator.value == BinaryOperator::And => {
-            Ok(matches_condition_with_fts(Some(left), candidate, params)?
-                && matches_condition_with_fts(Some(right), candidate, params)?)
-        }
+        } if operator.value == BinaryOperator::And => Ok(matches_condition_with_fts(
+            conn,
+            execution,
+            Some(left),
+            candidate,
+            params,
+            snapshot,
+            script,
+        )? && matches_condition_with_fts(
+            conn,
+            execution,
+            Some(right),
+            candidate,
+            params,
+            snapshot,
+            script,
+        )?),
         ExprKind::Binary { operator, .. }
             if matches!(operator.value, BinaryOperator::FtsMatch(_)) =>
         {
@@ -4462,7 +5486,10 @@ fn matches_condition_with_fts(
         }
         ExprKind::FunctionCall { name, .. } if function_name_is(name, &["fts_match"]) => Ok(true),
         ExprKind::Knn(_) => Ok(candidate.vector_distance.is_some()),
-        _ => Ok(eval::evaluate(condition, &candidate_context(candidate, params))?.truthy()),
+        _ => evaluate_projection_expression(
+            conn, execution, snapshot, candidate, condition, params, script,
+        )
+        .map(|value| script_value_truthy(&value)),
     }
 }
 
@@ -4478,6 +5505,9 @@ fn candidate_context<'a>(candidate: &'a Candidate, params: &'a Params) -> EvalCo
         id: &candidate.id,
         endpoints: candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
         params,
+        functions: None,
+        function_calls: None,
+        function_depth: 0,
     }
 }
 
@@ -4579,6 +5609,9 @@ fn resolve_target_expression(
         id: &id,
         endpoints: None,
         params,
+        functions: None,
+        function_calls: None,
+        function_depth: 0,
     };
     let value = eval::evaluate(expression, &context)?.into_projection();
     let mut targets = Vec::new();
@@ -4649,6 +5682,9 @@ fn record_id_value(value: RecordIdPart) -> Result<RecordIdValue> {
                 id: &id,
                 endpoints: None,
                 params: &params,
+                functions: None,
+                function_calls: None,
+                function_depth: 0,
             };
             match eval::evaluate(&expression, &context)?.into_projection() {
                 Value::Array(values) => RecordIdValue::Array(values),
@@ -5172,6 +6208,9 @@ impl<'a> StatementTimeoutGuard<'a> {
             id: &id,
             endpoints: None,
             params,
+            functions: None,
+            function_calls: None,
+            function_depth: 0,
         };
         let value = eval::evaluate(expression, &context)?.into_projection();
         let Value::Duration(timeout) = value else {
@@ -6213,14 +7252,14 @@ fn ensure_snapshot<'a>(
     if matches!(state, CatalogState::Empty) {
         let snapshot = catalog::bootstrap(conn)?;
         conn.check_failpoint(Failpoint::AfterBootstrap)?;
-        *state = CatalogState::Ready(snapshot);
+        *state = CatalogState::Ready(Box::new(snapshot));
     }
     ready_snapshot_mut(state)
 }
 
 fn ready_snapshot_mut(state: &mut CatalogState) -> Result<&mut catalog::CatalogSnapshot> {
     match state {
-        CatalogState::Ready(snapshot) => Ok(snapshot),
+        CatalogState::Ready(snapshot) => Ok(snapshot.as_mut()),
         CatalogState::Empty => Err(FastDbError::Schema(
             "schema statement requires an existing FastDB catalog and table".into(),
         )),

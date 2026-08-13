@@ -81,6 +81,9 @@ pub enum Statement {
     DefineParam(DefineParamStatement),
     AlterParam(AlterParamStatement),
     RemoveParam(RemoveParamStatement),
+    DefineFunction(DefineFunctionStatement),
+    AlterFunction(AlterFunctionStatement),
+    RemoveFunction(RemoveFunctionStatement),
     InfoDatabase(InfoDatabaseStatement),
     Begin(TransactionStatement),
     Commit(TransactionStatement),
@@ -111,6 +114,9 @@ impl Statement {
             Self::DefineParam(stmt) => stmt.span,
             Self::AlterParam(stmt) => stmt.span,
             Self::RemoveParam(stmt) => stmt.span,
+            Self::DefineFunction(stmt) => stmt.span,
+            Self::AlterFunction(stmt) => stmt.span,
+            Self::RemoveFunction(stmt) => stmt.span,
             Self::InfoDatabase(stmt) => stmt.span,
             Self::Begin(stmt) | Self::Commit(stmt) | Self::Cancel(stmt) => stmt.span,
         }
@@ -185,6 +191,38 @@ pub struct RemoveParamStatement {
     pub span: Span,
     pub if_exists: Option<Span>,
     pub name: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionArgument {
+    pub span: Span,
+    pub name: Identifier,
+    pub ty: SchemaType,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefineFunctionStatement {
+    pub span: Span,
+    pub if_not_exists: Option<Span>,
+    pub overwrite: Option<Span>,
+    pub name: Vec<Identifier>,
+    pub arguments: Vec<FunctionArgument>,
+    pub body: ScriptBlock,
+    pub permissions: SchemaPermissions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterFunctionStatement {
+    pub span: Span,
+    pub name: Vec<Identifier>,
+    pub permissions: SchemaPermissions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoveFunctionStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub name: Vec<Identifier>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

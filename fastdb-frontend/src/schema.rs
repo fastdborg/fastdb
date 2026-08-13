@@ -319,6 +319,14 @@ fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> 
     }
 }
 
+pub(crate) fn validate_standalone_value(
+    ty: &FieldType,
+    value: &mut Value,
+    label: &str,
+) -> Result<()> {
+    validate_type(ty, value, label).map(|_| ())
+}
+
 fn type_mismatch(ty: &FieldType, path: &str) -> Result<bool> {
     Err(FastDbError::Schema(format!(
         "field {path} does not match type {}",

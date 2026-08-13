@@ -150,8 +150,28 @@ pub struct CatalogSnapshot {
     pub tables: BTreeMap<String, TableDefinition>,
     pub analyzers: BTreeMap<String, AnalyzerDefinition>,
     pub parameters: BTreeMap<String, ParameterDefinition>,
+    pub functions: BTreeMap<String, FunctionDefinition>,
     pub hidden_columns: BTreeMap<CatalogId, HiddenColumnDefinition>,
     pub capabilities: BTreeMap<String, CapabilityRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FunctionArgumentDefinition {
+    pub name: String,
+    pub ty: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDefinition {
+    pub id: CatalogId,
+    /// Canonical name without the leading `fn::` namespace.
+    pub logical_name: String,
+    pub arguments: Vec<FunctionArgumentDefinition>,
+    pub body: turso_fastdb_parser::ScriptBlock,
+    pub body_source: String,
+    pub permissions: turso_fastdb_parser::SchemaPermissions,
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,14 +256,14 @@ pub struct CapabilityRequirement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CatalogState {
     Empty,
-    Ready(CatalogSnapshot),
+    Ready(Box<CatalogSnapshot>),
 }
 
 impl CatalogState {
     pub fn snapshot(&self) -> Option<&CatalogSnapshot> {
         match self {
             Self::Empty => None,
-            Self::Ready(snapshot) => Some(snapshot),
+            Self::Ready(snapshot) => Some(snapshot.as_ref()),
         }
     }
 }
@@ -491,6 +511,7 @@ pub fn bootstrap(conn: &Connection) -> Result<CatalogSnapshot> {
         tables: BTreeMap::new(),
         analyzers: BTreeMap::new(),
         parameters: BTreeMap::new(),
+        functions: BTreeMap::new(),
         hidden_columns: BTreeMap::new(),
         capabilities: BTreeMap::new(),
     })
@@ -581,6 +602,55 @@ pub fn allocate_parameter(
         permissions,
         definition,
     })
+}
+
+pub fn allocate_function(
+    logical_name: &str,
+    arguments: Vec<FunctionArgumentDefinition>,
+    body: turso_fastdb_parser::ScriptBlock,
+    body_source: String,
+    permissions: turso_fastdb_parser::SchemaPermissions,
+    definition: String,
+) -> Result<FunctionDefinition> {
+    if logical_name.is_empty()
+        || logical_name
+            .split("::")
+            .any(|segment| segment.is_empty() || is_reserved_logical_name(segment))
+    {
+        return Err(FastDbError::Constraint(
+            "custom function has an invalid logical name".into(),
+        ));
+    }
+    Ok(FunctionDefinition {
+        id: CatalogId::new_random(),
+        logical_name: logical_name.to_string(),
+        arguments,
+        body,
+        body_source,
+        permissions,
+        definition,
+    })
+}
+
+pub fn persist_function(conn: &Connection, function: &FunctionDefinition) -> Result<()> {
+    let arguments = serde_json::to_string(&function.arguments).map_err(|error| {
+        FastDbError::Engine(format!("failed to encode function arguments: {error}"))
+    })?;
+    let (statement, bindings) = lower::function_insert(
+        &function.id.to_hex(),
+        &function.logical_name,
+        &arguments,
+        &function.body_source,
+        EXPRESSION_VERSION,
+        "{\"call_limit\":10000,\"recursion_limit\":32}",
+        &function.definition,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn remove_function(conn: &Connection, function: &FunctionDefinition) -> Result<()> {
+    let (statement, bindings) = lower::function_delete(&function.id.to_hex());
+    conn.exec_bound(statement, bindings)
 }
 
 pub fn persist_parameter(conn: &Connection, parameter: &ParameterDefinition) -> Result<()> {
@@ -748,6 +818,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
         tables: load_tables(conn)?,
         analyzers: load_analyzers(conn)?,
         parameters: load_parameters(conn)?,
+        functions: load_functions(conn)?,
         hidden_columns: load_hidden_columns(conn)?,
         capabilities: load_capabilities(conn)?,
     };
@@ -759,7 +830,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     validate_vector_catalog(&snapshot)?;
     validate_physical_objects(&schema, &snapshot, FORMAT_VERSION)?;
     validate_vector_storage(conn, &snapshot)?;
-    Ok(CatalogState::Ready(snapshot))
+    Ok(CatalogState::Ready(Box::new(snapshot)))
 }
 
 fn load_metadata(conn: &Connection) -> Result<Metadata> {
@@ -864,6 +935,129 @@ fn load_parameters(conn: &Connection) -> Result<BTreeMap<String, ParameterDefini
     Ok(parameters)
 }
 
+fn load_functions(conn: &Connection) -> Result<BTreeMap<String, FunctionDefinition>> {
+    const LIMITS: &str = "{\"call_limit\":10000,\"recursion_limit\":32}";
+    let rows = conn.collect_rows(lower::functions_stmt(), vec![])?;
+    let mut functions = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    for row in rows {
+        if row.len() != 7 {
+            return Err(FastDbError::format("function catalog row has wrong width"));
+        }
+        let id = CatalogId::from_hex(&format_text(&row[0], "function_id")?)?;
+        let logical_name = format_text(&row[1], "logical_name")?;
+        let arguments_json = format_text(&row[2], "arguments_ast")?;
+        let arguments: Vec<FunctionArgumentDefinition> = serde_json::from_str(&arguments_json)
+            .map_err(|_| FastDbError::format("function arguments are malformed"))?;
+        if serde_json::to_string(&arguments).map_err(|error| {
+            FastDbError::Engine(format!("failed to encode function arguments: {error}"))
+        })? != arguments_json
+        {
+            return Err(FastDbError::format(
+                "function arguments are not canonically encoded",
+            ));
+        }
+        let mut argument_names = BTreeSet::new();
+        for argument in &arguments {
+            if argument.name.is_empty()
+                || !argument_names.insert(argument.name.clone())
+                || FieldType::parse_canonical(&argument.ty).is_err()
+            {
+                return Err(FastDbError::format(
+                    "function arguments contain an invalid name or type",
+                ));
+            }
+        }
+        let body_source = format_text(&row[3], "body_source")?;
+        if body_source.is_empty()
+            || format_integer(&row[4], "ast_version")? != EXPRESSION_VERSION
+            || format_text(&row[5], "limits_json")? != LIMITS
+        {
+            return Err(FastDbError::format(
+                "function AST version or limits are unsupported",
+            ));
+        }
+        let definition = format_text(&row[6], "definition")?;
+        let parsed = turso_fastdb_parser::parse_one(&definition)
+            .map_err(|_| FastDbError::format("function definition cannot be parsed"))?;
+        let turso_fastdb_parser::Statement::DefineFunction(parsed) = parsed else {
+            return Err(FastDbError::format(
+                "function definition has the wrong statement kind",
+            ));
+        };
+        let parsed_name = parsed
+            .name
+            .iter()
+            .skip(1)
+            .map(|segment| segment.value.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        let parsed_arguments = parsed
+            .arguments
+            .iter()
+            .map(|argument| FunctionArgumentDefinition {
+                name: argument.name.value.clone(),
+                ty: FieldType::from_parser(&argument.ty).canonical(),
+            })
+            .collect::<Vec<_>>();
+        let parsed_body = definition
+            .get(parsed.body.span.offset..parsed.body.span.end())
+            .ok_or_else(|| FastDbError::format("function body span is invalid"))?;
+        if parsed.if_not_exists.is_some()
+            || parsed.overwrite.is_some()
+            || parsed_name != logical_name
+            || parsed_arguments != arguments
+            || parsed_body != body_source
+            || canonical_function_definition(
+                &logical_name,
+                &arguments,
+                &body_source,
+                parsed.permissions,
+            ) != definition
+        {
+            return Err(FastDbError::format(
+                "function definition does not match catalog ownership",
+            ));
+        }
+        let function = FunctionDefinition {
+            id,
+            logical_name: logical_name.clone(),
+            arguments,
+            body: parsed.body,
+            body_source,
+            permissions: parsed.permissions,
+            definition,
+        };
+        if !ids.insert(id) || functions.insert(logical_name, function).is_some() {
+            return Err(FastDbError::format(
+                "function catalog contains duplicate ownership",
+            ));
+        }
+    }
+    Ok(functions)
+}
+
+pub fn canonical_function_definition(
+    logical_name: &str,
+    arguments: &[FunctionArgumentDefinition],
+    body_source: &str,
+    permissions: turso_fastdb_parser::SchemaPermissions,
+) -> String {
+    let arguments = arguments
+        .iter()
+        .map(|argument| format!("${}: {}", argument.name, argument.ty))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let permissions = match permissions {
+        turso_fastdb_parser::SchemaPermissions::Full => "FULL",
+        turso_fastdb_parser::SchemaPermissions::None => "NONE",
+    };
+    format!(
+        "DEFINE FUNCTION fn::{logical_name}({arguments}) {} PERMISSIONS {permissions}",
+        body_source.trim()
+    )
+}
+
 fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
     conn.with_transaction(|| {
         let schema = read_schema(conn)?;
@@ -900,6 +1094,7 @@ fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
             tables: load_tables_v1(conn)?,
             analyzers: BTreeMap::new(),
             parameters: BTreeMap::new(),
+            functions: BTreeMap::new(),
             hidden_columns: BTreeMap::new(),
             capabilities: BTreeMap::new(),
         };
@@ -930,6 +1125,7 @@ fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
             tables: load_tables(conn)?,
             analyzers: load_analyzers(conn)?,
             parameters: BTreeMap::new(),
+            functions: BTreeMap::new(),
             hidden_columns: load_hidden_columns_v2(conn)?,
             capabilities: load_capabilities(conn)?,
         };
@@ -976,6 +1172,7 @@ fn migrate_format_two_to_three(conn: &Connection) -> Result<()> {
             tables: load_tables(conn)?,
             analyzers: load_analyzers(conn)?,
             parameters: BTreeMap::new(),
+            functions: BTreeMap::new(),
             hidden_columns: load_hidden_columns_v2(conn)?,
             capabilities: load_capabilities(conn)?,
         };
@@ -1018,6 +1215,7 @@ fn apply_format_three(conn: &Connection, prior: &CatalogSnapshot) -> Result<()> 
         tables: load_tables(conn)?,
         analyzers: load_analyzers(conn)?,
         parameters: load_parameters(conn)?,
+        functions: load_functions(conn)?,
         hidden_columns: load_hidden_columns(conn)?,
         capabilities: load_capabilities(conn)?,
     };
@@ -1067,7 +1265,6 @@ fn create_format_three_catalogs(conn: &Connection) -> Result<()> {
 
 fn validate_future_catalogs_empty(conn: &Connection) -> Result<()> {
     for (table, id_column) in [
-        (FUNCTIONS_TABLE, "function_id"),
         (VIEWS_TABLE, "view_id"),
         (EVENTS_TABLE, "event_id"),
         (PERMISSIONS_TABLE, "permission_id"),

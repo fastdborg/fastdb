@@ -113,3 +113,35 @@ fn p15_parse_004_parameter_lifecycle_and_database_info_are_structured() {
         assert!(parse(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn p15_parse_005_function_lifecycle_is_structured_and_typed() {
+    let script = parse(
+        "DEFINE FUNCTION IF NOT EXISTS fn::math::double($x: int) { RETURN $x * 2; } \
+         PERMISSIONS FULL; ALTER FUNCTION fn::math::double PERMISSIONS NONE; \
+         REMOVE FUNCTION IF EXISTS fn::math::double",
+    )
+    .unwrap();
+    let Statement::DefineFunction(define) = &script.statements[0] else {
+        panic!("expected DEFINE FUNCTION")
+    };
+    assert!(define.if_not_exists.is_some());
+    assert_eq!(define.name[1].value, "math");
+    assert_eq!(define.name[2].value, "double");
+    assert_eq!(define.arguments.len(), 1);
+    assert_eq!(define.arguments[0].name.value, "x");
+    assert_eq!(define.body.statements.len(), 1);
+    assert!(matches!(script.statements[1], Statement::AlterFunction(_)));
+    assert!(matches!(script.statements[2], Statement::RemoveFunction(_)));
+
+    for source in [
+        "DEFINE FUNCTION double($x: int) { RETURN $x; }",
+        "DEFINE FUNCTION fn::double($x) { RETURN $x; }",
+        "DEFINE FUNCTION fn::double($x: int, $x: int) { RETURN $x; }",
+        "DEFINE FUNCTION IF NOT EXISTS OVERWRITE fn::f() { RETURN 1; }",
+        "ALTER FUNCTION fn::f",
+        "REMOVE FUNCTION IF fn::f",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}

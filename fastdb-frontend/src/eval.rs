@@ -17,6 +17,7 @@ use chrono::{Datelike as _, Local, Timelike as _, Utc};
 use rand::seq::SliceRandom as _;
 use rand::Rng as _;
 use rust_decimal::prelude::ToPrimitive as _;
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use turso_fastdb_parser::{
@@ -72,6 +73,9 @@ pub(crate) struct EvalContext<'a> {
     pub(crate) id: &'a RecordId,
     pub(crate) endpoints: Option<(&'a RecordId, &'a RecordId)>,
     pub(crate) params: &'a Params,
+    pub(crate) functions: Option<&'a BTreeMap<String, crate::catalog::FunctionDefinition>>,
+    pub(crate) function_calls: Option<&'a Cell<usize>>,
+    pub(crate) function_depth: usize,
 }
 
 pub(crate) fn validate_parameter_references(statement: &Statement, params: &Params) -> Result<()> {
@@ -213,6 +217,9 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         | Statement::Throw(_)
         | Statement::Sleep(_)
         | Statement::RemoveParam(_)
+        | Statement::DefineFunction(_)
+        | Statement::AlterFunction(_)
+        | Statement::RemoveFunction(_)
         | Statement::InfoDatabase(_) => {}
         Statement::DefineParam(statement) => {
             collect_parameters(&statement.value, &mut names);
@@ -422,6 +429,9 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
                 return Ok(());
             }
             if matches!(
+                normalized.as_slice(),
+                [namespace, ..] if namespace == "fn"
+            ) || matches!(
                 normalized.as_slice(),
                 [name] if matches!(name.as_str(), "fts_match" | "fts_score" | "fts_highlight")
             ) || matches!(
@@ -666,6 +676,16 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
             ))))
         }
         ExprKind::FunctionCall { name, arguments } => {
+            if name.len() >= 2 && name[0].value.eq_ignore_ascii_case("fn") {
+                let logical_name = name
+                    .iter()
+                    .skip(1)
+                    .map(|segment| segment.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                return evaluate_custom_function(&logical_name, arguments, context)
+                    .map(EvalValue::Present);
+            }
             let canonical = normalized_function_segments(name).join("::");
             let Some(spec) = builtins::lookup(&canonical) else {
                 return Err(FastDbError::Schema(format!(
@@ -1334,8 +1354,197 @@ fn invoke_closure(
         id: context.id,
         endpoints: context.endpoints,
         params: &parameters,
+        functions: context.functions,
+        function_calls: context.function_calls,
+        function_depth: context.function_depth,
     };
     evaluate(&closure.body, &closure_context)
+}
+
+#[derive(Debug)]
+enum FunctionFlow {
+    Normal(Value),
+    Return(Value),
+    Break,
+    Continue,
+}
+
+fn evaluate_custom_function(
+    logical_name: &str,
+    arguments: &[Expr],
+    context: &EvalContext<'_>,
+) -> Result<Value> {
+    const MAX_CALLS: usize = 10_000;
+    const MAX_RECURSION: usize = 32;
+    if context.function_depth == MAX_RECURSION {
+        return Err(FastDbError::ResourceLimit(format!(
+            "custom function recursion exceeds {MAX_RECURSION}"
+        )));
+    }
+    let functions = context.functions.ok_or_else(|| {
+        FastDbError::Schema(format!("function fn::{logical_name} is not defined"))
+    })?;
+    let function = functions.get(logical_name).ok_or_else(|| {
+        FastDbError::Schema(format!("function fn::{logical_name} is not defined"))
+    })?;
+    if arguments.len() != function.arguments.len() {
+        return Err(FastDbError::Schema(format!(
+            "function fn::{logical_name} expects {} arguments but received {}",
+            function.arguments.len(),
+            arguments.len()
+        )));
+    }
+    let local_calls = Cell::new(0);
+    let calls = context.function_calls.unwrap_or(&local_calls);
+    if calls.get() == MAX_CALLS {
+        return Err(FastDbError::ResourceLimit(format!(
+            "custom function calls exceed {MAX_CALLS}"
+        )));
+    }
+    calls.set(calls.get() + 1);
+    let mut params = context.params.clone();
+    for (argument, expression) in function.arguments.iter().zip(arguments) {
+        let mut value = evaluate(expression, context)?.into_function_value();
+        crate::schema::validate_standalone_value(
+            &crate::schema::FieldType::parse_canonical(&argument.ty)?,
+            &mut value,
+            &format!("function argument ${}", argument.name),
+        )?;
+        params.insert(argument.name.clone(), value);
+    }
+    let nested = EvalContext {
+        document: context.document,
+        id: context.id,
+        endpoints: context.endpoints,
+        params: &params,
+        functions: context.functions,
+        function_calls: Some(calls),
+        function_depth: context.function_depth + 1,
+    };
+    match evaluate_function_block(&function.body, &nested, false)? {
+        FunctionFlow::Normal(value) | FunctionFlow::Return(value) => Ok(value),
+        FunctionFlow::Break | FunctionFlow::Continue => Err(FastDbError::Schema(
+            "function body leaked loop control".into(),
+        )),
+    }
+}
+
+fn evaluate_function_block(
+    block: &turso_fastdb_parser::ScriptBlock,
+    context: &EvalContext<'_>,
+    in_loop: bool,
+) -> Result<FunctionFlow> {
+    let mut params = context.params.clone();
+    let mut last = Value::None;
+    for statement in &block.statements {
+        let local = EvalContext {
+            document: context.document,
+            id: context.id,
+            endpoints: context.endpoints,
+            params: &params,
+            functions: context.functions,
+            function_calls: context.function_calls,
+            function_depth: context.function_depth,
+        };
+        match statement {
+            Statement::Let(statement) => {
+                let value = evaluate(&statement.value, &local)?.into_projection();
+                params.insert(statement.name.value.clone(), value);
+                last = Value::None;
+            }
+            Statement::ScriptReturn(statement) => {
+                return evaluate(&statement.value, &local)
+                    .map(EvalValue::into_projection)
+                    .map(FunctionFlow::Return);
+            }
+            Statement::If(statement) => {
+                let mut selected = None;
+                for (condition, block) in &statement.branches {
+                    if evaluate(condition, &local)?.truthy() {
+                        selected = Some(block);
+                        break;
+                    }
+                }
+                if let Some(block) = selected.or(statement.otherwise.as_ref()) {
+                    match evaluate_function_block(block, &local, in_loop)? {
+                        FunctionFlow::Normal(value) | FunctionFlow::Return(value) => last = value,
+                        FunctionFlow::Break if in_loop => return Ok(FunctionFlow::Break),
+                        FunctionFlow::Continue if in_loop => return Ok(FunctionFlow::Continue),
+                        FunctionFlow::Break | FunctionFlow::Continue => {
+                            return Err(FastDbError::Schema(
+                                "loop control is only valid inside FOR".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    last = Value::None;
+                }
+            }
+            Statement::For(statement) => {
+                let iterable = evaluate(&statement.iterable, &local)?.into_projection();
+                let values = function_iterable_values(iterable)?;
+                last = Value::None;
+                for value in values {
+                    let mut iteration_params = params.clone();
+                    iteration_params.insert(statement.binding.value.clone(), value);
+                    let iteration = EvalContext {
+                        params: &iteration_params,
+                        ..local
+                    };
+                    match evaluate_function_block(&statement.body, &iteration, true)? {
+                        FunctionFlow::Normal(_) | FunctionFlow::Continue => {}
+                        FunctionFlow::Break => break,
+                        FunctionFlow::Return(value) => {
+                            last = value;
+                            break;
+                        }
+                    }
+                }
+            }
+            Statement::Break(_) if in_loop => return Ok(FunctionFlow::Break),
+            Statement::Continue(_) if in_loop => return Ok(FunctionFlow::Continue),
+            Statement::Break(_) | Statement::Continue(_) => {
+                return Err(FastDbError::Schema(
+                    "loop control is only valid inside FOR".into(),
+                ));
+            }
+            Statement::Throw(_) => {
+                return Err(FastDbError::Schema(
+                    "script THROW aborted execution (payload redacted)".into(),
+                ));
+            }
+            Statement::Sleep(_) => {
+                return Err(FastDbError::Schema(
+                    "SLEEP is unavailable while evaluating a function in a row context".into(),
+                ));
+            }
+            _ => {
+                return Err(FastDbError::Schema(
+                    "function with database statements requires script execution context".into(),
+                ));
+            }
+        }
+    }
+    Ok(FunctionFlow::Normal(last))
+}
+
+fn function_iterable_values(value: Value) -> Result<Vec<Value>> {
+    const MAX_ITERATIONS: usize = 10_000;
+    let values = match value {
+        Value::Array(values) => values,
+        Value::Set(values) => values.as_slice().to_vec(),
+        _ => {
+            return Err(FastDbError::Schema(
+                "function FOR requires an array or set in row context".into(),
+            ));
+        }
+    };
+    if values.len() > MAX_ITERATIONS {
+        return Err(FastDbError::ResourceLimit(format!(
+            "function FOR exceeds {MAX_ITERATIONS} iterations"
+        )));
+    }
+    Ok(values)
 }
 
 fn evaluate_value_expect(arguments: &[Expr], context: &EvalContext<'_>) -> Result<Value> {
