@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(warnings)]
 
-use turso_fastdb_parser::{parse, SchemaTypeKind, Statement};
+use turso_fastdb_parser::{parse, tokenize, SchemaTypeKind, Statement, TokenKind};
 
 #[test]
 fn p12_parse_001_non_geospatial_types_and_typed_collections_are_structured() {
@@ -49,4 +49,11 @@ fn p12_parse_002_typed_collection_limits_fail_during_parsing() {
     ] {
         assert!(parse(source).is_err(), "accepted {source}");
     }
+}
+
+#[test]
+fn p12_parse_003_none_remains_a_distinct_lexical_value() {
+    let tokens = tokenize("NONE NULL").unwrap();
+    assert!(matches!(tokens[0].kind, TokenKind::None));
+    assert!(matches!(tokens[1].kind, TokenKind::Null));
 }

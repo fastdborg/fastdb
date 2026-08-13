@@ -175,7 +175,7 @@ disposition = "target"
 status = "Supported"
 syntax = "Bound NONE remains distinct from NULL inside objects and collections; source-expression syntax is tracked with Phase 13 none semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/language-primitives/data-types", "https://surrealdb.com/docs/reference/query-language/language-primitives/data-types/none-and-null"]
-parser_evidence = []
+parser_evidence = ["P12-PARSE-003"]
 execution_evidence = ["P12-VALUE-001", "P12-VALUE-004"]
 stop_report = ""
 
@@ -331,7 +331,7 @@ disposition = "target"
 status = "Supported"
 syntax = "Typed values and adversarial user objects containing $fastdb round-trip without collisions."
 provenance = ["docs/compat-research/phase12.md"]
-parser_evidence = []
+parser_evidence = ["P1-EXPR-001"]
 execution_evidence = ["P12-VALUE-001", "P12-VALUE-002", "P12-API-001"]
 stop_report = ""
 

@@ -20,20 +20,20 @@ pub fn value_from_json(value: serde_json::Value) -> Result<Value, Error> {
             .map(Value::Array),
         serde_json::Value::Object(values) => {
             if values.len() == 1 {
-                if let Some(tag) = values.get(KEY).and_then(serde_json::Value::as_object) {
-                    if tag.get("v").and_then(serde_json::Value::as_i64) == Some(VERSION) {
-                        return decode_envelope(tag.clone());
+                if let Some(reserved) = values.get(KEY) {
+                    if let Some(tag) = reserved.as_object() {
+                        if tag.get("v").and_then(serde_json::Value::as_i64) == Some(VERSION) {
+                            return decode_envelope(tag.clone());
+                        }
+                        return decode_current_json(serde_json::Value::Object(values));
                     }
                 }
             }
-            if !values.contains_key(KEY) || values.len() != 1 {
-                return values
-                    .into_iter()
-                    .map(|(key, value)| Ok((key, value_from_json(value)?)))
-                    .collect::<Result<BTreeMap<_, _>, Error>>()
-                    .map(Value::Object);
-            }
-            decode_current_json(serde_json::Value::Object(values))
+            values
+                .into_iter()
+                .map(|(key, value)| Ok((key, value_from_json(value)?)))
+                .collect::<Result<BTreeMap<_, _>, Error>>()
+                .map(Value::Object)
         }
         value => decode_current_json(value),
     }

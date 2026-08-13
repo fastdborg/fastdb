@@ -94,7 +94,6 @@ fn p9_parse_004_invalid_dimensions_k_metrics_and_delimiters_fail() {
     for source in [
         "DEFINE FIELD v ON item TYPE array<float, 0>",
         "DEFINE FIELD v ON item TYPE array<float, 65537>",
-        "DEFINE FIELD v ON item TYPE array<string, 2>",
         "SELECT * FROM item WHERE v <|0,COSINE|> [1]",
         "SELECT * FROM item WHERE v <|10001,COSINE|> [1]",
         "SELECT * FROM item WHERE v <|2,DOT|> [1]",
