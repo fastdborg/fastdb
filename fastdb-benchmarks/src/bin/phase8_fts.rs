@@ -61,14 +61,22 @@ fn main() {
     let mut insert = native
         .prepare("INSERT INTO doc VALUES(?1,jsonb(json_object('text',?2)),?2)")
         .unwrap();
-    bind_text(&mut insert, 1, &encode_rid("seed"));
+    bind_text(
+        &mut insert,
+        1,
+        &encode_rid("seed").expect("benchmark RID must encode"),
+    );
     bind_text(&mut insert, 2, "needle seed");
     insert.run_ignore_rows().unwrap();
     insert.reset().unwrap();
     insert.clear_bindings();
     for index in 0..records {
         let term = if index % 100 == 0 { "needle" } else { "other" };
-        bind_text(&mut insert, 1, &encode_rid(format!("r{index}")));
+        bind_text(
+            &mut insert,
+            1,
+            &encode_rid(format!("r{index}")).expect("benchmark RID must encode"),
+        );
         bind_text(&mut insert, 2, &format!("{term} document {index}"));
         insert.run_ignore_rows().unwrap();
         insert.reset().unwrap();

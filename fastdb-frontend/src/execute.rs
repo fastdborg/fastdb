@@ -1529,12 +1529,10 @@ fn evaluate_group_expression(
     params: &Params,
 ) -> Result<Value> {
     if let ExprKind::FunctionCall { name, arguments } = &expression.kind {
-        if function_name_is(name, &["count"]) {
-            if arguments.is_empty() {
-                return Ok(Value::Integer(i64::try_from(candidates.len()).map_err(
-                    |_| FastDbError::ResourceLimit("aggregate count exceeds i64".into()),
-                )?));
-            }
+        if function_name_is(name, &["count"]) && arguments.is_empty() {
+            return Ok(Value::Integer(i64::try_from(candidates.len()).map_err(
+                |_| FastDbError::ResourceLimit("aggregate count exceeds i64".into()),
+            )?));
         }
         if is_aggregate_function(name) && arguments.len() == 1 {
             let values = candidates
@@ -2231,7 +2229,7 @@ fn run_update(
         }
 
         enum Work {
-            Existing(String, TableDefinition, Candidate),
+            Existing(String, TableDefinition, Box<Candidate>),
             Missing(String, TableDefinition, RecordIdValue),
         }
         let mut work = Vec::new();
@@ -2283,7 +2281,11 @@ fn run_update(
             }
             for candidate in matched {
                 if seen.insert((table_name.clone(), candidate.encoded_rid.clone())) {
-                    work.push(Work::Existing(table_name.clone(), table.clone(), candidate));
+                    work.push(Work::Existing(
+                        table_name.clone(),
+                        table.clone(),
+                        Box::new(candidate),
+                    ));
                 }
             }
         }
@@ -2457,7 +2459,7 @@ fn run_delete(
                     .filter(|table| table.kind == TableKind::Relation)
                 {
                     for encoded_edge in
-                        connected_edge_ids(conn, snapshot, relation, &table, &candidate.id.id)?
+                        connected_edge_ids(conn, snapshot, relation, table, &candidate.id.id)?
                     {
                         connected_edges.insert((relation.physical_name.clone(), encoded_edge));
                     }

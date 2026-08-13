@@ -145,7 +145,7 @@ fn seed_native_storage(path: &str, edges: usize) {
     let person_table = "00000000000000000000000000000001";
     let post_table = "00000000000000000000000000000002";
     for index in 0..edges {
-        let post_rid = encode_rid(format!("r{index}"));
+        let post_rid = encode_rid(format!("r{index}")).expect("benchmark RID must encode");
         bind_text(&mut post, 1, &post_rid);
         post.bind_at(
             NonZeroUsize::new(2).unwrap(),
@@ -156,7 +156,11 @@ fn seed_native_storage(path: &str, edges: usize) {
         post.reset().unwrap();
         post.clear_bindings();
 
-        bind_text(&mut edge, 1, &encode_rid(format!("e{index}")));
+        bind_text(
+            &mut edge,
+            1,
+            &encode_rid(format!("e{index}")).expect("benchmark RID must encode"),
+        );
         bind_text(&mut edge, 2, person_table);
         bind_text(&mut edge, 3, post_table);
         bind_text(&mut edge, 4, &post_rid);
@@ -212,7 +216,11 @@ fn run_native(
     post_id: &str,
 ) -> StatementResult {
     bind_text(statement, 1, person_id);
-    bind_text(statement, 2, &encode_rid("hub"));
+    bind_text(
+        statement,
+        2,
+        &encode_rid("hub").expect("benchmark RID must encode"),
+    );
     bind_text(statement, 3, post_id);
     let mut values = Vec::new();
     statement

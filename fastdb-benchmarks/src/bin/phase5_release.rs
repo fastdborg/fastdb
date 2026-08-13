@@ -149,7 +149,11 @@ impl NativeBackend {
             .unwrap();
         let payload = document_payload();
         for index in 0..records {
-            bind_text(&mut insert, 1, encode_rid(format!("r{index}")));
+            bind_text(
+                &mut insert,
+                1,
+                encode_rid(format!("r{index}")).expect("benchmark RID must encode"),
+            );
             bind_integer(&mut insert, 2, i64::try_from(index).unwrap());
             bind_text(&mut insert, 3, format!("person-{index}"));
             bind_text(&mut insert, 4, "true".into());
@@ -185,7 +189,11 @@ impl NativeBackend {
     }
 
     fn point(&mut self, id: &str) -> QueryResponse {
-        bind_text(&mut self.point, 1, encode_rid(id));
+        bind_text(
+            &mut self.point,
+            1,
+            encode_rid(id).expect("benchmark RID must encode"),
+        );
         let mut result = None;
         self.point
             .run_with_row_callback(|row| {
@@ -214,7 +222,11 @@ impl NativeBackend {
 
     fn insert(&mut self, index: usize) {
         let id = uuid::Uuid::now_v7();
-        bind_text(&mut self.insert, 1, encode_rid(id));
+        bind_text(
+            &mut self.insert,
+            1,
+            encode_rid(id).expect("benchmark RID must encode"),
+        );
         bind_integer(&mut self.insert, 2, i64::try_from(index).unwrap());
         bind_text(&mut self.insert, 3, format!("person-{index}"));
         bind_text(&mut self.insert, 4, "true".into());
