@@ -1153,6 +1153,8 @@ fn validate_statement_limits(
             return validate_statement_limits(&nested, params, limits);
         }
         Statement::Let(statement) => expressions.push(&statement.value),
+        Statement::DefineParam(statement) => expressions.push(&statement.value),
+        Statement::AlterParam(statement) => expressions.extend(statement.value.iter()),
         Statement::ScriptReturn(statement)
         | Statement::Throw(statement)
         | Statement::Sleep(statement) => expressions.push(&statement.value),
@@ -1181,6 +1183,8 @@ fn validate_statement_limits(
         | Statement::RebuildIndex(_)
         | Statement::Break(_)
         | Statement::Continue(_)
+        | Statement::RemoveParam(_)
+        | Statement::InfoDatabase(_)
         | Statement::Begin(_)
         | Statement::Commit(_)
         | Statement::Cancel(_) => {}

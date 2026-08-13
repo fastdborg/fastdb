@@ -1388,6 +1388,23 @@ pub fn future_catalog_stmt(table: &str, id_column: &str) -> Stmt {
     )
 }
 
+pub fn parameters_stmt() -> Stmt {
+    one_select(
+        [
+            "parameter_id",
+            "logical_name",
+            "value_json",
+            "encoding_version",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::PARAMETERS_TABLE,
+        None,
+    )
+}
+
 pub fn capabilities_stmt() -> Stmt {
     one_select(
         ["provider", "min_provider_version", "min_encoding_version"]
@@ -1704,6 +1721,51 @@ pub fn analyzer_insert(
             text(options_json),
             text(definition),
         ],
+    )
+}
+
+pub fn parameter_insert(
+    parameter_id: &str,
+    logical_name: &str,
+    value_json: &str,
+    encoding_version: i64,
+    definition: &str,
+) -> (Stmt, Bindings) {
+    insert_values(
+        crate::catalog::PARAMETERS_TABLE,
+        &[
+            "parameter_id",
+            "logical_name",
+            "value_json",
+            "encoding_version",
+            "definition",
+        ],
+        vec![var(1), var(2), var(3), numlit(encoding_version), var(4)],
+        vec![
+            text(parameter_id),
+            text(logical_name),
+            text(value_json),
+            text(definition),
+        ],
+    )
+}
+
+pub fn parameter_delete(parameter_id: &str) -> (Stmt, Bindings) {
+    (
+        Stmt::Delete {
+            with: None,
+            tbl_name: qnm(crate::catalog::PARAMETERS_TABLE),
+            indexed: None,
+            where_clause: Some(Box::new(Expr::binary(
+                id("parameter_id"),
+                Operator::Equals,
+                var(1),
+            ))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        },
+        vec![text(parameter_id)],
     )
 }
 

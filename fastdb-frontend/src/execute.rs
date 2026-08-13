@@ -136,6 +136,8 @@ const MAX_SLEEP: Duration = Duration::from_secs(5);
 
 pub(crate) struct ScriptRuntime {
     bindings: Params,
+    request_bindings: Params,
+    local_bindings: BTreeSet<String>,
     scopes: Vec<Vec<(String, Option<Value>)>>,
     steps: usize,
     loop_depth: usize,
@@ -145,12 +147,16 @@ pub(crate) struct ScriptRuntime {
 
 impl ScriptRuntime {
     pub(crate) fn new(
-        bindings: Params,
+        mut bindings: Params,
+        request_bindings: Params,
         timeout: Duration,
         cancellation: Option<Arc<AtomicBool>>,
     ) -> Self {
+        bindings.extend(request_bindings.clone());
         Self {
             bindings,
+            request_bindings,
+            local_bindings: BTreeSet::new(),
             scopes: Vec::new(),
             steps: 0,
             loop_depth: 0,
@@ -209,12 +215,30 @@ impl ScriptRuntime {
     }
 
     fn bind(&mut self, name: String, value: Value) {
+        self.local_bindings.insert(name.clone());
         if let Some(scope) = self.scopes.last_mut() {
             if !scope.iter().any(|(existing, _)| existing == &name) {
                 scope.push((name.clone(), self.bindings.get(&name).cloned()));
             }
         }
         self.bindings.insert(name, value);
+    }
+
+    fn publish_catalog_parameter(&mut self, name: &str, value: Value) {
+        if !self.local_bindings.contains(name) && !self.request_bindings.contains_key(name) {
+            self.bindings.insert(name.to_string(), value);
+        }
+    }
+
+    fn remove_catalog_parameter(&mut self, name: &str) {
+        if self.local_bindings.contains(name) {
+            return;
+        }
+        if let Some(value) = self.request_bindings.get(name).cloned() {
+            self.bindings.insert(name.to_string(), value);
+        } else {
+            self.bindings.remove(name);
+        }
     }
 }
 
@@ -331,6 +355,22 @@ fn run_script_statement(
                 StatementResult::None,
             )))
         }
+        Statement::DefineParam(statement) => {
+            run_define_param(conn, execution, statement, source, script)
+                .map(StatementExecution::read_only)
+                .map(ScriptOutcome::normal)
+        }
+        Statement::AlterParam(statement) => {
+            run_alter_param(conn, execution, statement, source, script)
+                .map(StatementExecution::read_only)
+                .map(ScriptOutcome::normal)
+        }
+        Statement::RemoveParam(statement) => run_remove_param(conn, execution, statement, script)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::InfoDatabase(_) => run_info_database(conn, execution)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
         Statement::Begin(_) => conn
             .begin_explicit(execution)
             .map(StatementExecution::read_only)
@@ -393,7 +433,11 @@ fn run_script_statement(
                 | Statement::Break(_)
                 | Statement::Continue(_)
                 | Statement::Throw(_)
-                | Statement::Sleep(_) => {
+                | Statement::Sleep(_)
+                | Statement::DefineParam(_)
+                | Statement::AlterParam(_)
+                | Statement::RemoveParam(_)
+                | Statement::InfoDatabase(_) => {
                     unreachable!("script statements were handled above")
                 }
             }?;
@@ -634,6 +678,198 @@ fn run_script_sleep(expression: &Expr, script: &ScriptRuntime) -> Result<()> {
         std::thread::park_timeout(remaining.min(Duration::from_millis(10)));
     }
     script.check_deadline()
+}
+
+fn run_define_param(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::DefineParamStatement,
+    source: &str,
+    script: &mut ScriptRuntime,
+) -> Result<StatementResult> {
+    let value = evaluate_script_expression(&statement.value, &script.bindings)?;
+    let value_source = source_slice(source, statement.value.span)?;
+    let definition =
+        canonical_parameter_definition(&statement.name.value, value_source, statement.permissions);
+    let mut published = None;
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        if let Some(existing) = snapshot.parameters.get(&statement.name.value).cloned() {
+            if statement.if_not_exists.is_some() {
+                published = Some(existing.value);
+                return Ok(());
+            }
+            if statement.overwrite.is_none() {
+                return Err(FastDbError::Constraint(format!(
+                    "parameter ${} is already defined",
+                    statement.name.value
+                )));
+            }
+            catalog::remove_parameter(conn, &existing)?;
+            snapshot.parameters.remove(&statement.name.value);
+        }
+        let parameter = catalog::allocate_parameter(
+            &statement.name.value,
+            value.clone(),
+            value_source.to_string(),
+            statement.permissions,
+            definition.clone(),
+        )?;
+        catalog::persist_parameter(conn, &parameter)?;
+        published = Some(parameter.value.clone());
+        snapshot
+            .parameters
+            .insert(statement.name.value.clone(), parameter);
+        Ok(())
+    })?;
+    if let Some(value) = published {
+        script.publish_catalog_parameter(&statement.name.value, value);
+    }
+    Ok(StatementResult::None)
+}
+
+fn run_alter_param(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::AlterParamStatement,
+    source: &str,
+    script: &mut ScriptRuntime,
+) -> Result<StatementResult> {
+    let evaluated = statement
+        .value
+        .as_ref()
+        .map(|expression| evaluate_script_expression(expression, &script.bindings))
+        .transpose()?;
+    let value_source = statement
+        .value
+        .as_ref()
+        .map(|expression| source_slice(source, expression.span).map(str::to_string))
+        .transpose()?;
+    let mut published = None;
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(existing) = snapshot.parameters.get(&statement.name.value).cloned() else {
+            return Err(FastDbError::Schema(format!(
+                "parameter ${} is not defined",
+                statement.name.value
+            )));
+        };
+        let value = evaluated.clone().unwrap_or_else(|| existing.value.clone());
+        let value_source = value_source
+            .clone()
+            .unwrap_or_else(|| existing.value_source.clone());
+        let permissions = statement.permissions.unwrap_or(existing.permissions);
+        let definition =
+            canonical_parameter_definition(&statement.name.value, &value_source, permissions);
+        let replacement = catalog::allocate_parameter(
+            &statement.name.value,
+            value.clone(),
+            value_source,
+            permissions,
+            definition,
+        )?;
+        catalog::remove_parameter(conn, &existing)?;
+        catalog::persist_parameter(conn, &replacement)?;
+        snapshot
+            .parameters
+            .insert(statement.name.value.clone(), replacement);
+        published = Some(value);
+        Ok(())
+    })?;
+    if let Some(value) = published {
+        script.publish_catalog_parameter(&statement.name.value, value);
+    }
+    Ok(StatementResult::None)
+}
+
+fn canonical_parameter_definition(
+    name: &str,
+    value_source: &str,
+    permissions: turso_fastdb_parser::SchemaPermissions,
+) -> String {
+    let permissions = match permissions {
+        turso_fastdb_parser::SchemaPermissions::Full => "FULL",
+        turso_fastdb_parser::SchemaPermissions::None => "NONE",
+    };
+    format!("DEFINE PARAM ${name} VALUE {value_source} PERMISSIONS {permissions}")
+}
+
+fn run_remove_param(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::RemoveParamStatement,
+    script: &mut ScriptRuntime,
+) -> Result<StatementResult> {
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(parameter) = snapshot.parameters.get(&statement.name.value).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "parameter ${} is not defined",
+                statement.name.value
+            )));
+        };
+        catalog::remove_parameter(conn, &parameter)?;
+        snapshot.parameters.remove(&statement.name.value);
+        Ok(())
+    })?;
+    script.remove_catalog_parameter(&statement.name.value);
+    Ok(StatementResult::None)
+}
+
+fn run_info_database(conn: &Connection, execution: &ExecutionState) -> Result<StatementResult> {
+    let catalog = catalog_for_read(conn, execution)?;
+    let snapshot = catalog.snapshot();
+    let mut root = BTreeMap::new();
+    for key in [
+        "accesses",
+        "analyzers",
+        "apis",
+        "buckets",
+        "configs",
+        "functions",
+        "models",
+        "modules",
+        "params",
+        "sequences",
+        "tables",
+        "users",
+    ] {
+        root.insert(key.to_string(), Value::Object(BTreeMap::new()));
+    }
+    if let Some(snapshot) = snapshot {
+        let params = snapshot
+            .parameters
+            .iter()
+            .map(|(name, parameter)| (name.clone(), Value::Str(parameter.definition.clone())))
+            .collect();
+        root.insert("params".into(), Value::Object(params));
+        let tables = snapshot
+            .tables
+            .iter()
+            .map(|(name, table)| {
+                (
+                    name.clone(),
+                    Value::Str(
+                        table
+                            .definition
+                            .clone()
+                            .unwrap_or_else(|| format!("DEFINE TABLE {name} SCHEMALESS")),
+                    ),
+                )
+            })
+            .collect();
+        root.insert("tables".into(), Value::Object(tables));
+        let analyzers = snapshot
+            .analyzers
+            .iter()
+            .map(|(name, analyzer)| (name.clone(), Value::Str(analyzer.definition.clone())))
+            .collect();
+        root.insert("analyzers".into(), Value::Object(analyzers));
+    }
+    Ok(StatementResult::Value(Value::Object(root)))
 }
 
 fn run_define_analyzer(

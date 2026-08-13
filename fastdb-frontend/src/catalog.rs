@@ -144,13 +144,24 @@ pub struct TableDefinition {
     pub indexes: BTreeMap<String, IndexDefinition>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CatalogSnapshot {
     pub metadata: Metadata,
     pub tables: BTreeMap<String, TableDefinition>,
     pub analyzers: BTreeMap<String, AnalyzerDefinition>,
+    pub parameters: BTreeMap<String, ParameterDefinition>,
     pub hidden_columns: BTreeMap<CatalogId, HiddenColumnDefinition>,
     pub capabilities: BTreeMap<String, CapabilityRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParameterDefinition {
+    pub id: CatalogId,
+    pub logical_name: String,
+    pub value: crate::Value,
+    pub value_source: String,
+    pub permissions: turso_fastdb_parser::SchemaPermissions,
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,7 +233,7 @@ pub struct CapabilityRequirement {
     pub min_encoding_version: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CatalogState {
     Empty,
     Ready(CatalogSnapshot),
@@ -479,6 +490,7 @@ pub fn bootstrap(conn: &Connection) -> Result<CatalogSnapshot> {
         },
         tables: BTreeMap::new(),
         analyzers: BTreeMap::new(),
+        parameters: BTreeMap::new(),
         hidden_columns: BTreeMap::new(),
         capabilities: BTreeMap::new(),
     })
@@ -546,6 +558,46 @@ pub fn persist_analyzer(conn: &Connection, analyzer: &AnalyzerDefinition) -> Res
         &analyzer.options_json,
         &analyzer.definition,
     );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn allocate_parameter(
+    logical_name: &str,
+    value: crate::Value,
+    value_source: String,
+    permissions: turso_fastdb_parser::SchemaPermissions,
+    definition: String,
+) -> Result<ParameterDefinition> {
+    if logical_name.is_empty() || is_reserved_logical_name(logical_name) {
+        return Err(FastDbError::Constraint(
+            "database parameter has an invalid logical name".into(),
+        ));
+    }
+    Ok(ParameterDefinition {
+        id: CatalogId::new_random(),
+        logical_name: logical_name.to_string(),
+        value,
+        value_source,
+        permissions,
+        definition,
+    })
+}
+
+pub fn persist_parameter(conn: &Connection, parameter: &ParameterDefinition) -> Result<()> {
+    let encoded = serde_json::to_string(&crate::decode::encode_value(&parameter.value)?)
+        .map_err(|error| FastDbError::Engine(format!("failed to encode parameter: {error}")))?;
+    let (statement, bindings) = lower::parameter_insert(
+        &parameter.id.to_hex(),
+        &parameter.logical_name,
+        &encoded,
+        DOCUMENT_ENCODING_VERSION,
+        &parameter.definition,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn remove_parameter(conn: &Connection, parameter: &ParameterDefinition) -> Result<()> {
+    let (statement, bindings) = lower::parameter_delete(&parameter.id.to_hex());
     conn.exec_bound(statement, bindings)
 }
 
@@ -691,14 +743,15 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
             metadata.document_encoding_version
         )));
     }
-    validate_future_catalogs_empty(conn)?;
     let mut snapshot = CatalogSnapshot {
         metadata,
         tables: load_tables(conn)?,
         analyzers: load_analyzers(conn)?,
+        parameters: load_parameters(conn)?,
         hidden_columns: load_hidden_columns(conn)?,
         capabilities: load_capabilities(conn)?,
     };
+    validate_future_catalogs_empty(conn)?;
     load_fields(conn, &mut snapshot)?;
     load_indexes(conn, &mut snapshot)?;
     validate_graph_catalog(&snapshot)?;
@@ -739,6 +792,78 @@ fn load_metadata(conn: &Connection) -> Result<Metadata> {
     })
 }
 
+fn load_parameters(conn: &Connection) -> Result<BTreeMap<String, ParameterDefinition>> {
+    let rows = conn.collect_rows(lower::parameters_stmt(), vec![])?;
+    let mut parameters = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    for row in rows {
+        if row.len() != 5 {
+            return Err(FastDbError::format("parameter catalog row has wrong width"));
+        }
+        let id = CatalogId::from_hex(&format_text(&row[0], "parameter_id")?)?;
+        let logical_name = format_text(&row[1], "logical_name")?;
+        if logical_name.is_empty() || is_reserved_logical_name(&logical_name) {
+            return Err(FastDbError::format(
+                "parameter catalog has an invalid logical name",
+            ));
+        }
+        let encoded = format_text(&row[2], "value_json")?;
+        let json: serde_json::Value = serde_json::from_str(&encoded)
+            .map_err(|_| FastDbError::format("parameter value is malformed"))?;
+        if serde_json::to_string(&json)
+            .map_err(|error| FastDbError::Engine(format!("failed to encode parameter: {error}")))?
+            != encoded
+        {
+            return Err(FastDbError::format(
+                "parameter value is not canonically encoded",
+            ));
+        }
+        let value = crate::decode::decode_value(json)?;
+        if format_integer(&row[3], "encoding_version")? != DOCUMENT_ENCODING_VERSION {
+            return Err(FastDbError::format(
+                "parameter has an unsupported encoding version",
+            ));
+        }
+        let definition = format_text(&row[4], "definition")?;
+        if definition.is_empty() {
+            return Err(FastDbError::format("parameter catalog definition is empty"));
+        }
+        let parsed = turso_fastdb_parser::parse_one(&definition)
+            .map_err(|_| FastDbError::format("parameter definition cannot be parsed"))?;
+        let turso_fastdb_parser::Statement::DefineParam(parsed) = parsed else {
+            return Err(FastDbError::format(
+                "parameter definition has the wrong statement kind",
+            ));
+        };
+        if parsed.if_not_exists.is_some()
+            || parsed.overwrite.is_some()
+            || parsed.name.value != logical_name
+        {
+            return Err(FastDbError::format(
+                "parameter definition does not match catalog ownership",
+            ));
+        }
+        let value_source = definition
+            .get(parsed.value.span.offset..parsed.value.span.end())
+            .ok_or_else(|| FastDbError::format("parameter value span is invalid"))?
+            .to_string();
+        let parameter = ParameterDefinition {
+            id,
+            logical_name: logical_name.clone(),
+            value,
+            value_source,
+            permissions: parsed.permissions,
+            definition,
+        };
+        if !ids.insert(id) || parameters.insert(logical_name, parameter).is_some() {
+            return Err(FastDbError::format(
+                "parameter catalog contains duplicate ownership",
+            ));
+        }
+    }
+    Ok(parameters)
+}
+
 fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
     conn.with_transaction(|| {
         let schema = read_schema(conn)?;
@@ -774,6 +899,7 @@ fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
             },
             tables: load_tables_v1(conn)?,
             analyzers: BTreeMap::new(),
+            parameters: BTreeMap::new(),
             hidden_columns: BTreeMap::new(),
             capabilities: BTreeMap::new(),
         };
@@ -803,6 +929,7 @@ fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
             metadata: prior.metadata.clone(),
             tables: load_tables(conn)?,
             analyzers: load_analyzers(conn)?,
+            parameters: BTreeMap::new(),
             hidden_columns: load_hidden_columns_v2(conn)?,
             capabilities: load_capabilities(conn)?,
         };
@@ -848,6 +975,7 @@ fn migrate_format_two_to_three(conn: &Connection) -> Result<()> {
             },
             tables: load_tables(conn)?,
             analyzers: load_analyzers(conn)?,
+            parameters: BTreeMap::new(),
             hidden_columns: load_hidden_columns_v2(conn)?,
             capabilities: load_capabilities(conn)?,
         };
@@ -882,7 +1010,6 @@ fn apply_format_three(conn: &Connection, prior: &CatalogSnapshot) -> Result<()> 
 
     let migrated_schema = read_schema(conn)?;
     validate_catalog_schema(&migrated_schema)?;
-    validate_future_catalogs_empty(conn)?;
     let mut migrated = CatalogSnapshot {
         metadata: Metadata {
             document_encoding_version: DOCUMENT_ENCODING_VERSION,
@@ -890,6 +1017,7 @@ fn apply_format_three(conn: &Connection, prior: &CatalogSnapshot) -> Result<()> 
         },
         tables: load_tables(conn)?,
         analyzers: load_analyzers(conn)?,
+        parameters: load_parameters(conn)?,
         hidden_columns: load_hidden_columns(conn)?,
         capabilities: load_capabilities(conn)?,
     };
@@ -940,7 +1068,6 @@ fn create_format_three_catalogs(conn: &Connection) -> Result<()> {
 fn validate_future_catalogs_empty(conn: &Connection) -> Result<()> {
     for (table, id_column) in [
         (FUNCTIONS_TABLE, "function_id"),
-        (PARAMETERS_TABLE, "parameter_id"),
         (VIEWS_TABLE, "view_id"),
         (EVENTS_TABLE, "event_id"),
         (PERMISSIONS_TABLE, "permission_id"),

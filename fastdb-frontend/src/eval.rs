@@ -211,7 +211,17 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         | Statement::Break(_)
         | Statement::Continue(_)
         | Statement::Throw(_)
-        | Statement::Sleep(_) => {}
+        | Statement::Sleep(_)
+        | Statement::RemoveParam(_)
+        | Statement::InfoDatabase(_) => {}
+        Statement::DefineParam(statement) => {
+            collect_parameters(&statement.value, &mut names);
+        }
+        Statement::AlterParam(statement) => {
+            if let Some(value) = &statement.value {
+                collect_parameters(value, &mut names);
+            }
+        }
     }
     if let Some(name) = names.into_iter().find(|name| !params.contains_key(*name)) {
         return Err(FastDbError::Schema(format!(
@@ -596,13 +606,12 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
             .collect::<Result<Vec<_>>>()
             .map(Value::Array)
             .map(EvalValue::Present),
-        ExprKind::Parameter(name) => Ok(EvalValue::Present(
-            context
-                .params
-                .get(name)
-                .expect("parameter references are prevalidated")
-                .clone(),
-        )),
+        ExprKind::Parameter(name) => context
+            .params
+            .get(name)
+            .cloned()
+            .map(EvalValue::Present)
+            .ok_or_else(|| FastDbError::Schema(format!("missing parameter ${name}"))),
         ExprKind::RecordId(record) => Ok(EvalValue::Present(Value::RecordId(RecordId::new(
             record.table.value.clone(),
             match &record.id.kind {

@@ -80,7 +80,7 @@ fn p1_bridge_003_parse_and_capability_errors_remain_distinct() {
     }
 
     for input in [
-        "LET $value = 1",
+        "USE NS unsupported",
         "RELATE person:a->likes->person:b OR UPDATE",
     ] {
         let error = connection.execute(input).unwrap_err();

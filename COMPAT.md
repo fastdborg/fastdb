@@ -4,7 +4,7 @@
 
 FastDB implements a clean-room SurrealQL-compatible subset pinned to SurrealDB `v3.1.5`. Parser acceptance alone does not mean execution support, and compatibility does not imply sponsorship or certification. See `CLEAN_ROOM.md`.
 
-The locked inventory contains 756 atomic capabilities: 512 Supported, 0 Partial, and 244 Unsupported. `Partial` is allowed only for the active Phase 15; all future-phase targets remain Unsupported until their implementation phase.
+The locked inventory contains 756 atomic capabilities: 516 Supported, 0 Partial, and 240 Unsupported. `Partial` is allowed only for the active Phase 15; all future-phase targets remain Unsupported until their implementation phase.
 
 ## Status legend
 
@@ -638,7 +638,7 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `SCHEMA-ALTER-FUNCTION` | Unsupported | Phase 15 | ALTER FUNCTION | Characterized ALTER FUNCTION clauses update canonical metadata atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-ALTER-INDEX` | Unsupported | Phase 17 | ALTER INDEX | Characterized ALTER INDEX clauses update canonical metadata atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-ALTER-NAMESPACE` | Unsupported | Phase 20 | ALTER NAMESPACE | Characterized ALTER NAMESPACE clauses update canonical metadata atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCHEMA-ALTER-PARAM` | Unsupported | Phase 15 | ALTER PARAM | Characterized ALTER PARAM clauses update canonical metadata atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `SCHEMA-ALTER-PARAM` | Supported | Phase 15 | ALTER PARAM | ALTER PARAM atomically replaces VALUE, PERMISSIONS, or both and rejects an absent parameter. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#parameters-and-initial-function-shapes | P15-PARSE-004<br>P15-API-006<br>P15-API-007 |
 | `SCHEMA-ALTER-SEQUENCE` | Unsupported | Phase 15 | ALTER SEQUENCE | Characterized ALTER SEQUENCE clauses update canonical metadata atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-ALTER-SYSTEM` | Unsupported | Phase 20 | ALTER SYSTEM | Characterized ALTER SYSTEM clauses update canonical metadata atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-ALTER-TABLE` | Unsupported | Phase 15 | ALTER TABLE | Characterized ALTER TABLE clauses update canonical metadata atomically. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
@@ -653,7 +653,7 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `SCHEMA-DEFINE-FUNCTION` | Unsupported | Phase 15 | DEFINE FUNCTION | Bounded custom SurrealQL functions execute from canonical definitions. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-DEFINE-INDEX-BTREE` | Supported | Phase 17 | DEFINE INDEX B-tree | Single canonical field-path B-tree and UNIQUE indexes execute with proven selection. | docs/compat-research/phase2.md | P1-STMT-002<br>P2-IDX-001 |
 | `SCHEMA-DEFINE-MODULE` | Unsupported | Phase 15 | DEFINE MODULE | WASM module definitions require a sealed bounded provider or an architecture stop. | https://surrealdb.com/docs/surrealql/statements/define/module | — |
-| `SCHEMA-DEFINE-PARAM` | Unsupported | Phase 15 | DEFINE PARAM | Typed database parameters store collision-safe canonical values. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `SCHEMA-DEFINE-PARAM` | Supported | Phase 15 | DEFINE PARAM | DEFINE PARAM stores a collision-safe format-3 value and canonical permissions; IF NOT EXISTS and OVERWRITE are explicit. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#parameters-and-initial-function-shapes | P15-PARSE-004<br>P15-API-006<br>P15-API-007 |
 | `SCHEMA-DEFINE-SEQUENCE` | Unsupported | Phase 15 | DEFINE SEQUENCE | Transactional bounded sequences execute with canonical metadata. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-DEFINE-TABLE-BASIC` | Supported | Phase 15 | basic DEFINE TABLE | SCHEMALESS and SCHEMAFULL normal tables execute with canonical definitions. | docs/compat-research/phase2.md | P1-STMT-002<br>P2-CAT-001 |
 | `SCHEMA-DEFINE-TABLE-COMPLETE` | Unsupported | Phase 15 | complete DEFINE TABLE | DROP, view AS, permissions, comments, and advanced schema clauses are explicit. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
@@ -667,7 +667,7 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `SCHEMA-INFO-FUNCTION` | Unsupported | Phase 15 | INFO FUNCTION | INFO FUNCTION returns structured authorized definitions. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-INFO-INDEX` | Unsupported | Phase 17 | INFO INDEX | INFO INDEX returns structured authorized definitions. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-INFO-NAMESPACE` | Unsupported | Phase 20 | INFO NAMESPACE | INFO NAMESPACE returns structured authorized definitions. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCHEMA-INFO-PARAM` | Unsupported | Phase 15 | INFO PARAM | INFO PARAM returns structured authorized definitions. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `SCHEMA-INFO-PARAM` | Supported | Phase 15 | INFO PARAM | INFO FOR DB returns the characterized params object of canonical definitions; v3.1.5 rejects a separate INFO FOR PARAM target. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#parameters-and-initial-function-shapes | P15-PARSE-004<br>P15-API-006 |
 | `SCHEMA-INFO-SEQUENCE` | Unsupported | Phase 15 | INFO SEQUENCE | INFO SEQUENCE returns structured authorized definitions. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-INFO-TABLE` | Unsupported | Phase 15 | INFO TABLE | INFO TABLE returns structured authorized definitions. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-REBUILD-BTREE` | Supported | Phase 17 | REBUILD B-tree index | REBUILD INDEX resolves a logical B-tree name and rebuilds opaque physical state. | docs/compat-research/phase6.md | P6-AST-002<br>P6-LANG-001 |
@@ -681,7 +681,7 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `SCHEMA-REMOVE-FUNCTION-COMPLETE` | Unsupported | Phase 15 | complete REMOVE FUNCTION | REMOVE FUNCTION executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-REMOVE-INDEX-COMPLETE` | Unsupported | Phase 17 | complete REMOVE INDEX | REMOVE INDEX executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-REMOVE-NAMESPACE-COMPLETE` | Unsupported | Phase 20 | complete REMOVE NAMESPACE | REMOVE NAMESPACE executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
-| `SCHEMA-REMOVE-PARAM-COMPLETE` | Unsupported | Phase 15 | complete REMOVE PARAM | REMOVE PARAM executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
+| `SCHEMA-REMOVE-PARAM-COMPLETE` | Supported | Phase 15 | complete REMOVE PARAM | REMOVE PARAM deletes canonical catalog state atomically; IF EXISTS is idempotent and transaction rollback restores the definition. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#parameters-and-initial-function-shapes | P15-PARSE-004<br>P15-API-006<br>P15-API-007 |
 | `SCHEMA-REMOVE-SEQUENCE-COMPLETE` | Unsupported | Phase 15 | complete REMOVE SEQUENCE | REMOVE SEQUENCE executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCHEMA-REMOVE-TABLE-COMPLETE` | Unsupported | Phase 15 | complete REMOVE TABLE | REMOVE TABLE executes atomically with dependency validation. | https://surrealdb.com/docs/reference/query-language/statements/overview | — |
 | `SCRIPT-BREAK` | Supported | Phase 15 | BREAK control flow | BREAK exits the innermost bounded FOR loop, including from a nested IF block, and is rejected outside a loop. | https://surrealdb.com/docs/reference/query-language/statements/overview<br>docs/compat-research/phase15.md#for-break-and-continue | P15-PARSE-001<br>P15-PARSE-003<br>P15-API-002 |

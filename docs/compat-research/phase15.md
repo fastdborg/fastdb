@@ -114,7 +114,7 @@ bounded intervals. Script statements, loop iterations, expression collection
 sizes, API output, vector dimensions, FTS query bytes, and graph hops retain
 their existing independent ceilings.
 
-## Initial parameter and function shapes
+## Parameters and initial function shapes
 
 The following definitions were accepted and persisted by the reference:
 
@@ -129,7 +129,23 @@ INFO FOR DB;
 ```
 
 The calls returned `42` and `8`. Canonical INFO output included `PERMISSIONS
-FULL` for both definitions. These observations establish candidates only;
-FastDB does not mark the locked parameter/function rows Supported until their
-catalog lifecycle, reopen, rollback, limits, and executable conformance tests
-pass.
+FULL` for both definitions.
+
+`DEFINE PARAM IF NOT EXISTS` retained an existing definition, while `DEFINE
+PARAM OVERWRITE` replaced it. `ALTER PARAM` accepted VALUE, PERMISSIONS, or
+both and rejected an absent parameter. `REMOVE PARAM IF EXISTS` was an
+idempotent no-op. The fixed binary exposed parameter definitions through the
+`params` object returned by `INFO FOR DB`; it rejected `INFO FOR PARAM`, so
+FastDB follows the database-information surface rather than inventing a
+per-parameter target.
+
+A top-level LET shadowed a database parameter only for that request. FastDB
+also gives an explicitly bound request parameter precedence for that request;
+catalog mutation does not silently replace an existing request/LET binding.
+Stored values use the collision-safe format-3 value envelope and remain
+authoritative after reopen; their canonical definition is independently
+parsed and ownership-checked during catalog loading.
+
+Custom-function observations remain candidates only. FastDB does not mark the
+locked function rows Supported until their catalog lifecycle, invocation,
+reopen, rollback, recursion limits, and executable conformance tests pass.

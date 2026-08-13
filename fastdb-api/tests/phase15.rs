@@ -6,6 +6,7 @@ use fastdb::{
 };
 use futures::executor::block_on;
 use std::time::{Duration, Instant};
+use tempfile::tempdir;
 
 #[test]
 fn p15_api_001_let_return_and_if_use_lexical_scope() {
@@ -208,6 +209,166 @@ fn p15_api_005_nested_transaction_control_poison_rolls_back_the_guard() {
             &response.statements[0],
             StatementResult::Rows(rows) if rows.is_empty()
         ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_006_database_parameters_persist_overwrite_remove_and_shadow() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("parameters.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE PARAM $answer VALUE { n: 42 }; RETURN $answer; INFO FOR DB",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &response.statements[1],
+            StatementResult::Value(Value::Object(value))
+                if value.get("n") == Some(&Value::Integer(42))
+        ));
+        let StatementResult::Value(Value::Object(info)) = &response.statements[2] else {
+            panic!("expected database information")
+        };
+        assert!(matches!(
+            info.get("params"),
+            Some(Value::Object(values))
+                if values.get("answer") == Some(&Value::Str(
+                    "DEFINE PARAM $answer VALUE { n: 42 } PERMISSIONS FULL".into()
+                ))
+        ));
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let reopened = connection
+            .query(
+                "RETURN $answer; LET $answer = 7; RETURN $answer; \
+                 DEFINE PARAM OVERWRITE $answer VALUE 43; RETURN $answer",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &reopened.statements[0],
+            StatementResult::Value(Value::Object(value))
+                if value.get("n") == Some(&Value::Integer(42))
+        ));
+        assert_eq!(
+            reopened.statements[2],
+            StatementResult::Value(Value::Integer(7))
+        );
+        assert_eq!(
+            reopened.statements[4],
+            StatementResult::Value(Value::Integer(7)),
+            "a top-level LET binding remains request-local"
+        );
+
+        let persisted = connection
+            .query("RETURN $answer", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            persisted.statements,
+            vec![StatementResult::Value(Value::Integer(43))]
+        );
+        let altered = connection
+            .query(
+                "ALTER PARAM $answer PERMISSIONS NONE; INFO FOR DB; \
+                 ALTER PARAM $answer VALUE 44; RETURN $answer",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &altered.statements[1],
+            StatementResult::Value(Value::Object(info))
+                if matches!(info.get("params"), Some(Value::Object(values))
+                    if values.get("answer") == Some(&Value::Str(
+                        "DEFINE PARAM $answer VALUE 43 PERMISSIONS NONE".into()
+                    )))
+        ));
+        assert_eq!(
+            altered.statements[3],
+            StatementResult::Value(Value::Integer(44))
+        );
+        let overridden = connection
+            .query("RETURN $answer", params! { "answer" => 99_i64 })
+            .await
+            .unwrap();
+        assert_eq!(
+            overridden.statements,
+            vec![StatementResult::Value(Value::Integer(99))]
+        );
+
+        connection
+            .execute("REMOVE PARAM $answer", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .query("RETURN $answer", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_007_parameter_catalog_changes_roll_back_with_explicit_transactions() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("DEFINE PARAM $temporary VALUE 1", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            transaction
+                .execute("THROW 'rollback'", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        drop(transaction);
+        assert_eq!(
+            connection
+                .query("RETURN $temporary", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+
+        connection
+            .execute("DEFINE PARAM $stable VALUE 2", params! {})
+            .await
+            .unwrap();
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("REMOVE PARAM $stable", params! {})
+            .await
+            .unwrap();
+        transaction.rollback().await.unwrap();
+        let response = connection
+            .query("RETURN $stable", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            response.statements,
+            vec![StatementResult::Value(Value::Integer(2))]
+        );
         connection.close().await.unwrap();
     });
 }

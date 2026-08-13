@@ -276,9 +276,11 @@ impl<'a> Parser<'a> {
                 Statement::Sleep(self.parse_script_expression(TokenKind::Sleep, "keyword SLEEP")?)
             }
             TokenKind::Define => self.parse_define()?,
+            TokenKind::Alter => self.parse_alter()?,
             TokenKind::Explain => Statement::Explain(self.parse_explain()?),
-            TokenKind::Remove => Statement::RemoveIndex(self.parse_index_maintenance(false)?),
+            TokenKind::Remove => self.parse_remove()?,
             TokenKind::Rebuild => Statement::RebuildIndex(self.parse_index_maintenance(true)?),
+            TokenKind::Info => Statement::InfoDatabase(self.parse_info_database()?),
             TokenKind::Begin => Statement::Begin(self.parse_transaction(TokenKind::Begin)?),
             TokenKind::Commit => Statement::Commit(self.parse_transaction(TokenKind::Commit)?),
             TokenKind::Cancel => Statement::Cancel(self.parse_transaction(TokenKind::Cancel)?),
@@ -930,11 +932,138 @@ impl<'a> Parser<'a> {
                 self.parse_define_analyzer(start)?,
             )),
             TokenKind::Index => Ok(Statement::DefineIndex(self.parse_define_index(start)?)),
+            TokenKind::Param => Ok(Statement::DefineParam(self.parse_define_param(start)?)),
             _ => Err(ParseError::unsupported(
-                "only DEFINE TABLE, DEFINE FIELD, DEFINE ANALYZER, and DEFINE INDEX are supported",
+                "this DEFINE target is outside the active FastDB grammar",
                 self.peek().span,
             )),
         }
+    }
+
+    fn parse_define_param(&mut self, start: Span) -> Result<DefineParamStatement, ParseError> {
+        self.expect(&TokenKind::Param, "keyword PARAM")?;
+        let if_not_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            self.expect(&TokenKind::Not, "keyword NOT after IF")?;
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF NOT")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let overwrite = self.take(&TokenKind::Overwrite).map(|token| token.span);
+        if let (Some(_), Some(overwrite_span)) = (if_not_exists, overwrite) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "DEFINE PARAM cannot combine IF NOT EXISTS and OVERWRITE",
+                },
+                overwrite_span,
+            ));
+        }
+        let name = self.expect_parameter("a database parameter")?;
+        self.expect(&TokenKind::Value, "keyword VALUE")?;
+        let value = self.parse_expression()?;
+        let permissions = if self.eat(&TokenKind::Permissions) {
+            if self.eat(&TokenKind::Full) {
+                SchemaPermissions::Full
+            } else if self.eat(&TokenKind::None) {
+                SchemaPermissions::None
+            } else {
+                return Err(self.unexpected("FULL or NONE after PERMISSIONS"));
+            }
+        } else {
+            SchemaPermissions::Full
+        };
+        Ok(DefineParamStatement {
+            span: Span::new(start.offset, self.previous_end() - start.offset),
+            if_not_exists,
+            overwrite,
+            name,
+            value,
+            permissions,
+        })
+    }
+
+    fn parse_alter(&mut self) -> Result<Statement, ParseError> {
+        let start = self.expect(&TokenKind::Alter, "keyword ALTER")?.span;
+        if !self.eat(&TokenKind::Param) {
+            return Err(ParseError::unsupported(
+                "Phase 15 ALTER currently supports PARAM",
+                self.peek().span,
+            ));
+        }
+        let name = self.expect_parameter("a database parameter")?;
+        let value = if self.eat(&TokenKind::Value) {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+        let permissions = if self.eat(&TokenKind::Permissions) {
+            if self.eat(&TokenKind::Full) {
+                Some(SchemaPermissions::Full)
+            } else if self.eat(&TokenKind::None) {
+                Some(SchemaPermissions::None)
+            } else {
+                return Err(self.unexpected("FULL or NONE after PERMISSIONS"));
+            }
+        } else {
+            None
+        };
+        if value.is_none() && permissions.is_none() {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "ALTER PARAM requires VALUE, PERMISSIONS, or both",
+                },
+                name.span,
+            ));
+        }
+        Ok(Statement::AlterParam(AlterParamStatement {
+            span: Span::new(start.offset, self.previous_end() - start.offset),
+            name,
+            value,
+            permissions,
+        }))
+    }
+
+    fn parse_remove(&mut self) -> Result<Statement, ParseError> {
+        if self.at_offset(1, &TokenKind::Param) {
+            return self.parse_remove_param().map(Statement::RemoveParam);
+        }
+        self.parse_index_maintenance(false)
+            .map(Statement::RemoveIndex)
+    }
+
+    fn parse_remove_param(&mut self) -> Result<RemoveParamStatement, ParseError> {
+        let start = self.expect(&TokenKind::Remove, "keyword REMOVE")?.span;
+        self.expect(&TokenKind::Param, "keyword PARAM")?;
+        let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let name = self.expect_parameter("a database parameter")?;
+        Ok(RemoveParamStatement {
+            span: start.union(name.span),
+            if_exists,
+            name,
+        })
+    }
+
+    fn parse_info_database(&mut self) -> Result<InfoDatabaseStatement, ParseError> {
+        let start = self.expect(&TokenKind::Info, "keyword INFO")?.span;
+        self.expect(&TokenKind::For, "keyword FOR after INFO")?;
+        let target = self.expect_identifier("DB or DATABASE")?;
+        if !matches!(
+            target.value.to_ascii_lowercase().as_str(),
+            "db" | "database"
+        ) {
+            return Err(ParseError::unsupported(
+                "Phase 15 INFO currently supports the database target",
+                target.span,
+            ));
+        }
+        Ok(InfoDatabaseStatement {
+            span: start.union(target.span),
+        })
     }
 
     fn parse_explain(&mut self) -> Result<ExplainStatement, ParseError> {
@@ -1344,7 +1473,8 @@ impl<'a> Parser<'a> {
                 if !is_complex_record_id_expression(&expression) {
                     return Err(ParseError::new(
                         ParseErrorKind::InvalidCombination {
-                            what: "complex record IDs must contain only literal array/object values",
+                            what:
+                                "complex record IDs must contain only literal array/object values",
                         },
                         expression.span,
                     ));
@@ -1422,9 +1552,19 @@ impl<'a> Parser<'a> {
                 },
                 token.span,
             )),
-            _ => Err(self.unexpected(
-                "a bare, backtick-quoted, integer, typed-UUID, array, or object record-ID component",
-            )),
+            kind => {
+                if let Some(value) = keyword_object_key(&kind) {
+                    self.position += 1;
+                    Ok(RecordIdPart {
+                        span: token.span,
+                        kind: RecordIdPartKind::Bare(value),
+                    })
+                } else {
+                    Err(self.unexpected(
+                        "a bare, backtick-quoted, integer, typed-UUID, array, or object record-ID component",
+                    ))
+                }
+            }
         }
     }
 
@@ -2839,7 +2979,7 @@ fn record_id_part_starts(token: &TokenKind) -> bool {
             | TokenKind::Minus
             | TokenKind::LeftBracket
             | TokenKind::LeftBrace
-    )
+    ) || keyword_object_key(token).is_some()
 }
 
 fn keyword_object_key(token: &TokenKind) -> Option<String> {
@@ -3007,6 +3147,7 @@ fn is_statement_start(kind: &TokenKind) -> bool {
             | TokenKind::Upsert
             | TokenKind::Delete
             | TokenKind::Define
+            | TokenKind::Alter
             | TokenKind::Explain
             | TokenKind::Remove
             | TokenKind::Rebuild
@@ -3021,14 +3162,12 @@ fn is_statement_start(kind: &TokenKind) -> bool {
             | TokenKind::Continue
             | TokenKind::Throw
             | TokenKind::Sleep
+            | TokenKind::Info
     ) || is_unsupported_statement(kind)
 }
 
 fn is_unsupported_statement(kind: &TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::Info | TokenKind::Use | TokenKind::Live | TokenKind::Show
-    )
+    matches!(kind, TokenKind::Use | TokenKind::Live | TokenKind::Show)
 }
 
 fn is_unsupported_clause(kind: &TokenKind) -> bool {

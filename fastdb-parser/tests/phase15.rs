@@ -1,4 +1,4 @@
-use turso_fastdb_parser::{parse, parse_one, Statement, StatementCursor};
+use turso_fastdb_parser::{parse, parse_one, ExprKind, Statement, StatementCursor};
 
 #[test]
 fn p15_parse_001_script_control_flow_is_structured() {
@@ -57,5 +57,59 @@ fn p15_parse_003_invalid_control_flow_and_blocks_fail_explicitly() {
         "SLEEP",
     ] {
         assert!(parse_one(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn p15_parse_004_parameter_lifecycle_and_database_info_are_structured() {
+    let script = parse(
+        "DEFINE PARAM IF NOT EXISTS $answer VALUE 42 PERMISSIONS FULL; \
+         DEFINE PARAM OVERWRITE $answer VALUE 43 PERMISSIONS NONE; \
+         ALTER PARAM $answer VALUE 44 PERMISSIONS FULL; \
+         REMOVE PARAM IF EXISTS $answer; INFO FOR DB",
+    )
+    .unwrap();
+    let Statement::DefineParam(first) = &script.statements[0] else {
+        panic!("expected DEFINE PARAM")
+    };
+    assert!(first.if_not_exists.is_some());
+    assert!(first.overwrite.is_none());
+    assert_eq!(first.name.value, "answer");
+    assert!(matches!(first.value.kind, ExprKind::Integer(42)));
+    assert_eq!(
+        first.permissions,
+        turso_fastdb_parser::SchemaPermissions::Full
+    );
+
+    let Statement::DefineParam(second) = &script.statements[1] else {
+        panic!("expected DEFINE PARAM OVERWRITE")
+    };
+    assert!(second.if_not_exists.is_none());
+    assert!(second.overwrite.is_some());
+    assert_eq!(
+        second.permissions,
+        turso_fastdb_parser::SchemaPermissions::None
+    );
+    let Statement::AlterParam(alter) = &script.statements[2] else {
+        panic!("expected ALTER PARAM")
+    };
+    assert!(alter.value.is_some());
+    assert_eq!(
+        alter.permissions,
+        Some(turso_fastdb_parser::SchemaPermissions::Full)
+    );
+    assert!(matches!(script.statements[3], Statement::RemoveParam(_)));
+    assert!(matches!(script.statements[4], Statement::InfoDatabase(_)));
+
+    for source in [
+        "DEFINE PARAM IF NOT EXISTS OVERWRITE $x VALUE 1",
+        "DEFINE PARAM $x 1",
+        "DEFINE PARAM $x VALUE 1 PERMISSIONS WHERE",
+        "REMOVE PARAM IF $x",
+        "ALTER PARAM $x",
+        "ALTER TABLE thing",
+        "INFO FOR TABLE",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
     }
 }

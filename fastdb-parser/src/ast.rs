@@ -78,6 +78,10 @@ pub enum Statement {
     Continue(ControlFlowStatement),
     Throw(ScriptExpressionStatement),
     Sleep(ScriptExpressionStatement),
+    DefineParam(DefineParamStatement),
+    AlterParam(AlterParamStatement),
+    RemoveParam(RemoveParamStatement),
+    InfoDatabase(InfoDatabaseStatement),
     Begin(TransactionStatement),
     Commit(TransactionStatement),
     Cancel(TransactionStatement),
@@ -104,6 +108,10 @@ impl Statement {
             Self::If(stmt) => stmt.span,
             Self::For(stmt) => stmt.span,
             Self::Break(stmt) | Self::Continue(stmt) => stmt.span,
+            Self::DefineParam(stmt) => stmt.span,
+            Self::AlterParam(stmt) => stmt.span,
+            Self::RemoveParam(stmt) => stmt.span,
+            Self::InfoDatabase(stmt) => stmt.span,
             Self::Begin(stmt) | Self::Commit(stmt) | Self::Cancel(stmt) => stmt.span,
         }
     }
@@ -145,6 +153,42 @@ pub struct ForStatement {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ControlFlowStatement {
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefineParamStatement {
+    pub span: Span,
+    pub if_not_exists: Option<Span>,
+    pub overwrite: Option<Span>,
+    pub name: Identifier,
+    pub value: Expr,
+    pub permissions: SchemaPermissions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterParamStatement {
+    pub span: Span,
+    pub name: Identifier,
+    pub value: Option<Expr>,
+    pub permissions: Option<SchemaPermissions>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaPermissions {
+    Full,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoveParamStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub name: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoDatabaseStatement {
     pub span: Span,
 }
 

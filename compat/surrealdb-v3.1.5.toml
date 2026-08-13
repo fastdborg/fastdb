@@ -7466,11 +7466,11 @@ area = "Scripting and schema"
 title = "ALTER PARAM"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Characterized ALTER PARAM clauses update canonical metadata atomically."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "ALTER PARAM atomically replaces VALUE, PERMISSIONS, or both and rejects an absent parameter."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#parameters-and-initial-function-shapes"]
+parser_evidence = ["P15-PARSE-004"]
+execution_evidence = ["P15-API-006", "P15-API-007"]
 stop_report = ""
 
 [[capability]]
@@ -7661,11 +7661,11 @@ area = "Scripting and schema"
 title = "DEFINE PARAM"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Typed database parameters store collision-safe canonical values."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "DEFINE PARAM stores a collision-safe format-3 value and canonical permissions; IF NOT EXISTS and OVERWRITE are explicit."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#parameters-and-initial-function-shapes"]
+parser_evidence = ["P15-PARSE-004"]
+execution_evidence = ["P15-API-006", "P15-API-007"]
 stop_report = ""
 
 [[capability]]
@@ -7843,11 +7843,11 @@ area = "Scripting and schema"
 title = "INFO PARAM"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "INFO PARAM returns structured authorized definitions."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "INFO FOR DB returns the characterized params object of canonical definitions; v3.1.5 rejects a separate INFO FOR PARAM target."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#parameters-and-initial-function-shapes"]
+parser_evidence = ["P15-PARSE-004"]
+execution_evidence = ["P15-API-006"]
 stop_report = ""
 
 [[capability]]
@@ -8025,11 +8025,11 @@ area = "Scripting and schema"
 title = "complete REMOVE PARAM"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "REMOVE PARAM executes atomically with dependency validation."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "REMOVE PARAM deletes canonical catalog state atomically; IF EXISTS is idempotent and transaction rollback restores the definition."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview", "docs/compat-research/phase15.md#parameters-and-initial-function-shapes"]
+parser_evidence = ["P15-PARSE-004"]
+execution_evidence = ["P15-API-006", "P15-API-007"]
 stop_report = ""
 
 [[capability]]
