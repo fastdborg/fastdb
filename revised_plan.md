@@ -1,12 +1,12 @@
 # FastDB MVP Technical Plan and Roadmap
 
-Status: proposed engineering baseline, cloud track revised 2026-08-13
+Status: engineering baseline; licensing and cloud boundary revised 2026-08-13
 
 ## 1. Product Definition
 
 FastDB will be a clean-room, SurrealQL-compatible document database frontend built on a pinned fork of Turso. The MVP will be an embedded Rust library and a command-line shell operating on a local Turso database. It will provide a deliberately small, documented subset of SurrealQL rather than claiming full SurrealDB compatibility.
 
-The product goal is a low-latency database with SurrealDB-like document ergonomics and Turso's embedded storage model. Relational interoperability, graph traversal, direct key-value access, network serving, and edge synchronization are roadmap items; they are not part of the first release. The intended business is a publicly developed, source-available database that becomes open source after a defined delay and is funded by a managed service at `cloud.fastdb.org`.
+The product goal is a low-latency database with SurrealDB-like document ergonomics and Turso's embedded storage model. Relational interoperability, graph traversal, direct key-value access, network serving, and edge synchronization are roadmap items; they are not part of the first release. FastDB Core is publicly developed as MIT-licensed open-source software. A future proprietary managed service at `cloud.fastdb.org` is a separate commercial product.
 
 For the MVP, "single file" means one durable `.fastdb` database artifact after a checkpoint and clean shutdown. WAL and shared-memory sidecars may exist while a database is open. A later synchronization mode may also create Turso-owned metadata sidecars. FastDB will not promise that a live database consists of exactly one filesystem entry.
 
@@ -22,10 +22,10 @@ For the MVP, "single file" means one durable `.fastdb` database artifact after a
 
 FastDB has two product surfaces with a strict boundary:
 
-- **FastDB Core:** the source-available parser, frontend, storage integration, embedded Rust API, CLI, conformance suite, and eventually the self-hostable query server and sync components. Local and self-hosted use within the Community License grant is the permanent free path. Each release becomes open source under its stated Change License on its Change Date.
-- **FastDB Cloud:** a managed service that sells operation, durability, regional compute, authentication, metering, backups, restore, observability, support, and later edge synchronization. The hosted service must use the same public query semantics and file-format policy as Core.
+- **FastDB Core:** the MIT-licensed parser, frontend, storage integration, embedded Rust API, CLI, conformance suite, and eventually the self-hostable query server and sync components. The MIT grant makes local, self-hosted, redistribution, and commercial use open-source rights rather than a restricted free tier.
+- **FastDB Cloud:** a future closed-source managed service that sells operation, durability, regional compute, authentication, metering, backups, restore, observability, support, and later edge synchronization. The hosted service may use Core under MIT and should preserve the same public query semantics and file-format policy.
 
-FastDB-authored Core and Cloud source code will be public. Deployment credentials, customer data, signing material, incident data, and live infrastructure state are not source code and are never published. The commercial advantage is the operated service, brand, reliability, support, and accumulated operational experience rather than a hidden database implementation.
+FastDB Core source is public. FastDB Cloud code, deployment credentials, customer data, signing material, incident data, and live infrastructure state remain private. Cloud must stay outside the Core build and licensing boundary so using, building, testing, or self-hosting Core never depends on proprietary code.
 
 The project will not depend on a permanent free cloud tier. A time-limited, payment-card-backed trial or small one-time credit may be offered only with a hard spend/resource cap and abuse controls. The initial pricing hypothesis is a simple three-tier ladder:
 
@@ -39,19 +39,24 @@ Names, prices, quotas, retention, and overage rates are hypotheses until load te
 
 ### 1.3 Licensing direction
 
-The preferred model, subject to qualified legal review, is dual licensing:
+FastDB-authored Core code is licensed under the repository's MIT License. The
+grant permits use, modification, redistribution, sublicensing, sale, and
+competing hosted services subject to the license's notice and disclaimer
+conditions. The project must not describe Core as field-of-use restricted or
+attempt to reserve managed-service rights in already MIT-licensed Core code.
 
-1. **Community License:** Business Source License 1.1 with a narrowly drafted Additional Use Grant. It should permit internal production use, self-hosting, modification, redistribution, and applications that use FastDB as an internal component. It should prohibit offering FastDB itself, or a substantial set of its database APIs and functionality, to third parties as a competing hosted or managed database service without a commercial agreement.
-2. **Commercial License:** a paid alternative for cloud providers, managed service providers, OEM redistribution that falls outside the Additional Use Grant, or customers that require different terms.
-3. **Change License:** Apache License 2.0, taking effect for each released version no later than the maximum period BSL 1.1 permits. Legal review should choose and publish a fixed, easy-to-calculate Change Date; the initial preference is four years after each version's first public release.
+All inherited Turso files retain their MIT notices and rights. Keep upstream
+and FastDB-authored provenance mechanically auditable and include both Turso
+and FastDB notices in distributions. Contributions accepted into Core must be
+MIT-compatible; the former BSL/commercial/change-license model and its special
+relicensing CLA requirement are retired.
 
-This model is source-available before the Change Date, not OSI open source. The Open Source Definition does not permit discrimination against a field of endeavor, so a current license cannot both qualify as open source and forbid competing cloud services. Project documentation must use these terms accurately and must not market pre-Change-Date releases as open source.
-
-The Additional Use Grant must distinguish a prohibited database-as-a-service from an allowed application that merely stores its own data in FastDB. It must not prevent consultants from helping a customer self-host FastDB for that customer's internal use. Do not write custom legal text informally in the repository; have counsel adapt the standard BSL parameters and publish practical examples.
-
-All inherited Turso files retain their MIT notices and rights. The FastDB license can govern FastDB-authored files and the combined FastDB distribution but cannot revoke permissions already granted for upstream Turso code. Keep file provenance mechanically auditable.
-
-Dual licensing requires the project to retain sufficient relicensing rights. Adopt a contributor license agreement that grants the FastDB legal entity the necessary copyright license to distribute contributions under the Community, Commercial, and Change Licenses while contributors retain copyright. A DCO alone is not sufficient for this licensing goal. Establish the legal entity, license parameters, CLA, privacy terms, and trademark policy before accepting material third-party code.
+FastDB Cloud is a separate proprietary product and may use Core under MIT.
+Cloud-only orchestration, control-plane, billing, operational, and service
+code may remain closed source, but proprietary components must not become a
+build-time or run-time requirement for Core. Package versions remain `0.0.0`
+and `publish = false` until the first alpha packaging decision; those controls
+do not narrow the MIT license.
 
 ### 1.4 MVP success criteria
 
@@ -69,7 +74,7 @@ The MVP is complete only when all of the following are true:
 
 FastDB will implement a documented compatibility subset from public SurrealQL specifications and observed public behavior. The team may run black-box queries against an unmodified SurrealDB `v3.1.5` binary and record inputs and outputs. FastDB's parser, implementation, fixtures, expected outputs, fuzz corpora, and conformance tests must be written independently.
 
-Do not copy, translate, vendor, or adapt SurrealDB source code or test files. Keep behavioral research notes separate from implementation artifacts and record the public source or black-box experiment behind each compatibility decision. SurrealDB's current core is distributed under Business Source License 1.1, so legal review is required before public compatibility claims, naming, or trademark use. "SurrealQL-compatible subset" must never imply sponsorship, certification, or complete compatibility.
+Do not copy, translate, vendor, or adapt SurrealDB source code or test files. Keep behavioral research notes separate from implementation artifacts and record the public source or black-box experiment behind each compatibility decision. The project owner has approved the FastDB name and the precise phrase "SurrealQL-compatible subset"; it must never imply sponsorship, affiliation, certification, or complete compatibility, and it grants no rights in third-party marks.
 
 `COMPAT.md` will be normative for language support. Each grammar item is assigned exactly one status:
 
@@ -472,7 +477,7 @@ Deliverables:
 
 Exit gate:
 
-- All MVP acceptance and performance gates pass in release CI. Crash injection reveals no partial logical state, every index has a plan test, fuzzing has no known crash, and release documentation states measured limitations without broader durability or compatibility claims.
+- All MVP acceptance and performance gates pass in the recorded local matrix. Crash injection reveals no partial logical state, every index has a plan test, fuzzing has no known crash, and release documentation states measured limitations without broader durability or compatibility claims. GitHub Actions is not required for the first public alpha; any later remote CI policy is a separate decision.
 
 ## 8. Verification Strategy
 
@@ -622,7 +627,7 @@ Run immediately during the end of Core Phase 3 and Phase 4 without shipping a ge
 - Compare the Durable Object journal with direct per-commit R2 publication and a small regional multi-tenant group-commit prototype. Record limits, availability assumptions, request sizes, maximum batching delay, physical object operations per logical transaction, and failure semantics; do not select by nominal storage price alone.
 - Define an object-store portability contract and run the recovery prototype against R2 plus at least one S3-compatible local test service.
 - Build a cost model for each proposed price tier and at low, expected, and adversarial utilization.
-- Have counsel finalize the BSL 1.1 parameters, Additional Use Grant, commercial terms, Change License/Date, CLA, and trademark policy before accepting material external contributions.
+- Keep proprietary Cloud code and operational data outside the MIT Core boundary, and define Cloud customer, privacy, security, ownership, and service terms before accepting external customers. These Cloud decisions do not block Core feature development.
 
 Exit gate: a reviewed design demonstrates a recoverable journal/log and database-generation model after forced Durable Object and Container loss, proves fencing and idempotent retry behavior, bounds journal backlog under R2 outage, identifies all non-upstream and Cloudflare-specific components, and shows a credible path to positive unit economics. Failure does not block the local MVP; it blocks external charging, durability promises, and advancement beyond a disposable internal prototype.
 
@@ -696,7 +701,7 @@ Commercial rules:
 - Do not offer lifetime plans or unbounded "unlimited" features.
 - Pricing comparisons use equivalent durability, retention, region, egress, support, and workload assumptions.
 
-FastDB should position the cloud as a lightweight, source-available and eventually open-source document database for embedded, edge, database-per-agent, and database-per-tenant applications. Price is a wedge, not proof of superiority. Claims against Turso or SurrealDB require reproducible feature-adjusted benchmarks and total-cost examples.
+FastDB should position Core as a lightweight MIT-licensed open-source document database for embedded, edge, database-per-agent, and database-per-tenant applications, with a proprietary managed service for users who want operations handled for them. Price is a wedge, not proof of superiority. Claims against Turso or SurrealDB require reproducible feature-adjusted benchmarks and total-cost examples.
 
 ### 10.4 Minimum cloud security and operations
 
@@ -736,7 +741,7 @@ Maintain a separate, non-gating competitive suite against the pinned SurrealDB b
 | Expression indexes do not cover required JSON predicates | One canonical expression builder; Phase 0 explain test | Supported filter cannot select its matching index |
 | JSONB loses required value distinctions | Define round-trip tests and public value limits | Record IDs, integers, missing/null, or nested values cannot round-trip |
 | DDL/catalog atomicity differs from assumptions | Failure injection in the vertical slice | Reopen exposes partial catalog or physical schema |
-| Compatibility research crosses license boundaries | Clean-room policy, provenance notes, legal review | Any implementation fixture resembles upstream source/tests or public claims expand |
+| Compatibility research crosses clean-room boundaries | Clean-room policy, provenance notes, independent review | Any implementation artifact derives from prohibited source/tests or public claims expand beyond recorded evidence |
 | Schema mutex is insufficient across handles/processes | Registry by canonical database identity; no multiprocess support | Concurrent opens bypass serialization or Turso adds stable native coordination |
 | Stable WAL does not meet a durability assumption | Pin settings and run crash tests | Corruption, partial logical change, or unsupported checkpoint behavior appears |
 | Performance target is missed | Profile parsing, planning, JSON encoding, and decoding separately | A release gate fails on the published benchmark harness |
@@ -752,7 +757,7 @@ Maintain a separate, non-gating competitive suite against the pinned SurrealDB b
 | Cloudflare-native durability cannot meet the service gates | Preserve the Worker edge and move the data plane to independently implemented regional multi-tenant FastDB shards with group commit and S3-compatible generations | Durable Object latency, throughput, capacity, regional behavior, or economics fail C0/C1 after the protocol is optimized |
 | Multi-tenant isolation fails | Database-level tenancy, hard resource limits, adversarial tests, least-privilege credentials | Cross-tenant access, noisy-neighbor outage, or unbounded resource use |
 | The `$5` tier is structurally unprofitable | Bounded credits, no included manual support, C0/C1 cost model | p95 included usage has non-positive variable gross margin |
-| Licensing discourages adoption or weakens the hosted strategy | BSL Additional Use Grant, eventual Apache-2.0 conversion, practical examples, CLA, and legal review | Target users reject terms, cloud restriction is ambiguous, or copyright ownership prevents dual licensing |
+| The Core/Cloud boundary becomes ambiguous | MIT metadata and notices in Core; proprietary service code kept separate | Core depends on private code, Cloud materials imply MIT rights were revoked, or distributions omit required notices |
 
 Any failed Phase 0 feasibility assumption is a design decision point, not permission to add a hidden core fork or relax correctness criteria.
 
@@ -787,8 +792,7 @@ Each roadmap item must update the format policy and `COMPAT.md`, add migration/r
 ### Licensing
 
 - [Open Source Definition](https://opensource.org/osd)
-- [Business Source License 1.1](https://mariadb.com/bsl11/)
-- [Adopting and developing BSL software](https://mariadb.com/bsl-faq-adopting/)
+- [FastDB and Turso MIT License](LICENSE.md)
 
 ### Turso
 

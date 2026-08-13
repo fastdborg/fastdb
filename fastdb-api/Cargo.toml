@@ -1,0 +1,18 @@
+# FastDB public embedded Rust API. FastDB-authored.
+[package]
+name = "fastdb"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+futures = { workspace = true }
+serde_json = { workspace = true }
+turso_fastdb = { path = "../fastdb-frontend" }
+turso_fastdb_parser = { path = "../fastdb-parser" }
+turso_core = { workspace = true }
+uuid = { version = "1.11.0", features = ["v4", "v7"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

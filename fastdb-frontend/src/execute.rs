@@ -12,6 +12,7 @@ use crate::test_failpoints::Failpoint;
 use crate::{Params, RecordId, StatementResult, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::RwLockReadGuard;
 use turso_fastdb_parser::{
     BinaryOperator, CreateData, Expr, ExprKind, ProjectionList, RecordIdPart, RecordIdPartKind,
     ReturnKind, Span, Statement, TableMode, Target,
@@ -24,13 +25,36 @@ struct Candidate {
     document: BTreeMap<String, Value>,
 }
 
+pub(crate) struct StatementExecution {
+    pub(crate) result: StatementResult,
+    pub(crate) mutation_count: u64,
+}
+
+impl StatementExecution {
+    fn read_only(result: StatementResult) -> Self {
+        Self {
+            result,
+            mutation_count: 0,
+        }
+    }
+
+    fn mutation(result: StatementResult, mutation_count: usize) -> Result<Self> {
+        Ok(Self {
+            result,
+            mutation_count: u64::try_from(mutation_count).map_err(|_| {
+                FastDbError::Engine("statement mutation count overflowed u64".into())
+            })?,
+        })
+    }
+}
+
 pub(crate) fn run_statement(
     conn: &Connection,
     execution: &mut ExecutionState,
     statement: Statement,
     source: &str,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     if matches!(execution.transaction, TransactionState::Poisoned)
         && !matches!(statement, Statement::Cancel(_))
     {
@@ -45,24 +69,34 @@ pub(crate) fn run_statement(
     }
 
     match statement {
-        Statement::Begin(_) => conn.begin_explicit(execution),
-        Statement::Commit(_) => conn.commit_explicit(execution),
-        Statement::Cancel(_) => conn.cancel_explicit(execution),
+        Statement::Begin(_) => conn
+            .begin_explicit(execution)
+            .map(StatementExecution::read_only),
+        Statement::Commit(_) => conn
+            .commit_explicit(execution)
+            .map(StatementExecution::read_only),
+        Statement::Cancel(_) => conn
+            .cancel_explicit(execution)
+            .map(StatementExecution::read_only),
         statement => {
             eval::validate_parameter_references(&statement, params)?;
             match statement {
                 Statement::Create(statement) => run_create(conn, execution, statement, params),
-                Statement::Select(statement) => run_select(conn, execution, statement, params),
+                Statement::Select(statement) => run_select(conn, execution, statement, params)
+                    .map(StatementExecution::read_only),
                 Statement::Update(statement) => run_update(conn, execution, statement, params),
                 Statement::Delete(statement) => run_delete(conn, execution, statement, params),
                 Statement::DefineTable(statement) => {
                     run_define_table(conn, execution, statement, source)
+                        .map(StatementExecution::read_only)
                 }
                 Statement::DefineField(statement) => {
                     run_define_field(conn, execution, statement, source)
+                        .map(StatementExecution::read_only)
                 }
                 Statement::DefineIndex(statement) => {
                     run_define_index(conn, execution, statement, source)
+                        .map(StatementExecution::read_only)
                 }
                 Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {
                     unreachable!("transaction statements were handled above")
@@ -77,7 +111,7 @@ fn run_create(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::CreateStatement,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     let (table_name, parsed_id) = target_parts(statement.target)?;
     let id_value = parsed_id.unwrap_or_else(|| RecordIdValue::Uuid(uuid::Uuid::now_v7()));
     let id = RecordId::new(table_name.clone(), id_value.clone());
@@ -150,11 +184,12 @@ fn run_create(
         Some(ReturnKind::Before) => Some(Value::Null),
         Some(ReturnKind::After) | None => Some(value),
     };
-    if statement.only.is_some() {
-        Ok(StatementResult::Value(returned.unwrap_or(Value::Null)))
+    let result = if statement.only.is_some() {
+        StatementResult::Value(returned.unwrap_or(Value::Null))
     } else {
-        Ok(StatementResult::Rows(returned.into_iter().collect()))
-    }
+        StatementResult::Rows(returned.into_iter().collect())
+    };
+    StatementExecution::mutation(result, 1)
 }
 
 fn run_select(
@@ -186,6 +221,7 @@ fn run_select(
         id.as_ref(),
         statement.condition.as_ref(),
         params,
+        !matches!(execution.transaction, TransactionState::Active(_)),
     )?;
     let mut matched = Vec::new();
     for candidate in candidates {
@@ -254,7 +290,7 @@ fn run_update(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::UpdateStatement,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     let assignment_paths = statement
         .assignments
         .iter()
@@ -276,6 +312,7 @@ fn run_update(
             id.as_ref(),
             statement.condition.as_ref(),
             params,
+            false,
         )?;
         let mut updates = Vec::new();
         for candidate in candidates {
@@ -322,14 +359,18 @@ fn run_update(
         statement.return_clause.map(|clause| clause.kind.value),
         Some(ReturnKind::None)
     ) {
-        return Ok(StatementResult::Rows(Vec::new()));
+        return StatementExecution::mutation(StatementResult::Rows(Vec::new()), updates.len());
     }
-    Ok(StatementResult::Rows(
-        updates
-            .into_iter()
-            .map(|(candidate, document)| full_record_value(&candidate.id, &document))
-            .collect(),
-    ))
+    let mutation_count = updates.len();
+    StatementExecution::mutation(
+        StatementResult::Rows(
+            updates
+                .into_iter()
+                .map(|(candidate, document)| full_record_value(&candidate.id, &document))
+                .collect(),
+        ),
+        mutation_count,
+    )
 }
 
 fn run_delete(
@@ -337,7 +378,7 @@ fn run_delete(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::DeleteStatement,
     params: &Params,
-) -> Result<StatementResult> {
+) -> Result<StatementExecution> {
     let (table_name, id) = target_parts(statement.target.clone())?;
     let deleted = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
@@ -354,6 +395,7 @@ fn run_delete(
             id.as_ref(),
             statement.condition.as_ref(),
             params,
+            false,
         )?;
         let mut deleted = Vec::new();
         for candidate in candidates {
@@ -371,14 +413,18 @@ fn run_delete(
         Ok(deleted)
     })?;
     if statement.return_clause.is_some() {
-        Ok(StatementResult::Rows(
-            deleted
-                .into_iter()
-                .map(|candidate| full_record_value(&candidate.id, &candidate.document))
-                .collect(),
-        ))
+        let mutation_count = deleted.len();
+        StatementExecution::mutation(
+            StatementResult::Rows(
+                deleted
+                    .into_iter()
+                    .map(|candidate| full_record_value(&candidate.id, &candidate.document))
+                    .collect(),
+            ),
+            mutation_count,
+        )
     } else {
-        Ok(StatementResult::Rows(Vec::new()))
+        StatementExecution::mutation(StatementResult::Rows(Vec::new()), deleted.len())
     }
 }
 
@@ -508,17 +554,39 @@ fn record_id_value(value: RecordIdPart) -> Result<RecordIdValue> {
     })
 }
 
-fn catalog_for_read(conn: &Connection, execution: &ExecutionState) -> Result<CatalogState> {
+enum CatalogRead<'a> {
+    Active(&'a CatalogState),
+    Shared(RwLockReadGuard<'a, Option<CatalogState>>),
+}
+
+impl CatalogRead<'_> {
+    fn snapshot(&self) -> Option<&catalog::CatalogSnapshot> {
+        match self {
+            Self::Active(catalog) => catalog.snapshot(),
+            Self::Shared(catalog) => catalog.as_ref().and_then(CatalogState::snapshot),
+        }
+    }
+}
+
+fn catalog_for_read<'a>(
+    conn: &'a Connection,
+    execution: &'a ExecutionState,
+) -> Result<CatalogRead<'a>> {
     if let TransactionState::Active(active) = &execution.transaction {
-        return Ok(active.catalog.clone());
+        return Ok(CatalogRead::Active(&active.catalog));
     }
     conn.wait_for_catalog()?;
-    conn.coordinator
+    let catalog = conn
+        .coordinator
         .catalog
         .read()
-        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
-        .clone()
-        .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))
+        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
+    if catalog.is_none() {
+        return Err(FastDbError::Engine(
+            "catalog cache was not initialized".into(),
+        ));
+    }
+    Ok(CatalogRead::Shared(catalog))
 }
 
 fn read_candidates(
@@ -527,6 +595,7 @@ fn read_candidates(
     id: Option<&RecordIdValue>,
     condition: Option<&Expr>,
     params: &Params,
+    allow_cache: bool,
 ) -> Result<Vec<Candidate>> {
     let predicates = condition
         .map(|condition| safe_pushdowns(condition, params, table))
@@ -537,23 +606,30 @@ fn read_candidates(
         encoded_rid.as_deref(),
         &predicates,
     )?;
-    conn.collect_rows(statement, bindings)
-        .map_err(stored_value_error)?
-        .into_iter()
-        .map(|row| {
-            let encoded_rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))
-                .map_err(stored_value_error)?;
-            let id = RecordId::new(&table.logical_name, decode_rid(&encoded_rid)?);
-            let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
-                .map_err(stored_value_error)?;
-            let document = decode::parse_doc(&json)?.into_iter().collect();
-            Ok(Candidate {
-                encoded_rid,
-                id,
-                document,
-            })
+    conn.collect_select_candidates(
+        statement,
+        bindings,
+        &table.physical_name,
+        encoded_rid.is_some(),
+        &predicates,
+        allow_cache,
+    )
+    .map_err(stored_value_error)?
+    .into_iter()
+    .map(|row| {
+        let encoded_rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))
+            .map_err(stored_value_error)?;
+        let id = RecordId::new(&table.logical_name, decode_rid(&encoded_rid)?);
+        let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
+            .map_err(stored_value_error)?;
+        let document = decode::parse_doc(&json)?.into_iter().collect();
+        Ok(Candidate {
+            encoded_rid,
+            id,
+            document,
         })
-        .collect()
+    })
+    .collect()
 }
 
 fn safe_pushdowns(
@@ -709,7 +785,31 @@ fn with_create_mutation<R>(
         return body(&mut active.catalog);
     }
     conn.wait_for_catalog()?;
-    schema_mutation(conn, body)
+    if table_was_missing {
+        return schema_mutation(conn, body);
+    }
+
+    // An existing-table CREATE is a data mutation. It needs the catalog to
+    // validate and lower the record, but it must not republish an unchanged
+    // catalog generation (which would invalidate every prepared SELECT after
+    // every insert).
+    // Keep the schema mutex through commit so a concurrent standalone DEFINE
+    // cannot publish a stricter schema after this validation snapshot but
+    // before the record mutation.
+    let _schema_guard = conn
+        .coordinator
+        .schema_mutex
+        .lock()
+        .map_err(|_| FastDbError::Transaction("database schema mutex is poisoned".into()))?;
+    conn.wait_for_catalog()?;
+    let mut catalog = conn
+        .coordinator
+        .catalog
+        .read()
+        .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+        .clone()
+        .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
+    data_mutation(conn, execution, || body(&mut catalog))
 }
 
 fn with_schema_mutation<R>(
@@ -905,6 +1005,7 @@ fn schema_mutation<R>(
         .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
     let result = conn.with_transaction(|| body(&mut candidate))?;
     *cache = Some(candidate);
+    conn.coordinator.publish_catalog_generation();
     Ok(result)
 }
 

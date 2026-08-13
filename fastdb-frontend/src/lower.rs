@@ -10,7 +10,7 @@ use turso_parser::ast::*;
 pub type Bindings = Vec<Value>;
 pub(crate) const TRANSLATED_INPUT: &str = "<fastdb-translated>";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PredicateOperator {
     Equal,
     Less,

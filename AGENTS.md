@@ -8,7 +8,7 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. For Phase 3, [`plan-phase3.md`](plan-phase3.md) is the authoritative execution plan and Definition of Done. [`docs/phase0-report.md`](docs/phase0-report.md), [`docs/phase1-report.md`](docs/phase1-report.md), and [`docs/phase2-report.md`](docs/phase2-report.md) preserve completed evidence.
+3. Read the plan for the active phase. Phase 5 is the completed technical baseline; [`plan-phase5.md`](plan-phase5.md) and [`docs/phase5-report.md`](docs/phase5-report.md) preserve its historical gates and evidence. Author a new authoritative phase plan before broadening the compatibility surface. Earlier phase reports preserve their completed evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -26,7 +26,7 @@ Do not silently resolve a material architectural contradiction. Record it and fo
 
 ## Project in One Paragraph
 
-FastDB is a clean-room, SurrealQL-compatible document database frontend built on a pinned fork of Turso. It provides its own parser, AST, compatibility contract, execution frontend, embedded asynchronous Rust API, and CLI while using Turso for durable storage, transactions, WAL, JSONB, query execution, and indexes. The MVP intentionally supports a documented SurrealQL subset rather than claiming complete SurrealDB compatibility. The code is intended to be publicly developed under a source-available/community plus commercial licensing model, with a future managed service at `cloud.fastdb.org`.
+FastDB is a clean-room, SurrealQL-compatible document database frontend built on a pinned fork of Turso. It provides its own parser, AST, compatibility contract, execution frontend, embedded asynchronous Rust API, and CLI while using Turso for durable storage, transactions, WAL, JSONB, query execution, and indexes. The MVP intentionally supports a documented SurrealQL subset rather than claiming complete SurrealDB compatibility. FastDB Core is publicly developed as MIT-licensed open-source software. A future managed FastDB Cloud service may be developed separately as proprietary software.
 
 ## Current Baselines and State
 
@@ -34,7 +34,7 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Behavioral compatibility reference: SurrealDB `v3.1.5`.
 - Durability default: stable Turso WAL with full durability.
 - Delivery surfaces for the MVP: an embedded Rust library and the `fastdb` CLI.
-- Current implementation stage: Core Phase 3, the CRUD, parameter, result, script, and transaction work described in `plan-phase3.md`.
+- Current implementation stage: Core Phase 5 release hardening is technically complete. Compatibility expansion toward the first public alpha is next; verification is local and GitHub Actions is not an alpha release gate.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.
@@ -102,22 +102,22 @@ It must not copy, translate, adapt, or vendor SurrealDB source code, test files,
 
 ## Licensing and Provenance
 
-The intended model for FastDB-authored code is:
+FastDB-authored Core code is licensed under the MIT License in `LICENSE.md`.
+This is an open-source grant without a field-of-use restriction. A future
+closed-source FastDB Cloud service may use Core under MIT, but that service is
+a separate product boundary and does not alter or revoke Core's MIT terms.
 
-- BSL 1.1 Community License with a counsel-drafted Additional Use Grant allowing normal internal production use, self-hosting, modification, redistribution, and applications that use FastDB internally, while restricting a competing managed database service.
-- A commercial license for prohibited managed-service use, qualifying OEM use, and customers needing other terms.
-- Apache-2.0 as the Change License, initially expected four years after each version's first public release, subject to counsel's final terms.
+All inherited Turso files retain their MIT notices and permissions. Preserve
+every inherited copyright and license notice and keep upstream and
+FastDB-authored file provenance mechanically auditable. Contributions to
+FastDB Core must be compatible with MIT; the former BSL/commercial/change-
+license model and its CLA/entity approval blockers no longer apply.
 
-Before its Change Date this is **source-available, not OSI open source**. Use that language accurately. Do not draft informal license text or make trademark/compatibility promises.
-
-All inherited Turso files retain their MIT notices and permissions. Keep upstream and FastDB-authored file provenance mechanically auditable. Dual licensing requires sufficient relicensing rights, so a counsel-approved CLA is required before accepting material third-party contributions; a DCO alone is insufficient for this model.
-
-Until final license, CLA, and entity decisions are approved:
-
-- Set new FastDB crates to `publish = false`.
-- Do not use `license.workspace = true` for FastDB-authored crates.
-- Do not publish releases or accept third-party contributions.
-- Preserve every inherited copyright and MIT notice.
+Keep new FastDB crates at version `0.0.0` and `publish = false` until an
+explicit alpha packaging decision. These fields prevent accidental package
+publication; they are not license restrictions. Record FastDB package
+metadata as `license = "MIT"`. Do not publish, tag, or upload a release unless
+the user explicitly authorizes that release operation.
 
 ## Repository and Upstream Policy
 
@@ -126,7 +126,9 @@ This workspace is to become one monorepo based on Turso's Git history. Do not cr
 - Preserve the planning documents while importing the Turso history.
 - Configure the official Turso repository as the `upstream` remote.
 - Record the audited engine SHA in machine-readable project metadata and CI output.
-- Keep FastDB crates and later service components in the same workspace.
+- Keep FastDB Core crates in the same workspace. A future proprietary cloud
+  service may live in a separate private repository and must not be required
+  to build, test, or use Core.
 - Regularly review upstream changes, but integrate only an exact audited SHA through a dedicated upstream-sync branch after relevant FastDB and unchanged Turso tests pass.
 - Preserve public FastDB history with explicit upstream merge commits. Do not rebase or force-push shared branches to update the engine.
 - Preserve unrelated user changes and never use destructive Git operations to simplify an import or update.
@@ -146,13 +148,13 @@ Keep work within the active phase unless the user explicitly changes scope.
 | 4 | Deliver the embedded Rust API and CLI. |
 | 5 | Fuzz, crash-test, benchmark, document, and harden the MVP for release. |
 
-Phase 2 established stable format version 1. Phase 3 completes the synchronous frontend CRUD, expression, parameter, result, script, and explicit transaction semantics defined in `plan-phase3.md`. The asynchronous public API, transaction guard, CLI, release hardening, and cloud service remain later phases.
+Phase 2 established stable format version 1, Phase 3 completed the synchronous frontend contract, Phase 4 delivered the worker-backed asynchronous Rust API, transaction guard, and CLI, and Phase 5 completed local hardening. Broader compatibility work toward alpha is the next Core track; the proprietary cloud service remains later and separate.
 
 ## Cloud and Business Context
 
 The planned business is a managed FastDB service at `cloud.fastdb.org`, but cloud implementation is not on the Phase 1 critical path.
 
-- Local and permitted self-hosted use should remain available under the Community License terms.
+- Local and self-hosted Core use is available under the MIT License.
 - Do not assume a permanent free managed tier; the initial hypothesis is bounded `$5`, `$20`, and `$100` plans, with a capped trial or one-time credit if economical.
 - Pricing is a hypothesis, not a promise. Model storage, requests, compute, egress, backups, support, and abuse before publishing prices.
 - Object storage does not make the service cheap by merely uploading live SQLite files. A safe design needs immutable blocks/segments, manifests, conditional publication, caching, recovery, compaction, and garbage collection.
@@ -199,6 +201,6 @@ For each task:
 6. Review the diff for generated SQL, provenance, accidental core edits, silent syntax acceptance, and unrelated changes.
 7. Report the outcome, commands run, remaining risks, and any stop condition.
 
-Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. For Phase 3, use the final report structure in `plan-phase3.md` and lead with the proceed/stop decision and its evidence.
+Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. Phase 5's original release stop is retained as historical evidence in its report and superseded by the MIT/private-cloud decision recorded in `docs/licensing.md` and the current gates in `docs/release-readiness.md`.
 
 Update this file only when durable project-wide decisions change. Put detailed implementation recipes in phase plans, observed results in reports, and temporary work status in normal task tracking.

@@ -10,7 +10,7 @@ use crate::error::{FastDbError, Result};
 use crate::execute;
 use crate::test_failpoints::{Failpoint, Failpoints};
 use crate::{Params, QueryResponse, StatementResult};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,6 +31,7 @@ pub(crate) struct Coordinator {
     schema_lease: Mutex<Option<u64>>,
     schema_lease_changed: Condvar,
     next_connection_id: AtomicU64,
+    catalog_generation: AtomicU64,
 }
 
 impl Coordinator {
@@ -41,11 +42,20 @@ impl Coordinator {
             schema_lease: Mutex::new(None),
             schema_lease_changed: Condvar::new(),
             next_connection_id: AtomicU64::new(1),
+            catalog_generation: AtomicU64::new(0),
         }
     }
 
     fn connection_id(&self) -> u64 {
         self.next_connection_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub(crate) fn catalog_generation(&self) -> u64 {
+        self.catalog_generation.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn publish_catalog_generation(&self) {
+        self.catalog_generation.fetch_add(1, Ordering::AcqRel);
     }
 
     pub(crate) fn wait_for_catalog(&self, connection_id: u64) -> Result<()> {
@@ -156,6 +166,7 @@ impl Database {
             }
         } else {
             *cached = Some(loaded);
+            self.coordinator.publish_catalog_generation();
         }
         Ok(())
     }
@@ -205,6 +216,139 @@ pub struct Connection {
     failpoints: Failpoints,
     connection_id: u64,
     execution: Mutex<ExecutionState>,
+    parse_cache: Mutex<ParseCache>,
+    prepared_select_cache: Mutex<PreparedSelectCache>,
+}
+
+const PARSE_CACHE_MAX_ENTRIES: usize = 128;
+const PARSE_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
+const PARSE_CACHE_MAX_SOURCE_BYTES: usize = 64 * 1024;
+const PREPARED_SELECT_CACHE_MAX_ENTRIES: usize = 64;
+
+#[derive(Default)]
+struct ParseCache {
+    entries: VecDeque<ParsedSource>,
+    source_bytes: usize,
+    hits: u64,
+    misses: u64,
+}
+
+struct ParsedSource {
+    source: String,
+    statements: Vec<turso_fastdb_parser::Statement>,
+}
+
+impl ParseCache {
+    fn get(&mut self, source: &str) -> Option<Vec<turso_fastdb_parser::Statement>> {
+        if source.len() > PARSE_CACHE_MAX_SOURCE_BYTES {
+            self.misses += 1;
+            return None;
+        }
+        let Some(position) = self.entries.iter().position(|entry| entry.source == source) else {
+            self.misses += 1;
+            return None;
+        };
+        let entry = self
+            .entries
+            .remove(position)
+            .expect("parse cache position came from the same deque");
+        let statements = entry.statements.clone();
+        self.entries.push_back(entry);
+        self.hits += 1;
+        Some(statements)
+    }
+
+    fn insert(&mut self, source: &str, statements: Vec<turso_fastdb_parser::Statement>) {
+        if source.len() > PARSE_CACHE_MAX_SOURCE_BYTES {
+            return;
+        }
+        if let Some(position) = self.entries.iter().position(|entry| entry.source == source) {
+            let previous = self
+                .entries
+                .remove(position)
+                .expect("parse cache position came from the same deque");
+            self.source_bytes -= previous.source.len();
+        }
+        self.source_bytes += source.len();
+        self.entries.push_back(ParsedSource {
+            source: source.to_owned(),
+            statements,
+        });
+        while self.entries.len() > PARSE_CACHE_MAX_ENTRIES
+            || self.source_bytes > PARSE_CACHE_MAX_BYTES
+        {
+            let evicted = self
+                .entries
+                .pop_front()
+                .expect("an over-limit parse cache cannot be empty");
+            self.source_bytes -= evicted.source.len();
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.source_bytes = 0;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreparedSelectKey {
+    catalog_generation: u64,
+    physical_table: String,
+    uses_rid: bool,
+    predicates: Vec<(String, crate::lower::PredicateOperator, ScalarKind)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScalarKind {
+    Null,
+    Bool,
+    Integer,
+    Float,
+    String,
+}
+
+struct PreparedSelectEntry {
+    key: PreparedSelectKey,
+    statement: turso_core::Statement,
+}
+
+#[derive(Default)]
+struct PreparedSelectCache {
+    generation: u64,
+    entries: VecDeque<PreparedSelectEntry>,
+    hits: u64,
+    misses: u64,
+}
+
+impl PreparedSelectCache {
+    fn sync_generation(&mut self, generation: u64) {
+        if self.generation != generation {
+            self.entries.clear();
+            self.generation = generation;
+        }
+    }
+
+    fn take(&mut self, key: &PreparedSelectKey) -> Option<turso_core::Statement> {
+        let Some(position) = self.entries.iter().position(|entry| &entry.key == key) else {
+            self.misses += 1;
+            return None;
+        };
+        self.hits += 1;
+        self.entries.remove(position).map(|entry| entry.statement)
+    }
+
+    fn insert(&mut self, key: PreparedSelectKey, statement: turso_core::Statement) {
+        if self.entries.len() == PREPARED_SELECT_CACHE_MAX_ENTRIES {
+            self.entries.pop_front();
+        }
+        self.entries
+            .push_back(PreparedSelectEntry { key, statement });
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
 }
 
 pub(crate) struct ExecutionState {
@@ -240,6 +384,8 @@ impl Connection {
             execution: Mutex::new(ExecutionState {
                 transaction: TransactionState::Idle,
             }),
+            parse_cache: Mutex::new(ParseCache::default()),
+            prepared_select_cache: Mutex::new(PreparedSelectCache::default()),
         }
     }
 
@@ -259,26 +405,75 @@ impl Connection {
             ));
         }
         if let Err(error) = crate::validate_params(params) {
+            self.invalidate_caches();
             return Err(self.poison_after_error(&mut execution, error));
         }
 
-        let mut cursor = turso_fastdb_parser::StatementCursor::new(source);
         let mut statements = Vec::new();
+        let mut mutation_count = 0_u64;
+        let cached = self
+            .parse_cache
+            .lock()
+            .map_err(|_| FastDbError::Engine("parse cache lock is poisoned".into()))?
+            .get(source);
+        let mut parsed_for_cache = Vec::new();
+        let mut cursor = cached
+            .is_none()
+            .then(|| turso_fastdb_parser::StatementCursor::new(source));
+        let mut cached = cached.unwrap_or_default().into_iter();
         loop {
-            let statement = match cursor.next_statement() {
-                Ok(Some(statement)) => statement,
-                Ok(None) => break,
-                Err(error) => {
-                    let error = FastDbError::from(error);
-                    return Err(self.poison_after_error(&mut execution, error));
+            let statement = if let Some(cursor) = cursor.as_mut() {
+                match cursor.next_statement() {
+                    Ok(Some(statement)) => {
+                        parsed_for_cache.push(statement.clone());
+                        Some(statement)
+                    }
+                    Ok(None) => None,
+                    Err(error) => {
+                        self.invalidate_caches();
+                        let error = FastDbError::from(error);
+                        return Err(self.poison_after_error(&mut execution, error));
+                    }
                 }
+            } else {
+                cached.next()
+            };
+            let Some(statement) = statement else {
+                break;
             };
             match execute::run_statement(self, &mut execution, statement, source, params) {
-                Ok(result) => statements.push(result),
-                Err(error) => return Err(self.poison_after_error(&mut execution, error)),
+                Ok(result) => {
+                    statements.push(result.result);
+                    mutation_count = mutation_count
+                        .checked_add(result.mutation_count)
+                        .ok_or_else(|| {
+                            FastDbError::Engine("request mutation count overflowed u64".into())
+                        })?;
+                }
+                Err(error) => {
+                    self.invalidate_caches();
+                    return Err(self.poison_after_error(&mut execution, error));
+                }
             }
         }
-        Ok(QueryResponse::new(statements))
+        if cursor.is_some() {
+            self.parse_cache
+                .lock()
+                .map_err(|_| FastDbError::Engine("parse cache lock is poisoned".into()))?
+                .insert(source, parsed_for_cache);
+        }
+        Ok(QueryResponse::new(statements, mutation_count))
+    }
+
+    /// Cooperatively interrupt the currently active engine statement.
+    pub fn interrupt(&self) {
+        self.conn.interrupt();
+    }
+
+    /// Close this connection and request the engine's clean-shutdown checkpoint.
+    pub fn close(&self) -> Result<()> {
+        self.invalidate_caches();
+        self.conn.close().map_err(FastDbError::from)
     }
 
     pub(crate) fn begin_explicit(&self, state: &mut ExecutionState) -> Result<StatementResult> {
@@ -301,6 +496,7 @@ impl Connection {
             }
         }
         self.coordinator.wait_for_catalog(self.connection_id)?;
+        self.invalidate_prepared_cache();
         self.exec_bound(crate::lower::begin_immediate(), vec![])?;
         let catalog = self
             .coordinator
@@ -347,9 +543,11 @@ impl Connection {
                         .into(),
                 ));
             }
+            self.coordinator.publish_catalog_generation();
         }
         state.transaction = TransactionState::Idle;
         self.coordinator.release_schema_lease(self.connection_id);
+        self.invalidate_prepared_cache();
         Ok(StatementResult::None)
     }
 
@@ -382,6 +580,7 @@ impl Connection {
                 ))
             }
         }
+        self.invalidate_prepared_cache();
         Ok(StatementResult::None)
     }
 
@@ -521,6 +720,7 @@ impl Connection {
             .write()
             .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?;
         *cache = Some(loaded);
+        self.coordinator.publish_catalog_generation();
         Ok(())
     }
 
@@ -695,6 +895,136 @@ impl Connection {
             Ok(())
         })?;
         Ok(rows)
+    }
+
+    pub(crate) fn collect_select_candidates(
+        &self,
+        stmt: Stmt,
+        bindings: crate::lower::Bindings,
+        physical_table: &str,
+        uses_rid: bool,
+        predicates: &[(String, crate::lower::PredicateOperator, crate::Value)],
+        allow_cache: bool,
+    ) -> Result<Vec<Vec<Value>>> {
+        if !allow_cache {
+            return self.collect_rows(stmt, bindings);
+        }
+        let generation = self.coordinator.catalog_generation();
+        let key = PreparedSelectKey {
+            catalog_generation: generation,
+            physical_table: physical_table.to_owned(),
+            uses_rid,
+            predicates: predicates
+                .iter()
+                .map(|(path, operator, value)| Ok((path.clone(), *operator, scalar_kind(value)?)))
+                .collect::<Result<Vec<_>>>()?,
+        };
+        let cached_statement = {
+            let mut cache = self.prepared_select_cache.lock().map_err(|_| {
+                FastDbError::Engine("prepared SELECT cache lock is poisoned".into())
+            })?;
+            cache.sync_generation(generation);
+            cache.take(&key)
+        };
+        let mut statement = match cached_statement {
+            Some(statement) => statement,
+            None => match self.prepare_translated(stmt) {
+                Ok(statement) => statement,
+                Err(error) => {
+                    self.invalidate_caches();
+                    return Err(error);
+                }
+            },
+        };
+        statement.clear_bindings();
+        if let Err(error) = bind_all(&mut statement, &bindings) {
+            self.invalidate_caches();
+            return Err(error);
+        }
+        let mut rows = Vec::new();
+        if let Err(error) = statement.run_with_row_callback(|row| {
+            rows.push(row.get_values().cloned().collect());
+            Ok(())
+        }) {
+            self.invalidate_caches();
+            return Err(error.into());
+        }
+        if let Err(error) = statement.reset() {
+            self.invalidate_caches();
+            return Err(error.into());
+        }
+        statement.clear_bindings();
+        let mut cache = self
+            .prepared_select_cache
+            .lock()
+            .map_err(|_| FastDbError::Engine("prepared SELECT cache lock is poisoned".into()))?;
+        cache.sync_generation(self.coordinator.catalog_generation());
+        if cache.generation == generation {
+            cache.insert(key, statement);
+        }
+        Ok(rows)
+    }
+
+    fn invalidate_caches(&self) {
+        if let Ok(mut cache) = self.parse_cache.lock() {
+            cache.clear();
+        }
+        if let Ok(mut cache) = self.prepared_select_cache.lock() {
+            cache.clear();
+        }
+    }
+
+    fn invalidate_prepared_cache(&self) {
+        if let Ok(mut cache) = self.prepared_select_cache.lock() {
+            cache.clear();
+        }
+    }
+
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn cache_stats(&self) -> Result<CacheStats> {
+        let parse = self
+            .parse_cache
+            .lock()
+            .map_err(|_| FastDbError::Engine("parse cache lock is poisoned".into()))?;
+        let prepared = self
+            .prepared_select_cache
+            .lock()
+            .map_err(|_| FastDbError::Engine("prepared SELECT cache lock is poisoned".into()))?;
+        Ok(CacheStats {
+            parse_entries: parse.entries.len(),
+            parse_source_bytes: parse.source_bytes,
+            parse_hits: parse.hits,
+            parse_misses: parse.misses,
+            prepared_entries: prepared.entries.len(),
+            prepared_hits: prepared.hits,
+            prepared_misses: prepared.misses,
+        })
+    }
+}
+
+#[cfg(feature = "testing")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheStats {
+    pub parse_entries: usize,
+    pub parse_source_bytes: usize,
+    pub parse_hits: u64,
+    pub parse_misses: u64,
+    pub prepared_entries: usize,
+    pub prepared_hits: u64,
+    pub prepared_misses: u64,
+}
+
+fn scalar_kind(value: &crate::Value) -> Result<ScalarKind> {
+    match value {
+        crate::Value::Null => Ok(ScalarKind::Null),
+        crate::Value::Bool(_) => Ok(ScalarKind::Bool),
+        crate::Value::Integer(_) => Ok(ScalarKind::Integer),
+        crate::Value::Float(_) => Ok(ScalarKind::Float),
+        crate::Value::Str(_) => Ok(ScalarKind::String),
+        crate::Value::Array(_) | crate::Value::Object(_) | crate::Value::RecordId(_) => Err(
+            FastDbError::Engine("prepared SELECT cache received a non-scalar predicate".into()),
+        ),
     }
 }
 

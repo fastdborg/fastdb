@@ -1,9 +1,10 @@
 # FastDB parser crate (Phase 0). FastDB-authored.
-# publish = false and no license field: see docs/licensing.md.
+# MIT licensed; publish stays disabled until explicit alpha packaging.
 [package]
 name = "turso_fastdb_parser"
 version = "0.0.0"
 edition = "2021"
+license = "MIT"
 publish = false
 
 [dependencies]

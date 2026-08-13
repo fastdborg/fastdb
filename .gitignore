@@ -13,6 +13,10 @@
 !/fastdb-parser/fuzz/corpus/parse/schema
 !/fastdb-parser/fuzz/corpus/parse/select
 !/fastdb-parser/fuzz/corpus/parse/transactions
+/fastdb-tests/fuzz/artifacts/
+/fastdb-tests/fuzz/corpus/structured_crud/*
+!/fastdb-tests/fuzz/corpus/structured_crud/create_update_read
+!/fastdb-tests/fuzz/corpus/structured_crud/delete_rollback
 
 *.so
 *.dylib
@@ -117,3 +121,4 @@ dhat-heap.json
 
 # pgregress actual output and diffs
 postgres/regress/results/
+docs/benchmarks

@@ -3,14 +3,23 @@
 name = "turso_fastdb_benchmarks"
 version = "0.0.0"
 edition = "2021"
+license = "MIT"
 publish = false
 
 [dependencies]
+fastdb = { path = "../fastdb-api" }
 turso_fastdb = { path = "../fastdb-frontend", features = ["testing"] }
 turso_core = { workspace = true }
 tempfile = { workspace = true }
 criterion = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }
+uuid = { version = "1.11.0", features = ["v7"] }
 
 [[bench]]
 name = "phase0"
 harness = false
+
+[[bin]]
+name = "phase5-release-bench"
+path = "src/bin/phase5_release.rs"

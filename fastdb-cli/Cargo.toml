@@ -1,0 +1,21 @@
+# FastDB command-line interface. FastDB-authored.
+[package]
+name = "fastdb-cli"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "fastdb"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+fastdb = { path = "../fastdb-api" }
+futures = { workspace = true }
+serde_json = { workspace = true }
+turso_fastdb_parser = { path = "../fastdb-parser" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

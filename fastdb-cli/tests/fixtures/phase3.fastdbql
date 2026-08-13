@@ -1,0 +1,9 @@
+DEFINE TABLE person SCHEMAFULL;
+DEFINE FIELD name ON person TYPE string;
+DEFINE FIELD score ON person TYPE int;
+DEFINE INDEX by_score ON person FIELDS score;
+CREATE person:one CONTENT { name: 'One', score: 1 } RETURN NONE;
+CREATE person:two CONTENT { name: 'Two', score: 2 };
+UPDATE person:one SET score = score + 1 RETURN NONE;
+SELECT id, name, score FROM person WHERE score >= 2 ORDER BY id;
+DELETE person:two RETURN BEFORE;

@@ -59,11 +59,16 @@ pub enum StatementResult {
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryResponse {
     pub statements: Vec<StatementResult>,
+    /// Exact number of records created, updated, or deleted by the request.
+    pub mutation_count: u64,
 }
 
 impl QueryResponse {
-    pub(crate) fn new(statements: Vec<StatementResult>) -> Self {
-        Self { statements }
+    pub(crate) fn new(statements: Vec<StatementResult>, mutation_count: u64) -> Self {
+        Self {
+            statements,
+            mutation_count,
+        }
     }
 
     /// Phase 0-2 test adapter. New code must inspect [`Self::statements`].

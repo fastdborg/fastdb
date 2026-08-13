@@ -1,71 +1,67 @@
 # Licensing Decision Record
 
-Status: policy direction approved; final text pending qualified legal
-counsel. This record summarizes the direction from `revised_plan.md`
-section 1.3 and the constraints in force **now**, before counsel
-finalizes terms. It is not license text.
+Status: approved by the project owner on 2026-08-13
 
-## Intended model (subject to counsel)
+This decision supersedes the earlier proposed BSL/community, commercial, and
+change-license model recorded in historical phase documents.
 
-FastDB-authored code is intended to be dual/triple-licensed:
+## FastDB Core
 
-1. **Community License** — Business Source License 1.1 (BSL 1.1) with a
-   narrowly drafted Additional Use Grant permitting internal production
-   use, self-hosting, modification, redistribution, and applications that
-   use FastDB internally, while restricting offering FastDB as a competing
-   hosted/managed database service.
-2. **Commercial License** — for prohibited managed-service use, qualifying
-   OEM redistribution, and customers needing other terms.
-3. **Change License** — Apache License 2.0, taking effect no later than
-   the maximum period BSL 1.1 permits. The initial preference is four
-   years after each version's first public release. Counsel chooses the
-   exact Change Date.
+FastDB-authored Core code is open-source software under the MIT License in
+`LICENSE.md`. FastDB package manifests identify that license with
+`license = "MIT"`.
 
-Until the Change Date, FastDB is **source-available, not OSI open
-source**. The Open Source Definition does not permit discriminating
-against a field of endeavor, so a current license cannot both be open
-source and forbid competing cloud services. Documentation must use
-"source-available" accurately and must not market pre-Change-Date
-releases as open source.
+MIT permits use, copying, modification, merging, publication, distribution,
+sublicensing, sale, and managed-service use subject to preserving the license
+notice and disclaimer. These rights cannot later be withdrawn from copies
+already distributed under MIT.
+
+Core packages remain version `0.0.0` and `publish = false` until the project
+owner deliberately packages the first public alpha. Those are release-safety
+controls, not restrictions on the MIT rights in the source.
 
 ## Inherited Turso code
 
-All inherited Turso files retain their MIT notices and permissions
-(`LICENSE.md`, `NOTICE.md`, `CONTRIBUTING.md` at the repository root).
-The FastDB license governs FastDB-authored files and the combined
-distribution; it cannot revoke permissions already granted for upstream
-Turso code. File provenance stays mechanically auditable.
+All inherited Turso files retain their existing MIT notices and permissions.
+The repository license lists both the Turso and FastDB authors, and
+`NOTICE.md` keeps inherited dependency notices intact. File provenance must
+remain mechanically auditable during upstream synchronization and release
+review.
 
-## Constraints in force NOW (before counsel finalizes terms)
+## Contributions
 
-Until final license files, CLA, legal entity, and trademark policy are
-approved by counsel:
+Contributions accepted into FastDB Core must be provided on terms compatible
+with MIT. The retired dual-license model's special relicensing CLA, commercial
+license, Change License, and legal-entity approval are not Core release
+blockers. A separate contribution guide or DCO may be adopted as project
+governance before opening public contribution intake; it must not contradict
+the MIT license already granted for Core.
 
-- New FastDB crates are `publish = false` in their manifests.
-- FastDB-authored crates do **not** use `license.workspace = true`
-  (the Turso workspace license is MIT; inheriting it would falsely state
-  that new FastDB-authored files are MIT).
-- No FastDB release is published.
-- No material third-party contribution is accepted. Dual licensing
-  requires sufficient relicensing rights, so a counsel-approved CLA is
-  required (a DCO alone is insufficient). A DCO may be added in addition
-  to the CLA, not instead of it.
-- No informal license text is drafted in the repository. Counsel adapts
-  the standard BSL parameters and publishes practical examples.
-- No trademark or compatibility promises are made.
+## Proprietary FastDB Cloud boundary
 
-## Provenance and relicensing rights
+A future FastDB Cloud service may be developed as closed-source proprietary
+software. It may use FastDB Core under MIT, but it is a separate product
+boundary. Cloud-only control-plane, orchestration, billing, operations,
+customer, and infrastructure code or data need not be published.
 
-Dual licensing requires the project to retain sufficient relicensing
-rights. Contributors retain copyright but grant the FastDB legal entity
-the licenses needed to distribute contributions under the Community,
-Commercial, and Change Licenses (via the CLA above). The legal entity,
-CLA, privacy terms, and trademark policy are established before accepting
-material external code.
+Private Cloud components must not be required to build, test, use, modify, or
+self-host Core. The proprietary service model does not alter, narrow, or
+revoke anyone's MIT rights in Core, including the right to operate a competing
+service using Core.
 
-## What this means for Phase 0
+## Product name and compatibility wording
 
-Phase 0 crates carry `publish = false`, no `license`/`license-file` field
-inheriting MIT, and clear provenance (FastDB-authored files live in new
-crates). The Phase 0 report records this legal block. No Phase 0 artifact
-makes a licensing, trademark, or compatibility promise.
+The project owner has approved the FastDB product name and the phrase
+"SurrealQL-compatible subset" for the current development stage. That phrase
+describes a tested behavioral target only. It does not imply sponsorship,
+affiliation, certification, ownership of third-party marks, or complete
+compatibility. `CLEAN_ROOM.md` remains normative for compatibility research.
+
+## Release process
+
+The former license, CLA, entity, trademark, and remote-CI approval items no
+longer block Core feature development or the first public alpha. Local
+verification is authoritative during this period. Before that alpha is cut,
+the project must rerun the full local matrix and perform the human
+artifact/documentation review in `docs/release-readiness.md`. GitHub Actions
+may be reconsidered later, but is not an alpha gate.

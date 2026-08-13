@@ -1,3 +1,10 @@
+FastDB
+======
+
+FastDB-authored additions are Copyright 2026 the FastDB authors and are
+licensed under the MIT License in LICENSE.md. This monorepo derives from
+Turso; inherited notices and permissions are preserved below.
+
 Turso
 =====
 

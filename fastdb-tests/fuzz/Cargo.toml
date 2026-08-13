@@ -1,0 +1,23 @@
+[package]
+name = "turso-fastdb-structured-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+turso_fastdb = { path = "../../fastdb-frontend" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "structured_crud"
+path = "fuzz_targets/structured_crud.rs"
+test = false
+doc = false
+bench = false

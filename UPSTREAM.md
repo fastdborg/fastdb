@@ -71,13 +71,13 @@ merge, cherry-pick, or conflict resolution.
 ## Notice preservation and provenance
 
 - Every inherited Turso file retains its MIT notice and permissions.
-  `LICENSE.md`, `NOTICE.md`, and `CONTRIBUTING.md` at the repository root
-  are inherited from Turso and preserved.
+  The inherited contents of `LICENSE.md`, `NOTICE.md`, and `CONTRIBUTING.md`
+  are preserved; the first two also carry FastDB's MIT notice.
 - File provenance stays mechanically auditable: inherited files are
   unchanged FastDB-vs-upstream diffs; FastDB-authored files live in new
   crates/directories.
-- See `docs/licensing.md` for the FastDB licensing direction and the
-  block on publishing and third-party contributions pending counsel.
+- See `docs/licensing.md` for the approved MIT Core license, proprietary Cloud
+  boundary, contribution terms, and pre-alpha package-publication controls.
 - One upstream root doc was relocated to avoid a name collision with the
   FastDB normative matrix: Turso's SQLite compatibility doc was moved
   `COMPAT.md` → `docs/upstream-turso-sqlite-compat.md` (content and
