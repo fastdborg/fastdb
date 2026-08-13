@@ -129,7 +129,7 @@ pub struct IndexDefinition {
     pub physical_columns: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableDefinition {
     pub id: CatalogId,
     pub logical_name: String,
@@ -140,6 +140,9 @@ pub struct TableDefinition {
     pub relation_in_table_id: Option<CatalogId>,
     pub relation_out_table_id: Option<CatalogId>,
     pub relation_enforced: bool,
+    pub drop: bool,
+    pub permissions: turso_fastdb_parser::SchemaPermissions,
+    pub comment: Option<String>,
     pub fields: BTreeMap<String, FieldRule>,
     pub indexes: BTreeMap<String, IndexDefinition>,
 }
@@ -301,6 +304,9 @@ pub fn allocate_table(
         relation_in_table_id: None,
         relation_out_table_id: None,
         relation_enforced: false,
+        drop: false,
+        permissions: turso_fastdb_parser::SchemaPermissions::None,
+        comment: None,
         fields: BTreeMap::new(),
         indexes: BTreeMap::new(),
     })
@@ -542,6 +548,30 @@ pub fn persist_table(conn: &Connection, table: &TableDefinition) -> Result<()> {
     conn.exec_bound(statement, bindings)
 }
 
+pub fn replace_table(conn: &Connection, table: &TableDefinition) -> Result<()> {
+    let (statement, bindings) = lower::table_delete(&table.id.to_hex());
+    conn.exec_bound(statement, bindings)?;
+    persist_table(conn, table)
+}
+
+pub fn remove_table_catalog(conn: &Connection, table: &TableDefinition) -> Result<()> {
+    let table_id = table.id.to_hex();
+    for (statement, bindings) in [
+        lower::hidden_columns_delete_table(&table_id),
+        lower::indexes_delete_table(&table_id),
+        lower::fields_delete_table(&table_id),
+        lower::table_delete(&table_id),
+    ] {
+        conn.exec_bound(statement, bindings)?;
+    }
+    Ok(())
+}
+
+pub fn remove_capability(conn: &Connection, provider: &str) -> Result<()> {
+    let (statement, bindings) = lower::capability_delete(provider);
+    conn.exec_bound(statement, bindings)
+}
+
 pub fn persist_hidden_column(conn: &Connection, column: &HiddenColumnDefinition) -> Result<()> {
     let index_id = column.index_id.map(CatalogId::to_hex);
     let (statement, bindings) = lower::hidden_column_insert(
@@ -709,6 +739,11 @@ pub fn persist_field(conn: &Connection, table: &TableDefinition, field: &FieldRu
     conn.exec_bound(statement, bindings)
 }
 
+pub fn remove_field(conn: &Connection, table: &TableDefinition, path_key: &str) -> Result<()> {
+    let (statement, bindings) = lower::field_delete(&table.id.to_hex(), path_key);
+    conn.exec_bound(statement, bindings)
+}
+
 pub fn persist_index(
     conn: &Connection,
     table: &TableDefinition,
@@ -825,6 +860,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     validate_future_catalogs_empty(conn)?;
     load_fields(conn, &mut snapshot)?;
     load_indexes(conn, &mut snapshot)?;
+    validate_table_definition_ownership(&snapshot)?;
     validate_graph_catalog(&snapshot)?;
     validate_fts_catalog(&snapshot)?;
     validate_vector_catalog(&snapshot)?;
@@ -1355,6 +1391,37 @@ fn load_table_rows(
         } else {
             (TableKind::Normal, None, None, false)
         };
+        let (drop, permissions, comment) = definition.as_deref().map_or_else(
+            || Ok((false, turso_fastdb_parser::SchemaPermissions::None, None)),
+            |definition| {
+                let parsed = turso_fastdb_parser::parse_one(definition)
+                    .map_err(|_| FastDbError::format("stored table definition does not parse"))?;
+                let turso_fastdb_parser::Statement::DefineTable(statement) = parsed else {
+                    return Err(FastDbError::format(
+                        "stored table definition has the wrong statement kind",
+                    ));
+                };
+                if statement.name.value != logical_name || statement.mode.value != mode {
+                    return Err(FastDbError::format(
+                        "stored table definition disagrees with catalog identity or mode",
+                    ));
+                }
+                let definition_kind = match statement.kind {
+                    turso_fastdb_parser::TableKindSyntax::Normal { .. } => TableKind::Normal,
+                    turso_fastdb_parser::TableKindSyntax::Relation(_) => TableKind::Relation,
+                };
+                if definition_kind != kind {
+                    return Err(FastDbError::format(
+                        "stored table definition disagrees with catalog kind",
+                    ));
+                }
+                Ok((
+                    statement.drop.is_some(),
+                    statement.permissions,
+                    statement.comment.map(|comment| comment.value),
+                ))
+            },
+        )?;
         if !ids.insert(id)
             || !physical_names.insert(physical_name.clone())
             || tables
@@ -1370,6 +1437,9 @@ fn load_table_rows(
                         relation_in_table_id,
                         relation_out_table_id,
                         relation_enforced,
+                        drop,
+                        permissions,
+                        comment,
                         fields: BTreeMap::new(),
                         indexes: BTreeMap::new(),
                     },
@@ -1405,12 +1475,62 @@ fn load_fields(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> 
             ));
         }
         let definition = format_text(&row[4], "definition")?;
+        let parsed = turso_fastdb_parser::parse_one(&definition)
+            .map_err(|_| FastDbError::format("stored field definition does not parse"))?;
+        let turso_fastdb_parser::Statement::DefineField(parsed) = parsed else {
+            return Err(FastDbError::format(
+                "stored field definition has the wrong statement kind",
+            ));
+        };
+        let (_, parsed_path_key) = crate::path::parser_path(&parsed.path)
+            .map_err(|_| FastDbError::format("stored field definition has an invalid path"))?;
+        if parsed.table.value != table.logical_name
+            || parsed_path_key != path_key
+            || FieldType::from_parser(&parsed.ty) != ty
+        {
+            return Err(FastDbError::format(
+                "stored field definition disagrees with catalog ownership or type",
+            ));
+        }
+        let expression =
+            |value: turso_fastdb_parser::Expr| -> Result<crate::schema::SchemaExpression> {
+                let source = definition
+                    .get(value.span.offset..value.span.end())
+                    .ok_or_else(|| FastDbError::format("stored field expression span is invalid"))?
+                    .to_string();
+                Ok(crate::schema::SchemaExpression {
+                    expression: value,
+                    source,
+                })
+            };
+        let default_always = parsed
+            .default
+            .as_ref()
+            .is_some_and(|default| default.always.is_some());
+        let default = parsed
+            .default
+            .map(|default| expression(default.value))
+            .transpose()?;
+        let value = parsed.value.map(expression).transpose()?;
+        let assert = parsed.assert.map(expression).transpose()?;
+        for expression in default.iter().chain(value.iter()).chain(assert.iter()) {
+            crate::execute::validate_schema_expression_safety(&expression.expression)
+                .map_err(|_| FastDbError::format("stored field expression is context-unsafe"))?;
+        }
         let rule = FieldRule {
             path,
             path_key: path_key.clone(),
             ty,
             required,
             definition,
+            default,
+            default_always,
+            value,
+            assert,
+            readonly: parsed.readonly.is_some(),
+            reference: parsed.reference.is_some(),
+            permissions: parsed.permissions,
+            comment: parsed.comment.map(|comment| comment.value),
         };
         crate::schema::validate_field_relationships(table.fields.values(), &rule).map_err(
             |_| FastDbError::format("field catalog contains structurally contradictory paths"),
@@ -1429,6 +1549,53 @@ fn load_indexes(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()>
         true,
         true,
     )
+}
+
+fn validate_table_definition_ownership(snapshot: &CatalogSnapshot) -> Result<()> {
+    for table in snapshot.tables.values() {
+        let Some(definition) = &table.definition else {
+            continue;
+        };
+        let parsed = turso_fastdb_parser::parse_one(definition)
+            .map_err(|_| FastDbError::format("stored table definition does not parse"))?;
+        let turso_fastdb_parser::Statement::DefineTable(statement) = parsed else {
+            return Err(FastDbError::format(
+                "stored table definition has the wrong statement kind",
+            ));
+        };
+        let turso_fastdb_parser::TableKindSyntax::Relation(relation) = statement.kind else {
+            continue;
+        };
+        if relation.enforced.is_some() != table.relation_enforced {
+            return Err(FastDbError::format(
+                "stored relation definition disagrees with endpoint enforcement",
+            ));
+        }
+        for (declared, owned) in [
+            (relation.input, table.relation_in_table_id),
+            (relation.output, table.relation_out_table_id),
+        ] {
+            let declared = declared
+                .map(|endpoint| {
+                    snapshot
+                        .tables
+                        .get(&endpoint.value)
+                        .map(|table| table.id)
+                        .ok_or_else(|| {
+                            FastDbError::format(
+                                "stored relation definition names a missing endpoint table",
+                            )
+                        })
+                })
+                .transpose()?;
+            if declared != owned {
+                return Err(FastDbError::format(
+                    "stored relation definition disagrees with endpoint ownership",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load_indexes_v2(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> {

@@ -187,3 +187,62 @@ execution. Calls share a 10,000-call ceiling, a depth limit of 32, the caller's
 script/deadline budget, typed argument normalization, and redacted THROW
 behavior. Replacement and removal validate stored function call sites so they
 cannot publish a dangling or wrong-arity dependency.
+
+## Table and field schema
+
+Public `DEFINE TABLE`, `DEFINE FIELD`, `ALTER TABLE`, `ALTER FIELD`, `REMOVE`,
+and `INFO` documentation supplied clause candidates. Independent probes then
+fixed the behavior used by the implementation. In `v3.1.5`, an omitted table
+type canonicalized as `TYPE ANY`, while explicit `TYPE NORMAL` and `TYPE
+RELATION` remained distinct. FastDB currently reports mixed `TYPE ANY` as an
+explicit provider limitation because its Phase 7 storage contract gives normal
+and relation records different immutable physical representations; it does not
+silently map ANY to NORMAL.
+
+The fixed binary accepted `DROP`, schema mode, permissions, and comments on a
+table. DROP retained existing records and allowed deletion but rejected create
+and update. `INFO FOR DB` returned canonical table definitions, while `INFO FOR
+TABLE item` returned the five structured `events`, `fields`, `indexes`, `lives`,
+and `tables` objects. `ALTER TABLE IF EXISTS` was an idempotent no-op for a
+missing table. FastDB stores this metadata in the table definition owned by the
+opaque table catalog row, parses and ownership-checks it on reopen, and keeps
+permission enforcement reserved for Phase 18's non-Owner sessions.
+
+The following independently authored field family established mutation order
+and lifecycle behavior:
+
+```surql
+DEFINE TABLE item SCHEMAFULL TYPE NORMAL;
+DEFINE FIELD count ON item TYPE int DEFAULT ALWAYS 1 ASSERT $value >= 0;
+DEFINE FIELD stamp ON item TYPE number VALUE count + 1;
+DEFINE FIELD code ON item TYPE string READONLY;
+CREATE item:a SET code = 'fixed';
+UPDATE item:a SET count = 4;
+UPDATE item:a SET code = 'changed';
+UPDATE item:a SET count = NONE;
+ALTER FIELD code ON item DROP READONLY;
+REMOVE FIELD stamp ON item;
+INFO FOR TABLE item;
+```
+
+CREATE produced `count: 1` and `stamp: 2`; updating count to four recomputed
+stamp as five; the readonly update failed without mutation; setting count to
+NONE reapplied DEFAULT ALWAYS and recomputed stamp as two. Dropping READONLY
+allowed the later update. REMOVE FIELD removed only schema metadata: the
+already stored stamp value remained visible. A separate probe showed that
+defining a required defaulted field after an older record did not backfill that
+record in the reference; the next update failed type coercion while the
+document remained unchanged. An untyped field permitted the field to be
+missing in a schemafull table; FastDB's collision-safe `any` field rule follows
+that optional, unrestricted value behavior.
+
+FastDB applies defaults, computed VALUE expressions, type normalization,
+readonly checks, assertions, and all derived graph/FTS/vector maintenance in
+one statement transaction. Stored expression source and AST are reparsed and
+ownership-checked on reopen. Simple REFERENCE metadata is accepted only for
+record-valued fields; ON DELETE actions remain explicit until the dependency
+provider is implemented. Field removal refuses live index dependencies and
+removes catalog-owned native-vector columns and the last vector capability
+atomically. Union/literal types, FLEXIBLE, permission predicates, full
+reference actions, mixed table ANY, and views remain Partial rather than being
+accepted without behavior.

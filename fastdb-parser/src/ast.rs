@@ -85,6 +85,11 @@ pub enum Statement {
     AlterFunction(AlterFunctionStatement),
     RemoveFunction(RemoveFunctionStatement),
     InfoDatabase(InfoDatabaseStatement),
+    AlterTable(AlterTableStatement),
+    RemoveTable(RemoveTableStatement),
+    InfoTable(InfoTableStatement),
+    AlterField(AlterFieldStatement),
+    RemoveField(RemoveFieldStatement),
     Begin(TransactionStatement),
     Commit(TransactionStatement),
     Cancel(TransactionStatement),
@@ -118,6 +123,11 @@ impl Statement {
             Self::AlterFunction(stmt) => stmt.span,
             Self::RemoveFunction(stmt) => stmt.span,
             Self::InfoDatabase(stmt) => stmt.span,
+            Self::AlterTable(stmt) => stmt.span,
+            Self::RemoveTable(stmt) => stmt.span,
+            Self::InfoTable(stmt) => stmt.span,
+            Self::AlterField(stmt) => stmt.span,
+            Self::RemoveField(stmt) => stmt.span,
             Self::Begin(stmt) | Self::Commit(stmt) | Self::Cancel(stmt) => stmt.span,
         }
     }
@@ -411,9 +421,45 @@ pub enum ReturnKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DefineTableStatement {
     pub span: Span,
+    pub if_not_exists: Option<Span>,
+    pub overwrite: Option<Span>,
     pub name: Identifier,
+    pub drop: Option<Span>,
     pub mode: Spanned<TableMode>,
     pub kind: TableKindSyntax,
+    pub permissions: SchemaPermissions,
+    pub comment: Option<Spanned<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterTableStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub name: Identifier,
+    pub mode: Option<Spanned<TableMode>>,
+    pub permissions: Option<SchemaPermissions>,
+    pub comment: TableCommentChange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TableCommentChange {
+    #[default]
+    Unchanged,
+    Set(String),
+    Drop,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoveTableStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub name: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoTableStatement {
+    pub span: Span,
+    pub table: Identifier,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,10 +485,64 @@ pub struct RelationTableType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DefineFieldStatement {
     pub span: Span,
+    pub if_not_exists: Option<Span>,
+    pub overwrite: Option<Span>,
     pub path: FieldPath,
     pub table_keyword: Option<Span>,
     pub table: Identifier,
     pub ty: SchemaType,
+    pub default: Option<FieldDefaultClause>,
+    pub value: Option<Expr>,
+    pub assert: Option<Expr>,
+    pub readonly: Option<Span>,
+    pub reference: Option<Span>,
+    pub permissions: SchemaPermissions,
+    pub comment: Option<Spanned<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDefaultClause {
+    pub span: Span,
+    pub always: Option<Span>,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterFieldStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub path: FieldPath,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
+    pub change: AlterFieldChange,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlterFieldChange {
+    Type(SchemaType),
+    Default(FieldDefaultClause),
+    Value(Expr),
+    Assert(Expr),
+    Readonly,
+    Reference,
+    Permissions(SchemaPermissions),
+    Comment(String),
+    DropType,
+    DropDefault,
+    DropValue,
+    DropAssert,
+    DropReadonly,
+    DropReference,
+    DropComment,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoveFieldStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub path: FieldPath,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -522,6 +622,7 @@ pub struct SchemaType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SchemaTypeKind {
+    Any,
     Bool,
     Int,
     Float,

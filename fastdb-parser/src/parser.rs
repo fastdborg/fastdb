@@ -280,7 +280,7 @@ impl<'a> Parser<'a> {
             TokenKind::Explain => Statement::Explain(self.parse_explain()?),
             TokenKind::Remove => self.parse_remove()?,
             TokenKind::Rebuild => Statement::RebuildIndex(self.parse_index_maintenance(true)?),
-            TokenKind::Info => Statement::InfoDatabase(self.parse_info_database()?),
+            TokenKind::Info => self.parse_info()?,
             TokenKind::Begin => Statement::Begin(self.parse_transaction(TokenKind::Begin)?),
             TokenKind::Commit => Statement::Commit(self.parse_transaction(TokenKind::Commit)?),
             TokenKind::Cancel => Statement::Cancel(self.parse_transaction(TokenKind::Cancel)?),
@@ -1087,6 +1087,151 @@ impl<'a> Parser<'a> {
 
     fn parse_alter(&mut self) -> Result<Statement, ParseError> {
         let start = self.expect(&TokenKind::Alter, "keyword ALTER")?.span;
+        if self.eat(&TokenKind::Field) {
+            let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+                let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+                Some(if_token.span.union(exists.span))
+            } else {
+                None
+            };
+            let path = self.parse_field_path()?;
+            self.expect(&TokenKind::On, "keyword ON")?;
+            let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+            let table = self.expect_identifier("a table name")?;
+            let change = if self.eat(&TokenKind::Drop) {
+                if self.eat(&TokenKind::Type) {
+                    AlterFieldChange::DropType
+                } else if self.eat(&TokenKind::Default) {
+                    AlterFieldChange::DropDefault
+                } else if self.eat(&TokenKind::Value) {
+                    AlterFieldChange::DropValue
+                } else if self.eat(&TokenKind::Assert) {
+                    AlterFieldChange::DropAssert
+                } else if self.eat(&TokenKind::Readonly) {
+                    AlterFieldChange::DropReadonly
+                } else if self.eat(&TokenKind::Reference) {
+                    AlterFieldChange::DropReference
+                } else if self.eat(&TokenKind::Comment) {
+                    AlterFieldChange::DropComment
+                } else {
+                    return Err(self.unexpected("a supported field clause after DROP"));
+                }
+            } else if self.eat(&TokenKind::Type) {
+                AlterFieldChange::Type(self.parse_schema_type()?)
+            } else if let Some(token) = self.take(&TokenKind::Default) {
+                let always = self.take(&TokenKind::Always).map(|token| token.span);
+                let value = self.parse_expression()?;
+                AlterFieldChange::Default(FieldDefaultClause {
+                    span: token.span.union(value.span),
+                    always,
+                    value,
+                })
+            } else if self.eat(&TokenKind::Value) {
+                AlterFieldChange::Value(self.parse_expression()?)
+            } else if self.eat(&TokenKind::Assert) {
+                AlterFieldChange::Assert(self.parse_expression()?)
+            } else if self.eat(&TokenKind::Readonly) {
+                AlterFieldChange::Readonly
+            } else if self.eat(&TokenKind::Reference) {
+                if self.at(&TokenKind::On) {
+                    return Err(ParseError::unsupported(
+                        "REFERENCE ON DELETE actions require the Phase 15 reference provider",
+                        self.peek().span,
+                    ));
+                }
+                AlterFieldChange::Reference
+            } else if self.at(&TokenKind::Permissions) {
+                AlterFieldChange::Permissions(
+                    self.parse_schema_permissions()?
+                        .expect("PERMISSIONS was present"),
+                )
+            } else if self.at(&TokenKind::Comment) {
+                AlterFieldChange::Comment(
+                    self.parse_optional_comment()?
+                        .expect("COMMENT was present")
+                        .value,
+                )
+            } else {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "ALTER FIELD requires one supported clause",
+                    },
+                    table.span,
+                ));
+            };
+            return Ok(Statement::AlterField(AlterFieldStatement {
+                span: Span::new(start.offset, self.previous_end() - start.offset),
+                if_exists,
+                path,
+                table_keyword,
+                table,
+                change,
+            }));
+        }
+        if self.eat(&TokenKind::Table) {
+            let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+                let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+                Some(if_token.span.union(exists.span))
+            } else {
+                None
+            };
+            let name = self.expect_identifier("a table name")?;
+            let mut mode = None;
+            let mut permissions = None;
+            let mut comment = TableCommentChange::Unchanged;
+            if let Some(token) = self.take(&TokenKind::Schemafull) {
+                mode = Some(Spanned::new(TableMode::Schemafull, token.span));
+            } else if let Some(token) = self.take(&TokenKind::Schemaless) {
+                mode = Some(Spanned::new(TableMode::Schemaless, token.span));
+            } else if self.eat(&TokenKind::Drop) {
+                if self.eat(&TokenKind::Comment) {
+                    comment = TableCommentChange::Drop;
+                } else if self.at(&TokenKind::Changefeed) {
+                    return Err(ParseError::unsupported(
+                        "CHANGEFEED and versioned history are deferred",
+                        self.peek().span,
+                    ));
+                } else {
+                    return Err(self.unexpected("COMMENT after DROP"));
+                }
+            } else if self.at(&TokenKind::Compact) {
+                return Err(ParseError::unsupported(
+                    "table-keyspace COMPACT is not exposed by the pinned engine",
+                    self.peek().span,
+                ));
+            } else if self.at(&TokenKind::Changefeed) {
+                return Err(ParseError::unsupported(
+                    "CHANGEFEED and versioned history are deferred",
+                    self.peek().span,
+                ));
+            }
+            if self.at(&TokenKind::Permissions) {
+                permissions = self.parse_schema_permissions()?;
+            }
+            if self.at(&TokenKind::Comment) {
+                let value = self.parse_optional_comment()?.expect("COMMENT was present");
+                comment = TableCommentChange::Set(value.value);
+            }
+            if mode.is_none()
+                && permissions.is_none()
+                && matches!(comment, TableCommentChange::Unchanged)
+            {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "ALTER TABLE requires a supported clause",
+                    },
+                    name.span,
+                ));
+            }
+            return Ok(Statement::AlterTable(AlterTableStatement {
+                span: Span::new(start.offset, self.previous_end() - start.offset),
+                if_exists,
+                name,
+                mode,
+                permissions,
+                comment,
+            }));
+        }
         if self.eat(&TokenKind::Function) {
             let name = self.parse_custom_function_name()?;
             let permissions = self.parse_schema_permissions()?.ok_or_else(|| {
@@ -1143,6 +1288,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_remove(&mut self) -> Result<Statement, ParseError> {
+        if self.at_offset(1, &TokenKind::Field) {
+            return self.parse_remove_field().map(Statement::RemoveField);
+        }
+        if self.at_offset(1, &TokenKind::Table) {
+            return self.parse_remove_table().map(Statement::RemoveTable);
+        }
         if self.at_offset(1, &TokenKind::Function) {
             return self.parse_remove_function().map(Statement::RemoveFunction);
         }
@@ -1151,6 +1302,45 @@ impl<'a> Parser<'a> {
         }
         self.parse_index_maintenance(false)
             .map(Statement::RemoveIndex)
+    }
+
+    fn parse_remove_field(&mut self) -> Result<RemoveFieldStatement, ParseError> {
+        let start = self.expect(&TokenKind::Remove, "keyword REMOVE")?.span;
+        self.expect(&TokenKind::Field, "keyword FIELD")?;
+        let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let path = self.parse_field_path()?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("a table name")?;
+        Ok(RemoveFieldStatement {
+            span: start.union(table.span),
+            if_exists,
+            path,
+            table_keyword,
+            table,
+        })
+    }
+
+    fn parse_remove_table(&mut self) -> Result<RemoveTableStatement, ParseError> {
+        let start = self.expect(&TokenKind::Remove, "keyword REMOVE")?.span;
+        self.expect(&TokenKind::Table, "keyword TABLE")?;
+        let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let name = self.expect_identifier("a table name")?;
+        Ok(RemoveTableStatement {
+            span: start.union(name.span),
+            if_exists,
+            name,
+        })
     }
 
     fn parse_remove_function(&mut self) -> Result<RemoveFunctionStatement, ParseError> {
@@ -1188,9 +1378,16 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_info_database(&mut self) -> Result<InfoDatabaseStatement, ParseError> {
+    fn parse_info(&mut self) -> Result<Statement, ParseError> {
         let start = self.expect(&TokenKind::Info, "keyword INFO")?.span;
         self.expect(&TokenKind::For, "keyword FOR after INFO")?;
+        if self.eat(&TokenKind::Table) {
+            let table = self.expect_identifier("a table name")?;
+            return Ok(Statement::InfoTable(InfoTableStatement {
+                span: start.union(table.span),
+                table,
+            }));
+        }
         let target = self.expect_identifier("DB or DATABASE")?;
         if !matches!(
             target.value.to_ascii_lowercase().as_str(),
@@ -1201,9 +1398,9 @@ impl<'a> Parser<'a> {
                 target.span,
             ));
         }
-        Ok(InfoDatabaseStatement {
+        Ok(Statement::InfoDatabase(InfoDatabaseStatement {
             span: start.union(target.span),
-        })
+        }))
     }
 
     fn parse_explain(&mut self) -> Result<ExplainStatement, ParseError> {
@@ -1259,15 +1456,30 @@ impl<'a> Parser<'a> {
 
     fn parse_define_table(&mut self, start: Span) -> Result<DefineTableStatement, ParseError> {
         self.expect(&TokenKind::Table, "keyword TABLE")?;
-        let name = self.expect_identifier("a table name")?;
-        let mode = if let Some(token) = self.take(&TokenKind::Schemaless) {
-            Spanned::new(TableMode::Schemaless, token.span)
-        } else if let Some(token) = self.take(&TokenKind::Schemafull) {
-            Spanned::new(TableMode::Schemafull, token.span)
-        } else if self.at(&TokenKind::Type) {
-            Spanned::new(TableMode::Schemaless, Span::new(name.span.end(), 0))
+        let if_not_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            self.expect(&TokenKind::Not, "keyword NOT after IF")?;
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF NOT")?;
+            Some(if_token.span.union(exists.span))
         } else {
-            return Err(self.unexpected("SCHEMALESS, SCHEMAFULL, or TYPE"));
+            None
+        };
+        let overwrite = self.take(&TokenKind::Overwrite).map(|token| token.span);
+        if let (Some(_), Some(overwrite_span)) = (if_not_exists, overwrite) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "DEFINE TABLE cannot combine IF NOT EXISTS and OVERWRITE",
+                },
+                overwrite_span,
+            ));
+        }
+        let name = self.expect_identifier("a table name")?;
+        let drop = self.take(&TokenKind::Drop).map(|token| token.span);
+        let mut mode = if let Some(token) = self.take(&TokenKind::Schemaless) {
+            Some(Spanned::new(TableMode::Schemaless, token.span))
+        } else if let Some(token) = self.take(&TokenKind::Schemafull) {
+            Some(Spanned::new(TableMode::Schemafull, token.span))
+        } else {
+            None
         };
         let kind = if let Some(type_token) = self.take(&TokenKind::Type) {
             if let Some(normal) = self.take(&TokenKind::Normal) {
@@ -1319,41 +1531,203 @@ impl<'a> Parser<'a> {
                     output,
                     enforced,
                 })
+            } else if matches!(&self.peek().kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("any"))
+            {
+                let any = self.advance().clone();
+                return Err(ParseError::unsupported(
+                    "TYPE ANY requires a mixed normal/relation physical provider",
+                    type_token.span.union(any.span),
+                ));
             } else {
-                return Err(self.unexpected("NORMAL or RELATION after TYPE"));
+                return Err(self.unexpected("ANY, NORMAL, or RELATION after TYPE"));
             }
         } else {
             TableKindSyntax::Normal { type_span: None }
         };
-        let end = match &kind {
-            TableKindSyntax::Normal {
-                type_span: Some(span),
-            } => span.end(),
-            TableKindSyntax::Normal { type_span: None } => mode.span.end(),
-            TableKindSyntax::Relation(relation) => relation.span.end(),
-        };
+        if mode.is_none() {
+            if let Some(token) = self.take(&TokenKind::Schemaless) {
+                mode = Some(Spanned::new(TableMode::Schemaless, token.span));
+            } else if let Some(token) = self.take(&TokenKind::Schemafull) {
+                mode = Some(Spanned::new(TableMode::Schemafull, token.span));
+            }
+        }
+        let mode = mode
+            .unwrap_or_else(|| Spanned::new(TableMode::Schemaless, Span::new(name.span.end(), 0)));
+        if self.at(&TokenKind::Changefeed) {
+            return Err(ParseError::unsupported(
+                "CHANGEFEED and versioned history are deferred",
+                self.peek().span,
+            ));
+        }
+        if self.at(&TokenKind::As) || self.at(&TokenKind::View) {
+            return Err(ParseError::unsupported(
+                "table views are owned by the Phase 15 view provider",
+                self.peek().span,
+            ));
+        }
+        let permissions = self
+            .parse_schema_permissions()?
+            .unwrap_or(SchemaPermissions::None);
+        let comment = self.parse_optional_comment()?;
+        let end = comment
+            .as_ref()
+            .map_or_else(
+                || match &kind {
+                    TableKindSyntax::Normal {
+                        type_span: Some(span),
+                    } => span.end(),
+                    TableKindSyntax::Normal { type_span: None } => {
+                        mode.span.end().max(name.span.end())
+                    }
+                    TableKindSyntax::Relation(relation) => relation.span.end(),
+                },
+                |comment| comment.span.end(),
+            )
+            .max(self.previous_end());
         Ok(DefineTableStatement {
             span: Span::new(start.offset, end - start.offset),
+            if_not_exists,
+            overwrite,
             name,
+            drop,
             mode,
             kind,
+            permissions,
+            comment,
         })
+    }
+
+    fn parse_optional_comment(&mut self) -> Result<Option<Spanned<String>>, ParseError> {
+        if !self.eat(&TokenKind::Comment) {
+            return Ok(None);
+        }
+        let token = self.peek().clone();
+        let TokenKind::String(value) = token.kind else {
+            return Err(self.unexpected_at(&token, "a string after COMMENT"));
+        };
+        self.position += 1;
+        Ok(Some(Spanned::new(value, token.span)))
     }
 
     fn parse_define_field(&mut self, start: Span) -> Result<DefineFieldStatement, ParseError> {
         self.expect(&TokenKind::Field, "keyword FIELD")?;
+        let if_not_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            self.expect(&TokenKind::Not, "keyword NOT after IF")?;
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF NOT")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let overwrite = self.take(&TokenKind::Overwrite).map(|token| token.span);
+        if let (Some(_), Some(overwrite_span)) = (if_not_exists, overwrite) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "DEFINE FIELD cannot combine IF NOT EXISTS and OVERWRITE",
+                },
+                overwrite_span,
+            ));
+        }
         let path = self.parse_field_path()?;
         self.expect(&TokenKind::On, "keyword ON")?;
         let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
         let table = self.expect_identifier("a table name")?;
-        self.expect(&TokenKind::Type, "keyword TYPE")?;
-        let ty = self.parse_schema_type()?;
+        let ty = if self.eat(&TokenKind::Type) {
+            self.parse_schema_type()?
+        } else {
+            SchemaType {
+                span: Span::new(table.span.end(), 0),
+                kind: SchemaTypeKind::Any,
+            }
+        };
+        let mut default = None;
+        let mut value = None;
+        let mut assert = None;
+        let mut readonly = None;
+        let mut reference = None;
+        let mut permissions = None;
+        let mut comment = None;
+        loop {
+            if let Some(token) = self.take(&TokenKind::Default) {
+                if default.is_some() {
+                    return Err(ParseError::new(
+                        ParseErrorKind::DuplicateClause { clause: "DEFAULT" },
+                        token.span,
+                    ));
+                }
+                let always = self.take(&TokenKind::Always).map(|token| token.span);
+                let expression = self.parse_expression()?;
+                default = Some(FieldDefaultClause {
+                    span: token.span.union(expression.span),
+                    always,
+                    value: expression,
+                });
+            } else if let Some(token) = self.take(&TokenKind::Value) {
+                if value.is_some() {
+                    return Err(ParseError::new(
+                        ParseErrorKind::DuplicateClause { clause: "VALUE" },
+                        token.span,
+                    ));
+                }
+                value = Some(self.parse_expression()?);
+            } else if let Some(token) = self.take(&TokenKind::Assert) {
+                if assert.is_some() {
+                    return Err(ParseError::new(
+                        ParseErrorKind::DuplicateClause { clause: "ASSERT" },
+                        token.span,
+                    ));
+                }
+                assert = Some(self.parse_expression()?);
+            } else if let Some(token) = self.take(&TokenKind::Readonly) {
+                if readonly.replace(token.span).is_some() {
+                    return Err(ParseError::new(
+                        ParseErrorKind::DuplicateClause { clause: "READONLY" },
+                        token.span,
+                    ));
+                }
+            } else if let Some(token) = self.take(&TokenKind::Reference) {
+                if self.at(&TokenKind::On) {
+                    return Err(ParseError::unsupported(
+                        "REFERENCE ON DELETE actions require the Phase 15 reference provider",
+                        self.peek().span,
+                    ));
+                }
+                if reference.replace(token.span).is_some() {
+                    return Err(ParseError::new(
+                        ParseErrorKind::DuplicateClause {
+                            clause: "REFERENCE",
+                        },
+                        token.span,
+                    ));
+                }
+            } else if self.at(&TokenKind::Permissions) {
+                if permissions.is_some() {
+                    return Err(self.duplicate_clause("PERMISSIONS"));
+                }
+                permissions = self.parse_schema_permissions()?;
+            } else if self.at(&TokenKind::Comment) {
+                if comment.is_some() {
+                    return Err(self.duplicate_clause("COMMENT"));
+                }
+                comment = self.parse_optional_comment()?;
+            } else {
+                break;
+            }
+        }
         Ok(DefineFieldStatement {
-            span: Span::new(start.offset, ty.span.end() - start.offset),
+            span: Span::new(start.offset, self.previous_end() - start.offset),
+            if_not_exists,
+            overwrite,
             path,
             table_keyword,
             table,
             ty,
+            default,
+            value,
+            assert,
+            readonly,
+            reference,
+            permissions: permissions.unwrap_or(SchemaPermissions::Full),
+            comment,
         })
     }
 
@@ -1948,6 +2322,7 @@ impl<'a> Parser<'a> {
     fn parse_schema_type(&mut self) -> Result<SchemaType, ParseError> {
         let token = self.advance().clone();
         let kind = match token.kind {
+            TokenKind::Ident(ref value) if value.eq_ignore_ascii_case("any") => SchemaTypeKind::Any,
             TokenKind::BoolType => SchemaTypeKind::Bool,
             TokenKind::IntType => SchemaTypeKind::Int,
             TokenKind::FloatType => SchemaTypeKind::Float,

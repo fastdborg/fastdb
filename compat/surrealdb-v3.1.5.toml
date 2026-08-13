@@ -7414,11 +7414,11 @@ area = "Scripting and schema"
 title = "ALTER FIELD"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Characterized ALTER FIELD clauses update canonical metadata atomically."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Partial"
+syntax = "TYPE, DEFAULT, VALUE, ASSERT, READONLY, simple REFERENCE, FULL/NONE permissions metadata, and COMMENT changes execute atomically; native-vector representation changes, reference actions, FLEXIBLE, and permission predicates remain incomplete."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/field", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-007"]
+execution_evidence = ["P15-API-012", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7505,11 +7505,11 @@ area = "Scripting and schema"
 title = "ALTER TABLE"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Characterized ALTER TABLE clauses update canonical metadata atomically."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Partial"
+syntax = "SCHEMAFULL/SCHEMALESS, FULL/NONE permissions metadata, COMMENT, DROP COMMENT, and IF EXISTS execute atomically; permission predicates remain incomplete and excluded CHANGEFEED plus unavailable keyspace COMPACT reject explicitly."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/table", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-006"]
+execution_evidence = ["P15-API-011", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7609,11 +7609,11 @@ area = "Scripting and schema"
 title = "complete DEFINE FIELD"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Union, literal, collection, DEFAULT, ASSERT, VALUE, READONLY, REFERENCE, permissions, and comments execute."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Partial"
+syntax = "ANY, current scalar/collection types, DEFAULT/ALWAYS, ASSERT, VALUE, READONLY, simple REFERENCE, FULL/NONE permissions metadata, comments, IF NOT EXISTS, and same-type OVERWRITE execute; unions, literals, FLEXIBLE, reference actions, and permission predicates remain incomplete."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/field", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-007"]
+execution_evidence = ["P15-API-012", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7700,11 +7700,11 @@ area = "Scripting and schema"
 title = "complete DEFINE TABLE"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "DROP, view AS, permissions, comments, and advanced schema clauses are explicit."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Partial"
+syntax = "NORMAL/RELATION, DROP, schema mode, FULL/NONE permissions metadata, comments, IF NOT EXISTS, and same-kind OVERWRITE execute; mixed TYPE ANY, views, and permission predicates remain incomplete while excluded CHANGEFEED rejects explicitly."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/table", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-006"]
+execution_evidence = ["P15-API-011", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7791,11 +7791,11 @@ area = "Scripting and schema"
 title = "INFO FIELD"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "INFO FIELD returns structured authorized definitions."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "INFO FOR TABLE returns the characterized fields object of canonical definitions for the trusted local Owner surface."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/info", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-006", "P15-PARSE-007"]
+execution_evidence = ["P15-API-012"]
 stop_report = ""
 
 [[capability]]
@@ -7869,11 +7869,11 @@ area = "Scripting and schema"
 title = "INFO TABLE"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "INFO TABLE returns structured authorized definitions."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "INFO FOR TABLE returns structured fields, indexes, events, lives, and tables objects for the trusted local Owner surface."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/info", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-006"]
+execution_evidence = ["P15-API-011", "P15-API-012"]
 stop_report = ""
 
 [[capability]]
@@ -7973,11 +7973,11 @@ area = "Scripting and schema"
 title = "complete REMOVE FIELD"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "REMOVE FIELD executes atomically with dependency validation."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Partial"
+syntax = "REMOVE FIELD executes atomically with B-tree/FTS index dependency checks and vector-derived cleanup; future view/event/reference dependencies remain incomplete."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/remove", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-007"]
+execution_evidence = ["P15-API-012"]
 stop_report = ""
 
 [[capability]]
@@ -8051,11 +8051,11 @@ area = "Scripting and schema"
 title = "complete REMOVE TABLE"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "REMOVE TABLE executes atomically with dependency validation."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Partial"
+syntax = "REMOVE TABLE executes atomically with relation-endpoint dependency checks, connected-edge cleanup, provider/index cleanup, rollback, and IF EXISTS; future view/event dependencies remain incomplete."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/remove", "docs/compat-research/phase15.md#table-and-field-schema"]
+parser_evidence = ["P15-PARSE-006"]
+execution_evidence = ["P15-API-011"]
 stop_report = ""
 
 [[capability]]

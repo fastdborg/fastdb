@@ -2,9 +2,9 @@
 
 use crate::catalog::{
     self, CapabilityRequirement, CatalogSnapshot, CatalogState, IndexDefinition, IndexKind,
-    TableDefinition, TableKind, BUILTIN_GRAPH_ENCODING_VERSION, BUILTIN_GRAPH_PROVIDER,
-    BUILTIN_GRAPH_PROVIDER_VERSION, BUILTIN_VECTOR_ENCODING_VERSION, BUILTIN_VECTOR_PROVIDER,
-    BUILTIN_VECTOR_PROVIDER_VERSION,
+    TableDefinition, TableKind, BUILTIN_FTS_PROVIDER, BUILTIN_GRAPH_ENCODING_VERSION,
+    BUILTIN_GRAPH_PROVIDER, BUILTIN_GRAPH_PROVIDER_VERSION, BUILTIN_VECTOR_ENCODING_VERSION,
+    BUILTIN_VECTOR_PROVIDER, BUILTIN_VECTOR_PROVIDER_VERSION,
 };
 use crate::connection::{value_to_string, Connection, ExecutionState, TransactionState};
 use crate::decode::{self, RecordIdValue};
@@ -12,7 +12,7 @@ use crate::error::{ErrorCategory, FastDbError, Result};
 use crate::eval::{self, EvalContext, EvalValue};
 use crate::lower::{self, PredicateOperator};
 use crate::names::{decode_rid, encode_rid};
-use crate::schema::{self, FieldRule, FieldType};
+use crate::schema::{self, FieldRule, FieldType, SchemaExpression};
 use crate::test_failpoints::Failpoint;
 use crate::{Params, RecordId, StatementResult, Value};
 use rand::seq::SliceRandom as _;
@@ -439,6 +439,21 @@ fn run_script_statement(
         Statement::InfoDatabase(_) => run_info_database(conn, execution)
             .map(StatementExecution::read_only)
             .map(ScriptOutcome::normal),
+        Statement::AlterTable(statement) => run_alter_table(conn, execution, statement)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::RemoveTable(statement) => run_remove_table(conn, execution, statement)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::InfoTable(statement) => run_info_table(conn, execution, statement)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::AlterField(statement) => run_alter_field(conn, execution, statement, source)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::RemoveField(statement) => run_remove_field(conn, execution, statement)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
         Statement::Begin(_) => conn
             .begin_explicit(execution)
             .map(StatementExecution::read_only)
@@ -514,7 +529,12 @@ fn run_script_statement(
                 | Statement::DefineFunction(_)
                 | Statement::AlterFunction(_)
                 | Statement::RemoveFunction(_)
-                | Statement::InfoDatabase(_) => {
+                | Statement::InfoDatabase(_)
+                | Statement::AlterTable(_)
+                | Statement::RemoveTable(_)
+                | Statement::InfoTable(_)
+                | Statement::AlterField(_)
+                | Statement::RemoveField(_) => {
                     unreachable!("script statements were handled above")
                 }
             }?;
@@ -1640,6 +1660,97 @@ fn collect_function_expression_dependencies(
     }
 }
 
+pub(crate) fn validate_schema_expression_safety(expression: &Expr) -> Result<()> {
+    match &expression.kind {
+        ExprKind::FunctionCall { name, arguments } => {
+            let segments = name
+                .iter()
+                .map(|segment| segment.value.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            if matches!(segments.first().map(String::as_str), Some("fn" | "rand"))
+                || matches!(
+                    segments.as_slice(),
+                    [family, function, ..]
+                        if (family == "time" && function == "now")
+                            || (family == "uuid" && matches!(function.as_str(), "v4" | "v7"))
+                )
+            {
+                return Err(FastDbError::Schema(
+                    "schema expressions must be deterministic and cannot invoke custom functions"
+                        .into(),
+                ));
+            }
+            for argument in arguments {
+                validate_schema_expression_safety(argument)?;
+            }
+        }
+        ExprKind::Array(values) | ExprKind::DestructureList(values) => {
+            for value in values {
+                validate_schema_expression_safety(value)?;
+            }
+        }
+        ExprKind::Object(fields) => {
+            for field in fields {
+                validate_schema_expression_safety(&field.value)?;
+            }
+        }
+        ExprKind::Destructure { target, .. }
+        | ExprKind::Cast { value: target, .. }
+        | ExprKind::Unary {
+            operand: target, ..
+        }
+        | ExprKind::Parenthesized(target) => validate_schema_expression_safety(target)?,
+        ExprKind::Access { target, accessor } => {
+            validate_schema_expression_safety(target)?;
+            match accessor {
+                turso_fastdb_parser::Accessor::Index(index) => {
+                    validate_schema_expression_safety(index)?
+                }
+                turso_fastdb_parser::Accessor::Slice { start, end, .. } => {
+                    if let Some(start) = start {
+                        validate_schema_expression_safety(start)?;
+                    }
+                    if let Some(end) = end {
+                        validate_schema_expression_safety(end)?;
+                    }
+                }
+                turso_fastdb_parser::Accessor::Field(_)
+                | turso_fastdb_parser::Accessor::Last(_) => {}
+            }
+        }
+        ExprKind::Range(range) => {
+            if let Some(start) = &range.start {
+                validate_schema_expression_safety(start)?;
+            }
+            if let Some(end) = &range.end {
+                validate_schema_expression_safety(end)?;
+            }
+        }
+        ExprKind::Closure(closure) => validate_schema_expression_safety(&closure.body)?,
+        ExprKind::Knn(_) | ExprKind::Traversal(_) => {
+            return Err(FastDbError::Schema(
+                "schema expressions cannot execute search or graph traversal".into(),
+            ));
+        }
+        ExprKind::Binary { left, right, .. } => {
+            validate_schema_expression_safety(left)?;
+            validate_schema_expression_safety(right)?;
+        }
+        ExprKind::None
+        | ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Integer(_)
+        | ExprKind::Float(_)
+        | ExprKind::Duration(_)
+        | ExprKind::String(_)
+        | ExprKind::Parameter(_)
+        | ExprKind::RecordId(_)
+        | ExprKind::FieldPath(_)
+        | ExprKind::NamespacedValue { .. } => {}
+    }
+    Ok(())
+}
+
 fn run_info_database(conn: &Connection, execution: &ExecutionState) -> Result<StatementResult> {
     let catalog = catalog_for_read(conn, execution)?;
     let snapshot = catalog.snapshot();
@@ -1697,6 +1808,274 @@ fn run_info_database(conn: &Connection, execution: &ExecutionState) -> Result<St
         root.insert("analyzers".into(), Value::Object(analyzers));
     }
     Ok(StatementResult::Value(Value::Object(root)))
+}
+
+fn render_schema_identifier(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        && value
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        value.to_string()
+    } else {
+        format!("`{}`", value.replace('`', "``"))
+    }
+}
+
+fn render_schema_string(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+fn canonical_table_definition(
+    snapshot: &CatalogSnapshot,
+    table: &TableDefinition,
+) -> Result<String> {
+    let mut definition = format!(
+        "DEFINE TABLE {}{} TYPE ",
+        render_schema_identifier(&table.logical_name),
+        if table.drop { " DROP" } else { "" },
+    );
+    match table.kind {
+        TableKind::Normal => definition.push_str("NORMAL"),
+        TableKind::Relation => {
+            definition.push_str("RELATION");
+            for (prefix, endpoint) in [
+                (" IN ", table.relation_in_table_id),
+                (" OUT ", table.relation_out_table_id),
+            ] {
+                if let Some(endpoint) = endpoint {
+                    let endpoint = snapshot
+                        .tables
+                        .values()
+                        .find(|candidate| candidate.id == endpoint)
+                        .ok_or_else(|| FastDbError::format("relation endpoint table is missing"))?;
+                    definition.push_str(prefix);
+                    definition.push_str(&render_schema_identifier(&endpoint.logical_name));
+                }
+            }
+            if table.relation_enforced {
+                definition.push_str(" ENFORCED");
+            }
+        }
+    }
+    definition.push(' ');
+    definition.push_str(match table.mode {
+        TableMode::Schemaless => "SCHEMALESS",
+        TableMode::Schemafull => "SCHEMAFULL",
+    });
+    definition.push_str(match table.permissions {
+        turso_fastdb_parser::SchemaPermissions::Full => " PERMISSIONS FULL",
+        turso_fastdb_parser::SchemaPermissions::None => " PERMISSIONS NONE",
+    });
+    if let Some(comment) = &table.comment {
+        definition.push_str(" COMMENT ");
+        definition.push_str(&render_schema_string(comment));
+    }
+    Ok(definition)
+}
+
+fn run_info_table(
+    conn: &Connection,
+    execution: &ExecutionState,
+    statement: turso_fastdb_parser::InfoTableStatement,
+) -> Result<StatementResult> {
+    let catalog = catalog_for_read(conn, execution)?;
+    let snapshot = catalog
+        .snapshot()
+        .ok_or_else(|| FastDbError::Schema("database catalog is empty".into()))?;
+    let table = snapshot.tables.get(&statement.table.value).ok_or_else(|| {
+        FastDbError::Schema(format!("table {:?} is not defined", statement.table.value))
+    })?;
+    let mut root = BTreeMap::from([
+        ("events".into(), Value::Object(BTreeMap::new())),
+        ("fields".into(), Value::Object(BTreeMap::new())),
+        ("indexes".into(), Value::Object(BTreeMap::new())),
+        ("lives".into(), Value::Object(BTreeMap::new())),
+        ("tables".into(), Value::Object(BTreeMap::new())),
+    ]);
+    root.insert(
+        "fields".into(),
+        Value::Object(
+            table
+                .fields
+                .values()
+                .map(|field| {
+                    (
+                        render_schema_path(&field.path),
+                        Value::Str(field.definition.clone()),
+                    )
+                })
+                .collect(),
+        ),
+    );
+    root.insert(
+        "indexes".into(),
+        Value::Object(
+            table
+                .indexes
+                .iter()
+                .filter(|(name, _)| !name.starts_with("__graph_"))
+                .map(|(name, index)| (name.clone(), Value::Str(index.definition.clone())))
+                .collect(),
+        ),
+    );
+    Ok(StatementResult::Value(Value::Object(root)))
+}
+
+fn run_alter_table(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::AlterTableStatement,
+) -> Result<StatementResult> {
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(existing) = snapshot.tables.get(&statement.name.value).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "table {:?} is not defined",
+                statement.name.value
+            )));
+        };
+        let mut replacement = existing;
+        if let Some(mode) = statement.mode {
+            if mode.value == TableMode::Schemafull {
+                for (_, mut document) in read_documents(conn, &replacement)? {
+                    schema::validate_document(true, &replacement.fields, &mut document)?;
+                }
+            }
+            replacement.mode = mode.value;
+        }
+        if let Some(permissions) = statement.permissions {
+            replacement.permissions = permissions;
+        }
+        match statement.comment {
+            turso_fastdb_parser::TableCommentChange::Unchanged => {}
+            turso_fastdb_parser::TableCommentChange::Set(comment) => {
+                replacement.comment = Some(comment)
+            }
+            turso_fastdb_parser::TableCommentChange::Drop => replacement.comment = None,
+        }
+        replacement.definition = Some(canonical_table_definition(snapshot, &replacement)?);
+        catalog::replace_table(conn, &replacement)?;
+        snapshot
+            .tables
+            .insert(statement.name.value.clone(), replacement);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn run_remove_table(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::RemoveTableStatement,
+) -> Result<StatementResult> {
+    let cascaded = with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(table) = snapshot.tables.get(&statement.name.value).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(false);
+            }
+            return Err(FastDbError::Schema(format!(
+                "table {:?} is not defined",
+                statement.name.value
+            )));
+        };
+        if let Some(relation) = snapshot.tables.values().find(|candidate| {
+            candidate.id != table.id
+                && [
+                    candidate.relation_in_table_id,
+                    candidate.relation_out_table_id,
+                ]
+                .contains(&Some(table.id))
+        }) {
+            return Err(FastDbError::Constraint(format!(
+                "table {:?} is required by relation table {:?}",
+                table.logical_name, relation.logical_name
+            )));
+        }
+        let mut cascaded = false;
+        if table.kind == TableKind::Normal {
+            for relation in snapshot
+                .tables
+                .values()
+                .filter(|candidate| candidate.kind == TableKind::Relation)
+            {
+                let hidden = catalog::graph_columns(snapshot, relation)?
+                    .into_iter()
+                    .map(|column| column.physical_name.clone())
+                    .collect::<Vec<_>>();
+                for forward in [true, false] {
+                    let (delete, bindings) = lower::physical_graph_delete_edges_for_table_stmt(
+                        &relation.physical_name,
+                        &hidden,
+                        &table.id.to_hex(),
+                        forward,
+                    )?;
+                    conn.exec_bound(delete, bindings)?;
+                    conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
+                }
+                cascaded = true;
+            }
+        }
+        for index in table.indexes.values() {
+            conn.exec_bound(
+                crate::provider::index_provider(index)?.drop_statement(index)?,
+                vec![],
+            )?;
+        }
+        conn.exec_bound(
+            lower::physical_drop_table_ddl(&table.physical_name)?,
+            vec![],
+        )?;
+        catalog::remove_table_catalog(conn, &table)?;
+        snapshot.tables.remove(&statement.name.value);
+        snapshot
+            .hidden_columns
+            .retain(|_, column| column.table_id != table.id);
+        for (provider, required) in [
+            (
+                BUILTIN_GRAPH_PROVIDER,
+                snapshot
+                    .tables
+                    .values()
+                    .any(|table| table.kind == TableKind::Relation),
+            ),
+            (
+                BUILTIN_FTS_PROVIDER,
+                snapshot.tables.values().any(|table| {
+                    table
+                        .indexes
+                        .values()
+                        .any(|index| index.kind == IndexKind::Fts)
+                }),
+            ),
+            (
+                BUILTIN_VECTOR_PROVIDER,
+                snapshot.tables.values().any(|table| {
+                    table
+                        .fields
+                        .values()
+                        .any(|field| field.ty.vector_dimension().is_some())
+                }),
+            ),
+        ] {
+            if !required && snapshot.capabilities.remove(provider).is_some() {
+                catalog::remove_capability(conn, provider)?;
+            }
+        }
+        Ok(cascaded)
+    })?;
+    if cascaded {
+        mark_relation_fts_dirty(execution);
+    }
+    Ok(StatementResult::None)
 }
 
 fn run_define_analyzer(
@@ -1801,15 +2180,25 @@ fn run_create(
                     "relation records must be created with RELATE".into(),
                 ));
             }
+            if table.drop {
+                return Err(FastDbError::Constraint(format!(
+                    "table {table_name:?} is DROP and rejects CREATE"
+                )));
+            }
             let id = RecordId::new(table_name, id_value.clone());
             let mut document = prepared
                 .remove(&(table_name.clone(), encode_rid(id_value)?))
                 .ok_or_else(|| FastDbError::Engine("prepared CREATE document is missing".into()))?;
             reject_stored_id(&document)?;
-            schema::validate_document(
-                table.mode == TableMode::Schemafull,
-                &table.fields,
+            normalize_schema_document(
+                &table,
                 &mut document,
+                None,
+                &id,
+                None,
+                params,
+                &functions,
+                true,
             )?;
             validate_index_values(&table, &document)?;
             let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
@@ -2034,6 +2423,7 @@ fn run_insert(
         .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
     let outcomes = with_create_mutation(conn, execution, table_was_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
+        let functions = snapshot.functions.clone();
         if !snapshot.tables.contains_key(&table_name) {
             let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
             catalog::persist_table(conn, &table)?;
@@ -2051,6 +2441,11 @@ fn run_insert(
             return Err(FastDbError::Schema(
                 "relation tables require INSERT RELATION or RELATE".into(),
             ));
+        }
+        if table.drop {
+            return Err(FastDbError::Constraint(format!(
+                "table {table_name:?} is DROP and rejects INSERT"
+            )));
         }
         let mut outcomes = Vec::new();
         for input in &input_documents {
@@ -2098,10 +2493,15 @@ fn run_insert(
                 document = candidate.document.clone();
                 apply_assignments(&mut document, assignments)?;
                 reject_stored_id(&document)?;
-                schema::validate_document(
-                    table.mode == TableMode::Schemafull,
-                    &table.fields,
+                normalize_schema_document(
+                    &table,
                     &mut document,
+                    Some(&candidate.document),
+                    &candidate.id,
+                    None,
+                    &scoped_params,
+                    &functions,
+                    false,
                 )?;
                 validate_index_values(&table, &document)?;
                 let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
@@ -2124,10 +2524,15 @@ fn run_insert(
             }
 
             reject_stored_id(&document)?;
-            schema::validate_document(
-                table.mode == TableMode::Schemafull,
-                &table.fields,
+            normalize_schema_document(
+                &table,
                 &mut document,
+                None,
+                &id,
+                None,
+                params,
+                &functions,
+                true,
             )?;
             validate_index_values(&table, &document)?;
             let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
@@ -2264,6 +2669,7 @@ fn run_insert_relation(
         });
     let outcomes = with_create_mutation(conn, execution, catalogs_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
+        let functions = snapshot.functions.clone();
         for (_, from, to, _) in &inputs {
             for endpoint in [from, to] {
                 if !snapshot.tables.contains_key(&endpoint.table) {
@@ -2299,6 +2705,11 @@ fn run_insert_relation(
             return Err(FastDbError::Schema(
                 "INSERT RELATION target is not a relation table".into(),
             ));
+        }
+        if relation.drop {
+            return Err(FastDbError::Constraint(format!(
+                "relation table {relation_name:?} is DROP and rejects INSERT"
+            )));
         }
         let hidden = catalog::graph_columns(snapshot, &relation)?
             .into_iter()
@@ -2377,10 +2788,15 @@ fn run_insert_relation(
                 let mut document = candidate.document.clone();
                 apply_assignments(&mut document, assignments)?;
                 reject_stored_edge_fields(&document)?;
-                schema::validate_document(
-                    relation.mode == TableMode::Schemafull,
-                    &relation.fields,
+                normalize_schema_document(
+                    &relation,
                     &mut document,
+                    Some(&candidate.document),
+                    id,
+                    Some((from, to)),
+                    &scoped_params,
+                    &functions,
+                    false,
                 )?;
                 validate_index_values(&relation, &document)?;
                 let derived_hidden = derived_hidden_values(snapshot, &relation, &document)?;
@@ -2402,10 +2818,15 @@ fn run_insert_relation(
             }
             let mut document = input_document.clone();
             reject_stored_edge_fields(&document)?;
-            schema::validate_document(
-                relation.mode == TableMode::Schemafull,
-                &relation.fields,
+            normalize_schema_document(
+                &relation,
                 &mut document,
+                None,
+                id,
+                Some((from, to)),
+                params,
+                &functions,
+                true,
             )?;
             validate_index_values(&relation, &document)?;
             let derived_hidden = derived_hidden_values(snapshot, &relation, &document)?;
@@ -2530,6 +2951,7 @@ fn run_relate(
         });
     let value = with_create_mutation(conn, execution, catalogs_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
+        let functions = snapshot.functions.clone();
         for endpoint in [&from, &to] {
             if !snapshot.tables.contains_key(&endpoint.table) {
                 register_normal_table(
@@ -2565,6 +2987,11 @@ fn run_relate(
                 "RELATE middle table {relation_name:?} is not a relation table"
             )));
         }
+        if relation.drop {
+            return Err(FastDbError::Constraint(format!(
+                "relation table {relation_name:?} is DROP and rejects RELATE"
+            )));
+        }
         let from_table = &snapshot.tables[&from.table];
         let to_table = &snapshot.tables[&to.table];
         if relation
@@ -2597,10 +3024,15 @@ fn run_relate(
                 )));
             }
         }
-        schema::validate_document(
-            relation.mode == TableMode::Schemafull,
-            &relation.fields,
+        normalize_schema_document(
+            &relation,
             &mut document,
+            None,
+            &edge_id,
+            Some((&from, &to)),
+            params,
+            &functions,
+            true,
         )?;
         validate_index_values(&relation, &document)?;
         let hidden = catalog::graph_columns(snapshot, &relation)?
@@ -3900,6 +4332,7 @@ fn run_update(
     };
     let outcomes = with_create_mutation(conn, execution, upsert && table_was_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
+        let functions = snapshot.functions.clone();
         for (table_name, _) in &targets {
             if snapshot.tables.contains_key(table_name) || !upsert {
                 continue;
@@ -3922,6 +4355,12 @@ fn run_update(
             let Some(table) = snapshot.tables.get(table_name).cloned() else {
                 continue;
             };
+            if table.drop {
+                return Err(FastDbError::Constraint(format!(
+                    "table {table_name:?} is DROP and rejects {}",
+                    if upsert { "UPSERT" } else { "UPDATE" }
+                )));
+            }
             let candidates = read_candidates(
                 conn,
                 snapshot,
@@ -3982,52 +4421,68 @@ fn run_update(
         let mut outcomes = Vec::with_capacity(work.len());
         conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
         for item in work {
-            let (table_name, table, id, endpoints, before, mut document, encoded_rid, existing) =
-                match item {
-                    Work::Existing(table_name, table, candidate) => {
-                        let document = apply_update_data(
-                            &statement.data,
-                            candidate.document.clone(),
-                            &candidate.id,
-                            candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
-                            params,
-                        )?;
-                        (
-                            table_name,
-                            table,
-                            candidate.id.clone(),
-                            candidate.endpoints.clone(),
-                            full_candidate_value(&candidate),
-                            document,
-                            candidate.encoded_rid,
-                            true,
-                        )
-                    }
-                    Work::Missing(table_name, table, id_value) => {
-                        let id = RecordId::new(&table_name, id_value.clone());
-                        let document =
-                            apply_update_data(&statement.data, BTreeMap::new(), &id, None, params)?;
-                        (
-                            table_name,
-                            table,
-                            id,
-                            None,
-                            Value::Null,
-                            document,
-                            encode_rid(&id_value)?,
-                            false,
-                        )
-                    }
-                };
+            let (
+                table_name,
+                table,
+                id,
+                endpoints,
+                before,
+                previous_document,
+                mut document,
+                encoded_rid,
+                existing,
+            ) = match item {
+                Work::Existing(table_name, table, candidate) => {
+                    let document = apply_update_data(
+                        &statement.data,
+                        candidate.document.clone(),
+                        &candidate.id,
+                        candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
+                        params,
+                    )?;
+                    (
+                        table_name,
+                        table,
+                        candidate.id.clone(),
+                        candidate.endpoints.clone(),
+                        full_candidate_value(&candidate),
+                        Some(candidate.document.clone()),
+                        document,
+                        candidate.encoded_rid,
+                        true,
+                    )
+                }
+                Work::Missing(table_name, table, id_value) => {
+                    let id = RecordId::new(&table_name, id_value.clone());
+                    let document =
+                        apply_update_data(&statement.data, BTreeMap::new(), &id, None, params)?;
+                    (
+                        table_name,
+                        table,
+                        id,
+                        None,
+                        Value::Null,
+                        None,
+                        document,
+                        encode_rid(&id_value)?,
+                        false,
+                    )
+                }
+            };
             if table.kind == TableKind::Relation {
                 reject_stored_edge_fields(&document)?;
             } else {
                 reject_stored_id(&document)?;
             }
-            schema::validate_document(
-                table.mode == TableMode::Schemafull,
-                &table.fields,
+            normalize_schema_document(
+                &table,
                 &mut document,
+                previous_document.as_ref(),
+                &id,
+                endpoints.as_ref().map(|(from, to)| (from, to)),
+                params,
+                &functions,
+                !existing,
             )?;
             validate_index_values(&table, &document)?;
             let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
@@ -6365,11 +6820,77 @@ fn run_define_table(
     let definition = source_slice(source, statement.span)?.to_string();
     with_schema_mutation(conn, execution, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
-        if snapshot.tables.contains_key(&statement.name.value) {
-            return Err(FastDbError::Constraint(format!(
-                "table {:?} is already defined",
-                statement.name.value
-            )));
+        if let Some(existing) = snapshot.tables.get(&statement.name.value).cloned() {
+            if statement.if_not_exists.is_some() {
+                return Ok(());
+            }
+            if statement.overwrite.is_none() {
+                return Err(FastDbError::Constraint(format!(
+                    "table {:?} is already defined",
+                    statement.name.value
+                )));
+            }
+            let requested_kind = match statement.kind {
+                TableKindSyntax::Normal { .. } => TableKind::Normal,
+                TableKindSyntax::Relation(_) => TableKind::Relation,
+            };
+            if requested_kind != existing.kind {
+                return Err(FastDbError::Schema(
+                    "DEFINE TABLE OVERWRITE cannot change NORMAL/RELATION physical kind".into(),
+                ));
+            }
+            if statement.mode.value == TableMode::Schemafull {
+                for (_, mut document) in read_documents(conn, &existing)? {
+                    schema::validate_document(true, &existing.fields, &mut document)?;
+                }
+            }
+            let mut replacement = existing;
+            replacement.mode = statement.mode.value;
+            replacement.definition = Some(definition.clone());
+            replacement.drop = statement.drop.is_some();
+            replacement.permissions = statement.permissions;
+            replacement.comment = statement.comment.as_ref().map(|value| value.value.clone());
+            if let TableKindSyntax::Relation(relation) = &statement.kind {
+                for endpoint in [relation.input.as_ref(), relation.output.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    if endpoint.value == statement.name.value {
+                        return Err(FastDbError::Schema(
+                            "a relation table cannot constrain an endpoint to itself".into(),
+                        ));
+                    }
+                    if !snapshot.tables.contains_key(&endpoint.value) {
+                        register_normal_table(
+                            conn,
+                            snapshot,
+                            &endpoint.value,
+                            TableMode::Schemaless,
+                            None,
+                        )?;
+                    }
+                    if snapshot.tables[&endpoint.value].kind != TableKind::Normal {
+                        return Err(FastDbError::Schema(
+                            "relation endpoint constraint must name a normal table".into(),
+                        ));
+                    }
+                }
+                replacement.relation_in_table_id = relation
+                    .input
+                    .as_ref()
+                    .map(|endpoint| snapshot.tables[&endpoint.value].id);
+                replacement.relation_out_table_id = relation
+                    .output
+                    .as_ref()
+                    .map(|endpoint| snapshot.tables[&endpoint.value].id);
+                replacement.relation_enforced = relation.enforced.is_some();
+                validate_existing_relation_edges(conn, snapshot, &replacement)?;
+            }
+            catalog::replace_table(conn, &replacement)?;
+            snapshot
+                .tables
+                .insert(statement.name.value.clone(), replacement);
+            return Ok(());
         }
         match &statement.kind {
             TableKindSyntax::Normal { .. } => {
@@ -6427,9 +6948,75 @@ fn run_define_table(
                 )?;
             }
         }
+        let table = snapshot
+            .tables
+            .get_mut(&statement.name.value)
+            .expect("defined table was published");
+        table.drop = statement.drop.is_some();
+        table.permissions = statement.permissions;
+        table.comment = statement.comment.as_ref().map(|value| value.value.clone());
+        catalog::replace_table(conn, table)?;
         Ok(())
     })?;
     Ok(StatementResult::None)
+}
+
+fn validate_existing_relation_edges(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    relation: &TableDefinition,
+) -> Result<()> {
+    debug_assert_eq!(relation.kind, TableKind::Relation);
+    let params = Params::new();
+    for candidate in read_candidates(
+        conn,
+        snapshot,
+        relation,
+        CandidateReadOptions {
+            id: None,
+            range: None,
+            condition: None,
+            params: &params,
+            allow_cache: false,
+            fts: None,
+            vector: None,
+        },
+    )? {
+        let (input, output) = candidate
+            .endpoints
+            .ok_or_else(|| FastDbError::format("relation record is missing stored endpoints"))?;
+        let input_table = snapshot.tables.get(&input.table).ok_or_else(|| {
+            FastDbError::format("relation input endpoint table is missing from the catalog")
+        })?;
+        let output_table = snapshot.tables.get(&output.table).ok_or_else(|| {
+            FastDbError::format("relation output endpoint table is missing from the catalog")
+        })?;
+        if input_table.kind != TableKind::Normal || output_table.kind != TableKind::Normal {
+            return Err(FastDbError::format(
+                "relation endpoint references a non-normal table",
+            ));
+        }
+        if relation
+            .relation_in_table_id
+            .is_some_and(|expected| expected != input_table.id)
+            || relation
+                .relation_out_table_id
+                .is_some_and(|expected| expected != output_table.id)
+        {
+            return Err(FastDbError::Schema(
+                "DEFINE TABLE OVERWRITE endpoint constraints reject an existing edge".into(),
+            ));
+        }
+        if relation.relation_enforced
+            && (!record_exists(conn, input_table, &input.id)?
+                || !record_exists(conn, output_table, &output.id)?)
+        {
+            return Err(FastDbError::Constraint(
+                "DEFINE TABLE OVERWRITE ENFORCED requires every existing endpoint record".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn register_normal_table(
@@ -6532,12 +7119,54 @@ fn run_define_field(
         ));
     }
     let ty = FieldType::from_parser(&statement.ty);
+    if statement.reference.is_some() && !ty.supports_reference() {
+        return Err(FastDbError::Schema(
+            "REFERENCE requires a record or record collection field type".into(),
+        ));
+    }
+    let schema_expression = |expression: &Expr| -> Result<SchemaExpression> {
+        validate_schema_expression_safety(expression)?;
+        Ok(SchemaExpression {
+            expression: expression.clone(),
+            source: source_slice(source, expression.span)?.to_string(),
+        })
+    };
+    let default_always = statement
+        .default
+        .as_ref()
+        .is_some_and(|default| default.always.is_some());
+    let default = statement
+        .default
+        .as_ref()
+        .map(|default| schema_expression(&default.value))
+        .transpose()?;
+    let value = statement
+        .value
+        .as_ref()
+        .map(schema_expression)
+        .transpose()?;
+    let assert = statement
+        .assert
+        .as_ref()
+        .map(schema_expression)
+        .transpose()?;
     let rule = FieldRule {
         path,
         path_key: path_key.clone(),
         required: ty.required(),
         ty,
         definition,
+        default,
+        default_always,
+        value,
+        assert,
+        readonly: statement.readonly.is_some(),
+        reference: statement.reference.is_some(),
+        permissions: statement.permissions,
+        comment: statement
+            .comment
+            .as_ref()
+            .map(|comment| comment.value.clone()),
     };
     with_schema_mutation(conn, execution, |state| {
         let snapshot = ready_snapshot_mut(state)?;
@@ -6559,21 +7188,23 @@ fn run_define_field(
             ));
         }
         if table.fields.contains_key(&path_key) {
-            return Err(FastDbError::Constraint(format!(
-                "field {path_key} is already defined on table {:?}",
-                statement.table.value
-            )));
+            if statement.if_not_exists.is_some() {
+                return Ok(());
+            }
+            if statement.overwrite.is_none() {
+                return Err(FastDbError::Constraint(format!(
+                    "field {path_key} is already defined on table {:?}",
+                    statement.table.value
+                )));
+            }
+            return replace_field_rule(conn, snapshot, &table, rule.clone());
         }
         schema::validate_field_relationships(table.fields.values(), &rule)?;
         let mut candidate_fields = table.fields.clone();
         candidate_fields.insert(path_key.clone(), rule.clone());
         let mut rows = read_documents(conn, &table)?;
         for (_, document) in &mut rows {
-            schema::validate_document(
-                table.mode == TableMode::Schemafull,
-                &candidate_fields,
-                document,
-            )?;
+            validate_candidate_field_document(&table, &candidate_fields, &rule, document)?;
         }
         conn.check_failpoint(Failpoint::AfterFieldValidation)?;
         let vector_ordinal = snapshot
@@ -6645,6 +7276,468 @@ fn run_define_field(
             .expect("cloned table remains present")
             .fields
             .insert(path_key.clone(), rule.clone());
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn validate_candidate_field_document(
+    table: &TableDefinition,
+    candidate_fields: &BTreeMap<String, FieldRule>,
+    candidate: &FieldRule,
+    document: &mut BTreeMap<String, Value>,
+) -> Result<()> {
+    if candidate.default.is_some() && crate::path::get_path(document, &candidate.path).is_none() {
+        let mut fields = candidate_fields.clone();
+        fields
+            .get_mut(&candidate.path_key)
+            .expect("candidate field is present")
+            .required = false;
+        schema::validate_document(table.mode == TableMode::Schemafull, &fields, document)?;
+    } else {
+        schema::validate_document(
+            table.mode == TableMode::Schemafull,
+            candidate_fields,
+            document,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn normalize_schema_document(
+    table: &TableDefinition,
+    document: &mut BTreeMap<String, Value>,
+    before: Option<&BTreeMap<String, Value>>,
+    id: &RecordId,
+    endpoints: Option<(&RecordId, &RecordId)>,
+    params: &Params,
+    functions: &BTreeMap<String, catalog::FunctionDefinition>,
+    create: bool,
+) -> Result<()> {
+    for field in table.fields.values() {
+        let prior = before.and_then(|before| crate::path::get_path(before, &field.path));
+        let supplied = crate::path::get_path(document, &field.path).cloned();
+        if field.readonly && !create && supplied.as_ref() != prior {
+            return Err(FastDbError::Constraint(format!(
+                "readonly field {} cannot be changed",
+                field.path_key
+            )));
+        }
+        let apply_default = field.default.is_some()
+            && ((create && supplied.is_none())
+                || (field.default_always && matches!(supplied.as_ref(), None | Some(Value::None))));
+        if apply_default {
+            let default = field.default.as_ref().expect("checked default presence");
+            let value = evaluate_schema_expression(
+                default,
+                document,
+                before,
+                id,
+                endpoints,
+                params,
+                functions,
+                supplied.clone().unwrap_or(Value::None),
+            )?;
+            if matches!(value, Value::None) {
+                crate::path::remove_path(document, &field.path)?;
+            } else {
+                crate::path::set_path(document, &field.path, value)?;
+            }
+        }
+        if let Some(expression) = &field.value {
+            let current = crate::path::get_path(document, &field.path)
+                .cloned()
+                .unwrap_or(Value::None);
+            let value = evaluate_schema_expression(
+                expression, document, before, id, endpoints, params, functions, current,
+            )?;
+            if matches!(value, Value::None) {
+                crate::path::remove_path(document, &field.path)?;
+            } else {
+                crate::path::set_path(document, &field.path, value)?;
+            }
+        }
+    }
+    schema::validate_document(table.mode == TableMode::Schemafull, &table.fields, document)?;
+    for field in table.fields.values() {
+        let Some(assertion) = &field.assert else {
+            continue;
+        };
+        let value = crate::path::get_path(document, &field.path)
+            .cloned()
+            .unwrap_or(Value::None);
+        let outcome = evaluate_schema_expression(
+            assertion, document, before, id, endpoints, params, functions, value,
+        )?;
+        if !EvalValue::Present(outcome).truthy() {
+            return Err(FastDbError::Constraint(format!(
+                "field {} does not satisfy its ASSERT expression",
+                field.path_key
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_schema_expression(
+    expression: &SchemaExpression,
+    document: &BTreeMap<String, Value>,
+    before: Option<&BTreeMap<String, Value>>,
+    id: &RecordId,
+    endpoints: Option<(&RecordId, &RecordId)>,
+    params: &Params,
+    functions: &BTreeMap<String, catalog::FunctionDefinition>,
+    value: Value,
+) -> Result<Value> {
+    let mut params = params.clone();
+    params.insert("value".into(), value);
+    params.insert(
+        "before".into(),
+        before.cloned().map(Value::Object).unwrap_or(Value::None),
+    );
+    params.insert("after".into(), Value::Object(document.clone()));
+    let calls = std::cell::Cell::new(0);
+    eval::evaluate(
+        &expression.expression,
+        &EvalContext {
+            document,
+            id,
+            endpoints,
+            params: &params,
+            functions: Some(functions),
+            function_calls: Some(&calls),
+            function_depth: 0,
+        },
+    )
+    .map(EvalValue::into_projection)
+}
+
+fn replace_field_rule(
+    conn: &Connection,
+    snapshot: &mut CatalogSnapshot,
+    table: &TableDefinition,
+    replacement: FieldRule,
+) -> Result<()> {
+    let existing = table
+        .fields
+        .get(&replacement.path_key)
+        .expect("replacement field exists");
+    if existing.ty != replacement.ty {
+        return Err(FastDbError::Schema(
+            "DEFINE FIELD OVERWRITE cannot change the physical field type; use ALTER FIELD TYPE"
+                .into(),
+        ));
+    }
+    let mut candidate_fields = table.fields.clone();
+    candidate_fields.insert(replacement.path_key.clone(), replacement.clone());
+    for (_, mut document) in read_documents(conn, table)? {
+        validate_candidate_field_document(table, &candidate_fields, &replacement, &mut document)?;
+    }
+    catalog::remove_field(conn, table, &replacement.path_key)?;
+    catalog::persist_field(conn, table, &replacement)?;
+    snapshot
+        .tables
+        .get_mut(&table.logical_name)
+        .expect("replacement table exists")
+        .fields
+        .insert(replacement.path_key.clone(), replacement);
+    Ok(())
+}
+
+fn render_schema_path(path: &[String]) -> String {
+    path.iter()
+        .map(|segment| render_schema_identifier(segment))
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn canonical_field_definition(table: &TableDefinition, field: &FieldRule) -> String {
+    let mut definition = format!(
+        "DEFINE FIELD {} ON {} TYPE {}",
+        render_schema_path(&field.path),
+        render_schema_identifier(&table.logical_name),
+        field.ty.canonical(),
+    );
+    if field.reference {
+        definition.push_str(" REFERENCE");
+    }
+    if let Some(default) = &field.default {
+        definition.push_str(" DEFAULT");
+        if field.default_always {
+            definition.push_str(" ALWAYS");
+        }
+        definition.push(' ');
+        definition.push_str(&default.source);
+    }
+    if field.readonly {
+        definition.push_str(" READONLY");
+    }
+    if let Some(value) = &field.value {
+        definition.push_str(" VALUE ");
+        definition.push_str(&value.source);
+    }
+    if let Some(assert) = &field.assert {
+        definition.push_str(" ASSERT ");
+        definition.push_str(&assert.source);
+    }
+    definition.push_str(match field.permissions {
+        turso_fastdb_parser::SchemaPermissions::Full => " PERMISSIONS FULL",
+        turso_fastdb_parser::SchemaPermissions::None => " PERMISSIONS NONE",
+    });
+    if let Some(comment) = &field.comment {
+        definition.push_str(" COMMENT ");
+        definition.push_str(&render_schema_string(comment));
+    }
+    definition
+}
+
+fn run_alter_field(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::AlterFieldStatement,
+    source: &str,
+) -> Result<StatementResult> {
+    let (_, path_key) = crate::path::parser_path(&statement.path)?;
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(table) = snapshot.tables.get(&statement.table.value).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "table {:?} is not defined",
+                statement.table.value
+            )));
+        };
+        let Some(mut replacement) = table.fields.get(&path_key).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "field {path_key} is not defined on table {:?}",
+                table.logical_name
+            )));
+        };
+        match statement.change {
+            turso_fastdb_parser::AlterFieldChange::Type(ty) => {
+                let ty = FieldType::from_parser(&ty);
+                if ty.vector_dimension() != replacement.ty.vector_dimension()
+                    && (ty.vector_dimension().is_some()
+                        || replacement.ty.vector_dimension().is_some())
+                {
+                    return Err(FastDbError::Schema(
+                        "ALTER FIELD cannot change the native vector representation".into(),
+                    ));
+                }
+                replacement.ty = ty;
+                replacement.required = replacement.ty.required();
+            }
+            turso_fastdb_parser::AlterFieldChange::Default(default) => {
+                validate_schema_expression_safety(&default.value)?;
+                replacement.default_always = default.always.is_some();
+                replacement.default = Some(SchemaExpression {
+                    source: source_slice(source, default.value.span)?.to_string(),
+                    expression: default.value,
+                });
+            }
+            turso_fastdb_parser::AlterFieldChange::Value(value) => {
+                validate_schema_expression_safety(&value)?;
+                replacement.value = Some(SchemaExpression {
+                    source: source_slice(source, value.span)?.to_string(),
+                    expression: value,
+                });
+            }
+            turso_fastdb_parser::AlterFieldChange::Assert(assert) => {
+                validate_schema_expression_safety(&assert)?;
+                replacement.assert = Some(SchemaExpression {
+                    source: source_slice(source, assert.span)?.to_string(),
+                    expression: assert,
+                });
+            }
+            turso_fastdb_parser::AlterFieldChange::Readonly => replacement.readonly = true,
+            turso_fastdb_parser::AlterFieldChange::Reference => replacement.reference = true,
+            turso_fastdb_parser::AlterFieldChange::Permissions(permissions) => {
+                replacement.permissions = permissions
+            }
+            turso_fastdb_parser::AlterFieldChange::Comment(comment) => {
+                replacement.comment = Some(comment)
+            }
+            turso_fastdb_parser::AlterFieldChange::DropType => {
+                replacement.ty = FieldType::Any;
+                replacement.required = false;
+            }
+            turso_fastdb_parser::AlterFieldChange::DropDefault => {
+                replacement.default = None;
+                replacement.default_always = false;
+            }
+            turso_fastdb_parser::AlterFieldChange::DropValue => replacement.value = None,
+            turso_fastdb_parser::AlterFieldChange::DropAssert => replacement.assert = None,
+            turso_fastdb_parser::AlterFieldChange::DropReadonly => replacement.readonly = false,
+            turso_fastdb_parser::AlterFieldChange::DropReference => replacement.reference = false,
+            turso_fastdb_parser::AlterFieldChange::DropComment => replacement.comment = None,
+        }
+        if replacement.reference && !replacement.ty.supports_reference() {
+            return Err(FastDbError::Schema(
+                "REFERENCE requires a record or record collection field type".into(),
+            ));
+        }
+        let mut candidate_fields = table.fields.clone();
+        candidate_fields.insert(path_key.clone(), replacement.clone());
+        schema::validate_field_relationships(
+            candidate_fields
+                .values()
+                .filter(|field| field.path_key != path_key),
+            &replacement,
+        )?;
+        let functions = snapshot.functions.clone();
+        for (rid, mut document) in read_documents(conn, &table)? {
+            validate_candidate_field_document(
+                &table,
+                &candidate_fields,
+                &replacement,
+                &mut document,
+            )?;
+            validate_field_assertion(
+                &replacement,
+                &document,
+                &RecordId::new(&table.logical_name, decode_rid(&rid)?),
+                &functions,
+            )?;
+            let hidden = derived_hidden_values(snapshot, &table, &document)?;
+            let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
+                &table.physical_name,
+                &rid,
+                &decode::encode_doc(&document)?,
+                &hidden,
+            )?;
+            conn.exec_bound(update, bindings)?;
+        }
+        replacement.definition = canonical_field_definition(&table, &replacement);
+        catalog::remove_field(conn, &table, &path_key)?;
+        catalog::persist_field(conn, &table, &replacement)?;
+        snapshot
+            .tables
+            .get_mut(&table.logical_name)
+            .expect("altered table exists")
+            .fields
+            .insert(path_key.clone(), replacement);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn validate_field_assertion(
+    field: &FieldRule,
+    document: &BTreeMap<String, Value>,
+    id: &RecordId,
+    functions: &BTreeMap<String, catalog::FunctionDefinition>,
+) -> Result<()> {
+    let Some(assertion) = &field.assert else {
+        return Ok(());
+    };
+    let value = crate::path::get_path(document, &field.path)
+        .cloned()
+        .unwrap_or(Value::None);
+    if !EvalValue::Present(evaluate_schema_expression(
+        assertion,
+        document,
+        None,
+        id,
+        None,
+        &Params::new(),
+        functions,
+        value,
+    )?)
+    .truthy()
+    {
+        return Err(FastDbError::Constraint(format!(
+            "field {} does not satisfy its ASSERT expression",
+            field.path_key
+        )));
+    }
+    Ok(())
+}
+
+fn run_remove_field(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::RemoveFieldStatement,
+) -> Result<StatementResult> {
+    let (_, path_key) = crate::path::parser_path(&statement.path)?;
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(table) = snapshot.tables.get(&statement.table.value).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "table {:?} is not defined",
+                statement.table.value
+            )));
+        };
+        let Some(field) = table.fields.get(&path_key).cloned() else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "field {path_key} is not defined on table {:?}",
+                table.logical_name
+            )));
+        };
+        if let Some(index) = table
+            .indexes
+            .values()
+            .find(|index| index.path_keys.contains(&path_key))
+        {
+            return Err(FastDbError::Constraint(format!(
+                "field {path_key} is required by index {:?}",
+                index.logical_name
+            )));
+        }
+        let vector_column = snapshot
+            .hidden_columns
+            .values()
+            .find(|column| {
+                column.table_id == table.id
+                    && column.field_path_key.as_deref() == Some(path_key.as_str())
+                    && matches!(column.role, catalog::HiddenColumnRole::Vector64(_))
+            })
+            .cloned();
+        if let Some(column) = &vector_column {
+            conn.exec_bound(
+                lower::physical_drop_hidden_column_ddl(
+                    &table.physical_name,
+                    &column.physical_name,
+                )?,
+                vec![],
+            )?;
+            let (delete, bindings) = lower::hidden_column_delete(&column.id.to_hex());
+            conn.exec_bound(delete, bindings)?;
+            snapshot.hidden_columns.remove(&column.id);
+        }
+        catalog::remove_field(conn, &table, &path_key)?;
+        snapshot
+            .tables
+            .get_mut(&table.logical_name)
+            .expect("field table exists")
+            .fields
+            .remove(&path_key);
+        if field.ty.vector_dimension().is_some()
+            && !snapshot.tables.values().any(|table| {
+                table
+                    .fields
+                    .values()
+                    .any(|field| field.ty.vector_dimension().is_some())
+            })
+            && snapshot
+                .capabilities
+                .remove(BUILTIN_VECTOR_PROVIDER)
+                .is_some()
+        {
+            catalog::remove_capability(conn, BUILTIN_VECTOR_PROVIDER)?;
+        }
         Ok(())
     })?;
     Ok(StatementResult::None)

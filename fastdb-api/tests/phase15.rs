@@ -750,3 +750,366 @@ fn p15_api_010_function_dependencies_block_dangling_catalog_state() {
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_011_table_metadata_lifecycle_is_atomic_and_reopens() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("tables.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item DROP SCHEMALESS TYPE NORMAL \
+                 PERMISSIONS FULL COMMENT 'initial'",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("CREATE item:a CONTENT {}", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        let info = connection
+            .query("INFO FOR DB; INFO FOR TABLE item", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("tables"), Some(Value::Object(tables))
+                    if matches!(tables.get("item"), Some(Value::Str(definition))
+                        if definition.contains("DROP") && definition.contains("COMMENT 'initial'")))
+        ));
+        assert!(matches!(
+            &info.statements[1],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("fields"), Some(Value::Object(fields)) if fields.is_empty())
+                    && matches!(root.get("indexes"), Some(Value::Object(indexes)) if indexes.is_empty())
+        ));
+
+        connection
+            .execute(
+                "DEFINE TABLE IF NOT EXISTS item SCHEMAFULL TYPE NORMAL; \
+                 DEFINE TABLE OVERWRITE item SCHEMALESS TYPE NORMAL \
+                   PERMISSIONS NONE COMMENT 'open'; \
+                 CREATE item:a CONTENT {}; \
+                 ALTER TABLE item SCHEMAFULL PERMISSIONS FULL COMMENT 'locked'",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("CREATE item:b CONTENT { extra: true }", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("REMOVE TABLE item", params! {})
+            .await
+            .unwrap();
+        transaction.rollback().await.unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM item:a", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.len() == 1
+        ));
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let reopened = connection.query("INFO FOR DB", params! {}).await.unwrap();
+        assert!(matches!(
+            &reopened.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("tables"), Some(Value::Object(tables))
+                    if matches!(tables.get("item"), Some(Value::Str(definition))
+                        if definition == "DEFINE TABLE item TYPE NORMAL SCHEMAFULL PERMISSIONS FULL COMMENT 'locked'"))
+        ));
+        connection
+            .execute(
+                "ALTER TABLE item SCHEMALESS; \
+                 DEFINE TABLE other SCHEMALESS TYPE NORMAL; \
+                 DEFINE TABLE link TYPE RELATION FROM item TO other ENFORCED",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE TABLE item", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute(
+                "DEFINE TABLE left_node SCHEMALESS TYPE NORMAL; \
+                 DEFINE TABLE right_node SCHEMALESS TYPE NORMAL; \
+                 DEFINE TABLE wrong_node SCHEMALESS TYPE NORMAL; \
+                 CREATE left_node:a; CREATE right_node:a; CREATE wrong_node:a; \
+                 RELATE wrong_node:a->redefined->right_node:a; \
+                 RELATE left_node:a->valid_link->right_node:a; \
+                 DEFINE TABLE OVERWRITE valid_link TYPE RELATION \
+                   FROM left_node TO right_node ENFORCED",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "DEFINE TABLE OVERWRITE redefined TYPE RELATION \
+                       FROM left_node TO right_node ENFORCED",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM redefined", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.len() == 1
+        ));
+        connection
+            .execute(
+                "DEFINE TABLE dangling_node SCHEMALESS TYPE NORMAL; \
+                 DEFINE TABLE dangling_other SCHEMALESS TYPE NORMAL; \
+                 RELATE dangling_node:absent->loose_link->dangling_other:absent; \
+                 REMOVE TABLE dangling_node",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM loose_link", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.is_empty()
+        ));
+        connection
+            .execute(
+                "REMOVE TABLE link; REMOVE TABLE item; \
+                 REMOVE TABLE IF EXISTS item; \
+                 DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 CREATE item:replacement SET n = 1",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE n FROM item", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(1)]
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_012_field_rules_normalize_validate_and_persist() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("fields.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item SCHEMAFULL TYPE NORMAL; \
+                 DEFINE FIELD count ON item TYPE int DEFAULT ALWAYS 1 \
+                   ASSERT $value >= 0 COMMENT 'counter'; \
+                 DEFINE FIELD stamp ON item TYPE number VALUE count + 1; \
+                 DEFINE FIELD code ON item TYPE string READONLY; \
+                 DEFINE FIELD owner ON item TYPE option<record> REFERENCE; \
+                 DEFINE FIELD metadata ON item COMMENT 'any value'; \
+                 CREATE item:a CONTENT { code: 'fixed', owner: person:a, metadata: { ok: true } }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "DEFINE FIELD random_value ON item TYPE int DEFAULT rand::int()",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        let created = connection
+            .query("SELECT count, stamp, code FROM item:a", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &created.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(value)
+                    if value.get("count") == Some(&Value::Integer(1))
+                        && value.get("stamp") == Some(&Value::Integer(2))
+                        && value.get("code") == Some(&Value::Str("fixed".into())))
+        ));
+        connection
+            .execute("UPDATE item:a SET count = 4", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("UPDATE item:a SET code = 'changed'", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        assert_eq!(
+            connection
+                .execute("UPDATE item:a SET count = -1", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute("UPDATE item:a SET count = NONE", params! {})
+            .await
+            .unwrap();
+        let defaulted = connection
+            .query("SELECT count, stamp FROM item:a", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &defaulted.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(value)
+                    if value.get("count") == Some(&Value::Integer(1))
+                        && value.get("stamp") == Some(&Value::Integer(2)))
+        ));
+
+        connection
+            .execute(
+                "DEFINE FIELD IF NOT EXISTS count ON item TYPE string; \
+                 DEFINE FIELD OVERWRITE count ON item TYPE int DEFAULT ALWAYS 2 \
+                   ASSERT $value >= 0 COMMENT 'overwritten'; \
+                 ALTER FIELD count ON item ASSERT $value <= 10; \
+                 ALTER FIELD count ON item TYPE float; \
+                 ALTER FIELD code ON item DROP READONLY; \
+                 ALTER FIELD metadata ON item PERMISSIONS NONE",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection
+            .execute("UPDATE item:a SET code = 'changed', count = 3", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "CREATE item:bad SET code = 'x', count = 11, metadata = {}",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        let info = connection
+            .query("INFO FOR TABLE item", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("fields"), Some(Value::Object(fields))
+                    if matches!(fields.get("count"), Some(Value::Str(definition))
+                        if definition.contains("TYPE float")
+                            && definition.contains("ASSERT $value <= 10")))
+        ));
+
+        connection
+            .execute(
+                "DEFINE FIELD embedding ON item TYPE option<array<float, 2>>; \
+                 CREATE item:vector SET code = 'v', metadata = {}, embedding = [1, 2]; \
+                 DEFINE INDEX code_idx ON item FIELDS code",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE FIELD code ON item", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute(
+                "REMOVE INDEX code_idx ON item; REMOVE FIELD embedding ON item; \
+                 REMOVE FIELD IF EXISTS embedding ON item",
+                params! {},
+            )
+            .await
+            .unwrap();
+
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("REMOVE FIELD code ON item", params! {})
+            .await
+            .unwrap();
+        transaction.rollback().await.unwrap();
+        let info = connection
+            .query("INFO FOR TABLE item", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("fields"), Some(Value::Object(fields)) if fields.contains_key("code"))
+        ));
+        connection.close().await.unwrap();
+        assert_eq!(database.check().await.unwrap().vector_fields, 0);
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let reopened = connection
+            .query("SELECT count, stamp, code FROM item:a", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &reopened.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(value)
+                    if value.get("count") == Some(&Value::Float(3.0))
+                        && value.get("stamp") == Some(&Value::Integer(4))
+                        && value.get("code") == Some(&Value::Str("changed".into())))
+        ));
+        connection.close().await.unwrap();
+    });
+}

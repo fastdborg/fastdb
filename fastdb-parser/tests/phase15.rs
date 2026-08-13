@@ -145,3 +145,96 @@ fn p15_parse_005_function_lifecycle_is_structured_and_typed() {
         assert!(parse(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn p15_parse_006_table_lifecycle_metadata_is_structured() {
+    let script = parse(
+        "DEFINE TABLE IF NOT EXISTS item DROP SCHEMAFULL TYPE NORMAL \
+         PERMISSIONS FULL COMMENT 'items'; \
+         DEFINE TABLE OVERWRITE item TYPE NORMAL SCHEMALESS PERMISSIONS NONE; \
+         ALTER TABLE IF EXISTS item SCHEMAFULL PERMISSIONS FULL COMMENT 'changed'; \
+         ALTER TABLE item DROP COMMENT; INFO FOR TABLE item; \
+         REMOVE TABLE IF EXISTS item",
+    )
+    .unwrap();
+    let Statement::DefineTable(define) = &script.statements[0] else {
+        panic!("expected DEFINE TABLE")
+    };
+    assert!(define.if_not_exists.is_some());
+    assert!(define.drop.is_some());
+    assert_eq!(
+        define.mode.value,
+        turso_fastdb_parser::TableMode::Schemafull
+    );
+    assert_eq!(define.comment.as_ref().unwrap().value, "items");
+    assert_eq!(
+        define.permissions,
+        turso_fastdb_parser::SchemaPermissions::Full
+    );
+    let Statement::AlterTable(alter) = &script.statements[2] else {
+        panic!("expected ALTER TABLE")
+    };
+    assert!(alter.if_exists.is_some());
+    assert!(alter.mode.is_some());
+    assert!(matches!(
+        alter.comment,
+        turso_fastdb_parser::TableCommentChange::Set(ref value) if value == "changed"
+    ));
+    assert!(matches!(script.statements[4], Statement::InfoTable(_)));
+    assert!(matches!(script.statements[5], Statement::RemoveTable(_)));
+
+    for source in [
+        "DEFINE TABLE IF NOT EXISTS OVERWRITE item",
+        "DEFINE TABLE item TYPE ANY",
+        "DEFINE TABLE item CHANGEFEED 1h",
+        "ALTER TABLE item COMPACT",
+        "ALTER TABLE item DROP CHANGEFEED",
+        "ALTER TABLE item COMMENT 1",
+        "REMOVE TABLE IF item",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn p15_parse_007_field_clauses_and_lifecycle_are_structured() {
+    let script = parse(
+        "DEFINE FIELD IF NOT EXISTS score ON TABLE item TYPE int \
+           DEFAULT ALWAYS 1 READONLY VALUE $value ASSERT $value >= 0 \
+           PERMISSIONS FULL COMMENT 'score'; \
+         DEFINE FIELD OVERWRITE anything ON item COMMENT 'untyped'; \
+         ALTER FIELD IF EXISTS score ON TABLE item DROP READONLY; \
+         ALTER FIELD score ON item DEFAULT 2; \
+         REMOVE FIELD IF EXISTS score ON TABLE item",
+    )
+    .unwrap();
+    let Statement::DefineField(field) = &script.statements[0] else {
+        panic!("expected DEFINE FIELD")
+    };
+    assert!(field.if_not_exists.is_some());
+    assert!(field.default.as_ref().unwrap().always.is_some());
+    assert!(field.readonly.is_some());
+    assert!(field.value.is_some());
+    assert!(field.assert.is_some());
+    assert!(field.comment.is_some());
+    let Statement::DefineField(anything) = &script.statements[1] else {
+        panic!("expected untyped DEFINE FIELD")
+    };
+    assert!(matches!(
+        anything.ty.kind,
+        turso_fastdb_parser::SchemaTypeKind::Any
+    ));
+    assert!(matches!(script.statements[2], Statement::AlterField(_)));
+    assert!(matches!(script.statements[4], Statement::RemoveField(_)));
+
+    for source in [
+        "DEFINE FIELD IF NOT EXISTS OVERWRITE score ON item TYPE int",
+        "DEFINE FIELD score ON item DEFAULT",
+        "DEFINE FIELD score ON item REFERENCE ON DELETE CASCADE",
+        "ALTER FIELD score ON item",
+        "ALTER FIELD score ON item DROP",
+        "REMOVE FIELD score item",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}

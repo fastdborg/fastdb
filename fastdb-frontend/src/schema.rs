@@ -8,6 +8,7 @@ use turso_fastdb_parser::{SchemaType, SchemaTypeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldType {
+    Any,
     Bool,
     Int,
     Float,
@@ -42,6 +43,7 @@ pub enum FieldType {
 impl FieldType {
     pub fn from_parser(value: &SchemaType) -> Self {
         match &value.kind {
+            SchemaTypeKind::Any => Self::Any,
             SchemaTypeKind::Bool => Self::Bool,
             SchemaTypeKind::Int => Self::Int,
             SchemaTypeKind::Float => Self::Float,
@@ -88,6 +90,7 @@ impl FieldType {
 
     pub fn canonical(&self) -> String {
         match self {
+            Self::Any => "any".into(),
             Self::Bool => "bool".into(),
             Self::Int => "int".into(),
             Self::Float => "float".into(),
@@ -123,12 +126,12 @@ impl FieldType {
     }
 
     pub const fn required(&self) -> bool {
-        !matches!(self, Self::Option(_))
+        !matches!(self, Self::Any | Self::Option(_))
     }
 
     pub const fn base_is_object(&self) -> bool {
         match self {
-            Self::Object => true,
+            Self::Any | Self::Object => true,
             Self::Option(inner) => inner.base_is_object(),
             _ => false,
         }
@@ -141,15 +144,50 @@ impl FieldType {
             _ => None,
         }
     }
+
+    pub const fn supports_reference(&self) -> bool {
+        match self {
+            Self::Record => true,
+            Self::Option(inner) => inner.supports_reference(),
+            Self::TypedArray { element, .. } => element.supports_reference(),
+            Self::Set {
+                element: Some(element),
+                ..
+            } => element.supports_reference(),
+            _ => false,
+        }
+    }
+
+    pub const fn base_is_any(&self) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Option(inner) => inner.base_is_any(),
+            _ => false,
+        }
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaExpression {
+    pub expression: turso_fastdb_parser::Expr,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldRule {
     pub path: Vec<String>,
     pub path_key: String,
     pub ty: FieldType,
     pub required: bool,
     pub definition: String,
+    pub default: Option<SchemaExpression>,
+    pub default_always: bool,
+    pub value: Option<SchemaExpression>,
+    pub assert: Option<SchemaExpression>,
+    pub readonly: bool,
+    pub reference: bool,
+    pub permissions: turso_fastdb_parser::SchemaPermissions,
+    pub comment: Option<String>,
 }
 
 pub fn validate_field_relationships<'a>(
@@ -206,6 +244,9 @@ pub fn validate_document(
 }
 
 fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> {
+    if matches!(ty, FieldType::Any) {
+        return Ok(false);
+    }
     if matches!(value, Value::Null) {
         return Err(FastDbError::Schema(format!(
             "declared field {path} cannot be null"
@@ -341,9 +382,11 @@ fn validate_declared_paths(
 ) -> Result<()> {
     for (key, value) in object {
         prefix.push(key.clone());
-        let allowed = fields
-            .values()
-            .any(|field| prefix == &field.path || is_prefix(prefix, &field.path));
+        let allowed = fields.values().any(|field| {
+            prefix == &field.path
+                || is_prefix(prefix, &field.path)
+                || (field.ty.base_is_any() && is_prefix(&field.path, prefix))
+        });
         if !allowed {
             let path = crate::path::canonical_path(prefix.iter().map(String::as_str))?;
             return Err(FastDbError::Schema(format!(
@@ -407,6 +450,7 @@ fn parse_type(value: &str) -> Result<(FieldType, usize)> {
         ));
     }
     for (name, ty) in [
+        ("any", FieldType::Any),
         ("bool", FieldType::Bool),
         ("int", FieldType::Int),
         ("float", FieldType::Float),
@@ -492,6 +536,14 @@ mod tests {
             required: ty.required(),
             ty,
             definition: "test".into(),
+            default: None,
+            default_always: false,
+            value: None,
+            assert: None,
+            readonly: false,
+            reference: false,
+            permissions: turso_fastdb_parser::SchemaPermissions::Full,
+            comment: None,
         }
     }
 

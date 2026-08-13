@@ -220,7 +220,11 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         | Statement::DefineFunction(_)
         | Statement::AlterFunction(_)
         | Statement::RemoveFunction(_)
-        | Statement::InfoDatabase(_) => {}
+        | Statement::InfoDatabase(_)
+        | Statement::AlterTable(_)
+        | Statement::RemoveTable(_)
+        | Statement::InfoTable(_) => {}
+        Statement::AlterField(_) | Statement::RemoveField(_) => {}
         Statement::DefineParam(statement) => {
             collect_parameters(&statement.value, &mut names);
         }
@@ -902,6 +906,7 @@ fn cast_value(value: EvalValue, ty: &SchemaType) -> Result<EvalValue> {
 
 fn cast_present(value: Value, ty: &SchemaTypeKind) -> Result<Value> {
     match ty {
+        SchemaTypeKind::Any => Ok(value),
         SchemaTypeKind::Option(_) if matches!(value, Value::None | Value::Null) => Ok(value),
         SchemaTypeKind::Option(inner) => cast_present(value, &inner.kind),
         SchemaTypeKind::Bool => match value {

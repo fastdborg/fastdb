@@ -1141,7 +1141,26 @@ fn validate_statement_limits(
                 let dimension = usize::try_from(dimension.value).unwrap_or(usize::MAX);
                 check_vector_dimension(dimension, limits)?;
             }
+            expressions.extend(statement.default.iter().map(|default| &default.value));
+            expressions.extend(statement.value.iter());
+            expressions.extend(statement.assert.iter());
         }
+        Statement::AlterField(statement) => match &statement.change {
+            turso_fastdb_parser::AlterFieldChange::Type(ty) => {
+                if let SchemaTypeKind::FixedFloatArray(dimension) = &ty.kind {
+                    check_vector_dimension(
+                        usize::try_from(dimension.value).unwrap_or(usize::MAX),
+                        limits,
+                    )?;
+                }
+            }
+            turso_fastdb_parser::AlterFieldChange::Default(default) => {
+                expressions.push(&default.value)
+            }
+            turso_fastdb_parser::AlterFieldChange::Value(value)
+            | turso_fastdb_parser::AlterFieldChange::Assert(value) => expressions.push(value),
+            _ => {}
+        },
         Statement::DefineIndex(statement) => {
             if let turso_fastdb_parser::IndexKindSyntax::Provider { options, .. } = &statement.kind
             {
@@ -1204,6 +1223,10 @@ fn validate_statement_limits(
         | Statement::AlterFunction(_)
         | Statement::RemoveFunction(_)
         | Statement::InfoDatabase(_)
+        | Statement::AlterTable(_)
+        | Statement::RemoveTable(_)
+        | Statement::InfoTable(_)
+        | Statement::RemoveField(_)
         | Statement::Begin(_)
         | Statement::Commit(_)
         | Statement::Cancel(_) => {}

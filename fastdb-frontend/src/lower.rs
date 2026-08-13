@@ -823,6 +823,21 @@ pub fn physical_add_fts_column_ddl(
     }))
 }
 
+pub fn physical_drop_hidden_column_ddl(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(
+        opaque_hidden_column,
+        crate::names::HIDDEN_COLUMN_NAME_PREFIX,
+    )?;
+    Ok(Stmt::AlterTable(AlterTable {
+        name: qnm(opaque_table),
+        body: AlterTableBody::DropColumn(nm(opaque_hidden_column)),
+    }))
+}
+
 pub fn physical_update_fts_column_stmt(
     opaque_table: &str,
     opaque_hidden_column: &str,
@@ -1707,6 +1722,64 @@ pub fn index_delete(index_id: &str) -> (Stmt, Bindings) {
     )
 }
 
+fn catalog_delete_by(column: &str, table: &str, value: &str) -> (Stmt, Bindings) {
+    (
+        Stmt::Delete {
+            with: None,
+            tbl_name: qnm(table),
+            indexed: None,
+            where_clause: Some(Box::new(Expr::binary(id(column), Operator::Equals, var(1)))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        },
+        vec![text(value)],
+    )
+}
+
+pub fn table_delete(table_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("table_id", crate::catalog::TABLES_TABLE, table_id)
+}
+
+pub fn fields_delete_table(table_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("table_id", crate::catalog::FIELDS_TABLE, table_id)
+}
+
+pub fn field_delete(table_id: &str, path_key: &str) -> (Stmt, Bindings) {
+    (
+        Stmt::Delete {
+            with: None,
+            tbl_name: qnm(crate::catalog::FIELDS_TABLE),
+            indexed: None,
+            where_clause: Some(Box::new(Expr::binary(
+                Expr::binary(id("table_id"), Operator::Equals, var(1)),
+                Operator::And,
+                Expr::binary(id("path_key"), Operator::Equals, var(2)),
+            ))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        },
+        vec![text(table_id), text(path_key)],
+    )
+}
+
+pub fn indexes_delete_table(table_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("table_id", crate::catalog::INDEXES_TABLE, table_id)
+}
+
+pub fn hidden_columns_delete_table(table_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("table_id", crate::catalog::HIDDEN_COLUMNS_TABLE, table_id)
+}
+
+pub fn hidden_column_delete(column_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("column_id", crate::catalog::HIDDEN_COLUMNS_TABLE, column_id)
+}
+
+pub fn capability_delete(provider: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("provider", crate::catalog::CAPABILITIES_TABLE, provider)
+}
+
 pub fn analyzer_insert(
     analyzer_id: &str,
     logical_name: &str,
@@ -1932,6 +2005,14 @@ pub fn physical_drop_index_ddl(opaque_index: &str) -> Result<Stmt, FastDbError> 
     Ok(Stmt::DropIndex {
         if_exists: false,
         idx_name: qnm(opaque_index),
+    })
+}
+
+pub fn physical_drop_table_ddl(opaque_table: &str) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    Ok(Stmt::DropTable {
+        if_exists: false,
+        tbl_name: qnm(opaque_table),
     })
 }
 
@@ -2555,6 +2636,44 @@ pub fn physical_graph_connected_edge_ids_stmt(
             Some(condition),
         ),
         vec![text(endpoint_table_id), text(endpoint_rid)],
+    ))
+}
+
+pub fn physical_graph_delete_edges_for_table_stmt(
+    opaque_table: &str,
+    hidden_columns: &[String],
+    endpoint_table_id: &str,
+    forward: bool,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    if hidden_columns.len() != 4 {
+        return Err(FastDbError::format(
+            "graph table cascade requires four endpoint columns",
+        ));
+    }
+    for hidden in hidden_columns {
+        validate_physical_name(hidden, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+    }
+    let table_column = if forward {
+        &hidden_columns[0]
+    } else {
+        &hidden_columns[2]
+    };
+    Ok((
+        Stmt::Delete {
+            with: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            where_clause: Some(Box::new(Expr::binary(
+                id(table_column),
+                Operator::Equals,
+                var(1),
+            ))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        },
+        vec![text(endpoint_table_id)],
     ))
 }
 

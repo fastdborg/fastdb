@@ -80,3 +80,49 @@ fn p15_catalog_002_function_corruption_fails_closed_without_mutation() {
         assert_eq!(std::fs::read(&file).unwrap(), before, "{name}");
     }
 }
+
+#[test]
+fn p15_catalog_003_table_and_field_metadata_corruption_fails_closed() {
+    let directory = tempdir().unwrap();
+    for (name, mutation) in [
+        (
+            "table-owner",
+            "UPDATE __fastdb_tables SET definition='DEFINE TABLE other TYPE NORMAL SCHEMAFULL PERMISSIONS NONE' WHERE logical_name='item'",
+        ),
+        (
+            "table-kind",
+            "UPDATE __fastdb_tables SET definition='DEFINE TABLE item TYPE RELATION SCHEMAFULL PERMISSIONS NONE' WHERE logical_name='item'",
+        ),
+        (
+            "field-type",
+            "UPDATE __fastdb_fields SET definition='DEFINE FIELD score ON item TYPE string PERMISSIONS FULL'",
+        ),
+        (
+            "field-expression",
+            "UPDATE __fastdb_fields SET definition='DEFINE FIELD score ON item TYPE int ASSERT ('",
+        ),
+    ] {
+        let file = directory.path().join(format!("schema-{name}.fastdb"));
+        {
+            let database = Database::open(file.to_str().unwrap()).unwrap();
+            let connection = database.connect().unwrap();
+            connection
+                .execute(
+                    "DEFINE TABLE item SCHEMAFULL TYPE NORMAL; \
+                     DEFINE FIELD score ON item TYPE int DEFAULT 1 ASSERT $value >= 0",
+                )
+                .unwrap();
+            common::native_exec(connection.native(), mutation);
+            connection.close().unwrap();
+        }
+        let before = std::fs::read(&file).unwrap();
+        assert_eq!(
+            Database::open(file.to_str().unwrap())
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Format,
+            "{name}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before, "{name}");
+    }
+}
