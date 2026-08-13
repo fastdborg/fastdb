@@ -496,10 +496,17 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
                 return evaluate_collection_closure(collection, operation, arguments, context)
                     .map(EvalValue::Present);
             }
+            if spec.function == Builtin::ValueExpect {
+                return evaluate_value_expect(arguments, context).map(EvalValue::Present);
+            }
             let arguments = arguments
                 .iter()
                 .map(|argument| evaluate(argument, context).map(EvalValue::into_function_value))
                 .collect::<Result<Vec<_>>>()?;
+            if matches!(spec.function, Builtin::TypeField | Builtin::TypeFields) {
+                return evaluate_type_projection(spec.function, &arguments, context)
+                    .map(EvalValue::Present);
+            }
             evaluate_builtin(spec.function, arguments).map(EvalValue::Present)
         }
         ExprKind::Closure(_) => Err(FastDbError::Schema(
@@ -1151,6 +1158,106 @@ fn invoke_closure(
     evaluate(&closure.body, &closure_context)
 }
 
+fn evaluate_value_expect(arguments: &[Expr], context: &EvalContext<'_>) -> Result<Value> {
+    let value = evaluate(&arguments[0], context)?.into_function_value();
+    let ExprKind::Closure(closure) = &arguments[1].kind else {
+        return Err(FastDbError::Schema(
+            "value::expect requires a closure second argument".into(),
+        ));
+    };
+    if closure.parameters.len() != 1 {
+        return Err(FastDbError::Schema(
+            "value::expect closure requires one parameter".into(),
+        ));
+    }
+    if invoke_closure(closure, std::slice::from_ref(&value), context)?.truthy() {
+        Ok(value)
+    } else {
+        let message = arguments
+            .get(2)
+            .map(|message| evaluate(message, context).map(EvalValue::into_function_value))
+            .transpose()?
+            .map(|message| match message {
+                Value::Str(message) => Ok(message),
+                _ => Err(argument_type("value::expect", "a string message")),
+            })
+            .transpose()?;
+        Err(FastDbError::Schema(match message {
+            Some(message) => format!("value::expect assertion failed with message: '{message}'"),
+            None => "value::expect assertion failed".into(),
+        }))
+    }
+}
+
+fn evaluate_type_projection(
+    function: Builtin,
+    arguments: &[Value],
+    context: &EvalContext<'_>,
+) -> Result<Value> {
+    let paths = if function == Builtin::TypeField {
+        vec![expect_string(&arguments[0], "type::field")?.to_string()]
+    } else {
+        collection_slice(&arguments[0], "type::fields")?
+            .iter()
+            .map(|value| expect_string(value, "type::fields").map(str::to_string))
+            .collect::<Result<Vec<_>>>()?
+    };
+    if paths.len() > 1_024 {
+        return Err(FastDbError::ResourceLimit(
+            "type::fields exceeds the field limit".into(),
+        ));
+    }
+    if function == Builtin::TypeField {
+        return Ok(dynamic_context_path(&paths[0], context).unwrap_or(Value::None));
+    }
+    let mut output = BTreeMap::new();
+    for path in paths {
+        let segments = dynamic_path_segments(&path)?;
+        if let Some(value) = dynamic_context_segments(&segments, context) {
+            crate::path::set_path(&mut output, &segments, value)?;
+        }
+    }
+    Ok(Value::Object(output))
+}
+
+fn dynamic_context_path(path: &str, context: &EvalContext<'_>) -> Option<Value> {
+    let segments = dynamic_path_segments(path).ok()?;
+    dynamic_context_segments(&segments, context)
+}
+
+fn dynamic_context_segments(segments: &[String], context: &EvalContext<'_>) -> Option<Value> {
+    let (first, rest) = segments.split_first()?;
+    let mut value = match first.as_str() {
+        "id" => Value::RecordId(context.id.clone()),
+        "in" => Value::RecordId(context.endpoints?.0.clone()),
+        "out" => Value::RecordId(context.endpoints?.1.clone()),
+        _ => context.document.get(first)?.clone(),
+    };
+    for segment in rest {
+        let Value::Object(object) = value else {
+            return None;
+        };
+        value = object.get(segment)?.clone();
+    }
+    Some(value)
+}
+
+fn dynamic_path_segments(path: &str) -> Result<Vec<String>> {
+    if path.len() > 4_096 {
+        return Err(FastDbError::ResourceLimit(
+            "dynamic field path exceeds the byte limit".into(),
+        ));
+    }
+    let segments = path.split('.').map(str::to_string).collect::<Vec<_>>();
+    crate::path::canonical_path(&segments)?;
+    if segments.len() > 64 {
+        return Err(FastDbError::ResourceLimit(
+            "dynamic field path exceeds the depth limit".into(),
+        ));
+    }
+    Ok(segments)
+}
+
 fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
     use Builtin::*;
     match function {
@@ -1700,6 +1807,9 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
         TypeCast(cast) => evaluate_type_cast(cast, &arguments),
         TypeIs(kind) => Ok(Value::Bool(value_is_type(&arguments[0], kind))),
         TypeOf => Ok(Value::Str(type_name(&arguments[0]).into())),
+        TypeField | TypeFields => Err(FastDbError::Engine(
+            "type projection bypassed its expression context".into(),
+        )),
         RecordId => match &arguments[0] {
             Value::RecordId(record) => Ok(match &record.id {
                 RecordIdValue::String(value) => Value::Str(value.clone()),
@@ -1876,6 +1986,9 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
         )),
         Not => Ok(Value::Bool(
             !EvalValue::Present(arguments[0].clone()).truthy(),
+        )),
+        ValueExpect => Err(FastDbError::Engine(
+            "value::expect bypassed its closure evaluator".into(),
         )),
         String(function) => crate::string_functions::evaluate(function, &arguments),
     }

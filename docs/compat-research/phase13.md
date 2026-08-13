@@ -325,3 +325,11 @@ input and output.
 or overflowing Crockford encodings. `count()` returned one, while a false,
 NONE, NULL, or zero argument returned zero. `not` applies the same
 characterized truthiness used by logical expressions.
+
+Dynamic `type::field(string)` and `type::fields(array<string>)` are
+record-context projection functions, not object-plus-path helpers. FastDB
+resolves their bounded dot paths directly against the decoded document and
+synthesized `id`/edge endpoints; it never renders a JSON or SQLite path from
+the input. `value::expect` returns the original value when its lexical closure
+is truthy and otherwise fails the containing statement or transaction without
+including the value in diagnostics.

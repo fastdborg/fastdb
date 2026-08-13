@@ -62,3 +62,45 @@ fn p13_fn_027_misc_pure_errors_leave_no_record() {
     };
     assert!(rows.is_empty());
 }
+
+#[test]
+fn p13_fn_028_dynamic_field_projection_and_value_expect_are_context_safe() {
+    let database = Database::open_memory().unwrap();
+    let connection = database.connect().unwrap();
+    connection
+        .execute(
+            "CREATE person:one SET name = {first:'Tobie',last:'Morgan'}, age = 42, \
+             checked = value::expect(42, |$value| $value > 0)",
+        )
+        .unwrap();
+    let selected = connection
+        .execute(
+            "SELECT type::field('name.first') AS first, \
+             type::fields(['name.first','age','id']) AS picked, checked FROM person:one",
+        )
+        .unwrap();
+    let row = row(&selected.statements[0]);
+    assert_eq!(row.get("first"), Some(&Value::Str("Tobie".into())));
+    assert_eq!(row.get("checked"), Some(&Value::Integer(42)));
+    let Some(Value::Object(picked)) = row.get("picked") else {
+        panic!("expected picked object")
+    };
+    assert_eq!(picked.get("age"), Some(&Value::Integer(42)));
+    assert!(matches!(picked.get("id"), Some(Value::RecordId(_))));
+    assert_eq!(
+        picked.get("name"),
+        Some(&Value::Object(std::collections::BTreeMap::from([(
+            "first".into(),
+            Value::Str("Tobie".into())
+        )])))
+    );
+
+    assert!(connection
+        .execute("CREATE bad:one SET value = value::expect(1, |$value| $value = 2)")
+        .is_err());
+    let selected = connection.execute("SELECT * FROM bad").unwrap();
+    let StatementResult::Rows(rows) = &selected.statements[0] else {
+        panic!("expected rows")
+    };
+    assert!(rows.is_empty());
+}

@@ -4,7 +4,7 @@
 
 FastDB implements a clean-room SurrealQL-compatible subset pinned to SurrealDB `v3.1.5`. Parser acceptance alone does not mean execution support, and compatibility does not imply sponsorship or certification. See `CLEAN_ROOM.md`.
 
-The locked inventory contains 756 atomic capabilities: 474 Supported, 0 Partial, and 282 Unsupported. `Partial` is allowed only for the active Phase 13; all future-phase targets remain Unsupported until their implementation phase.
+The locked inventory contains 756 atomic capabilities: 477 Supported, 0 Partial, and 279 Unsupported. `Partial` is allowed only for the active Phase 13; all future-phase targets remain Unsupported until their implementation phase.
 
 ## Status legend
 
@@ -360,7 +360,7 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `FN-SET-SLICE` | Supported | Phase 13 | set::slice function | `set::slice(...)` executes with characterized ordering, equality, path, and collection limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/set | P13-PARSE-004<br>P13-FN-002<br>P13-FN-003 |
 | `FN-SET-UNION` | Supported | Phase 13 | set::union function | `set::union(...)` executes with characterized ordering, equality, path, and collection limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/set | P13-PARSE-004<br>P13-FN-002<br>P13-FN-003 |
 | `FN-VALUE-DIFF` | Unsupported | Phase 13 | value::diff function | `value::diff(...)` executes with characterized ordering, equality, path, and collection limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/value | — |
-| `FN-VALUE-EXPECT` | Unsupported | Phase 13 | value::expect function | `value::expect(...)` executes with characterized ordering, equality, path, and collection limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/value | — |
+| `FN-VALUE-EXPECT` | Supported | Phase 13 | value::expect function | `value::expect(...)` executes with characterized ordering, equality, path, and collection limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/value | P13-PARSE-004<br>P13-PARSE-006<br>P13-FN-028 |
 | `FN-VALUE-PATCH` | Unsupported | Phase 13 | value::patch function | `value::patch(...)` executes with characterized ordering, equality, path, and collection limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/value | — |
 ## Functions — Parsing and strings
 
@@ -482,8 +482,8 @@ Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as Su
 | `FN-TYPE-DATETIME` | Supported | Phase 13 | type::datetime function | `type::datetime(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-FN-007<br>P13-FN-008 |
 | `FN-TYPE-DECIMAL` | Supported | Phase 13 | type::decimal function | `type::decimal(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-FN-007<br>P13-FN-008 |
 | `FN-TYPE-DURATION` | Supported | Phase 13 | type::duration function | `type::duration(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-FN-007<br>P13-FN-008 |
-| `FN-TYPE-FIELD` | Unsupported | Phase 13 | type::field function | `type::field(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | — |
-| `FN-TYPE-FIELDS` | Unsupported | Phase 13 | type::fields function | `type::fields(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | — |
+| `FN-TYPE-FIELD` | Supported | Phase 13 | type::field function | `type::field(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-PARSE-006<br>P13-FN-028 |
+| `FN-TYPE-FIELDS` | Supported | Phase 13 | type::fields function | `type::fields(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-PARSE-006<br>P13-FN-028 |
 | `FN-TYPE-FILE` | Supported | Phase 13 | type::file function | `type::file(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-FN-007<br>P13-FN-008 |
 | `FN-TYPE-FLOAT` | Supported | Phase 13 | type::float function | `type::float(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-FN-007<br>P13-FN-008 |
 | `FN-TYPE-INT` | Supported | Phase 13 | type::int function | `type::int(...)` executes with characterized type conversion, validation, random-source, and context limits. | https://surrealdb.com/docs/reference/query-language/functions/database-functions/type | P13-PARSE-004<br>P13-FN-007<br>P13-FN-008 |

@@ -113,6 +113,8 @@ pub(crate) enum Builtin {
     TypeCast(TypeCast),
     TypeIs(TypeKind),
     TypeOf,
+    TypeField,
+    TypeFields,
     RecordId,
     RecordTable,
     DurationMax,
@@ -143,6 +145,7 @@ pub(crate) enum Builtin {
     Random(RandomBuiltin),
     Count,
     Not,
+    ValueExpect,
     String(StringBuiltin),
 }
 
@@ -857,6 +860,8 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure_value!(Builtin::TypeCast(TypeCast::Thing), "type::thing", 1, 2),
     pure_value!(Builtin::TypeCast(TypeCast::Uuid), "type::uuid", 1),
     pure!(TypeOf, "type::of", 1),
+    context!(TypeField, "type::field", 1),
+    context!(TypeFields, "type::fields", 1),
     pure!(RecordId, "record::id", 1),
     pure!(RecordId, "meta::id", 1),
     pure!(RecordTable, "record::table", 1),
@@ -1073,6 +1078,7 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure!(CryptoJoaat, "crypto::joaat", 1),
     pure!(Count, "count", 0, 1),
     pure!(Not, "not", 1),
+    pure!(ValueExpect, "value::expect", 2, 3),
     context_value!(
         Builtin::CryptoPassword(PasswordAlgorithm::Argon2, PasswordOperation::Compare),
         "crypto::argon2::compare",

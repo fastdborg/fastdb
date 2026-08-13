@@ -4117,11 +4117,11 @@ area = "Functions — Object, set, and value"
 title = "value::expect function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`value::expect(...)` executes with characterized ordering, equality, path, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/value"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-006"]
+execution_evidence = ["P13-FN-028"]
 stop_report = ""
 
 [[capability]]
@@ -5597,11 +5597,11 @@ area = "Functions — Random, record, and type"
 title = "type::field function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::field(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-006"]
+execution_evidence = ["P13-FN-028"]
 stop_report = ""
 
 [[capability]]
@@ -5610,11 +5610,11 @@ area = "Functions — Random, record, and type"
 title = "type::fields function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::fields(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-006"]
+execution_evidence = ["P13-FN-028"]
 stop_report = ""
 
 [[capability]]
