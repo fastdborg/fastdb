@@ -7352,9 +7352,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "Characterized ALTER API clauses update canonical metadata atomically."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#server-api-lifecycle"
 
 [[capability]]
 id = "SCHEMA-ALTER-BUCKET"
@@ -7482,9 +7482,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "Characterized ALTER SEQUENCE clauses update canonical metadata atomically."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#sequence-definitions-and-allocation"
 
 [[capability]]
 id = "SCHEMA-ALTER-SYSTEM"
@@ -7651,9 +7651,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "WASM module definitions require a sealed bounded provider or an architecture stop."
 provenance = ["https://surrealdb.com/docs/surrealql/statements/define/module"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#surrealism-modules"
 
 [[capability]]
 id = "SCHEMA-DEFINE-PARAM"
@@ -7677,9 +7677,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "Transactional bounded sequences execute with canonical metadata."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#sequence-definitions-and-allocation"
 
 [[capability]]
 id = "SCHEMA-DEFINE-TABLE-BASIC"
@@ -7742,9 +7742,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "INFO API returns structured authorized definitions."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#server-api-lifecycle"
 
 [[capability]]
 id = "SCHEMA-INFO-BUCKET"
@@ -7859,9 +7859,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "INFO SEQUENCE returns structured authorized definitions."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#sequence-definitions-and-allocation"
 
 [[capability]]
 id = "SCHEMA-INFO-TABLE"
@@ -7911,9 +7911,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "REMOVE API executes atomically with dependency validation."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#server-api-lifecycle"
 
 [[capability]]
 id = "SCHEMA-REMOVE-BTREE"
@@ -8041,9 +8041,9 @@ disposition = "target"
 status = "Unsupported"
 syntax = "REMOVE SEQUENCE executes atomically with dependency validation."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#sequence-definitions-and-allocation"
 
 [[capability]]
 id = "SCHEMA-REMOVE-TABLE-COMPLETE"

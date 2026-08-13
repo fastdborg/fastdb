@@ -238,3 +238,29 @@ fn p15_parse_007_field_clauses_and_lifecycle_are_structured() {
         assert!(parse(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn p15_parse_008_stopped_sequence_module_and_server_api_fail_explicitly() {
+    for source in [
+        "DEFINE SEQUENCE ids BATCH 1 START 0 TIMEOUT 1s",
+        "ALTER SEQUENCE ids TIMEOUT 2s",
+        "REMOVE SEQUENCE IF EXISTS ids",
+        "INFO FOR DB.sequences",
+        "INFO FOR SEQUENCE ids",
+        "DEFINE MODULE mod::demo AS f\"files:/demo.surli\"",
+        "DEFINE API /health FOR get THEN RETURN 'ok'",
+        "ALTER API /health DROP ACTIONS",
+        "REMOVE API IF EXISTS /health",
+        "INFO FOR DB.apis",
+        "INFO FOR API /health",
+    ] {
+        let error = parse_one(source).unwrap_err();
+        assert!(
+            matches!(
+                error.kind,
+                turso_fastdb_parser::ParseErrorKind::UnsupportedSyntax { .. }
+            ),
+            "{source}: {error:?}"
+        );
+    }
+}

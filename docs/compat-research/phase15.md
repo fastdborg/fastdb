@@ -246,3 +246,28 @@ removes catalog-owned native-vector columns and the last vector capability
 atomically. Union/literal types, FLEXIBLE, permission predicates, full
 reference actions, mixed table ANY, and views remain Partial rather than being
 accepted without behavior.
+
+## Sequence and module stop probes
+
+The fixed reference canonicalized `DEFINE SEQUENCE basic` as `DEFINE SEQUENCE
+basic BATCH 1000 START 0`. Two calls to `sequence::nextval('basic')` returned
+zero and one; `sequence::next('basic')` was rejected as an invalid function
+path. `IF NOT EXISTS` retained a sequence, `OVERWRITE` replaced its definition,
+`ALTER SEQUENCE ... TIMEOUT` changed only the timeout, and missing-object
+`ALTER/REMOVE ... IF EXISTS` were no-ops.
+
+A `BATCH 1 START 10` transaction probe established the important durability
+boundary: an allocation followed by `CANCEL` was still burned, so the next
+call returned 11. Another allocation in a transaction stopped by `THROW` was
+also burned, and the next call returned 13. An independent pinned-Turso
+stable-WAL probe returned 10 both inside the rolled-back transaction and on
+the following call. The resulting architecture stop is recorded in
+`docs/phase15-architecture-stops.md`; FastDB does not substitute rollbackable
+or process-local semantics.
+
+The fixed reference also rejected `DEFINE MODULE mod::demo AS
+f\"files:/demo.surli\"` because the experimental `surrealism` capability was
+not enabled. Public documentation identifies the source as a bucket-hosted
+WASM artifact. FastDB has no sealed bounded WASM provider and rejects the
+definition before filesystem or catalog access, as detailed in the same stop
+report.

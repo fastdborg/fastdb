@@ -936,6 +936,24 @@ impl<'a> Parser<'a> {
             TokenKind::Function => Ok(Statement::DefineFunction(
                 self.parse_define_function(start)?,
             )),
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("sequence") => {
+                Err(ParseError::unsupported(
+                    "SurrealDB sequence allocation cannot preserve its non-rollback semantics on serialized stable WAL",
+                    self.peek().span,
+                ))
+            }
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("module") => {
+                Err(ParseError::unsupported(
+                    "DEFINE MODULE requires an unavailable sealed bounded WASM provider",
+                    self.peek().span,
+                ))
+            }
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("api") => {
+                Err(ParseError::unsupported(
+                    "DEFINE API execution belongs to the authenticated Phase 19 server",
+                    self.peek().span,
+                ))
+            }
             _ => Err(ParseError::unsupported(
                 "this DEFINE target is outside the active FastDB grammar",
                 self.peek().span,
@@ -1087,6 +1105,20 @@ impl<'a> Parser<'a> {
 
     fn parse_alter(&mut self) -> Result<Statement, ParseError> {
         let start = self.expect(&TokenKind::Alter, "keyword ALTER")?.span;
+        if matches!(&self.peek().kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("sequence"))
+        {
+            return Err(ParseError::unsupported(
+                "SurrealDB sequence allocation cannot preserve its non-rollback semantics on serialized stable WAL",
+                self.peek().span,
+            ));
+        }
+        if matches!(&self.peek().kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("api"))
+        {
+            return Err(ParseError::unsupported(
+                "ALTER API execution belongs to the authenticated Phase 19 server",
+                self.peek().span,
+            ));
+        }
         if self.eat(&TokenKind::Field) {
             let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
                 let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
@@ -1288,6 +1320,20 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_remove(&mut self) -> Result<Statement, ParseError> {
+        if matches!(&self.tokens[self.position + 1].kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("sequence"))
+        {
+            return Err(ParseError::unsupported(
+                "SurrealDB sequence allocation cannot preserve its non-rollback semantics on serialized stable WAL",
+                self.tokens[self.position + 1].span,
+            ));
+        }
+        if matches!(&self.tokens[self.position + 1].kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("api"))
+        {
+            return Err(ParseError::unsupported(
+                "REMOVE API execution belongs to the authenticated Phase 19 server",
+                self.tokens[self.position + 1].span,
+            ));
+        }
         if self.at_offset(1, &TokenKind::Field) {
             return self.parse_remove_field().map(Statement::RemoveField);
         }
@@ -1389,6 +1435,42 @@ impl<'a> Parser<'a> {
             }));
         }
         let target = self.expect_identifier("DB or DATABASE")?;
+        if target.value.eq_ignore_ascii_case("sequence") {
+            return Err(ParseError::unsupported(
+                "SurrealDB sequence allocation cannot preserve its non-rollback semantics on serialized stable WAL",
+                target.span,
+            ));
+        }
+        if target.value.eq_ignore_ascii_case("api") {
+            return Err(ParseError::unsupported(
+                "INFO API execution belongs to the authenticated Phase 19 server",
+                target.span,
+            ));
+        }
+        if matches!(
+            target.value.to_ascii_lowercase().as_str(),
+            "db" | "database"
+        ) && self.at(&TokenKind::Dot)
+        {
+            let dot = self.advance().span;
+            let collection = self.expect_identifier("an INFO database collection")?;
+            if collection.value.eq_ignore_ascii_case("sequences") {
+                return Err(ParseError::unsupported(
+                    "SurrealDB sequence allocation cannot preserve its non-rollback semantics on serialized stable WAL",
+                    dot.union(collection.span),
+                ));
+            }
+            if collection.value.eq_ignore_ascii_case("apis") {
+                return Err(ParseError::unsupported(
+                    "INFO API execution belongs to the authenticated Phase 19 server",
+                    dot.union(collection.span),
+                ));
+            }
+            return Err(ParseError::unsupported(
+                "this INFO database collection is outside the active FastDB grammar",
+                dot.union(collection.span),
+            ));
+        }
         if !matches!(
             target.value.to_ascii_lowercase().as_str(),
             "db" | "database"
