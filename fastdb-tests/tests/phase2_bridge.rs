@@ -127,9 +127,9 @@ fn p2_bridge_003_explicit_mvp_exclusions_stay_gated() {
     let conn = db.connect().unwrap();
     for source in [
         "SELECT * FROM ONLY person",
-        "UPDATE ONLY person:tracy SET name = 'Trace'",
-        "DELETE FROM person",
         "SELECT * FROM person WHERE lower(name) = 'tracy'",
+        "RELATE person:a->likes->person:b OR UPDATE",
+        "LIVE SELECT * FROM person",
     ] {
         let error = conn.execute(source).unwrap_err();
         assert_eq!(

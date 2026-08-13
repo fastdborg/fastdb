@@ -320,7 +320,19 @@ impl<'a> Parser<'a> {
         if self.at(&TokenKind::Return) {
             return Err(self.duplicate_clause("RETURN"));
         }
+        if self.at(&TokenKind::Version) {
+            return Err(ParseError::unsupported(
+                "CREATE VERSION requires versioned history, which is excluded from the pre-1.0 roadmap",
+                self.peek().span,
+            ));
+        }
         let timeout = self.parse_timeout_clause()?;
+        if self.at(&TokenKind::Version) {
+            return Err(ParseError::unsupported(
+                "CREATE VERSION requires versioned history, which is excluded from the pre-1.0 roadmap",
+                self.peek().span,
+            ));
+        }
         let end = self.previous_end();
         Ok(CreateStatement {
             span: Span::new(start.offset, end - start.offset),
@@ -1837,6 +1849,7 @@ impl<'a> Parser<'a> {
             TokenKind::Ident(_) | TokenKind::Search | TokenKind::In | TokenKind::Out => {
                 self.parse_identifier_expression()
             }
+            kind if keyword_object_key(&kind).is_some() => self.parse_identifier_expression(),
             TokenKind::LeftParen => self.parse_parenthesized_expression(),
             TokenKind::LeftBracket => self.parse_array_expression(),
             TokenKind::LeftBrace if self.brace_starts_object() => self.parse_object_expression(),
@@ -2445,7 +2458,11 @@ impl<'a> Parser<'a> {
 
     fn expect_identifier(&mut self, expected: &'static str) -> Result<Identifier, ParseError> {
         let token = self.peek().clone();
-        if let TokenKind::Ident(value) = token.kind {
+        let value = match token.kind.clone() {
+            TokenKind::Ident(value) => Some(value),
+            kind => keyword_object_key(&kind),
+        };
+        if let Some(value) = value {
             self.position += 1;
             return Ok(Identifier::new(value, token.span));
         }
@@ -2463,16 +2480,17 @@ impl<'a> Parser<'a> {
         expected: &'static str,
     ) -> Result<Identifier, ParseError> {
         let token = self.peek().clone();
-        let value = match function_segment_value(&token.kind) {
-            Some(value) => value,
-            None if matches!(token.kind, TokenKind::Eof) => {
-                return Err(ParseError::new(
-                    ParseErrorKind::UnexpectedEof { expected },
-                    token.span,
-                ));
-            }
-            None => return Err(self.unexpected(expected)),
-        };
+        let value =
+            match function_segment_value(&token.kind).or_else(|| keyword_object_key(&token.kind)) {
+                Some(value) => value,
+                None if matches!(token.kind, TokenKind::Eof) => {
+                    return Err(ParseError::new(
+                        ParseErrorKind::UnexpectedEof { expected },
+                        token.span,
+                    ));
+                }
+                None => return Err(self.unexpected(expected)),
+            };
         self.position += 1;
         Ok(Identifier::new(value, token.span))
     }
@@ -2749,6 +2767,7 @@ fn function_segment_value(kind: &TokenKind) -> Option<String> {
         TokenKind::Is => "is",
         TokenKind::Not => "not",
         TokenKind::None => "none",
+        TokenKind::All => "all",
         TokenKind::Null => "null",
         TokenKind::Contains => "contains",
         TokenKind::Set => "set",
@@ -2768,6 +2787,7 @@ fn function_segment_value(kind: &TokenKind) -> Option<String> {
         TokenKind::Split => "split",
         TokenKind::Group => "group",
         TokenKind::Timeout => "timeout",
+        TokenKind::Json => "json",
         TokenKind::BoolType => "bool",
         TokenKind::IntType => "int",
         TokenKind::FloatType => "float",

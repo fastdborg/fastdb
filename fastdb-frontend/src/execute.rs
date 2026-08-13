@@ -2238,11 +2238,6 @@ fn run_update(
             let Some(table) = snapshot.tables.get(table_name).cloned() else {
                 continue;
             };
-            if table.kind == TableKind::Relation {
-                return Err(FastDbError::Schema(
-                    "relation records must be mutated through RELATE".into(),
-                ));
-            }
             let candidates = read_candidates(
                 conn,
                 snapshot,
@@ -2264,6 +2259,11 @@ fn run_update(
                 }
             }
             if matched.is_empty() && upsert {
+                if table.kind == TableKind::Relation {
+                    return Err(FastDbError::Schema(
+                        "UPSERT cannot create a relation without immutable in/out endpoints".into(),
+                    ));
+                }
                 let id = match selector {
                     TargetSelector::All => RecordIdValue::Uuid(uuid::Uuid::now_v7()),
                     TargetSelector::Record(id) => id.clone(),
@@ -2335,7 +2335,11 @@ fn run_update(
                         )
                     }
                 };
-            reject_stored_id(&document)?;
+            if table.kind == TableKind::Relation {
+                reject_stored_edge_fields(&document)?;
+            } else {
+                reject_stored_id(&document)?;
+            }
             schema::validate_document(
                 table.mode == TableMode::Schemafull,
                 &table.fields,
@@ -2363,13 +2367,11 @@ fn run_update(
                 "UPDATE/UPSERT violates a declared unique index",
             )?;
             conn.check_failpoint(Failpoint::AfterUpdateMutation)?;
-            outcomes.push((
-                table_name,
-                id.clone(),
-                endpoints,
-                before,
-                full_record_value(&id, &document),
-            ));
+            let after = match &endpoints {
+                Some((from, to)) => full_edge_value(&id, from, to, &document),
+                None => full_record_value(&id, &document),
+            };
+            outcomes.push((table_name, id.clone(), endpoints, before, after));
         }
         Ok(outcomes)
     })?;

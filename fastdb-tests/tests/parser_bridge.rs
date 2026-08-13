@@ -50,9 +50,9 @@ fn p1_bridge_002_excluded_shapes_remain_frontend_unsupported() {
     let connection = database.connect().unwrap();
     let inputs = [
         "SELECT * FROM ONLY person",
-        "UPDATE ONLY person:tracy SET name = 'Trace'",
-        "DELETE FROM person",
         "SELECT * FROM person WHERE lower(name) = 'tracy'",
+        "RELATE person:a->likes->person:b OR UPDATE",
+        "LIVE SELECT * FROM person",
     ];
 
     for input in inputs {
@@ -79,7 +79,10 @@ fn p1_bridge_003_parse_and_capability_errors_remain_distinct() {
         assert_eq!(error.category(), ErrorCategory::Parse, "{input}: {error}");
     }
 
-    for input in ["INSERT INTO person {}", "SELECT * FROM person FETCH friend"] {
+    for input in [
+        "LET $value = 1",
+        "RELATE person:a->likes->person:b OR UPDATE",
+    ] {
         let error = connection.execute(input).unwrap_err();
         assert_eq!(
             error.category(),

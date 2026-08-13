@@ -78,7 +78,7 @@ fn p13_fn_014_invalid_encoding_inputs_fail_without_mutation() {
     for source in [
         "CREATE bad:one SET value = encoding::base64::decode('!')",
         "CREATE bad:one SET value = encoding::json::decode('{')",
-        "CREATE bad:one SET value = encoding::cbor::decode(<bytes>'bad')",
+        "CREATE bad:one SET value = encoding::cbor::decode(encoding::base64::decode('/w=='))",
         "CREATE bad:one SET value = crypto::sha256({})",
     ] {
         assert!(connection.execute(source).is_err(), "accepted {source}");
