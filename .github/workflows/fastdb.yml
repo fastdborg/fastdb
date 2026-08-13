@@ -1,0 +1,116 @@
+name: FastDB Core
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "fastdb-*/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "COMPAT.md"
+      - "docs/api.md"
+      - "docs/cli.md"
+      - "docs/format-v1.md"
+      - ".github/workflows/fastdb.yml"
+  pull_request:
+    paths:
+      - "fastdb-*/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "COMPAT.md"
+      - "docs/api.md"
+      - "docs/cli.md"
+      - "docs/format-v1.md"
+      - ".github/workflows/fastdb.yml"
+
+concurrency:
+  group: fastdb-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  FASTDB_ENGINE_SHA: 977383ff40edc44ef410af062ed0d2322252a869
+
+jobs:
+  fastdb-cross-platform:
+    name: FastDB (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fastdb-${{ matrix.os }}
+      - name: Record pinned engine
+        run: echo "FastDB Turso engine $FASTDB_ENGINE_SHA"
+        shell: bash
+      - name: Test FastDB parser, frontend, API, CLI, and filesystem paths
+        run: >-
+          cargo test --locked
+          -p turso_fastdb_parser
+          -p turso_fastdb
+          -p fastdb
+          -p fastdb-cli
+          -p turso_fastdb_tests
+
+  fastdb-quality:
+    name: FastDB quality and release builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fastdb-quality
+      - run: cargo fmt --all -- --check
+      - name: Check detached fuzz formatting
+        run: |
+          cargo fmt --manifest-path fastdb-parser/fuzz/Cargo.toml -- --check
+          cargo fmt --manifest-path fastdb-tests/fuzz/Cargo.toml -- --check
+      - name: Lint FastDB targets
+        run: >-
+          cargo clippy --locked
+          -p turso_fastdb_parser
+          -p turso_fastdb
+          -p fastdb
+          -p fastdb-cli
+          -p turso_fastdb_tests
+          -p turso_fastdb_benchmarks
+          --all-targets
+      - run: cargo test --locked --doc -p fastdb
+      - run: cargo build --locked --release -p fastdb-cli
+      - name: Compile release benchmark
+        run: cargo build --locked --release -p turso_fastdb_benchmarks --bin phase5-release-bench
+      - name: Verify committed fixture provenance
+        working-directory: fastdb-tests/fixtures
+        run: sha256sum -c SHA256SUMS
+      - name: Assert release remains non-publishing
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 > fastdb-metadata.json
+          jq -e '[.packages[] | select(.name == "fastdb" or .name == "fastdb-cli" or (.name | startswith("turso_fastdb"))) | (.version == "0.0.0" and .publish == [])] | all' fastdb-metadata.json
+
+  fastdb-fuzz-smoke:
+    name: FastDB fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-fuzz
+      - name: Parser fuzz smoke
+        working-directory: fastdb-parser
+        run: cargo +nightly fuzz run parse -- -max_total_time=20
+      - name: Structured CRUD fuzz smoke
+        working-directory: fastdb-tests/fuzz
+        run: cargo +nightly fuzz run structured_crud -- -max_total_time=20

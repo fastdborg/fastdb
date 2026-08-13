@@ -85,3 +85,19 @@ Indexable path values are missing, null, bool, integer, finite float, and string
 Catalog bootstrap, implicit table registration, physical table creation, record insertion, migration, field validation/catalog insertion, and index validation/DDL/catalog insertion run in immediate transactions under the shared schema mutex. The process-local catalog cache is write-locked through commit and replaced only after a successful commit. Rollback, injected commit failures, and real WAL-sync completion failures leave persistent catalog ownership and the shared cache unchanged.
 
 Direct external changes to catalogs or hidden objects are unsupported. They are diagnosed on reopen when structural validation can identify them; malformed stored records are diagnosed as format corruption when decoded.
+
+## Fixture and upgrade policy
+
+Format 1 is the only stable Core format in this release candidate. Unknown
+future format, dialect, expression, or migration versions are refused before
+mutation; format 0 is disposable and has no upgrade path. A release that
+changes physical layout or semantics must add an explicit transactional
+migration, retain the prior fixture, add a new fixture and provenance digest,
+and prove reopen, rollback, integrity, and index-plan behavior before changing
+the supported-version constants.
+
+The committed Phase 3 format-1 and migration-level-0 artifacts live under
+`fastdb-tests/fixtures/`. Their SHA-256 provenance is verified separately from
+behavioral open/migrate/mutate/reopen tests. Empty `-wal` placeholders can
+remain after a clean checkpoint in the pinned engine; nonempty sidecars are
+engine-owned recovery state and must never be deleted manually.

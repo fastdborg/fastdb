@@ -1,8 +1,8 @@
 # FastDB
 
 FastDB is a clean-room, SurrealQL-compatible document database frontend built
-on a pinned Turso engine. The current MVP surface is a runtime-neutral
-asynchronous Rust package and a local CLI. Compatibility is a documented
+on a pinned Turso engine. The release-candidate MVP surface is a
+runtime-neutral asynchronous Rust package and a local CLI. Compatibility is a documented
 subset, not sponsorship, certification, or complete SurrealDB compatibility.
 
 ```rust
@@ -28,4 +28,5 @@ See [the embedded API](docs/api.md), [CLI contract](docs/cli.md),
 
 FastDB-authored crates remain version `0.0.0`, `publish = false`, and
 source-available pending counsel-approved license, CLA, entity, and trademark
-materials. No release or production-readiness claim is made.
+materials. Local hardening evidence does not authorize a release or a
+production-readiness claim; see [the release-readiness checklist](docs/release-readiness.md).

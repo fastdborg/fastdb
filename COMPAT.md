@@ -9,7 +9,7 @@ FastDB implements a documented SurrealQL-compatible subset. This file is the nor
 - **Planned**: reserved for parsed behavior that has not reached execution.
 - **Unsupported**: explicitly rejected and outside the MVP target.
 
-Phase 4 exposes the complete synchronous MVP expression, parameter, CRUD, result, ordered-script, schema, index, and explicit-transaction surface through the asynchronous `fastdb` Rust package and CLI. Release hardening remains Phase 5.
+Phase 5 hardens the complete MVP expression, parameter, CRUD, result, ordered-script, schema, index, transaction, asynchronous Rust API, and CLI surface. Anything not listed as Supported or Partial remains explicitly outside this release candidate.
 
 ## Values and record IDs
 
@@ -97,6 +97,13 @@ Phase 4 exposes the complete synchronous MVP expression, parameter, CRUD, result
 - A transaction guard rejects source transaction control, consumes on commit/rollback, queues rollback on drop, and fully cleans up after any guarded operation error.
 - Public errors expose exactly seven stable categories. Parse and unsupported errors preserve half-open UTF-8 byte spans; internal format failures are `Engine`.
 - The CLI exposes command, piped batch, and interactive parser-completeness modes. Its strict JSON is one collision-safe version-1 `$fastdb` envelope per request.
+
+## Phase 5 release-candidate contracts
+
+- Successful parse caching is bounded to 128 entries/4 MiB and excludes sources over 64 KiB. Prepared SELECT caching is bounded to 64 value-free candidate keys and is disabled across explicit transaction execution.
+- Committed format-1 and migration-level-0 fixtures prove reopen, transactional migration, further mutation, integrity, and actual expression-index selection.
+- The release benchmark compares the public async API with an equivalent native Turso worker under identical values, durability, indexes, and result materialization. Raw samples and percentile ratios are committed.
+- The release candidate remains source-available, version `0.0.0`, `publish = false`, and blocked from release pending remote cross-platform CI and legal approval.
 
 ## Maintenance rule
 

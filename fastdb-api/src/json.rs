@@ -121,12 +121,9 @@ fn object_to_json(values: &BTreeMap<String, Value>) -> Result<serde_json::Value,
     ))
 }
 
-fn json_object_to_value(mut values: Map<String, serde_json::Value>) -> Result<Value, Error> {
+fn json_object_to_value(values: Map<String, serde_json::Value>) -> Result<Value, Error> {
     if values.len() == 1 && values.contains_key(KEY) {
-        let tag = values
-            .remove(KEY)
-            .and_then(|value| value.as_object().cloned());
-        if let Some(tag) = tag {
+        if let Some(tag) = values.get(KEY).and_then(|value| value.as_object().cloned()) {
             return decode_envelope(tag);
         }
     }

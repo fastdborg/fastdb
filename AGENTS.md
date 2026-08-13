@@ -8,7 +8,7 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. For Phase 4, [`plan-phase4.md`](plan-phase4.md) is the authoritative execution plan and Definition of Done. [`docs/phase0-report.md`](docs/phase0-report.md), [`docs/phase1-report.md`](docs/phase1-report.md), [`docs/phase2-report.md`](docs/phase2-report.md), and [`docs/phase3-report.md`](docs/phase3-report.md) preserve completed evidence.
+3. Read the plan for the active phase. For Phase 5, [`plan-phase5.md`](plan-phase5.md) is the authoritative execution plan and Definition of Done. [`docs/phase0-report.md`](docs/phase0-report.md), [`docs/phase1-report.md`](docs/phase1-report.md), [`docs/phase2-report.md`](docs/phase2-report.md), [`docs/phase3-report.md`](docs/phase3-report.md), and [`docs/phase4-report.md`](docs/phase4-report.md) preserve completed evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -34,7 +34,7 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Behavioral compatibility reference: SurrealDB `v3.1.5`.
 - Durability default: stable Turso WAL with full durability.
 - Delivery surfaces for the MVP: an embedded Rust library and the `fastdb` CLI.
-- Current implementation stage: Core Phase 4, the asynchronous embedded API and CLI work described in `plan-phase4.md`.
+- Current implementation stage: Core Phase 5 release hardening described in `plan-phase5.md`; public release remains blocked on remote CI and legal review.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.
@@ -146,7 +146,7 @@ Keep work within the active phase unless the user explicitly changes scope.
 | 4 | Deliver the embedded Rust API and CLI. |
 | 5 | Fuzz, crash-test, benchmark, document, and harden the MVP for release. |
 
-Phase 2 established stable format version 1 and Phase 3 completed the synchronous frontend contract. Phase 4 delivers the worker-backed asynchronous Rust API, transaction guard, and CLI defined in `plan-phase4.md`. Release hardening and the cloud service remain later phases.
+Phase 2 established stable format version 1, Phase 3 completed the synchronous frontend contract, and Phase 4 delivered the worker-backed asynchronous Rust API, transaction guard, and CLI. Phase 5 hardens that MVP for release review; the cloud service remains a later track.
 
 ## Cloud and Business Context
 
@@ -199,6 +199,6 @@ For each task:
 6. Review the diff for generated SQL, provenance, accidental core edits, silent syntax acceptance, and unrelated changes.
 7. Report the outcome, commands run, remaining risks, and any stop condition.
 
-Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. For Phase 4, use the final report structure in `plan-phase4.md` and lead with the proceed/stop decision and its evidence.
+Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. For Phase 5, use the final report structure in `plan-phase5.md` and lead with `Stop for release review` plus the local and external-gate evidence.
 
 Update this file only when durable project-wide decisions change. Put detailed implementation recipes in phase plans, observed results in reports, and temporary work status in normal task tracking.

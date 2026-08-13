@@ -81,4 +81,6 @@ include a half-open UTF-8 byte span. Internal format/corruption diagnostics map
 to `Engine`; rendered detail strings are not stable matching APIs.
 
 Always call consuming `close().await` when clean checkpoint/shutdown evidence
-matters. WAL or other Turso-owned sidecars may remain after abnormal exit.
+matters. The pinned engine can retain an empty `-wal` filesystem entry after
+a clean checkpoint; it contains no durable frames. Nonempty WAL or other
+Turso-owned sidecars may remain after abnormal exit and are recovered on open.
