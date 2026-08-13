@@ -103,6 +103,7 @@ pub struct CreateStatement {
     pub target: Target,
     pub data: Option<CreateData>,
     pub return_clause: Option<ReturnClause>,
+    pub timeout: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +115,7 @@ pub struct InsertStatement {
     pub data: InsertData,
     pub on_duplicate: Vec<Assignment>,
     pub return_clause: Option<ReturnClause>,
+    pub timeout: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -219,6 +221,7 @@ pub struct UpdateStatement {
     pub data: UpdateData,
     pub condition: Option<Expr>,
     pub return_clause: Option<ReturnClause>,
+    pub timeout: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -238,6 +241,7 @@ pub struct DeleteStatement {
     pub target: Target,
     pub condition: Option<Expr>,
     pub return_clause: Option<ReturnClause>,
+    pub timeout: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -423,6 +427,7 @@ pub enum Target {
     Table(TableTarget),
     Record(RecordId),
     RecordRange(RecordRangeTarget),
+    Expression(Expr),
     Batch { span: Span, target: Box<Target> },
 }
 
@@ -432,15 +437,17 @@ impl Target {
             Self::Table(target) => target.span,
             Self::Record(target) => target.span,
             Self::RecordRange(target) => target.span,
+            Self::Expression(target) => target.span,
             Self::Batch { span, .. } => *span,
         }
     }
 
-    pub fn table(&self) -> &Identifier {
+    pub fn table(&self) -> Option<&Identifier> {
         match self {
-            Self::Table(target) => &target.name,
-            Self::Record(target) => &target.table,
-            Self::RecordRange(target) => &target.table,
+            Self::Table(target) => Some(&target.name),
+            Self::Record(target) => Some(&target.table),
+            Self::RecordRange(target) => Some(&target.table),
+            Self::Expression(_) => None,
             Self::Batch { target, .. } => target.table(),
         }
     }

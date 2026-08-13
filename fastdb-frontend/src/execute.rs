@@ -19,6 +19,7 @@ use rand::seq::SliceRandom as _;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLockReadGuard;
+use std::time::Duration;
 use turso_fastdb_parser::{
     AssignmentOperator, BinaryOperator, CreateData, Expr, ExprKind, GroupClause,
     IndexDefinitionSurface, IndexKindSyntax, InsertData, ProjectionList, RecordIdPart,
@@ -251,38 +252,43 @@ fn run_create(
     statement: turso_fastdb_parser::CreateStatement,
     params: &Params,
 ) -> Result<StatementExecution> {
-    let (table_name, ids) = resolve_create_ids(statement.target)?;
-    if statement.only.is_some() && ids.len() != 1 {
+    let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
+    let targets = resolve_create_ids(statement.target, params)?;
+    if statement.only.is_some() && targets.len() != 1 {
         return Err(FastDbError::Schema(
             "CREATE ONLY requires exactly one target record".into(),
         ));
     }
-    let table_was_missing = !catalog_for_read(conn, execution)?
-        .snapshot()
-        .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
+    let table_was_missing = {
+        let catalog = catalog_for_read(conn, execution)?;
+        let snapshot = catalog.snapshot();
+        targets
+            .iter()
+            .any(|(table, _)| !snapshot.is_some_and(|snapshot| snapshot.tables.contains_key(table)))
+    };
     let values = with_create_mutation(conn, execution, table_was_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
-        if !snapshot.tables.contains_key(&table_name) {
-            let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
-            catalog::persist_table(conn, &table)?;
-            conn.check_failpoint(Failpoint::AfterCatalogRow)?;
-            conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
-            conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
-            snapshot.tables.insert(table_name.clone(), table);
-        }
-        let table = snapshot
-            .tables
-            .get(&table_name)
-            .cloned()
-            .expect("table inserted or already present");
-        if table.kind == TableKind::Relation {
-            return Err(FastDbError::Schema(
-                "relation records must be created with RELATE".into(),
-            ));
-        }
-        let mut values = Vec::with_capacity(ids.len());
-        for id_value in &ids {
-            let id = RecordId::new(&table_name, id_value.clone());
+        let mut values = Vec::with_capacity(targets.len());
+        for (table_name, id_value) in &targets {
+            if !snapshot.tables.contains_key(table_name) {
+                let table = catalog::allocate_table(table_name, TableMode::Schemaless, None)?;
+                catalog::persist_table(conn, &table)?;
+                conn.check_failpoint(Failpoint::AfterCatalogRow)?;
+                conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
+                conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
+                snapshot.tables.insert(table_name.clone(), table);
+            }
+            let table = snapshot
+                .tables
+                .get(table_name)
+                .cloned()
+                .expect("table inserted or already present");
+            if table.kind == TableKind::Relation {
+                return Err(FastDbError::Schema(
+                    "relation records must be created with RELATE".into(),
+                ));
+            }
+            let id = RecordId::new(table_name, id_value.clone());
             let mut document = evaluate_create_document(statement.data.as_ref(), &id, params)?;
             reject_stored_id(&document)?;
             schema::validate_document(
@@ -310,8 +316,12 @@ fn run_create(
         }
         Ok(values)
     })?;
-    if !values.is_empty() {
-        mark_fts_dirty(execution, &table_name);
+    for table_name in targets
+        .iter()
+        .map(|(table, _)| table)
+        .collect::<BTreeSet<_>>()
+    {
+        mark_fts_dirty(execution, table_name);
     }
     let mutation_count = values.len();
     let returned = values
@@ -368,14 +378,24 @@ fn evaluate_create_document(
     }
 }
 
-fn resolve_create_ids(target: Target) -> Result<(String, Vec<RecordIdValue>)> {
+fn resolve_create_ids(target: Target, params: &Params) -> Result<Vec<(String, RecordIdValue)>> {
     match target {
-        Target::Table(table) => Ok((
+        Target::Table(table) => Ok(vec![(
             table.name.value,
-            vec![RecordIdValue::Uuid(uuid::Uuid::now_v7())],
-        )),
-        Target::Record(record) => Ok((record.table.value, vec![record_id_value(record.id)?])),
+            RecordIdValue::Uuid(uuid::Uuid::now_v7()),
+        )]),
+        Target::Record(record) => Ok(vec![(record.table.value, record_id_value(record.id)?)]),
         Target::RecordRange(range) => resolve_integer_create_range(range),
+        Target::Expression(expression) => resolve_target_expression(&expression, params)?
+            .into_iter()
+            .map(|(table, selector)| match selector {
+                TargetSelector::All => Ok((table, RecordIdValue::Uuid(uuid::Uuid::now_v7()))),
+                TargetSelector::Record(id) => Ok((table, id)),
+                TargetSelector::Range(_) => Err(FastDbError::Schema(
+                    "CREATE expression targets cannot contain record ranges".into(),
+                )),
+            })
+            .collect(),
         Target::Batch { target, .. } => match *target {
             Target::Record(record) => {
                 let RecordIdPartKind::Integer(count) = record.id.kind else {
@@ -391,12 +411,14 @@ fn resolve_create_ids(target: Target) -> Result<(String, Vec<RecordIdValue>)> {
                         "batch CREATE count must be between 1 and 10,000".into(),
                     ));
                 }
-                Ok((
-                    record.table.value,
-                    (0..count)
-                        .map(|_| RecordIdValue::Uuid(uuid::Uuid::now_v7()))
-                        .collect(),
-                ))
+                Ok((0..count)
+                    .map(|_| {
+                        (
+                            record.table.value.clone(),
+                            RecordIdValue::Uuid(uuid::Uuid::now_v7()),
+                        )
+                    })
+                    .collect())
             }
             Target::RecordRange(range) => resolve_integer_create_range(range),
             _ => Err(FastDbError::Schema(
@@ -408,7 +430,7 @@ fn resolve_create_ids(target: Target) -> Result<(String, Vec<RecordIdValue>)> {
 
 fn resolve_integer_create_range(
     range: turso_fastdb_parser::RecordRangeTarget,
-) -> Result<(String, Vec<RecordIdValue>)> {
+) -> Result<Vec<(String, RecordIdValue)>> {
     let (Some(start), Some(end)) = (range.start, range.end) else {
         return Err(FastDbError::Schema(
             "CREATE record ranges require both integer bounds".into(),
@@ -444,10 +466,9 @@ fn resolve_integer_create_range(
             "CREATE range exceeds 10,000 records".into(),
         ));
     }
-    Ok((
-        range.table.value,
-        (start..exclusive_end).map(RecordIdValue::Integer).collect(),
-    ))
+    Ok((start..exclusive_end)
+        .map(|id| (range.table.value.clone(), RecordIdValue::Integer(id)))
+        .collect())
 }
 
 fn run_insert(
@@ -456,6 +477,7 @@ fn run_insert(
     statement: turso_fastdb_parser::InsertStatement,
     params: &Params,
 ) -> Result<StatementExecution> {
+    let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
     if statement.relation.is_some() {
         return run_insert_relation(conn, execution, statement, params);
     }
@@ -2185,100 +2207,132 @@ fn run_update(
     params: &Params,
     upsert: bool,
 ) -> Result<StatementExecution> {
-    let (table_name, selector) = target_parts(statement.target.clone())?;
-    let table_was_missing = !catalog_for_read(conn, execution)?
-        .snapshot()
-        .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
+    let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
+    let targets = resolve_mutation_targets(statement.target.clone(), params)?;
+    let table_was_missing = {
+        let catalog = catalog_for_read(conn, execution)?;
+        let snapshot = catalog.snapshot();
+        targets
+            .iter()
+            .any(|(table, _)| !snapshot.is_some_and(|snapshot| snapshot.tables.contains_key(table)))
+    };
     let outcomes = with_create_mutation(conn, execution, upsert && table_was_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
-        if !snapshot.tables.contains_key(&table_name) {
-            if !upsert {
-                return Ok(Vec::new());
+        for (table_name, _) in &targets {
+            if snapshot.tables.contains_key(table_name) || !upsert {
+                continue;
             }
-            let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
+            let table = catalog::allocate_table(table_name, TableMode::Schemaless, None)?;
             catalog::persist_table(conn, &table)?;
             conn.check_failpoint(Failpoint::AfterCatalogRow)?;
             conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
             conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
             snapshot.tables.insert(table_name.clone(), table);
         }
-        let table = snapshot
-            .tables
-            .get(&table_name)
-            .cloned()
-            .expect("table exists after upsert registration");
-        if table.kind == TableKind::Relation {
-            return Err(FastDbError::Schema(
-                "relation records must be mutated through RELATE".into(),
-            ));
+
+        enum Work {
+            Existing(String, TableDefinition, Candidate),
+            Missing(String, TableDefinition, RecordIdValue),
         }
-        let candidates = read_candidates(
-            conn,
-            snapshot,
-            &table,
-            CandidateReadOptions {
-                id: selector.id(),
-                range: selector.range(),
-                condition: statement.condition.as_ref(),
-                params,
-                allow_cache: false,
-                fts: None,
-                vector: None,
-            },
-        )?;
-        let mut matched = Vec::new();
-        for candidate in candidates {
-            if matches_condition(statement.condition.as_ref(), &candidate, params)? {
-                matched.push(candidate);
+        let mut work = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (table_name, selector) in &targets {
+            let Some(table) = snapshot.tables.get(table_name).cloned() else {
+                continue;
+            };
+            if table.kind == TableKind::Relation {
+                return Err(FastDbError::Schema(
+                    "relation records must be mutated through RELATE".into(),
+                ));
+            }
+            let candidates = read_candidates(
+                conn,
+                snapshot,
+                &table,
+                CandidateReadOptions {
+                    id: selector.id(),
+                    range: selector.range(),
+                    condition: statement.condition.as_ref(),
+                    params,
+                    allow_cache: false,
+                    fts: None,
+                    vector: None,
+                },
+            )?;
+            let mut matched = Vec::new();
+            for candidate in candidates {
+                if matches_condition(statement.condition.as_ref(), &candidate, params)? {
+                    matched.push(candidate);
+                }
+            }
+            if matched.is_empty() && upsert {
+                let id = match selector {
+                    TargetSelector::All => RecordIdValue::Uuid(uuid::Uuid::now_v7()),
+                    TargetSelector::Record(id) => id.clone(),
+                    TargetSelector::Range(_) => {
+                        return Err(FastDbError::Schema(
+                            "UPSERT cannot create a record from a record-range target".into(),
+                        ))
+                    }
+                };
+                let encoded = encode_rid(&id)?;
+                if seen.insert((table_name.clone(), encoded)) {
+                    work.push(Work::Missing(table_name.clone(), table, id));
+                }
+                continue;
+            }
+            for candidate in matched {
+                if seen.insert((table_name.clone(), candidate.encoded_rid.clone())) {
+                    work.push(Work::Existing(table_name.clone(), table.clone(), candidate));
+                }
             }
         }
-
-        if matched.is_empty() && upsert {
-            let id_value = match &selector {
-                TargetSelector::All => RecordIdValue::Uuid(uuid::Uuid::now_v7()),
-                TargetSelector::Record(id) => id.clone(),
-                TargetSelector::Range(_) => {
-                    return Err(FastDbError::Schema(
-                        "UPSERT cannot create a record from a record-range target".into(),
-                    ))
-                }
-            };
-            let id = RecordId::new(&table_name, id_value.clone());
-            let document = apply_update_data(&statement.data, BTreeMap::new(), &id, None, params)?;
-            let mut document = document;
-            reject_stored_id(&document)?;
-            schema::validate_document(
-                table.mode == TableMode::Schemafull,
-                &table.fields,
-                &mut document,
-            )?;
-            validate_index_values(&table, &document)?;
-            let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
-            let encoded_rid = encode_rid(&id_value)?;
-            let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
-                &table.physical_name,
-                &encoded_rid,
-                &decode::encode_doc(&document)?,
-                &derived_hidden,
-            )?;
-            contextual_constraint(
-                conn.exec_bound(insert, bindings),
-                "UPSERT violates a declared unique index",
-            )?;
-            return Ok(vec![(id, None, Value::Null, Value::Object(document))]);
+        if statement.only.is_some() && work.len() > 1 {
+            return Err(FastDbError::Schema(
+                "UPDATE/UPSERT ONLY matched more than one record".into(),
+            ));
         }
 
-        let mut outcomes = Vec::new();
+        let mut outcomes = Vec::with_capacity(work.len());
         conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
-        for candidate in matched.drain(..) {
-            let document = apply_update_data(
-                &statement.data,
-                candidate.document.clone(),
-                &candidate.id,
-                candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
-                params,
-            )?;
-            let mut document = document;
+        for item in work {
+            let (table_name, table, id, endpoints, before, mut document, encoded_rid, existing) =
+                match item {
+                    Work::Existing(table_name, table, candidate) => {
+                        let document = apply_update_data(
+                            &statement.data,
+                            candidate.document.clone(),
+                            &candidate.id,
+                            candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
+                            params,
+                        )?;
+                        (
+                            table_name,
+                            table,
+                            candidate.id.clone(),
+                            candidate.endpoints.clone(),
+                            full_candidate_value(&candidate),
+                            document,
+                            candidate.encoded_rid,
+                            true,
+                        )
+                    }
+                    Work::Missing(table_name, table, id_value) => {
+                        let id = RecordId::new(&table_name, id_value.clone());
+                        let document =
+                            apply_update_data(&statement.data, BTreeMap::new(), &id, None, params)?;
+                        (
+                            table_name,
+                            table,
+                            id,
+                            None,
+                            Value::Null,
+                            document,
+                            encode_rid(&id_value)?,
+                            false,
+                        )
+                    }
+                };
             reject_stored_id(&document)?;
             schema::validate_document(
                 table.mode == TableMode::Schemafull,
@@ -2287,33 +2341,47 @@ fn run_update(
             )?;
             validate_index_values(&table, &document)?;
             let derived_hidden = derived_hidden_values(snapshot, &table, &document)?;
-            let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
-                &table.physical_name,
-                &candidate.encoded_rid,
-                &decode::encode_doc(&document)?,
-                &derived_hidden,
-            )?;
+            let (update, bindings) = if existing {
+                lower::physical_update_document_with_hidden_stmt(
+                    &table.physical_name,
+                    &encoded_rid,
+                    &decode::encode_doc(&document)?,
+                    &derived_hidden,
+                )?
+            } else {
+                lower::physical_insert_document_with_hidden_stmt(
+                    &table.physical_name,
+                    &encoded_rid,
+                    &decode::encode_doc(&document)?,
+                    &derived_hidden,
+                )?
+            };
             contextual_constraint(
                 conn.exec_bound(update, bindings),
-                "UPDATE violates a declared unique index",
+                "UPDATE/UPSERT violates a declared unique index",
             )?;
             conn.check_failpoint(Failpoint::AfterUpdateMutation)?;
             outcomes.push((
-                candidate.id.clone(),
-                candidate.endpoints.clone(),
-                full_candidate_value(&candidate),
-                full_candidate_with_document(&candidate, &document),
+                table_name,
+                id.clone(),
+                endpoints,
+                before,
+                full_record_value(&id, &document),
             ));
         }
         Ok(outcomes)
     })?;
-    if !outcomes.is_empty() {
-        mark_fts_dirty(execution, &table_name);
+    for table_name in outcomes
+        .iter()
+        .map(|(table, ..)| table)
+        .collect::<BTreeSet<_>>()
+    {
+        mark_fts_dirty(execution, table_name);
     }
     let mutation_count = outcomes.len();
     let rows = outcomes
         .into_iter()
-        .filter_map(|(id, endpoints, before, after)| {
+        .filter_map(|(_, id, endpoints, before, after)| {
             mutation_return(
                 statement.return_clause.as_ref(),
                 &before,
@@ -2339,39 +2407,50 @@ fn run_delete(
     statement: turso_fastdb_parser::DeleteStatement,
     params: &Params,
 ) -> Result<StatementExecution> {
-    let (table_name, selector) = target_parts(statement.target.clone())?;
+    let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
+    let targets = resolve_mutation_targets(statement.target.clone(), params)?;
     let (deleted, cascaded_edges) = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
         let Some(snapshot) = catalog.snapshot() else {
             return Ok((Vec::new(), 0));
         };
-        let Some(table) = snapshot.tables.get(&table_name).cloned() else {
-            return Ok((Vec::new(), 0));
-        };
-        let candidates = read_candidates(
-            conn,
-            snapshot,
-            &table,
-            CandidateReadOptions {
-                id: selector.id(),
-                range: selector.range(),
-                condition: statement.condition.as_ref(),
-                params,
-                allow_cache: false,
-                fts: None,
-                vector: None,
-            },
-        )?;
         let mut deleted = Vec::new();
-        for candidate in candidates {
-            if matches_condition(statement.condition.as_ref(), &candidate, params)? {
-                deleted.push(candidate);
+        let mut seen = BTreeSet::new();
+        for (table_name, selector) in &targets {
+            let Some(table) = snapshot.tables.get(table_name).cloned() else {
+                continue;
+            };
+            let candidates = read_candidates(
+                conn,
+                snapshot,
+                &table,
+                CandidateReadOptions {
+                    id: selector.id(),
+                    range: selector.range(),
+                    condition: statement.condition.as_ref(),
+                    params,
+                    allow_cache: false,
+                    fts: None,
+                    vector: None,
+                },
+            )?;
+            for candidate in candidates {
+                if matches_condition(statement.condition.as_ref(), &candidate, params)?
+                    && seen.insert((table_name.clone(), candidate.encoded_rid.clone()))
+                {
+                    deleted.push((table.clone(), candidate));
+                }
             }
+        }
+        if statement.only.is_some() && deleted.len() > 1 {
+            return Err(FastDbError::Schema(
+                "DELETE ONLY matched more than one record".into(),
+            ));
         }
         conn.check_failpoint(Failpoint::BeforeDeleteMutations)?;
         let mut connected_edges = BTreeSet::new();
-        if table.kind == TableKind::Normal {
-            for candidate in &deleted {
+        for (table, candidate) in &deleted {
+            if table.kind == TableKind::Normal {
                 for relation in snapshot
                     .tables
                     .values()
@@ -2391,7 +2470,7 @@ fn run_delete(
             conn.exec_bound(delete, bindings)?;
             conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
         }
-        for candidate in &deleted {
+        for (table, candidate) in &deleted {
             let (delete, bindings) =
                 lower::physical_delete_by_rid_stmt(&table.physical_name, &candidate.encoded_rid)?;
             conn.exec_bound(delete, bindings)?;
@@ -2399,8 +2478,12 @@ fn run_delete(
         }
         Ok((deleted, connected_edges.len()))
     })?;
-    if !deleted.is_empty() {
-        mark_fts_dirty(execution, &table_name);
+    for table_name in deleted
+        .iter()
+        .map(|(table, _)| table.logical_name.as_str())
+        .collect::<BTreeSet<_>>()
+    {
+        mark_fts_dirty(execution, table_name);
     }
     if cascaded_edges > 0 {
         mark_relation_fts_dirty(execution);
@@ -2412,7 +2495,7 @@ fn run_delete(
     if statement.return_clause.is_some() {
         let rows = deleted
             .into_iter()
-            .filter_map(|candidate| {
+            .filter_map(|(_, candidate)| {
                 let before = full_candidate_value(&candidate);
                 mutation_return(
                     statement.return_clause.as_ref(),
@@ -3758,6 +3841,75 @@ fn target_parts(target: Target) -> Result<(String, TargetSelector)> {
         Target::Batch { .. } => Err(FastDbError::Schema(
             "batch targets are valid only for CREATE".into(),
         )),
+        Target::Expression(_) => Err(FastDbError::Schema(
+            "expression targets must be resolved before physical access".into(),
+        )),
+    }
+}
+
+fn resolve_mutation_targets(
+    target: Target,
+    params: &Params,
+) -> Result<Vec<(String, TargetSelector)>> {
+    match target {
+        Target::Expression(expression) => resolve_target_expression(&expression, params),
+        target => target_parts(target).map(|target| vec![target]),
+    }
+}
+
+fn resolve_target_expression(
+    expression: &Expr,
+    params: &Params,
+) -> Result<Vec<(String, TargetSelector)>> {
+    let document = BTreeMap::new();
+    let id = RecordId::new("__target", "expression");
+    let context = EvalContext {
+        document: &document,
+        id: &id,
+        endpoints: None,
+        params,
+    };
+    let value = eval::evaluate(expression, &context)?.into_projection();
+    let mut targets = Vec::new();
+    append_target_values(value, &mut targets)?;
+    if targets.is_empty() {
+        return Err(FastDbError::Schema(
+            "mutation target expression must resolve to at least one table or record".into(),
+        ));
+    }
+    if targets.len() > 10_000 {
+        return Err(FastDbError::ResourceLimit(
+            "mutation target expression exceeds 10,000 targets".into(),
+        ));
+    }
+    Ok(targets)
+}
+
+fn append_target_values(value: Value, targets: &mut Vec<(String, TargetSelector)>) -> Result<()> {
+    match value {
+        Value::RecordId(record) => {
+            targets.push((record.table, TargetSelector::Record(record.id)));
+            Ok(())
+        }
+        Value::Table(table) => {
+            targets.push((table.as_str().to_string(), TargetSelector::All));
+            Ok(())
+        }
+        Value::Array(values) => {
+            for value in values {
+                if targets.len() >= 10_000 {
+                    return Err(FastDbError::ResourceLimit(
+                        "mutation target expression exceeds 10,000 targets".into(),
+                    ));
+                }
+                append_target_values(value, targets)?;
+            }
+            Ok(())
+        }
+        _ => Err(FastDbError::Schema(
+            "mutation target expressions may contain only tables, records, or arrays of them"
+                .into(),
+        )),
     }
 }
 
@@ -4288,6 +4440,53 @@ fn scalar_expression_value(expression: &Expr, params: &Params) -> Option<Value> 
         ExprKind::Parameter(name) => params.get(name).cloned(),
         ExprKind::Parenthesized(inner) => scalar_expression_value(inner, params),
         _ => None,
+    }
+}
+
+struct StatementTimeoutGuard<'a> {
+    conn: &'a Connection,
+    previous: Duration,
+}
+
+impl<'a> StatementTimeoutGuard<'a> {
+    fn install(conn: &'a Connection, expression: Option<&Expr>, params: &Params) -> Result<Self> {
+        let previous = conn.native().get_query_timeout();
+        let Some(expression) = expression else {
+            return Ok(Self { conn, previous });
+        };
+        let document = BTreeMap::new();
+        let id = RecordId::new("__timeout", "statement");
+        let context = EvalContext {
+            document: &document,
+            id: &id,
+            endpoints: None,
+            params,
+        };
+        let value = eval::evaluate(expression, &context)?.into_projection();
+        let Value::Duration(timeout) = value else {
+            return Err(FastDbError::Schema(
+                "TIMEOUT must evaluate to a duration".into(),
+            ));
+        };
+        let timeout = Duration::new(timeout.seconds(), timeout.nanoseconds());
+        if timeout.is_zero() {
+            return Err(FastDbError::Schema(
+                "TIMEOUT must be greater than zero".into(),
+            ));
+        }
+        let effective = if previous.is_zero() {
+            timeout
+        } else {
+            previous.min(timeout)
+        };
+        conn.native().set_query_timeout(effective);
+        Ok(Self { conn, previous })
+    }
+}
+
+impl Drop for StatementTimeoutGuard<'_> {
+    fn drop(&mut self) {
+        self.conn.native().set_query_timeout(self.previous);
     }
 }
 

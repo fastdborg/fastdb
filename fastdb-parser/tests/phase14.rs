@@ -135,3 +135,34 @@ fn p14_parse_002_complex_record_ids_reject_dynamic_expressions() {
         assert!(parse(source).is_err(), "accepted {source}");
     }
 }
+
+#[test]
+fn p14_parse_006_mutation_target_expressions_and_timeouts_are_structured() {
+    let script = parse(
+        "CREATE [person:a, animal:b] SET n = 1 RETURN AFTER TIMEOUT 2s; \
+         UPDATE $targets SET n += 1 TIMEOUT $deadline; \
+         DELETE [person:a, animal:b] RETURN BEFORE TIMEOUT 1s; \
+         INSERT INTO person { id: 'c' } TIMEOUT 3s",
+    )
+    .unwrap();
+    let Statement::Create(create) = &script.statements[0] else {
+        panic!("expected CREATE")
+    };
+    assert!(matches!(create.target, Target::Expression(_)) && create.timeout.is_some());
+    let Statement::Update(update) = &script.statements[1] else {
+        panic!("expected UPDATE")
+    };
+    assert!(matches!(update.target, Target::Expression(_)) && update.timeout.is_some());
+    let Statement::Delete(delete) = &script.statements[2] else {
+        panic!("expected DELETE")
+    };
+    assert!(matches!(delete.target, Target::Expression(_)) && delete.timeout.is_some());
+    let Statement::Insert(insert) = &script.statements[3] else {
+        panic!("expected INSERT")
+    };
+    assert!(insert.timeout.is_some());
+
+    assert!(parse("UPDATE person SET n = 1 TIMEOUT 4").is_err());
+    assert!(parse("DELETE person TIMEOUT 1s TIMEOUT 2s").is_err());
+    assert!(parse("CREATE person:a VERSION d'2024-01-01T00:00:00Z'").is_err());
+}

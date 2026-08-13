@@ -295,7 +295,7 @@ impl<'a> Parser<'a> {
                 target: Box::new(target),
             }
         } else {
-            self.parse_target()?
+            self.parse_mutation_target()?
         };
         let data = if self.eat(&TokenKind::Content) {
             Some(CreateData::Content(self.parse_expression()?))
@@ -320,6 +320,7 @@ impl<'a> Parser<'a> {
         if self.at(&TokenKind::Return) {
             return Err(self.duplicate_clause("RETURN"));
         }
+        let timeout = self.parse_timeout_clause()?;
         let end = self.previous_end();
         Ok(CreateStatement {
             span: Span::new(start.offset, end - start.offset),
@@ -327,6 +328,7 @@ impl<'a> Parser<'a> {
             target,
             data,
             return_clause,
+            timeout,
         })
     }
 
@@ -386,6 +388,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        let timeout = self.parse_timeout_clause()?;
         let end = self.previous_end();
         Ok(InsertStatement {
             span: Span::new(start.offset, end - start.offset),
@@ -395,6 +398,7 @@ impl<'a> Parser<'a> {
             data,
             on_duplicate,
             return_clause,
+            timeout,
         })
     }
 
@@ -649,7 +653,7 @@ impl<'a> Parser<'a> {
         };
         let start = self.expect(&keyword, "UPDATE or UPSERT")?.span;
         let only = self.take(&TokenKind::Only).map(|token| token.span);
-        let target = self.parse_target()?;
+        let target = self.parse_mutation_target()?;
         let data = self.parse_update_data()?;
         let condition = if self.eat(&TokenKind::Where) {
             Some(self.parse_expression()?)
@@ -671,6 +675,7 @@ impl<'a> Parser<'a> {
         if self.at(&TokenKind::Return) {
             return Err(self.duplicate_clause("RETURN"));
         }
+        let timeout = self.parse_timeout_clause()?;
         let end = self.previous_end();
         Ok(UpdateStatement {
             span: Span::new(start.offset, end - start.offset),
@@ -679,6 +684,7 @@ impl<'a> Parser<'a> {
             data,
             condition,
             return_clause,
+            timeout,
         })
     }
 
@@ -710,7 +716,7 @@ impl<'a> Parser<'a> {
         let start = self.expect(&TokenKind::Delete, "keyword DELETE")?.span;
         self.eat(&TokenKind::From);
         let only = self.take(&TokenKind::Only).map(|token| token.span);
-        let target = self.parse_target()?;
+        let target = self.parse_mutation_target()?;
         let condition = if self.eat(&TokenKind::Where) {
             Some(self.parse_expression()?)
         } else {
@@ -731,6 +737,7 @@ impl<'a> Parser<'a> {
         if self.at(&TokenKind::Return) {
             return Err(self.duplicate_clause("RETURN"));
         }
+        let timeout = self.parse_timeout_clause()?;
         let end = self.previous_end();
         Ok(DeleteStatement {
             span: Span::new(start.offset, end - start.offset),
@@ -738,7 +745,27 @@ impl<'a> Parser<'a> {
             target,
             condition,
             return_clause,
+            timeout,
         })
+    }
+
+    fn parse_timeout_clause(&mut self) -> Result<Option<Expr>, ParseError> {
+        if !self.eat(&TokenKind::Timeout) {
+            return Ok(None);
+        }
+        let timeout = self.parse_expression()?;
+        if !matches!(timeout.kind, ExprKind::Duration(_) | ExprKind::Parameter(_)) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "TIMEOUT requires a duration literal or bound duration parameter",
+                },
+                timeout.span,
+            ));
+        }
+        if self.at(&TokenKind::Timeout) {
+            return Err(self.duplicate_clause("TIMEOUT"));
+        }
+        Ok(Some(timeout))
     }
 
     fn parse_define(&mut self) -> Result<Statement, ParseError> {
@@ -1144,6 +1171,16 @@ impl<'a> Parser<'a> {
         }
         let span = table.span.union(id.span);
         Ok(Target::Record(RecordId { span, table, id }))
+    }
+
+    fn parse_mutation_target(&mut self) -> Result<Target, ParseError> {
+        if matches!(
+            self.peek().kind,
+            TokenKind::LeftBracket | TokenKind::Parameter(_) | TokenKind::LeftParen
+        ) {
+            return self.parse_expression().map(Target::Expression);
+        }
+        self.parse_target()
     }
 
     fn parse_record_id_part(&mut self) -> Result<RecordIdPart, ParseError> {

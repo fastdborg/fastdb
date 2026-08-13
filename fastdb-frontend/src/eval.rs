@@ -78,10 +78,15 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
     let mut names = Vec::new();
     match statement {
         Statement::Create(statement) => {
+            if let turso_fastdb_parser::Target::Expression(expression) = &statement.target {
+                reject_unavailable_functions(expression)?;
+                collect_parameters(expression, &mut names);
+            }
             if let Some(data) = &statement.data {
                 collect_create_data_parameters(data, &mut names)?;
             }
             collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
+            collect_optional_expression_parameters(statement.timeout.as_ref(), &mut names)?;
         }
         Statement::Insert(statement) => {
             match &statement.data {
@@ -98,6 +103,7 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
             }
             collect_assignment_parameters(&statement.on_duplicate, &mut names)?;
             collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
+            collect_optional_expression_parameters(statement.timeout.as_ref(), &mut names)?;
             names.retain(|name| *name != "input");
         }
         Statement::Relate(statement) => {
@@ -151,19 +157,29 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
             }
         }
         Statement::Update(statement) | Statement::Upsert(statement) => {
+            if let turso_fastdb_parser::Target::Expression(expression) = &statement.target {
+                reject_unavailable_functions(expression)?;
+                collect_parameters(expression, &mut names);
+            }
             collect_update_data_parameters(&statement.data, &mut names)?;
             if let Some(condition) = &statement.condition {
                 reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
             collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
+            collect_optional_expression_parameters(statement.timeout.as_ref(), &mut names)?;
         }
         Statement::Delete(statement) => {
+            if let turso_fastdb_parser::Target::Expression(expression) = &statement.target {
+                reject_unavailable_functions(expression)?;
+                collect_parameters(expression, &mut names);
+            }
             if let Some(condition) = &statement.condition {
                 reject_unavailable_functions(condition)?;
                 collect_parameters(condition, &mut names);
             }
             collect_return_parameters(statement.return_clause.as_ref(), &mut names)?;
+            collect_optional_expression_parameters(statement.timeout.as_ref(), &mut names)?;
         }
         Statement::Explain(statement) => {
             if let turso_fastdb_parser::ProjectionList::Fields(projections) =
@@ -193,6 +209,17 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         return Err(FastDbError::Schema(format!(
             "missing value for parameter ${name}"
         )));
+    }
+    Ok(())
+}
+
+fn collect_optional_expression_parameters<'a>(
+    expression: Option<&'a Expr>,
+    names: &mut Vec<&'a str>,
+) -> Result<()> {
+    if let Some(expression) = expression {
+        reject_unavailable_functions(expression)?;
+        collect_parameters(expression, names);
     }
     Ok(())
 }

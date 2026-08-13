@@ -230,6 +230,17 @@ fn validate_target(parent: Span, target: &Target, source_len: usize) {
             child(record.span, record.table.span, source_len);
             child(record.span, record.id.span, source_len);
         }
+        Target::RecordRange(range) => {
+            child(range.span, range.table.span, source_len);
+            if let Some(start) = &range.start {
+                child(range.span, start.span, source_len);
+            }
+            if let Some(end) = &range.end {
+                child(range.span, end.span, source_len);
+            }
+        }
+        Target::Expression(expression) => validate_expr(parent, expression, source_len),
+        Target::Batch { span, target } => validate_target(*span, target, source_len),
     }
 }
 

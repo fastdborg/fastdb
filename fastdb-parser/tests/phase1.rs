@@ -376,7 +376,6 @@ fn p1_stmt_004_clause_order_duplicates_and_combinations() {
 fn p1_stmt_005_unsupported_families_and_clauses_are_precise() {
     for input in [
         "LET $x = 1",
-        "CREATE person CONTENT {} TIMEOUT 1s",
         "CREATE person CONTENT {} PARALLEL",
         "DEFINE INDEX x ON person FIELDS name FULLTEXT",
         "BEGIN TRANSACTION",

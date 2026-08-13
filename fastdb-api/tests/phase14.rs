@@ -433,6 +433,63 @@ fn p14_api_008_explain_full_analyze_json_executes_and_reports_structured_metrics
 }
 
 #[test]
+fn p14_api_013_multi_target_mutations_are_atomic_and_statement_timeouts_are_bounded() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let created = connection
+            .query(
+                "CREATE [person:a, animal:b] SET n = 1 RETURN AFTER TIMEOUT 2s",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.mutation_count, 2);
+
+        let targets = Value::Array(vec![
+            Value::RecordId(RecordId::new("person", "a")),
+            Value::RecordId(RecordId::new("animal", "b")),
+        ]);
+        let updated = connection
+            .query(
+                "UPDATE $targets SET n += 1 RETURN AFTER TIMEOUT 2s",
+                params! { "targets" => targets.clone() },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.mutation_count, 2);
+
+        let error = connection
+            .query(
+                "UPDATE $targets SET n += 1 TIMEOUT 0s",
+                params! { "targets" => targets },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("greater than zero"));
+        let unchanged = connection
+            .query("SELECT n FROM person:a; SELECT n FROM animal:b", params! {})
+            .await
+            .unwrap();
+        assert!(unchanged.statements.iter().all(|statement| {
+            matches!(statement, StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(row)
+                    if row.get("n") == Some(&Value::Integer(2))))
+        }));
+
+        let deleted = connection
+            .query(
+                "DELETE [person:a, animal:b] RETURN BEFORE TIMEOUT 2s",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.mutation_count, 2);
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
 fn p14_api_009_batch_create_count_and_integer_ranges_are_one_atomic_statement() {
     block_on(async {
         let database = Builder::new_memory().build().await.unwrap();
