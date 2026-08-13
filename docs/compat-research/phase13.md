@@ -242,3 +242,19 @@ The reference rejected the catalog aliases `string::startswith`,
 `string::endswith`, `string::distance::osa_distance`, and nested
 `string::is::*` spellings in favor of the underscored v3.1.5 paths. Those
 locked alias rows remain Unsupported despite defensive registry aliases.
+
+## Statistical math helpers
+
+For `[1,2,3,4]`, the reference returned median `2.5`, interquartile range
+`1.5`, midhinge and trimean `2.5`, sample variance `1.6666666666666667`, and
+sample standard deviation `1.2909944487358056`. A singleton variance was
+`0.0`. Percentiles use linear interpolation over rank `0..=100`; nearest-rank
+selection uses the observed floor-of-scaled-length index and retains the
+selected input number type.
+
+`math::bottom([4,1,3,2],2)` returned `[2,1]`, while `math::top` returned
+`[3,4]`. `math::lerpangle(350,10,0.5)` returned `360.0`. FastDB checks every
+input for finite numeric representation and bounds ranks, precision, and
+collection sizes. The `math::inf`/`math::infinity` and negative-infinity
+constants remain Unsupported because format 3 and the public `Value` contract
+deliberately prohibit non-finite persisted numbers.

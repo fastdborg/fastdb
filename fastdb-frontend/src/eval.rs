@@ -1294,6 +1294,63 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
             )
             .map(EvalValue::into_function_value)
         }
+        MathBottom | MathTop => {
+            let mut values = collection_slice(&arguments[0], "math::bottom/top")?.to_vec();
+            for value in &values {
+                numeric_f64(value, "math::bottom/top")?;
+            }
+            values.sort_by(|left, right| {
+                numeric_f64(left, "math::bottom/top")
+                    .expect("values were validated")
+                    .total_cmp(
+                        &numeric_f64(right, "math::bottom/top").expect("values were validated"),
+                    )
+            });
+            let count = expect_nonnegative_usize(&arguments[1], "math::bottom/top count")?
+                .min(values.len());
+            let mut selected = if function == MathBottom {
+                values.into_iter().take(count).collect::<Vec<_>>()
+            } else {
+                values.into_iter().rev().take(count).collect::<Vec<_>>()
+            };
+            selected.reverse();
+            Ok(Value::Array(selected))
+        }
+        MathFixed => {
+            let digits = expect_integer(&arguments[1], "math::fixed digits")?;
+            if !(1..=308).contains(&digits) {
+                return Err(FastDbError::Schema(
+                    "math::fixed digits must be between 1 and 308".into(),
+                ));
+            }
+            if matches!(arguments[0], Value::Integer(_)) {
+                return Ok(arguments[0].clone());
+            }
+            let factor = 10_f64.powi(digits as i32);
+            finite_float(
+                (numeric_f64(&arguments[0], "math::fixed")? * factor).round() / factor,
+                "math::fixed",
+            )
+        }
+        MathLerpAngle => {
+            let start = numeric_f64(&arguments[0], "math::lerpangle")?;
+            let end = numeric_f64(&arguments[1], "math::lerpangle")?;
+            let amount = numeric_f64(&arguments[2], "math::lerpangle")?;
+            let delta = (end - start + 180.0).rem_euclid(360.0) - 180.0;
+            finite_float(start + delta * amount, "math::lerpangle")
+        }
+        MathMedian | MathInterquartile | MathMidhinge | MathTrimean | MathStddev | MathVariance => {
+            evaluate_statistics(function, &arguments[0])
+        }
+        MathPercentile => evaluate_percentile(
+            &arguments[0],
+            numeric_f64(&arguments[1], "math::percentile rank")?,
+        ),
+        MathNearestRank => evaluate_nearest_rank(
+            &arguments[0],
+            numeric_f64(&arguments[1], "math::nearestrank rank")?,
+        ),
+        MathMode => evaluate_mode(&arguments[0]),
         TypeCast(cast) => evaluate_type_cast(cast, &arguments),
         TypeIs(kind) => Ok(Value::Bool(value_is_type(&arguments[0], kind))),
         TypeOf => Ok(Value::Str(type_name(&arguments[0]).into())),
@@ -1971,6 +2028,145 @@ fn finite_float(value: f64, function: &str) -> Result<Value> {
             "{function} produced a non-finite result"
         )))
     }
+}
+
+fn numeric_statistics(value: &Value, function: &str) -> Result<Vec<f64>> {
+    let mut values = collection_slice(value, function)?
+        .iter()
+        .map(|value| numeric_f64(value, function))
+        .collect::<Result<Vec<_>>>()?;
+    values.sort_by(f64::total_cmp);
+    Ok(values)
+}
+
+fn percentile_value(values: &[f64], rank: f64, function: &str) -> Result<Value> {
+    if values.is_empty() {
+        return Ok(Value::None);
+    }
+    if !rank.is_finite() || !(0.0..=100.0).contains(&rank) {
+        return Err(FastDbError::Schema(format!(
+            "{function} rank must be between 0 and 100"
+        )));
+    }
+    let position = rank / 100.0 * (values.len() - 1) as f64;
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    let value = values[lower] + (values[upper] - values[lower]) * position.fract();
+    finite_float(value, function)
+}
+
+fn evaluate_percentile(value: &Value, rank: f64) -> Result<Value> {
+    let values = numeric_statistics(value, "math::percentile")?;
+    percentile_value(&values, rank, "math::percentile")
+}
+
+fn evaluate_nearest_rank(value: &Value, rank: f64) -> Result<Value> {
+    let mut values = collection_slice(value, "math::nearestrank")?.to_vec();
+    if values.is_empty() {
+        return Ok(Value::None);
+    }
+    for value in &values {
+        numeric_f64(value, "math::nearestrank")?;
+    }
+    values.sort_by(|left, right| {
+        numeric_f64(left, "math::nearestrank")
+            .expect("values were validated")
+            .total_cmp(&numeric_f64(right, "math::nearestrank").expect("values were validated"))
+    });
+    if !rank.is_finite() || !(0.0..=100.0).contains(&rank) {
+        return Err(FastDbError::Schema(
+            "math::nearestrank rank must be between 0 and 100".into(),
+        ));
+    }
+    let index = ((rank / 100.0) * values.len() as f64).floor() as usize;
+    Ok(values[index.min(values.len() - 1)].clone())
+}
+
+fn evaluate_statistics(function: Builtin, value: &Value) -> Result<Value> {
+    let values = numeric_statistics(value, "math statistics")?;
+    if values.is_empty() {
+        return Ok(Value::None);
+    }
+    let percentile = |rank| percentile_value(&values, rank, "math statistics");
+    match function {
+        Builtin::MathMedian => percentile(50.0),
+        Builtin::MathInterquartile => {
+            let Value::Float(first) = percentile(25.0)? else {
+                unreachable!("nonempty percentile is a float")
+            };
+            let Value::Float(third) = percentile(75.0)? else {
+                unreachable!("nonempty percentile is a float")
+            };
+            finite_float(third - first, "math::interquartile")
+        }
+        Builtin::MathMidhinge | Builtin::MathTrimean => {
+            let Value::Float(first) = percentile(25.0)? else {
+                unreachable!("nonempty percentile is a float")
+            };
+            let Value::Float(third) = percentile(75.0)? else {
+                unreachable!("nonempty percentile is a float")
+            };
+            let Value::Float(median) = percentile(50.0)? else {
+                unreachable!("nonempty percentile is a float")
+            };
+            let value = if function == Builtin::MathMidhinge {
+                (first + third) / 2.0
+            } else {
+                (first + 2.0 * median + third) / 4.0
+            };
+            finite_float(value, "math statistics")
+        }
+        Builtin::MathVariance | Builtin::MathStddev => {
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let variance = if values.len() == 1 {
+                0.0
+            } else {
+                values
+                    .iter()
+                    .map(|value| (value - mean).powi(2))
+                    .sum::<f64>()
+                    / (values.len() - 1) as f64
+            };
+            finite_float(
+                if function == Builtin::MathStddev {
+                    variance.sqrt()
+                } else {
+                    variance
+                },
+                "math statistics",
+            )
+        }
+        _ => Err(FastDbError::Engine(
+            "non-statistics function reached statistics evaluator".into(),
+        )),
+    }
+}
+
+fn evaluate_mode(value: &Value) -> Result<Value> {
+    let mut values = collection_slice(value, "math::mode")?.to_vec();
+    if values.is_empty() {
+        return Ok(Value::None);
+    }
+    for value in &values {
+        numeric_f64(value, "math::mode")?;
+    }
+    values.sort_by(canonical_value_cmp);
+    let mut selected = values[0].clone();
+    let mut selected_count = 0_usize;
+    let mut start = 0_usize;
+    while start < values.len() {
+        let mut end = start + 1;
+        while end < values.len() && values_equal(&values[start], &values[end]) {
+            end += 1;
+        }
+        let count = end - start;
+        if count >= selected_count {
+            selected = values[start].clone();
+            selected_count = count;
+        }
+        start = end;
+    }
+    Ok(selected)
 }
 
 fn crypto_input(value: &Value) -> Result<&[u8]> {

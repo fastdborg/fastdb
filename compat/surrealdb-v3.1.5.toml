@@ -2909,11 +2909,11 @@ area = "Functions — Math"
 title = "math::bottom function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::bottom(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3000,11 +3000,11 @@ area = "Functions — Math"
 title = "math::fixed function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::fixed(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3169,11 +3169,11 @@ area = "Functions — Math"
 title = "math::interquartile function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::interquartile(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3195,11 +3195,11 @@ area = "Functions — Math"
 title = "math::lerpangle function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::lerpangle(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3364,11 +3364,11 @@ area = "Functions — Math"
 title = "math::median function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::median(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3377,11 +3377,11 @@ area = "Functions — Math"
 title = "math::midhinge function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::midhinge(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3403,11 +3403,11 @@ area = "Functions — Math"
 title = "math::mode function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::mode(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3416,11 +3416,11 @@ area = "Functions — Math"
 title = "math::nearestrank function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::nearestrank(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3455,11 +3455,11 @@ area = "Functions — Math"
 title = "math::percentile function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::percentile(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3598,11 +3598,11 @@ area = "Functions — Math"
 title = "math::stddev function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::stddev(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3650,11 +3650,11 @@ area = "Functions — Math"
 title = "math::top function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::top(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3663,11 +3663,11 @@ area = "Functions — Math"
 title = "math::trimean function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::trimean(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 
 [[capability]]
@@ -3676,11 +3676,11 @@ area = "Functions — Math"
 title = "math::variance function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`math::variance(...)` executes with characterized numeric promotion, finite-result, and collection limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/math"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-017", "P13-FN-018"]
 stop_report = ""
 [[capability]]
 id = "FN-OBJECT-ENTRIES"
