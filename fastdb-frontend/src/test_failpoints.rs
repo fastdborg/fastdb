@@ -27,6 +27,14 @@ pub enum Failpoint {
     AfterCatalogRow,
     /// After the hidden physical table is created.
     AfterPhysicalDdl,
+    /// After graph hidden-column rows are persisted.
+    AfterGraphHiddenCatalog,
+    /// After the forward graph adjacency index is persisted and created.
+    AfterGraphForwardIndex,
+    /// After the reverse graph adjacency index is persisted and created.
+    AfterGraphReverseIndex,
+    /// After an edge document and all hidden endpoints are inserted.
+    AfterGraphEdgeInsert,
     /// After existing rows pass a new field definition.
     AfterFieldValidation,
     /// After a field catalog row is written.
@@ -77,6 +85,10 @@ pub struct Failpoints {
     after_format2_validation: AtomicBool,
     after_catalog_row: AtomicBool,
     after_physical_ddl: AtomicBool,
+    after_graph_hidden_catalog: AtomicBool,
+    after_graph_forward_index: AtomicBool,
+    after_graph_reverse_index: AtomicBool,
+    after_graph_edge_insert: AtomicBool,
     after_field_validation: AtomicBool,
     after_field_catalog_row: AtomicBool,
     after_index_validation: AtomicBool,
@@ -115,6 +127,16 @@ impl Failpoints {
             }
             Failpoint::AfterCatalogRow => self.after_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.load(Ordering::SeqCst),
+            Failpoint::AfterGraphHiddenCatalog => {
+                self.after_graph_hidden_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphForwardIndex => {
+                self.after_graph_forward_index.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphReverseIndex => {
+                self.after_graph_reverse_index.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphEdgeInsert => self.after_graph_edge_insert.load(Ordering::SeqCst),
             Failpoint::AfterFieldValidation => self.after_field_validation.load(Ordering::SeqCst),
             Failpoint::AfterFieldCatalogRow => self.after_field_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterIndexValidation => self.after_index_validation.load(Ordering::SeqCst),
@@ -168,6 +190,18 @@ impl Failpoints {
             }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(true, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(true, Ordering::SeqCst),
+            Failpoint::AfterGraphHiddenCatalog => self
+                .after_graph_hidden_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterGraphForwardIndex => {
+                self.after_graph_forward_index.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphReverseIndex => {
+                self.after_graph_reverse_index.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphEdgeInsert => {
+                self.after_graph_edge_insert.store(true, Ordering::SeqCst)
+            }
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(true, Ordering::SeqCst)
             }
@@ -233,6 +267,18 @@ impl Failpoints {
             }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(false, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphHiddenCatalog => self
+                .after_graph_hidden_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphForwardIndex => self
+                .after_graph_forward_index
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphReverseIndex => self
+                .after_graph_reverse_index
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphEdgeInsert => {
+                self.after_graph_edge_insert.store(false, Ordering::SeqCst)
+            }
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(false, Ordering::SeqCst)
             }
@@ -290,6 +336,10 @@ impl Failpoints {
             Failpoint::AfterFormat2Validation,
             Failpoint::AfterCatalogRow,
             Failpoint::AfterPhysicalDdl,
+            Failpoint::AfterGraphHiddenCatalog,
+            Failpoint::AfterGraphForwardIndex,
+            Failpoint::AfterGraphReverseIndex,
+            Failpoint::AfterGraphEdgeInsert,
             Failpoint::AfterFieldValidation,
             Failpoint::AfterFieldCatalogRow,
             Failpoint::AfterIndexValidation,

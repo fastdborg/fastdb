@@ -389,7 +389,6 @@ fn p1_stmt_005_unsupported_families_and_clauses_are_precise() {
     for input in [
         "INSERT INTO person {}",
         "UPSERT person SET a = 1",
-        "RELATE person:a->knows->person:b",
         "LET $x = 1",
         "SELECT * FROM person FETCH friend",
         "SELECT * FROM person GROUP BY name",

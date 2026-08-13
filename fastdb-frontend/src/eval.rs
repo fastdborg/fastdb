@@ -39,6 +39,7 @@ impl EvalValue {
 pub(crate) struct EvalContext<'a> {
     pub(crate) document: &'a BTreeMap<String, Value>,
     pub(crate) id: &'a RecordId,
+    pub(crate) endpoints: Option<(&'a RecordId, &'a RecordId)>,
     pub(crate) params: &'a Params,
 }
 
@@ -57,6 +58,24 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
                 }
             }
         },
+        Statement::Relate(statement) => {
+            collect_parameters(&statement.from, &mut names);
+            collect_parameters(&statement.to, &mut names);
+            if let Some(data) = &statement.data {
+                match data {
+                    turso_fastdb_parser::CreateData::Content(expression) => {
+                        reject_unavailable_functions(expression)?;
+                        collect_parameters(expression, &mut names);
+                    }
+                    turso_fastdb_parser::CreateData::Set(assignments) => {
+                        for assignment in assignments {
+                            reject_unavailable_functions(&assignment.value)?;
+                            collect_parameters(&assignment.value, &mut names);
+                        }
+                    }
+                }
+            }
+        }
         Statement::Select(statement) => {
             if let turso_fastdb_parser::ProjectionList::Fields(projections) = &statement.projections
             {
@@ -142,6 +161,7 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
                 collect_parameters(argument, names);
             }
         }
+        ExprKind::Traversal(_) => {}
         ExprKind::Null
         | ExprKind::Bool(_)
         | ExprKind::Integer(_)
@@ -166,6 +186,7 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
                 ),
             ))
         }
+        ExprKind::Traversal(_) => Ok(()),
         ExprKind::Array(values) => {
             for value in values {
                 reject_unavailable_functions(value)?;
@@ -249,6 +270,9 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
                 .collect::<Vec<_>>()
                 .join("::")
         ))),
+        ExprKind::Traversal(_) => Err(FastDbError::Schema(
+            "graph traversal requires SELECT projection context".into(),
+        )),
         ExprKind::Parenthesized(inner) => evaluate(inner, context),
         ExprKind::Unary { operator, operand } => {
             let value = evaluate(operand, context)?;
@@ -280,6 +304,16 @@ fn read_path(path: &FieldPath, context: &EvalContext<'_>) -> EvalValue {
     };
     let mut value = if first.value == "id" {
         Value::RecordId(context.id.clone())
+    } else if first.value == "in" {
+        let Some((from, _)) = context.endpoints else {
+            return EvalValue::Missing;
+        };
+        Value::RecordId(from.clone())
+    } else if first.value == "out" {
+        let Some((_, to)) = context.endpoints else {
+            return EvalValue::Missing;
+        };
+        Value::RecordId(to.clone())
     } else {
         let Some(value) = context.document.get(&first.value) else {
             return EvalValue::Missing;

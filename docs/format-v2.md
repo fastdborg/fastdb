@@ -1,6 +1,6 @@
 # FastDB on-disk format version 2
 
-Status: Phase 6 implementation contract; not frozen for Core 1.0
+Status: Phase 7 implementation contract; not frozen for Core 1.0
 
 Format 2 extends format 1 with relation metadata and sealed provider-owned
 derived storage. It does not change existing `rid`, JSONB `doc`, record-ID,
@@ -119,23 +119,26 @@ model for hidden objects.
 
 ## Closed values and canonical options
 
-Phase 6 accepts these committed values:
+Phase 7 accepts these committed values:
 
 | Field | Accepted value |
 | --- | --- |
-| table `kind` | `NORMAL` |
-| index `index_kind` | `BTREE` |
-| index `provider` | `BUILTIN_BTREE` |
+| table `kind` | `NORMAL`, `RELATION` |
+| index `index_kind` | `BTREE`, `GRAPH_ADJACENCY` |
+| index `provider` | `BUILTIN_BTREE`, `BUILTIN_GRAPH` |
 | index `provider_version` | `1` |
-| index `options_json` | exactly `{}` |
+| index `options_json` | exactly `{}` for B-tree; `{"direction":"forward"}` or `{"direction":"reverse"}` for graph adjacency |
 | index `state` | `READY` |
 | index `encoding_version` | `1` |
 
-`RELATION`, FTS, graph adjacency, and vector provider values are reserved for
-their implementation phases and are unavailable in Phase 6. Their appearance
-in a database is not ignored: open fails before mutation. The same rule applies
-to unknown providers, newer versions, unknown encodings, noncanonical options,
-and invalid lifecycle states.
+Graph hidden columns use provider `BUILTIN_GRAPH`, provider/encoding version
+`1`, state `READY`, and physical encodings `GRAPH_TABLE_ID` or `GRAPH_RID`.
+Their canonical role options are `{"role":"in_table"}`,
+`{"role":"in_rid"}`, `{"role":"out_table"}`, and
+`{"role":"out_rid"}`. A graph database contains the exact capability row
+`BUILTIN_GRAPH,1,1`. FTS and vector provider values remain unavailable. Unknown
+providers, newer versions, unknown encodings, noncanonical options, and invalid
+lifecycle states fail open before catalog publication.
 
 Provider options are canonical JSON objects with lexicographically sorted keys,
 no duplicate keys, and a provider-version-specific value schema. Empty B-tree
@@ -154,8 +157,13 @@ transaction-local and is never a committed catalog value.
 - Physical names are deterministic opaque names derived from immutable IDs.
 - A `NORMAL` table has null relation endpoint IDs and
   `relation_enforced = 0`.
-- A relation table, when Phase 7 enables it, may constrain either endpoint by
-  immutable table ID. Endpoint names are never persisted as ownership keys.
+- A `RELATION` table may constrain either endpoint by immutable normal-table
+  ID. Endpoint names are never persisted as ownership keys.
+- Every relation table owns exactly four graph hidden columns and exactly two
+  non-unique graph adjacency indexes. The forward order is in-table, in-rid,
+  out-table, out-rid; the reverse order is out-table, out-rid, in-table,
+  in-rid. Their internal logical names are `__graph_forward` and
+  `__graph_reverse` and cannot be addressed through public index maintenance.
 - Every index and hidden column owns an existing table. Optional `index_id`
   must name an index owned by the same table. Optional `field_path_key` uses the
   canonical path codec.
@@ -209,7 +217,26 @@ derivative of the same logical document or immutable relation endpoint. It is
 maintained in the same transaction as `doc`, is never returned as a document
 field, and can be validated/rebuilt from cataloged logical state.
 
-Phase 6 adds no hidden column to an ordinary physical record table.
+Phase 7 adds no hidden column to an ordinary physical record table. A relation
+physical table appends four opaque `TEXT NOT NULL` columns in canonical role
+order:
+
+```text
+rid TEXT PRIMARY KEY,
+doc BLOB NOT NULL,
+<in_table> TEXT NOT NULL,
+<in_rid> TEXT NOT NULL,
+<out_table> TEXT NOT NULL,
+<out_rid> TEXT NOT NULL
+```
+
+Table IDs are canonical 32-byte lowercase catalog-ID hex. Endpoint RIDs use
+the existing version-1 RID codec. One edge insert binds `rid`, `doc`, and all
+four endpoint values in a single physical INSERT. The document never stores
+`id`, `in`, or `out`; FastDB synthesizes them from immutable physical state.
+Catalog loading verifies exact column ownership, role cardinality, endpoint
+table ownership, capability versions, index direction/order, and exact
+physical DDL before publishing a snapshot.
 
 ## Fixtures and freeze policy
 

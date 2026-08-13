@@ -50,6 +50,32 @@ fn validate_statement(statement: &Statement, source_len: usize) {
                 child(clause.span, clause.kind.span, source_len);
             }
         }
+        Statement::Relate(statement) => {
+            if let Some(span) = statement.only {
+                child(parent, span, source_len);
+            }
+            validate_expr(parent, &statement.from, source_len);
+            child(parent, statement.relation.span, source_len);
+            validate_expr(parent, &statement.to, source_len);
+            if let Some(data) = &statement.data {
+                match data {
+                    CreateData::Content(expression) => {
+                        validate_expr(parent, expression, source_len);
+                    }
+                    CreateData::Set(assignments) => {
+                        for assignment in assignments {
+                            child(parent, assignment.span, source_len);
+                            validate_path(assignment.span, &assignment.path, source_len);
+                            validate_expr(assignment.span, &assignment.value, source_len);
+                        }
+                    }
+                }
+            }
+            if let Some(clause) = &statement.return_clause {
+                child(parent, clause.span, source_len);
+                child(clause.span, clause.kind.span, source_len);
+            }
+        }
         Statement::Select(statement) => {
             match &statement.projections {
                 ProjectionList::All(span) => child(parent, *span, source_len),
@@ -121,6 +147,24 @@ fn validate_statement(statement: &Statement, source_len: usize) {
         Statement::DefineTable(statement) => {
             child(parent, statement.name.span, source_len);
             child(parent, statement.mode.span, source_len);
+            match &statement.kind {
+                turso_fastdb_parser::TableKindSyntax::Normal {
+                    type_span: Some(span),
+                } => child(parent, *span, source_len),
+                turso_fastdb_parser::TableKindSyntax::Normal { type_span: None } => {}
+                turso_fastdb_parser::TableKindSyntax::Relation(relation) => {
+                    child(parent, relation.span, source_len);
+                    if let Some(input) = &relation.input {
+                        child(relation.span, input.span, source_len);
+                    }
+                    if let Some(output) = &relation.output {
+                        child(relation.span, output.span, source_len);
+                    }
+                    if let Some(enforced) = relation.enforced {
+                        child(relation.span, enforced, source_len);
+                    }
+                }
+            }
         }
         Statement::DefineField(statement) => {
             validate_path(parent, &statement.path, source_len);
@@ -219,6 +263,14 @@ fn validate_expr(parent: Span, expression: &Expr, source_len: usize) {
             }
             for argument in arguments {
                 validate_expr(expression.span, argument, source_len);
+            }
+        }
+        ExprKind::Traversal(traversal) => {
+            for hop in &traversal.hops {
+                child(expression.span, hop.span, source_len);
+                child(hop.span, hop.direction.span, source_len);
+                child(hop.span, hop.relation.span, source_len);
+                child(hop.span, hop.endpoint_table.span, source_len);
             }
         }
         ExprKind::Unary { operator, operand } => {

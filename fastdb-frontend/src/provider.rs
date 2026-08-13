@@ -6,7 +6,7 @@
 
 use crate::catalog::{
     IndexDefinition, IndexKind, Provider, ProviderState, BUILTIN_BTREE_ENCODING_VERSION,
-    BUILTIN_BTREE_PROVIDER_VERSION,
+    BUILTIN_BTREE_PROVIDER_VERSION, BUILTIN_GRAPH_ENCODING_VERSION, BUILTIN_GRAPH_PROVIDER_VERSION,
 };
 use crate::error::{FastDbError, Result};
 use turso_parser::ast::Stmt;
@@ -19,6 +19,7 @@ pub(crate) trait IndexProviderAdapter: Sync {
 }
 
 struct BuiltinBtreeProvider;
+struct BuiltinGraphProvider;
 
 impl IndexProviderAdapter for BuiltinBtreeProvider {
     fn validate_definition(&self, index: &IndexDefinition) -> Result<()> {
@@ -73,13 +74,73 @@ impl IndexProviderAdapter for BuiltinBtreeProvider {
     }
 }
 
+impl IndexProviderAdapter for BuiltinGraphProvider {
+    fn validate_definition(&self, index: &IndexDefinition) -> Result<()> {
+        if index.kind != IndexKind::GraphAdjacency || index.provider != Provider::BuiltinGraph {
+            return Err(FastDbError::format(
+                "graph index has an incompatible kind or provider",
+            ));
+        }
+        if index.provider_version != BUILTIN_GRAPH_PROVIDER_VERSION
+            || index.encoding_version != BUILTIN_GRAPH_ENCODING_VERSION
+        {
+            return Err(FastDbError::format(
+                "graph index has an unsupported provider or encoding version",
+            ));
+        }
+        if !matches!(
+            index.options_json.as_str(),
+            "{\"direction\":\"forward\"}" | "{\"direction\":\"reverse\"}"
+        ) {
+            return Err(FastDbError::format(
+                "graph index direction options are not canonical",
+            ));
+        }
+        if index.unique || index.paths.len() != 4 || index.paths.iter().any(|path| path.len() != 1)
+        {
+            return Err(FastDbError::format(
+                "graph index must contain four direct non-unique hidden columns",
+            ));
+        }
+        if index.state != ProviderState::Ready {
+            return Err(FastDbError::format("graph index is not ready"));
+        }
+        Ok(())
+    }
+
+    fn create_statement(&self, index: &IndexDefinition, physical_table: &str) -> Result<Stmt> {
+        self.validate_definition(index)?;
+        let columns = index
+            .paths
+            .iter()
+            .map(|path| path[0].clone())
+            .collect::<Vec<_>>();
+        crate::lower::physical_graph_index_ddl(&index.physical_name, physical_table, &columns)
+    }
+
+    fn drop_statement(&self, index: &IndexDefinition) -> Result<Stmt> {
+        self.validate_definition(index)?;
+        crate::lower::physical_drop_index_ddl(&index.physical_name)
+    }
+
+    fn rebuild_statement(&self, index: &IndexDefinition) -> Result<Stmt> {
+        self.validate_definition(index)?;
+        crate::lower::physical_rebuild_index_stmt(&index.physical_name)
+    }
+}
+
 static BUILTIN_BTREE: BuiltinBtreeProvider = BuiltinBtreeProvider;
+static BUILTIN_GRAPH: BuiltinGraphProvider = BuiltinGraphProvider;
 
 pub(crate) fn index_provider(index: &IndexDefinition) -> Result<&'static dyn IndexProviderAdapter> {
     match index.provider {
         Provider::BuiltinBtree => {
             BUILTIN_BTREE.validate_definition(index)?;
             Ok(&BUILTIN_BTREE)
+        }
+        Provider::BuiltinGraph => {
+            BUILTIN_GRAPH.validate_definition(index)?;
+            Ok(&BUILTIN_GRAPH)
         }
     }
 }

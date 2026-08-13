@@ -8,11 +8,11 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. Phase 6 is complete;
-   [`plan-phase6.md`](plan-phase6.md) and
-   [`docs/phase6-report.md`](docs/phase6-report.md) preserve its gates and
-   evidence. Author and review an authoritative Phase 7 plan before broadening
-   into graph behavior. Earlier phase reports preserve their completed evidence.
+3. Read the plan for the active phase. Phase 7 is the completed graph baseline;
+   [`plan-phase7.md`](plan-phase7.md) and
+   [`docs/phase7-report.md`](docs/phase7-report.md) preserve its gates and
+   evidence. Author the authoritative Phase 8 plan before implementing FTS.
+   Earlier phase plans and reports preserve their completed evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -38,10 +38,9 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Behavioral compatibility reference: SurrealDB `v3.1.5`.
 - Durability default: stable Turso WAL with full durability.
 - Core 1.0 delivery surfaces: an embedded Rust library and the `fastdb` CLI.
-- Current implementation stage: Phase 6 format-2/multimodel foundation is
-  technically complete locally. The implemented on-disk format is version 2.
-  Phase 7 requires a new authoritative plan before graph implementation;
-  Phases 7–12 remain roadmap contracts, not implemented claims.
+- Current implementation stage: Phase 7 graph records and bounded traversal is
+  technically complete locally. Phase 8 full-text-search planning is next. The
+  implemented on-disk format remains version 2.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.
@@ -171,9 +170,10 @@ Keep work within the active phase unless the user explicitly changes scope.
 
 Phase 2 established stable format version 1, Phase 3 completed the synchronous
 frontend contract, Phase 4 delivered the worker-backed asynchronous Rust API,
-transaction guard, and CLI, Phase 5 completed local hardening, and Phase 6
-established format 2 plus the sealed provider and maintenance foundation. No
-Phase 7 implementation is active until its authoritative plan is reviewed.
+transaction guard, and CLI, Phase 5 completed local hardening, Phase 6
+established format 2 plus the sealed provider and maintenance foundation, and
+Phase 7 added graph records and bounded traversal. Phase 8 must receive an
+authoritative plan before FTS implementation begins.
 Phase 9 is an alpha-candidate milestone, Phase 11 is a beta-candidate milestone,
 and Phase 12 is the 1.0 gate; none authorizes publishing. The proprietary cloud
 service remains later and separate.

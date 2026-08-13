@@ -4,8 +4,8 @@ use crate::connection::Connection;
 use crate::error::{FastDbError, Result};
 use crate::lower;
 use crate::names::{
-    physical_index_name, physical_table_name, validate_physical_name, CatalogId, INDEX_NAME_PREFIX,
-    TABLE_NAME_PREFIX,
+    physical_hidden_column_name, physical_index_name, physical_table_name, validate_physical_name,
+    CatalogId, HIDDEN_COLUMN_NAME_PREFIX, INDEX_NAME_PREFIX, TABLE_NAME_PREFIX,
 };
 use crate::path::{canonical_path, decode_canonical_path};
 use crate::schema::{FieldRule, FieldType};
@@ -27,20 +27,26 @@ pub const LAST_MIGRATION: i64 = 2;
 pub const EXPRESSION_VERSION: i64 = 1;
 pub const BUILTIN_BTREE_PROVIDER_VERSION: i64 = 1;
 pub const BUILTIN_BTREE_ENCODING_VERSION: i64 = 1;
+pub const BUILTIN_GRAPH_PROVIDER_VERSION: i64 = 1;
+pub const BUILTIN_GRAPH_ENCODING_VERSION: i64 = 1;
+pub const BUILTIN_GRAPH_PROVIDER: &str = "BUILTIN_GRAPH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableKind {
     Normal,
+    Relation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexKind {
     Btree,
+    GraphAdjacency,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     BuiltinBtree,
+    BuiltinGraph,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +115,40 @@ pub struct HiddenColumnDefinition {
     pub id: CatalogId,
     pub table_id: CatalogId,
     pub physical_name: String,
+    pub role: GraphColumnRole,
+    pub physical_encoding: String,
+    pub options_json: String,
+    pub state: ProviderState,
+    pub provider_version: i64,
+    pub encoding_version: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GraphColumnRole {
+    InTable,
+    InRid,
+    OutTable,
+    OutRid,
+}
+
+impl GraphColumnRole {
+    pub const ALL: [Self; 4] = [Self::InTable, Self::InRid, Self::OutTable, Self::OutRid];
+
+    pub const fn options_json(self) -> &'static str {
+        match self {
+            Self::InTable => "{\"role\":\"in_table\"}",
+            Self::InRid => "{\"role\":\"in_rid\"}",
+            Self::OutTable => "{\"role\":\"out_table\"}",
+            Self::OutRid => "{\"role\":\"out_rid\"}",
+        }
+    }
+
+    pub const fn encoding(self) -> &'static str {
+        match self {
+            Self::InTable | Self::OutTable => "GRAPH_TABLE_ID",
+            Self::InRid | Self::OutRid => "GRAPH_RID",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +209,60 @@ pub fn allocate_table(
         fields: BTreeMap::new(),
         indexes: BTreeMap::new(),
     })
+}
+
+pub fn allocate_relation_table(
+    logical_name: &str,
+    mode: TableMode,
+    definition: Option<String>,
+    relation_in_table_id: Option<CatalogId>,
+    relation_out_table_id: Option<CatalogId>,
+    relation_enforced: bool,
+) -> Result<TableDefinition> {
+    let mut table = allocate_table(logical_name, mode, definition)?;
+    table.kind = TableKind::Relation;
+    table.relation_in_table_id = relation_in_table_id;
+    table.relation_out_table_id = relation_out_table_id;
+    table.relation_enforced = relation_enforced;
+    Ok(table)
+}
+
+pub fn allocate_graph_hidden_columns(table_id: CatalogId) -> Vec<HiddenColumnDefinition> {
+    GraphColumnRole::ALL
+        .into_iter()
+        .map(|role| {
+            let id = CatalogId::new_random();
+            HiddenColumnDefinition {
+                id,
+                table_id,
+                physical_name: physical_hidden_column_name(id),
+                role,
+                physical_encoding: role.encoding().to_string(),
+                options_json: role.options_json().to_string(),
+                state: ProviderState::Ready,
+                provider_version: BUILTIN_GRAPH_PROVIDER_VERSION,
+                encoding_version: BUILTIN_GRAPH_ENCODING_VERSION,
+            }
+        })
+        .collect()
+}
+
+pub fn allocate_graph_index(
+    logical_name: &str,
+    columns: &[&HiddenColumnDefinition],
+    direction: &str,
+) -> Result<IndexDefinition> {
+    let paths = columns
+        .iter()
+        .map(|column| vec![column.physical_name.clone()])
+        .collect::<Vec<_>>();
+    let mut index = allocate_index(logical_name, paths, false, String::new())?;
+    index.kind = IndexKind::GraphAdjacency;
+    index.provider = Provider::BuiltinGraph;
+    index.provider_version = BUILTIN_GRAPH_PROVIDER_VERSION;
+    index.options_json = format!("{{\"direction\":\"{direction}\"}}");
+    index.encoding_version = BUILTIN_GRAPH_ENCODING_VERSION;
+    Ok(index)
 }
 
 pub fn allocate_index(
@@ -241,6 +335,40 @@ pub fn persist_table(conn: &Connection, table: &TableDefinition) -> Result<()> {
         &table.physical_name,
         mode,
         table.definition.as_deref(),
+        match table.kind {
+            TableKind::Normal => "NORMAL",
+            TableKind::Relation => "RELATION",
+        },
+        table.relation_in_table_id.map(CatalogId::to_hex).as_deref(),
+        table
+            .relation_out_table_id
+            .map(CatalogId::to_hex)
+            .as_deref(),
+        table.relation_enforced,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn persist_hidden_column(conn: &Connection, column: &HiddenColumnDefinition) -> Result<()> {
+    let (statement, bindings) = lower::hidden_column_insert(
+        &column.id.to_hex(),
+        &column.table_id.to_hex(),
+        &column.physical_name,
+        BUILTIN_GRAPH_PROVIDER,
+        column.provider_version,
+        &column.physical_encoding,
+        &column.options_json,
+        "READY",
+        column.encoding_version,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn persist_graph_capability(conn: &Connection) -> Result<()> {
+    let (statement, bindings) = lower::capability_insert(
+        BUILTIN_GRAPH_PROVIDER,
+        BUILTIN_GRAPH_PROVIDER_VERSION,
+        BUILTIN_GRAPH_ENCODING_VERSION,
     );
     conn.exec_bound(statement, bindings)
 }
@@ -272,6 +400,21 @@ pub fn persist_index(
         index.unique,
         index.expression_version,
         &index.definition,
+        match index.kind {
+            IndexKind::Btree => "BTREE",
+            IndexKind::GraphAdjacency => "GRAPH_ADJACENCY",
+        },
+        match index.provider {
+            Provider::BuiltinBtree => "BUILTIN_BTREE",
+            Provider::BuiltinGraph => BUILTIN_GRAPH_PROVIDER,
+        },
+        index.provider_version,
+        &index.options_json,
+        match index.state {
+            ProviderState::Ready => "READY",
+            ProviderState::RebuildRequired => "REBUILD_REQUIRED",
+        },
+        index.encoding_version,
     );
     conn.exec_bound(statement, bindings)
 }
@@ -336,6 +479,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     };
     load_fields(conn, &mut snapshot)?;
     load_indexes(conn, &mut snapshot)?;
+    validate_graph_catalog(&snapshot)?;
     validate_physical_objects(&schema, &snapshot, true)?;
     Ok(CatalogState::Ready(snapshot))
 }
@@ -501,17 +645,15 @@ fn load_table_rows(
         let (kind, relation_in_table_id, relation_out_table_id, relation_enforced) = if format_two {
             let kind = match format_text(&row[5], "kind")?.as_str() {
                 "NORMAL" => TableKind::Normal,
-                "RELATION" => {
-                    return Err(FastDbError::format(
-                        "relation tables require the unavailable graph capability",
-                    ))
-                }
+                "RELATION" => TableKind::Relation,
                 _ => return Err(FastDbError::format("table catalog has unknown kind")),
             };
             let relation_in = format_optional_catalog_id(&row[6], "relation_in_table_id")?;
             let relation_out = format_optional_catalog_id(&row[7], "relation_out_table_id")?;
             let enforced = format_boolean_integer(&row[8], "relation_enforced")?;
-            if relation_in.is_some() || relation_out.is_some() || enforced {
+            if kind == TableKind::Normal
+                && (relation_in.is_some() || relation_out.is_some() || enforced)
+            {
                 return Err(FastDbError::format(
                     "normal table has relation-only metadata",
                 ));
@@ -656,10 +798,12 @@ fn load_index_rows(
             if format_two {
                 let kind = match format_text(&row[8], "index_kind")?.as_str() {
                     "BTREE" => IndexKind::Btree,
+                    "GRAPH_ADJACENCY" => IndexKind::GraphAdjacency,
                     _ => return Err(FastDbError::format("index catalog has unknown kind")),
                 };
                 let provider = match format_text(&row[9], "provider")?.as_str() {
                     "BUILTIN_BTREE" => Provider::BuiltinBtree,
+                    BUILTIN_GRAPH_PROVIDER => Provider::BuiltinGraph,
                     _ => {
                         return Err(FastDbError::format(
                             "index requires an unknown or unavailable provider",
@@ -667,33 +811,13 @@ fn load_index_rows(
                     }
                 };
                 let provider_version = format_integer(&row[10], "provider_version")?;
-                if provider_version != BUILTIN_BTREE_PROVIDER_VERSION {
-                    return Err(FastDbError::format(format!(
-                        "unsupported built-in B-tree provider version {provider_version}"
-                    )));
-                }
                 let options_json = format_text(&row[11], "options_json")?;
-                if options_json != "{}" {
-                    return Err(FastDbError::format(
-                        "built-in B-tree options are not canonical or supported",
-                    ));
-                }
                 let state = match format_text(&row[12], "state")?.as_str() {
                     "READY" => ProviderState::Ready,
                     "REBUILD_REQUIRED" => ProviderState::RebuildRequired,
                     _ => return Err(FastDbError::format("index has unknown lifecycle state")),
                 };
-                if state != ProviderState::Ready {
-                    return Err(FastDbError::format(
-                        "built-in B-tree index cannot require provider rebuild",
-                    ));
-                }
                 let encoding_version = format_integer(&row[13], "encoding_version")?;
-                if encoding_version != BUILTIN_BTREE_ENCODING_VERSION {
-                    return Err(FastDbError::format(format!(
-                        "unsupported built-in B-tree encoding version {encoding_version}"
-                    )));
-                }
                 (
                     kind,
                     provider,
@@ -751,22 +875,115 @@ fn load_analyzers(conn: &Connection) -> Result<BTreeMap<String, AnalyzerDefiniti
 
 fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenColumnDefinition>> {
     let rows = conn.collect_rows(lower::hidden_columns_stmt(), vec![])?;
-    if rows.is_empty() {
-        return Ok(BTreeMap::new());
+    let mut columns = BTreeMap::new();
+    let mut physical_names = BTreeSet::new();
+    for row in rows {
+        if row.len() != 12 {
+            return Err(FastDbError::format(
+                "hidden-column catalog row has wrong width",
+            ));
+        }
+        let id = CatalogId::from_hex(&format_text(&row[0], "column_id")?)?;
+        let table_id = CatalogId::from_hex(&format_text(&row[1], "table_id")?)?;
+        if !matches!(row[2], Value::Null)
+            || !matches!(row[3], Value::Null)
+            || !matches!(row[8], Value::Null)
+        {
+            return Err(FastDbError::format(
+                "graph hidden column has index, field, or dimension metadata",
+            ));
+        }
+        let physical_name = format_text(&row[4], "physical_name")?;
+        validate_physical_name(&physical_name, HIDDEN_COLUMN_NAME_PREFIX)?;
+        if physical_name != physical_hidden_column_name(id) {
+            return Err(FastDbError::format(
+                "hidden-column physical name does not match its immutable ID",
+            ));
+        }
+        if format_text(&row[5], "provider")? != BUILTIN_GRAPH_PROVIDER {
+            return Err(FastDbError::format(
+                "hidden typed column requires an unknown provider",
+            ));
+        }
+        let provider_version = format_integer(&row[6], "provider_version")?;
+        let physical_encoding = format_text(&row[7], "physical_encoding")?;
+        let options_json = format_text(&row[9], "options_json")?;
+        let role = match options_json.as_str() {
+            "{\"role\":\"in_table\"}" => GraphColumnRole::InTable,
+            "{\"role\":\"in_rid\"}" => GraphColumnRole::InRid,
+            "{\"role\":\"out_table\"}" => GraphColumnRole::OutTable,
+            "{\"role\":\"out_rid\"}" => GraphColumnRole::OutRid,
+            _ => return Err(FastDbError::format("unknown graph hidden-column role")),
+        };
+        if physical_encoding != role.encoding() {
+            return Err(FastDbError::format(
+                "graph hidden-column role and encoding disagree",
+            ));
+        }
+        let state = match format_text(&row[10], "state")?.as_str() {
+            "READY" => ProviderState::Ready,
+            "REBUILD_REQUIRED" => ProviderState::RebuildRequired,
+            _ => return Err(FastDbError::format("hidden column has unknown state")),
+        };
+        let encoding_version = format_integer(&row[11], "encoding_version")?;
+        if provider_version != BUILTIN_GRAPH_PROVIDER_VERSION
+            || encoding_version != BUILTIN_GRAPH_ENCODING_VERSION
+            || state != ProviderState::Ready
+        {
+            return Err(FastDbError::format(
+                "graph hidden column has an unsupported version or state",
+            ));
+        }
+        let column = HiddenColumnDefinition {
+            id,
+            table_id,
+            physical_name: physical_name.clone(),
+            role,
+            physical_encoding,
+            options_json,
+            state,
+            provider_version,
+            encoding_version,
+        };
+        if !physical_names.insert(physical_name) || columns.insert(id, column).is_some() {
+            return Err(FastDbError::format(
+                "hidden-column catalog contains duplicate ownership",
+            ));
+        }
     }
-    Err(FastDbError::format(
-        "hidden typed columns require an unavailable provider",
-    ))
+    Ok(columns)
 }
 
 fn load_capabilities(conn: &Connection) -> Result<BTreeMap<String, CapabilityRequirement>> {
     let rows = conn.collect_rows(lower::capabilities_stmt(), vec![])?;
-    if rows.is_empty() {
-        return Ok(BTreeMap::new());
+    let mut capabilities = BTreeMap::new();
+    for row in rows {
+        if row.len() != 3 {
+            return Err(FastDbError::format(
+                "capability catalog row has wrong width",
+            ));
+        }
+        let provider = format_text(&row[0], "provider")?;
+        let requirement = CapabilityRequirement {
+            provider: provider.clone(),
+            min_provider_version: format_integer(&row[1], "min_provider_version")?,
+            min_encoding_version: format_integer(&row[2], "min_encoding_version")?,
+        };
+        if provider != BUILTIN_GRAPH_PROVIDER
+            || requirement.min_provider_version != BUILTIN_GRAPH_PROVIDER_VERSION
+            || requirement.min_encoding_version != BUILTIN_GRAPH_ENCODING_VERSION
+        {
+            return Err(FastDbError::format(
+                "database requires an unknown or unavailable capability",
+            ));
+        }
+        if capabilities.insert(provider, requirement).is_some() {
+            return Err(FastDbError::format(
+                "capability catalog contains duplicate providers",
+            ));
+        }
     }
-    Err(FastDbError::format(
-        "database requires an unknown or unavailable capability",
-    ))
+    Ok(capabilities)
 }
 
 fn read_schema(conn: &Connection) -> Result<Vec<SchemaObject>> {
@@ -833,12 +1050,22 @@ fn validate_physical_objects(
     }
     for table in snapshot.tables.values() {
         expected_reserved.insert(table.physical_name.clone());
+        let table_ddl = match table.kind {
+            TableKind::Normal => lower::physical_table_ddl(&table.physical_name)?,
+            TableKind::Relation => lower::physical_relation_table_ddl(
+                &table.physical_name,
+                &graph_columns(snapshot, table)?
+                    .into_iter()
+                    .map(|column| column.physical_name.clone())
+                    .collect::<Vec<_>>(),
+            )?,
+        };
         require_exact_schema(
             schema,
             "table",
             &table.physical_name,
             &table.physical_name,
-            &lower::physical_table_ddl(&table.physical_name)?.to_string(),
+            &table_ddl.to_string(),
         )?;
         for index in table.indexes.values() {
             expected_reserved.insert(index.physical_name.clone());
@@ -860,6 +1087,130 @@ fn validate_physical_objects(
                 "orphan reserved physical object {:?}",
                 object.name
             )));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn graph_columns<'a>(
+    snapshot: &'a CatalogSnapshot,
+    table: &TableDefinition,
+) -> Result<Vec<&'a HiddenColumnDefinition>> {
+    let mut by_role = BTreeMap::new();
+    for column in snapshot
+        .hidden_columns
+        .values()
+        .filter(|column| column.table_id == table.id)
+    {
+        if by_role.insert(column.role, column).is_some() {
+            return Err(FastDbError::format(
+                "relation table has duplicate hidden-column roles",
+            ));
+        }
+    }
+    GraphColumnRole::ALL
+        .into_iter()
+        .map(|role| {
+            by_role.get(&role).copied().ok_or_else(|| {
+                FastDbError::format("relation table is missing a hidden endpoint column")
+            })
+        })
+        .collect()
+}
+
+fn validate_graph_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
+    let has_relations = snapshot
+        .tables
+        .values()
+        .any(|table| table.kind == TableKind::Relation);
+    if has_relations != snapshot.capabilities.contains_key(BUILTIN_GRAPH_PROVIDER) {
+        return Err(FastDbError::format(
+            "graph capability requirement disagrees with relation ownership",
+        ));
+    }
+    for column in snapshot.hidden_columns.values() {
+        let owner = snapshot
+            .tables
+            .values()
+            .find(|table| table.id == column.table_id)
+            .ok_or_else(|| FastDbError::format("hidden column has an orphan table owner"))?;
+        if owner.kind != TableKind::Relation {
+            return Err(FastDbError::format(
+                "normal table owns a graph hidden column",
+            ));
+        }
+    }
+    for table in snapshot.tables.values() {
+        let graph_indexes = table
+            .indexes
+            .values()
+            .filter(|index| index.kind == IndexKind::GraphAdjacency)
+            .collect::<Vec<_>>();
+        if table.kind == TableKind::Normal {
+            if !graph_indexes.is_empty() {
+                return Err(FastDbError::format(
+                    "normal table owns a graph adjacency index",
+                ));
+            }
+            continue;
+        }
+        for endpoint in [table.relation_in_table_id, table.relation_out_table_id]
+            .into_iter()
+            .flatten()
+        {
+            let endpoint_table = snapshot
+                .tables
+                .values()
+                .find(|candidate| candidate.id == endpoint)
+                .ok_or_else(|| FastDbError::format("relation endpoint table is missing"))?;
+            if endpoint_table.kind != TableKind::Normal {
+                return Err(FastDbError::format(
+                    "relation endpoint constraint must reference a normal table",
+                ));
+            }
+        }
+        let columns = graph_columns(snapshot, table)?;
+        if snapshot
+            .hidden_columns
+            .values()
+            .filter(|column| column.table_id == table.id)
+            .count()
+            != 4
+        {
+            return Err(FastDbError::format(
+                "relation table must own exactly four hidden columns",
+            ));
+        }
+        if graph_indexes.len() != 2 {
+            return Err(FastDbError::format(
+                "relation table must own forward and reverse adjacency indexes",
+            ));
+        }
+        let forward = columns
+            .iter()
+            .map(|column| vec![column.physical_name.clone()])
+            .collect::<Vec<_>>();
+        let reverse = [columns[2], columns[3], columns[0], columns[1]]
+            .into_iter()
+            .map(|column| vec![column.physical_name.clone()])
+            .collect::<Vec<_>>();
+        for (logical_name, options, expected) in [
+            ("__graph_forward", "{\"direction\":\"forward\"}", forward),
+            ("__graph_reverse", "{\"direction\":\"reverse\"}", reverse),
+        ] {
+            let matching = graph_indexes
+                .iter()
+                .filter(|index| {
+                    index.logical_name == logical_name
+                        && index.options_json == options
+                        && index.paths == expected
+                })
+                .count();
+            if matching != 1 {
+                return Err(FastDbError::format(
+                    "relation adjacency index direction or column order is invalid",
+                ));
+            }
         }
     }
     Ok(())

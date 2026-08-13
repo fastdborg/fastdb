@@ -123,3 +123,5 @@ dhat-heap.json
 postgres/regress/results/
 docs/benchmarks/*
 !docs/benchmarks/phase6-phase5-regression.json
+!docs/benchmarks/phase7-graph.json
+!docs/benchmarks/phase7-phase5-regression.json

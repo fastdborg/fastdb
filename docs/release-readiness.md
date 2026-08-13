@@ -1,7 +1,7 @@
 # FastDB Core release-readiness gates
 
-Status: Phase 6 complete locally; Phase 7 not started; no alpha, beta, or Core
-1.0 release authorized
+Status: Phase 7 complete locally; Phase 8 planning is next; no alpha, beta, or
+Core 1.0 release authorized
 
 This checklist is the durable release gate. Phase plans and reports contain
 execution details and evidence; completing a development phase does not itself
@@ -63,15 +63,15 @@ mandatory for Core 1.0 in Phase 12.
 
 ### Phase 7 — Graph records and bounded traversal
 
-- [ ] Characterize and implement the approved `v3.1.5` relation-table and
+- [x] Characterize and implement the approved `v3.1.5` relation-table and
       `RELATE` subset with record literals and bound record parameters.
-- [ ] Prove immutable hidden endpoints, synthesized `id`/`in`/`out`, generated
+- [x] Prove immutable hidden endpoints, synthesized `id`/`in`/`out`, generated
       UUIDv7 edge IDs, two-way adjacency indexes, fixed-depth traversal, and
       schemafull edge validation.
-- [ ] Prove dangling-edge defaults, `ENFORCED` existence checks, atomic node
+- [x] Prove dangling-edge defaults, `ENFORCED` existence checks, atomic node
       cascade, failure rollback, reopen/crash recovery, and scan-free plans in
       both directions.
-- [ ] Keep cartesian targets, complex IDs, `OR UPDATE`, edge-path filters,
+- [x] Keep cartesian targets, complex IDs, `OR UPDATE`, edge-path filters,
       recursive paths, and standalone traversal explicitly rejected.
 
 ### Phase 8 — Full-text search

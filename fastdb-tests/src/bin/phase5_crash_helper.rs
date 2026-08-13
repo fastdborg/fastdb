@@ -53,6 +53,18 @@ fn main() {
             // format-2 migration. Exit without close to exercise recovery at
             // the post-publication process boundary.
         }
+        "graph-write" => {
+            connection
+                .execute(
+                    "DEFINE TABLE links TYPE RELATION FROM person TO post ENFORCED; \
+                     CREATE person:one CONTENT {}; CREATE post:one CONTENT {}; \
+                     RELATE person:one->links->post:one SET weight=1",
+                )
+                .unwrap();
+        }
+        "graph-cascade" => {
+            connection.execute("DELETE person:one").unwrap();
+        }
         _ => panic!("unknown crash point {point}"),
     }
     // Test-only abrupt process boundary: bypass Rust drops and engine close.

@@ -9,7 +9,7 @@ FastDB implements a documented SurrealQL-compatible subset. This file is the nor
 - **Planned**: reserved for parsed behavior that has not reached execution.
 - **Unsupported**: explicitly rejected and outside the MVP target.
 
-Phase 5 hardened the MVP baseline. Phase 6 adds the evidenced scalar-expression projection and built-in B-tree maintenance subsets while keeping graph, FTS, vector, and function execution unavailable. Anything not listed as Supported or Partial remains explicitly outside the current phase.
+Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection and built-in B-tree maintenance. Phase 7 adds the evidenced bounded graph subset while FTS, vector, and function execution remain unavailable. Anything not listed as Supported or Partial remains explicitly outside the current phase.
 
 ## Values and record IDs
 
@@ -34,20 +34,22 @@ Phase 5 hardened the MVP baseline. Phase 6 adds the evidenced scalar-expression 
 
 | Feature ID | Status | Exact accepted / rejected syntax | Parser tests | Provenance | Execution / conformance |
 | --- | --- | --- | --- | --- | --- |
-| `EXPR-PATH` | Partial | Execute dot-separated Unicode paths plus virtual top-level `id`; indexing and traversal are excluded. | `P1-EXPR-001`, `P1-EXPR-005` | [Virtual id and SET](docs/compat-research/phase3.md#set-evaluation-and-conflicting-assignments) | `P3-CRUD-001`, `P3-CRUD-002` |
+| `EXPR-PATH` | Partial | Execute dot-separated Unicode paths plus synthesized top-level `id`; relation records also synthesize immutable `in` and `out`. Array indexing remains excluded. | `P1-EXPR-001`, `P7-AST-003` | [Virtual id and SET](docs/compat-research/phase3.md#set-evaluation-and-conflicting-assignments), [Phase 7 graph observations](docs/compat-research/phase7.md) | `P3-CRUD-001`, `P7-GRAPH-001`, `P7-GRAPH-003` |
 | `EXPR-PAREN` | Partial | Parentheses execute recursively within the configured nesting limit. | `P1-EXPR-004`, `P1-LIMIT-003` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P2-BRIDGE-002` |
 | `OP-UNARY` | Partial | Unary `+`, `-`, and keyword `NOT` execute; symbolic `!` remains rejected by the independent grammar. | `P1-EXPR-004`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P2-BRIDGE-003` |
 | `OP-ARITH` | Partial | Execute checked left-associative `*`, `/`, `+`, `-`; reject `%` and `**`. | `P1-EXPR-003`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001` |
 | `OP-REL` | Partial | Execute `<`, `<=`, `>`, `>=` using the documented total type order. | `P1-EXPR-003` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P3-CRUD-002` |
 | `OP-EQ` | Partial | Execute recursive `=` and `!=`; `==` and `IS` are rejected. | `P1-EXPR-003`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P2-IDX-001` |
 | `OP-BOOL` | Partial | Execute short-circuit operand-returning `AND` and `OR`; symbolic boolean operators are rejected. | `P1-EXPR-003`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P3-IDX-001` |
-| `EXPR-EXCLUDED` | Unsupported | Function calls now have a bounded namespaced AST but remain explicit pre-execution errors; casts, subqueries, traversal, ranges, indexing, modulo, power, and broader operators also fail explicitly. | `P1-EXPR-005`, `P6-AST-001` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P6-LANG-002` |
+| `EXPR-TRAVERSAL` | Partial | Execute aliased, projection-only fixed-depth `->`, `<-`, and `<->` traversal up to eight hops, returning endpoint IDs or final `.*` documents. Filters, recursive paths, and standalone traversal values are rejected. | `P7-AST-003`, `P7-AST-004` | [Phase 7 graph observations](docs/compat-research/phase7.md) | `P7-GRAPH-001`, `P7-GRAPH-002` |
+| `EXPR-EXCLUDED` | Unsupported | Function calls have a bounded namespaced AST but remain explicit pre-execution errors; casts, subqueries, ranges, indexing, modulo, power, and broader operators also fail explicitly. | `P1-EXPR-005`, `P6-AST-001` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P6-LANG-002` |
 
 ## Statements and clauses
 
 | Feature ID | Status | Exact accepted / rejected syntax | Parser tests | Provenance | Execution / conformance |
 | --- | --- | --- | --- | --- | --- |
 | `STMT-CREATE` | Partial | Execute `CREATE [ONLY] table[:id]` with CONTENT or one or more SET assignments and supported RETURN modes. | `P1-STMT-001`, `P1-STMT-004`, `P1-STMT-006` | [Phase 3 results](docs/compat-research/phase3.md#result-and-projection-shapes) | `P3-RESULT-001`, `P2-BRIDGE-001` |
+| `STMT-RELATE` | Partial | Execute one literal or bound record endpoint on each side of `RELATE [ONLY] record->relation->record`, optional CONTENT/SET, and RETURN AFTER/NONE/BEFORE. Arrays, cartesian targets, explicit edge IDs, OR UPDATE, and TIMEOUT are rejected. | `P7-AST-002`, `P7-AST-004` | [Phase 7 graph observations](docs/compat-research/phase7.md) | `P7-GRAPH-001`, `P7-GRAPH-002`, `P7-GRAPH-003` |
 | `STMT-SELECT` | Partial | Execute table or record targets, record-only ONLY, MVP expressions, projection, ordering, and pagination. | `P1-STMT-001`, `P1-STMT-002`, `P1-STMT-004`, `P1-STMT-006` | [Phase 3 results](docs/compat-research/phase3.md#result-and-projection-shapes) | `P3-CRUD-002`, `P3-IDX-001` |
 | `STMT-UPDATE` | Partial | Execute record or table UPDATE SET with optional WHERE and `RETURN AFTER` or `NONE`; richer operators are rejected. | `P1-STMT-001`, `P1-STMT-004`, `P1-STMT-006` | [SET evaluation](docs/compat-research/phase3.md#set-evaluation-and-conflicting-assignments) | `P3-CRUD-001`, `P3-ATOMIC-001` |
 | `STMT-DELETE` | Partial | Execute record or table DELETE with optional WHERE and `RETURN BEFORE`; other returns are rejected. | `P1-STMT-001`, `P1-STMT-004`, `P1-STMT-006` | [Return modes](docs/compat-research/phase3.md#return-modes-ordering-and-missing-targets) | `P3-CRUD-001`, `P3-ATOMIC-002` |
@@ -65,7 +67,7 @@ Phase 5 hardened the MVP baseline. Phase 6 adds the evidenced scalar-expression 
 
 | Feature ID | Status | Exact accepted / rejected syntax | Parser tests | Provenance | Execution / conformance |
 | --- | --- | --- | --- | --- | --- |
-| `SCHEMA-TABLE` | Supported | Execute exact DEFINE TABLE SCHEMALESS or SCHEMAFULL grammar, including explicit transactions. | `P1-STMT-001` | [Phase 2 definitions](docs/compat-research/phase2.md#nested-paths-and-duplicate-definitions) | `P2-SCHEMA-006`, `P3-TXN-001` |
+| `SCHEMA-TABLE` | Partial | Execute normal SCHEMALESS/SCHEMAFULL tables and `TYPE RELATION [IN/FROM table] [OUT/TO table] [ENFORCED]`; broader table types and clauses remain rejected. | `P1-STMT-001`, `P7-AST-001` | [Phase 2 definitions](docs/compat-research/phase2.md#nested-paths-and-duplicate-definitions), [Phase 7 graph observations](docs/compat-research/phase7.md) | `P2-SCHEMA-006`, `P3-TXN-001`, `P7-GRAPH-001`, `P7-GRAPH-003` |
 | `SCHEMA-FIELD` | Supported | Execute DEFINE FIELD on an existing table and validate all existing rows atomically. | `P1-STMT-001` | [Phase 2 fields](docs/compat-research/phase2.md#required-optional-null-and-numeric-coercion) | `P2-SCHEMA-005`, `P3-ATOMIC-003` |
 | `SCHEMA-INDEX` | Supported | Execute ordered scalar DEFINE INDEX fields with optional UNIQUE; excluded index kinds remain rejected. | `P1-STMT-001`, `P1-STMT-005` | [Phase 2 indexes](docs/compat-research/phase2.md#unique-null-missing-and-composite-indexes) | `P2-IDX-001`, `P3-IDX-001` |
 | `SCHEMA-INDEX-REMOVE` | Partial | Execute `REMOVE INDEX name ON [TABLE] table` atomically for built-in B-trees; reject `IF EXISTS` and other REMOVE resources. | `P6-AST-003` | [Phase 6 maintenance](docs/compat-research/phase6.md#index-removal-and-rebuild) | `P6-INDEX-001`, `P6-CLI-001` |
@@ -80,9 +82,9 @@ Phase 5 hardened the MVP baseline. Phase 6 adds the evidenced scalar-expression 
 
 | Feature ID | Status | Exact accepted / rejected syntax | Parser tests | Provenance | Execution / conformance |
 | --- | --- | --- | --- | --- | --- |
-| `EXCL-STMT` | Unsupported | INSERT, UPSERT, RELATE, LET, non-index REMOVE resources, INFO, USE, LIVE, SHOW, SLEEP, THROW, FOR, and IF fail explicitly. | `P1-STMT-005`, `P6-AST-003` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses) | `P1-BRIDGE-003`, `P3-SCRIPT-001`, `P6-INDEX-001` |
+| `EXCL-STMT` | Unsupported | INSERT, UPSERT, LET, non-index REMOVE resources, INFO, USE, LIVE, SHOW, SLEEP, THROW, FOR, and IF fail explicitly. | `P1-STMT-005`, `P6-AST-003` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses) | `P1-BRIDGE-003`, `P3-SCRIPT-001`, `P6-INDEX-001` |
 | `EXCL-CLAUSE` | Unsupported | TIMEOUT, FETCH, GROUP, SPLIT, OMIT, trailing SELECT EXPLAIN, general WITH, VALUE, MERGE, PATCH, PARALLEL, and executable specialized index kinds fail explicitly. | `P1-STMT-005`, `P6-AST-004` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P3-PARAM-001`, `P6-LANG-002` |
-| `EXCL-GRAPH` | Unsupported | Graph traversal, relation statements, complex record IDs, and ranges are not accepted. | `P1-EXPR-005`, `P1-STMT-005` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions) | `P1-BRIDGE-003` |
+| `EXCL-GRAPH` | Partial | The bounded Phase 7 relation/traversal subset executes. Array/cartesian RELATE, complex edge IDs, OR UPDATE, path filters, recursion, standalone traversal expressions, and relation endpoints that are themselves relations remain rejected. | `P7-AST-004` | [Phase 7 graph observations](docs/compat-research/phase7.md) | `P7-GRAPH-002`, `P7-GRAPH-003` |
 | `EXCL-ADVANCED` | Unsupported | Namespaced functions, casts, subqueries, permissions, users, namespaces, scopes, events, analyzers, views, live queries, and specialized index execution remain unavailable. | `P6-AST-001`, `P1-STMT-005`, `P6-AST-004` | [Phase 1 exclusions](docs/compat-research/phase1.md#phase-1-interpretation), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P6-LANG-002`, `P6-CLI-002` |
 
 ## Phase 3 execution contracts

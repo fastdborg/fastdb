@@ -240,6 +240,7 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         let statement = match &self.peek().kind {
             TokenKind::Create => Statement::Create(self.parse_create()?),
+            TokenKind::Relate => Statement::Relate(self.parse_relate()?),
             TokenKind::Select => Statement::Select(self.parse_select()?),
             TokenKind::Update => Statement::Update(self.parse_update()?),
             TokenKind::Delete => Statement::Delete(self.parse_delete()?),
@@ -305,6 +306,69 @@ impl<'a> Parser<'a> {
             data,
             return_clause,
         })
+    }
+
+    fn parse_relate(&mut self) -> Result<RelateStatement, ParseError> {
+        let start = self.expect(&TokenKind::Relate, "keyword RELATE")?.span;
+        let only = self.take(&TokenKind::Only).map(|token| token.span);
+        let from = self.parse_prefix_expression()?;
+        self.validate_relate_endpoint(&from)?;
+        self.expect(&TokenKind::ForwardArrow, "'->' after the source record")?;
+        let relation = self.expect_identifier("a relation table name")?;
+        self.expect(&TokenKind::ForwardArrow, "'->' after the relation table")?;
+        let to = self.parse_prefix_expression()?;
+        self.validate_relate_endpoint(&to)?;
+
+        let data = if self.eat(&TokenKind::Content) {
+            Some(CreateData::Content(self.parse_expression()?))
+        } else if self.eat(&TokenKind::Set) {
+            Some(CreateData::Set(self.parse_assignments()?))
+        } else {
+            None
+        };
+        if self.at(&TokenKind::Or) {
+            return Err(ParseError::unsupported(
+                "RELATE OR UPDATE is outside the Phase 7 grammar",
+                self.peek().span,
+            ));
+        }
+        let return_clause = if self.eat(&TokenKind::Return) {
+            Some(self.parse_return_clause(ReturnContext::Create)?)
+        } else {
+            None
+        };
+        if self.at(&TokenKind::Return) {
+            return Err(self.duplicate_clause("RETURN"));
+        }
+        if self.at(&TokenKind::Timeout) {
+            return Err(ParseError::unsupported(
+                "RELATE TIMEOUT is outside the Phase 7 grammar",
+                self.peek().span,
+            ));
+        }
+        let end = self.previous_end();
+        Ok(RelateStatement {
+            span: Span::new(start.offset, end - start.offset),
+            only,
+            from,
+            relation,
+            to,
+            data,
+            return_clause,
+        })
+    }
+
+    fn validate_relate_endpoint(&self, endpoint: &Expr) -> Result<(), ParseError> {
+        if matches!(
+            endpoint.kind,
+            ExprKind::RecordId(_) | ExprKind::Parameter(_)
+        ) {
+            return Ok(());
+        }
+        Err(ParseError::unsupported(
+            "RELATE endpoints must be record literals or bound record parameters",
+            endpoint.span,
+        ))
     }
 
     fn parse_select(&mut self) -> Result<SelectStatement, ParseError> {
@@ -523,16 +587,83 @@ impl<'a> Parser<'a> {
     fn parse_define_table(&mut self, start: Span) -> Result<DefineTableStatement, ParseError> {
         self.expect(&TokenKind::Table, "keyword TABLE")?;
         let name = self.expect_identifier("a table name")?;
-        let mode_token = self.advance().clone();
-        let mode = match mode_token.kind {
-            TokenKind::Schemaless => TableMode::Schemaless,
-            TokenKind::Schemafull => TableMode::Schemafull,
-            _ => return Err(self.unexpected_at(&mode_token, "SCHEMALESS or SCHEMAFULL")),
+        let mode = if let Some(token) = self.take(&TokenKind::Schemaless) {
+            Spanned::new(TableMode::Schemaless, token.span)
+        } else if let Some(token) = self.take(&TokenKind::Schemafull) {
+            Spanned::new(TableMode::Schemafull, token.span)
+        } else if self.at(&TokenKind::Type) {
+            Spanned::new(TableMode::Schemaless, Span::new(name.span.end(), 0))
+        } else {
+            return Err(self.unexpected("SCHEMALESS, SCHEMAFULL, or TYPE"));
+        };
+        let kind = if let Some(type_token) = self.take(&TokenKind::Type) {
+            if let Some(normal) = self.take(&TokenKind::Normal) {
+                TableKindSyntax::Normal {
+                    type_span: Some(type_token.span.union(normal.span)),
+                }
+            } else if let Some(relation) = self.take(&TokenKind::Relation) {
+                let mut input = None;
+                let mut output = None;
+                let mut enforced = None;
+                loop {
+                    if self.at(&TokenKind::In) || self.at(&TokenKind::From) {
+                        let clause = self.advance().clone();
+                        if input.is_some() {
+                            return Err(ParseError::new(
+                                ParseErrorKind::DuplicateClause { clause: "IN/FROM" },
+                                clause.span,
+                            ));
+                        }
+                        input = Some(self.expect_identifier("an input endpoint table")?);
+                    } else if self.at(&TokenKind::Out) || self.at(&TokenKind::To) {
+                        let clause = self.advance().clone();
+                        if output.is_some() {
+                            return Err(ParseError::new(
+                                ParseErrorKind::DuplicateClause { clause: "OUT/TO" },
+                                clause.span,
+                            ));
+                        }
+                        output = Some(self.expect_identifier("an output endpoint table")?);
+                    } else if let Some(token) = self.take(&TokenKind::Enforced) {
+                        if enforced.is_some() {
+                            return Err(ParseError::new(
+                                ParseErrorKind::DuplicateClause { clause: "ENFORCED" },
+                                token.span,
+                            ));
+                        }
+                        enforced = Some(token.span);
+                    } else {
+                        break;
+                    }
+                }
+                let end = enforced
+                    .or_else(|| output.as_ref().map(|value| value.span))
+                    .or_else(|| input.as_ref().map(|value| value.span))
+                    .unwrap_or(relation.span);
+                TableKindSyntax::Relation(RelationTableType {
+                    span: type_token.span.union(end),
+                    input,
+                    output,
+                    enforced,
+                })
+            } else {
+                return Err(self.unexpected("NORMAL or RELATION after TYPE"));
+            }
+        } else {
+            TableKindSyntax::Normal { type_span: None }
+        };
+        let end = match &kind {
+            TableKindSyntax::Normal {
+                type_span: Some(span),
+            } => span.end(),
+            TableKindSyntax::Normal { type_span: None } => mode.span.end(),
+            TableKindSyntax::Relation(relation) => relation.span.end(),
         };
         Ok(DefineTableStatement {
-            span: Span::new(start.offset, mode_token.span.end() - start.offset),
+            span: Span::new(start.offset, end - start.offset),
             name,
-            mode: Spanned::new(mode, mode_token.span),
+            mode,
+            kind,
         })
     }
 
@@ -798,6 +929,14 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if matches!(expression.kind, ExprKind::Traversal(_)) && alias.is_none() {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "graph traversal projections require an AS alias",
+                },
+                expression.span,
+            ));
+        }
         let span = alias
             .as_ref()
             .map_or(expression.span, |alias| expression.span.union(alias.span));
@@ -951,6 +1090,15 @@ impl<'a> Parser<'a> {
     fn parse_expression_bp(&mut self, minimum_binding_power: u8) -> Result<Expr, ParseError> {
         let mut left = self.parse_prefix_expression()?;
         loop {
+            if matches!(
+                self.peek().kind,
+                TokenKind::ForwardArrow | TokenKind::ReverseArrow | TokenKind::BidirectionalArrow
+            ) {
+                return Err(ParseError::unsupported(
+                    "standalone graph traversal expressions are outside the Phase 7 grammar",
+                    self.peek().span,
+                ));
+            }
             if self.at(&TokenKind::LeftBracket) {
                 return Err(ParseError::unsupported(
                     "array indexing is outside the MVP expression grammar",
@@ -970,6 +1118,12 @@ impl<'a> Parser<'a> {
                         self.peek().span,
                     ));
                 }
+            }
+            if self.at(&TokenKind::In) {
+                return Err(ParseError::unsupported(
+                    "comparison operator is outside the MVP expression grammar",
+                    self.peek().span,
+                ));
             }
             let Some((operator, left_bp, right_bp)) = binary_binding_power(&self.peek().kind)
             else {
@@ -1051,7 +1205,12 @@ impl<'a> Parser<'a> {
                 self.position += 1;
                 Ok(Expr::new(ExprKind::Parameter(value), token.span))
             }
-            TokenKind::Ident(_) | TokenKind::Search => self.parse_identifier_expression(),
+            TokenKind::ForwardArrow | TokenKind::ReverseArrow | TokenKind::BidirectionalArrow => {
+                self.parse_traversal_expression()
+            }
+            TokenKind::Ident(_) | TokenKind::Search | TokenKind::In | TokenKind::Out => {
+                self.parse_identifier_expression()
+            }
             TokenKind::LeftParen => self.parse_parenthesized_expression(),
             TokenKind::LeftBracket => self.parse_array_expression(),
             TokenKind::LeftBrace => self.parse_object_expression(),
@@ -1075,6 +1234,64 @@ impl<'a> Parser<'a> {
             )),
             _ => Err(self.unexpected("an expression")),
         }
+    }
+
+    fn parse_traversal_expression(&mut self) -> Result<Expr, ParseError> {
+        let start = self.peek().span;
+        let mut hops = Vec::new();
+        loop {
+            let opening = self.advance().clone();
+            let direction = traversal_direction(&opening.kind)
+                .ok_or_else(|| self.unexpected_at(&opening, "a graph traversal direction"))?;
+            let relation = self.expect_identifier("a relation table after the graph arrow")?;
+            let closing = self.advance().clone();
+            let closing_direction = traversal_direction(&closing.kind).ok_or_else(|| {
+                self.unexpected_at(&closing, "a matching graph arrow after the relation table")
+            })?;
+            if direction != closing_direction {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "a graph hop must use the same arrow on both sides of its relation",
+                    },
+                    opening.span.union(closing.span),
+                ));
+            }
+            let endpoint_table =
+                self.expect_identifier("an endpoint table after the graph arrow")?;
+            let span = opening.span.union(endpoint_table.span);
+            if hops.len() == self.limits.max_graph_hops {
+                return Err(ParseError::new(
+                    ParseErrorKind::LimitExceeded {
+                        kind: LimitKind::GraphHops,
+                        limit: self.limits.max_graph_hops,
+                    },
+                    span,
+                ));
+            }
+            hops.push(TraversalHop {
+                span,
+                direction: Spanned::new(direction, opening.span.union(closing.span)),
+                relation,
+                endpoint_table,
+            });
+            if !matches!(
+                self.peek().kind,
+                TokenKind::ForwardArrow | TokenKind::ReverseArrow | TokenKind::BidirectionalArrow
+            ) {
+                break;
+            }
+        }
+        let materialize = if self.eat(&TokenKind::Dot) {
+            self.expect(&TokenKind::Star, "'*' after traversal '.'")?;
+            true
+        } else {
+            false
+        };
+        let end = self.previous_end();
+        Ok(Expr::new(
+            ExprKind::Traversal(TraversalExpr { hops, materialize }),
+            Span::new(start.offset, end - start.offset),
+        ))
     }
 
     fn parse_identifier_expression(&mut self) -> Result<Expr, ParseError> {
@@ -1226,7 +1443,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_field_path(&mut self) -> Result<FieldPath, ParseError> {
-        let first = self.expect_identifier("a field path")?;
+        let first = self.expect_path_segment("a field path")?;
         self.parse_field_path_tail(first)
     }
 
@@ -1234,7 +1451,7 @@ impl<'a> Parser<'a> {
         let start = first.span;
         let mut segments = vec![first];
         while self.eat(&TokenKind::Dot) {
-            segments.push(self.expect_identifier("a path segment after '.'")?);
+            segments.push(self.expect_path_segment("a path segment after '.'")?);
         }
         let end = segments.last().expect("one path segment").span;
         Ok(FieldPath {
@@ -1368,6 +1585,8 @@ impl<'a> Parser<'a> {
         let value = match token.kind {
             TokenKind::Ident(value) => value,
             TokenKind::Search => "search".to_string(),
+            TokenKind::In => "in".to_string(),
+            TokenKind::Out => "out".to_string(),
             TokenKind::Eof => {
                 return Err(ParseError::new(
                     ParseErrorKind::UnexpectedEof { expected },
@@ -1375,6 +1594,24 @@ impl<'a> Parser<'a> {
                 ));
             }
             _ => return Err(self.unexpected(expected)),
+        };
+        self.position += 1;
+        Ok(Identifier::new(value, token.span))
+    }
+
+    fn expect_path_segment(&mut self, expected: &'static str) -> Result<Identifier, ParseError> {
+        let token = self.peek().clone();
+        let value = match token.kind {
+            TokenKind::Ident(value) => value,
+            TokenKind::In => "in".to_string(),
+            TokenKind::Out => "out".to_string(),
+            TokenKind::Eof => {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedEof { expected },
+                    token.span,
+                ));
+            }
+            _ => return Err(self.unexpected_at(&token, expected)),
         };
         self.position += 1;
         Ok(Identifier::new(value, token.span))
@@ -1583,10 +1820,20 @@ fn is_excluded_comparison(value: &str) -> bool {
     .any(|keyword| value.eq_ignore_ascii_case(keyword))
 }
 
+fn traversal_direction(kind: &TokenKind) -> Option<TraversalDirection> {
+    match kind {
+        TokenKind::ForwardArrow => Some(TraversalDirection::Forward),
+        TokenKind::ReverseArrow => Some(TraversalDirection::Reverse),
+        TokenKind::BidirectionalArrow => Some(TraversalDirection::Bidirectional),
+        _ => None,
+    }
+}
+
 fn is_statement_start(kind: &TokenKind) -> bool {
     matches!(
         kind,
         TokenKind::Create
+            | TokenKind::Relate
             | TokenKind::Select
             | TokenKind::Update
             | TokenKind::Delete
@@ -1605,7 +1852,6 @@ fn is_unsupported_statement(kind: &TokenKind) -> bool {
         kind,
         TokenKind::Insert
             | TokenKind::Upsert
-            | TokenKind::Relate
             | TokenKind::Let
             | TokenKind::Info
             | TokenKind::Use

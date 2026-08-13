@@ -265,4 +265,115 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.category(), ErrorCategory::Constraint);
     }
+
+    #[test]
+    fn p7_graph_001_define_relate_and_decode_synthesized_endpoints() {
+        let db = Database::open_memory().unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("DEFINE TABLE wrote SCHEMAFULL TYPE RELATION FROM person TO post ENFORCED")
+            .unwrap();
+        conn.execute("DEFINE FIELD role ON wrote TYPE string")
+            .unwrap();
+        conn.execute("CREATE person:one CONTENT {}").unwrap();
+        conn.execute("CREATE post:two CONTENT {}").unwrap();
+        let related = conn
+            .execute("RELATE ONLY person:one->wrote->post:two SET role = 'author'")
+            .unwrap();
+        let StatementResult::Value(Value::Object(edge)) = &related.statements[0] else {
+            panic!("expected one edge object")
+        };
+        assert_eq!(
+            edge.get("in"),
+            Some(&Value::RecordId(RecordId::new("person", "one")))
+        );
+        assert_eq!(
+            edge.get("out"),
+            Some(&Value::RecordId(RecordId::new("post", "two")))
+        );
+        assert_eq!(edge.get("role"), Some(&Value::Str("author".into())));
+
+        let selected = conn.execute("SELECT * FROM wrote").unwrap();
+        let StatementResult::Rows(rows) = &selected.statements[0] else {
+            panic!("expected edge rows")
+        };
+        assert_eq!(rows, &vec![Value::Object(edge.clone())]);
+
+        let traversed = conn
+            .execute(
+                "SELECT ->wrote->post AS ids, ->wrote->post.* AS docs FROM person:one; \
+                 SELECT <-wrote<-person AS authors FROM post:two",
+            )
+            .unwrap();
+        let StatementResult::Rows(forward) = &traversed.statements[0] else {
+            panic!("expected forward traversal rows")
+        };
+        let Value::Object(forward) = &forward[0] else {
+            panic!("expected projected object")
+        };
+        assert_eq!(
+            forward.get("ids"),
+            Some(&Value::Array(vec![Value::RecordId(RecordId::new(
+                "post", "two"
+            ))]))
+        );
+        assert!(matches!(
+            forward.get("docs"),
+            Some(Value::Array(values)) if values.len() == 1
+        ));
+        let StatementResult::Rows(reverse) = &traversed.statements[1] else {
+            panic!("expected reverse traversal rows")
+        };
+        let Value::Object(reverse) = &reverse[0] else {
+            panic!("expected projected object")
+        };
+        assert_eq!(
+            reverse.get("authors"),
+            Some(&Value::Array(vec![Value::RecordId(RecordId::new(
+                "person", "one"
+            ))]))
+        );
+
+        let explained = conn
+            .execute(
+                "EXPLAIN SELECT ->wrote->post AS forward, <-wrote<-person AS reverse \
+                 FROM person:one",
+            )
+            .unwrap();
+        let StatementResult::Rows(plans) = &explained.statements[0] else {
+            panic!("expected explain rows")
+        };
+        let details = plans
+            .iter()
+            .filter_map(|value| match value {
+                Value::Object(value) => match value.get("detail") {
+                    Some(Value::Str(value)) => Some(value.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let catalog = conn.coordinator.catalog.read().unwrap();
+        let relation = catalog
+            .as_ref()
+            .and_then(crate::catalog::CatalogState::snapshot)
+            .unwrap()
+            .tables
+            .get("wrote")
+            .unwrap();
+        for index in relation.indexes.values() {
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.contains(&index.physical_name)),
+                "missing adjacency plan for {}: {details:?}",
+                index.options_json
+            );
+        }
+        drop(catalog);
+
+        let deleted = conn.execute("DELETE person:one").unwrap();
+        assert_eq!(deleted.mutation_count, 2, "node and connected edge");
+        let remaining = conn.execute("SELECT * FROM wrote").unwrap();
+        assert_eq!(remaining.statements, vec![StatementResult::Rows(vec![])]);
+    }
 }

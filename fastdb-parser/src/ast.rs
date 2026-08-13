@@ -57,6 +57,7 @@ pub struct Script {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Create(CreateStatement),
+    Relate(RelateStatement),
     Select(SelectStatement),
     Update(UpdateStatement),
     Delete(DeleteStatement),
@@ -75,6 +76,7 @@ impl Statement {
     pub const fn span(&self) -> Span {
         match self {
             Self::Create(stmt) => stmt.span,
+            Self::Relate(stmt) => stmt.span,
             Self::Select(stmt) => stmt.span,
             Self::Update(stmt) => stmt.span,
             Self::Delete(stmt) => stmt.span,
@@ -101,6 +103,17 @@ pub struct CreateStatement {
 pub enum CreateData {
     Content(Expr),
     Set(Vec<Assignment>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelateStatement {
+    pub span: Span,
+    pub only: Option<Span>,
+    pub from: Expr,
+    pub relation: Identifier,
+    pub to: Expr,
+    pub data: Option<CreateData>,
+    pub return_clause: Option<ReturnClause>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -189,12 +202,27 @@ pub struct DefineTableStatement {
     pub span: Span,
     pub name: Identifier,
     pub mode: Spanned<TableMode>,
+    pub kind: TableKindSyntax,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableMode {
     Schemaless,
     Schemafull,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TableKindSyntax {
+    Normal { type_span: Option<Span> },
+    Relation(RelationTableType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelationTableType {
+    pub span: Span,
+    pub input: Option<Identifier>,
+    pub output: Option<Identifier>,
+    pub enforced: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -371,6 +399,7 @@ pub enum ExprKind {
         name: Vec<Identifier>,
         arguments: Vec<Expr>,
     },
+    Traversal(TraversalExpr),
     Unary {
         operator: Spanned<UnaryOperator>,
         operand: Box<Expr>,
@@ -381,6 +410,27 @@ pub enum ExprKind {
         right: Box<Expr>,
     },
     Parenthesized(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraversalExpr {
+    pub hops: Vec<TraversalHop>,
+    pub materialize: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraversalHop {
+    pub span: Span,
+    pub direction: Spanned<TraversalDirection>,
+    pub relation: Identifier,
+    pub endpoint_table: Identifier,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraversalDirection {
+    Forward,
+    Reverse,
+    Bidirectional,
 }
 
 #[derive(Debug, Clone, PartialEq)]

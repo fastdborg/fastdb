@@ -1,6 +1,10 @@
 //! Phase 3 planning, evaluation, lowering, and atomic execution.
 
-use crate::catalog::{self, CatalogState, IndexDefinition, TableDefinition};
+use crate::catalog::{
+    self, CapabilityRequirement, CatalogSnapshot, CatalogState, IndexDefinition, IndexKind,
+    TableDefinition, TableKind, BUILTIN_GRAPH_ENCODING_VERSION, BUILTIN_GRAPH_PROVIDER,
+    BUILTIN_GRAPH_PROVIDER_VERSION,
+};
 use crate::connection::{value_to_string, Connection, ExecutionState, TransactionState};
 use crate::decode::{self, RecordIdValue};
 use crate::error::{ErrorCategory, FastDbError, Result};
@@ -15,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLockReadGuard;
 use turso_fastdb_parser::{
     BinaryOperator, CreateData, Expr, ExprKind, IndexKindSyntax, ProjectionList, RecordIdPart,
-    RecordIdPartKind, ReturnKind, Span, Statement, TableMode, Target,
+    RecordIdPartKind, ReturnKind, Span, Statement, TableKindSyntax, TableMode, Target,
 };
 
 #[derive(Debug, Clone)]
@@ -23,6 +27,7 @@ struct Candidate {
     encoded_rid: String,
     id: RecordId,
     document: BTreeMap<String, Value>,
+    endpoints: Option<(RecordId, RecordId)>,
 }
 
 pub(crate) struct StatementExecution {
@@ -82,6 +87,7 @@ pub(crate) fn run_statement(
             eval::validate_parameter_references(&statement, params)?;
             match statement {
                 Statement::Create(statement) => run_create(conn, execution, statement, params),
+                Statement::Relate(statement) => run_relate(conn, execution, statement, params),
                 Statement::Select(statement) => run_select(conn, execution, statement, params)
                     .map(StatementExecution::read_only),
                 Statement::Update(statement) => run_update(conn, execution, statement, params),
@@ -127,6 +133,7 @@ fn run_create(
     let context = EvalContext {
         document: &empty,
         id: &id,
+        endpoints: None,
         params,
     };
     let mut document = match &statement.data {
@@ -166,6 +173,11 @@ fn run_create(
             .tables
             .get(&table_name)
             .expect("table inserted or already present");
+        if table.kind == TableKind::Relation {
+            return Err(FastDbError::Schema(
+                "relation records must be created with RELATE".into(),
+            ));
+        }
         schema::validate_document(
             table.mode == TableMode::Schemafull,
             &table.fields,
@@ -200,6 +212,185 @@ fn run_create(
     StatementExecution::mutation(result, 1)
 }
 
+fn run_relate(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::RelateStatement,
+    params: &Params,
+) -> Result<StatementExecution> {
+    let from = resolve_relate_endpoint(&statement.from, params)?;
+    let to = resolve_relate_endpoint(&statement.to, params)?;
+    let relation_name = statement.relation.value.clone();
+    let edge_id = RecordId::new(&relation_name, uuid::Uuid::now_v7());
+    let empty = BTreeMap::new();
+    let context = EvalContext {
+        document: &empty,
+        id: &edge_id,
+        endpoints: Some((&from, &to)),
+        params,
+    };
+    let mut document = match &statement.data {
+        None => BTreeMap::new(),
+        Some(CreateData::Content(expression)) => {
+            let Value::Object(document) = eval::evaluate(expression, &context)?.into_projection()
+            else {
+                return Err(FastDbError::Schema(
+                    "RELATE CONTENT must evaluate to an object".into(),
+                ));
+            };
+            document
+        }
+        Some(CreateData::Set(assignments)) => {
+            let evaluated = evaluate_assignments(assignments, &context)?;
+            let mut document = BTreeMap::new();
+            apply_assignments(&mut document, evaluated)?;
+            document
+        }
+    };
+    reject_stored_edge_fields(&document)?;
+
+    let catalogs_missing = !catalog_for_read(conn, execution)?
+        .snapshot()
+        .is_some_and(|snapshot| {
+            snapshot.tables.contains_key(&from.table)
+                && snapshot.tables.contains_key(&to.table)
+                && snapshot.tables.contains_key(&relation_name)
+        });
+    let value = with_create_mutation(conn, execution, catalogs_missing, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        for endpoint in [&from, &to] {
+            if !snapshot.tables.contains_key(&endpoint.table) {
+                register_normal_table(
+                    conn,
+                    snapshot,
+                    &endpoint.table,
+                    TableMode::Schemaless,
+                    None,
+                )?;
+            }
+            if snapshot.tables[&endpoint.table].kind != TableKind::Normal {
+                return Err(FastDbError::Schema(format!(
+                    "RELATE endpoint {:?} is not a normal record table",
+                    endpoint.table
+                )));
+            }
+        }
+        if !snapshot.tables.contains_key(&relation_name) {
+            create_relation_table(
+                conn,
+                snapshot,
+                &relation_name,
+                TableMode::Schemaless,
+                None,
+                None,
+                None,
+                false,
+            )?;
+        }
+        let relation = snapshot.tables[&relation_name].clone();
+        if relation.kind != TableKind::Relation {
+            return Err(FastDbError::Schema(format!(
+                "RELATE middle table {relation_name:?} is not a relation table"
+            )));
+        }
+        let from_table = &snapshot.tables[&from.table];
+        let to_table = &snapshot.tables[&to.table];
+        if relation
+            .relation_in_table_id
+            .is_some_and(|expected| expected != from_table.id)
+        {
+            return Err(FastDbError::Schema(format!(
+                "relation {:?} does not accept input table {:?}",
+                relation_name, from.table
+            )));
+        }
+        if relation
+            .relation_out_table_id
+            .is_some_and(|expected| expected != to_table.id)
+        {
+            return Err(FastDbError::Schema(format!(
+                "relation {:?} does not accept output table {:?}",
+                relation_name, to.table
+            )));
+        }
+        if relation.relation_enforced {
+            if !record_exists(conn, from_table, &from.id)? {
+                return Err(FastDbError::Constraint(format!(
+                    "enforced relation source record {from} does not exist"
+                )));
+            }
+            if !record_exists(conn, to_table, &to.id)? {
+                return Err(FastDbError::Constraint(format!(
+                    "enforced relation target record {to} does not exist"
+                )));
+            }
+        }
+        schema::validate_document(
+            relation.mode == TableMode::Schemafull,
+            &relation.fields,
+            &mut document,
+        )?;
+        validate_index_values(&relation, &document)?;
+        let hidden = catalog::graph_columns(snapshot, &relation)?
+            .into_iter()
+            .map(|column| column.physical_name.clone())
+            .collect::<Vec<_>>();
+        let (insert, bindings) = lower::physical_relation_insert_stmt(
+            &relation.physical_name,
+            &hidden,
+            &encode_rid(&edge_id.id),
+            &decode::encode_doc(&document)?,
+            &from_table.id.to_hex(),
+            &encode_rid(&from.id),
+            &to_table.id.to_hex(),
+            &encode_rid(&to.id),
+        )?;
+        conn.exec_bound(insert, bindings)?;
+        conn.check_failpoint(Failpoint::AfterGraphEdgeInsert)?;
+        Ok(full_edge_value(&edge_id, &from, &to, &document))
+    })?;
+
+    let returned = match statement.return_clause.map(|clause| clause.kind.value) {
+        Some(ReturnKind::None) => None,
+        Some(ReturnKind::Before) => Some(Value::Null),
+        Some(ReturnKind::After) | None => Some(value),
+    };
+    let result = if statement.only.is_some() {
+        StatementResult::Value(returned.unwrap_or(Value::Null))
+    } else {
+        StatementResult::Rows(returned.into_iter().collect())
+    };
+    StatementExecution::mutation(result, 1)
+}
+
+fn resolve_relate_endpoint(expression: &Expr, params: &Params) -> Result<RecordId> {
+    match &expression.kind {
+        ExprKind::RecordId(record) => Ok(RecordId::new(
+            &record.table.value,
+            record_id_value(record.id.clone())?,
+        )),
+        ExprKind::Parameter(name) => match params.get(name) {
+            Some(Value::RecordId(record)) => Ok(record.clone()),
+            Some(_) => Err(FastDbError::Schema(format!(
+                "RELATE parameter ${name} must contain a record ID"
+            ))),
+            None => Err(FastDbError::Schema(format!(
+                "missing value for parameter ${name}"
+            ))),
+        },
+        _ => Err(FastDbError::Schema(
+            "RELATE endpoints must be record IDs".into(),
+        )),
+    }
+}
+
+fn record_exists(conn: &Connection, table: &TableDefinition, id: &RecordIdValue) -> Result<bool> {
+    let encoded = encode_rid(id);
+    let (statement, bindings) =
+        lower::physical_select_stmt(&table.physical_name, Some(&encoded), &[])?;
+    Ok(!conn.collect_rows(statement, bindings)?.is_empty())
+}
+
 fn run_select(
     conn: &Connection,
     execution: &ExecutionState,
@@ -214,10 +405,14 @@ fn run_select(
     }
     let (table_name, id) = target_parts(statement.target.clone())?;
     let catalog = catalog_for_read(conn, execution)?;
-    let Some(table) = catalog
-        .snapshot()
-        .and_then(|snapshot| snapshot.tables.get(&table_name))
-    else {
+    let Some(snapshot) = catalog.snapshot() else {
+        return Ok(if statement.only.is_some() {
+            StatementResult::Value(Value::Null)
+        } else {
+            StatementResult::Rows(Vec::new())
+        });
+    };
+    let Some(table) = snapshot.tables.get(&table_name) else {
         return Ok(if statement.only.is_some() {
             StatementResult::Value(Value::Null)
         } else {
@@ -226,6 +421,7 @@ fn run_select(
     };
     let candidates = read_candidates(
         conn,
+        snapshot,
         table,
         id.as_ref(),
         statement.condition.as_ref(),
@@ -283,7 +479,9 @@ fn run_select(
         .into_iter()
         .skip(start)
         .take(limit)
-        .map(|candidate| project_candidate(&candidate, &statement.projections, params))
+        .map(|candidate| {
+            project_candidate(conn, snapshot, &candidate, &statement.projections, params)
+        })
         .collect::<Result<Vec<_>>>()?;
     if statement.only.is_some() {
         Ok(StatementResult::Value(
@@ -316,8 +514,12 @@ fn run_explain(
     params: &Params,
 ) -> Result<StatementResult> {
     validate_projection_shapes(&statement.select.projections)?;
-    let lowered = lower_select_scan_for_explain(conn, execution, statement.select, params)?;
-    let details = crate::connection::explain_statement(conn, lowered)?;
+    let graph_statements = lower_graph_scans_for_explain(conn, execution, &statement.select)?;
+    let lowered = lower_select_scan_for_explain(conn, execution, statement.select.clone(), params)?;
+    let mut details = crate::connection::explain_statement(conn, lowered)?;
+    for graph_statement in graph_statements {
+        details.extend(crate::connection::explain_statement(conn, graph_statement)?);
+    }
     let rows =
         details
             .into_iter()
@@ -337,6 +539,77 @@ fn run_explain(
     Ok(StatementResult::Rows(rows))
 }
 
+fn lower_graph_scans_for_explain(
+    conn: &Connection,
+    execution: &ExecutionState,
+    select: &turso_fastdb_parser::SelectStatement,
+) -> Result<Vec<turso_parser::ast::Stmt>> {
+    let ProjectionList::Fields(projections) = &select.projections else {
+        return Ok(Vec::new());
+    };
+    let (source_table_name, _) = target_parts(select.target.clone())?;
+    let catalog = catalog_for_read(conn, execution)?;
+    let snapshot = catalog
+        .snapshot()
+        .ok_or_else(|| FastDbError::Schema("graph source catalog is absent".into()))?;
+    let mut statements = Vec::new();
+    for projection in projections {
+        let ExprKind::Traversal(traversal) = &projection.expression.kind else {
+            continue;
+        };
+        let mut current_table_name = source_table_name.as_str();
+        for hop in &traversal.hops {
+            let current = snapshot.tables.get(current_table_name).ok_or_else(|| {
+                FastDbError::Schema(format!(
+                    "graph traversal endpoint table {current_table_name:?} is not defined"
+                ))
+            })?;
+            let other = snapshot
+                .tables
+                .get(&hop.endpoint_table.value)
+                .ok_or_else(|| {
+                    FastDbError::Schema(format!(
+                        "graph traversal endpoint table {:?} is not defined",
+                        hop.endpoint_table.value
+                    ))
+                })?;
+            let relation = snapshot.tables.get(&hop.relation.value).ok_or_else(|| {
+                FastDbError::Schema(format!(
+                    "graph traversal relation table {:?} is not defined",
+                    hop.relation.value
+                ))
+            })?;
+            if relation.kind != TableKind::Relation {
+                return Err(FastDbError::Schema(
+                    "graph traversal middle table is not a relation".into(),
+                ));
+            }
+            let hidden = catalog::graph_columns(snapshot, relation)?
+                .into_iter()
+                .map(|column| column.physical_name.clone())
+                .collect::<Vec<_>>();
+            let directions: &[bool] = match hop.direction.value {
+                turso_fastdb_parser::TraversalDirection::Forward => &[true],
+                turso_fastdb_parser::TraversalDirection::Reverse => &[false],
+                turso_fastdb_parser::TraversalDirection::Bidirectional => &[true, false],
+            };
+            for forward in directions {
+                let (statement, _) = lower::physical_graph_neighbors_stmt(
+                    &relation.physical_name,
+                    &hidden,
+                    *forward,
+                    &current.id.to_hex(),
+                    &encode_rid("explain"),
+                    &other.id.to_hex(),
+                )?;
+                statements.push(statement);
+            }
+            current_table_name = &hop.endpoint_table.value;
+        }
+    }
+    Ok(statements)
+}
+
 fn run_update(
     conn: &Connection,
     execution: &mut ExecutionState,
@@ -351,15 +624,25 @@ fn run_update(
     let (table_name, id) = target_parts(statement.target.clone())?;
     let updates = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
-        let Some(table) = catalog
-            .snapshot()
-            .and_then(|snapshot| snapshot.tables.get(&table_name))
-            .cloned()
-        else {
+        let Some(snapshot) = catalog.snapshot() else {
             return Ok(Vec::new());
         };
+        let Some(table) = snapshot.tables.get(&table_name).cloned() else {
+            return Ok(Vec::new());
+        };
+        if table.kind == TableKind::Relation
+            && assignment_paths.iter().any(|path| {
+                path.first()
+                    .is_some_and(|segment| matches!(segment.as_str(), "in" | "out"))
+            })
+        {
+            return Err(FastDbError::Schema(
+                "edge endpoints `in` and `out` are immutable".into(),
+            ));
+        }
         let candidates = read_candidates(
             conn,
+            snapshot,
             &table,
             id.as_ref(),
             statement.condition.as_ref(),
@@ -382,7 +665,11 @@ fn run_update(
                 &mut document,
                 assignment_paths.iter().cloned().zip(values).collect(),
             )?;
-            reject_stored_id(&document)?;
+            if table.kind == TableKind::Relation {
+                reject_stored_edge_fields(&document)?;
+            } else {
+                reject_stored_id(&document)?;
+            }
             schema::validate_document(
                 table.mode == TableMode::Schemafull,
                 &table.fields,
@@ -418,7 +705,7 @@ fn run_update(
         StatementResult::Rows(
             updates
                 .into_iter()
-                .map(|(candidate, document)| full_record_value(&candidate.id, &document))
+                .map(|(candidate, document)| full_candidate_with_document(&candidate, &document))
                 .collect(),
         ),
         mutation_count,
@@ -432,17 +719,17 @@ fn run_delete(
     params: &Params,
 ) -> Result<StatementExecution> {
     let (table_name, id) = target_parts(statement.target.clone())?;
-    let deleted = data_mutation(conn, execution, || {
+    let (deleted, cascaded_edges) = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
-        let Some(table) = catalog
-            .snapshot()
-            .and_then(|snapshot| snapshot.tables.get(&table_name))
-            .cloned()
-        else {
-            return Ok(Vec::new());
+        let Some(snapshot) = catalog.snapshot() else {
+            return Ok((Vec::new(), 0));
+        };
+        let Some(table) = snapshot.tables.get(&table_name).cloned() else {
+            return Ok((Vec::new(), 0));
         };
         let candidates = read_candidates(
             conn,
+            snapshot,
             &table,
             id.as_ref(),
             statement.condition.as_ref(),
@@ -456,28 +743,82 @@ fn run_delete(
             }
         }
         conn.check_failpoint(Failpoint::BeforeDeleteMutations)?;
+        let mut connected_edges = BTreeSet::new();
+        if table.kind == TableKind::Normal {
+            for candidate in &deleted {
+                for relation in snapshot
+                    .tables
+                    .values()
+                    .filter(|table| table.kind == TableKind::Relation)
+                {
+                    for encoded_edge in
+                        connected_edge_ids(conn, snapshot, relation, &table, &candidate.id.id)?
+                    {
+                        connected_edges.insert((relation.physical_name.clone(), encoded_edge));
+                    }
+                }
+            }
+        }
+        for (physical_table, encoded_edge) in &connected_edges {
+            let (delete, bindings) =
+                lower::physical_delete_by_rid_stmt(physical_table, encoded_edge)?;
+            conn.exec_bound(delete, bindings)?;
+            conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
+        }
         for candidate in &deleted {
             let (delete, bindings) =
                 lower::physical_delete_by_rid_stmt(&table.physical_name, &candidate.encoded_rid)?;
             conn.exec_bound(delete, bindings)?;
             conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
         }
-        Ok(deleted)
+        Ok((deleted, connected_edges.len()))
     })?;
+    let mutation_count = deleted
+        .len()
+        .checked_add(cascaded_edges)
+        .ok_or_else(|| FastDbError::Engine("cascade mutation count overflowed usize".into()))?;
     if statement.return_clause.is_some() {
-        let mutation_count = deleted.len();
         StatementExecution::mutation(
             StatementResult::Rows(
                 deleted
                     .into_iter()
-                    .map(|candidate| full_record_value(&candidate.id, &candidate.document))
+                    .map(|candidate| full_candidate_value(&candidate))
                     .collect(),
             ),
             mutation_count,
         )
     } else {
-        StatementExecution::mutation(StatementResult::Rows(Vec::new()), deleted.len())
+        StatementExecution::mutation(StatementResult::Rows(Vec::new()), mutation_count)
     }
+}
+
+fn connected_edge_ids(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    relation: &TableDefinition,
+    endpoint_table: &TableDefinition,
+    endpoint_id: &RecordIdValue,
+) -> Result<Vec<String>> {
+    let hidden = catalog::graph_columns(snapshot, relation)?
+        .into_iter()
+        .map(|column| column.physical_name.clone())
+        .collect::<Vec<_>>();
+    let mut result = Vec::new();
+    for forward in [true, false] {
+        let (statement, bindings) = lower::physical_graph_connected_edge_ids_stmt(
+            &relation.physical_name,
+            &hidden,
+            forward,
+            &endpoint_table.id.to_hex(),
+            &encode_rid(endpoint_id),
+        )?;
+        for row in conn.collect_rows(statement, bindings)? {
+            result.push(value_to_string(
+                row.first().unwrap_or(&turso_core::Value::Null),
+            )?);
+        }
+    }
+    Ok(result)
 }
 
 fn evaluate_assignments(
@@ -519,12 +860,14 @@ fn apply_assignments(
 }
 
 fn project_candidate(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
     candidate: &Candidate,
     projections: &ProjectionList,
     params: &Params,
 ) -> Result<Value> {
     if matches!(projections, ProjectionList::All(_)) {
-        return Ok(full_record_value(&candidate.id, &candidate.document));
+        return Ok(full_candidate_value(candidate));
     }
     let ProjectionList::Fields(projections) = projections else {
         unreachable!()
@@ -532,7 +875,11 @@ fn project_candidate(
     let context = candidate_context(candidate, params);
     let mut object = BTreeMap::new();
     for projection in projections {
-        let value = eval::evaluate(&projection.expression, &context)?.into_projection();
+        let value = if let ExprKind::Traversal(traversal) = &projection.expression.kind {
+            traverse_graph(conn, snapshot, &candidate.id, traversal)?
+        } else {
+            eval::evaluate(&projection.expression, &context)?.into_projection()
+        };
         if let Some(alias) = &projection.alias {
             object.insert(alias.value.clone(), value);
         } else {
@@ -550,6 +897,126 @@ fn project_candidate(
     Ok(Value::Object(object))
 }
 
+fn traverse_graph(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    source: &RecordId,
+    traversal: &turso_fastdb_parser::TraversalExpr,
+) -> Result<Value> {
+    const MAX_FRONTIER: usize = 10_000;
+    let mut frontier = vec![source.clone()];
+    for hop in &traversal.hops {
+        let mut next = Vec::new();
+        for endpoint in &frontier {
+            let directions: &[bool] = match hop.direction.value {
+                turso_fastdb_parser::TraversalDirection::Forward => &[true],
+                turso_fastdb_parser::TraversalDirection::Reverse => &[false],
+                turso_fastdb_parser::TraversalDirection::Bidirectional => &[true, false],
+            };
+            for forward in directions {
+                let neighbors = graph_neighbors(
+                    conn,
+                    snapshot,
+                    endpoint,
+                    &hop.relation.value,
+                    &hop.endpoint_table.value,
+                    *forward,
+                )?;
+                if next.len().saturating_add(neighbors.len()) > MAX_FRONTIER {
+                    return Err(FastDbError::Schema(format!(
+                        "graph traversal frontier exceeds {MAX_FRONTIER} endpoint occurrences"
+                    )));
+                }
+                next.extend(neighbors);
+            }
+        }
+        frontier = next;
+    }
+    if traversal.materialize {
+        let mut values = Vec::new();
+        for endpoint in frontier {
+            if let Some(value) = materialize_record(conn, snapshot, &endpoint)? {
+                values.push(value);
+            }
+        }
+        Ok(Value::Array(values))
+    } else {
+        Ok(Value::Array(
+            frontier.into_iter().map(Value::RecordId).collect(),
+        ))
+    }
+}
+
+fn graph_neighbors(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    endpoint: &RecordId,
+    relation_name: &str,
+    other_table_name: &str,
+    forward: bool,
+) -> Result<Vec<RecordId>> {
+    let endpoint_table = snapshot.tables.get(&endpoint.table).ok_or_else(|| {
+        FastDbError::Schema(format!(
+            "graph endpoint table {:?} is not defined",
+            endpoint.table
+        ))
+    })?;
+    let other_table = snapshot.tables.get(other_table_name).ok_or_else(|| {
+        FastDbError::Schema(format!(
+            "graph traversal endpoint table {other_table_name:?} is not defined"
+        ))
+    })?;
+    let relation = snapshot.tables.get(relation_name).ok_or_else(|| {
+        FastDbError::Schema(format!(
+            "graph traversal relation table {relation_name:?} is not defined"
+        ))
+    })?;
+    if relation.kind != TableKind::Relation || other_table.kind != TableKind::Normal {
+        return Err(FastDbError::Schema(
+            "graph traversal requires a relation and a normal endpoint table".into(),
+        ));
+    }
+    let hidden = catalog::graph_columns(snapshot, relation)?
+        .into_iter()
+        .map(|column| column.physical_name.clone())
+        .collect::<Vec<_>>();
+    let (statement, bindings) = lower::physical_graph_neighbors_stmt(
+        &relation.physical_name,
+        &hidden,
+        forward,
+        &endpoint_table.id.to_hex(),
+        &encode_rid(&endpoint.id),
+        &other_table.id.to_hex(),
+    )?;
+    conn.collect_rows(statement, bindings)?
+        .into_iter()
+        .map(|row| {
+            let encoded = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))?;
+            Ok(RecordId::new(other_table_name, decode_rid(&encoded)?))
+        })
+        .collect()
+}
+
+fn materialize_record(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    endpoint: &RecordId,
+) -> Result<Option<Value>> {
+    let table = snapshot
+        .tables
+        .get(&endpoint.table)
+        .ok_or_else(|| FastDbError::format("graph result references a missing endpoint table"))?;
+    let encoded = encode_rid(&endpoint.id);
+    let (statement, bindings) =
+        lower::physical_select_stmt(&table.physical_name, Some(&encoded), &[])?;
+    let Some(row) = conn.collect_rows(statement, bindings)?.into_iter().next() else {
+        return Ok(None);
+    };
+    let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))?;
+    let document = decode::parse_doc(&json)?.into_iter().collect();
+    Ok(Some(full_record_value(endpoint, &document)))
+}
+
 fn matches_condition(
     condition: Option<&Expr>,
     candidate: &Candidate,
@@ -565,6 +1032,7 @@ fn candidate_context<'a>(candidate: &'a Candidate, params: &'a Params) -> EvalCo
     EvalContext {
         document: &candidate.document,
         id: &candidate.id,
+        endpoints: candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
         params,
     }
 }
@@ -575,10 +1043,48 @@ fn full_record_value(id: &RecordId, document: &BTreeMap<String, Value>) -> Value
     Value::Object(object)
 }
 
+fn full_candidate_value(candidate: &Candidate) -> Value {
+    full_candidate_with_document(candidate, &candidate.document)
+}
+
+fn full_candidate_with_document(
+    candidate: &Candidate,
+    document: &BTreeMap<String, Value>,
+) -> Value {
+    if let Some((from, to)) = &candidate.endpoints {
+        full_edge_value(&candidate.id, from, to, document)
+    } else {
+        full_record_value(&candidate.id, document)
+    }
+}
+
+fn full_edge_value(
+    id: &RecordId,
+    from: &RecordId,
+    to: &RecordId,
+    document: &BTreeMap<String, Value>,
+) -> Value {
+    let mut object = document.clone();
+    object.insert("id".into(), Value::RecordId(id.clone()));
+    object.insert("in".into(), Value::RecordId(from.clone()));
+    object.insert("out".into(), Value::RecordId(to.clone()));
+    Value::Object(object)
+}
+
 fn reject_stored_id(document: &BTreeMap<String, Value>) -> Result<()> {
     if document.contains_key("id") {
         return Err(FastDbError::Schema(
             "top-level field `id` is reserved and synthesized from the record ID".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn reject_stored_edge_fields(document: &BTreeMap<String, Value>) -> Result<()> {
+    reject_stored_id(document)?;
+    if document.contains_key("in") || document.contains_key("out") {
+        return Err(FastDbError::Schema(
+            "top-level fields `in` and `out` are immutable synthesized edge endpoints".into(),
         ));
     }
     Ok(())
@@ -638,6 +1144,7 @@ fn catalog_for_read<'a>(
 
 fn read_candidates(
     conn: &Connection,
+    snapshot: &CatalogSnapshot,
     table: &TableDefinition,
     id: Option<&RecordIdValue>,
     condition: Option<&Expr>,
@@ -648,18 +1155,37 @@ fn read_candidates(
         .map(|condition| safe_pushdowns(condition, params, table))
         .unwrap_or_default();
     let encoded_rid = id.map(encode_rid);
-    let (statement, bindings) = lower::physical_select_predicates_stmt(
-        &table.physical_name,
-        encoded_rid.as_deref(),
-        &predicates,
-    )?;
+    let hidden = if table.kind == TableKind::Relation {
+        Some(
+            catalog::graph_columns(snapshot, table)?
+                .into_iter()
+                .map(|column| column.physical_name.clone())
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
+    let (statement, bindings) = if let Some(hidden) = &hidden {
+        lower::physical_relation_select_predicates_stmt(
+            &table.physical_name,
+            hidden,
+            encoded_rid.as_deref(),
+            &predicates,
+        )?
+    } else {
+        lower::physical_select_predicates_stmt(
+            &table.physical_name,
+            encoded_rid.as_deref(),
+            &predicates,
+        )?
+    };
     conn.collect_select_candidates(
         statement,
         bindings,
         &table.physical_name,
         encoded_rid.is_some(),
         &predicates,
-        allow_cache,
+        allow_cache && table.kind == TableKind::Normal,
     )
     .map_err(stored_value_error)?
     .into_iter()
@@ -670,13 +1196,43 @@ fn read_candidates(
         let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
             .map_err(stored_value_error)?;
         let document = decode::parse_doc(&json)?.into_iter().collect();
+        let endpoints = if table.kind == TableKind::Relation {
+            let in_table = crate::names::CatalogId::from_hex(&value_to_string(
+                row.get(2).unwrap_or(&turso_core::Value::Null),
+            )?)?;
+            let in_rid = decode_rid(&value_to_string(
+                row.get(3).unwrap_or(&turso_core::Value::Null),
+            )?)?;
+            let out_table = crate::names::CatalogId::from_hex(&value_to_string(
+                row.get(4).unwrap_or(&turso_core::Value::Null),
+            )?)?;
+            let out_rid = decode_rid(&value_to_string(
+                row.get(5).unwrap_or(&turso_core::Value::Null),
+            )?)?;
+            Some((
+                RecordId::new(logical_table_name(snapshot, in_table)?, in_rid),
+                RecordId::new(logical_table_name(snapshot, out_table)?, out_rid),
+            ))
+        } else {
+            None
+        };
         Ok(Candidate {
             encoded_rid,
             id,
             document,
+            endpoints,
         })
     })
     .collect()
+}
+
+fn logical_table_name(snapshot: &CatalogSnapshot, id: crate::names::CatalogId) -> Result<&str> {
+    snapshot
+        .tables
+        .values()
+        .find(|table| table.id == id)
+        .map(|table| table.logical_name.as_str())
+        .ok_or_else(|| FastDbError::format("edge endpoint references a missing table catalog"))
 }
 
 fn safe_pushdowns(
@@ -891,19 +1447,151 @@ fn run_define_table(
                 statement.name.value
             )));
         }
-        let table = catalog::allocate_table(
-            &statement.name.value,
-            statement.mode.value,
-            Some(definition.clone()),
-        )?;
-        catalog::persist_table(conn, &table)?;
-        conn.check_failpoint(Failpoint::AfterCatalogRow)?;
-        conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
-        conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
-        snapshot.tables.insert(statement.name.value.clone(), table);
+        match &statement.kind {
+            TableKindSyntax::Normal { .. } => {
+                register_normal_table(
+                    conn,
+                    snapshot,
+                    &statement.name.value,
+                    statement.mode.value,
+                    Some(definition.clone()),
+                )?;
+            }
+            TableKindSyntax::Relation(relation) => {
+                for endpoint in [relation.input.as_ref(), relation.output.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    if endpoint.value == statement.name.value {
+                        return Err(FastDbError::Schema(
+                            "a relation table cannot constrain an endpoint to itself".into(),
+                        ));
+                    }
+                    if !snapshot.tables.contains_key(&endpoint.value) {
+                        register_normal_table(
+                            conn,
+                            snapshot,
+                            &endpoint.value,
+                            TableMode::Schemaless,
+                            None,
+                        )?;
+                    }
+                    if snapshot.tables[&endpoint.value].kind != TableKind::Normal {
+                        return Err(FastDbError::Schema(format!(
+                            "relation endpoint table {:?} is itself a relation",
+                            endpoint.value
+                        )));
+                    }
+                }
+                let input = relation
+                    .input
+                    .as_ref()
+                    .map(|endpoint| snapshot.tables[&endpoint.value].id);
+                let output = relation
+                    .output
+                    .as_ref()
+                    .map(|endpoint| snapshot.tables[&endpoint.value].id);
+                create_relation_table(
+                    conn,
+                    snapshot,
+                    &statement.name.value,
+                    statement.mode.value,
+                    Some(definition.clone()),
+                    input,
+                    output,
+                    relation.enforced.is_some(),
+                )?;
+            }
+        }
         Ok(())
     })?;
     Ok(StatementResult::None)
+}
+
+fn register_normal_table(
+    conn: &Connection,
+    snapshot: &mut CatalogSnapshot,
+    logical_name: &str,
+    mode: TableMode,
+    definition: Option<String>,
+) -> Result<()> {
+    let table = catalog::allocate_table(logical_name, mode, definition)?;
+    catalog::persist_table(conn, &table)?;
+    conn.check_failpoint(Failpoint::AfterCatalogRow)?;
+    conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
+    conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
+    snapshot.tables.insert(logical_name.to_string(), table);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_relation_table(
+    conn: &Connection,
+    snapshot: &mut CatalogSnapshot,
+    logical_name: &str,
+    mode: TableMode,
+    definition: Option<String>,
+    input: Option<crate::names::CatalogId>,
+    output: Option<crate::names::CatalogId>,
+    enforced: bool,
+) -> Result<()> {
+    let mut table =
+        catalog::allocate_relation_table(logical_name, mode, definition, input, output, enforced)?;
+    let hidden = catalog::allocate_graph_hidden_columns(table.id);
+    let forward_columns = hidden.iter().collect::<Vec<_>>();
+    let reverse_columns = vec![&hidden[2], &hidden[3], &hidden[0], &hidden[1]];
+    let forward = catalog::allocate_graph_index("__graph_forward", &forward_columns, "forward")?;
+    let reverse = catalog::allocate_graph_index("__graph_reverse", &reverse_columns, "reverse")?;
+
+    catalog::persist_table(conn, &table)?;
+    conn.check_failpoint(Failpoint::AfterCatalogRow)?;
+    for column in &hidden {
+        catalog::persist_hidden_column(conn, column)?;
+    }
+    conn.check_failpoint(Failpoint::AfterGraphHiddenCatalog)?;
+    if !snapshot.capabilities.contains_key(BUILTIN_GRAPH_PROVIDER) {
+        catalog::persist_graph_capability(conn)?;
+    }
+    conn.exec_bound(
+        lower::physical_relation_table_ddl(
+            &table.physical_name,
+            &hidden
+                .iter()
+                .map(|column| column.physical_name.clone())
+                .collect::<Vec<_>>(),
+        )?,
+        vec![],
+    )?;
+    conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
+    for index in [&forward, &reverse] {
+        catalog::persist_index(conn, &table, index)?;
+        let provider = crate::provider::index_provider(index)?;
+        conn.exec_bound(
+            provider.create_statement(index, &table.physical_name)?,
+            vec![],
+        )?;
+        conn.check_failpoint(if index.options_json.contains("forward") {
+            Failpoint::AfterGraphForwardIndex
+        } else {
+            Failpoint::AfterGraphReverseIndex
+        })?;
+    }
+
+    table.indexes.insert(forward.logical_name.clone(), forward);
+    table.indexes.insert(reverse.logical_name.clone(), reverse);
+    for column in hidden {
+        snapshot.hidden_columns.insert(column.id, column);
+    }
+    snapshot.capabilities.insert(
+        BUILTIN_GRAPH_PROVIDER.to_string(),
+        CapabilityRequirement {
+            provider: BUILTIN_GRAPH_PROVIDER.to_string(),
+            min_provider_version: BUILTIN_GRAPH_PROVIDER_VERSION,
+            min_encoding_version: BUILTIN_GRAPH_ENCODING_VERSION,
+        },
+    );
+    snapshot.tables.insert(logical_name.to_string(), table);
+    Ok(())
 }
 
 fn run_define_field(
@@ -935,6 +1623,16 @@ fn run_define_field(
             .ok_or_else(|| {
                 FastDbError::Schema(format!("table {:?} is not defined", statement.table.value))
             })?;
+        if table.kind == TableKind::Relation
+            && rule
+                .path
+                .first()
+                .is_some_and(|segment| matches!(segment.as_str(), "in" | "out"))
+        {
+            return Err(FastDbError::Schema(
+                "synthesized edge endpoints `in` and `out` cannot be declared".into(),
+            ));
+        }
         if table.fields.contains_key(&path_key) {
             return Err(FastDbError::Constraint(format!(
                 "field {path_key} is already defined on table {:?}",
@@ -1015,6 +1713,16 @@ fn run_define_index(
             .ok_or_else(|| {
                 FastDbError::Schema(format!("table {:?} is not defined", statement.table.value))
             })?;
+        if table.kind == TableKind::Relation
+            && index.paths.iter().any(|path| {
+                path.first()
+                    .is_some_and(|segment| matches!(segment.as_str(), "in" | "out"))
+            })
+        {
+            return Err(FastDbError::Schema(
+                "synthesized edge endpoints use mandatory internal adjacency indexes".into(),
+            ));
+        }
         if table.indexes.contains_key(&statement.name.value) {
             return Err(FastDbError::Constraint(format!(
                 "index {:?} is already defined on table {:?}",
@@ -1051,11 +1759,18 @@ fn resolve_index_for_maintenance(
         .snapshot()
         .and_then(|snapshot| snapshot.tables.get(table_name))
         .ok_or_else(|| FastDbError::Schema(format!("table {table_name:?} is not defined")))?;
-    table.indexes.get(index_name).cloned().ok_or_else(|| {
+    let index = table.indexes.get(index_name).cloned().ok_or_else(|| {
         FastDbError::Schema(format!(
             "index {index_name:?} is not defined on table {table_name:?}"
         ))
-    })
+    })?;
+    if index.kind == IndexKind::GraphAdjacency {
+        return Err(FastDbError::Schema(
+            "graph adjacency indexes are internal and cannot be addressed by logical maintenance"
+                .into(),
+        ));
+    }
+    Ok(index)
 }
 
 fn run_remove_index(
@@ -1215,6 +1930,9 @@ fn validate_index_values(
     document: &BTreeMap<String, Value>,
 ) -> Result<()> {
     for index in table.indexes.values() {
+        if index.kind == IndexKind::GraphAdjacency {
+            continue;
+        }
         let _ = index_key(index, document)?;
     }
     Ok(())
@@ -1224,6 +1942,11 @@ fn index_key(
     index: &IndexDefinition,
     document: &BTreeMap<String, Value>,
 ) -> Result<Option<String>> {
+    if index.kind != IndexKind::Btree {
+        return Err(FastDbError::Engine(
+            "document index-key evaluation received a provider-owned index".into(),
+        ));
+    }
     let mut components = Vec::with_capacity(index.paths.len());
     for (path, path_key) in index.paths.iter().zip(&index.path_keys) {
         let Some(value) = crate::path::get_path(document, path) else {

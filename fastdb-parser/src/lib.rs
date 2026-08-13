@@ -51,6 +51,7 @@ pub struct ParserLimits {
     pub max_collection_elements: usize,
     pub max_statements: usize,
     pub max_identifier_bytes: usize,
+    pub max_graph_hops: usize,
 }
 
 impl Default for ParserLimits {
@@ -62,6 +63,7 @@ impl Default for ParserLimits {
             max_collection_elements: 1_024,
             max_statements: 256,
             max_identifier_bytes: 256,
+            max_graph_hops: 8,
         }
     }
 }

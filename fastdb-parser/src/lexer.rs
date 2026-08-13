@@ -39,6 +39,12 @@ pub enum TokenKind {
     Unique,
     Schemaless,
     Schemafull,
+    Normal,
+    Relation,
+    In,
+    Out,
+    To,
+    Enforced,
     Null,
     True,
     False,
@@ -92,6 +98,9 @@ pub enum TokenKind {
     Search,
     Analyzer,
     Parallel,
+    ForwardArrow,
+    ReverseArrow,
+    BidirectionalArrow,
     DoubleColon,
     Colon,
     Star,
@@ -173,6 +182,12 @@ impl TokenKind {
             Self::Unique => "keyword UNIQUE",
             Self::Schemaless => "keyword SCHEMALESS",
             Self::Schemafull => "keyword SCHEMAFULL",
+            Self::Normal => "keyword NORMAL",
+            Self::Relation => "keyword RELATION",
+            Self::In => "keyword IN",
+            Self::Out => "keyword OUT",
+            Self::To => "keyword TO",
+            Self::Enforced => "keyword ENFORCED",
             Self::Null => "keyword NULL",
             Self::True => "keyword TRUE",
             Self::False => "keyword FALSE",
@@ -226,6 +241,9 @@ impl TokenKind {
             Self::Search => "keyword SEARCH",
             Self::Analyzer => "keyword ANALYZER",
             Self::Parallel => "keyword PARALLEL",
+            Self::ForwardArrow => "'->'",
+            Self::ReverseArrow => "'<-'",
+            Self::BidirectionalArrow => "'<->'",
             Self::DoubleColon => "'::'",
             Self::Colon => "':'",
             Self::Star => "'*'",
@@ -393,10 +411,7 @@ impl Lexer<'_> {
             '-' if self.peek_next() == Some('>') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("->"),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::ForwardArrow, Span::new(start, 2)))
             }
             '-' => {
                 self.bump();
@@ -453,6 +468,20 @@ impl Lexer<'_> {
                     TokenKind::UnsupportedOperator("!"),
                     Span::new(start, 1),
                 ))
+            }
+            '<' if self.starts_with("<->") => {
+                self.bump();
+                self.bump();
+                self.bump();
+                Ok(Token::new(
+                    TokenKind::BidirectionalArrow,
+                    Span::new(start, 3),
+                ))
+            }
+            '<' if self.peek_next() == Some('-') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::ReverseArrow, Span::new(start, 2)))
             }
             '<' if self.peek_next() == Some('=') => {
                 self.bump();
@@ -787,7 +816,9 @@ fn classify_identifier(value: &str) -> TokenKind {
         "order" => Order, "by" => By, "limit" => Limit, "start" => Start,
         "as" => As, "asc" => Asc, "desc" => Desc, "on" => On, "type" => Type,
         "fields" => Fields, "unique" => Unique, "schemaless" => Schemaless,
-        "schemafull" => Schemafull, "null" => Null, "true" => True, "false" => False,
+        "schemafull" => Schemafull, "normal" => Normal, "relation" => Relation,
+        "in" => In, "out" => Out, "to" => To, "enforced" => Enforced,
+        "null" => Null, "true" => True, "false" => False,
         "not" => Not, "and" => And, "or" => Or, "bool" => BoolType, "int" => IntType,
         "float" => FloatType, "number" => NumberType, "string" => StringType,
         "object" => ObjectType, "array" => ArrayType, "record" => RecordType,

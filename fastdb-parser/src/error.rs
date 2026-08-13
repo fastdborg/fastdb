@@ -13,6 +13,7 @@ pub enum LimitKind {
     CollectionElements,
     Statements,
     IdentifierBytes,
+    GraphHops,
 }
 
 impl fmt::Display for LimitKind {
@@ -24,6 +25,7 @@ impl fmt::Display for LimitKind {
             Self::CollectionElements => "collection elements",
             Self::Statements => "statements",
             Self::IdentifierBytes => "identifier or parameter bytes",
+            Self::GraphHops => "graph traversal hops",
         })
     }
 }
@@ -146,6 +148,7 @@ impl ParseError {
                 LimitKind::CollectionElements => "fastdb::parse::limit_collection",
                 LimitKind::Statements => "fastdb::parse::limit_statements",
                 LimitKind::IdentifierBytes => "fastdb::parse::limit_identifier",
+                LimitKind::GraphHops => "fastdb::parse::limit_graph_hops",
             },
         }
     }
