@@ -167,6 +167,10 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
                 collect_parameters(argument, names);
             }
         }
+        ExprKind::Knn(knn) => {
+            collect_parameters(&knn.field, names);
+            collect_parameters(&knn.query, names);
+        }
         ExprKind::Traversal(_) => {}
         ExprKind::Null
         | ExprKind::Bool(_)
@@ -195,6 +199,16 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
                 normalized.as_slice(),
                 [namespace, name]
                     if namespace == "search" && matches!(name.as_str(), "score" | "highlight")
+            ) || matches!(
+                normalized.as_slice(),
+                [vector, distance, name]
+                    if vector == "vector"
+                        && distance == "distance"
+                        && matches!(name.as_str(), "euclidean" | "knn")
+            ) || matches!(
+                normalized.as_slice(),
+                [vector, similarity, name]
+                    if vector == "vector" && similarity == "similarity" && name == "cosine"
             ) {
                 Ok(())
             } else {
@@ -207,6 +221,10 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
             }
         }
         ExprKind::Traversal(_) => Ok(()),
+        ExprKind::Knn(knn) => {
+            reject_unavailable_functions(&knn.field)?;
+            reject_unavailable_functions(&knn.query)
+        }
         ExprKind::Array(values) => {
             for value in values {
                 reject_unavailable_functions(value)?;
@@ -242,6 +260,12 @@ fn reject_all_functions(expression: &Expr) -> Result<()> {
         ExprKind::FunctionCall { .. } => Err(FastDbError::UnsupportedSyntax(
             turso_fastdb_parser::ParseError::unsupported(
                 "function calls are unavailable in mutation values",
+                expression.span,
+            ),
+        )),
+        ExprKind::Knn(_) => Err(FastDbError::UnsupportedSyntax(
+            turso_fastdb_parser::ParseError::unsupported(
+                "KNN predicates are available only in SELECT WHERE clauses",
                 expression.span,
             ),
         )),
@@ -321,6 +345,9 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
                 .collect::<Vec<_>>()
                 .join("::")
         ))),
+        ExprKind::Knn(_) => Err(FastDbError::Schema(
+            "KNN predicate requires exact vector SELECT context".into(),
+        )),
         ExprKind::Traversal(_) => Err(FastDbError::Schema(
             "graph traversal requires SELECT projection context".into(),
         )),

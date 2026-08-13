@@ -75,6 +75,15 @@ fn main() {
                 )
                 .unwrap();
         }
+        "vector-write" => {
+            connection
+                .execute(
+                    "CREATE point:one SET embedding = [1,0]; \
+                     DEFINE FIELD embedding ON point TYPE array<float, 2>; \
+                     CREATE point:two SET embedding = [0,1]",
+                )
+                .unwrap();
+        }
         _ => panic!("unknown crash point {point}"),
     }
     // Test-only abrupt process boundary: bypass Rust drops and engine close.

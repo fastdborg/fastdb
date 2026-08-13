@@ -15,6 +15,7 @@ pub enum FieldType {
     String,
     Object,
     Array,
+    Vector { dimension: u32 },
     Record,
     Option(Box<FieldType>),
 }
@@ -29,6 +30,9 @@ impl FieldType {
             SchemaTypeKind::String => Self::String,
             SchemaTypeKind::Object => Self::Object,
             SchemaTypeKind::Array => Self::Array,
+            SchemaTypeKind::FixedFloatArray(dimension) => Self::Vector {
+                dimension: dimension.value as u32,
+            },
             SchemaTypeKind::Record => Self::Record,
             SchemaTypeKind::Option(inner) => Self::Option(Box::new(Self::from_parser(inner))),
         }
@@ -53,6 +57,7 @@ impl FieldType {
             Self::String => "string".into(),
             Self::Object => "object".into(),
             Self::Array => "array".into(),
+            Self::Vector { dimension } => format!("array<float,{dimension}>"),
             Self::Record => "record".into(),
             Self::Option(inner) => format!("option<{}>", inner.canonical()),
         }
@@ -67,6 +72,14 @@ impl FieldType {
             Self::Object => true,
             Self::Option(inner) => inner.base_is_object(),
             _ => false,
+        }
+    }
+
+    pub const fn vector_dimension(&self) -> Option<u32> {
+        match self {
+            Self::Vector { dimension } => Some(*dimension),
+            Self::Option(inner) => inner.vector_dimension(),
+            _ => None,
         }
     }
 }
@@ -142,6 +155,40 @@ fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> 
     if let FieldType::Option(inner) = ty {
         return validate_type(inner, value, path);
     }
+    if let FieldType::Vector { dimension } = ty {
+        let Value::Array(values) = value else {
+            return Err(FastDbError::Schema(format!(
+                "field {path} does not match type {}",
+                ty.canonical()
+            )));
+        };
+        if values.len() != *dimension as usize {
+            return Err(FastDbError::Schema(format!(
+                "field {path} requires exactly {dimension} vector dimensions"
+            )));
+        }
+        let mut changed = false;
+        for element in values {
+            match element {
+                Value::Integer(integer) => {
+                    *element = Value::Float(*integer as f64);
+                    changed = true;
+                }
+                Value::Float(value) if value.is_finite() => {}
+                Value::Float(_) => {
+                    return Err(FastDbError::Schema(format!(
+                        "field {path} vector elements must be finite"
+                    )))
+                }
+                _ => {
+                    return Err(FastDbError::Schema(format!(
+                        "field {path} vector elements must be numeric"
+                    )))
+                }
+            }
+        }
+        return Ok(changed);
+    }
     match (ty, value) {
         (FieldType::Bool, Value::Bool(_))
         | (FieldType::Int, Value::Integer(_))
@@ -194,6 +241,25 @@ fn is_prefix(left: &[String], right: &[String]) -> bool {
 }
 
 fn parse_type(value: &str) -> Result<(FieldType, usize)> {
+    if let Some(rest) = value.strip_prefix("array<float,") {
+        let Some(close) = rest.find('>') else {
+            return Err(FastDbError::format(
+                "stored fixed vector type is missing its closing delimiter",
+            ));
+        };
+        let dimension = rest[..close]
+            .parse::<u32>()
+            .map_err(|_| FastDbError::format("stored fixed vector dimension is invalid"))?;
+        if dimension == 0 || dimension > 65_536 {
+            return Err(FastDbError::format(
+                "stored fixed vector dimension is outside the supported range",
+            ));
+        }
+        return Ok((
+            FieldType::Vector { dimension },
+            "array<float,".len() + close + 1,
+        ));
+    }
     for (name, ty) in [
         ("bool", FieldType::Bool),
         ("int", FieldType::Int),

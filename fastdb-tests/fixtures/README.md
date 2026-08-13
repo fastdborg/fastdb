@@ -20,6 +20,9 @@ SurrealDB source, tests, fixtures, expected output, or fuzz corpus.
 - `phase8-format2-fts.fastdb` contains three independently authored article
   documents, a blank analyzer, one Surreal-surface full-text index, its hidden
   TEXT representation, and the pinned provider's physical index state.
+- `phase9-format2-vector.fastdb` contains three independently authored point
+  documents, one fixed two-dimensional vector field, normalized public arrays,
+  and catalog-owned native `vector64` BLOBs.
 
 Generation date: 2026-08-13. Behavioral data and expected assertions were
 written for FastDB and are not adapted from another implementation. SHA-256
@@ -30,3 +33,5 @@ mutation, integrity, and actual expression-index selection.
 checks against the committed format-2 artifact.
 `P8-FTS-012` reopens the FTS artifact, proves provider selection, mutates it,
 and verifies that provider maintenance remains live.
+`P9-VECTOR-008` reopens the vector artifact, proves exact scan execution,
+mutates it, and verifies that native vector maintenance remains live.

@@ -315,6 +315,7 @@ struct PreparedSelectKey {
     physical_table: String,
     uses_rid: bool,
     predicates: Vec<(String, crate::lower::PredicateOperator, ScalarKind)>,
+    provider_plan: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -998,6 +999,50 @@ impl Connection {
         predicates: &[(String, crate::lower::PredicateOperator, crate::Value)],
         allow_cache: bool,
     ) -> Result<Vec<Vec<Value>>> {
+        self.collect_prepared_select(
+            stmt,
+            bindings,
+            physical_table,
+            uses_rid,
+            predicates,
+            allow_cache,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn collect_vector_candidates(
+        &self,
+        stmt: Stmt,
+        bindings: crate::lower::Bindings,
+        physical_table: &str,
+        uses_rid: bool,
+        predicates: &[(String, crate::lower::PredicateOperator, crate::Value)],
+        allow_cache: bool,
+        plan_key: String,
+    ) -> Result<Vec<Vec<Value>>> {
+        self.collect_prepared_select(
+            stmt,
+            bindings,
+            physical_table,
+            uses_rid,
+            predicates,
+            allow_cache,
+            Some(plan_key),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_prepared_select(
+        &self,
+        stmt: Stmt,
+        bindings: crate::lower::Bindings,
+        physical_table: &str,
+        uses_rid: bool,
+        predicates: &[(String, crate::lower::PredicateOperator, crate::Value)],
+        allow_cache: bool,
+        provider_plan: Option<String>,
+    ) -> Result<Vec<Vec<Value>>> {
         if !allow_cache {
             return self.collect_rows(stmt, bindings);
         }
@@ -1010,6 +1055,7 @@ impl Connection {
                 .iter()
                 .map(|(path, operator, value)| Ok((path.clone(), *operator, scalar_kind(value)?)))
                 .collect::<Result<Vec<_>>>()?,
+            provider_plan,
         };
         let cached_statement = {
             let mut cache = self.prepared_select_cache.lock().map_err(|_| {

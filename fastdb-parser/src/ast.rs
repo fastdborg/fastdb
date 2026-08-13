@@ -317,6 +317,7 @@ pub enum SchemaTypeKind {
     String,
     Object,
     Array,
+    FixedFloatArray(NonnegativeInteger),
     Record,
     Option(Box<SchemaType>),
 }
@@ -421,6 +422,7 @@ pub enum ExprKind {
         name: Vec<Identifier>,
         arguments: Vec<Expr>,
     },
+    Knn(KnnExpr),
     Traversal(TraversalExpr),
     Unary {
         operator: Spanned<UnaryOperator>,
@@ -432,6 +434,21 @@ pub enum ExprKind {
         right: Box<Expr>,
     },
     Parenthesized(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KnnExpr {
+    pub field: Box<Expr>,
+    pub k: NonnegativeInteger,
+    pub metric: Spanned<KnnMetric>,
+    pub query: Box<Expr>,
+    pub operator_span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnnMetric {
+    Cosine,
+    Euclidean,
 }
 
 #[derive(Debug, Clone, PartialEq)]

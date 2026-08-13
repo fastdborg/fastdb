@@ -150,10 +150,14 @@ fn validate_bound_value(value: &Value, depth: usize) -> error::Result<()> {
             "parameter contains a non-finite float".into(),
         )),
         Value::Array(values) => {
-            if values.len() > limits.max_collection_elements {
+            let max_elements = if depth == 0 {
+                65_536
+            } else {
+                limits.max_collection_elements
+            };
+            if values.len() > max_elements {
                 return Err(FastDbError::Schema(format!(
-                    "parameter array exceeds {} elements",
-                    limits.max_collection_elements
+                    "parameter array exceeds {max_elements} elements"
                 )));
             }
             for value in values {
@@ -486,5 +490,85 @@ mod tests {
             .execute("SELECT * FROM doc WHERE text @@ 'uncommitted'")
             .unwrap();
         assert_eq!(absent.statements, vec![StatementResult::Rows(vec![])]);
+    }
+
+    #[test]
+    fn p9_vector_001_exact_knn_prefilters_and_projects_distance() {
+        let db = Database::open_memory().unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "CREATE item:a SET embedding = [1, 0], active = true; \
+             CREATE item:b SET embedding = [0, 1], active = true; \
+             CREATE item:c SET embedding = [0.9, 0.1], active = false; \
+             DEFINE FIELD embedding ON item TYPE array<float, 2>",
+        )
+        .unwrap();
+
+        let catalog = conn.coordinator.catalog.read().unwrap();
+        let snapshot = catalog
+            .as_ref()
+            .and_then(crate::catalog::CatalogState::snapshot)
+            .unwrap();
+        assert!(snapshot
+            .capabilities
+            .contains_key(crate::catalog::BUILTIN_VECTOR_PROVIDER));
+        let column = snapshot
+            .hidden_columns
+            .values()
+            .find(|column| matches!(column.role, crate::catalog::HiddenColumnRole::Vector64(_)))
+            .unwrap();
+        assert_eq!(column.dimension, Some(2));
+        drop(catalog);
+
+        let result = conn
+            .execute(
+                "SELECT id, vector::distance::knn() AS distance FROM item \
+                 WHERE active = true AND embedding <|2,COSINE|> [1,0]",
+            )
+            .unwrap();
+        let StatementResult::Rows(rows) = &result.statements[0] else {
+            panic!("expected KNN rows");
+        };
+        assert_eq!(rows.len(), 2);
+        let ids = rows
+            .iter()
+            .map(|row| match row {
+                Value::Object(row) => row.get("id").cloned().unwrap(),
+                _ => panic!("expected projected object"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                Value::RecordId(RecordId::new("item", "a")),
+                Value::RecordId(RecordId::new("item", "b")),
+            ]
+        );
+        let Value::Object(first) = &rows[0] else {
+            panic!("expected object")
+        };
+        assert!(
+            matches!(first.get("distance"), Some(Value::Float(value)) if value.abs() < 1e-6),
+            "unexpected first row: {first:?}"
+        );
+
+        let functions = conn
+            .execute(
+                "SELECT vector::distance::euclidean(embedding, [1,1]) AS euclidean, \
+                 vector::similarity::cosine(embedding, [1,1]) AS cosine FROM item:a",
+            )
+            .unwrap();
+        let StatementResult::Rows(rows) = &functions.statements[0] else {
+            panic!("expected function rows")
+        };
+        let Value::Object(row) = &rows[0] else {
+            panic!("expected function object")
+        };
+        assert!(
+            matches!(row.get("euclidean"), Some(Value::Float(value)) if (*value - 1.0).abs() < 1e-12)
+        );
+        assert!(
+            matches!(row.get("cosine"), Some(Value::Float(value)) if (*value - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-12)
+        );
     }
 }

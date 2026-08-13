@@ -511,6 +511,7 @@ pub fn physical_table_with_hidden_ddl(
     opaque_name: &str,
     graph_columns: &[String],
     fts_columns: &[String],
+    vector_columns: &[String],
 ) -> Result<Stmt, FastDbError> {
     validate_physical_name(opaque_name, TABLE_NAME_PREFIX)?;
     if !graph_columns.is_empty() && graph_columns.len() != 4 {
@@ -530,7 +531,26 @@ pub fn physical_table_with_hidden_ddl(
         validate_physical_name(hidden, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
         columns.push(column(hidden, "TEXT", vec![]));
     }
+    for hidden in vector_columns {
+        validate_physical_name(hidden, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+        columns.push(column(hidden, "BLOB", vec![]));
+    }
     Ok(create_table(opaque_name, columns, vec![]))
+}
+
+pub fn physical_add_vector_column_ddl(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(
+        opaque_hidden_column,
+        crate::names::HIDDEN_COLUMN_NAME_PREFIX,
+    )?;
+    Ok(Stmt::AlterTable(AlterTable {
+        name: qnm(opaque_table),
+        body: AlterTableBody::AddColumn(column(opaque_hidden_column, "BLOB", vec![])),
+    }))
 }
 
 pub fn physical_add_fts_column_ddl(
@@ -561,6 +581,42 @@ pub fn physical_update_fts_column_stmt(
     )?;
     let (value_expr, bindings) = if let Some(value) = value {
         (var(2), vec![text(encoded_rid), text(value)])
+    } else {
+        (Expr::Literal(Literal::Null), vec![text(encoded_rid)])
+    };
+    Ok((
+        Stmt::Update(Update {
+            with: None,
+            or_conflict: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            sets: vec![Set {
+                col_names: vec![nm(opaque_hidden_column)],
+                expr: Box::new(value_expr),
+            }],
+            from: None,
+            where_clause: Some(Box::new(Expr::binary(id("rid"), Operator::Equals, var(1)))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        }),
+        bindings,
+    ))
+}
+
+pub fn physical_update_vector_column_stmt(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+    encoded_rid: &str,
+    value: Option<Value>,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(
+        opaque_hidden_column,
+        crate::names::HIDDEN_COLUMN_NAME_PREFIX,
+    )?;
+    let (value_expr, bindings) = if let Some(value) = value {
+        (var(2), vec![text(encoded_rid), value])
     } else {
         (Expr::Literal(Literal::Null), vec![text(encoded_rid)])
     };
@@ -1382,7 +1438,7 @@ pub fn physical_insert_document_with_hidden_stmt(
     opaque_table: &str,
     encoded_rid: &str,
     encoded_doc: &str,
-    hidden: &[(String, Option<String>)],
+    hidden: &[(String, Option<Value>)],
 ) -> Result<(Stmt, Bindings), FastDbError> {
     validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
     let mut names = vec!["rid".to_string(), "doc".to_string()];
@@ -1392,7 +1448,7 @@ pub fn physical_insert_document_with_hidden_stmt(
         validate_physical_name(name, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
         names.push(name.clone());
         if let Some(value) = value {
-            bindings.push(text(value));
+            bindings.push(value.clone());
             let index = u32::try_from(bindings.len())
                 .map_err(|_| FastDbError::Engine("too many hidden bindings".into()))?;
             expressions.push(var(index));
@@ -1456,7 +1512,7 @@ pub fn physical_relation_insert_stmt(
 pub fn physical_relation_insert_with_hidden_stmt(
     opaque_table: &str,
     graph_columns: &[String],
-    fts_hidden: &[(String, Option<String>)],
+    derived_hidden: &[(String, Option<Value>)],
     encoded_rid: &str,
     encoded_doc: &str,
     in_table_id: &str,
@@ -1487,11 +1543,11 @@ pub fn physical_relation_insert_with_hidden_stmt(
             u32::try_from(ordinal + 3).expect("four graph bindings fit")
         ));
     }
-    for (name, value) in fts_hidden {
+    for (name, value) in derived_hidden {
         validate_physical_name(name, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
         names.push(name.clone());
         if let Some(value) = value {
-            bindings.push(text(value));
+            bindings.push(value.clone());
             expressions.push(var(u32::try_from(bindings.len())
                 .map_err(|_| FastDbError::Engine("too many hidden bindings".into()))?));
         } else {
@@ -1554,7 +1610,7 @@ pub fn physical_update_document_with_hidden_stmt(
     opaque_table: &str,
     encoded_rid: &str,
     encoded_doc: &str,
-    hidden: &[(String, Option<String>)],
+    hidden: &[(String, Option<Value>)],
 ) -> Result<(Stmt, Bindings), FastDbError> {
     validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
     let mut bindings = vec![text(encoded_rid), text(encoded_doc)];
@@ -1565,7 +1621,7 @@ pub fn physical_update_document_with_hidden_stmt(
     for (name, value) in hidden {
         validate_physical_name(name, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
         let expression = if let Some(value) = value {
-            bindings.push(text(value));
+            bindings.push(value.clone());
             var(u32::try_from(bindings.len())
                 .map_err(|_| FastDbError::Engine("too many hidden bindings".into()))?)
         } else {
@@ -1707,6 +1763,156 @@ pub fn physical_fts_select_stmt(
     };
     select.limit = Some(Limit {
         expr: Box::new(numlit(10_001)),
+        offset: None,
+    });
+    Ok((statement, bindings))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn physical_vector_select_stmt(
+    opaque_table: &str,
+    vector_column: &str,
+    graph_columns: &[String],
+    encoded_rid: Option<&str>,
+    predicates: &[(String, PredicateOperator, FastValue)],
+    query: Value,
+    metric: turso_fastdb_parser::KnnMetric,
+    k: u64,
+    include_document: bool,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(vector_column, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+    for column in graph_columns {
+        validate_physical_name(column, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+    }
+    if !graph_columns.is_empty() && graph_columns.len() != 4 {
+        return Err(FastDbError::format(
+            "vector relation query requires four graph columns",
+        ));
+    }
+    let mut bindings = Vec::new();
+    let mut condition = None;
+    if let Some(rid) = encoded_rid {
+        bindings.push(text(rid));
+        condition = Some(Expr::binary(id("rid"), Operator::Equals, var(1)));
+    }
+    for (path, predicate_operator, value) in predicates {
+        bindings.push(engine_scalar(value)?);
+        let index = u32::try_from(bindings.len())
+            .map_err(|_| FastDbError::Engine("too many translated bindings".into()))?;
+        let operator = match predicate_operator {
+            PredicateOperator::Equal if matches!(value, FastValue::Null) => Operator::Is,
+            PredicateOperator::Equal => Operator::Equals,
+            PredicateOperator::Less => Operator::Less,
+            PredicateOperator::LessEqual => Operator::LessEquals,
+            PredicateOperator::Greater => Operator::Greater,
+            PredicateOperator::GreaterEqual => Operator::GreaterEquals,
+        };
+        let predicate = Expr::binary(json_extract_doc(path), operator, var(index));
+        condition = Some(match condition {
+            None => predicate,
+            Some(previous) => Expr::binary(previous, Operator::And, predicate),
+        });
+    }
+    condition = Some(match condition {
+        None => Expr::binary(
+            id(vector_column),
+            Operator::IsNot,
+            Expr::Literal(Literal::Null),
+        ),
+        Some(previous) => Expr::binary(
+            previous,
+            Operator::And,
+            Expr::binary(
+                id(vector_column),
+                Operator::IsNot,
+                Expr::Literal(Literal::Null),
+            ),
+        ),
+    });
+    bindings.push(query);
+    let query_index = u32::try_from(bindings.len())
+        .map_err(|_| FastDbError::Engine("too many vector bindings".into()))?;
+    let function = match metric {
+        turso_fastdb_parser::KnnMetric::Cosine => "vector_distance_cos",
+        turso_fastdb_parser::KnnMetric::Euclidean => "vector_distance_l2",
+    };
+    let distance = fcall(function, vec![id(vector_column), var(query_index)]);
+    let document = if include_document {
+        fcall("json", vec![id("doc")])
+    } else {
+        Expr::Literal(Literal::Null)
+    };
+    let mut columns = vec![
+        ResultColumn::Expr(Box::new(id("rid")), None),
+        ResultColumn::Expr(Box::new(document), None),
+    ];
+    columns.extend(
+        graph_columns
+            .iter()
+            .map(|column| ResultColumn::Expr(Box::new(id(column)), None)),
+    );
+    columns.push(ResultColumn::Expr(
+        Box::new(distance.clone()),
+        Some(As::As(nm("__fastdb_vector_distance"))),
+    ));
+    let mut statement = one_select(columns, opaque_table, condition);
+    let Stmt::Select(select) = &mut statement else {
+        unreachable!("one_select returns SELECT");
+    };
+    select.order_by = vec![
+        SortedColumn {
+            expr: Box::new(distance),
+            order: Some(SortOrder::Asc),
+            nulls: None,
+        },
+        SortedColumn {
+            expr: Box::new(id("rid")),
+            order: Some(SortOrder::Asc),
+            nulls: None,
+        },
+    ];
+    select.limit = Some(Limit {
+        expr: Box::new(numlit(k)),
+        offset: None,
+    });
+    Ok((statement, bindings))
+}
+
+pub fn physical_vector_validation_stmt(
+    opaque_table: &str,
+    vector_column: &str,
+    after_rid: Option<&str>,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(vector_column, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+    let (condition, bindings) = if let Some(rid) = after_rid {
+        (
+            Some(Expr::binary(id("rid"), Operator::Greater, var(1))),
+            vec![text(rid)],
+        )
+    } else {
+        (None, Vec::new())
+    };
+    let mut statement = one_select(
+        vec![
+            ResultColumn::Expr(Box::new(id("rid")), None),
+            ResultColumn::Expr(Box::new(fcall("json", vec![id("doc")])), None),
+            ResultColumn::Expr(Box::new(id(vector_column)), None),
+        ],
+        opaque_table,
+        condition,
+    );
+    let Stmt::Select(select) = &mut statement else {
+        unreachable!("one_select returns SELECT");
+    };
+    select.order_by = vec![SortedColumn {
+        expr: Box::new(id("rid")),
+        order: Some(SortOrder::Asc),
+        nulls: None,
+    }];
+    select.limit = Some(Limit {
+        expr: Box::new(numlit(256)),
         offset: None,
     });
     Ok((statement, bindings))

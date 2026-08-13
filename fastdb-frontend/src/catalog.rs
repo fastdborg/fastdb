@@ -62,6 +62,9 @@ pub const BUILTIN_FTS_PROVIDER_VERSION: i64 = 1;
 pub const BUILTIN_FTS_ENCODING_VERSION: i64 = 1;
 pub const BUILTIN_FTS_PROVIDER: &str = "BUILTIN_FTS";
 pub const BUILTIN_FTS_ANALYZER_PROVIDER: &str = "BUILTIN_FTS_SURREAL_BLANK";
+pub const BUILTIN_VECTOR_PROVIDER_VERSION: i64 = 1;
+pub const BUILTIN_VECTOR_ENCODING_VERSION: i64 = 1;
+pub const BUILTIN_VECTOR_PROVIDER: &str = "BUILTIN_VECTOR_EXACT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableKind {
@@ -81,6 +84,7 @@ pub enum Provider {
     BuiltinBtree,
     BuiltinGraph,
     BuiltinFts,
+    BuiltinVector,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +175,7 @@ pub struct HiddenColumnDefinition {
 pub enum HiddenColumnRole {
     Graph(GraphColumnRole),
     FtsText(usize),
+    Vector64(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -384,6 +389,30 @@ pub fn allocate_fts_index(
     Ok((index, hidden))
 }
 
+pub fn allocate_vector_hidden_column(
+    table_id: CatalogId,
+    field_path_key: String,
+    dimension: u32,
+    ordinal: usize,
+) -> HiddenColumnDefinition {
+    let id = CatalogId::new_random();
+    HiddenColumnDefinition {
+        id,
+        table_id,
+        index_id: None,
+        field_path_key: Some(field_path_key),
+        physical_name: physical_hidden_column_name(id),
+        provider: Provider::BuiltinVector,
+        role: HiddenColumnRole::Vector64(ordinal),
+        physical_encoding: "VECTOR64".to_string(),
+        dimension: Some(i64::from(dimension)),
+        options_json: format!("{{\"ordinal\":{ordinal},\"role\":\"vector64\"}}"),
+        state: ProviderState::Ready,
+        provider_version: BUILTIN_VECTOR_PROVIDER_VERSION,
+        encoding_version: BUILTIN_VECTOR_ENCODING_VERSION,
+    }
+}
+
 pub fn allocate_index(
     logical_name: &str,
     paths: Vec<Vec<String>>,
@@ -480,6 +509,7 @@ pub fn persist_hidden_column(conn: &Connection, column: &HiddenColumnDefinition)
         match column.provider {
             Provider::BuiltinGraph => BUILTIN_GRAPH_PROVIDER,
             Provider::BuiltinFts => BUILTIN_FTS_PROVIDER,
+            Provider::BuiltinVector => BUILTIN_VECTOR_PROVIDER,
             Provider::BuiltinBtree => {
                 return Err(FastDbError::format(
                     "ordinary B-tree provider cannot own a hidden column",
@@ -526,6 +556,15 @@ pub fn persist_fts_capability(conn: &Connection) -> Result<()> {
     conn.exec_bound(statement, bindings)
 }
 
+pub fn persist_vector_capability(conn: &Connection) -> Result<()> {
+    let (statement, bindings) = lower::capability_insert(
+        BUILTIN_VECTOR_PROVIDER,
+        BUILTIN_VECTOR_PROVIDER_VERSION,
+        BUILTIN_VECTOR_ENCODING_VERSION,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
 pub fn persist_field(conn: &Connection, table: &TableDefinition, field: &FieldRule) -> Result<()> {
     let (statement, bindings) = lower::field_insert(
         &table.id.to_hex(),
@@ -562,6 +601,11 @@ pub fn persist_index(
             Provider::BuiltinBtree => "BUILTIN_BTREE",
             Provider::BuiltinGraph => BUILTIN_GRAPH_PROVIDER,
             Provider::BuiltinFts => BUILTIN_FTS_PROVIDER,
+            Provider::BuiltinVector => {
+                return Err(FastDbError::format(
+                    "exact vector provider does not own indexes",
+                ));
+            }
         },
         index.provider_version,
         &index.options_json,
@@ -636,7 +680,9 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     load_indexes(conn, &mut snapshot)?;
     validate_graph_catalog(&snapshot)?;
     validate_fts_catalog(&snapshot)?;
+    validate_vector_catalog(&snapshot)?;
     validate_physical_objects(&schema, &snapshot, true)?;
+    validate_vector_storage(conn, &snapshot)?;
     Ok(CatalogState::Ready(snapshot))
 }
 
@@ -962,6 +1008,7 @@ fn load_index_rows(
                     "BUILTIN_BTREE" => Provider::BuiltinBtree,
                     BUILTIN_GRAPH_PROVIDER => Provider::BuiltinGraph,
                     BUILTIN_FTS_PROVIDER => Provider::BuiltinFts,
+                    BUILTIN_VECTOR_PROVIDER => Provider::BuiltinVector,
                     _ => {
                         return Err(FastDbError::format(
                             "index requires an unknown or unavailable provider",
@@ -1018,6 +1065,7 @@ fn load_index_rows(
                 columns.sort_by_key(|column| match column.role {
                     HiddenColumnRole::FtsText(ordinal) => ordinal,
                     HiddenColumnRole::Graph(_) => usize::MAX,
+                    HiddenColumnRole::Vector64(_) => usize::MAX,
                 });
                 columns
                     .into_iter()
@@ -1103,6 +1151,7 @@ fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenCo
         let provider = match format_text(&row[5], "provider")?.as_str() {
             BUILTIN_GRAPH_PROVIDER => Provider::BuiltinGraph,
             BUILTIN_FTS_PROVIDER => Provider::BuiltinFts,
+            BUILTIN_VECTOR_PROVIDER => Provider::BuiltinVector,
             _ => {
                 return Err(FastDbError::format(
                     "hidden typed column requires an unknown provider",
@@ -1169,6 +1218,39 @@ fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenCo
                 }
                 HiddenColumnRole::FtsText(ordinal)
             }
+            Provider::BuiltinVector => {
+                if index_id.is_some() || field_path_key.is_none() {
+                    return Err(FastDbError::format(
+                        "vector hidden column requires field ownership only",
+                    ));
+                }
+                let dimension = dimension
+                    .ok_or_else(|| FastDbError::format("vector hidden column has no dimension"))?;
+                if !(1..=65_536).contains(&dimension) || physical_encoding != "VECTOR64" {
+                    return Err(FastDbError::format(
+                        "vector hidden column metadata is incompatible",
+                    ));
+                }
+                let value: serde_json::Value = serde_json::from_str(&options_json)
+                    .map_err(|_| FastDbError::format("vector hidden options are malformed"))?;
+                let object = value.as_object().ok_or_else(|| {
+                    FastDbError::format("vector hidden options must be an object")
+                })?;
+                let ordinal = object
+                    .get("ordinal")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .ok_or_else(|| FastDbError::format("vector hidden ordinal is invalid"))?;
+                if object.len() != 2
+                    || object.get("role").and_then(serde_json::Value::as_str) != Some("vector64")
+                    || options_json != format!("{{\"ordinal\":{ordinal},\"role\":\"vector64\"}}")
+                {
+                    return Err(FastDbError::format(
+                        "vector hidden options are not canonical",
+                    ));
+                }
+                HiddenColumnRole::Vector64(ordinal)
+            }
             Provider::BuiltinBtree => unreachable!("matched providers exclude B-tree"),
         };
         let state = match format_text(&row[10], "state")?.as_str() {
@@ -1183,6 +1265,10 @@ fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenCo
                 BUILTIN_GRAPH_ENCODING_VERSION,
             ),
             Provider::BuiltinFts => (BUILTIN_FTS_PROVIDER_VERSION, BUILTIN_FTS_ENCODING_VERSION),
+            Provider::BuiltinVector => (
+                BUILTIN_VECTOR_PROVIDER_VERSION,
+                BUILTIN_VECTOR_ENCODING_VERSION,
+            ),
             Provider::BuiltinBtree => unreachable!("hidden B-tree excluded"),
         };
         if provider_version != expected_versions.0
@@ -1241,6 +1327,10 @@ fn load_capabilities(conn: &Connection) -> Result<BTreeMap<String, CapabilityReq
                 cfg!(not(target_family = "wasm"))
                     && requirement.min_provider_version == BUILTIN_FTS_PROVIDER_VERSION
                     && requirement.min_encoding_version == BUILTIN_FTS_ENCODING_VERSION
+            }
+            BUILTIN_VECTOR_PROVIDER => {
+                requirement.min_provider_version == BUILTIN_VECTOR_PROVIDER_VERSION
+                    && requirement.min_encoding_version == BUILTIN_VECTOR_ENCODING_VERSION
             }
             _ => false,
         };
@@ -1340,11 +1430,28 @@ fn validate_physical_objects(
         fts.sort_by_key(|column| match column.role {
             HiddenColumnRole::FtsText(ordinal) => ordinal,
             HiddenColumnRole::Graph(_) => usize::MAX,
+            HiddenColumnRole::Vector64(_) => usize::MAX,
+        });
+        let vector = snapshot
+            .hidden_columns
+            .values()
+            .filter(|column| {
+                column.table_id == table.id && matches!(column.role, HiddenColumnRole::Vector64(_))
+            })
+            .collect::<Vec<_>>();
+        let mut vector = vector;
+        vector.sort_by_key(|column| match column.role {
+            HiddenColumnRole::Vector64(ordinal) => ordinal,
+            _ => usize::MAX,
         });
         let table_ddl = lower::physical_table_with_hidden_ddl(
             &table.physical_name,
             &graph,
             &fts.into_iter()
+                .map(|column| column.physical_name.clone())
+                .collect::<Vec<_>>(),
+            &vector
+                .into_iter()
                 .map(|column| column.physical_name.clone())
                 .collect::<Vec<_>>(),
         )?;
@@ -1591,6 +1698,7 @@ fn validate_fts_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
         owned.sort_by_key(|column| match column.role {
             HiddenColumnRole::FtsText(ordinal) => ordinal,
             HiddenColumnRole::Graph(_) => usize::MAX,
+            HiddenColumnRole::Vector64(_) => usize::MAX,
         });
         if owned.len() != index.paths.len()
             || owned.iter().zip(&index.path_keys).any(|(column, path)| {
@@ -1608,6 +1716,190 @@ fn validate_fts_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_vector_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
+    let vector_fields = snapshot
+        .tables
+        .values()
+        .flat_map(|table| {
+            table.fields.values().filter_map(move |field| {
+                let dimension = match &field.ty {
+                    crate::schema::FieldType::Vector { dimension } => Some(*dimension),
+                    crate::schema::FieldType::Option(inner) => match inner.as_ref() {
+                        crate::schema::FieldType::Vector { dimension } => Some(*dimension),
+                        _ => None,
+                    },
+                    _ => None,
+                }?;
+                Some((table, field, dimension))
+            })
+        })
+        .collect::<Vec<_>>();
+    let vector_columns = snapshot
+        .hidden_columns
+        .values()
+        .filter(|column| matches!(column.role, HiddenColumnRole::Vector64(_)))
+        .collect::<Vec<_>>();
+    let requires_vector = !vector_fields.is_empty() || !vector_columns.is_empty();
+    if requires_vector != snapshot.capabilities.contains_key(BUILTIN_VECTOR_PROVIDER) {
+        return Err(FastDbError::format(
+            "vector capability requirement disagrees with field ownership",
+        ));
+    }
+    let mut table_ordinals = BTreeMap::<CatalogId, BTreeSet<usize>>::new();
+    for column in &vector_columns {
+        if column.provider != Provider::BuiltinVector {
+            return Err(FastDbError::format(
+                "vector hidden column has an incompatible provider",
+            ));
+        }
+        let HiddenColumnRole::Vector64(ordinal) = column.role else {
+            unreachable!("filtered vector role");
+        };
+        if !table_ordinals
+            .entry(column.table_id)
+            .or_default()
+            .insert(ordinal)
+        {
+            return Err(FastDbError::format(
+                "vector hidden columns have duplicate table ordinals",
+            ));
+        }
+        let matches = vector_fields
+            .iter()
+            .filter(|(table, field, dimension)| {
+                column.table_id == table.id
+                    && column.field_path_key.as_deref() == Some(field.path_key.as_str())
+                    && column.dimension == Some(i64::from(*dimension))
+            })
+            .count();
+        if matches != 1 {
+            return Err(FastDbError::format(
+                "vector hidden column ownership or dimension is invalid",
+            ));
+        }
+    }
+    for ordinals in table_ordinals.values() {
+        if ordinals.iter().copied().ne(0..ordinals.len()) {
+            return Err(FastDbError::format(
+                "vector hidden-column table ordinals are not contiguous",
+            ));
+        }
+    }
+    for (table, field, dimension) in vector_fields {
+        let matches = vector_columns
+            .iter()
+            .filter(|column| {
+                column.table_id == table.id
+                    && column.field_path_key.as_deref() == Some(field.path_key.as_str())
+                    && column.dimension == Some(i64::from(dimension))
+            })
+            .count();
+        if matches != 1 {
+            return Err(FastDbError::format(
+                "vector field must own exactly one hidden vector64 column",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_vector_storage(conn: &Connection, snapshot: &CatalogSnapshot) -> Result<()> {
+    for table in snapshot.tables.values() {
+        for column in snapshot.hidden_columns.values().filter(|column| {
+            column.table_id == table.id && matches!(column.role, HiddenColumnRole::Vector64(_))
+        }) {
+            let path_key = column.field_path_key.as_deref().ok_or_else(|| {
+                FastDbError::format("vector hidden column has no field ownership")
+            })?;
+            let path = decode_canonical_path(path_key)?;
+            let dimension = column
+                .dimension
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| FastDbError::format("vector hidden dimension is invalid"))?;
+            let mut after_rid = None;
+            loop {
+                let (statement, bindings) = lower::physical_vector_validation_stmt(
+                    &table.physical_name,
+                    &column.physical_name,
+                    after_rid.as_deref(),
+                )?;
+                let rows = conn.collect_rows(statement, bindings)?;
+                if rows.is_empty() {
+                    break;
+                }
+                let row_count = rows.len();
+                for row in rows {
+                    if row.len() != 3 {
+                        return Err(FastDbError::format("vector validation row has wrong width"));
+                    }
+                    let rid = format_text(&row[0], "rid")?;
+                    let document = crate::decode::parse_doc(&format_text(&row[1], "doc")?)?
+                        .into_iter()
+                        .collect();
+                    let expected = vector_blob_from_document(&document, &path, dimension)?;
+                    let actual = match &row[2] {
+                        Value::Null => None,
+                        Value::Blob(value) => Some(value.as_slice()),
+                        _ => {
+                            return Err(FastDbError::format(format!(
+                                "record {rid:?} has a non-BLOB native vector value"
+                            )))
+                        }
+                    };
+                    if actual != expected.as_deref() {
+                        return Err(FastDbError::format(format!(
+                            "record {rid:?} document and native vector state disagree"
+                        )));
+                    }
+                    after_rid = Some(rid);
+                }
+                if row_count < 256 {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn vector_blob_from_document(
+    document: &BTreeMap<String, crate::decode::Value>,
+    path: &[String],
+    dimension: usize,
+) -> Result<Option<Vec<u8>>> {
+    let Some(value) = crate::path::get_path(document, path) else {
+        return Ok(None);
+    };
+    if matches!(value, crate::decode::Value::Null) {
+        return Ok(None);
+    }
+    let crate::decode::Value::Array(elements) = value else {
+        return Err(FastDbError::format(
+            "stored vector document value is not an array",
+        ));
+    };
+    if elements.len() != dimension {
+        return Err(FastDbError::format(
+            "stored vector document dimension disagrees with its catalog",
+        ));
+    }
+    let mut encoded = Vec::with_capacity(dimension.saturating_mul(8).saturating_add(1));
+    for element in elements {
+        let number = match element {
+            crate::decode::Value::Integer(value) => *value as f64,
+            crate::decode::Value::Float(value) if value.is_finite() => *value,
+            _ => {
+                return Err(FastDbError::format(
+                    "stored vector document contains a non-finite or non-numeric element",
+                ))
+            }
+        };
+        encoded.extend_from_slice(&number.to_le_bytes());
+    }
+    encoded.push(2);
+    Ok(Some(encoded))
 }
 
 fn require_exact_schema(

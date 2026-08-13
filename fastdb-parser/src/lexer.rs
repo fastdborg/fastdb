@@ -103,6 +103,8 @@ pub enum TokenKind {
     Filters,
     Parallel,
     FtsMatch(Option<u32>),
+    KnnStart,
+    KnnEnd,
     ForwardArrow,
     ReverseArrow,
     BidirectionalArrow,
@@ -252,6 +254,8 @@ impl TokenKind {
             Self::Functions => "keyword FUNCTIONS",
             Self::Filters => "keyword FILTERS",
             Self::Parallel => "keyword PARALLEL",
+            Self::KnnStart => "'<|'",
+            Self::KnnEnd => "'|>'",
             Self::ForwardArrow => "'->'",
             Self::ReverseArrow => "'<-'",
             Self::BidirectionalArrow => "'<->'",
@@ -502,6 +506,11 @@ impl Lexer<'_> {
                 self.bump();
                 Ok(Token::new(TokenKind::LessEqual, Span::new(start, 2)))
             }
+            '<' if self.peek_next() == Some('|') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::KnnStart, Span::new(start, 2)))
+            }
             '<' => {
                 self.bump();
                 single(TokenKind::Less)
@@ -514,6 +523,11 @@ impl Lexer<'_> {
             '>' => {
                 self.bump();
                 single(TokenKind::Greater)
+            }
+            '|' if self.peek_next() == Some('>') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::KnnEnd, Span::new(start, 2)))
             }
             '@' => self.lex_fts_match(start),
             '%' => {
@@ -537,6 +551,13 @@ impl Lexer<'_> {
                 Ok(Token::new(
                     TokenKind::UnsupportedOperator("||"),
                     Span::new(start, 2),
+                ))
+            }
+            '|' => {
+                self.bump();
+                Ok(Token::new(
+                    TokenKind::UnsupportedOperator("|"),
+                    Span::new(start, 1),
                 ))
             }
             '$' => self.lex_parameter(start),

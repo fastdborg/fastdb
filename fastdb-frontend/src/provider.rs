@@ -231,6 +231,9 @@ pub(crate) fn index_provider(index: &IndexDefinition) -> Result<&'static dyn Ind
             BUILTIN_FTS.validate_definition(index)?;
             Ok(&BUILTIN_FTS)
         }
+        Provider::BuiltinVector => Err(FastDbError::format(
+            "exact vector provider does not own indexes",
+        )),
     }
 }
 

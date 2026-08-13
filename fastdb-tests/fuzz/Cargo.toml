@@ -35,3 +35,10 @@ path = "fuzz_targets/structured_fts.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "structured_vector"
+path = "fuzz_targets/structured_vector.rs"
+test = false
+doc = false
+bench = false

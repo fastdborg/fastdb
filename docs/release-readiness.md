@@ -1,7 +1,7 @@
 # FastDB Core release-readiness gates
 
-Status: Phase 8 complete locally; Phase 9 exact-vector planning next; no alpha,
-beta, or Core 1.0 release authorized
+Status: Phase 9 complete locally; Phase 10 operational-readiness planning next;
+no alpha, beta, or Core 1.0 release authorized
 
 This checklist is the durable release gate. Phase plans and reports contain
 execution details and evidence; completing a development phase does not itself
@@ -90,15 +90,15 @@ mandatory for Core 1.0 in Phase 12.
 
 ### Phase 9 — Exact vector search / `0.1` alpha candidate
 
-- [ ] Implement fixed-size `array<float, N>` with public arrays and hidden
+- [x] Implement fixed-size `array<float, N>` with public arrays and hidden
       native `vector64` BLOBs; enforce finite values, dimensions <= 65,536, and
       `K <= 10,000`.
-- [ ] Prove exact cosine/euclidean KNN, bound vectors, filtering before top-k,
+- [x] Prove exact cosine/euclidean KNN, bound vectors, filtering before top-k,
       distance projection, bounded memory, structured explain output, and
       independent reference calculations.
-- [ ] Explicitly reject HNSW, DiskANN, and `toy_vector_sparse_ivf`; make no ANN
+- [x] Explicitly reject HNSW, DiskANN, and `toy_vector_sparse_ivf`; make no ANN
       GA claim.
-- [ ] Pass document/BLOB rollback/reopen and native-equivalent scan/storage
+- [x] Pass document/BLOB rollback/reopen and native-equivalent scan/storage
       benchmarks without regressing prior gates.
 
 Passing Phase 9 freezes a candidate surface for a possible `0.1` alpha review;

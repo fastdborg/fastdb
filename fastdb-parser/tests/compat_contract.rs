@@ -1,4 +1,4 @@
-//! Mechanical checks for the normative compatibility matrix through Phase 8.
+//! Mechanical checks for the normative compatibility matrix through Phase 9.
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -15,6 +15,7 @@ fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
         "tests/phase6.rs",
         "tests/phase7.rs",
         "tests/phase8.rs",
+        "tests/phase9.rs",
     ]
     .into_iter()
     .map(|path| fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap())
@@ -40,6 +41,10 @@ fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
         .unwrap()
         + &fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../fastdb-api/tests/phase8.rs"),
+        )
+        .unwrap()
+        + &fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fastdb-api/tests/phase9.rs"),
         )
         .unwrap()
         + &fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../fastdb-cli/tests"))
@@ -70,7 +75,8 @@ fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
                 || columns[4].contains("P2-UUID-")
                 || columns[4].contains("P6-AST-")
                 || columns[4].contains("P7-AST-")
-                || columns[4].contains("P8-PARSE-"),
+                || columns[4].contains("P8-PARSE-")
+                || columns[4].contains("P9-PARSE-"),
             "missing parser test in {feature}"
         );
         for test_id in columns[4].split('`').filter(|part| {
@@ -79,6 +85,7 @@ fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
                 || part.starts_with("P6-AST-")
                 || part.starts_with("P7-AST-")
                 || part.starts_with("P8-PARSE-")
+                || part.starts_with("P9-PARSE-")
         }) {
             let function = test_id.to_ascii_lowercase().replace('-', "_");
             assert!(
@@ -92,7 +99,8 @@ fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
                 || columns[5].contains("docs/compat-research/phase3.md#")
                 || columns[5].contains("docs/compat-research/phase6.md#")
                 || columns[5].contains("docs/compat-research/phase7.md")
-                || columns[5].contains("docs/compat-research/phase8.md"),
+                || columns[5].contains("docs/compat-research/phase8.md")
+                || columns[5].contains("docs/compat-research/phase9.md"),
             "missing clean-room provenance in {feature}"
         );
         assert!(
@@ -106,7 +114,8 @@ fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
                     || columns[6].contains("P3-")
                     || columns[6].contains("P6-")
                     || columns[6].contains("P7-")
-                    || columns[6].contains("P8-"),
+                    || columns[6].contains("P8-")
+                    || columns[6].contains("P9-"),
                 "executable row lacks execution evidence: {feature}"
             );
             for test_id in columns[6].split('`').filter(|part| {
@@ -115,6 +124,7 @@ fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
                     || part.starts_with("P6-")
                     || part.starts_with("P7-")
                     || part.starts_with("P8-")
+                    || part.starts_with("P9-")
             }) {
                 let function = test_id.to_ascii_lowercase().replace('-', "_");
                 assert!(

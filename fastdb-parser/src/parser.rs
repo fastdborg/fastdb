@@ -1137,6 +1137,25 @@ impl<'a> Parser<'a> {
             TokenKind::NumberType => SchemaTypeKind::Number,
             TokenKind::StringType => SchemaTypeKind::String,
             TokenKind::ObjectType => SchemaTypeKind::Object,
+            TokenKind::ArrayType if self.at(&TokenKind::Less) => {
+                self.advance();
+                self.expect(&TokenKind::FloatType, "FLOAT in fixed vector type")?;
+                self.expect(&TokenKind::Comma, "',' before vector dimension")?;
+                let dimension = self.parse_nonnegative_integer()?;
+                if dimension.value == 0 || dimension.value > 65_536 {
+                    return Err(ParseError::new(
+                        ParseErrorKind::InvalidCombination {
+                            what: "fixed vector dimension must be between 1 and 65,536",
+                        },
+                        dimension.span,
+                    ));
+                }
+                let close = self.expect(&TokenKind::Greater, "'>' after vector dimension")?;
+                return Ok(SchemaType {
+                    span: token.span.union(close.span),
+                    kind: SchemaTypeKind::FixedFloatArray(dimension),
+                });
+            }
             TokenKind::ArrayType => SchemaTypeKind::Array,
             TokenKind::RecordType => SchemaTypeKind::Record,
             TokenKind::OptionType => {
@@ -1174,6 +1193,49 @@ impl<'a> Parser<'a> {
     fn parse_expression_bp(&mut self, minimum_binding_power: u8) -> Result<Expr, ParseError> {
         let mut left = self.parse_prefix_expression()?;
         loop {
+            if self.at(&TokenKind::KnnStart) {
+                const LEFT_BP: u8 = 5;
+                const RIGHT_BP: u8 = 6;
+                if LEFT_BP < minimum_binding_power {
+                    break;
+                }
+                let open = self.advance().span;
+                let k = self.parse_nonnegative_integer()?;
+                if k.value == 0 || k.value > 10_000 {
+                    return Err(ParseError::new(
+                        ParseErrorKind::InvalidCombination {
+                            what: "KNN K must be between 1 and 10,000",
+                        },
+                        k.span,
+                    ));
+                }
+                self.expect(&TokenKind::Comma, "',' before KNN metric")?;
+                let metric_name = self.expect_function_segment("COSINE or EUCLIDEAN")?;
+                let metric = if metric_name.value.eq_ignore_ascii_case("cosine") {
+                    KnnMetric::Cosine
+                } else if metric_name.value.eq_ignore_ascii_case("euclidean") {
+                    KnnMetric::Euclidean
+                } else {
+                    return Err(ParseError::unsupported(
+                        "only COSINE and EUCLIDEAN exact KNN metrics are supported",
+                        metric_name.span,
+                    ));
+                };
+                let close = self.expect(&TokenKind::KnnEnd, "'|>' after KNN metric")?;
+                let query = self.parse_expression_bp(RIGHT_BP)?;
+                let span = left.span.union(query.span);
+                left = Expr::new(
+                    ExprKind::Knn(KnnExpr {
+                        field: Box::new(left),
+                        k,
+                        metric: Spanned::new(metric, metric_name.span),
+                        query: Box::new(query),
+                        operator_span: open.union(close.span),
+                    }),
+                    span,
+                );
+                continue;
+            }
             if matches!(
                 self.peek().kind,
                 TokenKind::ForwardArrow | TokenKind::ReverseArrow | TokenKind::BidirectionalArrow

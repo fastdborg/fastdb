@@ -3,7 +3,8 @@
 use crate::catalog::{
     self, CapabilityRequirement, CatalogSnapshot, CatalogState, IndexDefinition, IndexKind,
     TableDefinition, TableKind, BUILTIN_GRAPH_ENCODING_VERSION, BUILTIN_GRAPH_PROVIDER,
-    BUILTIN_GRAPH_PROVIDER_VERSION,
+    BUILTIN_GRAPH_PROVIDER_VERSION, BUILTIN_VECTOR_ENCODING_VERSION, BUILTIN_VECTOR_PROVIDER,
+    BUILTIN_VECTOR_PROVIDER_VERSION,
 };
 use crate::connection::{value_to_string, Connection, ExecutionState, TransactionState};
 use crate::decode::{self, RecordIdValue};
@@ -30,6 +31,16 @@ struct Candidate {
     document: BTreeMap<String, Value>,
     endpoints: Option<(RecordId, RecordId)>,
     fts: Option<FtsCandidateContext>,
+    vector_distance: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedVectorQuery {
+    column: catalog::HiddenColumnDefinition,
+    query: turso_core::Value,
+    k: u64,
+    metric: turso_fastdb_parser::KnnMetric,
+    needs_document: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +62,7 @@ struct CandidateReadOptions<'a> {
     params: &'a Params,
     allow_cache: bool,
     fts: Option<&'a ResolvedFtsQuery>,
+    vector: Option<&'a ResolvedVectorQuery>,
 }
 
 pub(crate) struct StatementExecution {
@@ -252,12 +264,12 @@ fn run_create(
             &mut document,
         )?;
         validate_index_values(table, &document)?;
-        let fts_hidden = fts_hidden_values(snapshot, table, &document)?;
+        let derived_hidden = derived_hidden_values(snapshot, table, &document)?;
         let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
             &table.physical_name,
             &encoded_rid,
             &decode::encode_doc(&document)?,
-            &fts_hidden,
+            &derived_hidden,
         )?;
         let mut prepared = conn.prepare_bound(insert, bindings)?;
         conn.check_failpoint(Failpoint::AfterRecordPrepare)?;
@@ -406,11 +418,11 @@ fn run_relate(
             .into_iter()
             .map(|column| column.physical_name.clone())
             .collect::<Vec<_>>();
-        let fts_hidden = fts_hidden_values(snapshot, &relation, &document)?;
+        let derived_hidden = derived_hidden_values(snapshot, &relation, &document)?;
         let (insert, bindings) = lower::physical_relation_insert_with_hidden_stmt(
             &relation.physical_name,
             &hidden,
-            &fts_hidden,
+            &derived_hidden,
             &encode_rid(&edge_id.id),
             &decode::encode_doc(&document)?,
             &from_table.id.to_hex(),
@@ -494,6 +506,12 @@ fn run_select(
         });
     };
     let fts = resolve_fts_query(&statement, table, params)?;
+    let vector = resolve_vector_query(&statement, snapshot, table, params)?;
+    if fts.is_some() && vector.is_some() {
+        return Err(FastDbError::Schema(
+            "FTS and KNN predicates cannot be combined in one Phase 9 SELECT".into(),
+        ));
+    }
     if fts.is_some()
         && matches!(
             &execution.transaction,
@@ -514,11 +532,14 @@ fn run_select(
             params,
             allow_cache: !matches!(execution.transaction, TransactionState::Active(_)),
             fts: fts.as_ref(),
+            vector: vector.as_ref(),
         },
     )?;
     let mut matched = Vec::new();
     for candidate in candidates {
-        if matches_condition_with_fts(statement.condition.as_ref(), &candidate, params)? {
+        if vector.is_some()
+            || matches_condition_with_fts(statement.condition.as_ref(), &candidate, params)?
+        {
             matched.push(candidate);
         }
     }
@@ -593,7 +614,7 @@ fn order_key(
                     .is_some_and(|alias| alias.value == term.path.segments[0].value)
             }) {
                 let value = if matches!(projection.expression.kind, ExprKind::FunctionCall { .. }) {
-                    evaluate_fts_projection(&projection.expression, candidate, params)?
+                    evaluate_special_projection(&projection.expression, candidate, params)?
                 } else {
                     eval::evaluate(&projection.expression, context)?.into_projection()
                 };
@@ -630,7 +651,10 @@ fn run_explain(
 ) -> Result<StatementResult> {
     validate_projection_shapes(&statement.select.projections)?;
     let graph_statements = lower_graph_scans_for_explain(conn, execution, &statement.select)?;
-    let lowered = if let Some(lowered) =
+    let vector_plan = lower_vector_scan_for_explain(conn, execution, &statement.select, params)?;
+    let lowered = if let Some((lowered, _)) = &vector_plan {
+        lowered.clone()
+    } else if let Some(lowered) =
         lower_fts_scan_for_explain(conn, execution, &statement.select, params)?
     {
         lowered
@@ -638,6 +662,9 @@ fn run_explain(
         lower_select_scan_for_explain(conn, execution, statement.select.clone(), params)?
     };
     let mut details = crate::connection::explain_statement(conn, lowered)?;
+    if let Some((_, detail)) = vector_plan {
+        details.push(detail);
+    }
     if details
         .iter()
         .any(|detail| detail.contains("QUERY INDEX METHOD fts"))
@@ -667,6 +694,57 @@ fn run_explain(
             })
             .collect::<Result<Vec<_>>>()?;
     Ok(StatementResult::Rows(rows))
+}
+
+fn lower_vector_scan_for_explain(
+    conn: &Connection,
+    execution: &ExecutionState,
+    select: &turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<Option<(turso_parser::ast::Stmt, String)>> {
+    let (table_name, id) = target_parts(select.target.clone())?;
+    let catalog = catalog_for_read(conn, execution)?;
+    let Some(snapshot) = catalog.snapshot() else {
+        return Ok(None);
+    };
+    let Some(table) = snapshot.tables.get(&table_name) else {
+        return Ok(None);
+    };
+    let Some(vector) = resolve_vector_query(select, snapshot, table, params)? else {
+        return Ok(None);
+    };
+    let predicates = select
+        .condition
+        .as_ref()
+        .map(|condition| safe_pushdowns(condition, params, table))
+        .unwrap_or_default();
+    let graph = if table.kind == TableKind::Relation {
+        catalog::graph_columns(snapshot, table)?
+            .into_iter()
+            .map(|column| column.physical_name.clone())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let (lowered, _) = lower::physical_vector_select_stmt(
+        &table.physical_name,
+        &vector.column.physical_name,
+        &graph,
+        id.as_ref().map(encode_rid).as_deref(),
+        &predicates,
+        vector.query.clone(),
+        vector.metric,
+        vector.k,
+        vector.needs_document,
+    )?;
+    let metric = match vector.metric {
+        turso_fastdb_parser::KnnMetric::Cosine => "COSINE",
+        turso_fastdb_parser::KnnMetric::Euclidean => "EUCLIDEAN",
+    };
+    Ok(Some((
+        lowered,
+        format!("VECTOR EXACT SCAN {metric} K={}", vector.k),
+    )))
 }
 
 fn fts_index_name_for_explain(
@@ -840,6 +918,7 @@ fn run_update(
                 params,
                 allow_cache: false,
                 fts: None,
+                vector: None,
             },
         )?;
         let mut updates = Vec::new();
@@ -874,12 +953,12 @@ fn run_update(
 
         conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
         for (candidate, document) in &updates {
-            let fts_hidden = fts_hidden_values(snapshot, &table, document)?;
+            let derived_hidden = derived_hidden_values(snapshot, &table, document)?;
             let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
                 &table.physical_name,
                 &candidate.encoded_rid,
                 &decode::encode_doc(document)?,
-                &fts_hidden,
+                &derived_hidden,
             )?;
             contextual_constraint(
                 conn.exec_bound(update, bindings),
@@ -935,6 +1014,7 @@ fn run_delete(
                 params,
                 allow_cache: false,
                 fts: None,
+                vector: None,
             },
         )?;
         let mut deleted = Vec::new();
@@ -1085,7 +1165,7 @@ fn project_candidate(
         let value = if let ExprKind::Traversal(traversal) = &projection.expression.kind {
             traverse_graph(conn, snapshot, &candidate.id, traversal)?
         } else if matches!(projection.expression.kind, ExprKind::FunctionCall { .. }) {
-            evaluate_fts_projection(&projection.expression, candidate, params)?
+            evaluate_special_projection(&projection.expression, candidate, params)?
         } else {
             eval::evaluate(&projection.expression, &context)?.into_projection()
         };
@@ -1104,6 +1184,70 @@ fn project_candidate(
         }
     }
     Ok(Value::Object(object))
+}
+
+fn evaluate_special_projection(
+    expression: &Expr,
+    candidate: &Candidate,
+    params: &Params,
+) -> Result<Value> {
+    let ExprKind::FunctionCall { name, arguments } = &expression.kind else {
+        unreachable!("caller filters function calls");
+    };
+    if function_name_is(name, &["vector", "distance", "knn"]) {
+        if !arguments.is_empty() {
+            return Err(FastDbError::Schema(
+                "vector::distance::knn requires no arguments".into(),
+            ));
+        }
+        return candidate.vector_distance.map(Value::Float).ok_or_else(|| {
+            FastDbError::Schema("vector::distance::knn requires a KNN predicate".into())
+        });
+    }
+    if function_name_is(name, &["vector", "distance", "euclidean"])
+        || function_name_is(name, &["vector", "similarity", "cosine"])
+    {
+        if arguments.len() != 2 {
+            return Err(FastDbError::Schema(
+                "vector distance/similarity functions require exactly two vectors".into(),
+            ));
+        }
+        let left = projection_vector(&arguments[0], candidate, params)?;
+        let right = projection_vector(&arguments[1], candidate, params)?;
+        if left.len() != right.len() || left.is_empty() {
+            return Err(FastDbError::Schema(
+                "vector function arguments must have equal nonzero dimensions".into(),
+            ));
+        }
+        let value = if function_name_is(name, &["vector", "distance", "euclidean"]) {
+            left.iter()
+                .zip(&right)
+                .map(|(left, right)| (left - right).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        } else {
+            let dot = left.iter().zip(&right).map(|(l, r)| l * r).sum::<f64>();
+            let left_norm = left.iter().map(|value| value * value).sum::<f64>().sqrt();
+            let right_norm = right.iter().map(|value| value * value).sum::<f64>().sqrt();
+            if left_norm == 0.0 || right_norm == 0.0 {
+                0.0
+            } else {
+                dot / (left_norm * right_norm)
+            }
+        };
+        return Ok(Value::Float(value));
+    }
+    evaluate_fts_projection(expression, candidate, params)
+}
+
+fn projection_vector(
+    expression: &Expr,
+    candidate: &Candidate,
+    params: &Params,
+) -> Result<Vec<f64>> {
+    let value =
+        eval::evaluate(expression, &candidate_context(candidate, params))?.into_projection();
+    vector_values_from_value(&value, "vector function argument")
 }
 
 fn evaluate_fts_projection(
@@ -1386,6 +1530,269 @@ fn matches_condition(
         return Ok(true);
     };
     Ok(eval::evaluate(condition, &candidate_context(candidate, params))?.truthy())
+}
+
+fn resolve_vector_query(
+    select: &turso_fastdb_parser::SelectStatement,
+    snapshot: &CatalogSnapshot,
+    table: &TableDefinition,
+    params: &Params,
+) -> Result<Option<ResolvedVectorQuery>> {
+    let Some(condition) = select.condition.as_ref() else {
+        return Ok(None);
+    };
+    let mut predicates = Vec::new();
+    collect_knn_predicates(condition, &mut predicates)?;
+    if predicates.is_empty() {
+        return Ok(None);
+    }
+    if predicates.len() != 1 {
+        return Err(FastDbError::Schema(
+            "Phase 9 permits exactly one KNN predicate per SELECT".into(),
+        ));
+    }
+    validate_knn_prefilters(condition, params, table)?;
+    let ExprKind::Knn(knn) = &predicates[0].kind else {
+        unreachable!("collector returns KNN predicates");
+    };
+    let ExprKind::FieldPath(path) = &knn.field.kind else {
+        return Err(FastDbError::Schema(
+            "the left side of a KNN predicate must be a vector field path".into(),
+        ));
+    };
+    let (_, path_key) = crate::path::parser_path(path)?;
+    let field = table
+        .fields
+        .get(&path_key)
+        .ok_or_else(|| FastDbError::Schema(format!("KNN field {path_key} is not declared")))?;
+    let dimension = field.ty.vector_dimension().ok_or_else(|| {
+        FastDbError::Schema(format!("KNN field {path_key} is not array<float,N>"))
+    })?;
+    let query_values = vector_query_values(&knn.query, params)?;
+    if query_values.len() != dimension as usize {
+        return Err(FastDbError::Schema(format!(
+            "KNN query requires exactly {dimension} elements"
+        )));
+    }
+    if knn.metric.value == turso_fastdb_parser::KnnMetric::Cosine
+        && query_values.iter().all(|value| *value == 0.0)
+    {
+        return Err(FastDbError::Schema(
+            "COSINE KNN query vector must have nonzero magnitude".into(),
+        ));
+    }
+    let mut matches = snapshot
+        .hidden_columns
+        .values()
+        .filter(|column| {
+            column.table_id == table.id
+                && matches!(column.role, catalog::HiddenColumnRole::Vector64(_))
+                && column.field_path_key.as_deref() == Some(path_key.as_str())
+                && column.dimension == Some(i64::from(dimension))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(FastDbError::format(
+            "KNN field does not own exactly one native vector column",
+        ));
+    }
+    let document = BTreeMap::from([(
+        "query".to_string(),
+        Value::Array(query_values.iter().copied().map(Value::Float).collect()),
+    )]);
+    let query =
+        derive_vector64(&document, &["query".to_string()], dimension)?.ok_or_else(|| {
+            FastDbError::Engine("KNN query encoding unexpectedly produced null".into())
+        })?;
+    Ok(Some(ResolvedVectorQuery {
+        column: matches.pop().expect("one match"),
+        query,
+        k: knn.k.value,
+        metric: knn.metric.value,
+        needs_document: vector_select_needs_document(select),
+    }))
+}
+
+fn vector_select_needs_document(select: &turso_fastdb_parser::SelectStatement) -> bool {
+    match &select.projections {
+        ProjectionList::All(_) => true,
+        ProjectionList::Fields(projections) => projections
+            .iter()
+            .any(|projection| expression_needs_document(&projection.expression)),
+    }
+}
+
+fn expression_needs_document(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::FieldPath(path) => path.segments.len() != 1 || path.segments[0].value != "id",
+        ExprKind::FunctionCall { name, arguments }
+            if function_name_is(name, &["vector", "distance", "knn"]) =>
+        {
+            !arguments.is_empty()
+        }
+        ExprKind::FunctionCall { arguments, .. } | ExprKind::Array(arguments) => {
+            arguments.iter().any(expression_needs_document)
+        }
+        ExprKind::Object(fields) => fields
+            .iter()
+            .any(|field| expression_needs_document(&field.value)),
+        ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
+            expression_needs_document(operand)
+        }
+        ExprKind::Binary { left, right, .. } => {
+            expression_needs_document(left) || expression_needs_document(right)
+        }
+        ExprKind::Knn(_) | ExprKind::Traversal(_) => false,
+        _ => false,
+    }
+}
+
+fn validate_knn_prefilters(
+    expression: &Expr,
+    params: &Params,
+    table: &TableDefinition,
+) -> Result<()> {
+    match &expression.kind {
+        ExprKind::Knn(_) => Ok(()),
+        ExprKind::Parenthesized(inner) => validate_knn_prefilters(inner, params, table),
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } if operator.value == BinaryOperator::And => {
+            validate_knn_prefilters(left, params, table)?;
+            validate_knn_prefilters(right, params, table)
+        }
+        _ if safe_pushdowns(expression, params, table).len() == 1 => Ok(()),
+        _ => Err(FastDbError::Schema(
+            "KNN ordinary predicates must be scalar comparisons that can run before top-k".into(),
+        )),
+    }
+}
+
+fn collect_knn_predicates<'a>(expression: &'a Expr, found: &mut Vec<&'a Expr>) -> Result<()> {
+    match &expression.kind {
+        ExprKind::Parenthesized(inner) => collect_knn_predicates(inner, found),
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } if operator.value == BinaryOperator::And => {
+            collect_knn_predicates(left, found)?;
+            collect_knn_predicates(right, found)
+        }
+        ExprKind::Knn(_) => {
+            found.push(expression);
+            Ok(())
+        }
+        _ if contains_knn_predicate(expression) => Err(FastDbError::Schema(
+            "KNN predicates must be top-level AND conjuncts".into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn contains_knn_predicate(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Knn(_) => true,
+        ExprKind::Binary { left, right, .. } => {
+            contains_knn_predicate(left) || contains_knn_predicate(right)
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
+            contains_knn_predicate(operand)
+        }
+        ExprKind::FunctionCall { arguments, .. } | ExprKind::Array(arguments) => {
+            arguments.iter().any(contains_knn_predicate)
+        }
+        ExprKind::Object(fields) => fields
+            .iter()
+            .any(|field| contains_knn_predicate(&field.value)),
+        _ => false,
+    }
+}
+
+fn vector_query_values(expression: &Expr, params: &Params) -> Result<Vec<f64>> {
+    let value = match &expression.kind {
+        ExprKind::Parameter(name) => params
+            .get(name)
+            .cloned()
+            .ok_or_else(|| FastDbError::Schema(format!("missing value for parameter ${name}")))?,
+        ExprKind::Array(elements) => Value::Array(
+            elements
+                .iter()
+                .map(vector_literal_value)
+                .collect::<Result<Vec<_>>>()?,
+        ),
+        _ => {
+            return Err(FastDbError::Schema(
+                "KNN query must be a vector literal or bound vector parameter".into(),
+            ))
+        }
+    };
+    vector_values_from_value(&value, "KNN query")
+}
+
+fn vector_literal_value(expression: &Expr) -> Result<Value> {
+    match &expression.kind {
+        ExprKind::Integer(value) => Ok(Value::Integer(*value)),
+        ExprKind::Float(value) => Ok(Value::Float(*value)),
+        ExprKind::Parenthesized(inner) => vector_literal_value(inner),
+        ExprKind::Unary { operator, operand }
+            if matches!(
+                operator.value,
+                turso_fastdb_parser::UnaryOperator::Plus
+                    | turso_fastdb_parser::UnaryOperator::Minus
+            ) =>
+        {
+            let value = vector_literal_value(operand)?;
+            if operator.value == turso_fastdb_parser::UnaryOperator::Plus {
+                return Ok(value);
+            }
+            match value {
+                Value::Integer(value) => value
+                    .checked_neg()
+                    .map(Value::Integer)
+                    .ok_or_else(|| FastDbError::Schema("vector integer literal overflow".into())),
+                Value::Float(value) => Ok(Value::Float(-value)),
+                _ => unreachable!("recursive vector literal returns numeric values"),
+            }
+        }
+        _ => Err(FastDbError::Schema(
+            "KNN vector literals may contain only numbers".into(),
+        )),
+    }
+}
+
+fn vector_values_from_value(value: &Value, label: &str) -> Result<Vec<f64>> {
+    let Value::Array(elements) = value else {
+        return Err(FastDbError::Schema(format!("{label} must be an array")));
+    };
+    if elements.is_empty() || elements.len() > 65_536 {
+        return Err(FastDbError::Schema(format!(
+            "{label} dimension must be between 1 and 65536"
+        )));
+    }
+    elements
+        .iter()
+        .map(|element| {
+            let value = match element {
+                Value::Integer(value) => *value as f64,
+                Value::Float(value) => *value,
+                _ => {
+                    return Err(FastDbError::Schema(format!(
+                        "{label} elements must be finite numbers"
+                    )))
+                }
+            };
+            if !value.is_finite() {
+                return Err(FastDbError::Schema(format!(
+                    "{label} elements must be finite numbers"
+                )));
+            }
+            Ok(value)
+        })
+        .collect()
 }
 
 fn resolve_fts_query(
@@ -1696,6 +2103,7 @@ fn matches_condition_with_fts(
                     }))
         }
         ExprKind::FunctionCall { name, .. } if function_name_is(name, &["fts_match"]) => Ok(true),
+        ExprKind::Knn(_) => Ok(candidate.vector_distance.is_some()),
         _ => Ok(eval::evaluate(condition, &candidate_context(candidate, params))?.truthy()),
     }
 }
@@ -1832,6 +2240,7 @@ fn read_candidates(
         params,
         allow_cache,
         fts,
+        vector,
     } = options;
     let predicates = condition
         .map(|condition| safe_pushdowns(condition, params, table))
@@ -1847,6 +2256,48 @@ fn read_candidates(
     } else {
         None
     };
+    if let Some(vector) =
+        vector.filter(|query| query.metric == turso_fastdb_parser::KnnMetric::Cosine)
+    {
+        let dimension = vector
+            .column
+            .dimension
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| FastDbError::format("vector hidden dimension is invalid"))?;
+        let mut zero = vec![
+            0_u8;
+            dimension.checked_mul(8).ok_or_else(|| {
+                FastDbError::Schema("vector dimension overflows native encoding".into())
+            })?
+        ];
+        zero.push(2);
+        let (zero_scan, zero_bindings) = lower::physical_vector_select_stmt(
+            &table.physical_name,
+            &vector.column.physical_name,
+            &[],
+            encoded_rid.as_deref(),
+            &predicates,
+            turso_core::Value::from_blob(zero),
+            turso_fastdb_parser::KnnMetric::Euclidean,
+            1,
+            false,
+        )?;
+        let nearest = conn.collect_rows(zero_scan, zero_bindings)?;
+        let zero_distance = nearest.first().and_then(|row| match row.get(2) {
+            Some(turso_core::Value::Numeric(turso_core::Numeric::Integer(value))) => {
+                Some(*value as f64)
+            }
+            Some(turso_core::Value::Numeric(turso_core::Numeric::Float(value))) => {
+                Some(f64::from(*value))
+            }
+            _ => None,
+        });
+        if zero_distance == Some(0.0) {
+            return Err(FastDbError::Schema(
+                "COSINE KNN cannot evaluate a zero-magnitude stored vector".into(),
+            ));
+        }
+    }
     let (statement, bindings) = if let Some(fts) = fts {
         lower::physical_fts_select_stmt(
             &table.physical_name,
@@ -1854,6 +2305,18 @@ fn read_candidates(
             hidden.as_deref().unwrap_or(&[]),
             encoded_rid.as_deref(),
             &fts.query,
+        )?
+    } else if let Some(vector) = vector {
+        lower::physical_vector_select_stmt(
+            &table.physical_name,
+            &vector.column.physical_name,
+            hidden.as_deref().unwrap_or(&[]),
+            encoded_rid.as_deref(),
+            &predicates,
+            vector.query.clone(),
+            vector.metric,
+            vector.k,
+            vector.needs_document,
         )?
     } else if let Some(hidden) = &hidden {
         lower::physical_relation_select_predicates_stmt(
@@ -1871,6 +2334,22 @@ fn read_candidates(
     };
     let rows = if fts.is_some() {
         conn.collect_rows(statement, bindings)?
+    } else if let Some(vector) = vector {
+        conn.collect_vector_candidates(
+            statement,
+            bindings,
+            &table.physical_name,
+            encoded_rid.is_some(),
+            &predicates,
+            allow_cache,
+            format!(
+                "vector:{}:{:?}:{}:{}",
+                vector.column.physical_name,
+                vector.metric,
+                vector.k,
+                table.kind == TableKind::Relation
+            ),
+        )?
     } else {
         conn.collect_select_candidates(
             statement,
@@ -1893,9 +2372,13 @@ fn read_candidates(
             let encoded_rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))
                 .map_err(stored_value_error)?;
             let id = RecordId::new(&table.logical_name, decode_rid(&encoded_rid)?);
-            let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
-                .map_err(stored_value_error)?;
-            let document = decode::parse_doc(&json)?.into_iter().collect();
+            let document = if vector.is_some_and(|vector| !vector.needs_document) {
+                BTreeMap::new()
+            } else {
+                let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
+                    .map_err(stored_value_error)?;
+                decode::parse_doc(&json)?.into_iter().collect()
+            };
             let endpoints = if table.kind == TableKind::Relation {
                 let in_table = crate::names::CatalogId::from_hex(&value_to_string(
                     row.get(2).unwrap_or(&turso_core::Value::Null),
@@ -1942,12 +2425,35 @@ fn read_candidates(
                     })
                 })
                 .transpose()?;
+            let vector_distance = if vector.is_some() {
+                let distance_index = 2 + if table.kind == TableKind::Relation {
+                    4
+                } else {
+                    0
+                };
+                Some(match row.get(distance_index) {
+                    Some(turso_core::Value::Numeric(turso_core::Numeric::Integer(value))) => {
+                        *value as f64
+                    }
+                    Some(turso_core::Value::Numeric(turso_core::Numeric::Float(value))) => {
+                        f64::from(*value)
+                    }
+                    _ => {
+                        return Err(stored_value_error(FastDbError::Engine(
+                            "vector provider returned a non-numeric distance".into(),
+                        )))
+                    }
+                })
+            } else {
+                None
+            };
             Ok(Candidate {
                 encoded_rid,
                 id,
                 document,
                 endpoints,
                 fts,
+                vector_distance,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -2460,7 +2966,8 @@ fn run_define_field(
         let snapshot = ready_snapshot_mut(state)?;
         let table = snapshot
             .tables
-            .get_mut(&statement.table.value)
+            .get(&statement.table.value)
+            .cloned()
             .ok_or_else(|| {
                 FastDbError::Schema(format!("table {:?} is not defined", statement.table.value))
             })?;
@@ -2483,7 +2990,7 @@ fn run_define_field(
         schema::validate_field_relationships(table.fields.values(), &rule)?;
         let mut candidate_fields = table.fields.clone();
         candidate_fields.insert(path_key.clone(), rule.clone());
-        let mut rows = read_documents(conn, table)?;
+        let mut rows = read_documents(conn, &table)?;
         for (_, document) in &mut rows {
             schema::validate_document(
                 table.mode == TableMode::Schemafull,
@@ -2492,17 +2999,75 @@ fn run_define_field(
             )?;
         }
         conn.check_failpoint(Failpoint::AfterFieldValidation)?;
-        for (rid, document) in rows {
-            let (update, bindings) = lower::physical_update_doc_stmt(
+        let vector_ordinal = snapshot
+            .hidden_columns
+            .values()
+            .filter(|column| {
+                column.table_id == table.id
+                    && matches!(column.role, catalog::HiddenColumnRole::Vector64(_))
+            })
+            .count();
+        let vector_column = rule.ty.vector_dimension().map(|dimension| {
+            catalog::allocate_vector_hidden_column(
+                table.id,
+                path_key.clone(),
+                dimension,
+                vector_ordinal,
+            )
+        });
+        if let Some(column) = &vector_column {
+            catalog::persist_hidden_column(conn, column)?;
+            if !snapshot.capabilities.contains_key(BUILTIN_VECTOR_PROVIDER) {
+                catalog::persist_vector_capability(conn)?;
+            }
+            conn.check_failpoint(Failpoint::AfterVectorHiddenCatalog)?;
+            conn.exec_bound(
+                lower::physical_add_vector_column_ddl(&table.physical_name, &column.physical_name)?,
+                vec![],
+            )?;
+            conn.check_failpoint(Failpoint::AfterVectorPhysicalColumn)?;
+        }
+        for (rid, document) in &rows {
+            let hidden = if let Some(column) = &vector_column {
+                let dimension = u32::try_from(column.dimension.expect("allocated dimension"))
+                    .expect("allocated vector dimension fits");
+                vec![(
+                    column.physical_name.clone(),
+                    derive_vector64(document, &rule.path, dimension)?,
+                )]
+            } else {
+                Vec::new()
+            };
+            let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
                 &table.physical_name,
-                &rid,
-                &decode::encode_doc(&document)?,
+                rid,
+                &decode::encode_doc(document)?,
+                &hidden,
             )?;
             conn.exec_bound(update, bindings)?;
         }
-        catalog::persist_field(conn, table, &rule)?;
+        if vector_column.is_some() {
+            conn.check_failpoint(Failpoint::AfterVectorBackfill)?;
+        }
+        catalog::persist_field(conn, &table, &rule)?;
         conn.check_failpoint(Failpoint::AfterFieldCatalogRow)?;
-        table.fields.insert(path_key.clone(), rule.clone());
+        if let Some(column) = vector_column {
+            snapshot.hidden_columns.insert(column.id, column);
+            snapshot.capabilities.insert(
+                BUILTIN_VECTOR_PROVIDER.to_string(),
+                CapabilityRequirement {
+                    provider: BUILTIN_VECTOR_PROVIDER.to_string(),
+                    min_provider_version: BUILTIN_VECTOR_PROVIDER_VERSION,
+                    min_encoding_version: BUILTIN_VECTOR_ENCODING_VERSION,
+                },
+            );
+        }
+        snapshot
+            .tables
+            .get_mut(&statement.table.value)
+            .expect("cloned table remains present")
+            .fields
+            .insert(path_key.clone(), rule.clone());
         Ok(())
     })?;
     Ok(StatementResult::None)
@@ -2873,11 +3438,11 @@ fn derive_fts_text(document: &BTreeMap<String, Value>, path: &[String]) -> Resul
     }
 }
 
-fn fts_hidden_values(
+fn derived_hidden_values(
     snapshot: &CatalogSnapshot,
     table: &TableDefinition,
     document: &BTreeMap<String, Value>,
-) -> Result<Vec<(String, Option<String>)>> {
+) -> Result<Vec<(String, Option<turso_core::Value>)>> {
     let mut columns = snapshot
         .hidden_columns
         .values()
@@ -2889,8 +3454,9 @@ fn fts_hidden_values(
     columns.sort_by_key(|column| match column.role {
         catalog::HiddenColumnRole::FtsText(ordinal) => ordinal,
         catalog::HiddenColumnRole::Graph(_) => usize::MAX,
+        catalog::HiddenColumnRole::Vector64(_) => usize::MAX,
     });
-    columns
+    let mut values = columns
         .into_iter()
         .map(|column| {
             let path_key = column.field_path_key.as_deref().ok_or_else(|| {
@@ -2899,10 +3465,84 @@ fn fts_hidden_values(
             let path = crate::path::decode_canonical_path(path_key)?;
             Ok((
                 column.physical_name.clone(),
-                derive_fts_text(document, &path)?,
+                derive_fts_text(document, &path)?.map(turso_core::Value::build_text),
             ))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    let mut vector_columns = snapshot
+        .hidden_columns
+        .values()
+        .filter(|column| {
+            column.table_id == table.id
+                && matches!(column.role, catalog::HiddenColumnRole::Vector64(_))
+        })
+        .collect::<Vec<_>>();
+    vector_columns.sort_by(|left, right| left.physical_name.cmp(&right.physical_name));
+    for column in vector_columns {
+        let path_key = column.field_path_key.as_deref().ok_or_else(|| {
+            FastDbError::format("vector hidden column has no logical field ownership")
+        })?;
+        let dimension = column
+            .dimension
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| FastDbError::format("vector hidden dimension is invalid"))?;
+        let path = crate::path::decode_canonical_path(path_key)?;
+        values.push((
+            column.physical_name.clone(),
+            derive_vector64(document, &path, dimension)?,
+        ));
+    }
+    Ok(values)
+}
+
+fn derive_vector64(
+    document: &BTreeMap<String, Value>,
+    path: &[String],
+    dimension: u32,
+) -> Result<Option<turso_core::Value>> {
+    let Some(value) = crate::path::get_path(document, path) else {
+        return Ok(None);
+    };
+    if matches!(value, Value::Null) {
+        return Ok(None);
+    }
+    let Value::Array(elements) = value else {
+        return Err(FastDbError::Constraint(format!(
+            "vector field {} must be an array",
+            crate::path::canonical_path(path)?
+        )));
+    };
+    if elements.len() != dimension as usize {
+        return Err(FastDbError::Constraint(format!(
+            "vector field {} requires exactly {dimension} elements",
+            crate::path::canonical_path(path)?
+        )));
+    }
+    let capacity = elements
+        .len()
+        .checked_mul(std::mem::size_of::<f64>())
+        .and_then(|bytes| bytes.checked_add(1))
+        .ok_or_else(|| FastDbError::Constraint("vector encoding is too large".into()))?;
+    let mut encoded = Vec::with_capacity(capacity);
+    for element in elements {
+        let number = match element {
+            Value::Integer(value) => *value as f64,
+            Value::Float(value) => *value,
+            _ => {
+                return Err(FastDbError::Constraint(
+                    "vector elements must be finite numbers".into(),
+                ))
+            }
+        };
+        if !number.is_finite() {
+            return Err(FastDbError::Constraint(
+                "vector elements must be finite numbers".into(),
+            ));
+        }
+        encoded.extend_from_slice(&number.to_le_bytes());
+    }
+    encoded.push(2);
+    Ok(Some(turso_core::Value::from_blob(encoded)))
 }
 
 fn resolve_index_for_maintenance(

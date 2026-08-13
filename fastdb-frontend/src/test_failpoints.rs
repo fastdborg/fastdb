@@ -45,6 +45,12 @@ pub enum Failpoint {
     AfterFtsBackfill,
     /// After the custom FTS provider index is created.
     AfterFtsProviderIndex,
+    /// After vector hidden-column ownership is cataloged.
+    AfterVectorHiddenCatalog,
+    /// After the native vector BLOB column is added.
+    AfterVectorPhysicalColumn,
+    /// After existing documents are backfilled into native vector storage.
+    AfterVectorBackfill,
     /// After existing rows pass a new field definition.
     AfterFieldValidation,
     /// After a field catalog row is written.
@@ -104,6 +110,9 @@ pub struct Failpoints {
     after_fts_physical_column: AtomicBool,
     after_fts_backfill: AtomicBool,
     after_fts_provider_index: AtomicBool,
+    after_vector_hidden_catalog: AtomicBool,
+    after_vector_physical_column: AtomicBool,
+    after_vector_backfill: AtomicBool,
     after_field_validation: AtomicBool,
     after_field_catalog_row: AtomicBool,
     after_index_validation: AtomicBool,
@@ -165,6 +174,13 @@ impl Failpoints {
             Failpoint::AfterFtsProviderIndex => {
                 self.after_fts_provider_index.load(Ordering::SeqCst)
             }
+            Failpoint::AfterVectorHiddenCatalog => {
+                self.after_vector_hidden_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorPhysicalColumn => {
+                self.after_vector_physical_column.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorBackfill => self.after_vector_backfill.load(Ordering::SeqCst),
             Failpoint::AfterFieldValidation => self.after_field_validation.load(Ordering::SeqCst),
             Failpoint::AfterFieldCatalogRow => self.after_field_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterIndexValidation => self.after_index_validation.load(Ordering::SeqCst),
@@ -242,6 +258,15 @@ impl Failpoints {
             Failpoint::AfterFtsBackfill => self.after_fts_backfill.store(true, Ordering::SeqCst),
             Failpoint::AfterFtsProviderIndex => {
                 self.after_fts_provider_index.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorHiddenCatalog => self
+                .after_vector_hidden_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterVectorPhysicalColumn => self
+                .after_vector_physical_column
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterVectorBackfill => {
+                self.after_vector_backfill.store(true, Ordering::SeqCst)
             }
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(true, Ordering::SeqCst)
@@ -333,6 +358,15 @@ impl Failpoints {
             Failpoint::AfterFtsProviderIndex => {
                 self.after_fts_provider_index.store(false, Ordering::SeqCst)
             }
+            Failpoint::AfterVectorHiddenCatalog => self
+                .after_vector_hidden_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterVectorPhysicalColumn => self
+                .after_vector_physical_column
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterVectorBackfill => {
+                self.after_vector_backfill.store(false, Ordering::SeqCst)
+            }
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(false, Ordering::SeqCst)
             }
@@ -399,6 +433,9 @@ impl Failpoints {
             Failpoint::AfterFtsPhysicalColumn,
             Failpoint::AfterFtsBackfill,
             Failpoint::AfterFtsProviderIndex,
+            Failpoint::AfterVectorHiddenCatalog,
+            Failpoint::AfterVectorPhysicalColumn,
+            Failpoint::AfterVectorBackfill,
             Failpoint::AfterFieldValidation,
             Failpoint::AfterFieldCatalogRow,
             Failpoint::AfterIndexValidation,
