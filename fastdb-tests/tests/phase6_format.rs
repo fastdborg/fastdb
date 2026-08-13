@@ -376,7 +376,7 @@ fn p6_lang_002_functions_and_unaliased_expressions_fail_before_catalog_mutation(
             .execute("CREATE person CONTENT search::score(1)")
             .unwrap_err()
             .category(),
-        ErrorCategory::UnsupportedSyntax
+        ErrorCategory::Schema
     );
     assert!(matches!(
         connection.catalog_state().unwrap(),
