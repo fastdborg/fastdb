@@ -35,6 +35,16 @@ pub enum Failpoint {
     AfterGraphReverseIndex,
     /// After an edge document and all hidden endpoints are inserted.
     AfterGraphEdgeInsert,
+    /// After a Surreal analyzer and FTS capability are cataloged.
+    AfterFtsAnalyzerCatalog,
+    /// After FTS hidden-column ownership rows are cataloged.
+    AfterFtsHiddenCatalog,
+    /// After one FTS hidden physical TEXT column is added.
+    AfterFtsPhysicalColumn,
+    /// After existing documents are backfilled into FTS hidden columns.
+    AfterFtsBackfill,
+    /// After the custom FTS provider index is created.
+    AfterFtsProviderIndex,
     /// After existing rows pass a new field definition.
     AfterFieldValidation,
     /// After a field catalog row is written.
@@ -89,6 +99,11 @@ pub struct Failpoints {
     after_graph_forward_index: AtomicBool,
     after_graph_reverse_index: AtomicBool,
     after_graph_edge_insert: AtomicBool,
+    after_fts_analyzer_catalog: AtomicBool,
+    after_fts_hidden_catalog: AtomicBool,
+    after_fts_physical_column: AtomicBool,
+    after_fts_backfill: AtomicBool,
+    after_fts_provider_index: AtomicBool,
     after_field_validation: AtomicBool,
     after_field_catalog_row: AtomicBool,
     after_index_validation: AtomicBool,
@@ -137,6 +152,19 @@ impl Failpoints {
                 self.after_graph_reverse_index.load(Ordering::SeqCst)
             }
             Failpoint::AfterGraphEdgeInsert => self.after_graph_edge_insert.load(Ordering::SeqCst),
+            Failpoint::AfterFtsAnalyzerCatalog => {
+                self.after_fts_analyzer_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsHiddenCatalog => {
+                self.after_fts_hidden_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsPhysicalColumn => {
+                self.after_fts_physical_column.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsBackfill => self.after_fts_backfill.load(Ordering::SeqCst),
+            Failpoint::AfterFtsProviderIndex => {
+                self.after_fts_provider_index.load(Ordering::SeqCst)
+            }
             Failpoint::AfterFieldValidation => self.after_field_validation.load(Ordering::SeqCst),
             Failpoint::AfterFieldCatalogRow => self.after_field_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterIndexValidation => self.after_index_validation.load(Ordering::SeqCst),
@@ -201,6 +229,19 @@ impl Failpoints {
             }
             Failpoint::AfterGraphEdgeInsert => {
                 self.after_graph_edge_insert.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsAnalyzerCatalog => self
+                .after_fts_analyzer_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFtsHiddenCatalog => {
+                self.after_fts_hidden_catalog.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsPhysicalColumn => {
+                self.after_fts_physical_column.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsBackfill => self.after_fts_backfill.store(true, Ordering::SeqCst),
+            Failpoint::AfterFtsProviderIndex => {
+                self.after_fts_provider_index.store(true, Ordering::SeqCst)
             }
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(true, Ordering::SeqCst)
@@ -279,6 +320,19 @@ impl Failpoints {
             Failpoint::AfterGraphEdgeInsert => {
                 self.after_graph_edge_insert.store(false, Ordering::SeqCst)
             }
+            Failpoint::AfterFtsAnalyzerCatalog => self
+                .after_fts_analyzer_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFtsHiddenCatalog => {
+                self.after_fts_hidden_catalog.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsPhysicalColumn => self
+                .after_fts_physical_column
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFtsBackfill => self.after_fts_backfill.store(false, Ordering::SeqCst),
+            Failpoint::AfterFtsProviderIndex => {
+                self.after_fts_provider_index.store(false, Ordering::SeqCst)
+            }
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(false, Ordering::SeqCst)
             }
@@ -340,6 +394,11 @@ impl Failpoints {
             Failpoint::AfterGraphForwardIndex,
             Failpoint::AfterGraphReverseIndex,
             Failpoint::AfterGraphEdgeInsert,
+            Failpoint::AfterFtsAnalyzerCatalog,
+            Failpoint::AfterFtsHiddenCatalog,
+            Failpoint::AfterFtsPhysicalColumn,
+            Failpoint::AfterFtsBackfill,
+            Failpoint::AfterFtsProviderIndex,
             Failpoint::AfterFieldValidation,
             Failpoint::AfterFieldCatalogRow,
             Failpoint::AfterIndexValidation,

@@ -97,7 +97,12 @@ pub enum TokenKind {
     Fulltext,
     Search,
     Analyzer,
+    Tokenizers,
+    Highlights,
+    Functions,
+    Filters,
     Parallel,
+    FtsMatch(Option<u32>),
     ForwardArrow,
     ReverseArrow,
     BidirectionalArrow,
@@ -142,6 +147,8 @@ impl TokenKind {
             Self::String(_) => "string literal".into(),
             Self::QuotedIdent(_) => "backtick-quoted identifier".into(),
             Self::UnsupportedOperator(op) => format!("operator {op:?}"),
+            Self::FtsMatch(None) => "operator @@".into(),
+            Self::FtsMatch(Some(reference)) => format!("operator @{reference}@"),
             Self::Eof => "end of input".into(),
             other => other.fixed_description().into(),
         }
@@ -240,6 +247,10 @@ impl TokenKind {
             Self::Fulltext => "keyword FULLTEXT",
             Self::Search => "keyword SEARCH",
             Self::Analyzer => "keyword ANALYZER",
+            Self::Tokenizers => "keyword TOKENIZERS",
+            Self::Highlights => "keyword HIGHLIGHTS",
+            Self::Functions => "keyword FUNCTIONS",
+            Self::Filters => "keyword FILTERS",
             Self::Parallel => "keyword PARALLEL",
             Self::ForwardArrow => "'->'",
             Self::ReverseArrow => "'<-'",
@@ -265,7 +276,10 @@ impl TokenKind {
             Self::RightBracket => "']'",
             Self::LeftBrace => "'{'",
             Self::RightBrace => "'}'",
-            Self::UnsupportedOperator(_) | Self::Ident(_) | Self::Parameter(_) => unreachable!(),
+            Self::UnsupportedOperator(_)
+            | Self::FtsMatch(_)
+            | Self::Ident(_)
+            | Self::Parameter(_) => unreachable!(),
             Self::Number(_)
             | Self::Duration(_)
             | Self::String(_)
@@ -501,6 +515,7 @@ impl Lexer<'_> {
                 self.bump();
                 single(TokenKind::Greater)
             }
+            '@' => self.lex_fts_match(start),
             '%' => {
                 self.bump();
                 Ok(Token::new(
@@ -605,6 +620,50 @@ impl Lexer<'_> {
         self.check_identifier_limit(name, Span::new(name_start, name.len()))?;
         Ok(Token::new(
             TokenKind::Parameter(name.to_string()),
+            Span::new(start, self.position - start),
+        ))
+    }
+
+    fn lex_fts_match(&mut self, start: usize) -> Result<Token, ParseError> {
+        self.bump();
+        if self.peek().is_none() {
+            return Err(ParseError::new(
+                ParseErrorKind::UnexpectedCharacter { ch: '@' },
+                Span::new(start, 1),
+            ));
+        }
+        if self.peek() == Some('@') {
+            self.bump();
+            return Ok(Token::new(TokenKind::FtsMatch(None), Span::new(start, 2)));
+        }
+
+        let digits_start = self.position;
+        while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            self.bump();
+        }
+        if self.position == digits_start || self.peek() != Some('@') {
+            while self
+                .peek()
+                .is_some_and(|ch| !ch.is_whitespace() && !matches!(ch, ';' | ',' | ')' | ']'))
+            {
+                self.bump();
+            }
+            return Err(ParseError::unsupported(
+                "only @@ and @<digits>@ FTS match operators are supported",
+                Span::new(start, self.position - start),
+            ));
+        }
+        let reference = self.source[digits_start..self.position]
+            .parse::<u32>()
+            .map_err(|_| {
+                ParseError::unsupported(
+                    "FTS match references must fit an unsigned 32-bit integer",
+                    Span::new(start, self.position - start + 1),
+                )
+            })?;
+        self.bump();
+        Ok(Token::new(
+            TokenKind::FtsMatch(Some(reference)),
             Span::new(start, self.position - start),
         ))
     }
@@ -834,6 +893,8 @@ fn classify_identifier(value: &str) -> TokenKind {
         "permissions" => Permissions, "assert" => Assert, "default" => Default,
         "readonly" => Readonly, "changefeed" => Changefeed, "view" => View,
         "fulltext" => Fulltext, "search" => Search, "analyzer" => Analyzer,
+        "tokenizers" => Tokenizers, "highlights" => Highlights,
+        "functions" => Functions, "filters" => Filters,
         "parallel" => Parallel,
     }
     TokenKind::Ident(value.to_string())

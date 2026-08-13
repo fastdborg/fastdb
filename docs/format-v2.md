@@ -1,6 +1,6 @@
 # FastDB on-disk format version 2
 
-Status: Phase 7 implementation contract; not frozen for Core 1.0
+Status: Phase 8 implementation contract; not frozen for Core 1.0
 
 Format 2 extends format 1 with relation metadata and sealed provider-owned
 derived storage. It does not change existing `rid`, JSONB `doc`, record-ID,
@@ -119,13 +119,13 @@ model for hidden objects.
 
 ## Closed values and canonical options
 
-Phase 7 accepts these committed values:
+Phase 8 accepts these committed values:
 
 | Field | Accepted value |
 | --- | --- |
 | table `kind` | `NORMAL`, `RELATION` |
-| index `index_kind` | `BTREE`, `GRAPH_ADJACENCY` |
-| index `provider` | `BUILTIN_BTREE`, `BUILTIN_GRAPH` |
+| index `index_kind` | `BTREE`, `GRAPH_ADJACENCY`, `FTS` |
+| index `provider` | `BUILTIN_BTREE`, `BUILTIN_GRAPH`, `BUILTIN_FTS` |
 | index `provider_version` | `1` |
 | index `options_json` | exactly `{}` for B-tree; `{"direction":"forward"}` or `{"direction":"reverse"}` for graph adjacency |
 | index `state` | `READY` |
@@ -136,9 +136,25 @@ Graph hidden columns use provider `BUILTIN_GRAPH`, provider/encoding version
 Their canonical role options are `{"role":"in_table"}`,
 `{"role":"in_rid"}`, `{"role":"out_table"}`, and
 `{"role":"out_rid"}`. A graph database contains the exact capability row
-`BUILTIN_GRAPH,1,1`. FTS and vector provider values remain unavailable. Unknown
-providers, newer versions, unknown encodings, noncanonical options, and invalid
-lifecycle states fail open before catalog publication.
+`BUILTIN_GRAPH,1,1`.
+
+An FTS analyzer uses provider `BUILTIN_FTS_SURREAL_BLANK`, provider version
+`1`, and canonical options `{"tokenizer":"blank"}`. An FTS index uses
+provider `BUILTIN_FTS`, provider/encoding version `1`, state `READY`, and a
+canonical JSON options object containing, in struct serialization order,
+`surface`, `tokenizer`, `weights`, `analyzer`, and `highlights`. The Surreal
+surface requires `whitespace`, one weight of `1.0`, one defined analyzer, and
+one field. The FastDB extension allows the closed native tokenizer set and one
+finite positive weight per ordered field, with no analyzer or Surreal
+highlight flag.
+
+Each FTS input owns one hidden nullable TEXT column using provider
+`BUILTIN_FTS`, encoding `FTS_TEXT_UTF8`, an index ID, a canonical field path,
+and role options `{"role":"fts_text","ordinal":N}`. An FTS database contains
+the exact capability row `BUILTIN_FTS,1,1`. Vector provider values remain
+unavailable. Unknown providers, newer versions, unknown encodings,
+noncanonical options, and invalid lifecycle states fail open before catalog
+publication.
 
 Provider options are canonical JSON objects with lexicographically sorted keys,
 no duplicate keys, and a provider-version-specific value schema. Empty B-tree
@@ -173,6 +189,9 @@ transaction-local and is never a committed catalog value.
   a provider/encoding beyond the built-in format-2 B-tree baseline.
 - No catalog row may point to a missing, extra, differently encoded, or
   differently named reserved physical object.
+- Every FTS index owns exactly one hidden TEXT column per ordered indexed
+  field. Ordinals are contiguous from zero; ownership, canonical paths, and
+  physical column order must agree with the index definition.
 
 ## Format 1 to format 2 migration
 
@@ -237,6 +256,14 @@ four endpoint values in a single physical INSERT. The document never stores
 Catalog loading verifies exact column ownership, role cardinality, endpoint
 table ownership, capability versions, index direction/order, and exact
 physical DDL before publishing a snapshot.
+
+An FTS-enabled table appends nullable opaque `TEXT` columns after any graph
+columns. Missing or null logical values encode as SQL NULL; strings retain
+their exact UTF-8 bytes. The document and every derived FTS column are bound by
+one physical INSERT or UPDATE. Provider index maintenance participates in the
+same engine transaction. Catalog loading validates the exact custom index,
+column list, tokenizer/weight options, provider versions, ownership, and
+physical table declaration before publishing a snapshot.
 
 ## Fixtures and freeze policy
 

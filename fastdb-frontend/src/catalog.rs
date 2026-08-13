@@ -13,6 +13,34 @@ use std::collections::{BTreeMap, BTreeSet};
 use turso_core::Value;
 use turso_fastdb_parser::TableMode;
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FtsIndexOptions {
+    pub surface: String,
+    pub tokenizer: String,
+    pub weights: Vec<f64>,
+    pub analyzer: Option<String>,
+    pub highlights: bool,
+}
+
+impl FtsIndexOptions {
+    pub fn canonical_json(&self) -> Result<String> {
+        serde_json::to_string(self)
+            .map_err(|error| FastDbError::Engine(format!("failed to encode FTS options: {error}")))
+    }
+
+    pub fn parse_canonical(value: &str) -> Result<Self> {
+        let options: Self = serde_json::from_str(value)
+            .map_err(|_| FastDbError::format("FTS index options are malformed"))?;
+        if options.canonical_json()? != value {
+            return Err(FastDbError::format(
+                "FTS index options are not canonically encoded",
+            ));
+        }
+        Ok(options)
+    }
+}
+
 pub const META_TABLE: &str = "__fastdb_meta";
 pub const TABLES_TABLE: &str = "__fastdb_tables";
 pub const FIELDS_TABLE: &str = "__fastdb_fields";
@@ -30,6 +58,10 @@ pub const BUILTIN_BTREE_ENCODING_VERSION: i64 = 1;
 pub const BUILTIN_GRAPH_PROVIDER_VERSION: i64 = 1;
 pub const BUILTIN_GRAPH_ENCODING_VERSION: i64 = 1;
 pub const BUILTIN_GRAPH_PROVIDER: &str = "BUILTIN_GRAPH";
+pub const BUILTIN_FTS_PROVIDER_VERSION: i64 = 1;
+pub const BUILTIN_FTS_ENCODING_VERSION: i64 = 1;
+pub const BUILTIN_FTS_PROVIDER: &str = "BUILTIN_FTS";
+pub const BUILTIN_FTS_ANALYZER_PROVIDER: &str = "BUILTIN_FTS_SURREAL_BLANK";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableKind {
@@ -41,12 +73,14 @@ pub enum TableKind {
 pub enum IndexKind {
     Btree,
     GraphAdjacency,
+    Fts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     BuiltinBtree,
     BuiltinGraph,
+    BuiltinFts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +112,8 @@ pub struct IndexDefinition {
     pub options_json: String,
     pub state: ProviderState,
     pub encoding_version: i64,
+    /// Opaque provider input columns. Empty for ordinary B-tree indexes.
+    pub physical_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,19 +144,33 @@ pub struct CatalogSnapshot {
 pub struct AnalyzerDefinition {
     pub id: CatalogId,
     pub logical_name: String,
+    pub provider: String,
+    pub provider_version: i64,
+    pub options_json: String,
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HiddenColumnDefinition {
     pub id: CatalogId,
     pub table_id: CatalogId,
+    pub index_id: Option<CatalogId>,
+    pub field_path_key: Option<String>,
     pub physical_name: String,
-    pub role: GraphColumnRole,
+    pub provider: Provider,
+    pub role: HiddenColumnRole,
     pub physical_encoding: String,
+    pub dimension: Option<i64>,
     pub options_json: String,
     pub state: ProviderState,
     pub provider_version: i64,
     pub encoding_version: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HiddenColumnRole {
+    Graph(GraphColumnRole),
+    FtsText(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -235,9 +285,13 @@ pub fn allocate_graph_hidden_columns(table_id: CatalogId) -> Vec<HiddenColumnDef
             HiddenColumnDefinition {
                 id,
                 table_id,
+                index_id: None,
+                field_path_key: None,
                 physical_name: physical_hidden_column_name(id),
-                role,
+                provider: Provider::BuiltinGraph,
+                role: HiddenColumnRole::Graph(role),
                 physical_encoding: role.encoding().to_string(),
+                dimension: None,
                 options_json: role.options_json().to_string(),
                 state: ProviderState::Ready,
                 provider_version: BUILTIN_GRAPH_PROVIDER_VERSION,
@@ -262,7 +316,72 @@ pub fn allocate_graph_index(
     index.provider_version = BUILTIN_GRAPH_PROVIDER_VERSION;
     index.options_json = format!("{{\"direction\":\"{direction}\"}}");
     index.encoding_version = BUILTIN_GRAPH_ENCODING_VERSION;
+    index.physical_columns = columns
+        .iter()
+        .map(|column| column.physical_name.clone())
+        .collect();
     Ok(index)
+}
+
+pub fn allocate_analyzer(logical_name: &str, definition: String) -> Result<AnalyzerDefinition> {
+    if is_reserved_logical_name(logical_name) {
+        return Err(FastDbError::Constraint(format!(
+            "logical analyzer name {logical_name:?} uses the reserved FastDB prefix"
+        )));
+    }
+    Ok(AnalyzerDefinition {
+        id: CatalogId::new_random(),
+        logical_name: logical_name.to_string(),
+        provider: BUILTIN_FTS_ANALYZER_PROVIDER.to_string(),
+        provider_version: BUILTIN_FTS_PROVIDER_VERSION,
+        options_json: "{\"tokenizer\":\"blank\"}".to_string(),
+        definition,
+    })
+}
+
+pub fn allocate_fts_index(
+    table_id: CatalogId,
+    first_ordinal: usize,
+    logical_name: &str,
+    paths: Vec<Vec<String>>,
+    definition: String,
+    options_json: String,
+) -> Result<(IndexDefinition, Vec<HiddenColumnDefinition>)> {
+    let mut index = allocate_index(logical_name, paths, false, definition)?;
+    index.kind = IndexKind::Fts;
+    index.provider = Provider::BuiltinFts;
+    index.provider_version = BUILTIN_FTS_PROVIDER_VERSION;
+    index.options_json = options_json;
+    index.encoding_version = BUILTIN_FTS_ENCODING_VERSION;
+    let hidden = index
+        .path_keys
+        .iter()
+        .enumerate()
+        .map(|(field_ordinal, path_key)| {
+            let ordinal = first_ordinal + field_ordinal;
+            let id = CatalogId::new_random();
+            HiddenColumnDefinition {
+                id,
+                table_id,
+                index_id: Some(index.id),
+                field_path_key: Some(path_key.clone()),
+                physical_name: physical_hidden_column_name(id),
+                provider: Provider::BuiltinFts,
+                role: HiddenColumnRole::FtsText(ordinal),
+                physical_encoding: "FTS_TEXT_UTF8".to_string(),
+                dimension: None,
+                options_json: format!("{{\"ordinal\":{ordinal},\"role\":\"fts_text\"}}"),
+                state: ProviderState::Ready,
+                provider_version: BUILTIN_FTS_PROVIDER_VERSION,
+                encoding_version: BUILTIN_FTS_ENCODING_VERSION,
+            }
+        })
+        .collect::<Vec<_>>();
+    index.physical_columns = hidden
+        .iter()
+        .map(|column| column.physical_name.clone())
+        .collect();
+    Ok((index, hidden))
 }
 
 pub fn allocate_index(
@@ -296,6 +415,7 @@ pub fn allocate_index(
         options_json: "{}".to_string(),
         state: ProviderState::Ready,
         encoding_version: BUILTIN_BTREE_ENCODING_VERSION,
+        physical_columns: Vec::new(),
     })
 }
 
@@ -350,16 +470,40 @@ pub fn persist_table(conn: &Connection, table: &TableDefinition) -> Result<()> {
 }
 
 pub fn persist_hidden_column(conn: &Connection, column: &HiddenColumnDefinition) -> Result<()> {
+    let index_id = column.index_id.map(CatalogId::to_hex);
     let (statement, bindings) = lower::hidden_column_insert(
         &column.id.to_hex(),
         &column.table_id.to_hex(),
+        index_id.as_deref(),
+        column.field_path_key.as_deref(),
         &column.physical_name,
-        BUILTIN_GRAPH_PROVIDER,
+        match column.provider {
+            Provider::BuiltinGraph => BUILTIN_GRAPH_PROVIDER,
+            Provider::BuiltinFts => BUILTIN_FTS_PROVIDER,
+            Provider::BuiltinBtree => {
+                return Err(FastDbError::format(
+                    "ordinary B-tree provider cannot own a hidden column",
+                ));
+            }
+        },
         column.provider_version,
         &column.physical_encoding,
+        column.dimension,
         &column.options_json,
         "READY",
         column.encoding_version,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn persist_analyzer(conn: &Connection, analyzer: &AnalyzerDefinition) -> Result<()> {
+    let (statement, bindings) = lower::analyzer_insert(
+        &analyzer.id.to_hex(),
+        &analyzer.logical_name,
+        &analyzer.provider,
+        analyzer.provider_version,
+        &analyzer.options_json,
+        &analyzer.definition,
     );
     conn.exec_bound(statement, bindings)
 }
@@ -369,6 +513,15 @@ pub fn persist_graph_capability(conn: &Connection) -> Result<()> {
         BUILTIN_GRAPH_PROVIDER,
         BUILTIN_GRAPH_PROVIDER_VERSION,
         BUILTIN_GRAPH_ENCODING_VERSION,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn persist_fts_capability(conn: &Connection) -> Result<()> {
+    let (statement, bindings) = lower::capability_insert(
+        BUILTIN_FTS_PROVIDER,
+        BUILTIN_FTS_PROVIDER_VERSION,
+        BUILTIN_FTS_ENCODING_VERSION,
     );
     conn.exec_bound(statement, bindings)
 }
@@ -403,10 +556,12 @@ pub fn persist_index(
         match index.kind {
             IndexKind::Btree => "BTREE",
             IndexKind::GraphAdjacency => "GRAPH_ADJACENCY",
+            IndexKind::Fts => "FTS",
         },
         match index.provider {
             Provider::BuiltinBtree => "BUILTIN_BTREE",
             Provider::BuiltinGraph => BUILTIN_GRAPH_PROVIDER,
+            Provider::BuiltinFts => BUILTIN_FTS_PROVIDER,
         },
         index.provider_version,
         &index.options_json,
@@ -480,6 +635,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     load_fields(conn, &mut snapshot)?;
     load_indexes(conn, &mut snapshot)?;
     validate_graph_catalog(&snapshot)?;
+    validate_fts_catalog(&snapshot)?;
     validate_physical_objects(&schema, &snapshot, true)?;
     Ok(CatalogState::Ready(snapshot))
 }
@@ -799,11 +955,13 @@ fn load_index_rows(
                 let kind = match format_text(&row[8], "index_kind")?.as_str() {
                     "BTREE" => IndexKind::Btree,
                     "GRAPH_ADJACENCY" => IndexKind::GraphAdjacency,
+                    "FTS" => IndexKind::Fts,
                     _ => return Err(FastDbError::format("index catalog has unknown kind")),
                 };
                 let provider = match format_text(&row[9], "provider")?.as_str() {
                     "BUILTIN_BTREE" => Provider::BuiltinBtree,
                     BUILTIN_GRAPH_PROVIDER => Provider::BuiltinGraph,
+                    BUILTIN_FTS_PROVIDER => Provider::BuiltinFts,
                     _ => {
                         return Err(FastDbError::format(
                             "index requires an unknown or unavailable provider",
@@ -851,6 +1009,23 @@ fn load_index_rows(
             options_json,
             state,
             encoding_version,
+            physical_columns: if kind == IndexKind::Fts {
+                let mut columns = snapshot
+                    .hidden_columns
+                    .values()
+                    .filter(|column| column.index_id == Some(id))
+                    .collect::<Vec<_>>();
+                columns.sort_by_key(|column| match column.role {
+                    HiddenColumnRole::FtsText(ordinal) => ordinal,
+                    HiddenColumnRole::Graph(_) => usize::MAX,
+                });
+                columns
+                    .into_iter()
+                    .map(|column| column.physical_name.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            },
         };
         crate::provider::index_provider(&index)?;
         if !ids.insert(id)
@@ -865,12 +1040,40 @@ fn load_index_rows(
 
 fn load_analyzers(conn: &Connection) -> Result<BTreeMap<String, AnalyzerDefinition>> {
     let rows = conn.collect_rows(lower::analyzers_stmt(), vec![])?;
-    if rows.is_empty() {
-        return Ok(BTreeMap::new());
+    let mut analyzers = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    for row in rows {
+        if row.len() != 6 {
+            return Err(FastDbError::format("analyzer catalog row has wrong width"));
+        }
+        let id = CatalogId::from_hex(&format_text(&row[0], "analyzer_id")?)?;
+        let logical_name = format_text(&row[1], "logical_name")?;
+        if logical_name.is_empty() || is_reserved_logical_name(&logical_name) {
+            return Err(FastDbError::format(
+                "analyzer catalog has invalid logical name",
+            ));
+        }
+        let analyzer = AnalyzerDefinition {
+            id,
+            logical_name: logical_name.clone(),
+            provider: format_text(&row[2], "provider")?,
+            provider_version: format_integer(&row[3], "provider_version")?,
+            options_json: format_text(&row[4], "options_json")?,
+            definition: format_text(&row[5], "definition")?,
+        };
+        if analyzer.provider != BUILTIN_FTS_ANALYZER_PROVIDER
+            || analyzer.provider_version != BUILTIN_FTS_PROVIDER_VERSION
+            || analyzer.options_json != "{\"tokenizer\":\"blank\"}"
+        {
+            return Err(FastDbError::format(
+                "analyzer requires an unknown or incompatible provider",
+            ));
+        }
+        if !ids.insert(id) || analyzers.insert(logical_name, analyzer).is_some() {
+            return Err(FastDbError::format("analyzer catalog contains duplicates"));
+        }
     }
-    Err(FastDbError::format(
-        "analyzer catalog requires the unavailable FTS capability",
-    ))
+    Ok(analyzers)
 }
 
 fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenColumnDefinition>> {
@@ -885,13 +1088,10 @@ fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenCo
         }
         let id = CatalogId::from_hex(&format_text(&row[0], "column_id")?)?;
         let table_id = CatalogId::from_hex(&format_text(&row[1], "table_id")?)?;
-        if !matches!(row[2], Value::Null)
-            || !matches!(row[3], Value::Null)
-            || !matches!(row[8], Value::Null)
-        {
-            return Err(FastDbError::format(
-                "graph hidden column has index, field, or dimension metadata",
-            ));
+        let index_id = format_optional_catalog_id(&row[2], "index_id")?;
+        let field_path_key = format_optional_text(&row[3], "field_path_key")?;
+        if let Some(path_key) = &field_path_key {
+            decode_canonical_path(path_key)?;
         }
         let physical_name = format_text(&row[4], "physical_name")?;
         validate_physical_name(&physical_name, HIDDEN_COLUMN_NAME_PREFIX)?;
@@ -900,34 +1100,93 @@ fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenCo
                 "hidden-column physical name does not match its immutable ID",
             ));
         }
-        if format_text(&row[5], "provider")? != BUILTIN_GRAPH_PROVIDER {
-            return Err(FastDbError::format(
-                "hidden typed column requires an unknown provider",
-            ));
-        }
+        let provider = match format_text(&row[5], "provider")?.as_str() {
+            BUILTIN_GRAPH_PROVIDER => Provider::BuiltinGraph,
+            BUILTIN_FTS_PROVIDER => Provider::BuiltinFts,
+            _ => {
+                return Err(FastDbError::format(
+                    "hidden typed column requires an unknown provider",
+                ));
+            }
+        };
         let provider_version = format_integer(&row[6], "provider_version")?;
         let physical_encoding = format_text(&row[7], "physical_encoding")?;
+        let dimension = format_optional_integer(&row[8], "dimension")?;
         let options_json = format_text(&row[9], "options_json")?;
-        let role = match options_json.as_str() {
-            "{\"role\":\"in_table\"}" => GraphColumnRole::InTable,
-            "{\"role\":\"in_rid\"}" => GraphColumnRole::InRid,
-            "{\"role\":\"out_table\"}" => GraphColumnRole::OutTable,
-            "{\"role\":\"out_rid\"}" => GraphColumnRole::OutRid,
-            _ => return Err(FastDbError::format("unknown graph hidden-column role")),
+        let role = match provider {
+            Provider::BuiltinGraph => {
+                if index_id.is_some() || field_path_key.is_some() || dimension.is_some() {
+                    return Err(FastDbError::format(
+                        "graph hidden column has index, field, or dimension metadata",
+                    ));
+                }
+                let graph_role = match options_json.as_str() {
+                    "{\"role\":\"in_table\"}" => GraphColumnRole::InTable,
+                    "{\"role\":\"in_rid\"}" => GraphColumnRole::InRid,
+                    "{\"role\":\"out_table\"}" => GraphColumnRole::OutTable,
+                    "{\"role\":\"out_rid\"}" => GraphColumnRole::OutRid,
+                    _ => return Err(FastDbError::format("unknown graph hidden-column role")),
+                };
+                if physical_encoding != graph_role.encoding() {
+                    return Err(FastDbError::format(
+                        "graph hidden-column role and encoding disagree",
+                    ));
+                }
+                HiddenColumnRole::Graph(graph_role)
+            }
+            Provider::BuiltinFts => {
+                if index_id.is_none() || field_path_key.is_none() || dimension.is_some() {
+                    return Err(FastDbError::format(
+                        "FTS hidden column requires index and field ownership only",
+                    ));
+                }
+                if physical_encoding != "FTS_TEXT_UTF8" {
+                    return Err(FastDbError::format(
+                        "FTS hidden column has an incompatible encoding",
+                    ));
+                }
+                let value: serde_json::Value = serde_json::from_str(&options_json)
+                    .map_err(|_| FastDbError::format("FTS hidden options are malformed"))?;
+                let object = value
+                    .as_object()
+                    .ok_or_else(|| FastDbError::format("FTS hidden options must be an object"))?;
+                if object.len() != 2
+                    || object.get("role").and_then(serde_json::Value::as_str) != Some("fts_text")
+                {
+                    return Err(FastDbError::format(
+                        "FTS hidden-column role options are not canonical",
+                    ));
+                }
+                let ordinal = object
+                    .get("ordinal")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .ok_or_else(|| FastDbError::format("FTS hidden ordinal is invalid"))?;
+                if options_json != format!("{{\"ordinal\":{ordinal},\"role\":\"fts_text\"}}") {
+                    return Err(FastDbError::format(
+                        "FTS hidden options are not canonically encoded",
+                    ));
+                }
+                HiddenColumnRole::FtsText(ordinal)
+            }
+            Provider::BuiltinBtree => unreachable!("matched providers exclude B-tree"),
         };
-        if physical_encoding != role.encoding() {
-            return Err(FastDbError::format(
-                "graph hidden-column role and encoding disagree",
-            ));
-        }
         let state = match format_text(&row[10], "state")?.as_str() {
             "READY" => ProviderState::Ready,
             "REBUILD_REQUIRED" => ProviderState::RebuildRequired,
             _ => return Err(FastDbError::format("hidden column has unknown state")),
         };
         let encoding_version = format_integer(&row[11], "encoding_version")?;
-        if provider_version != BUILTIN_GRAPH_PROVIDER_VERSION
-            || encoding_version != BUILTIN_GRAPH_ENCODING_VERSION
+        let expected_versions = match provider {
+            Provider::BuiltinGraph => (
+                BUILTIN_GRAPH_PROVIDER_VERSION,
+                BUILTIN_GRAPH_ENCODING_VERSION,
+            ),
+            Provider::BuiltinFts => (BUILTIN_FTS_PROVIDER_VERSION, BUILTIN_FTS_ENCODING_VERSION),
+            Provider::BuiltinBtree => unreachable!("hidden B-tree excluded"),
+        };
+        if provider_version != expected_versions.0
+            || encoding_version != expected_versions.1
             || state != ProviderState::Ready
         {
             return Err(FastDbError::format(
@@ -937,9 +1196,13 @@ fn load_hidden_columns(conn: &Connection) -> Result<BTreeMap<CatalogId, HiddenCo
         let column = HiddenColumnDefinition {
             id,
             table_id,
+            index_id,
+            field_path_key,
             physical_name: physical_name.clone(),
+            provider,
             role,
             physical_encoding,
+            dimension,
             options_json,
             state,
             provider_version,
@@ -969,10 +1232,19 @@ fn load_capabilities(conn: &Connection) -> Result<BTreeMap<String, CapabilityReq
             min_provider_version: format_integer(&row[1], "min_provider_version")?,
             min_encoding_version: format_integer(&row[2], "min_encoding_version")?,
         };
-        if provider != BUILTIN_GRAPH_PROVIDER
-            || requirement.min_provider_version != BUILTIN_GRAPH_PROVIDER_VERSION
-            || requirement.min_encoding_version != BUILTIN_GRAPH_ENCODING_VERSION
-        {
+        let supported = match provider.as_str() {
+            BUILTIN_GRAPH_PROVIDER => {
+                requirement.min_provider_version == BUILTIN_GRAPH_PROVIDER_VERSION
+                    && requirement.min_encoding_version == BUILTIN_GRAPH_ENCODING_VERSION
+            }
+            BUILTIN_FTS_PROVIDER => {
+                cfg!(not(target_family = "wasm"))
+                    && requirement.min_provider_version == BUILTIN_FTS_PROVIDER_VERSION
+                    && requirement.min_encoding_version == BUILTIN_FTS_ENCODING_VERSION
+            }
+            _ => false,
+        };
+        if !supported {
             return Err(FastDbError::format(
                 "database requires an unknown or unavailable capability",
             ));
@@ -1050,16 +1322,32 @@ fn validate_physical_objects(
     }
     for table in snapshot.tables.values() {
         expected_reserved.insert(table.physical_name.clone());
-        let table_ddl = match table.kind {
-            TableKind::Normal => lower::physical_table_ddl(&table.physical_name)?,
-            TableKind::Relation => lower::physical_relation_table_ddl(
-                &table.physical_name,
-                &graph_columns(snapshot, table)?
-                    .into_iter()
-                    .map(|column| column.physical_name.clone())
-                    .collect::<Vec<_>>(),
-            )?,
+        let graph = if table.kind == TableKind::Relation {
+            graph_columns(snapshot, table)?
+                .into_iter()
+                .map(|column| column.physical_name.clone())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
         };
+        let mut fts = snapshot
+            .hidden_columns
+            .values()
+            .filter(|column| {
+                column.table_id == table.id && matches!(column.role, HiddenColumnRole::FtsText(_))
+            })
+            .collect::<Vec<_>>();
+        fts.sort_by_key(|column| match column.role {
+            HiddenColumnRole::FtsText(ordinal) => ordinal,
+            HiddenColumnRole::Graph(_) => usize::MAX,
+        });
+        let table_ddl = lower::physical_table_with_hidden_ddl(
+            &table.physical_name,
+            &graph,
+            &fts.into_iter()
+                .map(|column| column.physical_name.clone())
+                .collect::<Vec<_>>(),
+        )?;
         require_exact_schema(
             schema,
             "table",
@@ -1097,12 +1385,13 @@ pub(crate) fn graph_columns<'a>(
     table: &TableDefinition,
 ) -> Result<Vec<&'a HiddenColumnDefinition>> {
     let mut by_role = BTreeMap::new();
-    for column in snapshot
-        .hidden_columns
-        .values()
-        .filter(|column| column.table_id == table.id)
-    {
-        if by_role.insert(column.role, column).is_some() {
+    for column in snapshot.hidden_columns.values().filter(|column| {
+        column.table_id == table.id && matches!(column.role, HiddenColumnRole::Graph(_))
+    }) {
+        let HiddenColumnRole::Graph(role) = column.role else {
+            unreachable!("filtered graph role");
+        };
+        if by_role.insert(role, column).is_some() {
             return Err(FastDbError::format(
                 "relation table has duplicate hidden-column roles",
             ));
@@ -1128,7 +1417,11 @@ fn validate_graph_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
             "graph capability requirement disagrees with relation ownership",
         ));
     }
-    for column in snapshot.hidden_columns.values() {
+    for column in snapshot
+        .hidden_columns
+        .values()
+        .filter(|column| matches!(column.role, HiddenColumnRole::Graph(_)))
+    {
         let owner = snapshot
             .tables
             .values()
@@ -1173,7 +1466,9 @@ fn validate_graph_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
         if snapshot
             .hidden_columns
             .values()
-            .filter(|column| column.table_id == table.id)
+            .filter(|column| {
+                column.table_id == table.id && matches!(column.role, HiddenColumnRole::Graph(_))
+            })
             .count()
             != 4
         {
@@ -1211,6 +1506,105 @@ fn validate_graph_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
                     "relation adjacency index direction or column order is invalid",
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_fts_catalog(snapshot: &CatalogSnapshot) -> Result<()> {
+    let fts_indexes = snapshot
+        .tables
+        .values()
+        .flat_map(|table| table.indexes.values().map(move |index| (table, index)))
+        .filter(|(_, index)| index.kind == IndexKind::Fts)
+        .collect::<Vec<_>>();
+    let fts_columns = snapshot
+        .hidden_columns
+        .values()
+        .filter(|column| matches!(column.role, HiddenColumnRole::FtsText(_)))
+        .collect::<Vec<_>>();
+    let requires_fts =
+        !snapshot.analyzers.is_empty() || !fts_indexes.is_empty() || !fts_columns.is_empty();
+    if requires_fts != snapshot.capabilities.contains_key(BUILTIN_FTS_PROVIDER) {
+        return Err(FastDbError::format(
+            "FTS capability requirement disagrees with analyzer/index ownership",
+        ));
+    }
+
+    let mut table_ordinals = BTreeMap::<CatalogId, BTreeSet<usize>>::new();
+    for column in &fts_columns {
+        let owner = snapshot
+            .tables
+            .values()
+            .find(|table| table.id == column.table_id)
+            .ok_or_else(|| FastDbError::format("FTS hidden column has an orphan table owner"))?;
+        let index_id = column
+            .index_id
+            .ok_or_else(|| FastDbError::format("FTS hidden column has no index owner"))?;
+        let index = owner
+            .indexes
+            .values()
+            .find(|index| index.id == index_id)
+            .ok_or_else(|| FastDbError::format("FTS hidden column has an orphan index owner"))?;
+        if index.kind != IndexKind::Fts || column.provider != Provider::BuiltinFts {
+            return Err(FastDbError::format(
+                "FTS hidden column is owned by an incompatible index",
+            ));
+        }
+        let HiddenColumnRole::FtsText(ordinal) = column.role else {
+            unreachable!("filtered FTS role");
+        };
+        if !table_ordinals.entry(owner.id).or_default().insert(ordinal) {
+            return Err(FastDbError::format(
+                "FTS hidden columns have duplicate table ordinals",
+            ));
+        }
+    }
+    for ordinals in table_ordinals.values() {
+        if ordinals.iter().copied().ne(0..ordinals.len()) {
+            return Err(FastDbError::format(
+                "FTS hidden-column table ordinals are not contiguous",
+            ));
+        }
+    }
+
+    for (table, index) in fts_indexes {
+        crate::provider::index_provider(index)?;
+        let options = FtsIndexOptions::parse_canonical(&index.options_json)?;
+        if options.surface == "surreal" {
+            let analyzer = options
+                .analyzer
+                .as_ref()
+                .and_then(|name| snapshot.analyzers.get(name))
+                .ok_or_else(|| FastDbError::format("FTS index analyzer is missing"))?;
+            if analyzer.provider != BUILTIN_FTS_ANALYZER_PROVIDER {
+                return Err(FastDbError::format(
+                    "FTS index analyzer provider is incompatible",
+                ));
+            }
+        }
+        let mut owned = snapshot
+            .hidden_columns
+            .values()
+            .filter(|column| column.index_id == Some(index.id))
+            .collect::<Vec<_>>();
+        owned.sort_by_key(|column| match column.role {
+            HiddenColumnRole::FtsText(ordinal) => ordinal,
+            HiddenColumnRole::Graph(_) => usize::MAX,
+        });
+        if owned.len() != index.paths.len()
+            || owned.iter().zip(&index.path_keys).any(|(column, path)| {
+                column.table_id != table.id
+                    || column.field_path_key.as_deref() != Some(path.as_str())
+            })
+            || owned
+                .iter()
+                .map(|column| column.physical_name.as_str())
+                .ne(index.physical_columns.iter().map(String::as_str))
+        {
+            return Err(FastDbError::format(
+                "FTS index hidden-column ownership or order is invalid",
+            ));
         }
     }
     Ok(())
@@ -1289,6 +1683,16 @@ fn format_integer(value: &Value, field: &str) -> Result<i64> {
         Value::Numeric(turso_core::Numeric::Integer(value)) => Ok(*value),
         _ => Err(FastDbError::format(format!(
             "catalog field {field} is not INTEGER"
+        ))),
+    }
+}
+
+fn format_optional_integer(value: &Value, field: &str) -> Result<Option<i64>> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Numeric(turso_core::Numeric::Integer(value)) => Ok(Some(*value)),
+        _ => Err(FastDbError::format(format!(
+            "catalog field {field} is neither INTEGER nor NULL"
         ))),
     }
 }

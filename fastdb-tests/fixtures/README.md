@@ -15,6 +15,11 @@ SurrealDB source, tests, fixtures, expected output, or fuzz corpus.
   Phase 6 implementation. It preserves the same independently authored table,
   index, and record data while recording format/migration version 2 and the
   three empty provider catalogs.
+- `phase7-format2-graph.fastdb` contains independently authored person nodes,
+  relation records, and both mandatory adjacency indexes in format 2.
+- `phase8-format2-fts.fastdb` contains three independently authored article
+  documents, a blank analyzer, one Surreal-surface full-text index, its hidden
+  TEXT representation, and the pinned provider's physical index state.
 
 Generation date: 2026-08-13. Behavioral data and expected assertions were
 written for FastDB and are not adapted from another implementation. SHA-256
@@ -23,3 +28,5 @@ and CI provenance step. `P5-FIXTURE-001` checks open/migration/reopen,
 mutation, integrity, and actual expression-index selection.
 `P6-FMT-004` performs the equivalent reopen, mutation, integrity, and plan
 checks against the committed format-2 artifact.
+`P8-FTS-012` reopens the FTS artifact, proves provider selection, mutates it,
+and verifies that provider maintenance remains live.

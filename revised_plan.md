@@ -1,7 +1,7 @@
 # FastDB Core Technical Plan and Roadmap
 
-Status: Phase 7 complete locally; Phase 8 planning is next; Core 1.0 roadmap
-revised 2026-08-13
+Status: Phase 8 complete locally; Phase 9 exact-vector planning next; Core 1.0
+roadmap revised 2026-08-13
 
 ## 1. Product Definition
 
@@ -1063,17 +1063,17 @@ After Core 1.0, separately plan and gate:
 
 ## 14. Immediate Engineering Checklist
 
-1. Preserve the completed Phase 7 graph baseline and evidence in
-   `plan-phase7.md`, `docs/phase7-report.md`, and
-   `docs/compat-research/phase7.md`.
-2. Author an authoritative `plan-phase8.md` before implementing FTS; keep the
-   SurrealQL-compatible and FastDB/Turso extension surfaces explicitly distinct.
-3. Characterize only the immutable SurrealDB `v3.1.5` FTS subset and add only
-   independently authored clean-room tests.
+1. Preserve the completed Phase 8 FTS baseline and evidence in
+   `plan-phase8.md`, `docs/phase8-report.md`, and
+   `docs/compat-research/phase8.md`.
+2. Author the authoritative Phase 9 plan before implementing exact vectors.
+3. Preserve the immutable SurrealDB `v3.1.5` characterization and add only
+   independently authored tests.
 4. Preserve format 2, graph semantics, the sealed provider boundary, direct
    translated AST, opaque physical names, and every earlier verification gate.
-5. Do not start vectors, operational tooling, parallel writers, server, cloud,
-   tagging, publication, or release operations while Phase 8 is being planned.
+5. Do not start operational tooling, parallel writers, server, cloud, tagging,
+   publication, or release operations until Phase 9 is complete and committed
+   as its own rollback point.
 
 ## 15. References
 

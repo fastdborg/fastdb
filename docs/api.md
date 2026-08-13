@@ -35,6 +35,34 @@ connection.close().await?;
 # }
 ```
 
+Phase 8 full-text search is available through the same query surface:
+
+```rust
+# use fastdb::{params, Connection};
+# async fn search(connection: &Connection) -> Result<(), fastdb::Error> {
+connection.execute(
+    "DEFINE ANALYZER blankish TOKENIZERS blank; \
+     DEFINE INDEX body_idx ON article FIELDS body \
+       FULLTEXT ANALYZER blankish HIGHLIGHTS",
+    params! {},
+).await?;
+let rows = connection.query(
+    "SELECT id, search::score(1) AS score FROM article \
+     WHERE body @1@ $query ORDER BY score DESC",
+    params! { "query" => "Rust database" },
+).await?;
+# let _ = rows;
+# Ok(())
+# }
+```
+
+Only the documented case-sensitive `blank` analyzer subset counts as
+SurrealQL compatibility. `CREATE INDEX ... USING fts` and the `fts_*`
+functions are labeled FastDB/Turso extensions. A query touching an FTS index
+after an indexed write in the same explicit transaction returns a Transaction
+error and rolls back that transaction, preventing the pinned provider's stale
+pre-commit view from escaping.
+
 Each connection owns a dedicated worker thread. Requests from concurrent
 callers are serialized as complete units. If a queued request future is
 dropped, that request is skipped. Dropping a future after its request starts

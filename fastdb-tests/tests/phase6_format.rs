@@ -395,20 +395,24 @@ fn p6_lang_002_functions_and_unaliased_expressions_fail_before_catalog_mutation(
             .category(),
         ErrorCategory::Schema
     );
-    for source in [
-        "DEFINE INDEX body ON article FIELDS body FULLTEXT ANALYZER blank",
-        "DEFINE INDEX body ON article FIELDS body USING fts WITH (tokenizer='simple')",
-    ] {
-        assert_eq!(
-            connection.execute(source).unwrap_err().category(),
-            ErrorCategory::UnsupportedSyntax,
-            "{source}"
-        );
-        assert!(matches!(
-            connection.catalog_state().unwrap(),
-            turso_fastdb::catalog::CatalogState::Empty
-        ));
-    }
+    assert_eq!(
+        connection
+            .execute("DEFINE INDEX body ON article FIELDS body FULLTEXT ANALYZER blank")
+            .unwrap_err()
+            .category(),
+        ErrorCategory::Schema
+    );
+    assert!(matches!(
+        connection.catalog_state().unwrap(),
+        turso_fastdb::catalog::CatalogState::Empty
+    ));
+    assert_eq!(
+        connection
+            .execute("DEFINE INDEX body ON article FIELDS body USING fts WITH (tokenizer='simple')")
+            .unwrap_err()
+            .category(),
+        ErrorCategory::UnsupportedSyntax
+    );
 }
 
 #[test]

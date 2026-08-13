@@ -376,4 +376,115 @@ mod tests {
         let remaining = conn.execute("SELECT * FROM wrote").unwrap();
         assert_eq!(remaining.statements, vec![StatementResult::Rows(vec![])]);
     }
+
+    #[test]
+    fn p8_fts_001_analyzer_and_index_create_sealed_provider_storage() {
+        let db = Database::open_memory().unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("CREATE doc:one SET text = 'Rust web programming'")
+            .unwrap();
+        conn.execute("DEFINE ANALYZER blankish TOKENIZERS blank")
+            .unwrap();
+        conn.execute(
+            "DEFINE INDEX text_idx ON doc FIELDS text FULLTEXT ANALYZER blankish HIGHLIGHTS",
+        )
+        .unwrap();
+
+        let catalog = conn.coordinator.catalog.read().unwrap();
+        let snapshot = catalog
+            .as_ref()
+            .and_then(crate::catalog::CatalogState::snapshot)
+            .unwrap();
+        assert_eq!(snapshot.analyzers.len(), 1);
+        assert!(snapshot
+            .capabilities
+            .contains_key(crate::catalog::BUILTIN_FTS_PROVIDER));
+        let index = &snapshot.tables["doc"].indexes["text_idx"];
+        assert_eq!(index.kind, crate::catalog::IndexKind::Fts);
+        assert_eq!(index.physical_columns.len(), 1);
+        assert_eq!(
+            snapshot
+                .hidden_columns
+                .values()
+                .filter(|column| column.index_id == Some(index.id))
+                .count(),
+            1
+        );
+        drop(catalog);
+
+        let result = conn
+            .execute(
+                "SELECT text, search::score(1) AS score, \
+                 search::highlight('<b>', '</b>', 1) AS marked \
+                 FROM doc WHERE text @1@ 'Rust web'",
+            )
+            .unwrap();
+        let StatementResult::Rows(rows) = &result.statements[0] else {
+            panic!("expected FTS rows");
+        };
+        assert_eq!(rows.len(), 1);
+        let Value::Object(row) = &rows[0] else {
+            panic!("expected projected object");
+        };
+        assert!(matches!(row.get("score"), Some(Value::Float(value)) if *value >= 0.0));
+        assert_eq!(
+            row.get("marked"),
+            Some(&Value::Str(
+                "<b>Rust</b> <b>web</b> programming".to_string()
+            ))
+        );
+
+        conn.execute("UPDATE doc:one SET text = 'database internals'")
+            .unwrap();
+        let stale = conn
+            .execute("SELECT * FROM doc WHERE text @@ 'Rust'")
+            .unwrap();
+        assert_eq!(stale.statements, vec![StatementResult::Rows(vec![])]);
+        let fresh = conn
+            .execute("SELECT * FROM doc WHERE text @@ 'database'")
+            .unwrap();
+        assert!(matches!(&fresh.statements[0], StatementResult::Rows(rows) if rows.len() == 1));
+
+        conn.execute("CREATE INDEX native_idx ON doc USING fts (text) WITH (tokenizer = 'simple')")
+            .unwrap();
+        let native = conn
+            .execute(
+                "SELECT fts_score(text, 'database') AS score, \
+                 fts_highlight(text, '<i>', '</i>', 'database') AS marked \
+                 FROM doc WHERE fts_match(text, 'database')",
+            )
+            .unwrap();
+        assert!(matches!(&native.statements[0], StatementResult::Rows(rows) if rows.len() == 1));
+    }
+
+    #[test]
+    fn p8_fts_002_explicit_writer_rejects_stale_search_and_rolls_back() {
+        let db = Database::open_memory().unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("CREATE doc:one SET text = 'committed term'")
+            .unwrap();
+        conn.execute("DEFINE ANALYZER blankish TOKENIZERS blank")
+            .unwrap();
+        conn.execute("DEFINE INDEX text_idx ON doc FIELDS text FULLTEXT ANALYZER blankish")
+            .unwrap();
+
+        conn.execute("BEGIN").unwrap();
+        conn.execute("UPDATE doc:one SET text = 'uncommitted term'")
+            .unwrap();
+        let error = conn
+            .execute("SELECT * FROM doc WHERE text @@ 'uncommitted'")
+            .unwrap_err();
+        assert_eq!(error.category(), ErrorCategory::Transaction);
+        assert!(error.to_string().contains("until commit"));
+        conn.execute("CANCEL").unwrap();
+
+        let committed = conn
+            .execute("SELECT * FROM doc WHERE text @@ 'committed'")
+            .unwrap();
+        assert!(matches!(&committed.statements[0], StatementResult::Rows(rows) if rows.len() == 1));
+        let absent = conn
+            .execute("SELECT * FROM doc WHERE text @@ 'uncommitted'")
+            .unwrap();
+        assert_eq!(absent.statements, vec![StatementResult::Rows(vec![])]);
+    }
 }

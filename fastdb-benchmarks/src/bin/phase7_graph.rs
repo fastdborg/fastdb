@@ -12,7 +12,7 @@ use turso_core::{
     storage::database::DatabaseFile, Database as EngineDatabase, DatabaseOpts, OpenFlags,
     OpenOptions, SqliteDialect, Value as EngineValue,
 };
-use turso_fastdb::catalog::{GraphColumnRole, TableKind};
+use turso_fastdb::catalog::{GraphColumnRole, HiddenColumnRole, TableKind};
 use turso_fastdb::names::encode_rid;
 use turso_fastdb::{Database, RecordId, StatementResult, Value};
 
@@ -47,7 +47,9 @@ fn main() {
         snapshot
             .hidden_columns
             .values()
-            .find(|column| column.table_id == relation.id && column.role == role)
+            .find(|column| {
+                column.table_id == relation.id && column.role == HiddenColumnRole::Graph(role)
+            })
             .unwrap()
     });
     let person_id = snapshot.tables["person"].id.to_hex();

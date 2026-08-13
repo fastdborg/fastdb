@@ -239,6 +239,9 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         let statement = match &self.peek().kind {
+            TokenKind::Create if self.at_offset(1, &TokenKind::Index) => {
+                Statement::DefineIndex(self.parse_create_index()?)
+            }
             TokenKind::Create => Statement::Create(self.parse_create()?),
             TokenKind::Relate => Statement::Relate(self.parse_relate()?),
             TokenKind::Select => Statement::Select(self.parse_select()?),
@@ -538,9 +541,12 @@ impl<'a> Parser<'a> {
         match &self.peek().kind {
             TokenKind::Table => Ok(Statement::DefineTable(self.parse_define_table(start)?)),
             TokenKind::Field => Ok(Statement::DefineField(self.parse_define_field(start)?)),
+            TokenKind::Analyzer => Ok(Statement::DefineAnalyzer(
+                self.parse_define_analyzer(start)?,
+            )),
             TokenKind::Index => Ok(Statement::DefineIndex(self.parse_define_index(start)?)),
             _ => Err(ParseError::unsupported(
-                "only DEFINE TABLE, DEFINE FIELD, and DEFINE INDEX are in the MVP grammar",
+                "only DEFINE TABLE, DEFINE FIELD, DEFINE ANALYZER, and DEFINE INDEX are supported",
                 self.peek().span,
             )),
         }
@@ -684,6 +690,42 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_define_analyzer(
+        &mut self,
+        start: Span,
+    ) -> Result<DefineAnalyzerStatement, ParseError> {
+        self.expect(&TokenKind::Analyzer, "keyword ANALYZER")?;
+        let name = self.expect_identifier("an analyzer name")?;
+        self.expect(&TokenKind::Tokenizers, "keyword TOKENIZERS")?;
+        let tokenizer_token = self.peek().clone();
+        let tokenizer = match &tokenizer_token.kind {
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("blank") => {
+                self.position += 1;
+                Spanned::new(AnalyzerTokenizerSyntax::Blank, tokenizer_token.span)
+            }
+            _ => {
+                return Err(ParseError::unsupported(
+                    "Phase 8 Surreal analyzers support exactly TOKENIZERS blank",
+                    tokenizer_token.span,
+                ));
+            }
+        };
+        if matches!(
+            self.peek().kind,
+            TokenKind::Functions | TokenKind::Filters | TokenKind::Ident(_)
+        ) {
+            return Err(ParseError::unsupported(
+                "analyzer functions and filters are outside the Phase 8 subset",
+                self.peek().span,
+            ));
+        }
+        Ok(DefineAnalyzerStatement {
+            span: start.union(tokenizer.span),
+            name,
+            tokenizer,
+        })
+    }
+
     fn parse_define_index(&mut self, start: Span) -> Result<DefineIndexStatement, ParseError> {
         self.expect(&TokenKind::Index, "keyword INDEX")?;
         let name = self.expect_identifier("an index name")?;
@@ -706,9 +748,11 @@ impl<'a> Parser<'a> {
                 ));
             }
             let analyzer = self.expect_identifier("an analyzer name")?;
+            let highlights = self.take(&TokenKind::Highlights).map(|token| token.span);
             IndexKindSyntax::Fulltext {
-                span: fulltext.span.union(analyzer.span),
+                span: fulltext.span.union(highlights.unwrap_or(analyzer.span)),
                 analyzer,
+                highlights,
             }
         } else if let Some(using) = self.take(&TokenKind::Using) {
             let name = self.expect_identifier("an index provider name")?;
@@ -743,6 +787,46 @@ impl<'a> Parser<'a> {
             fields,
             unique,
             kind,
+            surface: IndexDefinitionSurface::SurrealDefine,
+        })
+    }
+
+    fn parse_create_index(&mut self) -> Result<DefineIndexStatement, ParseError> {
+        let start = self.expect(&TokenKind::Create, "keyword CREATE")?.span;
+        self.expect(&TokenKind::Index, "keyword INDEX")?;
+        let name = self.expect_identifier("an index name")?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("a table name")?;
+        let using = self.expect(&TokenKind::Using, "keyword USING")?.span;
+        let provider = self.expect_identifier("an index provider name")?;
+        self.expect(&TokenKind::LeftParen, "'(' after index provider")?;
+        let mut fields = vec![self.parse_field_path()?];
+        while self.eat(&TokenKind::Comma) {
+            let field = self.parse_field_path()?;
+            self.check_element_count(fields.len() + 1, field.span)?;
+            fields.push(field);
+        }
+        let close = self.expect(&TokenKind::RightParen, "')' after indexed fields")?;
+        let options = if self.eat(&TokenKind::With) {
+            self.parse_index_options()?
+        } else {
+            Vec::new()
+        };
+        let end = options.last().map_or(close.span, |option| option.span);
+        Ok(DefineIndexStatement {
+            span: start.union(end),
+            name,
+            table_keyword,
+            table,
+            fields,
+            unique: None,
+            kind: IndexKindSyntax::Provider {
+                span: using.union(end),
+                name: provider,
+                options,
+            },
+            surface: IndexDefinitionSurface::FastDbCreate,
         })
     }
 
@@ -1527,6 +1611,12 @@ impl<'a> Parser<'a> {
         &self.tokens[self.position]
     }
 
+    fn at_offset(&self, offset: usize, expected: &TokenKind) -> bool {
+        self.tokens
+            .get(self.position + offset)
+            .is_some_and(|token| discriminant(&token.kind) == discriminant(expected))
+    }
+
     fn at(&self, expected: &TokenKind) -> bool {
         discriminant(&self.peek().kind) == discriminant(expected)
     }
@@ -1786,6 +1876,7 @@ fn binary_binding_power(kind: &TokenKind) -> Option<(BinaryOperator, u8, u8)> {
         TokenKind::GreaterEqual => (BinaryOperator::GreaterEqual, 7),
         TokenKind::Equal => (BinaryOperator::Equal, 5),
         TokenKind::NotEqual => (BinaryOperator::NotEqual, 5),
+        TokenKind::FtsMatch(reference) => (BinaryOperator::FtsMatch(*reference), 5),
         TokenKind::And => (BinaryOperator::And, 3),
         TokenKind::Or => (BinaryOperator::Or, 1),
         _ => return None,

@@ -9,7 +9,7 @@ FastDB implements a documented SurrealQL-compatible subset. This file is the nor
 - **Planned**: reserved for parsed behavior that has not reached execution.
 - **Unsupported**: explicitly rejected and outside the MVP target.
 
-Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection and built-in B-tree maintenance. Phase 7 adds the evidenced bounded graph subset while FTS, vector, and function execution remain unavailable. Anything not listed as Supported or Partial remains explicitly outside the current phase.
+Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection and built-in B-tree maintenance. Phase 7 added the evidenced bounded graph subset. Phase 8 adds the evidenced single-field Surreal FTS subset; the broader native FTS surface is labeled a FastDB extension and is not counted as SurrealQL compatibility. Vector search and functions outside the closed FTS set remain unavailable. Anything not listed as Supported or Partial remains explicitly outside the current phase.
 
 ## Values and record IDs
 
@@ -41,8 +41,9 @@ Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection an
 | `OP-REL` | Partial | Execute `<`, `<=`, `>`, `>=` using the documented total type order. | `P1-EXPR-003` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P3-CRUD-002` |
 | `OP-EQ` | Partial | Execute recursive `=` and `!=`; `==` and `IS` are rejected. | `P1-EXPR-003`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P2-IDX-001` |
 | `OP-BOOL` | Partial | Execute short-circuit operand-returning `AND` and `OR`; symbolic boolean operators are rejected. | `P1-EXPR-003`, `P1-EXPR-005` | [Phase 3 expressions](docs/compat-research/phase3.md#expressions-and-truthiness) | `P3-EXPR-001`, `P3-IDX-001` |
+| `OP-FTS` | Partial | Execute one index-backed, case-sensitive, whitespace-AND `@@` or `@n@` predicate per SELECT for a characterized `blank` analyzer. FTS under OR/NOT, multiple predicates, and non-string queries are rejected. | `P8-PARSE-002`, `P8-PARSE-004` | [Phase 8 FTS observations](docs/compat-research/phase8.md) | `P8-FTS-001`, `P8-FTS-003`, `P8-FTS-009` |
 | `EXPR-TRAVERSAL` | Partial | Execute aliased, projection-only fixed-depth `->`, `<-`, and `<->` traversal up to eight hops, returning endpoint IDs or final `.*` documents. Filters, recursive paths, and standalone traversal values are rejected. | `P7-AST-003`, `P7-AST-004` | [Phase 7 graph observations](docs/compat-research/phase7.md) | `P7-GRAPH-001`, `P7-GRAPH-002` |
-| `EXPR-EXCLUDED` | Unsupported | Function calls have a bounded namespaced AST but remain explicit pre-execution errors; casts, subqueries, ranges, indexing, modulo, power, and broader operators also fail explicitly. | `P1-EXPR-005`, `P6-AST-001` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P6-LANG-002` |
+| `EXPR-EXCLUDED` | Unsupported | Function calls outside the closed Phase 8 FTS set, casts, subqueries, ranges, indexing, modulo, power, and broader operators fail explicitly. | `P1-EXPR-005`, `P6-AST-001`, `P8-PARSE-004` | [Phase 1 exclusions](docs/compat-research/phase1.md#binding-power-and-exclusions), [Phase 8 FTS observations](docs/compat-research/phase8.md) | `P1-BRIDGE-003`, `P6-LANG-002`, `P8-FTS-009` |
 
 ## Statements and clauses
 
@@ -69,9 +70,10 @@ Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection an
 | --- | --- | --- | --- | --- | --- |
 | `SCHEMA-TABLE` | Partial | Execute normal SCHEMALESS/SCHEMAFULL tables and `TYPE RELATION [IN/FROM table] [OUT/TO table] [ENFORCED]`; broader table types and clauses remain rejected. | `P1-STMT-001`, `P7-AST-001` | [Phase 2 definitions](docs/compat-research/phase2.md#nested-paths-and-duplicate-definitions), [Phase 7 graph observations](docs/compat-research/phase7.md) | `P2-SCHEMA-006`, `P3-TXN-001`, `P7-GRAPH-001`, `P7-GRAPH-003` |
 | `SCHEMA-FIELD` | Supported | Execute DEFINE FIELD on an existing table and validate all existing rows atomically. | `P1-STMT-001` | [Phase 2 fields](docs/compat-research/phase2.md#required-optional-null-and-numeric-coercion) | `P2-SCHEMA-005`, `P3-ATOMIC-003` |
-| `SCHEMA-INDEX` | Supported | Execute ordered scalar DEFINE INDEX fields with optional UNIQUE; excluded index kinds remain rejected. | `P1-STMT-001`, `P1-STMT-005` | [Phase 2 indexes](docs/compat-research/phase2.md#unique-null-missing-and-composite-indexes) | `P2-IDX-001`, `P3-IDX-001` |
-| `SCHEMA-INDEX-REMOVE` | Partial | Execute `REMOVE INDEX name ON [TABLE] table` atomically for built-in B-trees; reject `IF EXISTS` and other REMOVE resources. | `P6-AST-003` | [Phase 6 maintenance](docs/compat-research/phase6.md#index-removal-and-rebuild) | `P6-INDEX-001`, `P6-CLI-001` |
-| `SCHEMA-INDEX-REBUILD` | Partial | Execute blocking `REBUILD INDEX name ON [TABLE] table` atomically for built-in B-trees; reject `IF EXISTS` and `CONCURRENTLY`. | `P6-AST-003` | [Phase 6 maintenance](docs/compat-research/phase6.md#index-removal-and-rebuild) | `P6-INDEX-001`, `P6-CLI-001` |
+| `SCHEMA-ANALYZER` | Partial | Execute `DEFINE ANALYZER name TOKENIZERS blank`; functions, filters, comments, multiple tokenizers, and other analyzer configurations are rejected. | `P8-PARSE-001`, `P8-PARSE-004` | [Phase 8 FTS observations](docs/compat-research/phase8.md) | `P8-FTS-001`, `P8-API-001`, `P8-CLI-001` |
+| `SCHEMA-INDEX` | Partial | Execute ordered scalar B-tree indexes plus one-field `FULLTEXT ANALYZER` indexes over text. Other Surreal specialized indexes remain rejected; `CREATE INDEX ... USING fts` is a separate FastDB extension. | `P1-STMT-001`, `P8-PARSE-002`, `P8-PARSE-003` | [Phase 2 indexes](docs/compat-research/phase2.md#unique-null-missing-and-composite-indexes), [Phase 8 FTS observations](docs/compat-research/phase8.md) | `P2-IDX-001`, `P8-FTS-001`, `P8-FTS-003` |
+| `SCHEMA-INDEX-REMOVE` | Partial | Execute `REMOVE INDEX name ON [TABLE] table` atomically for built-in B-trees; explicitly reject FTS removal until physical-column reclamation is proven, `IF EXISTS`, and other resources. | `P6-AST-003` | [Phase 6 maintenance](docs/compat-research/phase6.md#index-removal-and-rebuild), [Phase 8 FTS observations](docs/compat-research/phase8.md) | `P6-INDEX-001`, `P8-FTS-003` |
+| `SCHEMA-INDEX-REBUILD` | Partial | Execute blocking B-tree rebuild and map ready FTS rebuild to provider segment optimization; reject `IF EXISTS` and `CONCURRENTLY`. | `P6-AST-003` | [Phase 6 maintenance](docs/compat-research/phase6.md#index-removal-and-rebuild), [Phase 8 FTS observations](docs/compat-research/phase8.md) | `P6-INDEX-001`, `P8-FTS-003` |
 | `TYPE-BASE` | Supported | Enforce bool, int, float, number, string, object, array, and record; null belongs to no base type. | `P1-STMT-001` | [Phase 2 fields](docs/compat-research/phase2.md#required-optional-null-and-numeric-coercion) | `P2-SCHEMA-003`, `P3-CRUD-003` |
 | `TYPE-OPTION` | Supported | Enforce recursive option types: absence is permitted but null is not. | `P1-STMT-001`, `P1-LIMIT-003` | [Phase 2 fields](docs/compat-research/phase2.md#required-optional-null-and-numeric-coercion) | `P2-SCHEMA-003`, `P3-CRUD-003` |
 | `TXN-BEGIN` | Supported | Execute bare BEGIN through BEGIN IMMEDIATE; nested BEGIN is a transaction error. | `P1-STMT-001`, `P1-STMT-005` | [Explicit transactions](docs/compat-research/phase3.md#explicit-transactions) | `P3-TXN-001`, `P3-TXN-003` |
@@ -85,7 +87,7 @@ Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection an
 | `EXCL-STMT` | Unsupported | INSERT, UPSERT, LET, non-index REMOVE resources, INFO, USE, LIVE, SHOW, SLEEP, THROW, FOR, and IF fail explicitly. | `P1-STMT-005`, `P6-AST-003` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses) | `P1-BRIDGE-003`, `P3-SCRIPT-001`, `P6-INDEX-001` |
 | `EXCL-CLAUSE` | Unsupported | TIMEOUT, FETCH, GROUP, SPLIT, OMIT, trailing SELECT EXPLAIN, general WITH, VALUE, MERGE, PATCH, PARALLEL, and executable specialized index kinds fail explicitly. | `P1-STMT-005`, `P6-AST-004` | [Phase 1 statements](docs/compat-research/phase1.md#statements-and-clauses), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P3-PARAM-001`, `P6-LANG-002` |
 | `EXCL-GRAPH` | Partial | The bounded Phase 7 relation/traversal subset executes. Array/cartesian RELATE, complex edge IDs, OR UPDATE, path filters, recursion, standalone traversal expressions, and relation endpoints that are themselves relations remain rejected. | `P7-AST-004` | [Phase 7 graph observations](docs/compat-research/phase7.md) | `P7-GRAPH-002`, `P7-GRAPH-003` |
-| `EXCL-ADVANCED` | Unsupported | Namespaced functions, casts, subqueries, permissions, users, namespaces, scopes, events, analyzers, views, live queries, and specialized index execution remain unavailable. | `P6-AST-001`, `P1-STMT-005`, `P6-AST-004` | [Phase 1 exclusions](docs/compat-research/phase1.md#phase-1-interpretation), [Phase 6 provider boundary](docs/compat-research/phase6.md#provider-syntax-boundary) | `P1-BRIDGE-003`, `P6-LANG-002`, `P6-CLI-002` |
+| `EXCL-ADVANCED` | Unsupported | Namespaced functions and analyzers outside the closed Phase 8 FTS subset, casts, subqueries, permissions, users, namespaces, scopes, events, views, live queries, vectors, and other specialized indexes remain unavailable. | `P6-AST-001`, `P1-STMT-005`, `P8-PARSE-004` | [Phase 1 exclusions](docs/compat-research/phase1.md#phase-1-interpretation), [Phase 8 FTS observations](docs/compat-research/phase8.md) | `P1-BRIDGE-003`, `P6-LANG-002`, `P8-FTS-009` |
 
 ## Phase 3 execution contracts
 
@@ -109,6 +111,13 @@ Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection an
 - Committed format-1 and migration-level-0 fixtures prove reopen, transactional migration, further mutation, integrity, and actual expression-index selection.
 - The release benchmark compares the public async API with an equivalent native Turso worker under identical values, durability, indexes, and result materialization. Raw samples and percentile ratios are committed.
 - FastDB Core is MIT licensed. Crates remain version `0.0.0` and `publish = false` while compatibility work continues toward the first public alpha; the alpha gate is the recorded local verification matrix, not remote CI.
+
+## Phase 8 FTS contracts
+
+- Surreal `blank` is a sealed, case-sensitive whitespace tokenizer with AND query semantics. `search::score` and `search::highlight` require a matching `@n@` reference in the same SELECT.
+- The native `CREATE INDEX ... USING fts`, `fts_match`, `fts_score`, and `fts_highlight` surface preserves pinned Turso behavior and is always labeled a FastDB extension.
+- Documents are authoritative; catalog-owned hidden nullable TEXT columns and provider state are maintained atomically. An FTS read after an indexed write in the same explicit transaction is rejected and poisons that transaction rather than returning a stale provider view.
+- FTS candidate materialization is capped at 10,000 rows and query text at 65,536 UTF-8 bytes. FTS is unavailable on unsupported WASM targets.
 
 ## Maintenance rule
 

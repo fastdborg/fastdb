@@ -15,6 +15,20 @@ fastdb [--memory | PATH] [-c SOURCE]
   appear only once.
 - Batch failures exit 1. Argument errors use clap's conventional exit 2.
 
+Full-text definitions and queries work in command, piped-batch, and
+interactive modes. Quote the source at the shell boundary and use `--param`
+for runtime query text:
+
+```text
+fastdb app.fastdb --param q='"Rust database"' -c \
+  'SELECT id FROM article WHERE body @@ $q'
+```
+
+The Surreal-compatible surface is limited to the documented `blank` analyzer,
+single-field FULLTEXT index, one `@@`/`@n@` predicate, and supported
+`search::*` functions. Native `USING fts` and `fts_*` syntax is a FastDB/Turso
+extension. Neither query text nor parameters are logged by FastDB.
+
 Human output starts every result with `-- statement N --` and prints object
 keys in lexical order. JSON mode writes exactly one object for each request.
 Success goes to stdout; errors go to stderr.

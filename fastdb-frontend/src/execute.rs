@@ -18,8 +18,9 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLockReadGuard;
 use turso_fastdb_parser::{
-    BinaryOperator, CreateData, Expr, ExprKind, IndexKindSyntax, ProjectionList, RecordIdPart,
-    RecordIdPartKind, ReturnKind, Span, Statement, TableKindSyntax, TableMode, Target,
+    BinaryOperator, CreateData, Expr, ExprKind, IndexDefinitionSurface, IndexKindSyntax,
+    ProjectionList, RecordIdPart, RecordIdPartKind, ReturnKind, Span, Statement, TableKindSyntax,
+    TableMode, Target,
 };
 
 #[derive(Debug, Clone)]
@@ -28,6 +29,28 @@ struct Candidate {
     id: RecordId,
     document: BTreeMap<String, Value>,
     endpoints: Option<(RecordId, RecordId)>,
+    fts: Option<FtsCandidateContext>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedFtsQuery {
+    index: IndexDefinition,
+    options: catalog::FtsIndexOptions,
+    query: String,
+}
+
+#[derive(Debug, Clone)]
+struct FtsCandidateContext {
+    query: ResolvedFtsQuery,
+    score: f64,
+}
+
+struct CandidateReadOptions<'a> {
+    id: Option<&'a RecordIdValue>,
+    condition: Option<&'a Expr>,
+    params: &'a Params,
+    allow_cache: bool,
+    fts: Option<&'a ResolvedFtsQuery>,
 }
 
 pub(crate) struct StatementExecution {
@@ -100,6 +123,10 @@ pub(crate) fn run_statement(
                     run_define_field(conn, execution, statement, source)
                         .map(StatementExecution::read_only)
                 }
+                Statement::DefineAnalyzer(statement) => {
+                    run_define_analyzer(conn, execution, statement, source)
+                        .map(StatementExecution::read_only)
+                }
                 Statement::DefineIndex(statement) => {
                     run_define_index(conn, execution, statement, source)
                         .map(StatementExecution::read_only)
@@ -118,6 +145,47 @@ pub(crate) fn run_statement(
             }
         }
     }
+}
+
+fn run_define_analyzer(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::DefineAnalyzerStatement,
+    source: &str,
+) -> Result<StatementResult> {
+    ensure_fts_available()?;
+    let definition = source_slice(source, statement.span)?.to_string();
+    let analyzer = catalog::allocate_analyzer(&statement.name.value, definition)?;
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        if snapshot.analyzers.contains_key(&statement.name.value) {
+            return Err(FastDbError::Constraint(format!(
+                "analyzer {:?} is already defined",
+                statement.name.value
+            )));
+        }
+        if !snapshot
+            .capabilities
+            .contains_key(catalog::BUILTIN_FTS_PROVIDER)
+        {
+            catalog::persist_fts_capability(conn)?;
+            snapshot.capabilities.insert(
+                catalog::BUILTIN_FTS_PROVIDER.to_string(),
+                CapabilityRequirement {
+                    provider: catalog::BUILTIN_FTS_PROVIDER.to_string(),
+                    min_provider_version: catalog::BUILTIN_FTS_PROVIDER_VERSION,
+                    min_encoding_version: catalog::BUILTIN_FTS_ENCODING_VERSION,
+                },
+            );
+        }
+        catalog::persist_analyzer(conn, &analyzer)?;
+        conn.check_failpoint(Failpoint::AfterFtsAnalyzerCatalog)?;
+        snapshot
+            .analyzers
+            .insert(statement.name.value.clone(), analyzer.clone());
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
 }
 
 fn run_create(
@@ -184,10 +252,12 @@ fn run_create(
             &mut document,
         )?;
         validate_index_values(table, &document)?;
-        let (insert, bindings) = lower::physical_insert_content_stmt(
+        let fts_hidden = fts_hidden_values(snapshot, table, &document)?;
+        let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
             &table.physical_name,
             &encoded_rid,
             &decode::encode_doc(&document)?,
+            &fts_hidden,
         )?;
         let mut prepared = conn.prepare_bound(insert, bindings)?;
         conn.check_failpoint(Failpoint::AfterRecordPrepare)?;
@@ -198,6 +268,7 @@ fn run_create(
         conn.check_failpoint(Failpoint::AfterRecordInsert)?;
         Ok(full_record_value(&id, &document))
     })?;
+    mark_fts_dirty(execution, &table_name);
 
     let returned = match statement.return_clause.map(|clause| clause.kind.value) {
         Some(ReturnKind::None) => None,
@@ -335,9 +406,11 @@ fn run_relate(
             .into_iter()
             .map(|column| column.physical_name.clone())
             .collect::<Vec<_>>();
-        let (insert, bindings) = lower::physical_relation_insert_stmt(
+        let fts_hidden = fts_hidden_values(snapshot, &relation, &document)?;
+        let (insert, bindings) = lower::physical_relation_insert_with_hidden_stmt(
             &relation.physical_name,
             &hidden,
+            &fts_hidden,
             &encode_rid(&edge_id.id),
             &decode::encode_doc(&document)?,
             &from_table.id.to_hex(),
@@ -349,6 +422,7 @@ fn run_relate(
         conn.check_failpoint(Failpoint::AfterGraphEdgeInsert)?;
         Ok(full_edge_value(&edge_id, &from, &to, &document))
     })?;
+    mark_fts_dirty(execution, &relation_name);
 
     let returned = match statement.return_clause.map(|clause| clause.kind.value) {
         Some(ReturnKind::None) => None,
@@ -419,18 +493,32 @@ fn run_select(
             StatementResult::Rows(Vec::new())
         });
     };
+    let fts = resolve_fts_query(&statement, table, params)?;
+    if fts.is_some()
+        && matches!(
+            &execution.transaction,
+            TransactionState::Active(active) if active.dirty_fts_tables.contains(&table.id)
+        )
+    {
+        return Err(FastDbError::Transaction(format!(
+            "FTS index on table {table_name:?} is unavailable after an indexed write until commit"
+        )));
+    }
     let candidates = read_candidates(
         conn,
         snapshot,
         table,
-        id.as_ref(),
-        statement.condition.as_ref(),
-        params,
-        !matches!(execution.transaction, TransactionState::Active(_)),
+        CandidateReadOptions {
+            id: id.as_ref(),
+            condition: statement.condition.as_ref(),
+            params,
+            allow_cache: !matches!(execution.transaction, TransactionState::Active(_)),
+            fts: fts.as_ref(),
+        },
     )?;
     let mut matched = Vec::new();
     for candidate in candidates {
-        if matches_condition(statement.condition.as_ref(), &candidate, params)? {
+        if matches_condition_with_fts(statement.condition.as_ref(), &candidate, params)? {
             matched.push(candidate);
         }
     }
@@ -445,10 +533,7 @@ fn run_select(
                     .order_by
                     .iter()
                     .map(|term| {
-                        eval::evaluate(
-                            &Expr::new(ExprKind::FieldPath(term.path.clone()), term.path.span),
-                            &context,
-                        )
+                        order_key(&statement.projections, term, &candidate, params, &context)
                     })
                     .collect::<Result<Vec<_>>>()?;
                 Ok((candidate, keys))
@@ -492,6 +577,36 @@ fn run_select(
     }
 }
 
+fn order_key(
+    projections: &ProjectionList,
+    term: &turso_fastdb_parser::OrderBy,
+    candidate: &Candidate,
+    params: &Params,
+    context: &EvalContext<'_>,
+) -> Result<EvalValue> {
+    if term.path.segments.len() == 1 {
+        if let ProjectionList::Fields(projections) = projections {
+            if let Some(projection) = projections.iter().find(|projection| {
+                projection
+                    .alias
+                    .as_ref()
+                    .is_some_and(|alias| alias.value == term.path.segments[0].value)
+            }) {
+                let value = if matches!(projection.expression.kind, ExprKind::FunctionCall { .. }) {
+                    evaluate_fts_projection(&projection.expression, candidate, params)?
+                } else {
+                    eval::evaluate(&projection.expression, context)?.into_projection()
+                };
+                return Ok(EvalValue::Present(value));
+            }
+        }
+    }
+    eval::evaluate(
+        &Expr::new(ExprKind::FieldPath(term.path.clone()), term.path.span),
+        context,
+    )
+}
+
 fn validate_projection_shapes(projections: &ProjectionList) -> Result<()> {
     if let ProjectionList::Fields(projections) = projections {
         for projection in projections {
@@ -515,8 +630,23 @@ fn run_explain(
 ) -> Result<StatementResult> {
     validate_projection_shapes(&statement.select.projections)?;
     let graph_statements = lower_graph_scans_for_explain(conn, execution, &statement.select)?;
-    let lowered = lower_select_scan_for_explain(conn, execution, statement.select.clone(), params)?;
+    let lowered = if let Some(lowered) =
+        lower_fts_scan_for_explain(conn, execution, &statement.select, params)?
+    {
+        lowered
+    } else {
+        lower_select_scan_for_explain(conn, execution, statement.select.clone(), params)?
+    };
     let mut details = crate::connection::explain_statement(conn, lowered)?;
+    if details
+        .iter()
+        .any(|detail| detail.contains("QUERY INDEX METHOD fts"))
+    {
+        if let Some(name) = fts_index_name_for_explain(conn, execution, &statement.select, params)?
+        {
+            details.push(format!("FTS INDEX {name}"));
+        }
+    }
     for graph_statement in graph_statements {
         details.extend(crate::connection::explain_statement(conn, graph_statement)?);
     }
@@ -537,6 +667,66 @@ fn run_explain(
             })
             .collect::<Result<Vec<_>>>()?;
     Ok(StatementResult::Rows(rows))
+}
+
+fn fts_index_name_for_explain(
+    conn: &Connection,
+    execution: &ExecutionState,
+    select: &turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<Option<String>> {
+    let (table_name, _) = target_parts(select.target.clone())?;
+    let catalog = catalog_for_read(conn, execution)?;
+    let Some(table) = catalog
+        .snapshot()
+        .and_then(|snapshot| snapshot.tables.get(&table_name))
+    else {
+        return Ok(None);
+    };
+    Ok(resolve_fts_query(select, table, params)?.map(|query| query.index.physical_name))
+}
+
+fn lower_fts_scan_for_explain(
+    conn: &Connection,
+    execution: &ExecutionState,
+    select: &turso_fastdb_parser::SelectStatement,
+    params: &Params,
+) -> Result<Option<turso_parser::ast::Stmt>> {
+    let (table_name, id) = target_parts(select.target.clone())?;
+    let catalog = catalog_for_read(conn, execution)?;
+    let Some(snapshot) = catalog.snapshot() else {
+        return Ok(None);
+    };
+    let Some(table) = snapshot.tables.get(&table_name) else {
+        return Ok(None);
+    };
+    let Some(fts) = resolve_fts_query(select, table, params)? else {
+        return Ok(None);
+    };
+    if matches!(
+        &execution.transaction,
+        TransactionState::Active(active) if active.dirty_fts_tables.contains(&table.id)
+    ) {
+        return Err(FastDbError::Transaction(format!(
+            "FTS index on table {table_name:?} is unavailable after an indexed write until commit"
+        )));
+    }
+    let graph = if table.kind == TableKind::Relation {
+        catalog::graph_columns(snapshot, table)?
+            .into_iter()
+            .map(|column| column.physical_name.clone())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let (statement, _) = lower::physical_fts_select_stmt(
+        &table.physical_name,
+        &fts.index.physical_columns,
+        &graph,
+        id.as_ref().map(encode_rid).as_deref(),
+        &fts.query,
+    )?;
+    Ok(Some(statement))
 }
 
 fn lower_graph_scans_for_explain(
@@ -644,10 +834,13 @@ fn run_update(
             conn,
             snapshot,
             &table,
-            id.as_ref(),
-            statement.condition.as_ref(),
-            params,
-            false,
+            CandidateReadOptions {
+                id: id.as_ref(),
+                condition: statement.condition.as_ref(),
+                params,
+                allow_cache: false,
+                fts: None,
+            },
         )?;
         let mut updates = Vec::new();
         for candidate in candidates {
@@ -681,10 +874,12 @@ fn run_update(
 
         conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
         for (candidate, document) in &updates {
-            let (update, bindings) = lower::physical_update_doc_stmt(
+            let fts_hidden = fts_hidden_values(snapshot, &table, document)?;
+            let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
                 &table.physical_name,
                 &candidate.encoded_rid,
                 &decode::encode_doc(document)?,
+                &fts_hidden,
             )?;
             contextual_constraint(
                 conn.exec_bound(update, bindings),
@@ -694,6 +889,9 @@ fn run_update(
         }
         Ok(updates)
     })?;
+    if !updates.is_empty() {
+        mark_fts_dirty(execution, &table_name);
+    }
     if matches!(
         statement.return_clause.map(|clause| clause.kind.value),
         Some(ReturnKind::None)
@@ -731,10 +929,13 @@ fn run_delete(
             conn,
             snapshot,
             &table,
-            id.as_ref(),
-            statement.condition.as_ref(),
-            params,
-            false,
+            CandidateReadOptions {
+                id: id.as_ref(),
+                condition: statement.condition.as_ref(),
+                params,
+                allow_cache: false,
+                fts: None,
+            },
         )?;
         let mut deleted = Vec::new();
         for candidate in candidates {
@@ -773,6 +974,12 @@ fn run_delete(
         }
         Ok((deleted, connected_edges.len()))
     })?;
+    if !deleted.is_empty() {
+        mark_fts_dirty(execution, &table_name);
+    }
+    if cascaded_edges > 0 {
+        mark_relation_fts_dirty(execution);
+    }
     let mutation_count = deleted
         .len()
         .checked_add(cascaded_edges)
@@ -877,6 +1084,8 @@ fn project_candidate(
     for projection in projections {
         let value = if let ExprKind::Traversal(traversal) = &projection.expression.kind {
             traverse_graph(conn, snapshot, &candidate.id, traversal)?
+        } else if matches!(projection.expression.kind, ExprKind::FunctionCall { .. }) {
+            evaluate_fts_projection(&projection.expression, candidate, params)?
         } else {
             eval::evaluate(&projection.expression, &context)?.into_projection()
         };
@@ -895,6 +1104,157 @@ fn project_candidate(
         }
     }
     Ok(Value::Object(object))
+}
+
+fn evaluate_fts_projection(
+    expression: &Expr,
+    candidate: &Candidate,
+    params: &Params,
+) -> Result<Value> {
+    let ExprKind::FunctionCall { name, arguments } = &expression.kind else {
+        unreachable!("caller filters function calls");
+    };
+    let fts = candidate.fts.as_ref().ok_or_else(|| {
+        FastDbError::Schema("FTS projection function requires an indexed FTS predicate".into())
+    })?;
+    if function_name_is(name, &["search", "score"]) {
+        if arguments.len() != 1 {
+            return Err(FastDbError::Schema(
+                "search::score requires exactly one match reference".into(),
+            ));
+        }
+        return Ok(Value::Float(fts.score));
+    }
+    if function_name_is(name, &["search", "highlight"]) {
+        if arguments.len() != 3 {
+            return Err(FastDbError::Schema(
+                "search::highlight requires before tag, after tag, and reference".into(),
+            ));
+        }
+        let before = fts_projection_string(&arguments[0], candidate, params, "before tag")?;
+        let after = fts_projection_string(&arguments[1], candidate, params, "after tag")?;
+        let text =
+            derive_fts_text(&candidate.document, &fts.query.index.paths[0])?.unwrap_or_default();
+        if !fts.query.options.highlights {
+            return Ok(Value::Str(text));
+        }
+        return Ok(Value::Str(highlight_blank(
+            &text,
+            &fts.query.query,
+            &before,
+            &after,
+        )));
+    }
+    if function_name_is(name, &["fts_match"]) {
+        validate_native_fts_call(arguments, fts, params)?;
+        return Ok(Value::Bool(true));
+    }
+    if function_name_is(name, &["fts_score"]) {
+        validate_native_fts_call(arguments, fts, params)?;
+        return Ok(Value::Float(fts.score));
+    }
+    if function_name_is(name, &["fts_highlight"]) {
+        if arguments.len() != 4 {
+            return Err(FastDbError::Schema(
+                "fts_highlight requires field, before tag, after tag, and query".into(),
+            ));
+        }
+        let ExprKind::FieldPath(path) = &arguments[0].kind else {
+            return Err(FastDbError::Schema(
+                "fts_highlight first argument must be an indexed field".into(),
+            ));
+        };
+        let path = crate::path::parser_path(path)?.0;
+        if fts.query.index.paths.len() != 1 || fts.query.index.paths[0] != path {
+            return Err(FastDbError::Schema(
+                "fts_highlight field does not match the selected FTS index".into(),
+            ));
+        }
+        let before = fts_projection_string(&arguments[1], candidate, params, "before tag")?;
+        let after = fts_projection_string(&arguments[2], candidate, params, "after tag")?;
+        let query = fts_query_string(&arguments[3], params)?;
+        if query != fts.query.query {
+            return Err(FastDbError::Schema(
+                "fts_highlight query does not match the selected FTS predicate".into(),
+            ));
+        }
+        let Some(text) = derive_fts_text(&candidate.document, &path)? else {
+            return Ok(Value::Null);
+        };
+        #[cfg(not(target_family = "wasm"))]
+        return Ok(Value::Str(turso_core::index_method::fts::fts_highlight(
+            &text, &query, &before, &after,
+        )));
+        #[cfg(target_family = "wasm")]
+        return Err(fts_unavailable());
+    }
+    Err(FastDbError::Schema(format!(
+        "function {} is not an executable Phase 8 FTS projection",
+        name.iter()
+            .map(|segment| segment.value.as_str())
+            .collect::<Vec<_>>()
+            .join("::")
+    )))
+}
+
+fn fts_projection_string(
+    expression: &Expr,
+    candidate: &Candidate,
+    params: &Params,
+    label: &str,
+) -> Result<String> {
+    match eval::evaluate(expression, &candidate_context(candidate, params))?.into_projection() {
+        Value::Str(value) => Ok(value),
+        _ => Err(FastDbError::Schema(format!("FTS {label} must be a string"))),
+    }
+}
+
+fn validate_native_fts_call(
+    arguments: &[Expr],
+    fts: &FtsCandidateContext,
+    params: &Params,
+) -> Result<()> {
+    if arguments.len() < 2 {
+        return Err(FastDbError::Schema(
+            "native FTS call requires fields followed by a query".into(),
+        ));
+    }
+    let paths = arguments[..arguments.len() - 1]
+        .iter()
+        .map(|argument| {
+            let ExprKind::FieldPath(path) = &argument.kind else {
+                return Err(FastDbError::Schema(
+                    "native FTS field arguments must be paths".into(),
+                ));
+            };
+            Ok(crate::path::parser_path(path)?.0)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let query = fts_query_string(arguments.last().expect("length checked"), params)?;
+    if paths != fts.query.index.paths || query != fts.query.query {
+        return Err(FastDbError::Schema(
+            "native FTS projection does not match the selected index/query".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn highlight_blank(text: &str, query: &str, before: &str, after: &str) -> String {
+    let terms = query.split_whitespace().collect::<BTreeSet<_>>();
+    let mut output = String::with_capacity(text.len());
+    for piece in text.split_inclusive(char::is_whitespace) {
+        let token_end = piece.find(char::is_whitespace).unwrap_or(piece.len());
+        let (token, whitespace) = piece.split_at(token_end);
+        if !token.is_empty() && terms.contains(token) {
+            output.push_str(before);
+            output.push_str(token);
+            output.push_str(after);
+        } else {
+            output.push_str(token);
+        }
+        output.push_str(whitespace);
+    }
+    output
 }
 
 fn traverse_graph(
@@ -1028,6 +1388,324 @@ fn matches_condition(
     Ok(eval::evaluate(condition, &candidate_context(candidate, params))?.truthy())
 }
 
+fn resolve_fts_query(
+    select: &turso_fastdb_parser::SelectStatement,
+    table: &TableDefinition,
+    params: &Params,
+) -> Result<Option<ResolvedFtsQuery>> {
+    let Some(condition) = select.condition.as_ref() else {
+        return Ok(None);
+    };
+    let mut predicates = Vec::new();
+    collect_fts_predicates(condition, &mut predicates)?;
+    if predicates.is_empty() {
+        return Ok(None);
+    }
+    ensure_fts_available()?;
+    if predicates.len() != 1 {
+        return Err(FastDbError::Schema(
+            "Phase 8 permits exactly one FTS predicate per SELECT".into(),
+        ));
+    }
+    let predicate = predicates[0];
+    let (paths, query_expression, reference, surface) = match &predicate.kind {
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } if matches!(operator.value, BinaryOperator::FtsMatch(_)) => {
+            let ExprKind::FieldPath(path) = &left.kind else {
+                return Err(FastDbError::Schema(
+                    "the left side of an FTS match must be a field path".into(),
+                ));
+            };
+            let (path, _) = crate::path::parser_path(path)?;
+            let BinaryOperator::FtsMatch(reference) = operator.value else {
+                unreachable!("guarded FTS operator");
+            };
+            (
+                vec![path],
+                right.as_ref(),
+                reference.unwrap_or(0),
+                "surreal",
+            )
+        }
+        ExprKind::FunctionCall { name, arguments } if function_name_is(name, &["fts_match"]) => {
+            if arguments.len() < 2 {
+                return Err(FastDbError::Schema(
+                    "fts_match requires indexed fields followed by a query".into(),
+                ));
+            }
+            let mut paths = Vec::new();
+            for argument in &arguments[..arguments.len() - 1] {
+                let ExprKind::FieldPath(path) = &argument.kind else {
+                    return Err(FastDbError::Schema(
+                        "fts_match indexed arguments must be field paths".into(),
+                    ));
+                };
+                paths.push(crate::path::parser_path(path)?.0);
+            }
+            (
+                paths,
+                arguments.last().expect("length checked"),
+                0,
+                "fastdb",
+            )
+        }
+        _ => unreachable!("collector returns supported predicate shapes"),
+    };
+    let query = fts_query_string(query_expression, params)?;
+    if query.len() > 65_536 {
+        return Err(FastDbError::Schema(
+            "FTS query exceeds the Phase 8 65536-byte limit".into(),
+        ));
+    }
+    let path_keys = paths
+        .iter()
+        .map(crate::path::canonical_path)
+        .collect::<Result<Vec<_>>>()?;
+    let mut matches = table
+        .indexes
+        .values()
+        .filter(|index| index.kind == IndexKind::Fts && index.path_keys == path_keys)
+        .filter_map(|index| {
+            catalog::FtsIndexOptions::parse_canonical(&index.options_json)
+                .ok()
+                .filter(|options| options.surface == surface)
+                .map(|options| (index, options))
+        })
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(FastDbError::Schema(format!(
+            "FTS predicate resolves to {} matching {surface} indexes",
+            matches.len()
+        )));
+    }
+    let (index, options) = matches.pop().expect("one match");
+    validate_fts_projection_calls(&select.projections, reference, surface)?;
+    Ok(Some(ResolvedFtsQuery {
+        index: index.clone(),
+        options,
+        query,
+    }))
+}
+
+fn collect_fts_predicates<'a>(expression: &'a Expr, found: &mut Vec<&'a Expr>) -> Result<()> {
+    match &expression.kind {
+        ExprKind::Parenthesized(inner) => collect_fts_predicates(inner, found),
+        ExprKind::Binary {
+            operator,
+            left,
+            right,
+        } if operator.value == BinaryOperator::And => {
+            collect_fts_predicates(left, found)?;
+            collect_fts_predicates(right, found)
+        }
+        ExprKind::Binary { operator, .. }
+            if matches!(operator.value, BinaryOperator::FtsMatch(_)) =>
+        {
+            found.push(expression);
+            Ok(())
+        }
+        ExprKind::FunctionCall { name, .. } if function_name_is(name, &["fts_match"]) => {
+            found.push(expression);
+            Ok(())
+        }
+        ExprKind::Binary { operator, .. } if operator.value == BinaryOperator::Or => {
+            if contains_fts_predicate(expression) {
+                Err(FastDbError::Schema(
+                    "FTS predicates under OR are outside the Phase 8 subset".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+        ExprKind::Unary { .. } => {
+            if contains_fts_predicate(expression) {
+                Err(FastDbError::Schema(
+                    "FTS predicates under NOT are outside the Phase 8 subset".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+        _ => {
+            if contains_fts_predicate(expression) {
+                Err(FastDbError::Schema(
+                    "FTS predicate nesting is outside the Phase 8 subset".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn contains_fts_predicate(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } => {
+            matches!(operator.value, BinaryOperator::FtsMatch(_))
+                || contains_fts_predicate(left)
+                || contains_fts_predicate(right)
+        }
+        ExprKind::FunctionCall { name, arguments } => {
+            function_name_is(name, &["fts_match"]) || arguments.iter().any(contains_fts_predicate)
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
+            contains_fts_predicate(operand)
+        }
+        ExprKind::Array(values) => values.iter().any(contains_fts_predicate),
+        ExprKind::Object(fields) => fields
+            .iter()
+            .any(|field| contains_fts_predicate(&field.value)),
+        _ => false,
+    }
+}
+
+fn fts_query_string(expression: &Expr, params: &Params) -> Result<String> {
+    match &expression.kind {
+        ExprKind::String(value) => Ok(value.clone()),
+        ExprKind::Parameter(name) => match params.get(name) {
+            Some(Value::Str(value)) => Ok(value.clone()),
+            Some(_) => Err(FastDbError::Schema(format!(
+                "FTS query parameter ${name} must be a string"
+            ))),
+            None => Err(FastDbError::Schema(format!(
+                "missing value for parameter ${name}"
+            ))),
+        },
+        _ => Err(FastDbError::Schema(
+            "FTS query must be a string literal or bound string parameter".into(),
+        )),
+    }
+}
+
+fn function_name_is(name: &[turso_fastdb_parser::Identifier], expected: &[&str]) -> bool {
+    name.len() == expected.len()
+        && name
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual.value.eq_ignore_ascii_case(expected))
+}
+
+fn validate_fts_projection_calls(
+    projections: &ProjectionList,
+    reference: u32,
+    surface: &str,
+) -> Result<()> {
+    let ProjectionList::Fields(projections) = projections else {
+        return Ok(());
+    };
+    for projection in projections {
+        validate_fts_projection_expression(&projection.expression, reference, surface)?;
+    }
+    Ok(())
+}
+
+fn validate_fts_projection_expression(
+    expression: &Expr,
+    reference: u32,
+    surface: &str,
+) -> Result<()> {
+    match &expression.kind {
+        ExprKind::FunctionCall { name, arguments }
+            if function_name_is(name, &["search", "score"])
+                || function_name_is(name, &["search", "highlight"]) =>
+        {
+            if surface != "surreal" {
+                return Err(FastDbError::Schema(
+                    "search::* functions require a Surreal FTS predicate".into(),
+                ));
+            }
+            let reference_argument = arguments.last().ok_or_else(|| {
+                FastDbError::Schema("search function requires a match reference".into())
+            })?;
+            if !matches!(reference_argument.kind, ExprKind::Integer(value) if value >= 0 && value as u32 == reference)
+            {
+                return Err(FastDbError::Schema(
+                    "search function reference does not match the FTS predicate".into(),
+                ));
+            }
+            for argument in arguments {
+                validate_fts_projection_expression(argument, reference, surface)?;
+            }
+            Ok(())
+        }
+        ExprKind::FunctionCall { arguments, .. } | ExprKind::Array(arguments) => {
+            for argument in arguments {
+                validate_fts_projection_expression(argument, reference, surface)?;
+            }
+            Ok(())
+        }
+        ExprKind::Object(fields) => {
+            for field in fields {
+                validate_fts_projection_expression(&field.value, reference, surface)?;
+            }
+            Ok(())
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
+            validate_fts_projection_expression(operand, reference, surface)
+        }
+        ExprKind::Binary { left, right, .. } => {
+            validate_fts_projection_expression(left, reference, surface)?;
+            validate_fts_projection_expression(right, reference, surface)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn matches_condition_with_fts(
+    condition: Option<&Expr>,
+    candidate: &Candidate,
+    params: &Params,
+) -> Result<bool> {
+    let Some(condition) = condition else {
+        return Ok(true);
+    };
+    match &condition.kind {
+        ExprKind::Parenthesized(inner) => {
+            matches_condition_with_fts(Some(inner), candidate, params)
+        }
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } if operator.value == BinaryOperator::And => {
+            Ok(matches_condition_with_fts(Some(left), candidate, params)?
+                && matches_condition_with_fts(Some(right), candidate, params)?)
+        }
+        ExprKind::Binary { operator, .. }
+            if matches!(operator.value, BinaryOperator::FtsMatch(_)) =>
+        {
+            let fts = candidate.fts.as_ref().ok_or_else(|| {
+                FastDbError::Engine("FTS candidate is missing provider context".into())
+            })?;
+            Ok(fts.query.options.surface != "surreal"
+                || fts
+                    .query
+                    .index
+                    .paths
+                    .first()
+                    .and_then(|path| crate::path::get_path(&candidate.document, path))
+                    .is_some_and(|value| {
+                        matches!(value, Value::Str(text) if blank_matches(text, &fts.query.query))
+                    }))
+        }
+        ExprKind::FunctionCall { name, .. } if function_name_is(name, &["fts_match"]) => Ok(true),
+        _ => Ok(eval::evaluate(condition, &candidate_context(candidate, params))?.truthy()),
+    }
+}
+
+fn blank_matches(text: &str, query: &str) -> bool {
+    let tokens = text.split_whitespace().collect::<BTreeSet<_>>();
+    let query_tokens = query.split_whitespace().collect::<Vec<_>>();
+    !query_tokens.is_empty() && query_tokens.into_iter().all(|term| tokens.contains(term))
+}
+
 fn candidate_context<'a>(candidate: &'a Candidate, params: &'a Params) -> EvalContext<'a> {
     EvalContext {
         document: &candidate.document,
@@ -1146,11 +1824,15 @@ fn read_candidates(
     conn: &Connection,
     snapshot: &CatalogSnapshot,
     table: &TableDefinition,
-    id: Option<&RecordIdValue>,
-    condition: Option<&Expr>,
-    params: &Params,
-    allow_cache: bool,
+    options: CandidateReadOptions<'_>,
 ) -> Result<Vec<Candidate>> {
+    let CandidateReadOptions {
+        id,
+        condition,
+        params,
+        allow_cache,
+        fts,
+    } = options;
     let predicates = condition
         .map(|condition| safe_pushdowns(condition, params, table))
         .unwrap_or_default();
@@ -1165,7 +1847,15 @@ fn read_candidates(
     } else {
         None
     };
-    let (statement, bindings) = if let Some(hidden) = &hidden {
+    let (statement, bindings) = if let Some(fts) = fts {
+        lower::physical_fts_select_stmt(
+            &table.physical_name,
+            &fts.index.physical_columns,
+            hidden.as_deref().unwrap_or(&[]),
+            encoded_rid.as_deref(),
+            &fts.query,
+        )?
+    } else if let Some(hidden) = &hidden {
         lower::physical_relation_select_predicates_stmt(
             &table.physical_name,
             hidden,
@@ -1179,51 +1869,161 @@ fn read_candidates(
             &predicates,
         )?
     };
-    conn.collect_select_candidates(
-        statement,
-        bindings,
-        &table.physical_name,
-        encoded_rid.is_some(),
-        &predicates,
-        allow_cache && table.kind == TableKind::Normal,
-    )
-    .map_err(stored_value_error)?
-    .into_iter()
-    .map(|row| {
-        let encoded_rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))
-            .map_err(stored_value_error)?;
-        let id = RecordId::new(&table.logical_name, decode_rid(&encoded_rid)?);
-        let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
-            .map_err(stored_value_error)?;
-        let document = decode::parse_doc(&json)?.into_iter().collect();
-        let endpoints = if table.kind == TableKind::Relation {
-            let in_table = crate::names::CatalogId::from_hex(&value_to_string(
-                row.get(2).unwrap_or(&turso_core::Value::Null),
-            )?)?;
-            let in_rid = decode_rid(&value_to_string(
-                row.get(3).unwrap_or(&turso_core::Value::Null),
-            )?)?;
-            let out_table = crate::names::CatalogId::from_hex(&value_to_string(
-                row.get(4).unwrap_or(&turso_core::Value::Null),
-            )?)?;
-            let out_rid = decode_rid(&value_to_string(
-                row.get(5).unwrap_or(&turso_core::Value::Null),
-            )?)?;
-            Some((
-                RecordId::new(logical_table_name(snapshot, in_table)?, in_rid),
-                RecordId::new(logical_table_name(snapshot, out_table)?, out_rid),
-            ))
-        } else {
-            None
-        };
-        Ok(Candidate {
-            encoded_rid,
-            id,
-            document,
-            endpoints,
+    let rows = if fts.is_some() {
+        conn.collect_rows(statement, bindings)?
+    } else {
+        conn.collect_select_candidates(
+            statement,
+            bindings,
+            &table.physical_name,
+            encoded_rid.is_some(),
+            &predicates,
+            allow_cache && table.kind == TableKind::Normal,
+        )
+        .map_err(stored_value_error)?
+    };
+    if fts.is_some() && rows.len() > 10_000 {
+        return Err(FastDbError::Constraint(
+            "FTS result candidate count exceeds 10,000 rows".into(),
+        ));
+    }
+    let mut candidates = rows
+        .into_iter()
+        .map(|row| {
+            let encoded_rid = value_to_string(row.first().unwrap_or(&turso_core::Value::Null))
+                .map_err(stored_value_error)?;
+            let id = RecordId::new(&table.logical_name, decode_rid(&encoded_rid)?);
+            let json = value_to_string(row.get(1).unwrap_or(&turso_core::Value::Null))
+                .map_err(stored_value_error)?;
+            let document = decode::parse_doc(&json)?.into_iter().collect();
+            let endpoints = if table.kind == TableKind::Relation {
+                let in_table = crate::names::CatalogId::from_hex(&value_to_string(
+                    row.get(2).unwrap_or(&turso_core::Value::Null),
+                )?)?;
+                let in_rid = decode_rid(&value_to_string(
+                    row.get(3).unwrap_or(&turso_core::Value::Null),
+                )?)?;
+                let out_table = crate::names::CatalogId::from_hex(&value_to_string(
+                    row.get(4).unwrap_or(&turso_core::Value::Null),
+                )?)?;
+                let out_rid = decode_rid(&value_to_string(
+                    row.get(5).unwrap_or(&turso_core::Value::Null),
+                )?)?;
+                Some((
+                    RecordId::new(logical_table_name(snapshot, in_table)?, in_rid),
+                    RecordId::new(logical_table_name(snapshot, out_table)?, out_rid),
+                ))
+            } else {
+                None
+            };
+            let fts = fts
+                .map(|query| {
+                    let score_index = 2 + if table.kind == TableKind::Relation {
+                        4
+                    } else {
+                        0
+                    };
+                    let score = match row.get(score_index) {
+                        Some(turso_core::Value::Numeric(turso_core::Numeric::Integer(value))) => {
+                            *value as f64
+                        }
+                        Some(turso_core::Value::Numeric(turso_core::Numeric::Float(value))) => {
+                            f64::from(*value)
+                        }
+                        _ => {
+                            return Err(stored_value_error(FastDbError::Engine(
+                                "FTS provider returned a non-numeric score".into(),
+                            )))
+                        }
+                    };
+                    Ok(FtsCandidateContext {
+                        query: query.clone(),
+                        score,
+                    })
+                })
+                .transpose()?;
+            Ok(Candidate {
+                encoded_rid,
+                id,
+                document,
+                endpoints,
+                fts,
+            })
         })
-    })
-    .collect()
+        .collect::<Result<Vec<_>>>()?;
+    if let Some(fts) = fts.filter(|fts| fts.options.surface == "surreal") {
+        let scores = surreal_blank_scores(conn, table, fts)?;
+        for candidate in &mut candidates {
+            if let Some(context) = &mut candidate.fts {
+                context.score = scores.get(&candidate.encoded_rid).copied().unwrap_or(0.0);
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn surreal_blank_scores(
+    conn: &Connection,
+    table: &TableDefinition,
+    query: &ResolvedFtsQuery,
+) -> Result<BTreeMap<String, f64>> {
+    let path = query
+        .index
+        .paths
+        .first()
+        .ok_or_else(|| FastDbError::format("Surreal FTS index has no field"))?;
+    let documents = read_documents(conn, table)?
+        .into_iter()
+        .filter_map(
+            |(rid, document)| match crate::path::get_path(&document, path) {
+                Some(Value::Str(text)) => Some((rid, text.clone())),
+                None | Some(Value::Null) => None,
+                Some(_) => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    if documents.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let query_terms = query.query.split_whitespace().collect::<BTreeSet<_>>();
+    if query_terms.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let document_tokens = documents
+        .iter()
+        .map(|(_, text)| text.split_whitespace().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let document_count = document_tokens.len() as f32;
+    let average_length =
+        document_tokens.iter().map(Vec::len).sum::<usize>() as f32 / document_count;
+    let mut document_frequencies = BTreeMap::new();
+    for term in &query_terms {
+        let frequency = document_tokens
+            .iter()
+            .filter(|tokens| tokens.iter().any(|token| token == term))
+            .count() as f32;
+        document_frequencies.insert(*term, frequency);
+    }
+    let mut scores = BTreeMap::new();
+    for ((rid, _), tokens) in documents.iter().zip(&document_tokens) {
+        let mut score = 0.0_f32;
+        for term in &query_terms {
+            let frequency = tokens.iter().filter(|token| *token == term).count();
+            if frequency == 0 {
+                continue;
+            }
+            let document_frequency = document_frequencies[term];
+            let idf = ((document_count - document_frequency + 0.5) / (document_frequency + 0.5))
+                .ln()
+                .max(0.0);
+            let logarithmic_tf = 1.0 + (frequency as f32).ln();
+            let length_normalization = 1.0 - 0.75 + 0.75 * (tokens.len() as f32 / average_length);
+            score +=
+                idf * logarithmic_tf * (1.2 + 1.0) / (logarithmic_tf + 1.2 * length_normalization);
+        }
+        scores.insert(rid.clone(), f64::from(score));
+    }
+    Ok(scores)
 }
 
 fn logical_table_name(snapshot: &CatalogSnapshot, id: crate::names::CatalogId) -> Result<&str> {
@@ -1367,6 +2167,47 @@ fn data_mutation<R>(
     } else {
         conn.with_transaction(body)
     }
+}
+
+fn mark_fts_dirty(execution: &mut ExecutionState, table_name: &str) {
+    let TransactionState::Active(active) = &mut execution.transaction else {
+        return;
+    };
+    let Some(table) = active
+        .catalog
+        .snapshot()
+        .and_then(|snapshot| snapshot.tables.get(table_name))
+    else {
+        return;
+    };
+    if table
+        .indexes
+        .values()
+        .any(|index| index.kind == IndexKind::Fts)
+    {
+        active.dirty_fts_tables.insert(table.id);
+    }
+}
+
+fn mark_relation_fts_dirty(execution: &mut ExecutionState) {
+    let TransactionState::Active(active) = &mut execution.transaction else {
+        return;
+    };
+    let dirty = active
+        .catalog
+        .snapshot()
+        .into_iter()
+        .flat_map(|snapshot| snapshot.tables.values())
+        .filter(|table| {
+            table.kind == TableKind::Relation
+                && table
+                    .indexes
+                    .values()
+                    .any(|index| index.kind == IndexKind::Fts)
+        })
+        .map(|table| table.id)
+        .collect::<Vec<_>>();
+    active.dirty_fts_tables.extend(dirty);
 }
 
 fn with_create_mutation<R>(
@@ -1673,17 +2514,12 @@ fn run_define_index(
     statement: turso_fastdb_parser::DefineIndexStatement,
     source: &str,
 ) -> Result<StatementResult> {
+    if !matches!(statement.kind, IndexKindSyntax::Btree) {
+        return run_define_fts_index(conn, execution, statement, source);
+    }
     match &statement.kind {
         IndexKindSyntax::Btree => {}
-        IndexKindSyntax::Fulltext { span, .. } => {
-            return unsupported(*span, "FULLTEXT indexes are unavailable until Phase 8")
-        }
-        IndexKindSyntax::Provider { span, .. } => {
-            return unsupported(
-                *span,
-                "provider-specific indexes are unavailable in Phase 6",
-            )
-        }
+        IndexKindSyntax::Fulltext { .. } | IndexKindSyntax::Provider { .. } => unreachable!(),
     }
     let definition = source_slice(source, statement.span)?.to_string();
     let paths = statement
@@ -1748,6 +2584,327 @@ fn run_define_index(
     Ok(StatementResult::None)
 }
 
+fn run_define_fts_index(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::DefineIndexStatement,
+    source: &str,
+) -> Result<StatementResult> {
+    ensure_fts_available()?;
+    if statement.unique.is_some() {
+        return Err(FastDbError::Schema("FTS indexes cannot be UNIQUE".into()));
+    }
+    let definition = source_slice(source, statement.span)?.to_string();
+    let paths = statement
+        .fields
+        .iter()
+        .map(|path| crate::path::parser_path(path).map(|(segments, _)| segments))
+        .collect::<Result<Vec<_>>>()?;
+    let path_keys = paths
+        .iter()
+        .map(crate::path::canonical_path)
+        .collect::<Result<Vec<_>>>()?;
+    if path_keys.iter().collect::<BTreeSet<_>>().len() != path_keys.len() {
+        return Err(FastDbError::Schema(
+            "FTS index fields must be distinct".into(),
+        ));
+    }
+    if paths.iter().any(|path| {
+        path.first()
+            .is_some_and(|segment| matches!(segment.as_str(), "id" | "in" | "out"))
+    }) {
+        return Err(FastDbError::Schema(
+            "synthesized record fields cannot be full-text indexed".into(),
+        ));
+    }
+
+    let options = match &statement.kind {
+        IndexKindSyntax::Fulltext {
+            analyzer,
+            highlights,
+            ..
+        } => {
+            if statement.surface != IndexDefinitionSurface::SurrealDefine {
+                return Err(FastDbError::Schema(
+                    "FULLTEXT ANALYZER is available only through DEFINE INDEX".into(),
+                ));
+            }
+            if paths.len() != 1 {
+                return Err(FastDbError::Schema(
+                    "Phase 8 Surreal FULLTEXT indexes require exactly one field".into(),
+                ));
+            }
+            catalog::FtsIndexOptions {
+                surface: "surreal".to_string(),
+                tokenizer: "whitespace".to_string(),
+                weights: vec![1.0],
+                analyzer: Some(analyzer.value.clone()),
+                highlights: highlights.is_some(),
+            }
+        }
+        IndexKindSyntax::Provider {
+            span,
+            name,
+            options,
+        } => {
+            if statement.surface != IndexDefinitionSurface::FastDbCreate {
+                return unsupported(
+                    *span,
+                    "provider indexes use the labeled CREATE INDEX extension surface",
+                );
+            }
+            if !name.value.eq_ignore_ascii_case("fts") {
+                return unsupported(*span, "only the sealed fts provider is available");
+            }
+            parse_native_fts_options(options, paths.len())?
+        }
+        IndexKindSyntax::Btree => unreachable!("dispatched ordinary B-tree earlier"),
+    };
+    let options_json = options.canonical_json()?;
+
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ready_snapshot_mut(state)?;
+        if let Some(analyzer_name) = &options.analyzer {
+            if !snapshot.analyzers.contains_key(analyzer_name) {
+                return Err(FastDbError::Schema(format!(
+                    "analyzer {analyzer_name:?} is not defined"
+                )));
+            }
+        }
+        let table = snapshot.tables.get(&statement.table.value).ok_or_else(|| {
+            FastDbError::Schema(format!("table {:?} is not defined", statement.table.value))
+        })?;
+        if table.indexes.contains_key(&statement.name.value) {
+            return Err(FastDbError::Constraint(format!(
+                "index {:?} is already defined on table {:?}",
+                statement.name.value, statement.table.value
+            )));
+        }
+        let first_ordinal = snapshot
+            .hidden_columns
+            .values()
+            .filter(|column| {
+                column.table_id == table.id
+                    && matches!(column.role, catalog::HiddenColumnRole::FtsText(_))
+            })
+            .count();
+        let (index, hidden) = catalog::allocate_fts_index(
+            table.id,
+            first_ordinal,
+            &statement.name.value,
+            paths.clone(),
+            definition.clone(),
+            options_json.clone(),
+        )?;
+        let rows = read_documents(conn, table)?;
+        let derived = rows
+            .iter()
+            .map(|(rid, document)| {
+                let values = index
+                    .paths
+                    .iter()
+                    .map(|path| derive_fts_text(document, path))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((rid.clone(), values))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if !snapshot
+            .capabilities
+            .contains_key(catalog::BUILTIN_FTS_PROVIDER)
+        {
+            catalog::persist_fts_capability(conn)?;
+        }
+        for column in &hidden {
+            catalog::persist_hidden_column(conn, column)?;
+        }
+        conn.check_failpoint(Failpoint::AfterFtsHiddenCatalog)?;
+        for column in &hidden {
+            conn.exec_bound(
+                lower::physical_add_fts_column_ddl(&table.physical_name, &column.physical_name)?,
+                vec![],
+            )?;
+            conn.check_failpoint(Failpoint::AfterFtsPhysicalColumn)?;
+        }
+        for (rid, values) in &derived {
+            for (column, value) in hidden.iter().zip(values) {
+                let (update, bindings) = lower::physical_update_fts_column_stmt(
+                    &table.physical_name,
+                    &column.physical_name,
+                    rid,
+                    value.as_deref(),
+                )?;
+                conn.exec_bound(update, bindings)?;
+            }
+        }
+        conn.check_failpoint(Failpoint::AfterFtsBackfill)?;
+        conn.exec_bound(
+            crate::provider::index_provider(&index)?
+                .create_statement(&index, &table.physical_name)?,
+            vec![],
+        )
+        .map_err(|error| logical_index_constraint(error, &index.logical_name))?;
+        conn.check_failpoint(Failpoint::AfterFtsProviderIndex)?;
+        catalog::persist_index(conn, table, &index)?;
+
+        let table = snapshot
+            .tables
+            .get_mut(&statement.table.value)
+            .expect("table remained present under schema mutex");
+        table
+            .indexes
+            .insert(statement.name.value.clone(), index.clone());
+        for column in hidden {
+            snapshot.hidden_columns.insert(column.id, column);
+        }
+        snapshot.capabilities.insert(
+            catalog::BUILTIN_FTS_PROVIDER.to_string(),
+            CapabilityRequirement {
+                provider: catalog::BUILTIN_FTS_PROVIDER.to_string(),
+                min_provider_version: catalog::BUILTIN_FTS_PROVIDER_VERSION,
+                min_encoding_version: catalog::BUILTIN_FTS_ENCODING_VERSION,
+            },
+        );
+        Ok(())
+    })?;
+    mark_fts_dirty(execution, &statement.table.value);
+    Ok(StatementResult::None)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn ensure_fts_available() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(target_family = "wasm")]
+fn ensure_fts_available() -> Result<()> {
+    Err(fts_unavailable())
+}
+
+#[cfg(target_family = "wasm")]
+fn fts_unavailable() -> FastDbError {
+    FastDbError::Schema("full-text search is unavailable on this WASM target".into())
+}
+
+fn parse_native_fts_options(
+    options: &[turso_fastdb_parser::IndexOption],
+    field_count: usize,
+) -> Result<catalog::FtsIndexOptions> {
+    let mut tokenizer = "default".to_string();
+    let mut weights = vec![1.0; field_count];
+    let mut seen = BTreeSet::new();
+    for option in options {
+        let key = option.key.value.to_ascii_lowercase();
+        if !seen.insert(key.clone()) {
+            return Err(FastDbError::Schema(format!(
+                "duplicate FTS index option {:?}",
+                option.key.value
+            )));
+        }
+        match key.as_str() {
+            "tokenizer" => {
+                let ExprKind::String(value) = &option.value.kind else {
+                    return Err(FastDbError::Schema(
+                        "FTS tokenizer option must be a string".into(),
+                    ));
+                };
+                tokenizer = value.to_ascii_lowercase();
+                if !matches!(
+                    tokenizer.as_str(),
+                    "default" | "raw" | "simple" | "whitespace" | "ngram"
+                ) {
+                    return Err(FastDbError::Schema(format!(
+                        "unsupported FTS tokenizer {value:?}"
+                    )));
+                }
+            }
+            "weights" => {
+                let ExprKind::Array(values) = &option.value.kind else {
+                    return Err(FastDbError::Schema(
+                        "FTS weights option must be a numeric array".into(),
+                    ));
+                };
+                weights = values
+                    .iter()
+                    .map(|value| match value.kind {
+                        ExprKind::Integer(value) => Ok(value as f64),
+                        ExprKind::Float(value) => Ok(value),
+                        _ => Err(FastDbError::Schema(
+                            "FTS weights must contain only numbers".into(),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if weights.len() != field_count
+                    || weights
+                        .iter()
+                        .any(|weight| !weight.is_finite() || *weight <= 0.0)
+                {
+                    return Err(FastDbError::Schema(
+                        "FTS weights must be finite positive values matching the field count"
+                            .into(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(FastDbError::Schema(format!(
+                    "unknown FTS index option {:?}",
+                    option.key.value
+                )));
+            }
+        }
+    }
+    Ok(catalog::FtsIndexOptions {
+        surface: "fastdb".to_string(),
+        tokenizer,
+        weights,
+        analyzer: None,
+        highlights: false,
+    })
+}
+
+fn derive_fts_text(document: &BTreeMap<String, Value>, path: &[String]) -> Result<Option<String>> {
+    match crate::path::get_path(document, path) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Str(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(FastDbError::Constraint(format!(
+            "full-text indexed field {} must be a string, null, or missing",
+            crate::path::canonical_path(path)?
+        ))),
+    }
+}
+
+fn fts_hidden_values(
+    snapshot: &CatalogSnapshot,
+    table: &TableDefinition,
+    document: &BTreeMap<String, Value>,
+) -> Result<Vec<(String, Option<String>)>> {
+    let mut columns = snapshot
+        .hidden_columns
+        .values()
+        .filter(|column| {
+            column.table_id == table.id
+                && matches!(column.role, catalog::HiddenColumnRole::FtsText(_))
+        })
+        .collect::<Vec<_>>();
+    columns.sort_by_key(|column| match column.role {
+        catalog::HiddenColumnRole::FtsText(ordinal) => ordinal,
+        catalog::HiddenColumnRole::Graph(_) => usize::MAX,
+    });
+    columns
+        .into_iter()
+        .map(|column| {
+            let path_key = column.field_path_key.as_deref().ok_or_else(|| {
+                FastDbError::format("FTS hidden column has no logical field ownership")
+            })?;
+            let path = crate::path::decode_canonical_path(path_key)?;
+            Ok((
+                column.physical_name.clone(),
+                derive_fts_text(document, &path)?,
+            ))
+        })
+        .collect()
+}
+
 fn resolve_index_for_maintenance(
     conn: &Connection,
     execution: &ExecutionState,
@@ -1781,6 +2938,12 @@ fn run_remove_index(
     let table_name = statement.table.value;
     let index_name = statement.name.value;
     let resolved = resolve_index_for_maintenance(conn, execution, &table_name, &index_name)?;
+    if resolved.kind == IndexKind::Fts {
+        return Err(FastDbError::Schema(
+            "removing FTS indexes is deferred until provider-owned hidden columns can be removed atomically"
+                .into(),
+        ));
+    }
     with_schema_mutation(conn, execution, |state| {
         let table = ready_snapshot_mut(state)?
             .tables
@@ -1930,7 +3093,7 @@ fn validate_index_values(
     document: &BTreeMap<String, Value>,
 ) -> Result<()> {
     for index in table.indexes.values() {
-        if index.kind == IndexKind::GraphAdjacency {
+        if index.kind != IndexKind::Btree {
             continue;
         }
         let _ = index_key(index, document)?;

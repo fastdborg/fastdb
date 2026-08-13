@@ -65,6 +65,16 @@ fn main() {
         "graph-cascade" => {
             connection.execute("DELETE person:one").unwrap();
         }
+        "fts-write" => {
+            connection
+                .execute(
+                    "CREATE doc:one SET text = 'recovered search'; \
+                     DEFINE ANALYZER blankish TOKENIZERS blank; \
+                     DEFINE INDEX text_idx ON doc FIELDS text FULLTEXT ANALYZER blankish; \
+                     CREATE doc:two SET text = 'recovered second'",
+                )
+                .unwrap();
+        }
         _ => panic!("unknown crash point {point}"),
     }
     // Test-only abrupt process boundary: bypass Rust drops and engine close.

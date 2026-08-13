@@ -18,6 +18,9 @@ serde_json = { workspace = true }
 rand = { workspace = true }
 uuid = { version = "1.11.0", features = ["v4", "v7"] }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+turso_core = { workspace = true, features = ["fts"] }
+
 [features]
 # Exposes deterministic failure-injection (`arm_failpoint`/`disarm_all_failpoints`).
 # Test/benchmark-only; never enabled in release builds.

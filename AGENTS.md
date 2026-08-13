@@ -8,11 +8,12 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. Phase 7 is the completed graph baseline;
-   [`plan-phase7.md`](plan-phase7.md) and
-   [`docs/phase7-report.md`](docs/phase7-report.md) preserve its gates and
-   evidence. Author the authoritative Phase 8 plan before implementing FTS.
-   Earlier phase plans and reports preserve their completed evidence.
+3. Read the plan for the active phase. Phase 8 FTS is the completed technical
+   baseline; [`plan-phase8.md`](plan-phase8.md),
+   [`docs/phase8-report.md`](docs/phase8-report.md), and its clean-room
+   observations preserve the gates and evidence. Author the authoritative
+   Phase 9 plan before vector implementation. Earlier plans and reports remain
+   historical evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -38,8 +39,8 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Behavioral compatibility reference: SurrealDB `v3.1.5`.
 - Durability default: stable Turso WAL with full durability.
 - Core 1.0 delivery surfaces: an embedded Rust library and the `fastdb` CLI.
-- Current implementation stage: Phase 7 graph records and bounded traversal is
-  technically complete locally. Phase 8 full-text-search planning is next. The
+- Current implementation stage: Phase 8 dual-syntax full-text search is
+  technically complete locally. Phase 9 exact-vector planning is next. The
   implemented on-disk format remains version 2.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
@@ -172,8 +173,8 @@ Phase 2 established stable format version 1, Phase 3 completed the synchronous
 frontend contract, Phase 4 delivered the worker-backed asynchronous Rust API,
 transaction guard, and CLI, Phase 5 completed local hardening, Phase 6
 established format 2 plus the sealed provider and maintenance foundation, and
-Phase 7 added graph records and bounded traversal. Phase 8 must receive an
-authoritative plan before FTS implementation begins.
+Phase 7 added graph records and bounded traversal, and Phase 8 added dual-
+syntax full-text search. Phase 9 exact vectors are next.
 Phase 9 is an alpha-candidate milestone, Phase 11 is a beta-candidate milestone,
 and Phase 12 is the 1.0 gate; none authorizes publishing. The proprietary cloud
 service remains later and separate.

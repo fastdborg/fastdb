@@ -10,7 +10,7 @@ use crate::error::{FastDbError, Result};
 use crate::execute;
 use crate::test_failpoints::{Failpoint, Failpoints};
 use crate::{Params, QueryResponse, StatementResult};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -123,7 +123,7 @@ impl Database {
         let opts = turso_core::OpenOptions::new(Arc::new(turso_core::SqliteDialect))
             .storage(db_file)
             .flags(flags)
-            .db_opts(turso_core::DatabaseOpts::default());
+            .db_opts(turso_core::DatabaseOpts::default().with_index_method(true));
         let db = turso_core::Database::open(io, path, opts)?;
         let coordinator = coordinator_for_path(path)?;
         let database = Self { db, coordinator };
@@ -383,6 +383,7 @@ pub(crate) enum TransactionState {
 pub(crate) struct ActiveTransaction {
     pub(crate) catalog: crate::catalog::CatalogState,
     pub(crate) schema_changed: bool,
+    pub(crate) dirty_fts_tables: BTreeSet<crate::names::CatalogId>,
 }
 
 impl std::fmt::Debug for Connection {
@@ -526,6 +527,7 @@ impl Connection {
         state.transaction = TransactionState::Active(ActiveTransaction {
             catalog,
             schema_changed: false,
+            dirty_fts_tables: BTreeSet::new(),
         });
         Ok(StatementResult::None)
     }

@@ -28,3 +28,10 @@ path = "fuzz_targets/structured_graph.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "structured_fts"
+path = "fuzz_targets/structured_fts.rs"
+test = false
+doc = false
+bench = false

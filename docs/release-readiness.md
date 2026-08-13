@@ -1,7 +1,7 @@
 # FastDB Core release-readiness gates
 
-Status: Phase 7 complete locally; Phase 8 planning is next; no alpha, beta, or
-Core 1.0 release authorized
+Status: Phase 8 complete locally; Phase 9 exact-vector planning next; no alpha,
+beta, or Core 1.0 release authorized
 
 This checklist is the durable release gate. Phase plans and reports contain
 execution details and evidence; completing a development phase does not itself
@@ -76,16 +76,16 @@ mandatory for Core 1.0 in Phase 12.
 
 ### Phase 8 — Full-text search
 
-- [ ] Normalize the characterized SurrealQL FTS subset and labeled FastDB/Turso
+- [x] Normalize the characterized SurrealQL FTS subset and labeled FastDB/Turso
       extension into one versioned catalog provider; do not count extension
       syntax as SurrealQL compatibility.
-- [ ] Limit Surreal analyzers to behaviorally equivalent configurations,
+- [x] Limit Surreal analyzers to behaviorally equivalent configurations,
       beginning with `blank` and no pipeline; keep broader Turso tokenizers and
       weights extension-only.
-- [ ] Prove hidden TEXT/document atomicity, actual plan selection, ranking,
+- [x] Prove hidden TEXT/document atomicity, actual plan selection, ranking,
       highlighting, churn, rollback, reopen, abrupt exit, corruption handling,
       bounded memory, and rebuild/optimization.
-- [ ] Reject affected FTS reads after an indexed write in an explicit
+- [x] Reject affected FTS reads after an indexed write in an explicit
       transaction until commit; reject FTS explicitly on unsupported WASM.
 
 ### Phase 9 — Exact vector search / `0.1` alpha candidate

@@ -5,8 +5,9 @@
 //! from catalog definitions whose names are already opaque.
 
 use crate::catalog::{
-    IndexDefinition, IndexKind, Provider, ProviderState, BUILTIN_BTREE_ENCODING_VERSION,
-    BUILTIN_BTREE_PROVIDER_VERSION, BUILTIN_GRAPH_ENCODING_VERSION, BUILTIN_GRAPH_PROVIDER_VERSION,
+    FtsIndexOptions, IndexDefinition, IndexKind, Provider, ProviderState,
+    BUILTIN_BTREE_ENCODING_VERSION, BUILTIN_BTREE_PROVIDER_VERSION, BUILTIN_FTS_ENCODING_VERSION,
+    BUILTIN_FTS_PROVIDER_VERSION, BUILTIN_GRAPH_ENCODING_VERSION, BUILTIN_GRAPH_PROVIDER_VERSION,
 };
 use crate::error::{FastDbError, Result};
 use turso_parser::ast::Stmt;
@@ -20,6 +21,7 @@ pub(crate) trait IndexProviderAdapter: Sync {
 
 struct BuiltinBtreeProvider;
 struct BuiltinGraphProvider;
+struct BuiltinFtsProvider;
 
 impl IndexProviderAdapter for BuiltinBtreeProvider {
     fn validate_definition(&self, index: &IndexDefinition) -> Result<()> {
@@ -129,8 +131,91 @@ impl IndexProviderAdapter for BuiltinGraphProvider {
     }
 }
 
+impl IndexProviderAdapter for BuiltinFtsProvider {
+    fn validate_definition(&self, index: &IndexDefinition) -> Result<()> {
+        if index.kind != IndexKind::Fts || index.provider != Provider::BuiltinFts {
+            return Err(FastDbError::format(
+                "FTS index has an incompatible kind or provider",
+            ));
+        }
+        if index.provider_version != BUILTIN_FTS_PROVIDER_VERSION
+            || index.encoding_version != BUILTIN_FTS_ENCODING_VERSION
+            || index.state != ProviderState::Ready
+        {
+            return Err(FastDbError::format(
+                "FTS index has an unsupported version or state",
+            ));
+        }
+        if index.unique
+            || index.paths.is_empty()
+            || index.paths.len() != index.physical_columns.len()
+        {
+            return Err(FastDbError::format(
+                "FTS index must have matching logical and hidden input columns",
+            ));
+        }
+        let options = FtsIndexOptions::parse_canonical(&index.options_json)?;
+        if !matches!(
+            options.tokenizer.as_str(),
+            "default" | "raw" | "simple" | "whitespace" | "ngram"
+        ) || options.weights.len() != index.paths.len()
+            || options
+                .weights
+                .iter()
+                .any(|weight| !weight.is_finite() || *weight <= 0.0)
+        {
+            return Err(FastDbError::format("FTS index options are incompatible"));
+        }
+        match options.surface.as_str() {
+            "surreal" => {
+                if options.tokenizer != "whitespace"
+                    || options.analyzer.is_none()
+                    || index.paths.len() != 1
+                    || options.weights != [1.0]
+                {
+                    return Err(FastDbError::format(
+                        "Surreal FTS index options are incompatible",
+                    ));
+                }
+            }
+            "fastdb" => {
+                if options.analyzer.is_some() || options.highlights {
+                    return Err(FastDbError::format(
+                        "native FTS index contains Surreal-only options",
+                    ));
+                }
+            }
+            _ => return Err(FastDbError::format("FTS surface is unknown")),
+        }
+        Ok(())
+    }
+
+    fn create_statement(&self, index: &IndexDefinition, physical_table: &str) -> Result<Stmt> {
+        self.validate_definition(index)?;
+        let options = FtsIndexOptions::parse_canonical(&index.options_json)?;
+        crate::lower::physical_fts_index_ddl(
+            &index.physical_name,
+            physical_table,
+            &index.physical_columns,
+            &options.tokenizer,
+            &options.weights,
+        )
+    }
+
+    fn drop_statement(&self, index: &IndexDefinition) -> Result<Stmt> {
+        self.validate_definition(index)?;
+        crate::lower::physical_drop_index_ddl(&index.physical_name)
+    }
+
+    fn rebuild_statement(&self, index: &IndexDefinition) -> Result<Stmt> {
+        self.validate_definition(index)?;
+        crate::lower::physical_optimize_index_stmt(&index.physical_name)
+    }
+}
+
 static BUILTIN_BTREE: BuiltinBtreeProvider = BuiltinBtreeProvider;
 static BUILTIN_GRAPH: BuiltinGraphProvider = BuiltinGraphProvider;
+static BUILTIN_FTS: BuiltinFtsProvider = BuiltinFtsProvider;
 
 pub(crate) fn index_provider(index: &IndexDefinition) -> Result<&'static dyn IndexProviderAdapter> {
     match index.provider {
@@ -141,6 +226,10 @@ pub(crate) fn index_provider(index: &IndexDefinition) -> Result<&'static dyn Ind
         Provider::BuiltinGraph => {
             BUILTIN_GRAPH.validate_definition(index)?;
             Ok(&BUILTIN_GRAPH)
+        }
+        Provider::BuiltinFts => {
+            BUILTIN_FTS.validate_definition(index)?;
+            Ok(&BUILTIN_FTS)
         }
     }
 }

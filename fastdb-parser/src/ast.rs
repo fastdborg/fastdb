@@ -63,6 +63,7 @@ pub enum Statement {
     Delete(DeleteStatement),
     DefineTable(DefineTableStatement),
     DefineField(DefineFieldStatement),
+    DefineAnalyzer(DefineAnalyzerStatement),
     DefineIndex(DefineIndexStatement),
     Explain(ExplainStatement),
     RemoveIndex(IndexMaintenanceStatement),
@@ -82,6 +83,7 @@ impl Statement {
             Self::Delete(stmt) => stmt.span,
             Self::DefineTable(stmt) => stmt.span,
             Self::DefineField(stmt) => stmt.span,
+            Self::DefineAnalyzer(stmt) => stmt.span,
             Self::DefineIndex(stmt) => stmt.span,
             Self::Explain(stmt) => stmt.span,
             Self::RemoveIndex(stmt) | Self::RebuildIndex(stmt) => stmt.span,
@@ -235,6 +237,18 @@ pub struct DefineFieldStatement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct DefineAnalyzerStatement {
+    pub span: Span,
+    pub name: Identifier,
+    pub tokenizer: Spanned<AnalyzerTokenizerSyntax>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalyzerTokenizerSyntax {
+    Blank,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DefineIndexStatement {
     pub span: Span,
     pub name: Identifier,
@@ -243,6 +257,13 @@ pub struct DefineIndexStatement {
     pub fields: Vec<FieldPath>,
     pub unique: Option<Span>,
     pub kind: IndexKindSyntax,
+    pub surface: IndexDefinitionSurface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexDefinitionSurface {
+    SurrealDefine,
+    FastDbCreate,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -251,6 +272,7 @@ pub enum IndexKindSyntax {
     Fulltext {
         span: Span,
         analyzer: Identifier,
+        highlights: Option<Span>,
     },
     Provider {
         span: Span,
@@ -471,6 +493,7 @@ pub enum BinaryOperator {
     GreaterEqual,
     Equal,
     NotEqual,
+    FtsMatch(Option<u32>),
     And,
     Or,
 }

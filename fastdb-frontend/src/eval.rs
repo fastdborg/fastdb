@@ -48,11 +48,13 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
     match statement {
         Statement::Create(statement) => match &statement.data {
             turso_fastdb_parser::CreateData::Content(expression) => {
+                reject_all_functions(expression)?;
                 reject_unavailable_functions(expression)?;
                 collect_parameters(expression, &mut names)
             }
             turso_fastdb_parser::CreateData::Set(assignments) => {
                 for assignment in assignments {
+                    reject_all_functions(&assignment.value)?;
                     reject_unavailable_functions(&assignment.value)?;
                     collect_parameters(&assignment.value, &mut names);
                 }
@@ -64,11 +66,13 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
             if let Some(data) = &statement.data {
                 match data {
                     turso_fastdb_parser::CreateData::Content(expression) => {
+                        reject_all_functions(expression)?;
                         reject_unavailable_functions(expression)?;
                         collect_parameters(expression, &mut names);
                     }
                     turso_fastdb_parser::CreateData::Set(assignments) => {
                         for assignment in assignments {
+                            reject_all_functions(&assignment.value)?;
                             reject_unavailable_functions(&assignment.value)?;
                             collect_parameters(&assignment.value, &mut names);
                         }
@@ -91,6 +95,7 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         }
         Statement::Update(statement) => {
             for assignment in &statement.assignments {
+                reject_all_functions(&assignment.value)?;
                 reject_unavailable_functions(&assignment.value)?;
                 collect_parameters(&assignment.value, &mut names);
             }
@@ -121,6 +126,7 @@ pub(crate) fn validate_parameter_references(statement: &Statement, params: &Para
         }
         Statement::DefineTable(_)
         | Statement::DefineField(_)
+        | Statement::DefineAnalyzer(_)
         | Statement::DefineIndex(_)
         | Statement::RemoveIndex(_)
         | Statement::RebuildIndex(_)
@@ -178,13 +184,27 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
             for argument in arguments {
                 reject_unavailable_functions(argument)?;
             }
-            let _ = name;
-            Err(FastDbError::UnsupportedSyntax(
-                turso_fastdb_parser::ParseError::unsupported(
-                    "function execution is unavailable in Phase 6",
-                    expression.span,
-                ),
-            ))
+            let normalized = name
+                .iter()
+                .map(|segment| segment.value.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            if matches!(
+                normalized.as_slice(),
+                [name] if matches!(name.as_str(), "fts_match" | "fts_score" | "fts_highlight")
+            ) || matches!(
+                normalized.as_slice(),
+                [namespace, name]
+                    if namespace == "search" && matches!(name.as_str(), "score" | "highlight")
+            ) {
+                Ok(())
+            } else {
+                Err(FastDbError::UnsupportedSyntax(
+                    turso_fastdb_parser::ParseError::unsupported(
+                        "function is outside the Phase 8 FTS subset",
+                        expression.span,
+                    ),
+                ))
+            }
         }
         ExprKind::Traversal(_) => Ok(()),
         ExprKind::Array(values) => {
@@ -214,6 +234,37 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
         | ExprKind::Parameter(_)
         | ExprKind::RecordId(_)
         | ExprKind::FieldPath(_) => Ok(()),
+    }
+}
+
+fn reject_all_functions(expression: &Expr) -> Result<()> {
+    match &expression.kind {
+        ExprKind::FunctionCall { .. } => Err(FastDbError::UnsupportedSyntax(
+            turso_fastdb_parser::ParseError::unsupported(
+                "function calls are unavailable in mutation values",
+                expression.span,
+            ),
+        )),
+        ExprKind::Array(values) => {
+            for value in values {
+                reject_all_functions(value)?;
+            }
+            Ok(())
+        }
+        ExprKind::Object(fields) => {
+            for field in fields {
+                reject_all_functions(&field.value)?;
+            }
+            Ok(())
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Parenthesized(operand) => {
+            reject_all_functions(operand)
+        }
+        ExprKind::Binary { left, right, .. } => {
+            reject_all_functions(left)?;
+            reject_all_functions(right)
+        }
+        _ => Ok(()),
     }
 }
 
@@ -403,6 +454,9 @@ fn evaluate_binary(
         BinaryOperator::And | BinaryOperator::Or => {
             unreachable!("short-circuit operators are handled before RHS evaluation")
         }
+        BinaryOperator::FtsMatch(_) => Err(FastDbError::Schema(
+            "FTS match predicates require an indexed SELECT context".into(),
+        )),
     }
 }
 

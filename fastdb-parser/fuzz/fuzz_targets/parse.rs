@@ -174,6 +174,10 @@ fn validate_statement(statement: &Statement, source_len: usize) {
             child(parent, statement.table.span, source_len);
             validate_schema_type(parent, &statement.ty, source_len);
         }
+        Statement::DefineAnalyzer(statement) => {
+            child(parent, statement.name.span, source_len);
+            child(parent, statement.tokenizer.span, source_len);
+        }
         Statement::DefineIndex(statement) => {
             child(parent, statement.name.span, source_len);
             if let Some(span) = statement.table_keyword {
@@ -188,9 +192,16 @@ fn validate_statement(statement: &Statement, source_len: usize) {
             }
             match &statement.kind {
                 turso_fastdb_parser::IndexKindSyntax::Btree => {}
-                turso_fastdb_parser::IndexKindSyntax::Fulltext { span, analyzer } => {
+                turso_fastdb_parser::IndexKindSyntax::Fulltext {
+                    span,
+                    analyzer,
+                    highlights,
+                } => {
                     child(parent, *span, source_len);
                     child(*span, analyzer.span, source_len);
+                    if let Some(highlights) = highlights {
+                        child(*span, *highlights, source_len);
+                    }
                 }
                 turso_fastdb_parser::IndexKindSyntax::Provider {
                     span,

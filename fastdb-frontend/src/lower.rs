@@ -507,6 +507,83 @@ pub fn physical_relation_table_ddl(
     Ok(create_table(opaque_name, columns, vec![]))
 }
 
+pub fn physical_table_with_hidden_ddl(
+    opaque_name: &str,
+    graph_columns: &[String],
+    fts_columns: &[String],
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_name, TABLE_NAME_PREFIX)?;
+    if !graph_columns.is_empty() && graph_columns.len() != 4 {
+        return Err(FastDbError::format(
+            "physical table requires zero or four graph columns",
+        ));
+    }
+    let mut columns = vec![
+        column("rid", "TEXT", vec![primary_key()]),
+        column("doc", "BLOB", vec![not_null()]),
+    ];
+    for hidden in graph_columns {
+        validate_physical_name(hidden, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+        columns.push(column(hidden, "TEXT", vec![not_null()]));
+    }
+    for hidden in fts_columns {
+        validate_physical_name(hidden, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+        columns.push(column(hidden, "TEXT", vec![]));
+    }
+    Ok(create_table(opaque_name, columns, vec![]))
+}
+
+pub fn physical_add_fts_column_ddl(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(
+        opaque_hidden_column,
+        crate::names::HIDDEN_COLUMN_NAME_PREFIX,
+    )?;
+    Ok(Stmt::AlterTable(AlterTable {
+        name: qnm(opaque_table),
+        body: AlterTableBody::AddColumn(column(opaque_hidden_column, "TEXT", vec![])),
+    }))
+}
+
+pub fn physical_update_fts_column_stmt(
+    opaque_table: &str,
+    opaque_hidden_column: &str,
+    encoded_rid: &str,
+    value: Option<&str>,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    validate_physical_name(
+        opaque_hidden_column,
+        crate::names::HIDDEN_COLUMN_NAME_PREFIX,
+    )?;
+    let (value_expr, bindings) = if let Some(value) = value {
+        (var(2), vec![text(encoded_rid), text(value)])
+    } else {
+        (Expr::Literal(Literal::Null), vec![text(encoded_rid)])
+    };
+    Ok((
+        Stmt::Update(Update {
+            with: None,
+            or_conflict: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            sets: vec![Set {
+                col_names: vec![nm(opaque_hidden_column)],
+                expr: Box::new(value_expr),
+            }],
+            from: None,
+            where_clause: Some(Box::new(Expr::binary(id("rid"), Operator::Equals, var(1)))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        }),
+        bindings,
+    ))
+}
+
 pub fn physical_graph_index_ddl(
     opaque_index: &str,
     opaque_table: &str,
@@ -531,6 +608,56 @@ pub fn physical_graph_index_ddl(
         columns: hidden_columns.iter().map(|name| sorted_id(name)).collect(),
         with_clause: vec![],
         where_clause: None,
+    })
+}
+
+pub fn physical_fts_index_ddl(
+    opaque_index: &str,
+    opaque_table: &str,
+    hidden_columns: &[String],
+    tokenizer: &str,
+    weights: &[f64],
+) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_index, INDEX_NAME_PREFIX)?;
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    if hidden_columns.is_empty() {
+        return Err(FastDbError::format("FTS index has no hidden input columns"));
+    }
+    for hidden in hidden_columns {
+        validate_physical_name(hidden, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+    }
+    let mut with_clause = vec![(
+        nm("tokenizer"),
+        Box::new(Expr::Literal(Literal::String(format!("'{tokenizer}'")))),
+    )];
+    if !weights.is_empty() {
+        let encoded = hidden_columns
+            .iter()
+            .zip(weights)
+            .map(|(column, weight)| format!("{column}={weight}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        with_clause.push((
+            nm("weights"),
+            Box::new(Expr::Literal(Literal::String(format!("'{encoded}'")))),
+        ));
+    }
+    Ok(Stmt::CreateIndex {
+        unique: false,
+        if_not_exists: false,
+        idx_name: qnm(opaque_index),
+        tbl_name: nm(opaque_table),
+        using: Some(nm("fts")),
+        columns: hidden_columns.iter().map(|name| sorted_id(name)).collect(),
+        with_clause,
+        where_clause: None,
+    })
+}
+
+pub fn physical_optimize_index_stmt(opaque_index: &str) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_index, INDEX_NAME_PREFIX)?;
+    Ok(Stmt::Optimize {
+        idx_name: Some(qnm(opaque_index)),
     })
 }
 
@@ -1105,27 +1232,83 @@ pub fn index_delete(index_id: &str) -> (Stmt, Bindings) {
     )
 }
 
+pub fn analyzer_insert(
+    analyzer_id: &str,
+    logical_name: &str,
+    provider: &str,
+    provider_version: i64,
+    options_json: &str,
+    definition: &str,
+) -> (Stmt, Bindings) {
+    insert_values(
+        crate::catalog::ANALYZERS_TABLE,
+        &[
+            "analyzer_id",
+            "logical_name",
+            "provider",
+            "provider_version",
+            "options_json",
+            "definition",
+        ],
+        vec![
+            var(1),
+            var(2),
+            var(3),
+            numlit(provider_version),
+            var(4),
+            var(5),
+        ],
+        vec![
+            text(analyzer_id),
+            text(logical_name),
+            text(provider),
+            text(options_json),
+            text(definition),
+        ],
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn hidden_column_insert(
     column_id: &str,
     table_id: &str,
+    index_id: Option<&str>,
+    field_path_key: Option<&str>,
     physical_name: &str,
     provider: &str,
     provider_version: i64,
     physical_encoding: &str,
+    dimension: Option<i64>,
     options_json: &str,
     state: &str,
     encoding_version: i64,
 ) -> (Stmt, Bindings) {
+    let mut bindings = vec![text(column_id), text(table_id)];
+    let index_id = optional_text_binding(&mut bindings, index_id);
+    let field_path_key = optional_text_binding(&mut bindings, field_path_key);
+    bindings.push(text(physical_name));
+    let physical_name_index = u32::try_from(bindings.len()).expect("fixed hidden bindings");
+    bindings.push(text(provider));
+    let provider_index = u32::try_from(bindings.len()).expect("fixed hidden bindings");
+    bindings.push(text(physical_encoding));
+    let encoding_index = u32::try_from(bindings.len()).expect("fixed hidden bindings");
+    let dimension = dimension.map_or(Expr::Literal(Literal::Null), numlit);
+    bindings.push(text(options_json));
+    let options_index = u32::try_from(bindings.len()).expect("fixed hidden bindings");
+    bindings.push(text(state));
+    let state_index = u32::try_from(bindings.len()).expect("fixed hidden bindings");
     insert_values(
         crate::catalog::HIDDEN_COLUMNS_TABLE,
         &[
             "column_id",
             "table_id",
+            "index_id",
+            "field_path_key",
             "physical_name",
             "provider",
             "provider_version",
             "physical_encoding",
+            "dimension",
             "options_json",
             "state",
             "encoding_version",
@@ -1133,23 +1316,18 @@ pub fn hidden_column_insert(
         vec![
             var(1),
             var(2),
-            var(3),
-            var(4),
+            index_id,
+            field_path_key,
+            var(physical_name_index),
+            var(provider_index),
             numlit(provider_version),
-            var(5),
-            var(6),
-            var(7),
+            var(encoding_index),
+            dimension,
+            var(options_index),
+            var(state_index),
             numlit(encoding_version),
         ],
-        vec![
-            text(column_id),
-            text(table_id),
-            text(physical_name),
-            text(provider),
-            text(physical_encoding),
-            text(options_json),
-            text(state),
-        ],
+        bindings,
     )
 }
 
@@ -1200,6 +1378,36 @@ pub fn physical_insert_content_stmt(
     ))
 }
 
+pub fn physical_insert_document_with_hidden_stmt(
+    opaque_table: &str,
+    encoded_rid: &str,
+    encoded_doc: &str,
+    hidden: &[(String, Option<String>)],
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    let mut names = vec!["rid".to_string(), "doc".to_string()];
+    let mut expressions = vec![var(1), fcall("jsonb", vec![var(2)])];
+    let mut bindings = vec![text(encoded_rid), text(encoded_doc)];
+    for (name, value) in hidden {
+        validate_physical_name(name, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+        names.push(name.clone());
+        if let Some(value) = value {
+            bindings.push(text(value));
+            let index = u32::try_from(bindings.len())
+                .map_err(|_| FastDbError::Engine("too many hidden bindings".into()))?;
+            expressions.push(var(index));
+        } else {
+            expressions.push(Expr::Literal(Literal::Null));
+        }
+    }
+    Ok(insert_values_owned(
+        opaque_table,
+        &names,
+        expressions,
+        bindings,
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn physical_relation_insert_stmt(
     opaque_table: &str,
@@ -1244,6 +1452,60 @@ pub fn physical_relation_insert_stmt(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn physical_relation_insert_with_hidden_stmt(
+    opaque_table: &str,
+    graph_columns: &[String],
+    fts_hidden: &[(String, Option<String>)],
+    encoded_rid: &str,
+    encoded_doc: &str,
+    in_table_id: &str,
+    in_rid: &str,
+    out_table_id: &str,
+    out_rid: &str,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    if graph_columns.len() != 4 {
+        return Err(FastDbError::format(
+            "relation insert requires four endpoint columns",
+        ));
+    }
+    let mut names = vec!["rid".to_string(), "doc".to_string()];
+    let mut expressions = vec![var(1), fcall("jsonb", vec![var(2)])];
+    let mut bindings = vec![
+        text(encoded_rid),
+        text(encoded_doc),
+        text(in_table_id),
+        text(in_rid),
+        text(out_table_id),
+        text(out_rid),
+    ];
+    for (ordinal, name) in graph_columns.iter().enumerate() {
+        validate_physical_name(name, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+        names.push(name.clone());
+        expressions.push(var(
+            u32::try_from(ordinal + 3).expect("four graph bindings fit")
+        ));
+    }
+    for (name, value) in fts_hidden {
+        validate_physical_name(name, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+        names.push(name.clone());
+        if let Some(value) = value {
+            bindings.push(text(value));
+            expressions.push(var(u32::try_from(bindings.len())
+                .map_err(|_| FastDbError::Engine("too many hidden bindings".into()))?));
+        } else {
+            expressions.push(Expr::Literal(Literal::Null));
+        }
+    }
+    Ok(insert_values_owned(
+        opaque_table,
+        &names,
+        expressions,
+        bindings,
+    ))
+}
+
 pub fn physical_insert_set_stmt(
     opaque_table: &str,
     encoded_rid: &str,
@@ -1285,6 +1547,49 @@ pub fn physical_update_doc_stmt(
             limit: None,
         }),
         vec![text(encoded_rid), text(encoded_doc)],
+    ))
+}
+
+pub fn physical_update_document_with_hidden_stmt(
+    opaque_table: &str,
+    encoded_rid: &str,
+    encoded_doc: &str,
+    hidden: &[(String, Option<String>)],
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    let mut bindings = vec![text(encoded_rid), text(encoded_doc)];
+    let mut sets = vec![Set {
+        col_names: vec![nm("doc")],
+        expr: Box::new(fcall("jsonb", vec![var(2)])),
+    }];
+    for (name, value) in hidden {
+        validate_physical_name(name, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+        let expression = if let Some(value) = value {
+            bindings.push(text(value));
+            var(u32::try_from(bindings.len())
+                .map_err(|_| FastDbError::Engine("too many hidden bindings".into()))?)
+        } else {
+            Expr::Literal(Literal::Null)
+        };
+        sets.push(Set {
+            col_names: vec![nm(name)],
+            expr: Box::new(expression),
+        });
+    }
+    Ok((
+        Stmt::Update(Update {
+            with: None,
+            or_conflict: None,
+            tbl_name: qnm(opaque_table),
+            indexed: None,
+            sets,
+            from: None,
+            where_clause: Some(Box::new(Expr::binary(id("rid"), Operator::Equals, var(1)))),
+            returning: vec![],
+            order_by: vec![],
+            limit: None,
+        }),
+        bindings,
     ))
 }
 
@@ -1342,6 +1647,69 @@ pub fn physical_select_predicates_stmt(
         ),
         bindings,
     ))
+}
+
+pub fn physical_fts_select_stmt(
+    opaque_table: &str,
+    fts_columns: &[String],
+    graph_columns: &[String],
+    encoded_rid: Option<&str>,
+    query: &str,
+) -> Result<(Stmt, Bindings), FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    if fts_columns.is_empty() {
+        return Err(FastDbError::format("FTS query has no provider columns"));
+    }
+    for column in fts_columns.iter().chain(graph_columns) {
+        validate_physical_name(column, crate::names::HIDDEN_COLUMN_NAME_PREFIX)?;
+    }
+    if !graph_columns.is_empty() && graph_columns.len() != 4 {
+        return Err(FastDbError::format(
+            "FTS relation query requires four graph columns",
+        ));
+    }
+    let mut bindings = Vec::new();
+    let mut condition = if let Some(rid) = encoded_rid {
+        bindings.push(text(rid));
+        Some(Expr::binary(id("rid"), Operator::Equals, var(1)))
+    } else {
+        None
+    };
+    bindings.push(text(query));
+    let query_index = u32::try_from(bindings.len())
+        .map_err(|_| FastDbError::Engine("too many FTS bindings".into()))?;
+    let arguments = fts_columns
+        .iter()
+        .map(|column| id(column))
+        .chain(std::iter::once(var(query_index)))
+        .collect::<Vec<_>>();
+    let matched = fcall("fts_match", arguments.clone());
+    condition = Some(match condition {
+        None => matched,
+        Some(previous) => Expr::binary(previous, Operator::And, matched),
+    });
+    let mut columns = vec![
+        ResultColumn::Expr(Box::new(id("rid")), None),
+        ResultColumn::Expr(Box::new(fcall("json", vec![id("doc")])), None),
+    ];
+    columns.extend(
+        graph_columns
+            .iter()
+            .map(|column| ResultColumn::Expr(Box::new(id(column)), None)),
+    );
+    columns.push(ResultColumn::Expr(
+        Box::new(fcall("fts_score", arguments)),
+        Some(As::As(nm("__fastdb_fts_score"))),
+    ));
+    let mut statement = one_select(columns, opaque_table, condition);
+    let Stmt::Select(select) = &mut statement else {
+        unreachable!("one_select returns SELECT");
+    };
+    select.limit = Some(Limit {
+        expr: Box::new(numlit(10_001)),
+        offset: None,
+    });
+    Ok((statement, bindings))
 }
 
 pub fn physical_relation_select_predicates_stmt(
