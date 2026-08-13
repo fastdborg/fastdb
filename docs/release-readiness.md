@@ -1,7 +1,7 @@
 # FastDB Core release-readiness gates
 
-Status: Phase 10 complete locally; Phase 11 mandatory MVCC audit next; no
-alpha, beta, or Core 1.0 release authorized
+Status: Phase 11 stopped at the mandatory MVCC audit; no stable parallel-writer
+candidate qualified; no alpha, beta, or Core 1.0 release authorized
 
 This checklist is the durable release gate. Phase plans and reports contain
 execution details and evidence; completing a development phase does not itself
@@ -118,11 +118,17 @@ it does not authorize publication.
 
 ### Phase 11 — Parallel writers / `0.9` beta candidate
 
-- [ ] Perform the mandatory exact-implementation upstream audit. The current
+- [x] Perform the mandatory exact-implementation upstream audit. The current
       pinned MVCC implementation is experimental and not production-ready.
 - [ ] Confirm a stable candidate has snapshot isolation, recovery, garbage
       collection, bounded memory, and acceptable checkpoint behavior. If not,
       stop the Core 1.0 roadmap at this gate.
+
+Audit result: stopped on 2026-08-13. Retained pin, `v0.8.0-pre.4`, and upstream
+`main` at `069b5431e86779d70df3940711bb61f8601db069` all failed the stable-status,
+non-ignored correctness, and checkpoint gates. See
+`docs/phase11-mvcc-audit.md`. Remaining Phase 11 and all Phase 12 gates are not
+started.
 - [ ] If qualified, integrate exactly one audited SHA through the mandatory
       upstream-sync workflow and update all pin/evidence records together.
 - [ ] Add opt-in `ParallelWrites` while retaining `Serialized` as default; add

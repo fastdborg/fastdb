@@ -1,7 +1,7 @@
 # FastDB Core Technical Plan and Roadmap
 
-Status: Phase 10 complete locally; Phase 11 mandatory MVCC audit next; Core 1.0
-roadmap revised 2026-08-13
+Status: Phase 11 stopped at the mandatory MVCC audit; no stable parallel-writer
+candidate qualified; Core 1.0 is blocked as of 2026-08-13
 
 ## 1. Product Definition
 
@@ -1065,14 +1065,16 @@ After Core 1.0, separately plan and gate:
 
 1. Preserve the completed Phase 10 operational baseline and evidence in
    `plan-phase10.md`, `docs/phase10-report.md`, and `docs/operations.md`.
-2. Begin Phase 11 with the mandatory exact-implementation MVCC and upstream
-   audit; do not implement parallel writers unless one stable candidate passes.
+2. Preserve the Phase 11 stop decision in `plan-phase11.md` and
+   `docs/phase11-mvcc-audit.md`; do not implement parallel writers or begin
+   Phase 12 without a newly audited stable exact candidate.
 3. Preserve the immutable SurrealDB `v3.1.5` characterization and add only
    independently authored tests.
 4. Preserve format 2, graph semantics, the sealed provider boundary, direct
    translated AST, opaque physical names, and every earlier verification gate.
-5. Do not start server, cloud, tagging, publication, or release operations;
-   Phase 11 itself remains a stop gate and requires its own rollback commit.
+5. Do not start Phase 12, server, cloud, tagging, publication, or release
+   operations. A future resumed Phase 11 must repeat the exact-SHA audit and
+   earn a separate rollback commit before implementation.
 
 ## 15. References
 
