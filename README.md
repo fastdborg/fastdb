@@ -15,6 +15,7 @@ let response = connection
     )
     .await?;
 connection.close().await?;
+database.close().await?;
 ```
 
 ```sh
@@ -23,8 +24,8 @@ fastdb --memory --output json -c "SELECT * FROM person"
 ```
 
 See [the embedded API](docs/api.md), [CLI contract](docs/cli.md),
-[compatibility matrix](COMPAT.md), [format policy](docs/format-v1.md), and
-[clean-room policy](CLEAN_ROOM.md).
+[operations guide](docs/operations.md), [compatibility matrix](COMPAT.md),
+[format policy](docs/format-v2.md), and [clean-room policy](CLEAN_ROOM.md).
 
 FastDB Core is open-source software under the [MIT License](LICENSE.md).
 FastDB-authored crates remain version `0.0.0` and `publish = false` until the

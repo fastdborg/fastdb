@@ -3,6 +3,11 @@
 ```text
 fastdb [--memory | PATH] [-c SOURCE]
        [--output human|json] [--param NAME=JSON]
+fastdb shell [--memory | PATH] [-c SOURCE] [OPTIONS]
+fastdb check PATH [--output human|json]
+fastdb backup PATH DESTINATION [--output human|json]
+fastdb restore BACKUP DESTINATION [--output human|json]
+fastdb rebuild-index PATH TABLE INDEX [--output human|json]
 ```
 
 - `-c` executes one request and exits.
@@ -14,6 +19,15 @@ fastdb [--memory | PATH] [-c SOURCE]
 - `--param` binds a JSON value. Names omit `$`, are case-sensitive, and may
   appear only once.
 - Batch failures exit 1. Argument errors use clap's conventional exit 2.
+- The legacy invocation remains an alias for `shell`.
+
+Operational commands take an exclusive maintenance lease. `check` validates
+catalogs, hidden provider state, graph adjacency indexes, vector encodings, and
+engine integrity. `backup` checkpoints and validates a new destination before
+publishing it. `restore` validates both the source and the copied temporary
+file before atomically publishing a new destination. Neither command
+overwrites an existing path. `rebuild-index` resolves logical table/index names
+through the catalog and rebuilds the sealed provider representation.
 
 Full-text definitions and queries work in command, piped-batch, and
 interactive modes. Quote the source at the shell boundary and use `--param`
@@ -52,3 +66,8 @@ Responses use `t: "response"` and contain ordered statement objects. Errors
 use `t: "error"`, a stable category, human detail, and a byte span when
 available. This versioned JSON contract is distinct from the internal format-1
 JSONB codec and does not change the database format.
+
+Operational success uses a compact deterministic envelope with `ok`,
+`operation`, and a `report` object. Operational failures use the same strict
+`$fastdb` error envelope as query failures. Source and parameters are never
+included.

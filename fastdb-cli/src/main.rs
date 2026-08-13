@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
 #![deny(warnings)]
 
-use clap::{Parser, ValueEnum};
+use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use fastdb::{
-    Builder, Connection, Error, ErrorCategory, Params, QueryResponse, StatementResult, Value,
+    Builder, CheckReport, Connection, Error, ErrorCategory, Params, QueryResponse, StatementResult,
+    Value,
 };
 use futures::executor::block_on;
 use std::collections::BTreeSet;
@@ -15,21 +16,64 @@ use turso_fastdb_parser::{classify_input, InputCompleteness};
 #[derive(Debug, Parser)]
 #[command(name = "fastdb", version, about = "FastDB local database shell")]
 struct Args {
+    #[command(subcommand)]
+    operation: Option<Operation>,
+
     /// Open a private in-memory database.
     #[arg(long, conflicts_with = "path")]
     memory: bool,
 
     /// Database file to open or create.
-    #[arg(value_name = "PATH", required_unless_present = "memory")]
+    #[arg(value_name = "PATH")]
     path: Option<PathBuf>,
 
     /// Execute one request and exit.
     #[arg(short = 'c', value_name = "SOURCE")]
-    command: Option<String>,
+    source_command: Option<String>,
 
     /// Request output format.
-    #[arg(long, value_enum, default_value_t = Output::Human)]
+    #[arg(long, value_enum, default_value_t = Output::Human, global = true)]
     output: Output,
+
+    /// Bind a named JSON value. May be repeated with distinct names.
+    #[arg(long = "param", value_name = "NAME=JSON")]
+    params: Vec<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Operation {
+    /// Open the interactive or command-driven database shell.
+    Shell(ShellArgs),
+    /// Validate catalogs, provider state, and engine integrity.
+    Check { path: PathBuf },
+    /// Create a checkpointed, validated backup artifact.
+    Backup { path: PathBuf, destination: PathBuf },
+    /// Validate and restore a backup to a new database path.
+    Restore {
+        backup: PathBuf,
+        destination: PathBuf,
+    },
+    /// Rebuild one catalog-resolved index from document state.
+    RebuildIndex {
+        path: PathBuf,
+        table: String,
+        index: String,
+    },
+}
+
+#[derive(Debug, ClapArgs)]
+struct ShellArgs {
+    /// Open a private in-memory database.
+    #[arg(long, conflicts_with = "path")]
+    memory: bool,
+
+    /// Database file to open or create.
+    #[arg(value_name = "PATH")]
+    path: Option<PathBuf>,
+
+    /// Execute one request and exit.
+    #[arg(short = 'c', value_name = "SOURCE")]
+    source_command: Option<String>,
 
     /// Bind a named JSON value. May be repeated with distinct names.
     #[arg(long = "param", value_name = "NAME=JSON")]
@@ -55,16 +99,99 @@ fn main() -> ExitCode {
 
 async fn run(args: Args) -> Result<(), (Error, Output)> {
     let output = args.output;
-    let params = parse_params(&args.params).map_err(|error| (error, output))?;
-    let builder = if args.memory {
+    match args.operation {
+        Some(Operation::Shell(shell)) => {
+            run_shell(
+                shell.memory,
+                shell.path,
+                shell.source_command,
+                shell.params,
+                output,
+            )
+            .await
+        }
+        Some(Operation::Check { path }) => {
+            let database = Builder::new_local(path)
+                .build()
+                .await
+                .map_err(|error| (error, output))?;
+            let report = database.check().await.map_err(|error| (error, output))?;
+            database.close().await.map_err(|error| (error, output))?;
+            print_operation("check", &report, output);
+            Ok(())
+        }
+        Some(Operation::Backup { path, destination }) => {
+            let database = Builder::new_local(path)
+                .build()
+                .await
+                .map_err(|error| (error, output))?;
+            let report = database
+                .backup_to(destination)
+                .await
+                .map_err(|error| (error, output))?;
+            database.close().await.map_err(|error| (error, output))?;
+            print_operation("backup", &report, output);
+            Ok(())
+        }
+        Some(Operation::Restore {
+            backup,
+            destination,
+        }) => {
+            let report = restore(&backup, &destination)
+                .await
+                .map_err(|error| (error, output))?;
+            print_operation("restore", &report, output);
+            Ok(())
+        }
+        Some(Operation::RebuildIndex { path, table, index }) => {
+            let database = Builder::new_local(path)
+                .build()
+                .await
+                .map_err(|error| (error, output))?;
+            database
+                .rebuild_index(&table, &index)
+                .await
+                .map_err(|error| (error, output))?;
+            let report = database.check().await.map_err(|error| (error, output))?;
+            database.close().await.map_err(|error| (error, output))?;
+            print_operation("rebuild-index", &report, output);
+            Ok(())
+        }
+        None => {
+            run_shell(
+                args.memory,
+                args.path,
+                args.source_command,
+                args.params,
+                output,
+            )
+            .await
+        }
+    }
+}
+
+async fn run_shell(
+    memory: bool,
+    path: Option<PathBuf>,
+    source_command: Option<String>,
+    raw_params: Vec<String>,
+    output: Output,
+) -> Result<(), (Error, Output)> {
+    let params = parse_params(&raw_params).map_err(|error| (error, output))?;
+    let builder = if memory {
         Builder::new_memory()
     } else {
-        Builder::new_local(args.path.expect("clap requires PATH or --memory"))
+        Builder::new_local(path.ok_or_else(|| {
+            (
+                Error::new(ErrorCategory::Schema, "PATH or --memory is required"),
+                output,
+            )
+        })?)
     };
     let database = builder.build().await.map_err(|error| (error, output))?;
     let connection = database.connect().map_err(|error| (error, output))?;
 
-    let result = if let Some(source) = args.command {
+    let result = if let Some(source) = source_command {
         execute_and_print(&connection, &source, params, output).await
     } else if io::stdin().is_terminal() {
         interactive(&connection, params, output).await
@@ -76,11 +203,124 @@ async fn run(args: Args) -> Result<(), (Error, Output)> {
         execute_and_print(&connection, &source, params, output).await
     };
     let close = connection.close().await;
-    match (result, close) {
-        (Err(error), _) => Err((error, output)),
-        (Ok(()), Err(error)) => Err((error, output)),
-        (Ok(()), Ok(())) => Ok(()),
+    let database_close = if close.is_ok() {
+        database.close().await
+    } else {
+        Ok(())
+    };
+    match (result, close, database_close) {
+        (Err(error), _, _) => Err((error, output)),
+        (Ok(()), Err(error), _) | (Ok(()), Ok(()), Err(error)) => Err((error, output)),
+        (Ok(()), Ok(()), Ok(())) => Ok(()),
     }
+}
+
+async fn restore(backup: &PathBuf, destination: &PathBuf) -> Result<CheckReport, Error> {
+    if !backup.is_file() {
+        return Err(Error::new(
+            ErrorCategory::Io,
+            "restore source is not a database file",
+        ));
+    }
+    if destination.exists() {
+        return Err(Error::new(
+            ErrorCategory::Io,
+            "restore destination already exists",
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| Error::new(ErrorCategory::Io, "restore destination has no parent"))?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| Error::new(ErrorCategory::Io, "restore destination has no file name"))?;
+    let source = std::fs::canonicalize(backup)
+        .map_err(|error| Error::new(ErrorCategory::Io, error.to_string()))?;
+    let destination_absolute = if destination.is_absolute() {
+        destination.clone()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| Error::new(ErrorCategory::Io, error.to_string()))?
+            .join(destination)
+    };
+    if source == destination_absolute {
+        return Err(Error::new(
+            ErrorCategory::Io,
+            "restore destination must differ from the backup",
+        ));
+    }
+    let source_database = Builder::new_local(&source).build().await?;
+    source_database.check().await?;
+    source_database.close().await?;
+
+    let temporary = parent.join(format!(
+        ".{}.fastdb-restore-{}.tmp",
+        file_name.to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+    let result = async {
+        std::fs::copy(&source, &temporary)
+            .map_err(|error| Error::new(ErrorCategory::Io, error.to_string()))?;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&temporary)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| Error::new(ErrorCategory::Io, error.to_string()))?;
+        let restored = Builder::new_local(&temporary).build().await?;
+        let report = restored.check().await?;
+        restored.close().await?;
+        std::fs::rename(&temporary, destination)
+            .map_err(|error| Error::new(ErrorCategory::Io, error.to_string()))?;
+        sync_parent(parent)?;
+        Ok(report)
+    }
+    .await;
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn print_operation(operation: &str, report: &CheckReport, output: Output) {
+    match output {
+        Output::Human => println!(
+            "{operation}: ok (format {}, tables {}, indexes {}, FTS indexes {}, vector fields {}, pinned FTS exception {})",
+            report.format_version,
+            report.tables,
+            report.indexes,
+            report.fts_indexes,
+            report.vector_fields,
+            report.pinned_fts_exception
+        ),
+        Output::Json => println!(
+            "{}",
+            serde_json::json!({
+                "ok": true,
+                "operation": operation,
+                "report": {
+                    "format_version": report.format_version,
+                    "tables": report.tables,
+                    "indexes": report.indexes,
+                    "fts_indexes": report.fts_indexes,
+                    "vector_fields": report.vector_fields,
+                    "pinned_fts_exception": report.pinned_fts_exception,
+                }
+            })
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn sync_parent(parent: &std::path::Path) -> Result<(), Error> {
+    std::fs::File::open(parent)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| Error::new(ErrorCategory::Io, error.to_string()))
+}
+
+#[cfg(not(unix))]
+fn sync_parent(_parent: &std::path::Path) -> Result<(), Error> {
+    Ok(())
 }
 
 async fn interactive(connection: &Connection, params: Params, output: Output) -> Result<(), Error> {

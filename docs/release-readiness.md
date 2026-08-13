@@ -1,7 +1,7 @@
 # FastDB Core release-readiness gates
 
-Status: Phase 9 complete locally; Phase 10 operational-readiness planning next;
-no alpha, beta, or Core 1.0 release authorized
+Status: Phase 10 complete locally; Phase 11 mandatory MVCC audit next; no
+alpha, beta, or Core 1.0 release authorized
 
 This checklist is the durable release gate. Phase plans and reports contain
 execution details and evidence; completing a development phase does not itself
@@ -106,13 +106,13 @@ it does not authorize publication.
 
 ### Phase 10 — Operational readiness
 
-- [ ] Add bounded query/resource options, with-options methods, deterministic
+- [x] Add bounded query/resource options, with-options methods, deterministic
       close, consistent backup, and CLI check/backup/restore/rebuild commands.
-- [ ] Bound time, output rows/bytes, graph hops, vector dimensions, and FTS
+- [x] Bound time, output rows/bytes, graph hops, vector dimensions, and FTS
       queries without logging source or parameters.
-- [ ] Validate catalogs, hidden columns, adjacency indexes, FTS state, vector
+- [x] Validate catalogs, hidden columns, adjacency indexes, FTS state, vector
       encodings, and engine integrity through one supported check path.
-- [ ] Pass randomized backup/restore hashes, interrupted operations,
+- [x] Pass randomized backup/restore hashes, interrupted operations,
       document-derived provider rebuilds, busy/checkpoint behavior, safe limit
       failures, upgrade/rollback, and clean/abrupt shutdown retention tests.
 

@@ -2220,6 +2220,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "turso_fastdb_parser",
+ "uuid",
 ]
 
 [[package]]

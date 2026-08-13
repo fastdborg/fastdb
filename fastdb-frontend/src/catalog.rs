@@ -1919,6 +1919,8 @@ fn require_exact_schema(
     let sql_matches = actual_sql.is_some_and(|actual| {
         actual == expected_sql
             || actual.replace("CHECK (", "CHECK(") == expected_sql.replace("CHECK (", "CHECK(")
+            || (name.starts_with(crate::names::TABLE_NAME_PREFIX)
+                && physical_table_sql_matches(actual, expected_sql))
     });
     if object.table_name != table_name || !sql_matches {
         return Err(FastDbError::format(format!(
@@ -1926,6 +1928,31 @@ fn require_exact_schema(
         )));
     }
     Ok(())
+}
+
+fn physical_table_sql_matches(actual: &str, expected: &str) -> bool {
+    fn columns(sql: &str) -> Option<(&str, Vec<&str>)> {
+        let (prefix, body) = sql.split_once(" (")?;
+        let body = body.strip_suffix(") STRICT")?;
+        Some((prefix, body.split(", ").collect()))
+    }
+    let Some((actual_prefix, mut actual_columns)) = columns(actual) else {
+        return false;
+    };
+    let Some((expected_prefix, mut expected_columns)) = columns(expected) else {
+        return false;
+    };
+    if actual_prefix != expected_prefix
+        || actual_columns.get(..2) != expected_columns.get(..2)
+        || actual_columns.len() != expected_columns.len()
+    {
+        return false;
+    }
+    actual_columns.drain(..2);
+    expected_columns.drain(..2);
+    actual_columns.sort_unstable();
+    expected_columns.sort_unstable();
+    actual_columns == expected_columns
 }
 
 fn singleton_integer(rows: &[Vec<Value>], field: &str) -> Result<i64> {

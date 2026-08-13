@@ -18,20 +18,34 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, Weak};
 use turso_core::Value;
 use turso_parser::ast::Stmt;
 
+/// Result of the supported catalog/provider/engine integrity path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckReport {
+    pub format_version: i64,
+    pub tables: usize,
+    pub indexes: usize,
+    pub fts_indexes: usize,
+    pub vector_fields: usize,
+    pub pinned_fts_exception: bool,
+}
+
 /// An open FastDB database. Phase 0 uses one connection and one writer.
 #[derive(Clone)]
 pub struct Database {
     db: Arc<turso_core::Database>,
     coordinator: Arc<Coordinator>,
+    path: PathBuf,
 }
 
 pub(crate) struct Coordinator {
     pub(crate) schema_mutex: Mutex<()>,
     pub(crate) catalog: RwLock<Option<crate::catalog::CatalogState>>,
+    maintenance: RwLock<()>,
     schema_lease: Mutex<Option<u64>>,
     schema_lease_changed: Condvar,
     next_connection_id: AtomicU64,
     catalog_generation: AtomicU64,
+    active_transactions: AtomicU64,
 }
 
 impl Coordinator {
@@ -39,10 +53,12 @@ impl Coordinator {
         Self {
             schema_mutex: Mutex::new(()),
             catalog: RwLock::new(None),
+            maintenance: RwLock::new(()),
             schema_lease: Mutex::new(None),
             schema_lease_changed: Condvar::new(),
             next_connection_id: AtomicU64::new(1),
             catalog_generation: AtomicU64::new(0),
+            active_transactions: AtomicU64::new(0),
         }
     }
 
@@ -56,6 +72,16 @@ impl Coordinator {
 
     pub(crate) fn publish_catalog_generation(&self) {
         self.catalog_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn ensure_no_active_transactions(&self) -> Result<()> {
+        if self.active_transactions.load(Ordering::Acquire) == 0 {
+            Ok(())
+        } else {
+            Err(FastDbError::Transaction(
+                "database maintenance requires all explicit transactions to finish".into(),
+            ))
+        }
     }
 
     pub(crate) fn wait_for_catalog(&self, connection_id: u64) -> Result<()> {
@@ -126,7 +152,16 @@ impl Database {
             .db_opts(turso_core::DatabaseOpts::default().with_index_method(true));
         let db = turso_core::Database::open(io, path, opts)?;
         let coordinator = coordinator_for_path(path)?;
-        let database = Self { db, coordinator };
+        let stored_path = if path == ":memory:" {
+            PathBuf::from(path)
+        } else {
+            normalized_database_path(path)?
+        };
+        let database = Self {
+            db,
+            coordinator,
+            path: stored_path,
+        };
         database.initialize_catalog(catalog_failpoint)?;
         Ok(database)
     }
@@ -156,6 +191,218 @@ impl Database {
     pub fn connect(&self) -> Result<Connection> {
         let conn = self.db.connect()?;
         Ok(Connection::new(conn, self.coordinator.clone()))
+    }
+
+    /// Validate catalogs, provider-derived state, physical objects, and the
+    /// pinned engine integrity result through one supported path.
+    pub fn check(&self) -> Result<CheckReport> {
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .write()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
+        self.coordinator.ensure_no_active_transactions()?;
+        let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+        let state = crate::catalog::load_and_validate(&connection)?;
+        let (tables, indexes, fts_indexes, vector_fields) = match &state {
+            crate::catalog::CatalogState::Empty => (0, 0, 0, 0),
+            crate::catalog::CatalogState::Ready(snapshot) => {
+                let indexes = snapshot
+                    .tables
+                    .values()
+                    .map(|table| table.indexes.len())
+                    .sum();
+                let fts_indexes = snapshot
+                    .tables
+                    .values()
+                    .flat_map(|table| table.indexes.values())
+                    .filter(|index| index.provider == crate::catalog::Provider::BuiltinFts)
+                    .count();
+                let vector_fields = snapshot
+                    .hidden_columns
+                    .values()
+                    .filter(|column| column.provider == crate::catalog::Provider::BuiltinVector)
+                    .count();
+                (snapshot.tables.len(), indexes, fts_indexes, vector_fields)
+            }
+        };
+        let allowed_fts_diagnostics = match &state {
+            crate::catalog::CatalogState::Empty => BTreeSet::new(),
+            crate::catalog::CatalogState::Ready(snapshot) => snapshot
+                .tables
+                .values()
+                .flat_map(|table| table.indexes.values())
+                .filter(|index| index.provider == crate::catalog::Provider::BuiltinFts)
+                .map(|index| {
+                    format!(
+                        "wrong # of entries in index __turso_internal_fts_dir_{}_key",
+                        index.physical_name
+                    )
+                })
+                .collect(),
+        };
+        let mut statement = connection.conn.prepare("PRAGMA integrity_check")?;
+        let mut diagnostics = Vec::new();
+        statement.run_with_row_callback(|row| {
+            diagnostics.push(row.get::<String>(0)?);
+            Ok(())
+        })?;
+        if diagnostics.is_empty() {
+            return Err(FastDbError::Format(
+                "engine integrity check returned no result".into(),
+            ));
+        }
+        let mut pinned_fts_exception = false;
+        for diagnostic in diagnostics {
+            if diagnostic == "ok" {
+                continue;
+            }
+            if allowed_fts_diagnostics.contains(&diagnostic) {
+                pinned_fts_exception = true;
+                continue;
+            }
+            return Err(FastDbError::Format(format!(
+                "engine integrity check failed: {diagnostic}"
+            )));
+        }
+        connection.close()?;
+        Ok(CheckReport {
+            format_version: crate::catalog::FORMAT_VERSION,
+            tables,
+            indexes,
+            fts_indexes,
+            vector_fields,
+            pinned_fts_exception,
+        })
+    }
+
+    /// Create one checkpointed, validated backup without overwriting a path.
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<CheckReport> {
+        self.backup_to_inner(destination.as_ref(), None)
+    }
+
+    /// Test-only entry point for proving that a durable temporary copy is not
+    /// published when backup is interrupted before validation.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn backup_to_with_failpoint(
+        &self,
+        destination: impl AsRef<Path>,
+        failpoint: Failpoint,
+    ) -> Result<CheckReport> {
+        self.backup_to_inner(destination.as_ref(), Some(failpoint))
+    }
+
+    fn backup_to_inner(
+        &self,
+        destination: &Path,
+        failpoint: Option<Failpoint>,
+    ) -> Result<CheckReport> {
+        if self.path == Path::new(":memory:") {
+            return Err(FastDbError::Io(
+                "an in-memory database cannot be backed up to a file".into(),
+            ));
+        }
+        let source = self.path.clone();
+        let destination_normalized = normalized_output_path(destination)?;
+        if source == destination_normalized {
+            return Err(FastDbError::Io(
+                "backup destination must differ from the source".into(),
+            ));
+        }
+        if destination.exists() {
+            return Err(FastDbError::Io("backup destination already exists".into()));
+        }
+        let parent = destination
+            .parent()
+            .ok_or_else(|| FastDbError::Io("backup destination has no parent directory".into()))?;
+        let file_name = destination
+            .file_name()
+            .ok_or_else(|| FastDbError::Io("backup destination has no file name".into()))?;
+        let temporary = parent.join(format!(
+            ".{}.fastdb-backup-{}.tmp",
+            file_name.to_string_lossy(),
+            uuid::Uuid::new_v4()
+        ));
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .write()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
+        self.coordinator.ensure_no_active_transactions()?;
+        let result = (|| {
+            let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+            connection
+                .conn
+                .checkpoint(turso_core::CheckpointMode::Truncate {
+                    upper_bound_inclusive: None,
+                })?;
+            std::fs::copy(&source, &temporary)?;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&temporary)?
+                .sync_all()?;
+            if failpoint == Some(Failpoint::AfterBackupCopy) {
+                return Err(FastDbError::Transaction(
+                    "injected failure: AfterBackupCopy".into(),
+                ));
+            }
+            connection.close()?;
+            let temporary_text = temporary
+                .to_str()
+                .ok_or_else(|| FastDbError::Io("backup path is not valid UTF-8".into()))?;
+            let report = Database::open(temporary_text)?.check()?;
+            std::fs::rename(&temporary, destination)?;
+            sync_parent(parent)?;
+            Ok(report)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    /// Rebuild one catalog-resolved index without constructing FastDB source.
+    pub fn rebuild_index(&self, table: &str, index: &str) -> Result<()> {
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .write()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
+        self.coordinator.ensure_no_active_transactions()?;
+        let _schema =
+            self.coordinator.schema_mutex.lock().map_err(|_| {
+                FastDbError::Transaction("database schema mutex is poisoned".into())
+            })?;
+        let catalog = self
+            .coordinator
+            .catalog
+            .read()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+            .clone()
+            .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
+        let snapshot = match catalog {
+            crate::catalog::CatalogState::Ready(snapshot) => snapshot,
+            crate::catalog::CatalogState::Empty => {
+                return Err(FastDbError::Schema("database has no indexes".into()))
+            }
+        };
+        let definition = snapshot
+            .tables
+            .get(table)
+            .and_then(|table| table.indexes.get(index))
+            .ok_or_else(|| {
+                FastDbError::Schema(format!("index {index:?} is not defined on table {table:?}"))
+            })?;
+        let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+        connection.with_transaction(|| {
+            connection.exec_bound(
+                crate::provider::index_provider(definition)?.rebuild_statement(definition)?,
+                vec![],
+            )
+        })?;
+        connection.close()
     }
 
     fn initialize_catalog(&self, catalog_failpoint: Option<Failpoint>) -> Result<()> {
@@ -224,6 +471,24 @@ fn normalized_database_path(path: &str) -> Result<PathBuf> {
         .canonicalize()
         .unwrap_or_else(|_| parent.to_path_buf());
     Ok(normalized_parent.join(file_name))
+}
+
+fn normalized_output_path(path: &Path) -> Result<PathBuf> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| FastDbError::Io("output path is not valid UTF-8".into()))?;
+    normalized_database_path(text)
+}
+
+#[cfg(unix)]
+fn sync_parent(parent: &Path) -> Result<()> {
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent(_parent: &Path) -> Result<()> {
+    Ok(())
 }
 
 /// A FastDB connection wrapping one Turso connection. Not `Send`/`Sync` in
@@ -416,6 +681,11 @@ impl Connection {
 
     /// Execute one or more statements with named value bindings.
     pub fn execute_with_params(&self, source: &str, params: &Params) -> Result<QueryResponse> {
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .read()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
         let mut execution = self.execution.lock().map_err(|_| {
             FastDbError::Transaction("connection execution lock is poisoned".into())
         })?;
@@ -493,6 +763,15 @@ impl Connection {
     /// Close this connection and request the engine's clean-shutdown checkpoint.
     pub fn close(&self) -> Result<()> {
         self.invalidate_caches();
+        if let Ok(mut execution) = self.execution.lock() {
+            if matches!(execution.transaction, TransactionState::Active(_)) {
+                self.coordinator
+                    .active_transactions
+                    .fetch_sub(1, Ordering::AcqRel);
+                execution.transaction = TransactionState::Broken;
+                self.coordinator.release_schema_lease(self.connection_id);
+            }
+        }
         self.conn.close().map_err(FastDbError::from)
     }
 
@@ -518,6 +797,9 @@ impl Connection {
         self.coordinator.wait_for_catalog(self.connection_id)?;
         self.invalidate_prepared_cache();
         self.exec_bound(crate::lower::begin_immediate(), vec![])?;
+        self.coordinator
+            .active_transactions
+            .fetch_add(1, Ordering::AcqRel);
         let catalog = self
             .coordinator
             .catalog
@@ -567,6 +849,9 @@ impl Connection {
             self.coordinator.publish_catalog_generation();
         }
         state.transaction = TransactionState::Idle;
+        self.coordinator
+            .active_transactions
+            .fetch_sub(1, Ordering::AcqRel);
         self.coordinator.release_schema_lease(self.connection_id);
         self.invalidate_prepared_cache();
         Ok(StatementResult::None)
@@ -579,6 +864,9 @@ impl Connection {
                     .check_failpoint(Failpoint::RollbackFailure)
                     .and_then(|()| self.exec_bound(crate::lower::rollback(), vec![]));
                 self.coordinator.release_schema_lease(self.connection_id);
+                self.coordinator
+                    .active_transactions
+                    .fetch_sub(1, Ordering::AcqRel);
                 match rollback {
                     Ok(()) => state.transaction = TransactionState::Idle,
                     Err(error) => {
@@ -613,6 +901,9 @@ impl Connection {
             .check_failpoint(Failpoint::RollbackFailure)
             .and_then(|()| self.exec_bound(crate::lower::rollback(), vec![]));
         self.coordinator.release_schema_lease(self.connection_id);
+        self.coordinator
+            .active_transactions
+            .fetch_sub(1, Ordering::AcqRel);
         match rollback {
             Ok(()) => {
                 state.transaction = TransactionState::Poisoned;

@@ -51,6 +51,8 @@ pub enum Failpoint {
     AfterVectorPhysicalColumn,
     /// After existing documents are backfilled into native vector storage.
     AfterVectorBackfill,
+    /// After a backup temporary file is durable, before it is validated or published.
+    AfterBackupCopy,
     /// After existing rows pass a new field definition.
     AfterFieldValidation,
     /// After a field catalog row is written.
@@ -181,6 +183,7 @@ impl Failpoints {
                 self.after_vector_physical_column.load(Ordering::SeqCst)
             }
             Failpoint::AfterVectorBackfill => self.after_vector_backfill.load(Ordering::SeqCst),
+            Failpoint::AfterBackupCopy => false,
             Failpoint::AfterFieldValidation => self.after_field_validation.load(Ordering::SeqCst),
             Failpoint::AfterFieldCatalogRow => self.after_field_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterIndexValidation => self.after_index_validation.load(Ordering::SeqCst),
@@ -268,6 +271,7 @@ impl Failpoints {
             Failpoint::AfterVectorBackfill => {
                 self.after_vector_backfill.store(true, Ordering::SeqCst)
             }
+            Failpoint::AfterBackupCopy => {}
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(true, Ordering::SeqCst)
             }
@@ -367,6 +371,7 @@ impl Failpoints {
             Failpoint::AfterVectorBackfill => {
                 self.after_vector_backfill.store(false, Ordering::SeqCst)
             }
+            Failpoint::AfterBackupCopy => {}
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(false, Ordering::SeqCst)
             }

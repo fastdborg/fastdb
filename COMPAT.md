@@ -9,7 +9,7 @@ FastDB implements a documented SurrealQL-compatible subset. This file is the nor
 - **Planned**: reserved for parsed behavior that has not reached execution.
 - **Unsupported**: explicitly rejected and outside the MVP target.
 
-Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection and built-in B-tree maintenance. Phase 7 added the evidenced bounded graph subset. Phase 8 added the evidenced single-field Surreal FTS subset; the broader native FTS surface is labeled a FastDB extension and is not counted as SurrealQL compatibility. Phase 9 adds the evidenced fixed-dimension exact-vector subset. ANN and functions outside the closed FTS/vector sets remain unavailable. Anything not listed as Supported or Partial remains explicitly outside the current phase.
+Phase 5 hardened the MVP baseline. Phase 6 added scalar-expression projection and built-in B-tree maintenance. Phase 7 added the evidenced bounded graph subset. Phase 8 added the evidenced single-field Surreal FTS subset; the broader native FTS surface is labeled a FastDB extension and is not counted as SurrealQL compatibility. Phase 9 adds the evidenced fixed-dimension exact-vector subset. Phase 10 adds operational API/CLI tooling without expanding the SurrealQL compatibility surface. ANN and functions outside the closed FTS/vector sets remain unavailable. Anything not listed as Supported or Partial remains explicitly outside the current phase.
 
 ## Values and record IDs
 

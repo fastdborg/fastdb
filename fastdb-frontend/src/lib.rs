@@ -38,7 +38,7 @@ mod provider;
 pub mod schema;
 pub mod test_failpoints;
 
-pub use connection::{Connection, Database};
+pub use connection::{CheckReport, Connection, Database};
 pub use decode::{parse_doc, Record, RecordId, RecordIdValue, Value};
 pub use error::{ErrorCategory, FastDbError};
 pub use test_failpoints::Failpoint;

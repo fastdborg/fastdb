@@ -1,6 +1,6 @@
 # FastDB Core Technical Plan and Roadmap
 
-Status: Phase 9 complete locally; Phase 10 operational-readiness planning next; Core 1.0
+Status: Phase 10 complete locally; Phase 11 mandatory MVCC audit next; Core 1.0
 roadmap revised 2026-08-13
 
 ## 1. Product Definition
@@ -1063,18 +1063,16 @@ After Core 1.0, separately plan and gate:
 
 ## 14. Immediate Engineering Checklist
 
-1. Preserve the completed Phase 9 exact-vector baseline and evidence in
-   `plan-phase9.md`, `docs/phase9-report.md`, and
-   `docs/compat-research/phase9.md`.
-2. Author the authoritative Phase 10 plan before implementing operational
-   tooling.
+1. Preserve the completed Phase 10 operational baseline and evidence in
+   `plan-phase10.md`, `docs/phase10-report.md`, and `docs/operations.md`.
+2. Begin Phase 11 with the mandatory exact-implementation MVCC and upstream
+   audit; do not implement parallel writers unless one stable candidate passes.
 3. Preserve the immutable SurrealDB `v3.1.5` characterization and add only
    independently authored tests.
 4. Preserve format 2, graph semantics, the sealed provider boundary, direct
    translated AST, opaque physical names, and every earlier verification gate.
-5. Do not start parallel writers, server, cloud, tagging, publication, or
-   release operations until Phase 10 is complete and committed as its own
-   rollback point.
+5. Do not start server, cloud, tagging, publication, or release operations;
+   Phase 11 itself remains a stop gate and requires its own rollback commit.
 
 ## 15. References
 
