@@ -46,6 +46,14 @@ impl DatetimeValue {
         Ok(Self(value))
     }
 
+    pub(crate) fn from_utc(value: DateTime<Utc>) -> Result<Self> {
+        Self::new(value)
+    }
+
+    pub(crate) fn as_utc(&self) -> DateTime<Utc> {
+        self.0
+    }
+
     pub fn timestamp(&self) -> i64 {
         self.0.timestamp()
     }
@@ -98,7 +106,10 @@ impl DurationValue {
     }
 
     pub fn parse(value: &str) -> Result<Self> {
-        Self::parse_canonical(value).map_err(|error| FastDbError::Schema(error.to_string()))
+        if let Ok(duration) = Self::parse_canonical(value) {
+            return Ok(duration);
+        }
+        parse_duration_units(value)
     }
 
     pub fn parse_canonical(value: &str) -> Result<Self> {
@@ -135,6 +146,56 @@ impl DurationValue {
         }
         Ok(duration)
     }
+}
+
+fn parse_duration_units(value: &str) -> Result<DurationValue> {
+    let mut remaining = value;
+    let mut total = 0_u128;
+    let mut saw_unit = false;
+    while !remaining.is_empty() {
+        let digits = remaining.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            return Err(FastDbError::Schema(
+                "duration components require a nonnegative integer".into(),
+            ));
+        }
+        let amount = remaining[..digits]
+            .parse::<u128>()
+            .map_err(|_| FastDbError::Schema("duration component is too large".into()))?;
+        remaining = &remaining[digits..];
+        let (unit, nanos) = [
+            ("ms", 1_000_000_u128),
+            ("us", 1_000_u128),
+            ("µs", 1_000_u128),
+            ("ns", 1_u128),
+            ("y", 365 * 24 * 60 * 60 * 1_000_000_000_u128),
+            ("w", 7 * 24 * 60 * 60 * 1_000_000_000_u128),
+            ("d", 24 * 60 * 60 * 1_000_000_000_u128),
+            ("h", 60 * 60 * 1_000_000_000_u128),
+            ("m", 60 * 1_000_000_000_u128),
+            ("s", 1_000_000_000_u128),
+        ]
+        .into_iter()
+        .find(|(unit, _)| remaining.starts_with(unit))
+        .ok_or_else(|| FastDbError::Schema("duration component has an unknown unit".into()))?;
+        remaining = &remaining[unit.len()..];
+        total = total
+            .checked_add(
+                amount
+                    .checked_mul(nanos)
+                    .ok_or_else(|| FastDbError::Schema("duration is too large".into()))?,
+            )
+            .ok_or_else(|| FastDbError::Schema("duration is too large".into()))?;
+        saw_unit = true;
+    }
+    if !saw_unit {
+        return Err(FastDbError::Schema("duration is empty".into()));
+    }
+    DurationValue::new(
+        u64::try_from(total / 1_000_000_000)
+            .map_err(|_| FastDbError::Schema("duration is too large".into()))?,
+        u32::try_from(total % 1_000_000_000).expect("nanosecond remainder fits u32"),
+    )
 }
 
 /// A SurrealDB-compatible 96-bit coefficient decimal with scale `0..=28`.

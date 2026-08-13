@@ -1205,6 +1205,7 @@ fn validate_expression_limits(
         | ExprKind::Bool(_)
         | ExprKind::Integer(_)
         | ExprKind::Float(_)
+        | ExprKind::Duration(_)
         | ExprKind::String(_)
         | ExprKind::Parameter(_)
         | ExprKind::RecordId(_)

@@ -2091,11 +2091,11 @@ area = "Functions — Duration and time"
 title = "duration::days function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::days(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2104,11 +2104,11 @@ area = "Functions — Duration and time"
 title = "duration::from_days function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_days(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2117,11 +2117,11 @@ area = "Functions — Duration and time"
 title = "duration::from_hours function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_hours(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2130,11 +2130,11 @@ area = "Functions — Duration and time"
 title = "duration::from_micros function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_micros(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2143,11 +2143,11 @@ area = "Functions — Duration and time"
 title = "duration::from_millis function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_millis(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2156,11 +2156,11 @@ area = "Functions — Duration and time"
 title = "duration::from_mins function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_mins(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2169,11 +2169,11 @@ area = "Functions — Duration and time"
 title = "duration::from_nanos function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_nanos(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2182,11 +2182,11 @@ area = "Functions — Duration and time"
 title = "duration::from_secs function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_secs(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2195,11 +2195,11 @@ area = "Functions — Duration and time"
 title = "duration::from_weeks function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::from_weeks(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2208,11 +2208,11 @@ area = "Functions — Duration and time"
 title = "duration::hours function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::hours(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2221,11 +2221,11 @@ area = "Functions — Duration and time"
 title = "duration::max function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::max` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2234,11 +2234,11 @@ area = "Functions — Duration and time"
 title = "duration::micros function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::micros(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2247,11 +2247,11 @@ area = "Functions — Duration and time"
 title = "duration::millis function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::millis(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2260,11 +2260,11 @@ area = "Functions — Duration and time"
 title = "duration::mins function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::mins(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2273,11 +2273,11 @@ area = "Functions — Duration and time"
 title = "duration::nanos function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::nanos(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2286,11 +2286,11 @@ area = "Functions — Duration and time"
 title = "duration::secs function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::secs(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2299,11 +2299,11 @@ area = "Functions — Duration and time"
 title = "duration::weeks function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::weeks(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2312,11 +2312,11 @@ area = "Functions — Duration and time"
 title = "duration::years function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`duration::years(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/duration"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-005"]
+execution_evidence = ["P13-FN-009", "P13-FN-010"]
 stop_report = ""
 
 [[capability]]
@@ -2325,11 +2325,11 @@ area = "Functions — Duration and time"
 title = "time::ceil function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::ceil(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2338,11 +2338,11 @@ area = "Functions — Duration and time"
 title = "time::day function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::day(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2351,11 +2351,11 @@ area = "Functions — Duration and time"
 title = "time::epoch function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::epoch(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2364,11 +2364,11 @@ area = "Functions — Duration and time"
 title = "time::floor function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::floor(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2377,11 +2377,11 @@ area = "Functions — Duration and time"
 title = "time::format function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::format(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2390,11 +2390,11 @@ area = "Functions — Duration and time"
 title = "time::from_micros function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::from_micros(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2403,11 +2403,11 @@ area = "Functions — Duration and time"
 title = "time::from_millis function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::from_millis(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2416,11 +2416,11 @@ area = "Functions — Duration and time"
 title = "time::from_nanos function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::from_nanos(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2429,11 +2429,11 @@ area = "Functions — Duration and time"
 title = "time::from_secs function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::from_secs(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2455,11 +2455,11 @@ area = "Functions — Duration and time"
 title = "time::from_unix function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::from_unix(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2468,11 +2468,11 @@ area = "Functions — Duration and time"
 title = "time::from_uuid function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::from_uuid(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2481,11 +2481,11 @@ area = "Functions — Duration and time"
 title = "time::group function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::group(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2494,11 +2494,11 @@ area = "Functions — Duration and time"
 title = "time::hour function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::hour(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2507,11 +2507,11 @@ area = "Functions — Duration and time"
 title = "time::is_leap_year function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::is_leap_year(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2520,11 +2520,11 @@ area = "Functions — Duration and time"
 title = "time::max function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::max` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2546,11 +2546,11 @@ area = "Functions — Duration and time"
 title = "time::micros function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::micros(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2559,11 +2559,11 @@ area = "Functions — Duration and time"
 title = "time::millis function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::millis(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2572,11 +2572,11 @@ area = "Functions — Duration and time"
 title = "time::min function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::min(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2598,11 +2598,11 @@ area = "Functions — Duration and time"
 title = "time::minute function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::minute(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2611,11 +2611,11 @@ area = "Functions — Duration and time"
 title = "time::month function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::month(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2624,11 +2624,11 @@ area = "Functions — Duration and time"
 title = "time::nano function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::nano(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2637,11 +2637,11 @@ area = "Functions — Duration and time"
 title = "time::now function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::now(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2650,11 +2650,11 @@ area = "Functions — Duration and time"
 title = "time::round function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::round(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2663,11 +2663,11 @@ area = "Functions — Duration and time"
 title = "time::second function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::second(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2676,11 +2676,11 @@ area = "Functions — Duration and time"
 title = "time::set_day function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::set_day(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2689,11 +2689,11 @@ area = "Functions — Duration and time"
 title = "time::set_hour function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::set_hour(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2702,11 +2702,11 @@ area = "Functions — Duration and time"
 title = "time::set_minute function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::set_minute(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2715,11 +2715,11 @@ area = "Functions — Duration and time"
 title = "time::set_month function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::set_month(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2728,11 +2728,11 @@ area = "Functions — Duration and time"
 title = "time::set_nanosecond function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::set_nanosecond(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2741,11 +2741,11 @@ area = "Functions — Duration and time"
 title = "time::set_second function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::set_second(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2754,11 +2754,11 @@ area = "Functions — Duration and time"
 title = "time::set_year function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::set_year(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2767,11 +2767,11 @@ area = "Functions — Duration and time"
 title = "time::timezone function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::timezone(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2780,11 +2780,11 @@ area = "Functions — Duration and time"
 title = "time::unix function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::unix(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2793,11 +2793,11 @@ area = "Functions — Duration and time"
 title = "time::wday function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::wday(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2806,11 +2806,11 @@ area = "Functions — Duration and time"
 title = "time::week function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::week(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2819,11 +2819,11 @@ area = "Functions — Duration and time"
 title = "time::yday function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::yday(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 
 [[capability]]
@@ -2832,11 +2832,11 @@ area = "Functions — Duration and time"
 title = "time::year function or constant"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`time::year(...)` executes with characterized UTC/nanosecond and overflow semantics."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/time"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004", "P13-PARSE-005"]
+execution_evidence = ["P13-FN-011", "P13-FN-012"]
 stop_report = ""
 [[capability]]
 id = "FN-MATH-ABS"
@@ -5454,11 +5454,11 @@ area = "Functions — Random, record, and type"
 title = "record::id function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`record::id(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/record"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5493,11 +5493,11 @@ area = "Functions — Random, record, and type"
 title = "record::table function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`record::table(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/record"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5506,11 +5506,11 @@ area = "Functions — Random, record, and type"
 title = "record::tb function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`record::tb(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/record"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5519,11 +5519,11 @@ area = "Functions — Random, record, and type"
 title = "type::array function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::array(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5532,11 +5532,11 @@ area = "Functions — Random, record, and type"
 title = "type::bool function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::bool(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5545,11 +5545,11 @@ area = "Functions — Random, record, and type"
 title = "type::bytes function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::bytes(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5558,11 +5558,11 @@ area = "Functions — Random, record, and type"
 title = "type::datetime function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::datetime(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5571,11 +5571,11 @@ area = "Functions — Random, record, and type"
 title = "type::decimal function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::decimal(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5584,11 +5584,11 @@ area = "Functions — Random, record, and type"
 title = "type::duration function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::duration(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5623,11 +5623,11 @@ area = "Functions — Random, record, and type"
 title = "type::file function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::file(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5636,11 +5636,11 @@ area = "Functions — Random, record, and type"
 title = "type::float function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::float(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5649,11 +5649,11 @@ area = "Functions — Random, record, and type"
 title = "type::int function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::int(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5662,11 +5662,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_array function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_array(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5675,11 +5675,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_bool function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_bool(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5688,11 +5688,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_bytes function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_bytes(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5701,11 +5701,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_collection function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_collection(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5714,11 +5714,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_datetime function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_datetime(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5727,11 +5727,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_decimal function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_decimal(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5740,11 +5740,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_duration function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_duration(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5753,11 +5753,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_float function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_float(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5766,11 +5766,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::array function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::array(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5779,11 +5779,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::bool function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::bool(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5792,11 +5792,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::bytes function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::bytes(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5805,11 +5805,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::collection function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::collection(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5818,11 +5818,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::datetime function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::datetime(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5831,11 +5831,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::decimal function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::decimal(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5844,11 +5844,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::duration function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::duration(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5857,11 +5857,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::float function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::float(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5870,11 +5870,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::none function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::none(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5883,11 +5883,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::null function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::null(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5896,11 +5896,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::number function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::number(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5909,11 +5909,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::object function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::object(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5922,11 +5922,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::range function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::range(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5935,11 +5935,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::record function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::record(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5948,11 +5948,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::string function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::string(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5961,11 +5961,11 @@ area = "Functions — Random, record, and type"
 title = "type::is::uuid function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is::uuid(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5974,11 +5974,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_none function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_none(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -5987,11 +5987,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_null function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_null(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6000,11 +6000,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_number function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_number(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6013,11 +6013,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_object function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_object(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6026,11 +6026,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_range function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_range(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6039,11 +6039,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_record function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_record(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6052,11 +6052,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_string function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_string(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6065,11 +6065,11 @@ area = "Functions — Random, record, and type"
 title = "type::is_uuid function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::is_uuid(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6078,11 +6078,11 @@ area = "Functions — Random, record, and type"
 title = "type::number function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::number(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6091,11 +6091,11 @@ area = "Functions — Random, record, and type"
 title = "type::of function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::of(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6104,11 +6104,11 @@ area = "Functions — Random, record, and type"
 title = "type::range function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::range(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6117,11 +6117,11 @@ area = "Functions — Random, record, and type"
 title = "type::record function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::record(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6130,11 +6130,11 @@ area = "Functions — Random, record, and type"
 title = "type::string function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::string(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6143,11 +6143,11 @@ area = "Functions — Random, record, and type"
 title = "type::string_lossy function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::string_lossy(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6156,11 +6156,11 @@ area = "Functions — Random, record, and type"
 title = "type::table function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::table(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6182,11 +6182,11 @@ area = "Functions — Random, record, and type"
 title = "type::uuid function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`type::uuid(...)` executes with characterized type conversion, validation, random-source, and context limits."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/type"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 [[capability]]
 id = "FN-API-INVOKE"
@@ -6558,11 +6558,11 @@ area = "Functions — Resource and session"
 title = "meta::id function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`meta::id(...)` executes with characterized semantics; outbound or expensive work is deny-by-default and bounded."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/meta"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]
@@ -6584,11 +6584,11 @@ area = "Functions — Resource and session"
 title = "meta::tb function"
 phase = 13
 disposition = "target"
-status = "Unsupported"
+status = "Supported"
 syntax = "`meta::tb(...)` executes with characterized semantics; outbound or expensive work is deny-by-default and bounded."
 provenance = ["https://surrealdb.com/docs/reference/query-language/functions/database-functions/meta"]
-parser_evidence = []
-execution_evidence = []
+parser_evidence = ["P13-PARSE-004"]
+execution_evidence = ["P13-FN-007", "P13-FN-008"]
 stop_report = ""
 
 [[capability]]

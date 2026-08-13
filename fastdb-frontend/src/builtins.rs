@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BuiltinClass {
     Pure,
+    Context,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +79,104 @@ pub(crate) enum Builtin {
     MathProduct,
     MathSpread,
     MathSum,
+    TypeCast(TypeCast),
+    TypeIs(TypeKind),
+    TypeOf,
+    RecordId,
+    RecordTable,
+    DurationMax,
+    DurationExtract(DurationUnit),
+    DurationFrom(DurationUnit),
+    TimeEpoch,
+    TimeNow,
+    TimeTimezone,
+    TimePart(TimePart),
+    TimeFrom(DurationUnit),
+    TimeIsLeapYear,
+    TimeMin,
+    TimeMax,
+    TimeFormat,
+    TimeSet(TimePart),
+    TimeTruncate(TimeTruncate),
+    TimeFromUuid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DurationUnit {
+    Years,
+    Weeks,
+    Days,
+    Hours,
+    Minutes,
+    Seconds,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TimePart {
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    Nano,
+    Unix,
+    Millis,
+    Micros,
+    Weekday,
+    Week,
+    YearDay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TimeTruncate {
+    Floor,
+    Ceil,
+    Round,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypeCast {
+    Array,
+    Bool,
+    Bytes,
+    Datetime,
+    Decimal,
+    Duration,
+    File,
+    Float,
+    Int,
+    Number,
+    Range,
+    Record,
+    String,
+    StringLossy,
+    Table,
+    Thing,
+    Uuid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypeKind {
+    Array,
+    Bool,
+    Bytes,
+    Collection,
+    Datetime,
+    Decimal,
+    Duration,
+    Float,
+    None,
+    Null,
+    Number,
+    Object,
+    Range,
+    Record,
+    String,
+    Uuid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +273,17 @@ macro_rules! pure_value {
             implementation_version: 1,
         }
     };
+    ($function:expr, $name:literal, $min:expr, $max:expr) => {
+        BuiltinSpec {
+            function: $function,
+            name: $name,
+            min_arity: $min,
+            max_arity: $max,
+            class: BuiltinClass::Pure,
+            syntax: BuiltinSyntax::Function,
+            implementation_version: 1,
+        }
+    };
 }
 
 macro_rules! constant {
@@ -185,6 +295,20 @@ macro_rules! constant {
             max_arity: 0,
             class: BuiltinClass::Pure,
             syntax: BuiltinSyntax::Constant,
+            implementation_version: 1,
+        }
+    };
+}
+
+macro_rules! context {
+    ($function:ident, $name:literal, $arity:expr) => {
+        BuiltinSpec {
+            function: Builtin::$function,
+            name: $name,
+            min_arity: $arity,
+            max_arity: $arity,
+            class: BuiltinClass::Context,
+            syntax: BuiltinSyntax::Function,
             implementation_version: 1,
         }
     };
@@ -326,6 +450,217 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure!(MathProduct, "math::product", 1),
     pure!(MathSpread, "math::spread", 1),
     pure!(MathSum, "math::sum", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Array), "type::array", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Bool), "type::bool", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Bytes), "type::bytes", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Datetime), "type::datetime", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Decimal), "type::decimal", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Duration), "type::duration", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::File), "type::file", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Float), "type::float", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Int), "type::int", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Number), "type::number", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Range), "type::range", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Record), "type::record", 1, 2),
+    pure_value!(Builtin::TypeCast(TypeCast::String), "type::string", 1),
+    pure_value!(
+        Builtin::TypeCast(TypeCast::StringLossy),
+        "type::string_lossy",
+        1
+    ),
+    pure_value!(Builtin::TypeCast(TypeCast::Table), "type::table", 1),
+    pure_value!(Builtin::TypeCast(TypeCast::Thing), "type::thing", 1, 2),
+    pure_value!(Builtin::TypeCast(TypeCast::Uuid), "type::uuid", 1),
+    pure!(TypeOf, "type::of", 1),
+    pure!(RecordId, "record::id", 1),
+    pure!(RecordId, "meta::id", 1),
+    pure!(RecordTable, "record::table", 1),
+    pure!(RecordTable, "record::tb", 1),
+    pure!(RecordTable, "meta::table", 1),
+    pure!(RecordTable, "meta::tb", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Array), "type::is::array", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Array), "type::is_array", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Bool), "type::is::bool", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Bool), "type::is_bool", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Bytes), "type::is::bytes", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Bytes), "type::is_bytes", 1),
+    pure_value!(
+        Builtin::TypeIs(TypeKind::Collection),
+        "type::is::collection",
+        1
+    ),
+    pure_value!(
+        Builtin::TypeIs(TypeKind::Collection),
+        "type::is_collection",
+        1
+    ),
+    pure_value!(Builtin::TypeIs(TypeKind::Datetime), "type::is::datetime", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Datetime), "type::is_datetime", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Decimal), "type::is::decimal", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Decimal), "type::is_decimal", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Duration), "type::is::duration", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Duration), "type::is_duration", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Float), "type::is::float", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Float), "type::is_float", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::None), "type::is::none", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::None), "type::is_none", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Null), "type::is::null", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Null), "type::is_null", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Number), "type::is::number", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Number), "type::is_number", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Object), "type::is::object", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Object), "type::is_object", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Range), "type::is::range", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Range), "type::is_range", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Record), "type::is::record", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Record), "type::is_record", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::String), "type::is::string", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::String), "type::is_string", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Uuid), "type::is::uuid", 1),
+    pure_value!(Builtin::TypeIs(TypeKind::Uuid), "type::is_uuid", 1),
+    constant!(Builtin::DurationMax, "duration::max"),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Years),
+        "duration::years",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Weeks),
+        "duration::weeks",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Days),
+        "duration::days",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Hours),
+        "duration::hours",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Minutes),
+        "duration::mins",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Seconds),
+        "duration::secs",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Milliseconds),
+        "duration::millis",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Microseconds),
+        "duration::micros",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationExtract(DurationUnit::Nanoseconds),
+        "duration::nanos",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Weeks),
+        "duration::from_weeks",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Days),
+        "duration::from_days",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Hours),
+        "duration::from_hours",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Minutes),
+        "duration::from_mins",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Seconds),
+        "duration::from_secs",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Milliseconds),
+        "duration::from_millis",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Microseconds),
+        "duration::from_micros",
+        1
+    ),
+    pure_value!(
+        Builtin::DurationFrom(DurationUnit::Nanoseconds),
+        "duration::from_nanos",
+        1
+    ),
+    constant!(Builtin::TimeEpoch, "time::epoch"),
+    context!(TimeNow, "time::now", 0),
+    context!(TimeTimezone, "time::timezone", 0),
+    pure_value!(Builtin::TimePart(TimePart::Year), "time::year", 1),
+    pure_value!(Builtin::TimePart(TimePart::Month), "time::month", 1),
+    pure_value!(Builtin::TimePart(TimePart::Day), "time::day", 1),
+    pure_value!(Builtin::TimePart(TimePart::Hour), "time::hour", 1),
+    pure_value!(Builtin::TimePart(TimePart::Minute), "time::minute", 1),
+    pure_value!(Builtin::TimePart(TimePart::Second), "time::second", 1),
+    pure_value!(Builtin::TimePart(TimePart::Nano), "time::nano", 1),
+    pure_value!(Builtin::TimePart(TimePart::Unix), "time::unix", 1),
+    pure_value!(Builtin::TimePart(TimePart::Millis), "time::millis", 1),
+    pure_value!(Builtin::TimePart(TimePart::Micros), "time::micros", 1),
+    pure_value!(Builtin::TimePart(TimePart::Weekday), "time::wday", 1),
+    pure_value!(Builtin::TimePart(TimePart::Week), "time::week", 1),
+    pure_value!(Builtin::TimePart(TimePart::YearDay), "time::yday", 1),
+    pure_value!(
+        Builtin::TimeFrom(DurationUnit::Seconds),
+        "time::from_secs",
+        1
+    ),
+    pure_value!(
+        Builtin::TimeFrom(DurationUnit::Seconds),
+        "time::from_unix",
+        1
+    ),
+    pure_value!(
+        Builtin::TimeFrom(DurationUnit::Milliseconds),
+        "time::from_millis",
+        1
+    ),
+    pure_value!(
+        Builtin::TimeFrom(DurationUnit::Microseconds),
+        "time::from_micros",
+        1
+    ),
+    pure_value!(
+        Builtin::TimeFrom(DurationUnit::Nanoseconds),
+        "time::from_nanos",
+        1
+    ),
+    pure!(TimeFromUuid, "time::from_uuid", 1),
+    pure!(TimeIsLeapYear, "time::is_leap_year", 1),
+    pure!(TimeMin, "time::min", 1),
+    pure!(TimeMax, "time::max", 1),
+    pure!(TimeFormat, "time::format", 2),
+    pure_value!(Builtin::TimeSet(TimePart::Year), "time::set_year", 2),
+    pure_value!(Builtin::TimeSet(TimePart::Month), "time::set_month", 2),
+    pure_value!(Builtin::TimeSet(TimePart::Day), "time::set_day", 2),
+    pure_value!(Builtin::TimeSet(TimePart::Hour), "time::set_hour", 2),
+    pure_value!(Builtin::TimeSet(TimePart::Minute), "time::set_minute", 2),
+    pure_value!(Builtin::TimeSet(TimePart::Second), "time::set_second", 2),
+    pure_value!(Builtin::TimeSet(TimePart::Nano), "time::set_nanosecond", 2),
+    pure_value!(Builtin::TimeTruncate(TimeTruncate::Floor), "time::floor", 2),
+    pure_value!(Builtin::TimeTruncate(TimeTruncate::Ceil), "time::ceil", 2),
+    pure_value!(Builtin::TimeTruncate(TimeTruncate::Round), "time::round", 2),
+    pure_value!(Builtin::TimeTruncate(TimeTruncate::Floor), "time::group", 2),
 ];
 
 pub(crate) fn lookup(name: &str) -> Option<&'static BuiltinSpec> {
@@ -343,7 +678,10 @@ mod tests {
         for spec in SPECS {
             assert!(names.insert(spec.name));
             assert!(spec.min_arity <= spec.max_arity);
-            assert_eq!(spec.class, BuiltinClass::Pure);
+            assert!(matches!(
+                spec.class,
+                BuiltinClass::Pure | BuiltinClass::Context
+            ));
             assert!(matches!(
                 spec.syntax,
                 BuiltinSyntax::Function | BuiltinSyntax::Constant

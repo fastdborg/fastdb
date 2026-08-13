@@ -164,3 +164,11 @@ fn p13_parse_004_keyword_namespaces_remain_structured_function_segments() {
     }
     assert!(matches!(values[6].kind, ExprKind::NamespacedValue { .. }));
 }
+
+#[test]
+fn p13_parse_005_composite_duration_literals_remain_typed_expressions() {
+    let values = assignments("CREATE calc:one SET elapsed = 1d2h3m4s5ms6us7ns");
+    assert!(
+        matches!(values[0].kind, ExprKind::Duration(ref value) if value == "1d2h3m4s5ms6us7ns")
+    );
+}

@@ -815,14 +815,30 @@ impl Lexer<'_> {
         }
         if self.peek().is_some_and(is_identifier_start) {
             let suffix_start = self.position;
-            while self.peek().is_some_and(is_identifier_continue) {
+            while self.peek().is_some_and(char::is_alphabetic) {
                 self.bump();
             }
             let suffix = &self.source[suffix_start..self.position];
-            if matches!(
-                suffix,
-                "ns" | "us" | "ms" | "s" | "m" | "h" | "d" | "w" | "y"
-            ) {
+            if is_duration_suffix(suffix) {
+                while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                    while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                        self.bump();
+                    }
+                    let suffix_start = self.position;
+                    while self.peek().is_some_and(char::is_alphabetic) {
+                        self.bump();
+                    }
+                    let suffix = &self.source[suffix_start..self.position];
+                    if !is_duration_suffix(suffix) {
+                        return Err(ParseError::new(
+                            ParseErrorKind::InvalidNumber {
+                                literal: self.source[start..self.position].to_string(),
+                                reason: "duration component has an unknown unit",
+                            },
+                            Span::new(start, self.position - start),
+                        ));
+                    }
+                }
                 return Ok(Token::new(
                     TokenKind::Duration(self.source[start..self.position].to_string()),
                     Span::new(start, self.position - start),
@@ -966,6 +982,13 @@ impl Lexer<'_> {
             span,
         ))
     }
+}
+
+fn is_duration_suffix(value: &str) -> bool {
+    matches!(
+        value,
+        "ns" | "us" | "µs" | "ms" | "s" | "m" | "h" | "d" | "w" | "y"
+    )
 }
 
 fn is_identifier_start(ch: char) -> bool {

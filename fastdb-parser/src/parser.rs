@@ -1439,6 +1439,10 @@ impl<'a> Parser<'a> {
                 self.position += 1;
                 parse_number_expression(value, token.span)
             }
+            TokenKind::Duration(value) => {
+                self.position += 1;
+                Ok(Expr::new(ExprKind::Duration(value), token.span))
+            }
             TokenKind::String(value) => {
                 self.position += 1;
                 Ok(Expr::new(ExprKind::String(value), token.span))
@@ -2190,6 +2194,8 @@ fn function_segment_value(kind: &TokenKind) -> Option<String> {
         TokenKind::Out => "out",
         TokenKind::Is => "is",
         TokenKind::Not => "not",
+        TokenKind::None => "none",
+        TokenKind::Null => "null",
         TokenKind::Contains => "contains",
         TokenKind::Set => "set",
         TokenKind::Value => "value",

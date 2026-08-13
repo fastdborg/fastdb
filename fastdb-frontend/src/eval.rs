@@ -1,12 +1,16 @@
 //! Authoritative FastDB expression evaluation over decoded documents.
 
-use crate::builtins::{self, Builtin, BuiltinClass, BuiltinSyntax, MathConstant, MathUnary};
+use crate::builtins::{
+    self, Builtin, BuiltinClass, BuiltinSyntax, DurationUnit, MathConstant, MathUnary, TimePart,
+    TimeTruncate, TypeCast, TypeKind,
+};
 use crate::decode::{
     canonical_value_cmp, DatetimeValue, DecimalValue, DurationValue, FileValue, RangeBound,
     RangeValue, RecordId, RecordIdValue, RegexValue, SetValue, TableValue, Value,
 };
 use crate::error::{FastDbError, Result};
 use crate::Params;
+use chrono::{Datelike as _, Local, Timelike as _, Utc};
 use rust_decimal::prelude::ToPrimitive as _;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -208,6 +212,7 @@ fn collect_parameters<'a>(expression: &'a Expr, names: &mut Vec<&'a str>) {
         | ExprKind::Bool(_)
         | ExprKind::Integer(_)
         | ExprKind::Float(_)
+        | ExprKind::Duration(_)
         | ExprKind::String(_)
         | ExprKind::RecordId(_)
         | ExprKind::FieldPath(_) => {}
@@ -238,7 +243,9 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
             let normalized = normalized_function_segments(name);
             let canonical = normalized.join("::");
             if let Some(spec) = builtins::lookup(&canonical) {
-                if spec.class != BuiltinClass::Pure || spec.implementation_version != 1 {
+                if !matches!(spec.class, BuiltinClass::Pure | BuiltinClass::Context)
+                    || spec.implementation_version != 1
+                {
                     return Err(FastDbError::Engine(
                         "built-in registry contains an unsupported implementation class".into(),
                     ));
@@ -345,6 +352,7 @@ fn reject_unavailable_functions(expression: &Expr) -> Result<()> {
         | ExprKind::Bool(_)
         | ExprKind::Integer(_)
         | ExprKind::Float(_)
+        | ExprKind::Duration(_)
         | ExprKind::String(_)
         | ExprKind::Parameter(_)
         | ExprKind::RecordId(_)
@@ -390,6 +398,9 @@ pub(crate) fn evaluate(expression: &Expr, context: &EvalContext<'_>) -> Result<E
         ExprKind::Integer(value) => Ok(EvalValue::Present(Value::Integer(*value))),
         ExprKind::Float(value) if value.is_finite() => Ok(EvalValue::Present(Value::Float(*value))),
         ExprKind::Float(_) => Err(FastDbError::Schema("non-finite float expression".into())),
+        ExprKind::Duration(value) => DurationValue::parse(value)
+            .map(Value::Duration)
+            .map(EvalValue::Present),
         ExprKind::String(value) => Ok(EvalValue::Present(Value::Str(value.clone()))),
         ExprKind::Array(values) => values
             .iter()
@@ -662,7 +673,14 @@ fn cast_present(value: Value, ty: &SchemaTypeKind) -> Result<Value> {
     match ty {
         SchemaTypeKind::Option(_) if matches!(value, Value::None | Value::Null) => Ok(value),
         SchemaTypeKind::Option(inner) => cast_present(value, &inner.kind),
-        SchemaTypeKind::Bool => Ok(Value::Bool(EvalValue::Present(value).truthy())),
+        SchemaTypeKind::Bool => match value {
+            Value::Bool(value) => Ok(Value::Bool(value)),
+            Value::Str(value) if value.eq_ignore_ascii_case("true") => Ok(Value::Bool(true)),
+            Value::Str(value) if value.eq_ignore_ascii_case("false") => Ok(Value::Bool(false)),
+            _ => Err(FastDbError::Schema(
+                "value cannot be cast to boolean".into(),
+            )),
+        },
         SchemaTypeKind::Int => cast_int(value).map(Value::Integer),
         SchemaTypeKind::Float => cast_float(value).map(Value::Float),
         SchemaTypeKind::Number => match value {
@@ -805,17 +823,16 @@ fn cast_int(value: Value) -> Result<i64> {
         Value::Integer(value) => Ok(value),
         Value::Float(value)
             if value.is_finite()
+                && value.fract() == 0.0
                 && value.trunc() >= i64::MIN as f64
                 && value.trunc() < 9_223_372_036_854_775_808.0 =>
         {
             Ok(value.trunc() as i64)
         }
-        Value::Decimal(value) => value
+        Value::Decimal(value) if value.as_decimal().fract().is_zero() => value
             .as_decimal()
-            .trunc()
             .to_i64()
             .ok_or_else(|| FastDbError::Schema("decimal is outside the integer range".into())),
-        Value::Bool(value) => Ok(i64::from(value)),
         Value::Str(value) => value
             .parse::<i64>()
             .map_err(|_| FastDbError::Schema("value cannot be cast to integer".into())),
@@ -833,7 +850,6 @@ fn cast_float(value: Value) -> Result<f64> {
             .as_decimal()
             .to_f64()
             .ok_or_else(|| FastDbError::Schema("decimal cannot be represented as float".into()))?,
-        Value::Bool(value) => f64::from(u8::from(value)),
         Value::Str(value) => value
             .parse::<f64>()
             .map_err(|_| FastDbError::Schema("value cannot be cast to float".into()))?,
@@ -853,7 +869,6 @@ fn cast_decimal(value: Value) -> Result<DecimalValue> {
         Value::Decimal(value) => Ok(value),
         Value::Integer(value) => DecimalValue::parse(&value.to_string()),
         Value::Float(value) if value.is_finite() => DecimalValue::parse(&value.to_string()),
-        Value::Bool(value) => DecimalValue::parse(if value { "1" } else { "0" }),
         Value::Str(value) => DecimalValue::parse(&value),
         _ => Err(FastDbError::Schema(
             "value cannot be cast to decimal".into(),
@@ -941,7 +956,7 @@ fn render_string(value: Value) -> Result<String> {
         Value::Datetime(value) => value.to_canonical(),
         Value::Uuid(value) => value.hyphenated().to_string(),
         Value::Regex(value) => value.as_str().to_string(),
-        Value::RecordId(value) => value.to_string(),
+        Value::RecordId(value) => render_record_id(&value),
         Value::Table(value) => value.as_str().to_string(),
         Value::File(value) => value.as_str().to_string(),
         Value::Array(_) | Value::Object(_) | Value::Set(_) | Value::Range(_) => {
@@ -951,6 +966,22 @@ fn render_string(value: Value) -> Result<String> {
         }
         Value::Float(_) => return Err(FastDbError::Schema("non-finite float value".into())),
     })
+}
+
+fn render_record_id(value: &RecordId) -> String {
+    let id = match &value.id {
+        RecordIdValue::String(value) if is_bare_record_component(value) => value.clone(),
+        other => other.to_source(),
+    };
+    format!("{}:{id}", value.table)
+}
+
+fn is_bare_record_component(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_alphabetic())
+        && chars.all(|character| character == '_' || character.is_alphanumeric())
 }
 
 fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
@@ -1261,6 +1292,89 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
             )
             .map(EvalValue::into_function_value)
         }
+        TypeCast(cast) => evaluate_type_cast(cast, &arguments),
+        TypeIs(kind) => Ok(Value::Bool(value_is_type(&arguments[0], kind))),
+        TypeOf => Ok(Value::Str(type_name(&arguments[0]).into())),
+        RecordId => match &arguments[0] {
+            Value::RecordId(record) => Ok(match &record.id {
+                RecordIdValue::String(value) => Value::Str(value.clone()),
+                RecordIdValue::Integer(value) => Value::Integer(*value),
+                RecordIdValue::Uuid(value) => Value::Uuid(*value),
+            }),
+            _ => Err(argument_type("record::id", "record")),
+        },
+        RecordTable => match &arguments[0] {
+            Value::RecordId(record) => Ok(Value::Str(record.table.clone())),
+            _ => Err(argument_type("record table", "record")),
+        },
+        DurationMax => DurationValue::new(u64::MAX, 999_999_999).map(Value::Duration),
+        DurationExtract(unit) => {
+            let Value::Duration(duration) = arguments[0] else {
+                return Err(argument_type("duration extraction", "duration"));
+            };
+            let value = duration_nanos(duration) / duration_unit_nanos(unit);
+            i64::try_from(value)
+                .map(Value::Integer)
+                .map_err(|_| FastDbError::Schema("duration extraction exceeds int range".into()))
+        }
+        DurationFrom(unit) => {
+            let value = u128::try_from(expect_integer(&arguments[0], "duration constructor")?)
+                .map_err(|_| FastDbError::Schema("duration input must be nonnegative".into()))?;
+            let nanos = value
+                .checked_mul(duration_unit_nanos(unit))
+                .ok_or_else(|| FastDbError::Schema("duration constructor overflow".into()))?;
+            duration_from_nanos(nanos).map(Value::Duration)
+        }
+        TimeEpoch => DatetimeValue::from_timestamp(0, 0).map(Value::Datetime),
+        TimeNow => DatetimeValue::from_utc(Utc::now()).map(Value::Datetime),
+        TimeTimezone => Ok(Value::Str(Local::now().offset().to_string())),
+        TimePart(part) => evaluate_time_part(part, &arguments[0]),
+        TimeFrom(unit) => evaluate_time_from(unit, &arguments[0]),
+        TimeFromUuid => evaluate_time_from_uuid(&arguments[0]),
+        TimeIsLeapYear => {
+            let datetime = expect_datetime(&arguments[0], "time::is_leap_year")?.as_utc();
+            let year = datetime.year();
+            Ok(Value::Bool(
+                year % 4 == 0 && (year % 100 != 0 || year % 400 == 0),
+            ))
+        }
+        TimeMin | TimeMax => {
+            let values = collection_slice(&arguments[0], "time min/max")?;
+            let mut datetimes = values
+                .iter()
+                .map(|value| expect_datetime(value, "time min/max"));
+            let Some(first) = datetimes.next() else {
+                return Ok(Value::None);
+            };
+            let mut selected = *first?;
+            for datetime in datetimes {
+                let datetime = datetime?;
+                if (function == TimeMin && datetime < &selected)
+                    || (function == TimeMax && datetime > &selected)
+                {
+                    selected = *datetime;
+                }
+            }
+            Ok(Value::Datetime(selected))
+        }
+        TimeFormat => {
+            let datetime = expect_datetime(&arguments[0], "time::format")?.as_utc();
+            let format = expect_string(&arguments[1], "time::format pattern")?;
+            if format.len() > 4_096 {
+                return Err(FastDbError::ResourceLimit(
+                    "time format pattern exceeds the limit".into(),
+                ));
+            }
+            let output = datetime.format(format).to_string();
+            if output.len() > 1_048_576 {
+                return Err(FastDbError::ResourceLimit(
+                    "formatted time exceeds the output limit".into(),
+                ));
+            }
+            Ok(Value::Str(output))
+        }
+        TimeSet(part) => evaluate_time_set(part, &arguments[0], &arguments[1]),
+        TimeTruncate(mode) => evaluate_time_truncate(mode, &arguments[0], &arguments[1]),
     }
 }
 
@@ -1559,6 +1673,154 @@ fn math_constant(constant: MathConstant) -> f64 {
     }
 }
 
+fn duration_unit_nanos(unit: DurationUnit) -> u128 {
+    const SECOND: u128 = 1_000_000_000;
+    match unit {
+        DurationUnit::Years => 365 * 24 * 60 * 60 * SECOND,
+        DurationUnit::Weeks => 7 * 24 * 60 * 60 * SECOND,
+        DurationUnit::Days => 24 * 60 * 60 * SECOND,
+        DurationUnit::Hours => 60 * 60 * SECOND,
+        DurationUnit::Minutes => 60 * SECOND,
+        DurationUnit::Seconds => SECOND,
+        DurationUnit::Milliseconds => 1_000_000,
+        DurationUnit::Microseconds => 1_000,
+        DurationUnit::Nanoseconds => 1,
+    }
+}
+
+fn expect_datetime<'a>(value: &'a Value, function: &str) -> Result<&'a DatetimeValue> {
+    match value {
+        Value::Datetime(value) => Ok(value),
+        _ => Err(argument_type(function, "datetime")),
+    }
+}
+
+fn evaluate_time_part(part: TimePart, value: &Value) -> Result<Value> {
+    let datetime = expect_datetime(value, "time extraction")?.as_utc();
+    let value = match part {
+        TimePart::Year => i64::from(datetime.year()),
+        TimePart::Month => i64::from(datetime.month()),
+        TimePart::Day => i64::from(datetime.day()),
+        TimePart::Hour => i64::from(datetime.hour()),
+        TimePart::Minute => i64::from(datetime.minute()),
+        TimePart::Second => i64::from(datetime.second()),
+        TimePart::Nano => datetime
+            .timestamp_nanos_opt()
+            .ok_or_else(|| FastDbError::Schema("datetime nanoseconds exceed int range".into()))?,
+        TimePart::Unix => datetime.timestamp(),
+        TimePart::Millis => datetime.timestamp_millis(),
+        TimePart::Micros => datetime.timestamp_micros(),
+        TimePart::Weekday => i64::from(datetime.weekday().num_days_from_sunday()),
+        TimePart::Week => i64::from(datetime.iso_week().week()),
+        TimePart::YearDay => i64::from(datetime.ordinal()),
+    };
+    Ok(Value::Integer(value))
+}
+
+fn evaluate_time_from(unit: DurationUnit, value: &Value) -> Result<Value> {
+    let value = expect_integer(value, "time constructor")?;
+    let nanos_per_unit = duration_unit_nanos(unit);
+    let total = i128::from(value)
+        .checked_mul(i128::try_from(nanos_per_unit).expect("time unit fits i128"))
+        .ok_or_else(|| FastDbError::Schema("time constructor overflow".into()))?;
+    let seconds = total.div_euclid(1_000_000_000);
+    let nanos = total.rem_euclid(1_000_000_000);
+    DatetimeValue::from_timestamp(
+        i64::try_from(seconds)
+            .map_err(|_| FastDbError::Schema("datetime is outside the supported range".into()))?,
+        u32::try_from(nanos).expect("nanosecond remainder fits u32"),
+    )
+    .map(Value::Datetime)
+}
+
+fn evaluate_time_from_uuid(value: &Value) -> Result<Value> {
+    let Value::Uuid(value) = value else {
+        return Err(argument_type("time::from_uuid", "UUIDv7"));
+    };
+    let timestamp = value
+        .get_timestamp()
+        .ok_or_else(|| FastDbError::Schema("time::from_uuid requires UUIDv7".into()))?;
+    let (seconds, nanoseconds) = timestamp.to_unix();
+    DatetimeValue::from_timestamp(
+        i64::try_from(seconds)
+            .map_err(|_| FastDbError::Schema("UUID time is outside the supported range".into()))?,
+        nanoseconds,
+    )
+    .map(Value::Datetime)
+}
+
+fn evaluate_time_set(part: TimePart, datetime: &Value, replacement: &Value) -> Result<Value> {
+    let datetime = expect_datetime(datetime, "time setter")?.as_utc();
+    let replacement = expect_integer(replacement, "time setter value")?;
+    let changed = match part {
+        TimePart::Year => datetime.with_year(
+            i32::try_from(replacement)
+                .map_err(|_| FastDbError::Schema("time year is outside range".into()))?,
+        ),
+        TimePart::Month => datetime.with_month(
+            u32::try_from(replacement)
+                .map_err(|_| FastDbError::Schema("time month is outside range".into()))?,
+        ),
+        TimePart::Day => datetime.with_day(
+            u32::try_from(replacement)
+                .map_err(|_| FastDbError::Schema("time day is outside range".into()))?,
+        ),
+        TimePart::Hour => datetime.with_hour(
+            u32::try_from(replacement)
+                .map_err(|_| FastDbError::Schema("time hour is outside range".into()))?,
+        ),
+        TimePart::Minute => datetime.with_minute(
+            u32::try_from(replacement)
+                .map_err(|_| FastDbError::Schema("time minute is outside range".into()))?,
+        ),
+        TimePart::Second => datetime.with_second(
+            u32::try_from(replacement)
+                .map_err(|_| FastDbError::Schema("time second is outside range".into()))?,
+        ),
+        TimePart::Nano => datetime.with_nanosecond(
+            u32::try_from(replacement)
+                .map_err(|_| FastDbError::Schema("time nanosecond is outside range".into()))?,
+        ),
+        _ => {
+            return Err(FastDbError::Schema(
+                "time setter does not support this component".into(),
+            ))
+        }
+    }
+    .ok_or_else(|| FastDbError::Schema("time setter produced an invalid datetime".into()))?;
+    DatetimeValue::from_utc(changed).map(Value::Datetime)
+}
+
+fn evaluate_time_truncate(mode: TimeTruncate, datetime: &Value, duration: &Value) -> Result<Value> {
+    let datetime = expect_datetime(datetime, "time rounding")?;
+    let Value::Duration(duration) = duration else {
+        return Err(argument_type("time rounding", "duration"));
+    };
+    let quantum = i128::try_from(duration_nanos(*duration))
+        .map_err(|_| FastDbError::Schema("time rounding duration is too large".into()))?;
+    if quantum == 0 {
+        return Err(FastDbError::Schema(
+            "time rounding duration must be nonzero".into(),
+        ));
+    }
+    let value =
+        i128::from(datetime.timestamp()) * 1_000_000_000 + i128::from(datetime.nanosecond());
+    let floor = value.div_euclid(quantum) * quantum;
+    let rounded = match mode {
+        TimeTruncate::Floor => floor,
+        TimeTruncate::Ceil if floor == value => floor,
+        TimeTruncate::Ceil => floor + quantum,
+        TimeTruncate::Round if value - floor < quantum - (value - floor) => floor,
+        TimeTruncate::Round => floor + quantum,
+    };
+    DatetimeValue::from_timestamp(
+        i64::try_from(rounded.div_euclid(1_000_000_000))
+            .map_err(|_| FastDbError::Schema("rounded datetime is outside range".into()))?,
+        u32::try_from(rounded.rem_euclid(1_000_000_000)).expect("nanosecond remainder fits u32"),
+    )
+    .map(Value::Datetime)
+}
+
 fn evaluate_math_unary(operation: MathUnary, value: &Value) -> Result<Value> {
     if operation == MathUnary::Abs {
         return match value {
@@ -1626,6 +1888,145 @@ fn finite_float(value: f64, function: &str) -> Result<Value> {
         Err(FastDbError::Schema(format!(
             "{function} produced a non-finite result"
         )))
+    }
+}
+
+fn evaluate_type_cast(cast: TypeCast, arguments: &[Value]) -> Result<Value> {
+    match cast {
+        TypeCast::Array => cast_array(arguments[0].clone()).map(Value::Array),
+        TypeCast::Bool => match &arguments[0] {
+            Value::Bool(value) => Ok(Value::Bool(*value)),
+            Value::Str(value) if value.eq_ignore_ascii_case("true") => Ok(Value::Bool(true)),
+            Value::Str(value) if value.eq_ignore_ascii_case("false") => Ok(Value::Bool(false)),
+            _ => Err(argument_type("type::bool", "bool or boolean string")),
+        },
+        TypeCast::Bytes => match &arguments[0] {
+            Value::Bytes(value) => Ok(Value::Bytes(value.clone())),
+            Value::Str(value) => Ok(Value::Bytes(value.as_bytes().to_vec())),
+            _ => Err(argument_type("type::bytes", "string or bytes")),
+        },
+        TypeCast::Datetime => match &arguments[0] {
+            Value::Datetime(value) => Ok(Value::Datetime(value.clone())),
+            Value::Str(value) => DatetimeValue::parse(value).map(Value::Datetime),
+            _ => Err(argument_type(
+                "type::datetime",
+                "datetime or RFC 3339 string",
+            )),
+        },
+        TypeCast::Decimal => cast_decimal(arguments[0].clone()).map(Value::Decimal),
+        TypeCast::Duration => match &arguments[0] {
+            Value::Duration(value) => Ok(Value::Duration(value.clone())),
+            Value::Str(value) => DurationValue::parse(value).map(Value::Duration),
+            _ => Err(argument_type(
+                "type::duration",
+                "duration or duration string",
+            )),
+        },
+        TypeCast::File => match &arguments[0] {
+            Value::File(value) => Ok(Value::File(value.clone())),
+            Value::Str(value) => FileValue::new(value.clone()).map(Value::File),
+            _ => Err(argument_type("type::file", "file or string")),
+        },
+        TypeCast::Float => cast_float(arguments[0].clone()).map(Value::Float),
+        TypeCast::Int => cast_int(arguments[0].clone()).map(Value::Integer),
+        TypeCast::Number => match &arguments[0] {
+            value @ (Value::Integer(_) | Value::Float(_) | Value::Decimal(_)) => Ok(value.clone()),
+            Value::Str(value) => value
+                .parse::<i64>()
+                .map(Value::Integer)
+                .or_else(|_| {
+                    value.parse::<f64>().map_err(|_| ()).and_then(|value| {
+                        value.is_finite().then_some(Value::Float(value)).ok_or(())
+                    })
+                })
+                .map_err(|_| argument_type("type::number", "numeric or numeric string")),
+            _ => Err(argument_type("type::number", "numeric or numeric string")),
+        },
+        TypeCast::Range => cast_present(arguments[0].clone(), &SchemaTypeKind::Range),
+        TypeCast::Record | TypeCast::Thing => {
+            if arguments.len() == 2 {
+                let table = expect_string(&arguments[0], "record table")?;
+                let id = match &arguments[1] {
+                    Value::Str(value) => RecordIdValue::String(value.clone()),
+                    Value::Integer(value) => RecordIdValue::Integer(*value),
+                    Value::Uuid(value) => RecordIdValue::Uuid(*value),
+                    _ => return Err(argument_type("type::record", "record ID component")),
+                };
+                Ok(Value::RecordId(RecordId::new(table, id)))
+            } else {
+                match &arguments[0] {
+                    Value::RecordId(value) => Ok(Value::RecordId(value.clone())),
+                    Value::Str(value) => parse_record_string(value).map(Value::RecordId),
+                    _ => Err(argument_type("type::record", "record or record string")),
+                }
+            }
+        }
+        TypeCast::String => render_string(arguments[0].clone()).map(Value::Str),
+        TypeCast::StringLossy => match &arguments[0] {
+            Value::Bytes(value) => Ok(Value::Str(String::from_utf8_lossy(value).into_owned())),
+            value => render_string(value.clone()).map(Value::Str),
+        },
+        TypeCast::Table => match &arguments[0] {
+            Value::Table(value) => Ok(Value::Table(value.clone())),
+            Value::RecordId(value) => TableValue::new(value.table.clone()).map(Value::Table),
+            Value::Str(value) => TableValue::new(value.clone()).map(Value::Table),
+            _ => Err(argument_type("type::table", "table, record, or string")),
+        },
+        TypeCast::Uuid => match &arguments[0] {
+            Value::Uuid(value) => Ok(Value::Uuid(*value)),
+            Value::Str(value) => uuid::Uuid::parse_str(value)
+                .map(Value::Uuid)
+                .map_err(|_| argument_type("type::uuid", "UUID or UUID string")),
+            _ => Err(argument_type("type::uuid", "UUID or UUID string")),
+        },
+    }
+}
+
+fn value_is_type(value: &Value, kind: TypeKind) -> bool {
+    match kind {
+        TypeKind::Array => matches!(value, Value::Array(_)),
+        TypeKind::Bool => matches!(value, Value::Bool(_)),
+        TypeKind::Bytes => matches!(value, Value::Bytes(_)),
+        TypeKind::Collection => matches!(value, Value::Array(_) | Value::Set(_)),
+        TypeKind::Datetime => matches!(value, Value::Datetime(_)),
+        TypeKind::Decimal => matches!(value, Value::Decimal(_)),
+        TypeKind::Duration => matches!(value, Value::Duration(_)),
+        TypeKind::Float => matches!(value, Value::Float(_)),
+        TypeKind::None => matches!(value, Value::None),
+        TypeKind::Null => matches!(value, Value::Null),
+        TypeKind::Number => matches!(
+            value,
+            Value::Integer(_) | Value::Float(_) | Value::Decimal(_)
+        ),
+        TypeKind::Object => matches!(value, Value::Object(_)),
+        TypeKind::Range => matches!(value, Value::Range(_)),
+        TypeKind::Record => matches!(value, Value::RecordId(_)),
+        TypeKind::String => matches!(value, Value::Str(_)),
+        TypeKind::Uuid => matches!(value, Value::Uuid(_)),
+    }
+}
+
+fn type_name(value: &Value) -> &'static str {
+    match value {
+        Value::None => "none",
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Integer(_) => "int",
+        Value::Float(_) => "float",
+        Value::Decimal(_) => "decimal",
+        Value::Str(_) => "string",
+        Value::Bytes(_) => "bytes",
+        Value::Duration(_) => "duration",
+        Value::Datetime(_) => "datetime",
+        Value::Uuid(_) => "uuid",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+        Value::Set(_) => "set",
+        Value::Range(_) => "range",
+        Value::Regex(_) => "regex",
+        Value::RecordId(_) => "record",
+        Value::Table(_) => "table",
+        Value::File(_) => "file",
     }
 }
 

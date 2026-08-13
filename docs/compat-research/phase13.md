@@ -157,3 +157,50 @@ math::pow(2,3)         => 8
 FastDB preserves exact integer results where the reference does, returns
 finite floats for transcendental operations, and rejects domain errors or
 non-finite output rather than persisting an invalid numeric value.
+
+## Type and record helpers
+
+Type conversion probes established that conversion is checked rather than a
+general truthiness or truncation operation. `type::bool('true')` succeeds but
+`type::bool(0)` fails; `type::int(1.0)` succeeds but `type::int(1.9)` fails.
+Typed sets convert to canonically ordered arrays, UTF-8 strings convert to
+bytes, and two-element arrays convert to exclusive-end ranges.
+
+The reference returned lower-case type names from `type::of`, the raw record
+component from `record::id`/`meta::id`, and the table string from
+`record::table`. `type::string(person:one)` produced `person:one` without
+unnecessary quoting. FastDB follows these result types while retaining typed
+record IDs and table values for the actual conversion functions.
+
+The fixed `v3.1.5` binary rejected `type::thing` and `meta::table` and suggested
+`type::record` and `meta::tb`, respectively. FastDB implements the locked
+catalog names defensively but leaves those two inventory rows Unsupported
+until the reference/catalog mismatch is resolved.
+
+## Duration and time families
+
+Composite duration literals concatenate nonnegative unit components. The
+reference reported total whole units from extractors (for example,
+`duration::hours(1d2h) => 26`) and constructors returned exact typed
+durations (`duration::from_millis(1500) => 1s500ms`). `duration::max` is a
+constant without parentheses and corresponds to the full unsigned
+seconds-plus-nanoseconds domain used by FastDB's typed duration.
+
+UTC datetime extraction from
+`2024-02-29T12:34:56.123456789Z` returned year 2024, month 2, day 29, hour 12,
+minute 34, second 56, Sunday-based weekday 4, ISO week 9, one-based year day
+60, and integer Unix seconds/milliseconds/microseconds/nanoseconds. Timestamp
+constructors use Unix epoch units. `time::epoch` is a constant, while
+`time::timezone()` is a context function and returned the process-local
+offset.
+
+Time setters reject invalid calendar results (setting the leap day to 2023
+failed). For a `56.789` second value with a one-second quantum, floor/group
+returned second 56 and ceil/round returned second 57. FastDB performs this
+arithmetic with checked signed nanoseconds and rejects a zero quantum.
+
+The reference `time::minimum` and `time::maximum` constants are outside
+FastDB's currently declared year `1..=9999` datetime domain. They remain
+Unsupported until the datetime domain is deliberately expanded with storage,
+migration, and client-format evidence; the supported `time::min` and
+`time::max` functions operate on in-domain datetime collections.

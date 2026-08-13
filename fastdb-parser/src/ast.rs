@@ -430,6 +430,7 @@ pub enum ExprKind {
     Bool(bool),
     Integer(i64),
     Float(f64),
+    Duration(String),
     String(String),
     Array(Vec<Expr>),
     Object(Vec<ObjectField>),
