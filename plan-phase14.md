@@ -1,6 +1,7 @@
 # FastDB Phase 14 — CRUD and query completeness
 
-Status: authoritative implementation plan; implementation not started
+Status: technically complete locally on 2026-08-14; see
+`docs/phase14-report.md`
 
 Starting checkpoint: `d3ccf412e`
 
@@ -299,3 +300,15 @@ recorded in `docs/phase14-report.md`.
 Completion is a local pre-1.0 compatibility checkpoint only. It does not
 authorize Phase 15, a server, package publication, parallel writers, or a
 production-ready/Core 1.0 claim.
+
+## 14. Completion checkpoint
+
+The implementation ended at `6d06d0120`. All 50 locked Phase 14 rows are
+resolved: 49 are Supported by named executable evidence and
+`STMT-CREATE-COMPLETE` is Unsupported by the approved versioned-history stop
+in `docs/phase14-architecture-stops.md`. No Phase 14 Partial row remains.
+
+The complete command log, compatibility evidence, regression counts,
+performance measurements, and rollback boundary are preserved in
+`docs/phase14-report.md`. Phase 15 must still begin with its own authoritative
+plan commit before implementation.

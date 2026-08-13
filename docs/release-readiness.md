@@ -1,7 +1,7 @@
 # FastDB pre-1.0 and Core 1.0 release-readiness gates
 
-Status: Phase 11 stopped at its mandatory MVCC audit. Phases 12 and 13 are
-technically complete locally; Phase 14 planning is next on the serialized
+Status: Phase 11 stopped at its mandatory MVCC audit. Phases 12–14 are
+technically complete locally; Phase 15 planning is next on the serialized
 stable-WAL pre-1.0 track. No alpha, beta, pre-1.0 package publication, or Core
 1.0 release is authorized.
 
@@ -79,9 +79,9 @@ compatibility.
 
 ### Phase 14 — CRUD and query completeness
 
-- [ ] Add INSERT, UPSERT, richer mutations/returns, subqueries, aggregation,
+- [x] Add INSERT, UPSERT, richer mutations/returns, subqueries, aggregation,
       grouping, split/omit/fetch, multiple targets, and analyze forms.
-- [ ] Preserve bound values, direct translated AST, authoritative FastDB
+- [x] Preserve bound values, direct translated AST, authoritative FastDB
       semantics, transaction poisoning, and proven-safe index pushdown.
 
 ### Phase 15 — Scripting, schema, views, and events
