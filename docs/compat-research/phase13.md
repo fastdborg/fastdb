@@ -280,3 +280,18 @@ ID and string lengths were 20 and 32; bounded explicit lengths were accepted.
 Duration and datetime calls require two typed endpoints, and equal endpoints
 return that exact typed value. The fixed binary rejected `rand::guid`, so its
 locked inventory row remains Unsupported rather than inferring an alias.
+
+## Advanced collection helpers
+
+Boolean and logical array operations extend to the longer input, treating a
+missing boolean as false and a missing logical operand as NONE. Logical AND/OR
+return an operand; XOR returns the single truthy operand or false. Flatten and
+group remove exactly one collection level, with group additionally removing
+duplicates in first-seen order.
+
+Sequence's second argument is a count rather than an end: `(2,5)` returned
+`[2,3,4,5,6]`. Bottom-level collection construction, cartesian combine,
+clump, fill, insert, swap, transpose, and windows are all bounded at 65,536
+output elements. Natural sorts compare digit runs numerically; the lexical
+variant folds case. The v3.1.5 names are flat `array::sort_lexical`,
+`array::sort_natural`, and `array::sort_natural_lexical` paths.

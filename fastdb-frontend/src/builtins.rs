@@ -42,6 +42,22 @@ pub(crate) enum Builtin {
     ArraySortAsc,
     ArraySortDesc,
     ArrayUnion,
+    ArrayBoolean(ArrayBoolean),
+    ArrayClump,
+    ArrayCombine,
+    ArrayFill,
+    ArrayFlatten,
+    ArrayGroup,
+    ArrayInsert,
+    ArrayLogical(ArrayLogical),
+    ArrayMatches,
+    ArraySequence,
+    ArrayShuffle,
+    ArraySortLexical,
+    ArraySortNatural(bool),
+    ArraySwap,
+    ArrayTranspose,
+    ArrayWindows,
     BytesLen,
     ObjectEntries,
     ObjectExtend,
@@ -67,6 +83,7 @@ pub(crate) enum Builtin {
     SetRemove,
     SetSlice,
     SetUnion,
+    SetFlatten,
     MathConstant(MathConstant),
     MathUnary(MathUnary),
     MathClamp,
@@ -123,6 +140,21 @@ pub(crate) enum Builtin {
     CryptoPassword(PasswordAlgorithm, PasswordOperation),
     Random(RandomBuiltin),
     String(StringBuiltin),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArrayBoolean {
+    And,
+    Not,
+    Or,
+    Xor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArrayLogical {
+    And,
+    Or,
+    Xor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,6 +556,60 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure!(ArraySortAsc, "array::sort::asc", 1),
     pure!(ArraySortDesc, "array::sort::desc", 1),
     pure!(ArrayUnion, "array::union", 2),
+    pure_value!(
+        Builtin::ArrayBoolean(ArrayBoolean::And),
+        "array::boolean_and",
+        2
+    ),
+    pure_value!(
+        Builtin::ArrayBoolean(ArrayBoolean::Not),
+        "array::boolean_not",
+        1
+    ),
+    pure_value!(
+        Builtin::ArrayBoolean(ArrayBoolean::Or),
+        "array::boolean_or",
+        2
+    ),
+    pure_value!(
+        Builtin::ArrayBoolean(ArrayBoolean::Xor),
+        "array::boolean_xor",
+        2
+    ),
+    pure!(ArrayClump, "array::clump", 2),
+    pure!(ArrayCombine, "array::combine", 2),
+    pure!(ArrayFill, "array::fill", 2, 4),
+    pure!(ArrayFlatten, "array::flatten", 1),
+    pure!(ArrayGroup, "array::group", 1),
+    pure!(ArrayInsert, "array::insert", 2, 3),
+    pure_value!(
+        Builtin::ArrayLogical(ArrayLogical::And),
+        "array::logical_and",
+        2
+    ),
+    pure_value!(
+        Builtin::ArrayLogical(ArrayLogical::Or),
+        "array::logical_or",
+        2
+    ),
+    pure_value!(
+        Builtin::ArrayLogical(ArrayLogical::Xor),
+        "array::logical_xor",
+        2
+    ),
+    pure!(ArrayMatches, "array::matches", 2),
+    pure!(ArraySequence, "array::sequence", 1, 2),
+    context_value!(Builtin::ArrayShuffle, "array::shuffle", 1),
+    pure!(ArraySortLexical, "array::sort_lexical", 1),
+    pure_value!(Builtin::ArraySortNatural(false), "array::sort_natural", 1),
+    pure_value!(
+        Builtin::ArraySortNatural(true),
+        "array::sort_natural_lexical",
+        1
+    ),
+    pure!(ArraySwap, "array::swap", 3),
+    pure!(ArrayTranspose, "array::transpose", 1),
+    pure!(ArrayWindows, "array::windows", 2),
     pure!(BytesLen, "bytes::len", 1),
     pure!(ObjectEntries, "object::entries", 1),
     pure!(ObjectExtend, "object::extend", 2),
@@ -549,6 +635,7 @@ pub(crate) const SPECS: &[BuiltinSpec] = &[
     pure!(SetRemove, "set::remove", 2),
     pure!(SetSlice, "set::slice", 2, 3),
     pure!(SetUnion, "set::union", 2),
+    pure!(SetFlatten, "set::flatten", 1),
     constant!(Builtin::MathConstant(MathConstant::E), "math::e"),
     constant!(
         Builtin::MathConstant(MathConstant::Frac1Pi),

@@ -2206,6 +2206,7 @@ fn function_segment_value(kind: &TokenKind) -> Option<String> {
         TokenKind::Asc => "asc",
         TokenKind::Desc => "desc",
         TokenKind::Sleep => "sleep",
+        TokenKind::Insert => "insert",
         TokenKind::Delete => "delete",
         TokenKind::Remove => "remove",
         TokenKind::Patch => "patch",

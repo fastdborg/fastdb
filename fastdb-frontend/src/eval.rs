@@ -1,8 +1,9 @@
 //! Authoritative FastDB expression evaluation over decoded documents.
 
 use crate::builtins::{
-    self, Builtin, BuiltinClass, BuiltinSyntax, CryptoDigest, DurationUnit, MathConstant,
-    MathUnary, RandomBuiltin, TimePart, TimeTruncate, TypeCast, TypeKind,
+    self, ArrayBoolean, ArrayLogical, Builtin, BuiltinClass, BuiltinSyntax, CryptoDigest,
+    DurationUnit, MathConstant, MathUnary, RandomBuiltin, TimePart, TimeTruncate, TypeCast,
+    TypeKind,
 };
 use crate::decode::{
     canonical_value_cmp, decode_value, encode_value, DatetimeValue, DecimalValue, DurationValue,
@@ -13,6 +14,7 @@ use crate::error::{FastDbError, Result};
 use crate::Params;
 use base64::Engine as _;
 use chrono::{Datelike as _, Local, Timelike as _, Utc};
+use rand::seq::SliceRandom as _;
 use rand::Rng as _;
 use rust_decimal::prelude::ToPrimitive as _;
 use std::cmp::Ordering;
@@ -1073,6 +1075,172 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
         ArrayUnion | ArrayIntersect | ArrayDifference | ArrayComplement => {
             evaluate_array_set_operation(function, &arguments[0], &arguments[1])
         }
+        ArrayBoolean(operation) => evaluate_array_boolean(operation, &arguments),
+        ArrayClump => {
+            let values = collection_slice(&arguments[0], "array::clump")?;
+            let size = expect_nonnegative_usize(&arguments[1], "array::clump size")?;
+            if size == 0 {
+                return Err(FastDbError::Schema(
+                    "array::clump size must be positive".into(),
+                ));
+            }
+            let groups = values
+                .chunks(size)
+                .map(|values| Value::Array(values.to_vec()))
+                .collect();
+            Ok(Value::Array(groups))
+        }
+        ArrayCombine => {
+            let left = collection_slice(&arguments[0], "array::combine")?;
+            let right = collection_slice(&arguments[1], "array::combine")?;
+            ensure_collection_growth(0, left.len().saturating_mul(right.len()))?;
+            Ok(Value::Array(
+                left.iter()
+                    .flat_map(|left| {
+                        right
+                            .iter()
+                            .map(move |right| Value::Array(vec![left.clone(), right.clone()]))
+                    })
+                    .collect(),
+            ))
+        }
+        ArrayFill => {
+            let mut values = take_array(&arguments[0], "array::fill")?;
+            let start = arguments
+                .get(2)
+                .map(|value| expect_integer(value, "array::fill start"))
+                .transpose()?
+                .map_or(0, |value| relative_bound_i64(value, values.len()));
+            let end = arguments
+                .get(3)
+                .map(|value| expect_integer(value, "array::fill end"))
+                .transpose()?
+                .map_or(values.len(), |value| {
+                    relative_bound_i64(value, values.len())
+                });
+            for slot in values.iter_mut().take(end).skip(start) {
+                *slot = arguments[1].clone();
+            }
+            Ok(Value::Array(values))
+        }
+        ArrayFlatten | ArrayGroup => {
+            let mut output = Vec::new();
+            for value in collection_slice(&arguments[0], "array flatten/group")? {
+                if let Value::Array(values) = value {
+                    ensure_collection_growth(output.len(), values.len())?;
+                    output.extend(values.iter().cloned());
+                } else {
+                    push_bounded(&mut output, value.clone())?;
+                }
+            }
+            if function == ArrayGroup {
+                let mut distinct = Vec::new();
+                for value in output {
+                    push_unique(&mut distinct, value)?;
+                }
+                output = distinct;
+            }
+            Ok(Value::Array(output))
+        }
+        ArrayInsert => {
+            let mut values = take_array(&arguments[0], "array::insert")?;
+            ensure_collection_growth(values.len(), 1)?;
+            let index = arguments
+                .get(2)
+                .map(|value| expect_integer(value, "array::insert index"))
+                .transpose()?
+                .map_or(values.len(), |value| {
+                    relative_bound_i64(value, values.len())
+                });
+            values.insert(index, arguments[1].clone());
+            Ok(Value::Array(values))
+        }
+        ArrayLogical(operation) => evaluate_array_logical(operation, &arguments),
+        ArrayMatches => Ok(Value::Array(
+            collection_slice(&arguments[0], "array::matches")?
+                .iter()
+                .map(|value| Value::Bool(values_equal(value, &arguments[1])))
+                .collect(),
+        )),
+        ArraySequence => {
+            let (start, count) = if arguments.len() == 1 {
+                (
+                    0,
+                    expect_nonnegative_usize(&arguments[0], "array::sequence count")?,
+                )
+            } else {
+                (
+                    expect_integer(&arguments[0], "array::sequence start")?,
+                    expect_nonnegative_usize(&arguments[1], "array::sequence count")?,
+                )
+            };
+            ensure_collection_growth(0, count)?;
+            let values = (0..count)
+                .map(|offset| {
+                    start
+                        .checked_add(offset as i64)
+                        .map(Value::Integer)
+                        .ok_or_else(|| FastDbError::Schema("array::sequence overflow".into()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Value::Array(values))
+        }
+        ArrayShuffle => {
+            let mut values = take_array(&arguments[0], "array::shuffle")?;
+            values.shuffle(&mut rand::rng());
+            Ok(Value::Array(values))
+        }
+        ArraySortLexical | ArraySortNatural(_) => {
+            let mut values = take_array(&arguments[0], "array string sort")?;
+            let mut rendered = values
+                .drain(..)
+                .map(|value| render_string(value).map(Value::Str))
+                .collect::<Result<Vec<_>>>()?;
+            rendered.sort_by(|left, right| {
+                let (Value::Str(left), Value::Str(right)) = (left, right) else {
+                    unreachable!("string sort values are strings")
+                };
+                match function {
+                    ArraySortLexical => left.cmp(right),
+                    ArraySortNatural(case_insensitive) => {
+                        natural_string_cmp(left, right, case_insensitive)
+                    }
+                    _ => unreachable!(),
+                }
+            });
+            Ok(Value::Array(rendered))
+        }
+        ArraySwap => {
+            let mut values = take_array(&arguments[0], "array::swap")?;
+            let left = relative_index(
+                expect_integer(&arguments[1], "array::swap index")?,
+                values.len(),
+            )
+            .ok_or_else(|| FastDbError::Schema("array::swap index is out of bounds".into()))?;
+            let right = relative_index(
+                expect_integer(&arguments[2], "array::swap index")?,
+                values.len(),
+            )
+            .ok_or_else(|| FastDbError::Schema("array::swap index is out of bounds".into()))?;
+            values.swap(left, right);
+            Ok(Value::Array(values))
+        }
+        ArrayTranspose => evaluate_array_transpose(&arguments[0]),
+        ArrayWindows => {
+            let values = collection_slice(&arguments[0], "array::windows")?;
+            let size = expect_nonnegative_usize(&arguments[1], "array::windows size")?;
+            if size == 0 {
+                return Err(FastDbError::Schema(
+                    "array::windows size must be positive".into(),
+                ));
+            }
+            Ok(Value::Array(
+                values
+                    .windows(size)
+                    .map(|window| Value::Array(window.to_vec()))
+                    .collect(),
+            ))
+        }
         ArrayRemove => {
             let mut values = take_array(&arguments[0], "array::remove")?;
             if let Some(index) = relative_index(
@@ -1197,6 +1365,18 @@ fn evaluate_builtin(function: Builtin, arguments: Vec<Value>) -> Result<Value> {
         .map(Value::Set),
         SetUnion | SetIntersect | SetDifference | SetComplement => {
             evaluate_set_operation(function, &arguments[0], &arguments[1])
+        }
+        SetFlatten => {
+            let mut output = Vec::new();
+            for value in set_slice(&arguments[0], "set::flatten")? {
+                match value {
+                    Value::Array(values) => output.extend(values.iter().cloned()),
+                    Value::Set(values) => output.extend(values.as_slice().iter().cloned()),
+                    value => output.push(value.clone()),
+                }
+                ensure_collection_growth(0, output.len())?;
+            }
+            SetValue::new(output).map(Value::Set)
         }
         MathConstant(constant) => Ok(Value::Float(math_constant(constant))),
         MathUnary(operation) => evaluate_math_unary(operation, &arguments[0]),
@@ -1630,6 +1810,163 @@ fn relative_index(index: i64, length: usize) -> Option<usize> {
     usize::try_from(index)
         .ok()
         .filter(|index| *index < length as usize)
+}
+
+fn relative_bound_i64(index: i64, length: usize) -> usize {
+    let length_i64 = i64::try_from(length).unwrap_or(i64::MAX);
+    let index = if index < 0 {
+        length_i64.saturating_add(index)
+    } else {
+        index
+    };
+    index.clamp(0, length_i64) as usize
+}
+
+fn evaluate_array_boolean(operation: ArrayBoolean, arguments: &[Value]) -> Result<Value> {
+    let left = collection_slice(&arguments[0], "array boolean")?;
+    if operation == ArrayBoolean::Not {
+        return left
+            .iter()
+            .map(|value| match value {
+                Value::Bool(value) => Ok(Value::Bool(!value)),
+                _ => Err(argument_type("array::boolean_not", "boolean arrays")),
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(Value::Array);
+    }
+    let right = collection_slice(&arguments[1], "array boolean")?;
+    let length = left.len().max(right.len());
+    let mut output = Vec::with_capacity(length);
+    for index in 0..length {
+        let left = match left.get(index) {
+            Some(Value::Bool(value)) => *value,
+            None => false,
+            Some(_) => return Err(argument_type("array boolean", "boolean arrays")),
+        };
+        let right = match right.get(index) {
+            Some(Value::Bool(value)) => *value,
+            None => false,
+            Some(_) => return Err(argument_type("array boolean", "boolean arrays")),
+        };
+        output.push(Value::Bool(match operation {
+            ArrayBoolean::And => left && right,
+            ArrayBoolean::Or => left || right,
+            ArrayBoolean::Xor => left ^ right,
+            ArrayBoolean::Not => unreachable!(),
+        }));
+    }
+    Ok(Value::Array(output))
+}
+
+fn evaluate_array_logical(operation: ArrayLogical, arguments: &[Value]) -> Result<Value> {
+    let left = collection_slice(&arguments[0], "array logical")?;
+    let right = collection_slice(&arguments[1], "array logical")?;
+    let length = left.len().max(right.len());
+    let mut output = Vec::with_capacity(length);
+    for index in 0..length {
+        let left = left.get(index).cloned().unwrap_or(Value::None);
+        let right = right.get(index).cloned().unwrap_or(Value::None);
+        let left_truthy = EvalValue::Present(left.clone()).truthy();
+        let right_truthy = EvalValue::Present(right.clone()).truthy();
+        output.push(match operation {
+            ArrayLogical::And => {
+                if left_truthy {
+                    right
+                } else {
+                    left
+                }
+            }
+            ArrayLogical::Or => {
+                if left_truthy {
+                    left
+                } else {
+                    right
+                }
+            }
+            ArrayLogical::Xor if left_truthy ^ right_truthy => {
+                if left_truthy {
+                    left
+                } else {
+                    right
+                }
+            }
+            ArrayLogical::Xor => Value::Bool(false),
+        });
+    }
+    Ok(Value::Array(output))
+}
+
+fn evaluate_array_transpose(value: &Value) -> Result<Value> {
+    let rows = collection_slice(value, "array::transpose")?;
+    let mut arrays = Vec::with_capacity(rows.len());
+    for row in rows {
+        arrays.push(collection_slice(row, "array::transpose row")?);
+    }
+    let columns = arrays.first().map_or(0, |row| row.len());
+    if arrays.iter().any(|row| row.len() != columns) {
+        return Err(FastDbError::Schema(
+            "array::transpose rows must have equal length".into(),
+        ));
+    }
+    ensure_collection_growth(0, columns)?;
+    Ok(Value::Array(
+        (0..columns)
+            .map(|column| Value::Array(arrays.iter().map(|row| row[column].clone()).collect()))
+            .collect(),
+    ))
+}
+
+fn natural_string_cmp(left: &str, right: &str, case_insensitive: bool) -> Ordering {
+    let left_owned;
+    let right_owned;
+    let (left, right) = if case_insensitive {
+        left_owned = left.to_lowercase();
+        right_owned = right.to_lowercase();
+        (left_owned.as_str(), right_owned.as_str())
+    } else {
+        (left, right)
+    };
+    let (mut left_index, mut right_index) = (0, 0);
+    while left_index < left.len() && right_index < right.len() {
+        let left_digit = left.as_bytes()[left_index].is_ascii_digit();
+        let right_digit = right.as_bytes()[right_index].is_ascii_digit();
+        if left_digit && right_digit {
+            let left_end = digit_end(left, left_index);
+            let right_end = digit_end(right, right_index);
+            let left_number = left[left_index..left_end].trim_start_matches('0');
+            let right_number = right[right_index..right_end].trim_start_matches('0');
+            let ordering = left_number
+                .len()
+                .cmp(&right_number.len())
+                .then_with(|| left_number.cmp(right_number))
+                .then_with(|| (left_end - left_index).cmp(&(right_end - right_index)));
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+            left_index = left_end;
+            right_index = right_end;
+        } else {
+            let left_character = left[left_index..].chars().next().expect("valid character");
+            let right_character = right[right_index..]
+                .chars()
+                .next()
+                .expect("valid character");
+            let ordering = left_character.cmp(&right_character);
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+            left_index += left_character.len_utf8();
+            right_index += right_character.len_utf8();
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
+fn digit_end(value: &str, mut index: usize) -> usize {
+    while index < value.len() && value.as_bytes()[index].is_ascii_digit() {
+        index += 1;
+    }
+    index
 }
 
 fn array_at(values: &[Value], index: i64) -> Value {
