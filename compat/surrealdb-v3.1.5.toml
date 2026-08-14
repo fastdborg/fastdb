@@ -7364,10 +7364,10 @@ phase = 15
 disposition = "target"
 status = "Unsupported"
 syntax = "Characterized ALTER BUCKET clauses update canonical metadata atomically."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/bucket", "docs/phase15-architecture-stops.md#bucket-lifecycle"]
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#bucket-lifecycle"
 
 [[capability]]
 id = "SCHEMA-ALTER-CONFIG"
@@ -7559,10 +7559,10 @@ phase = 15
 disposition = "target"
 status = "Unsupported"
 syntax = "Capability-gated bucket definitions store canonical metadata without arbitrary plugins."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/bucket", "docs/phase15-architecture-stops.md#bucket-lifecycle"]
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#bucket-lifecycle"
 
 [[capability]]
 id = "SCHEMA-DEFINE-CONFIG"
@@ -7700,12 +7700,12 @@ area = "Scripting and schema"
 title = "complete DEFINE TABLE"
 phase = 15
 disposition = "target"
-status = "Partial"
-syntax = "NORMAL/RELATION, DROP, schema mode, materialized views, FULL/NONE/conditional permissions metadata, comments, IF NOT EXISTS, and same-kind OVERWRITE execute; mixed TYPE ANY remains incomplete while excluded CHANGEFEED rejects explicitly."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/table", "docs/compat-research/phase15.md#table-and-field-schema"]
+status = "Unsupported"
+syntax = "Explicit NORMAL/RELATION, DROP, schema mode, materialized views, FULL/NONE/conditional permissions metadata, comments, IF NOT EXISTS, and same-kind OVERWRITE execute; the locked complete capability remains Unsupported because mixed TYPE ANY requires a versioned mixed-record graph provider. Excluded CHANGEFEED rejects explicitly."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/table", "docs/compat-research/phase15.md#table-and-field-schema", "docs/phase15-architecture-stops.md#mixed-type-any-tables"]
 parser_evidence = ["P15-PARSE-006", "P15-PARSE-012"]
-execution_evidence = ["P15-API-011", "P15-API-027", "P15-CATALOG-003"]
-stop_report = ""
+execution_evidence = []
+stop_report = "docs/phase15-architecture-stops.md#mixed-type-any-tables"
 
 [[capability]]
 id = "SCHEMA-DEFINE-VIEW"
@@ -7754,10 +7754,10 @@ phase = 15
 disposition = "target"
 status = "Unsupported"
 syntax = "INFO BUCKET returns structured authorized definitions."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/bucket", "docs/phase15-architecture-stops.md#bucket-lifecycle"]
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#bucket-lifecycle"
 
 [[capability]]
 id = "SCHEMA-INFO-DATABASE"
@@ -7936,10 +7936,10 @@ phase = 15
 disposition = "target"
 status = "Unsupported"
 syntax = "REMOVE BUCKET executes atomically with dependency validation."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/remove", "docs/phase15-architecture-stops.md#bucket-lifecycle"]
+parser_evidence = ["P15-PARSE-008"]
 execution_evidence = []
-stop_report = ""
+stop_report = "docs/phase15-architecture-stops.md#bucket-lifecycle"
 
 [[capability]]
 id = "SCHEMA-REMOVE-DATABASE-COMPLETE"
@@ -7973,11 +7973,11 @@ area = "Scripting and schema"
 title = "complete REMOVE FIELD"
 phase = 15
 disposition = "target"
-status = "Partial"
-syntax = "REMOVE FIELD executes atomically with B-tree/FTS index dependency checks and vector-derived cleanup; future view/event/reference dependencies remain incomplete."
+status = "Supported"
+syntax = "REMOVE FIELD executes atomically with overlapping B-tree/FTS index, nested/schema-expression, materialized-view, and event dependency checks plus compacted vector-derived cleanup, IF EXISTS, rollback, and reopen validation."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/remove", "docs/compat-research/phase15.md#table-and-field-schema"]
 parser_evidence = ["P15-PARSE-007"]
-execution_evidence = ["P15-API-012"]
+execution_evidence = ["P15-API-012", "P15-API-029", "P15-API-030"]
 stop_report = ""
 
 [[capability]]
@@ -8051,11 +8051,11 @@ area = "Scripting and schema"
 title = "complete REMOVE TABLE"
 phase = 15
 disposition = "target"
-status = "Partial"
-syntax = "REMOVE TABLE executes atomically with relation-endpoint and view dependency checks, connected-edge cleanup, provider/index/view cleanup, rollback, and IF EXISTS; remaining cross-object dependency modes are incomplete."
+status = "Supported"
+syntax = "REMOVE TABLE executes atomically with relation-endpoint, view, typed-field/schema-expression, parameter, function, and event dependency checks; connected-edge, provider/index/view cleanup; rollback; and IF EXISTS."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/remove", "docs/compat-research/phase15.md#table-and-field-schema"]
 parser_evidence = ["P15-PARSE-006"]
-execution_evidence = ["P15-API-011"]
+execution_evidence = ["P15-API-011", "P15-API-023", "P15-API-030"]
 stop_report = ""
 
 [[capability]]

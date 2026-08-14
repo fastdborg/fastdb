@@ -2759,6 +2759,432 @@ fn run_alter_table(
     Ok(StatementResult::None)
 }
 
+fn paths_overlap(left: &[String], right: &[String]) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}
+
+fn resolved_expression_path(expression: &Expr) -> Option<(Option<&str>, Vec<String>)> {
+    match &expression.kind {
+        ExprKind::Parameter(name) => Some((Some(name.as_str()), Vec::new())),
+        ExprKind::FieldPath(path) => Some((
+            None,
+            path.segments
+                .iter()
+                .map(|segment| segment.value.clone())
+                .collect(),
+        )),
+        ExprKind::Access {
+            target,
+            accessor: turso_fastdb_parser::Accessor::Field(field),
+        } => {
+            let (base, mut path) = resolved_expression_path(target)?;
+            path.push(field.value.clone());
+            Some((base, path))
+        }
+        ExprKind::Parenthesized(inner) => resolved_expression_path(inner),
+        _ => None,
+    }
+}
+
+fn expression_references_field(
+    expression: &Expr,
+    field_path: &[String],
+    document_parameters: &[&str],
+    include_bare_paths: bool,
+) -> bool {
+    if let Some((base, path)) = resolved_expression_path(expression) {
+        let relevant = match base {
+            Some(base) => document_parameters.contains(&base),
+            None => include_bare_paths,
+        };
+        return relevant && paths_overlap(&path, field_path);
+    }
+    match &expression.kind {
+        ExprKind::Array(values) | ExprKind::DestructureList(values) => values.iter().any(|value| {
+            expression_references_field(value, field_path, document_parameters, include_bare_paths)
+        }),
+        ExprKind::Object(fields) => fields.iter().any(|field| {
+            expression_references_field(
+                &field.value,
+                field_path,
+                document_parameters,
+                include_bare_paths,
+            )
+        }),
+        ExprKind::Destructure { target, .. }
+        | ExprKind::Cast { value: target, .. }
+        | ExprKind::Unary {
+            operand: target, ..
+        } => {
+            expression_references_field(target, field_path, document_parameters, include_bare_paths)
+        }
+        ExprKind::Access { target, accessor } => {
+            expression_references_field(target, field_path, document_parameters, include_bare_paths)
+                || match accessor {
+                    turso_fastdb_parser::Accessor::Index(index) => expression_references_field(
+                        index,
+                        field_path,
+                        document_parameters,
+                        include_bare_paths,
+                    ),
+                    turso_fastdb_parser::Accessor::Slice { start, end, .. } => {
+                        start.iter().chain(end.iter()).any(|value| {
+                            expression_references_field(
+                                value,
+                                field_path,
+                                document_parameters,
+                                include_bare_paths,
+                            )
+                        })
+                    }
+                    turso_fastdb_parser::Accessor::Field(_)
+                    | turso_fastdb_parser::Accessor::Last(_) => false,
+                }
+        }
+        ExprKind::Range(range) => range.start.iter().chain(range.end.iter()).any(|value| {
+            expression_references_field(value, field_path, document_parameters, include_bare_paths)
+        }),
+        ExprKind::FunctionCall { arguments, .. } => arguments.iter().any(|argument| {
+            expression_references_field(
+                argument,
+                field_path,
+                document_parameters,
+                include_bare_paths,
+            )
+        }),
+        ExprKind::Closure(closure) => expression_references_field(
+            &closure.body,
+            field_path,
+            document_parameters,
+            include_bare_paths,
+        ),
+        ExprKind::Knn(knn) => [&knn.field, &knn.query].into_iter().any(|value| {
+            expression_references_field(value, field_path, document_parameters, include_bare_paths)
+        }),
+        ExprKind::Binary { left, right, .. } => [left, right].into_iter().any(|value| {
+            expression_references_field(value, field_path, document_parameters, include_bare_paths)
+        }),
+        ExprKind::RecordId(record) => match &record.id.kind {
+            RecordIdPartKind::Complex(value) => expression_references_field(
+                value,
+                field_path,
+                document_parameters,
+                include_bare_paths,
+            ),
+            _ => false,
+        },
+        ExprKind::None
+        | ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Integer(_)
+        | ExprKind::Float(_)
+        | ExprKind::Duration(_)
+        | ExprKind::String(_)
+        | ExprKind::Parameter(_)
+        | ExprKind::FieldPath(_)
+        | ExprKind::NamespacedValue { .. }
+        | ExprKind::Traversal(_)
+        | ExprKind::Parenthesized(_) => false,
+    }
+}
+
+fn select_references_field(
+    statement: &turso_fastdb_parser::SelectStatement,
+    path: &[String],
+) -> bool {
+    if statement.include_all || matches!(statement.projections, ProjectionList::All(_)) {
+        return true;
+    }
+    if select_expressions_reference_field(statement, path, &[], true) {
+        return true;
+    }
+    statement
+        .split
+        .iter()
+        .chain(statement.omit.iter())
+        .chain(statement.order_by.iter().map(|order| &order.path))
+        .chain(statement.fetch.iter())
+        .any(|candidate| {
+            let candidate = candidate
+                .segments
+                .iter()
+                .map(|segment| segment.value.clone())
+                .collect::<Vec<_>>();
+            paths_overlap(&candidate, path)
+        })
+}
+
+fn select_expressions_reference_field(
+    statement: &turso_fastdb_parser::SelectStatement,
+    path: &[String],
+    document_parameters: &[&str],
+    include_bare_paths: bool,
+) -> bool {
+    let expression_matches = |expression: &Expr| {
+        expression_references_field(expression, path, document_parameters, include_bare_paths)
+    };
+    matches!(&statement.projections, ProjectionList::Fields(projections)
+        if projections.iter().any(|projection| expression_matches(&projection.expression)))
+        || statement.condition.as_ref().is_some_and(expression_matches)
+        || matches!(&statement.group, Some(GroupClause::By(values)) if values.iter().any(expression_matches))
+        || statement
+            .limit_expression
+            .as_ref()
+            .is_some_and(expression_matches)
+        || statement
+            .start_expression
+            .as_ref()
+            .is_some_and(expression_matches)
+        || statement
+            .additional_targets
+            .iter()
+            .chain(std::iter::once(&statement.target))
+            .any(|target| match target {
+                SelectTarget::Expression(expression) => expression_matches(expression),
+                SelectTarget::Subquery(statement) => select_expressions_reference_field(
+                    statement,
+                    path,
+                    document_parameters,
+                    include_bare_paths,
+                ),
+                SelectTarget::Target(_) => false,
+            })
+}
+
+fn create_data_references_field(
+    data: &CreateData,
+    path: &[String],
+    document_parameters: &[&str],
+    include_bare_paths: bool,
+) -> bool {
+    match data {
+        CreateData::Content(expression) => {
+            expression_references_field(expression, path, document_parameters, include_bare_paths)
+        }
+        CreateData::Set(assignments) => assignments.iter().any(|assignment| {
+            expression_references_field(
+                &assignment.value,
+                path,
+                document_parameters,
+                include_bare_paths,
+            )
+        }),
+    }
+}
+
+fn block_references_field(
+    block: &turso_fastdb_parser::ScriptBlock,
+    path: &[String],
+    document_parameters: &[&str],
+    include_bare_paths: bool,
+) -> bool {
+    let expression_matches = |expression: &Expr| {
+        expression_references_field(expression, path, document_parameters, include_bare_paths)
+    };
+    block.statements.iter().any(|statement| match statement {
+        Statement::Let(statement) => expression_matches(&statement.value),
+        Statement::ScriptReturn(statement)
+        | Statement::Throw(statement)
+        | Statement::Sleep(statement) => expression_matches(&statement.value),
+        Statement::If(statement) => {
+            statement.branches.iter().any(|(condition, block)| {
+                expression_matches(condition)
+                    || block_references_field(block, path, document_parameters, include_bare_paths)
+            }) || statement.otherwise.as_ref().is_some_and(|block| {
+                block_references_field(block, path, document_parameters, include_bare_paths)
+            })
+        }
+        Statement::For(statement) => {
+            expression_matches(&statement.iterable)
+                || block_references_field(
+                    &statement.body,
+                    path,
+                    document_parameters,
+                    include_bare_paths,
+                )
+        }
+        Statement::Create(statement) => statement.data.as_ref().is_some_and(|data| {
+            create_data_references_field(data, path, document_parameters, include_bare_paths)
+        }),
+        Statement::Insert(statement) => {
+            let data = match &statement.data {
+                InsertData::Expression(expression) => expression_matches(expression),
+                InsertData::Values { rows, .. } => rows.iter().flatten().any(expression_matches),
+            };
+            data || statement
+                .on_duplicate
+                .iter()
+                .any(|assignment| expression_matches(&assignment.value))
+        }
+        Statement::Relate(statement) => {
+            expression_matches(&statement.from)
+                || expression_matches(&statement.to)
+                || statement.data.as_ref().is_some_and(|data| {
+                    create_data_references_field(
+                        data,
+                        path,
+                        document_parameters,
+                        include_bare_paths,
+                    )
+                })
+        }
+        Statement::Select(statement) => select_expressions_reference_field(
+            statement,
+            path,
+            document_parameters,
+            include_bare_paths,
+        ),
+        Statement::Update(statement) | Statement::Upsert(statement) => {
+            let data = match &statement.data {
+                UpdateData::Content(expression)
+                | UpdateData::Merge(expression)
+                | UpdateData::Patch(expression)
+                | UpdateData::Replace(expression) => expression_matches(expression),
+                UpdateData::Set(assignments) => assignments
+                    .iter()
+                    .any(|assignment| expression_matches(&assignment.value)),
+                UpdateData::Unset(_) => false,
+            };
+            data || statement.condition.as_ref().is_some_and(expression_matches)
+        }
+        Statement::Delete(statement) => {
+            statement.condition.as_ref().is_some_and(expression_matches)
+        }
+        Statement::DefineParam(statement) => expression_matches(&statement.value),
+        Statement::AlterParam(statement) => {
+            statement.value.as_ref().is_some_and(expression_matches)
+        }
+        Statement::DefineFunction(statement) => block_references_field(
+            &statement.body,
+            path,
+            document_parameters,
+            include_bare_paths,
+        ),
+        _ => false,
+    })
+}
+
+fn value_references_table(value: &Value, table: &str) -> bool {
+    match value {
+        Value::RecordId(record) => record.table == table,
+        Value::Array(values) => values
+            .iter()
+            .any(|value| value_references_table(value, table)),
+        Value::Set(values) => values
+            .as_slice()
+            .iter()
+            .any(|value| value_references_table(value, table)),
+        Value::Object(fields) => fields
+            .values()
+            .any(|value| value_references_table(value, table)),
+        Value::Range(range) => [range.start(), range.end()]
+            .into_iter()
+            .any(|bound| match bound {
+                decode::RangeBound::Included(value) | decode::RangeBound::Excluded(value) => {
+                    value_references_table(value, table)
+                }
+                decode::RangeBound::Unbounded => false,
+            }),
+        _ => false,
+    }
+}
+
+fn expression_references_table(expression: &Expr, table: &str) -> bool {
+    match &expression.kind {
+        ExprKind::RecordId(record) => record.table.value == table,
+        ExprKind::Array(values) | ExprKind::DestructureList(values) => values
+            .iter()
+            .any(|value| expression_references_table(value, table)),
+        ExprKind::Object(fields) => fields
+            .iter()
+            .any(|field| expression_references_table(&field.value, table)),
+        ExprKind::Destructure { target, .. }
+        | ExprKind::Cast { value: target, .. }
+        | ExprKind::Unary {
+            operand: target, ..
+        }
+        | ExprKind::Parenthesized(target) => expression_references_table(target, table),
+        ExprKind::Access { target, accessor } => {
+            expression_references_table(target, table)
+                || match accessor {
+                    turso_fastdb_parser::Accessor::Index(index) => {
+                        expression_references_table(index, table)
+                    }
+                    turso_fastdb_parser::Accessor::Slice { start, end, .. } => start
+                        .iter()
+                        .chain(end.iter())
+                        .any(|value| expression_references_table(value, table)),
+                    turso_fastdb_parser::Accessor::Field(_)
+                    | turso_fastdb_parser::Accessor::Last(_) => false,
+                }
+        }
+        ExprKind::Range(range) => range
+            .start
+            .iter()
+            .chain(range.end.iter())
+            .any(|value| expression_references_table(value, table)),
+        ExprKind::FunctionCall { arguments, .. } => arguments
+            .iter()
+            .any(|argument| expression_references_table(argument, table)),
+        ExprKind::Closure(closure) => expression_references_table(&closure.body, table),
+        ExprKind::Knn(knn) => {
+            expression_references_table(&knn.field, table)
+                || expression_references_table(&knn.query, table)
+        }
+        ExprKind::Binary { left, right, .. } => {
+            expression_references_table(left, table) || expression_references_table(right, table)
+        }
+        _ => false,
+    }
+}
+
+fn target_references_table(target: &Target, table: &str) -> bool {
+    target.table().is_some_and(|name| name.value == table)
+        || matches!(target, Target::Expression(expression) if expression_references_table(expression, table))
+}
+
+fn select_references_table(statement: &turso_fastdb_parser::SelectStatement, table: &str) -> bool {
+    statement
+        .additional_targets
+        .iter()
+        .chain(std::iter::once(&statement.target))
+        .any(|target| match target {
+            SelectTarget::Target(target) => target_references_table(target, table),
+            SelectTarget::Expression(expression) => expression_references_table(expression, table),
+            SelectTarget::Subquery(statement) => select_references_table(statement, table),
+        })
+}
+
+fn block_references_table(block: &turso_fastdb_parser::ScriptBlock, table: &str) -> bool {
+    block.statements.iter().any(|statement| match statement {
+        Statement::If(statement) => {
+            statement
+                .branches
+                .iter()
+                .any(|(_, block)| block_references_table(block, table))
+                || statement
+                    .otherwise
+                    .as_ref()
+                    .is_some_and(|block| block_references_table(block, table))
+        }
+        Statement::For(statement) => block_references_table(&statement.body, table),
+        Statement::Create(statement) => target_references_table(&statement.target, table),
+        Statement::Insert(statement) => statement.table.value == table,
+        Statement::Relate(statement) => {
+            statement.relation.value == table
+                || expression_references_table(&statement.from, table)
+                || expression_references_table(&statement.to, table)
+        }
+        Statement::Select(statement) => select_references_table(statement, table),
+        Statement::Update(statement) | Statement::Upsert(statement) => {
+            target_references_table(&statement.target, table)
+        }
+        Statement::Delete(statement) => target_references_table(&statement.target, table),
+        Statement::DefineFunction(statement) => block_references_table(&statement.body, table),
+        _ => false,
+    })
+}
+
 fn run_remove_table(
     conn: &Connection,
     execution: &mut ExecutionState,
@@ -2796,6 +3222,71 @@ fn run_remove_table(
             return Err(FastDbError::Constraint(format!(
                 "table {:?} is required by materialized view {:?}",
                 table.logical_name, view.logical_name
+            )));
+        }
+        if let Some((owner, field)) = snapshot
+            .tables
+            .values()
+            .filter(|owner| owner.id != table.id)
+            .find_map(|owner| {
+                owner
+                    .fields
+                    .values()
+                    .find(|field| {
+                        field.ty.references_table(&table.logical_name)
+                            || [&field.default, &field.value, &field.assert]
+                                .into_iter()
+                                .flatten()
+                                .any(|expression| {
+                                    expression_references_table(
+                                        &expression.expression,
+                                        &table.logical_name,
+                                    )
+                                })
+                    })
+                    .map(|field| (owner, field))
+            })
+        {
+            return Err(FastDbError::Constraint(format!(
+                "table {:?} is required by field {} on table {:?}",
+                table.logical_name, field.path_key, owner.logical_name
+            )));
+        }
+        if let Some(parameter) = snapshot
+            .parameters
+            .values()
+            .find(|parameter| value_references_table(&parameter.value, &table.logical_name))
+        {
+            return Err(FastDbError::Constraint(format!(
+                "table {:?} is required by parameter ${}",
+                table.logical_name, parameter.logical_name
+            )));
+        }
+        if let Some(function) = snapshot
+            .functions
+            .values()
+            .find(|function| block_references_table(&function.body, &table.logical_name))
+        {
+            return Err(FastDbError::Constraint(format!(
+                "table {:?} is required by function fn::{}",
+                table.logical_name, function.logical_name
+            )));
+        }
+        if let Some((owner, event)) = snapshot
+            .tables
+            .values()
+            .filter(|owner| owner.id != table.id)
+            .find_map(|owner| {
+                owner
+                    .events
+                    .values()
+                    .find(|event| block_references_table(&event.action.block, &table.logical_name))
+                    .map(|event| (owner, event))
+            })
+        {
+            return Err(FastDbError::Constraint(format!(
+                "table {:?} is required by event {:?} on table {:?}",
+                table.logical_name, event.logical_name, owner.logical_name
             )));
         }
         let mut cascaded = false;
@@ -9337,14 +9828,64 @@ fn run_remove_field(
                 table.logical_name
             )));
         };
-        if let Some(index) = table
-            .indexes
-            .values()
-            .find(|index| index.path_keys.contains(&path_key))
-        {
+        if let Some(index) = table.indexes.values().find(|index| {
+            index
+                .paths
+                .iter()
+                .any(|path| paths_overlap(path, &field.path))
+        }) {
             return Err(FastDbError::Constraint(format!(
                 "field {path_key} is required by index {:?}",
                 index.logical_name
+            )));
+        }
+        if let Some(dependent) = table.fields.values().find(|candidate| {
+            candidate.path_key != path_key
+                && (candidate.path.starts_with(&field.path)
+                    || [&candidate.default, &candidate.value, &candidate.assert]
+                        .into_iter()
+                        .flatten()
+                        .any(|expression| {
+                            expression_references_field(
+                                &expression.expression,
+                                &field.path,
+                                &["before", "after"],
+                                true,
+                            )
+                        }))
+        }) {
+            return Err(FastDbError::Constraint(format!(
+                "field {path_key} is required by field {}",
+                dependent.path_key
+            )));
+        }
+        if let Some(view) = snapshot.views.values().find(|view| {
+            view.dependencies.contains(&table.id)
+                && select_references_field(&view.select, &field.path)
+        }) {
+            return Err(FastDbError::Constraint(format!(
+                "field {path_key} is required by materialized view {:?}",
+                view.logical_name
+            )));
+        }
+        if let Some(event) = table.events.values().find(|event| {
+            event.condition.as_ref().is_some_and(|condition| {
+                expression_references_field(
+                    condition,
+                    &field.path,
+                    &["before", "after", "value"],
+                    true,
+                )
+            }) || block_references_field(
+                &event.action.block,
+                &field.path,
+                &["before", "after", "value"],
+                false,
+            )
+        }) {
+            return Err(FastDbError::Constraint(format!(
+                "field {path_key} is required by event {:?}",
+                event.logical_name
             )));
         }
         let vector_column = snapshot

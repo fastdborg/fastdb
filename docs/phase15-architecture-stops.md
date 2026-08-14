@@ -75,3 +75,48 @@ These three lifecycle rows remain Unsupported at the embedded Phase 15
 boundary and reject before mutation. Phase 19 must reopen all four API rows
 together when definition, routing, authentication, authorization, collision,
 and malformed-request tests share one catalog and transaction contract.
+
+## Bucket lifecycle
+
+Capabilities: `SCHEMA-DEFINE-BUCKET`, `SCHEMA-ALTER-BUCKET`,
+`SCHEMA-INFO-BUCKET`, and `SCHEMA-REMOVE-BUCKET-COMPLETE`.
+
+The fixed reference exposes experimental memory, local-file, and global bucket
+backends. A memory backend cannot satisfy reopen, backup, or acknowledged
+durability. A local/global backend stores mutable bytes outside the one
+`.fastdb` artifact, so a catalog transaction cannot atomically publish file
+content, rollback it, include it in `backup_to`, or prove crash recovery. The
+format-3 catalogs also deliberately have no bucket owner: adding inert metadata
+would create file pointers without the Phase 18 authorization and Phase 19
+request capability boundaries.
+
+FastDB therefore rejects every bucket lifecycle form before catalog or
+filesystem mutation. This is not a denial of future object storage. A later
+sealed provider must define versioned content identity, transactional staging,
+rollback/recovery, backup/restore, canonical-directory or object-store policy,
+authorization, quotas, and no ambient filesystem authority. Arbitrary storage
+plugins and host paths remain prohibited.
+
+## Mixed TYPE ANY tables
+
+Capability: `SCHEMA-DEFINE-TABLE-COMPLETE`.
+
+The fixed reference uses `TYPE ANY` for a table that may contain both ordinary
+and relation records. FastDB format 3 assigns one immutable physical kind to
+each table: NORMAL rows have only document state, while RELATION rows have
+mandatory immutable endpoint columns and two adjacency indexes. Mapping ANY to
+NORMAL would silently reject relation records; mapping it to RELATION would
+invent endpoints for ordinary records. Allowing nullable endpoint state in the
+current provider would invalidate the Phase 7 catalog and adjacency invariants
+for every existing format-2/3 fixture.
+
+Phase 15 freezes format 3 and cannot reinterpret an existing table kind during
+reopen or backup/restore. A qualifying implementation therefore needs a later
+transactional format migration and a versioned mixed-record graph provider,
+including normal/relation decode discrimination, adjacency maintenance,
+cascade behavior, integrity checking, rebuild, and failure injection. Until
+that representation exists, explicit `TYPE ANY` remains Unsupported and fails
+before mutation. Explicit NORMAL and RELATION tables and every other
+characterized Phase 15 table clause remain executable; the locked complete-row
+status is nevertheless Unsupported because its atomic capability includes
+mixed ANY.

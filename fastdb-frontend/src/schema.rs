@@ -263,6 +263,23 @@ impl FieldType {
         }
     }
 
+    pub fn references_table(&self, table: &str) -> bool {
+        match self {
+            Self::Record { tables } => tables.iter().any(|candidate| candidate == table),
+            Self::Union(variants) => variants
+                .iter()
+                .any(|variant| variant.references_table(table)),
+            Self::TypedArray { element, .. } | Self::Option(element) => {
+                element.references_table(table)
+            }
+            Self::Set {
+                element: Some(element),
+                ..
+            } => element.references_table(table),
+            _ => false,
+        }
+    }
+
     pub fn base_is_any(&self) -> bool {
         match self {
             Self::Any => true,

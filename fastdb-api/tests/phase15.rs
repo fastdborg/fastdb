@@ -2270,3 +2270,110 @@ fn p15_api_029_alter_field_rebuilds_native_vector_representation() {
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_030_remove_field_and_table_refuse_live_schema_dependencies() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item SCHEMAFULL; \
+                 DEFINE FIELD source ON item TYPE int; \
+                 DEFINE FIELD doubled ON item TYPE option<int> VALUE source * 2; \
+                 DEFINE FIELD profile ON item TYPE option<object> FLEXIBLE; \
+                 DEFINE FIELD profile.name ON item TYPE option<string>; \
+                 DEFINE EVENT watch ON item WHEN $after.source > 0 \
+                   THEN RETURN $after.source; \
+                 DEFINE EVENT unrelated ON item THEN SELECT * FROM elsewhere; \
+                 DEFINE TABLE derived AS SELECT source FROM item",
+                params! {},
+            )
+            .await
+            .unwrap();
+        for field in ["source", "profile"] {
+            assert_eq!(
+                connection
+                    .execute(&format!("REMOVE FIELD {field} ON item"), params! {})
+                    .await
+                    .unwrap_err()
+                    .category(),
+                ErrorCategory::Constraint
+            );
+        }
+        connection
+            .execute(
+                "ALTER FIELD doubled ON item DROP VALUE; \
+                 REMOVE EVENT watch ON item; REMOVE TABLE derived; \
+                 REMOVE FIELD source ON item; \
+                 REMOVE FIELD profile.name ON item; REMOVE FIELD profile ON item",
+                params! {},
+            )
+            .await
+            .unwrap();
+
+        connection
+            .execute(
+                "DEFINE TABLE target; DEFINE TABLE holder; \
+                 DEFINE FIELD ref ON holder TYPE option<record<target>>; \
+                 DEFINE PARAM $saved VALUE target:a; \
+                 DEFINE FUNCTION fn::touch_target() { SELECT * FROM target; RETURN 1; }; \
+                 DEFINE EVENT create_target ON holder THEN CREATE target:auto",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE TABLE target", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute("REMOVE FIELD ref ON holder", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE TABLE target", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute("REMOVE PARAM $saved", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE TABLE target", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute("REMOVE FUNCTION fn::touch_target", params! {})
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE TABLE target", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute(
+                "REMOVE EVENT create_target ON holder; REMOVE TABLE target",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+    });
+}

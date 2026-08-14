@@ -955,6 +955,12 @@ impl<'a> Parser<'a> {
                     self.peek().span,
                 ))
             }
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("bucket") => {
+                Err(ParseError::unsupported(
+                    "DEFINE BUCKET requires an unavailable durable sealed storage provider",
+                    self.peek().span,
+                ))
+            }
             TokenKind::Ident(value) if value.eq_ignore_ascii_case("api") => {
                 Err(ParseError::unsupported(
                     "DEFINE API execution belongs to the authenticated Phase 19 server",
@@ -1411,6 +1417,13 @@ impl<'a> Parser<'a> {
                 self.peek().span,
             ));
         }
+        if matches!(&self.peek().kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("bucket"))
+        {
+            return Err(ParseError::unsupported(
+                "ALTER BUCKET requires an unavailable durable sealed storage provider",
+                self.peek().span,
+            ));
+        }
         if self.at_ident_keyword("event") {
             return self.parse_alter_event(start).map(Statement::AlterEvent);
         }
@@ -1721,6 +1734,13 @@ impl<'a> Parser<'a> {
                 self.tokens[self.position + 1].span,
             ));
         }
+        if matches!(&self.tokens[self.position + 1].kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("bucket"))
+        {
+            return Err(ParseError::unsupported(
+                "REMOVE BUCKET requires an unavailable durable sealed storage provider",
+                self.tokens[self.position + 1].span,
+            ));
+        }
         if matches!(&self.tokens[self.position + 1].kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("event"))
         {
             return self.parse_remove_event().map(Statement::RemoveEvent);
@@ -1860,6 +1880,12 @@ impl<'a> Parser<'a> {
                 target.span,
             ));
         }
+        if target.value.eq_ignore_ascii_case("bucket") {
+            return Err(ParseError::unsupported(
+                "INFO BUCKET requires an unavailable durable sealed storage provider",
+                target.span,
+            ));
+        }
         if matches!(
             target.value.to_ascii_lowercase().as_str(),
             "db" | "database"
@@ -1876,6 +1902,12 @@ impl<'a> Parser<'a> {
             if collection.value.eq_ignore_ascii_case("apis") {
                 return Err(ParseError::unsupported(
                     "INFO API execution belongs to the authenticated Phase 19 server",
+                    dot.union(collection.span),
+                ));
+            }
+            if collection.value.eq_ignore_ascii_case("buckets") {
+                return Err(ParseError::unsupported(
+                    "INFO BUCKET requires an unavailable durable sealed storage provider",
                     dot.union(collection.span),
                 ));
             }

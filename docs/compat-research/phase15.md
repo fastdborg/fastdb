@@ -281,7 +281,30 @@ output normalized `option<record<target>>` to `none | record<target>` and
 preserved typed-record table sets. FastDB keeps its own canonical internal type
 spelling but implements those value constraints, flexible schemafull paths,
 alter/drop lifecycle, reopen validation, and collision-safe document storage.
-Mixed table ANY remains incomplete rather than being accepted without behavior.
+Mixed table ANY remains unavailable rather than being accepted without
+behavior; the format/provider boundary is recorded in the Phase 15
+architecture stops.
+
+Removal probes showed that the reference removes only the field definition: a
+materialized view definition and its already-derived row remained, and an
+event that mentioned `$after.x` remained installed after `REMOVE FIELD x`.
+Likewise, removing a table left a custom function that selected that table;
+the later call failed because the table no longer existed. FastDB deliberately
+uses the stricter dependency contract required by the Phase 15 plan: REMOVE
+refuses overlapping indexes, nested/schema-expression fields, materialized
+views, events, typed-record fields, parameters containing record IDs, custom
+function targets, and event mutation targets until the dependent object is
+removed. This prevents a successfully reopened catalog from publishing a
+dangling executable definition. P15-API-030 fixes that safety boundary while
+P15-API-011, P15-API-023, and P15-API-029 cover table/view/provider cleanup and
+rollback.
+
+The moving public bucket documentation labels DEFINE BUCKET experimental and
+offers memory, local-file, and global backends. The fixed binary was run
+without the experimental file capability. FastDB records the resulting
+single-artifact, recovery, backup, and ambient-authority boundary in
+`docs/phase15-architecture-stops.md`; every bucket lifecycle spelling receives
+a precise parser denial and performs no filesystem or catalog mutation.
 
 ## Synchronous events
 

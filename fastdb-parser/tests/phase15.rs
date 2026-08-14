@@ -380,7 +380,7 @@ fn p15_parse_012_conditional_schema_permissions_are_structured() {
 }
 
 #[test]
-fn p15_parse_008_stopped_sequence_module_and_server_api_fail_explicitly() {
+fn p15_parse_008_stopped_capabilities_fail_explicitly() {
     for source in [
         "DEFINE SEQUENCE ids BATCH 1 START 0 TIMEOUT 1s",
         "ALTER SEQUENCE ids TIMEOUT 2s",
@@ -388,6 +388,11 @@ fn p15_parse_008_stopped_sequence_module_and_server_api_fail_explicitly() {
         "INFO FOR DB.sequences",
         "INFO FOR SEQUENCE ids",
         "DEFINE MODULE mod::demo AS f\"files:/demo.surli\"",
+        "DEFINE BUCKET files BACKEND 'memory'",
+        "ALTER BUCKET files DROP READONLY",
+        "REMOVE BUCKET IF EXISTS files",
+        "INFO FOR DB.buckets",
+        "INFO FOR BUCKET files",
         "DEFINE API /health FOR get THEN RETURN 'ok'",
         "ALTER API /health DROP ACTIONS",
         "REMOVE API IF EXISTS /health",
