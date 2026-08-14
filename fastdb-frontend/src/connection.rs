@@ -713,11 +713,11 @@ impl Connection {
 
         let mut statements = Vec::new();
         let mut mutation_count = 0_u64;
-        let catalog_parameters = match &execution.transaction {
+        let (catalog_parameters, custom_functions_defined) = match &execution.transaction {
             TransactionState::Active(active) => active
                 .catalog
                 .snapshot()
-                .map(|snapshot| snapshot.parameters.clone()),
+                .map(|snapshot| (snapshot.parameters.clone(), !snapshot.functions.is_empty())),
             TransactionState::Idle | TransactionState::Poisoned | TransactionState::Broken => self
                 .coordinator
                 .catalog
@@ -725,18 +725,22 @@ impl Connection {
                 .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
                 .as_ref()
                 .and_then(crate::catalog::CatalogState::snapshot)
-                .map(|snapshot| snapshot.parameters.clone()),
+                .map(|snapshot| (snapshot.parameters.clone(), !snapshot.functions.is_empty())),
         }
-        .map(|parameters| {
-            parameters
-                .into_iter()
-                .map(|(name, parameter)| (name, parameter.value))
-                .collect::<Params>()
+        .map(|(parameters, custom_functions_defined)| {
+            (
+                parameters
+                    .into_iter()
+                    .map(|(name, parameter)| (name, parameter.value))
+                    .collect::<Params>(),
+                custom_functions_defined,
+            )
         })
         .unwrap_or_default();
         let mut script = execute::ScriptRuntime::new(
             catalog_parameters,
             params.clone(),
+            custom_functions_defined,
             self.conn.get_query_timeout(),
             cancellation,
         );

@@ -10,6 +10,7 @@ use crate::names::{
 use crate::path::{canonical_path, decode_canonical_path};
 use crate::schema::{FieldRule, FieldType};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use turso_core::Value;
 use turso_fastdb_parser::TableMode;
 
@@ -295,7 +296,7 @@ pub struct CapabilityRequirement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CatalogState {
     Empty,
-    Ready(Box<CatalogSnapshot>),
+    Ready(Arc<CatalogSnapshot>),
 }
 
 impl CatalogState {
@@ -303,6 +304,13 @@ impl CatalogState {
         match self {
             Self::Empty => None,
             Self::Ready(snapshot) => Some(snapshot.as_ref()),
+        }
+    }
+
+    pub(crate) fn shared_snapshot(&self) -> Option<Arc<CatalogSnapshot>> {
+        match self {
+            Self::Empty => None,
+            Self::Ready(snapshot) => Some(Arc::clone(snapshot)),
         }
     }
 }
@@ -994,7 +1002,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     validate_physical_objects(&schema, &snapshot, FORMAT_VERSION)?;
     validate_vector_storage(conn, &snapshot)?;
     crate::execute::validate_materialized_views(conn, &snapshot)?;
-    Ok(CatalogState::Ready(Box::new(snapshot)))
+    Ok(CatalogState::Ready(Arc::new(snapshot)))
 }
 
 fn load_metadata(conn: &Connection) -> Result<Metadata> {

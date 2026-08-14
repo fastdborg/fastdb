@@ -157,6 +157,7 @@ pub(crate) struct ScriptRuntime {
     event_depth: usize,
     event_mutations: u64,
     active_events: BTreeSet<String>,
+    custom_functions_defined: bool,
     deadline: Option<Instant>,
     cancellation: Option<Arc<AtomicBool>>,
 }
@@ -165,6 +166,7 @@ impl ScriptRuntime {
     pub(crate) fn new(
         mut bindings: Params,
         request_bindings: Params,
+        custom_functions_defined: bool,
         timeout: Duration,
         cancellation: Option<Arc<AtomicBool>>,
     ) -> Self {
@@ -183,6 +185,7 @@ impl ScriptRuntime {
             event_depth: 0,
             event_mutations: 0,
             active_events: BTreeSet::new(),
+            custom_functions_defined,
             deadline: (!timeout.is_zero())
                 .then(|| Instant::now().checked_add(timeout))
                 .flatten(),
@@ -295,9 +298,9 @@ pub(crate) fn run_statement(
     script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
     let implicit_frontend_transaction = matches!(execution.transaction, TransactionState::Idle)
-        && (statement_invokes_custom_function(&statement)
-            || statement_may_fire_events(conn, execution, &statement)?
-            || statement_requires_multi_record_transaction(&statement));
+        && (statement_requires_multi_record_transaction(&statement)
+            || (script.custom_functions_defined && statement_invokes_custom_function(&statement))
+            || statement_may_fire_events(conn, execution, &statement)?);
     if implicit_frontend_transaction {
         conn.begin_explicit(execution)?;
     }
@@ -487,9 +490,9 @@ fn run_script_statement(
             .map(StatementExecution::read_only)
             .map(ScriptOutcome::normal),
         Statement::DefineFunction(statement) => {
-            run_define_function(conn, execution, statement, source)
-                .map(StatementExecution::read_only)
-                .map(ScriptOutcome::normal)
+            let result = run_define_function(conn, execution, statement, source)?;
+            script.custom_functions_defined = true;
+            Ok(ScriptOutcome::normal(StatementExecution::read_only(result)))
         }
         Statement::AlterFunction(statement) => run_alter_function(conn, execution, statement)
             .map(StatementExecution::read_only)
@@ -1011,12 +1014,22 @@ fn run_table_events(
     invocation: EventInvocation<'_>,
     script: &mut ScriptRuntime,
 ) -> Result<()> {
-    refresh_dependent_views(conn, execution, invocation.table_name, script)?;
-    let events = catalog_for_read(conn, execution)?
+    let (has_views, events) = catalog_for_read(conn, execution)?
         .snapshot()
-        .and_then(|snapshot| snapshot.tables.get(invocation.table_name))
-        .map(|table| table.events.values().cloned().collect::<Vec<_>>())
+        .map(|snapshot| {
+            (
+                !snapshot.views.is_empty(),
+                snapshot
+                    .tables
+                    .get(invocation.table_name)
+                    .map(|table| table.events.values().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            )
+        })
         .unwrap_or_default();
+    if has_views {
+        refresh_dependent_views(conn, execution, invocation.table_name, script)?;
+    }
     if !events.is_empty() {
         conn.check_failpoint(Failpoint::BeforeEventActions)?;
     }
@@ -1325,12 +1338,18 @@ pub(crate) fn validate_materialized_views(
     }
     let mut execution = ExecutionState {
         transaction: TransactionState::Active(Box::new(crate::connection::ActiveTransaction {
-            catalog: CatalogState::Ready(Box::new(snapshot.clone())),
+            catalog: CatalogState::Ready(Arc::new(snapshot.clone())),
             schema_changed: false,
             dirty_fts_tables: BTreeSet::new(),
         })),
     };
-    let mut script = ScriptRuntime::new(Params::new(), Params::new(), Duration::ZERO, None);
+    let mut script = ScriptRuntime::new(
+        Params::new(),
+        Params::new(),
+        !snapshot.functions.is_empty(),
+        Duration::ZERO,
+        None,
+    );
     for view in snapshot.views.values() {
         let table = snapshot
             .tables
@@ -3560,9 +3579,25 @@ fn evaluate_create_document_with_custom_functions(
     match data {
         None => Ok(BTreeMap::new()),
         Some(CreateData::Content(expression)) => {
-            let value = evaluate_expression_with_custom_functions(
-                conn, execution, &empty, id, None, expression, params, functions, script,
-            )?;
+            let value = if functions.is_empty() || !expression_invokes_custom_function(expression) {
+                eval::evaluate(
+                    expression,
+                    &EvalContext {
+                        document: &empty,
+                        id,
+                        endpoints: None,
+                        params,
+                        functions: Some(functions),
+                        function_calls: None,
+                        function_depth: 0,
+                    },
+                )?
+                .into_projection()
+            } else {
+                evaluate_expression_with_custom_functions(
+                    conn, execution, &empty, id, None, expression, params, functions, script,
+                )?
+            };
             let Value::Object(document) = value else {
                 return Err(FastDbError::Schema(
                     "CREATE CONTENT must evaluate to an object".into(),
@@ -3582,7 +3617,9 @@ fn evaluate_create_document_with_custom_functions(
                 function_depth: 0,
             };
             for assignment in assignments {
-                let value = if expression_invokes_custom_function(&assignment.value) {
+                let value = if !functions.is_empty()
+                    && expression_invokes_custom_function(&assignment.value)
+                {
                     EvalValue::Present(evaluate_expression_with_custom_functions(
                         conn,
                         execution,
@@ -4499,7 +4536,7 @@ fn run_select(
     }
     let (table_name, selector) = select_target_parts(&statement.target)?;
     let catalog = catalog_for_read(conn, execution)?;
-    let Some(snapshot) = catalog.snapshot().cloned() else {
+    let Some(snapshot) = catalog.shared_snapshot() else {
         return Ok(if statement.only.is_some() {
             StatementResult::Value(Value::Null)
         } else {
@@ -5092,6 +5129,21 @@ fn evaluate_projection_expression(
         if custom_function_name(name).is_none())
     {
         evaluate_special_projection(expression, candidate, params)
+    } else if snapshot.functions.is_empty() || !expression_invokes_custom_function(expression) {
+        let calls = std::cell::Cell::new(0);
+        eval::evaluate(
+            expression,
+            &EvalContext {
+                document: &candidate.document,
+                id: &candidate.id,
+                endpoints: candidate.endpoints.as_ref().map(|(from, to)| (from, to)),
+                params,
+                functions: Some(&snapshot.functions),
+                function_calls: Some(&calls),
+                function_depth: 0,
+            },
+        )
+        .map(EvalValue::into_projection)
     } else {
         evaluate_expression_with_custom_functions(
             conn,
@@ -7924,6 +7976,13 @@ impl CatalogRead<'_> {
             Self::Shared(catalog) => catalog.as_ref().and_then(CatalogState::snapshot),
         }
     }
+
+    fn shared_snapshot(&self) -> Option<Arc<catalog::CatalogSnapshot>> {
+        match self {
+            Self::Active(catalog) => catalog.shared_snapshot(),
+            Self::Shared(catalog) => catalog.as_ref().and_then(CatalogState::shared_snapshot),
+        }
+    }
 }
 
 fn catalog_for_read<'a>(
@@ -9300,6 +9359,16 @@ fn normalize_schema_document(
     functions: &BTreeMap<String, catalog::FunctionDefinition>,
     create: bool,
 ) -> Result<()> {
+    let extended_rules = table.fields.values().any(|field| {
+        field.default.is_some()
+            || field.value.is_some()
+            || field.assert.is_some()
+            || (!create && field.readonly)
+    });
+    if !extended_rules {
+        schema::validate_document(table.mode == TableMode::Schemafull, &table.fields, document)?;
+        return Ok(());
+    }
     for field in table.fields.values() {
         let prior = before.and_then(|before| crate::path::get_path(before, &field.path));
         let supplied = crate::path::get_path(document, &field.path).cloned();
@@ -10538,14 +10607,14 @@ fn ensure_snapshot<'a>(
     if matches!(state, CatalogState::Empty) {
         let snapshot = catalog::bootstrap(conn)?;
         conn.check_failpoint(Failpoint::AfterBootstrap)?;
-        *state = CatalogState::Ready(Box::new(snapshot));
+        *state = CatalogState::Ready(Arc::new(snapshot));
     }
     ready_snapshot_mut(state)
 }
 
 fn ready_snapshot_mut(state: &mut CatalogState) -> Result<&mut catalog::CatalogSnapshot> {
     match state {
-        CatalogState::Ready(snapshot) => Ok(snapshot.as_mut()),
+        CatalogState::Ready(snapshot) => Ok(Arc::make_mut(snapshot)),
         CatalogState::Empty => Err(FastDbError::Schema(
             "schema statement requires an existing FastDB catalog and table".into(),
         )),

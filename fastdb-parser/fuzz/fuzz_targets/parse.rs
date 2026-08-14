@@ -278,8 +278,9 @@ fn validate_schema_type(parent: Span, ty: &SchemaType, source_len: usize) {
                 validate_schema_type(ty.span, variant, source_len);
             }
         }
-        SchemaTypeKind::TypedArray { element, .. }
-        | SchemaTypeKind::Option(element) => validate_schema_type(ty.span, element, source_len),
+        SchemaTypeKind::TypedArray { element, .. } | SchemaTypeKind::Option(element) => {
+            validate_schema_type(ty.span, element, source_len)
+        }
         SchemaTypeKind::Set {
             element: Some(element),
             ..
