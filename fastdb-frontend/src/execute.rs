@@ -84,6 +84,11 @@ enum TargetSelector {
     Range(ResolvedRecordRange),
 }
 
+enum UpdateWork {
+    Existing(String, Box<Candidate>),
+    Missing(String, RecordIdValue),
+}
+
 impl TargetSelector {
     fn id(&self) -> Option<&RecordIdValue> {
         match self {
@@ -291,7 +296,8 @@ pub(crate) fn run_statement(
 ) -> Result<StatementExecution> {
     let implicit_frontend_transaction = matches!(execution.transaction, TransactionState::Idle)
         && (statement_invokes_custom_function(&statement)
-            || statement_may_fire_events(conn, execution, &statement)?);
+            || statement_may_fire_events(conn, execution, &statement)?
+            || statement_requires_multi_record_transaction(&statement));
     if implicit_frontend_transaction {
         conn.begin_explicit(execution)?;
     }
@@ -366,6 +372,20 @@ fn statement_may_fire_events(
                 .values()
                 .any(|table| !table.events.is_empty())
         }))
+}
+
+fn statement_requires_multi_record_transaction(statement: &Statement) -> bool {
+    match statement {
+        Statement::Create(statement) => matches!(
+            statement.target,
+            Target::RecordRange(_) | Target::Expression(_) | Target::Batch { .. }
+        ),
+        Statement::Insert(_)
+        | Statement::Update(_)
+        | Statement::Upsert(_)
+        | Statement::Delete(_) => true,
+        _ => false,
+    }
 }
 
 fn statement_invokes_custom_function(statement: &Statement) -> bool {
@@ -2577,13 +2597,6 @@ fn run_create(
             "CREATE ONLY requires exactly one target record".into(),
         ));
     }
-    let table_was_missing = {
-        let catalog = catalog_for_read(conn, execution)?;
-        let snapshot = catalog.snapshot();
-        targets
-            .iter()
-            .any(|(table, _)| !snapshot.is_some_and(|snapshot| snapshot.tables.contains_key(table)))
-    };
     let functions = catalog_for_read(conn, execution)?
         .snapshot()
         .map(|snapshot| snapshot.functions.clone())
@@ -2602,10 +2615,13 @@ fn run_create(
         )?;
         prepared.insert((table_name.clone(), encode_rid(id_value)?), document);
     }
-    let values = with_create_mutation(conn, execution, table_was_missing, |state| {
-        let snapshot = ensure_snapshot(conn, state)?;
-        let mut values = Vec::with_capacity(targets.len());
-        for (table_name, id_value) in &targets {
+    let mut values = Vec::with_capacity(targets.len());
+    for (table_name, id_value) in &targets {
+        let table_was_missing = !catalog_for_read(conn, execution)?
+            .snapshot()
+            .is_some_and(|snapshot| snapshot.tables.contains_key(table_name));
+        let value = with_create_mutation(conn, execution, table_was_missing, |state| {
+            let snapshot = ensure_snapshot(conn, state)?;
             if !snapshot.tables.contains_key(table_name) {
                 let table = catalog::allocate_table(table_name, TableMode::Schemaless, None)?;
                 catalog::persist_table(conn, &table)?;
@@ -2661,31 +2677,23 @@ fn run_create(
                 "record ID already exists or violates a declared unique index",
             )?;
             conn.check_failpoint(Failpoint::AfterRecordInsert)?;
-            values.push((id.clone(), full_record_value(&id, &document), input));
-        }
-        Ok(values)
-    })?;
-    for table_name in targets
-        .iter()
-        .map(|(table, _)| table)
-        .collect::<BTreeSet<_>>()
-    {
+            Ok((id.clone(), full_record_value(&id, &document), input))
+        })?;
         mark_fts_dirty(execution, table_name);
-    }
-    for (id, after, input) in &values {
         run_table_events(
             conn,
             execution,
             EventInvocation {
-                table_name: &id.table,
+                table_name,
                 kind: "CREATE",
-                id,
+                id: &value.0,
                 before: Value::Null,
-                after: after.clone(),
-                input: input.clone(),
+                after: value.1.clone(),
+                input: value.2.clone(),
             },
             script,
         )?;
+        values.push(value);
     }
     let mutation_count = values.len();
     let returned = values
@@ -2879,37 +2887,37 @@ fn run_insert(
     }
     let table_name = statement.table.value.clone();
     let input_documents = evaluate_insert_documents(&statement.data, &table_name, params)?;
-    let table_was_missing = !catalog_for_read(conn, execution)?
-        .snapshot()
-        .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
-    let outcomes = with_create_mutation(conn, execution, table_was_missing, |state| {
-        let snapshot = ensure_snapshot(conn, state)?;
-        let functions = snapshot.functions.clone();
-        if !snapshot.tables.contains_key(&table_name) {
-            let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
-            catalog::persist_table(conn, &table)?;
-            conn.check_failpoint(Failpoint::AfterCatalogRow)?;
-            conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
-            conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
-            snapshot.tables.insert(table_name.clone(), table);
-        }
-        let table = snapshot
-            .tables
-            .get(&table_name)
-            .cloned()
-            .expect("insert table exists after registration");
-        if table.kind == TableKind::Relation {
-            return Err(FastDbError::Schema(
-                "relation tables require INSERT RELATION or RELATE".into(),
-            ));
-        }
-        if table.drop {
-            return Err(FastDbError::Constraint(format!(
-                "table {table_name:?} is DROP and rejects INSERT"
-            )));
-        }
-        let mut outcomes = Vec::new();
-        for input in &input_documents {
+    let mut outcomes = Vec::new();
+    for input in &input_documents {
+        let table_was_missing = !catalog_for_read(conn, execution)?
+            .snapshot()
+            .is_some_and(|snapshot| snapshot.tables.contains_key(&table_name));
+        let outcome = with_create_mutation(conn, execution, table_was_missing, |state| {
+            let snapshot = ensure_snapshot(conn, state)?;
+            let functions = snapshot.functions.clone();
+            if !snapshot.tables.contains_key(&table_name) {
+                let table = catalog::allocate_table(&table_name, TableMode::Schemaless, None)?;
+                catalog::persist_table(conn, &table)?;
+                conn.check_failpoint(Failpoint::AfterCatalogRow)?;
+                conn.exec_bound(lower::physical_table_ddl(&table.physical_name)?, vec![])?;
+                conn.check_failpoint(Failpoint::AfterPhysicalDdl)?;
+                snapshot.tables.insert(table_name.clone(), table);
+            }
+            let table = snapshot
+                .tables
+                .get(&table_name)
+                .cloned()
+                .expect("insert table exists after registration");
+            if table.kind == TableKind::Relation {
+                return Err(FastDbError::Schema(
+                    "relation tables require INSERT RELATION or RELATE".into(),
+                ));
+            }
+            if table.drop {
+                return Err(FastDbError::Constraint(format!(
+                    "table {table_name:?} is DROP and rejects INSERT"
+                )));
+            }
             let event_input = Value::Object(input.clone());
             let (id, mut document) = normalize_insert_document(&table_name, input.clone())?;
             let existing = read_candidates(
@@ -2930,7 +2938,7 @@ fn run_insert(
             .next();
             if let Some(candidate) = existing {
                 if statement.ignore.is_some() {
-                    continue;
+                    return Ok(None);
                 }
                 if statement.on_duplicate.is_empty() {
                     return Err(FastDbError::Constraint(
@@ -2977,14 +2985,13 @@ fn run_insert(
                     conn.exec_bound(update, bindings),
                     "INSERT ON DUPLICATE KEY violates a declared unique index",
                 )?;
-                outcomes.push((
+                return Ok(Some((
                     "UPDATE",
                     candidate.id.clone(),
                     before,
                     full_candidate_with_document(&candidate, &document),
                     event_input,
-                ));
-                continue;
+                )));
             }
 
             reject_stored_id(&document)?;
@@ -3011,33 +3018,32 @@ fn run_insert(
                 conn.exec_bound(insert, bindings),
                 "INSERT violates a declared unique index",
             )?;
-            outcomes.push((
+            Ok(Some((
                 "CREATE",
                 id.clone(),
                 Value::Null,
                 full_record_value(&id, &document),
                 event_input,
-            ));
-        }
-        Ok(outcomes)
-    })?;
-    if !outcomes.is_empty() {
+            )))
+        })?;
+        let Some(outcome) = outcome else {
+            continue;
+        };
         mark_fts_dirty(execution, &table_name);
-    }
-    for (event_kind, id, before, after, input) in &outcomes {
         run_table_events(
             conn,
             execution,
             EventInvocation {
                 table_name: &table_name,
-                kind: event_kind,
-                id,
-                before: before.clone(),
-                after: after.clone(),
-                input: input.clone(),
+                kind: outcome.0,
+                id: &outcome.1,
+                before: outcome.2.clone(),
+                after: outcome.3.clone(),
+                input: outcome.4.clone(),
             },
             script,
         )?;
+        outcomes.push(outcome);
     }
     let mutation_count = outcomes.len();
     let rows = outcomes
@@ -3153,9 +3159,8 @@ fn run_insert_relation(
                         && snapshot.tables.contains_key(&to.table)
                 })
         });
-    let outcomes = with_create_mutation(conn, execution, catalogs_missing, |state| {
+    with_create_mutation(conn, execution, catalogs_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
-        let functions = snapshot.functions.clone();
         for (_, from, to, _) in &inputs {
             for endpoint in [from, to] {
                 if !snapshot.tables.contains_key(&endpoint.table) {
@@ -3197,12 +3202,18 @@ fn run_insert_relation(
                 "relation table {relation_name:?} is DROP and rejects INSERT"
             )));
         }
-        let hidden = catalog::graph_columns(snapshot, &relation)?
-            .into_iter()
-            .map(|column| column.physical_name.clone())
-            .collect::<Vec<_>>();
-        let mut outcomes = Vec::new();
-        for (id, from, to, input_document) in &inputs {
+        Ok(())
+    })?;
+    let mut outcomes = Vec::with_capacity(inputs.len());
+    for (id, from, to, input_document) in &inputs {
+        let outcome = with_create_mutation(conn, execution, false, |state| {
+            let snapshot = ensure_snapshot(conn, state)?;
+            let functions = snapshot.functions.clone();
+            let relation = snapshot.tables[&relation_name].clone();
+            let hidden = catalog::graph_columns(snapshot, &relation)?
+                .into_iter()
+                .map(|column| column.physical_name.clone())
+                .collect::<Vec<_>>();
             let mut event_input = input_document.clone();
             event_input.insert("id".into(), Value::RecordId(id.clone()));
             event_input.insert("in".into(), Value::RecordId(from.clone()));
@@ -3247,7 +3258,7 @@ fn run_insert_relation(
             .next();
             if let Some(candidate) = existing {
                 if statement.ignore.is_some() {
-                    continue;
+                    return Ok(None);
                 }
                 if statement.on_duplicate.is_empty() {
                     return Err(FastDbError::Constraint(
@@ -3298,7 +3309,7 @@ fn run_insert_relation(
                     &derived_hidden,
                 )?;
                 conn.exec_bound(update, bindings)?;
-                outcomes.push((
+                return Ok(Some((
                     "UPDATE",
                     id.clone(),
                     from.clone(),
@@ -3306,8 +3317,7 @@ fn run_insert_relation(
                     before,
                     full_edge_value(id, from, to, &document),
                     event_input,
-                ));
-                continue;
+                )));
             }
             let mut document = input_document.clone();
             reject_stored_edge_fields(&document)?;
@@ -3336,7 +3346,7 @@ fn run_insert_relation(
             )?;
             conn.exec_bound(insert, bindings)?;
             conn.check_failpoint(Failpoint::AfterGraphEdgeInsert)?;
-            outcomes.push((
+            Ok(Some((
                 "CREATE",
                 id.clone(),
                 from.clone(),
@@ -3344,27 +3354,26 @@ fn run_insert_relation(
                 Value::Null,
                 full_edge_value(id, from, to, &document),
                 event_input,
-            ));
-        }
-        Ok(outcomes)
-    })?;
-    if !outcomes.is_empty() {
+            )))
+        })?;
+        let Some(outcome) = outcome else {
+            continue;
+        };
         mark_fts_dirty(execution, &relation_name);
-    }
-    for (event_kind, id, _, _, before, after, input) in &outcomes {
         run_table_events(
             conn,
             execution,
             EventInvocation {
                 table_name: &relation_name,
-                kind: event_kind,
-                id,
-                before: before.clone(),
-                after: after.clone(),
-                input: input.clone(),
+                kind: outcome.0,
+                id: &outcome.1,
+                before: outcome.4.clone(),
+                after: outcome.5.clone(),
+                input: outcome.6.clone(),
             },
             script,
         )?;
+        outcomes.push(outcome);
     }
     let mutation_count = outcomes.len();
     let rows = outcomes
@@ -4859,9 +4868,8 @@ fn run_update(
             .iter()
             .any(|(table, _)| !snapshot.is_some_and(|snapshot| snapshot.tables.contains_key(table)))
     };
-    let outcomes = with_create_mutation(conn, execution, upsert && table_was_missing, |state| {
+    let work = with_create_mutation(conn, execution, upsert && table_was_missing, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
-        let functions = snapshot.functions.clone();
         for (table_name, _) in &targets {
             if snapshot.tables.contains_key(table_name) || !upsert {
                 continue;
@@ -4874,10 +4882,6 @@ fn run_update(
             snapshot.tables.insert(table_name.clone(), table);
         }
 
-        enum Work {
-            Existing(String, TableDefinition, Box<Candidate>),
-            Missing(String, TableDefinition, RecordIdValue),
-        }
         let mut work = Vec::new();
         let mut seen = BTreeSet::new();
         for (table_name, selector) in &targets {
@@ -4927,15 +4931,14 @@ fn run_update(
                 };
                 let encoded = encode_rid(&id)?;
                 if seen.insert((table_name.clone(), encoded)) {
-                    work.push(Work::Missing(table_name.clone(), table, id));
+                    work.push(UpdateWork::Missing(table_name.clone(), id));
                 }
                 continue;
             }
             for candidate in matched {
                 if seen.insert((table_name.clone(), candidate.encoded_rid.clone())) {
-                    work.push(Work::Existing(
+                    work.push(UpdateWork::Existing(
                         table_name.clone(),
-                        table.clone(),
                         Box::new(candidate),
                     ));
                 }
@@ -4947,12 +4950,16 @@ fn run_update(
             ));
         }
 
-        let mut outcomes = Vec::with_capacity(work.len());
-        conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
-        for item in work {
+        Ok(work)
+    })?;
+    conn.check_failpoint(Failpoint::BeforeUpdateMutations)?;
+    let mut outcomes = Vec::with_capacity(work.len());
+    for item in work {
+        let outcome = with_create_mutation(conn, execution, false, |state| {
+            let snapshot = ensure_snapshot(conn, state)?;
+            let functions = snapshot.functions.clone();
             let (
                 table_name,
-                table,
                 id,
                 endpoints,
                 before,
@@ -4961,7 +4968,7 @@ fn run_update(
                 encoded_rid,
                 existing,
             ) = match item {
-                Work::Existing(table_name, table, candidate) => {
+                UpdateWork::Existing(table_name, candidate) => {
                     let document = apply_update_data(
                         &statement.data,
                         candidate.document.clone(),
@@ -4971,7 +4978,6 @@ fn run_update(
                     )?;
                     (
                         table_name,
-                        table,
                         candidate.id.clone(),
                         candidate.endpoints.clone(),
                         full_candidate_value(&candidate),
@@ -4981,13 +4987,12 @@ fn run_update(
                         true,
                     )
                 }
-                Work::Missing(table_name, table, id_value) => {
+                UpdateWork::Missing(table_name, id_value) => {
                     let id = RecordId::new(&table_name, id_value.clone());
                     let document =
                         apply_update_data(&statement.data, BTreeMap::new(), &id, None, params)?;
                     (
                         table_name,
-                        table,
                         id,
                         None,
                         Value::Null,
@@ -4998,6 +5003,11 @@ fn run_update(
                     )
                 }
             };
+            let table = snapshot.tables.get(&table_name).cloned().ok_or_else(|| {
+                FastDbError::Schema(format!(
+                    "table {table_name:?} was removed during UPDATE/UPSERT"
+                ))
+            })?;
             let event_input = Value::Object(document.clone());
             if table.kind == TableKind::Relation {
                 reject_stored_edge_fields(&document)?;
@@ -5040,7 +5050,7 @@ fn run_update(
                 Some((from, to)) => full_edge_value(&id, from, to, &document),
                 None => full_record_value(&id, &document),
             };
-            outcomes.push((
+            Ok((
                 if existing { "UPDATE" } else { "CREATE" },
                 table_name,
                 id.clone(),
@@ -5048,31 +5058,23 @@ fn run_update(
                 before,
                 after,
                 event_input,
-            ));
-        }
-        Ok(outcomes)
-    })?;
-    for table_name in outcomes
-        .iter()
-        .map(|(_, table, ..)| table)
-        .collect::<BTreeSet<_>>()
-    {
-        mark_fts_dirty(execution, table_name);
-    }
-    for (event_kind, table_name, id, _, before, after, input) in &outcomes {
+            ))
+        })?;
+        mark_fts_dirty(execution, &outcome.1);
         run_table_events(
             conn,
             execution,
             EventInvocation {
-                table_name,
-                kind: event_kind,
-                id,
-                before: before.clone(),
-                after: after.clone(),
-                input: input.clone(),
+                table_name: &outcome.1,
+                kind: outcome.0,
+                id: &outcome.2,
+                before: outcome.4.clone(),
+                after: outcome.5.clone(),
+                input: outcome.6.clone(),
             },
             script,
         )?;
+        outcomes.push(outcome);
     }
     let mutation_count = outcomes.len();
     let rows = outcomes
@@ -5106,12 +5108,12 @@ fn run_delete(
 ) -> Result<StatementExecution> {
     let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
     let targets = resolve_mutation_targets(statement.target.clone(), params)?;
-    let (deleted, cascaded_edges) = data_mutation(conn, execution, || {
+    let selected = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
         let Some(snapshot) = catalog.snapshot() else {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(Vec::new());
         };
-        let mut deleted = Vec::new();
+        let mut selected = Vec::new();
         let mut seen = BTreeSet::new();
         for (table_name, selector) in &targets {
             let Some(table) = snapshot.tables.get(table_name).cloned() else {
@@ -5135,22 +5137,48 @@ fn run_delete(
                 if matches_condition(statement.condition.as_ref(), &candidate, params, snapshot)?
                     && seen.insert((table_name.clone(), candidate.encoded_rid.clone()))
                 {
-                    deleted.push((table.clone(), candidate));
+                    selected.push((table.clone(), candidate));
                 }
             }
         }
-        if statement.only.is_some() && deleted.len() > 1 {
+        if statement.only.is_some() && selected.len() > 1 {
             return Err(FastDbError::Schema(
                 "DELETE ONLY matched more than one record".into(),
             ));
         }
-        conn.check_failpoint(Failpoint::BeforeDeleteMutations)?;
-        let explicit = deleted
-            .iter()
-            .map(|(table, candidate)| (table.physical_name.clone(), candidate.encoded_rid.clone()))
-            .collect::<BTreeSet<_>>();
-        let mut connected_edges = BTreeMap::new();
-        for (table, candidate) in &deleted {
+        Ok(selected)
+    })?;
+    conn.check_failpoint(Failpoint::BeforeDeleteMutations)?;
+    let mut deleted = Vec::with_capacity(selected.len());
+    let mut cascaded_count = 0_usize;
+    for (selected_table, selected_candidate) in selected {
+        let deleted_one = data_mutation(conn, execution, || {
+            let catalog = catalog_for_read(conn, execution)?;
+            let Some(snapshot) = catalog.snapshot() else {
+                return Ok(None);
+            };
+            let Some(table) = snapshot.tables.get(&selected_table.logical_name).cloned() else {
+                return Ok(None);
+            };
+            let Some(candidate) = read_candidates(
+                conn,
+                snapshot,
+                &table,
+                CandidateReadOptions {
+                    id: Some(&selected_candidate.id.id),
+                    range: None,
+                    condition: None,
+                    params,
+                    allow_cache: false,
+                    fts: None,
+                    vector: None,
+                },
+            )?
+            .into_iter()
+            .next() else {
+                return Ok(None);
+            };
+            let mut connected_edges = BTreeMap::new();
             if table.kind == TableKind::Normal {
                 for relation in snapshot
                     .tables
@@ -5158,14 +5186,10 @@ fn run_delete(
                     .filter(|table| table.kind == TableKind::Relation)
                 {
                     for encoded_edge in
-                        connected_edge_ids(conn, snapshot, relation, table, &candidate.id.id)?
+                        connected_edge_ids(conn, snapshot, relation, &table, &candidate.id.id)?
                     {
-                        let key = (relation.physical_name.clone(), encoded_edge.clone());
-                        if explicit.contains(&key) || connected_edges.contains_key(&key) {
-                            continue;
-                        }
                         let edge_id = decode_rid(&encoded_edge)?;
-                        let edge = read_candidates(
+                        let Some(edge) = read_candidates(
                             conn,
                             snapshot,
                             relation,
@@ -5180,42 +5204,56 @@ fn run_delete(
                             },
                         )?
                         .into_iter()
-                        .next()
-                        .ok_or_else(|| {
-                            FastDbError::format(
+                        .next() else {
+                            return Err(FastDbError::format(
                                 "graph adjacency points to a missing relation record",
-                            )
-                        })?;
-                        connected_edges.insert(key, (relation.clone(), edge));
+                            ));
+                        };
+                        connected_edges
+                            .entry((relation.physical_name.clone(), encoded_edge))
+                            .or_insert_with(|| (relation.clone(), edge));
                     }
                 }
             }
-        }
-        for (physical_table, encoded_edge) in connected_edges.keys() {
-            let (delete, bindings) =
-                lower::physical_delete_by_rid_stmt(physical_table, encoded_edge)?;
-            conn.exec_bound(delete, bindings)?;
-            conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
-        }
-        for (table, candidate) in &deleted {
+            for (physical_table, encoded_edge) in connected_edges.keys() {
+                let (delete, bindings) =
+                    lower::physical_delete_by_rid_stmt(physical_table, encoded_edge)?;
+                conn.exec_bound(delete, bindings)?;
+                conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
+            }
             let (delete, bindings) =
                 lower::physical_delete_by_rid_stmt(&table.physical_name, &candidate.encoded_rid)?;
             conn.exec_bound(delete, bindings)?;
             conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
+            Ok(Some((
+                table,
+                candidate,
+                connected_edges.into_values().collect::<Vec<_>>(),
+            )))
+        })?;
+        let Some((table, candidate, cascaded_edges)) = deleted_one else {
+            continue;
+        };
+        for (relation, edge) in &cascaded_edges {
+            mark_fts_dirty(execution, &relation.logical_name);
+            run_table_events(
+                conn,
+                execution,
+                EventInvocation {
+                    table_name: &relation.logical_name,
+                    kind: "DELETE",
+                    id: &edge.id,
+                    before: full_candidate_value(edge),
+                    after: Value::Null,
+                    input: Value::Null,
+                },
+                script,
+            )?;
         }
-        Ok((deleted, connected_edges.into_values().collect::<Vec<_>>()))
-    })?;
-    for table_name in deleted
-        .iter()
-        .map(|(table, _)| table.logical_name.as_str())
-        .collect::<BTreeSet<_>>()
-    {
-        mark_fts_dirty(execution, table_name);
-    }
-    if !cascaded_edges.is_empty() {
-        mark_relation_fts_dirty(execution);
-    }
-    for (table, candidate) in deleted.iter().chain(&cascaded_edges) {
+        cascaded_count = cascaded_count
+            .checked_add(cascaded_edges.len())
+            .ok_or_else(|| FastDbError::Engine("cascade mutation count overflowed usize".into()))?;
+        mark_fts_dirty(execution, &table.logical_name);
         run_table_events(
             conn,
             execution,
@@ -5223,16 +5261,17 @@ fn run_delete(
                 table_name: &table.logical_name,
                 kind: "DELETE",
                 id: &candidate.id,
-                before: full_candidate_value(candidate),
+                before: full_candidate_value(&candidate),
                 after: Value::Null,
                 input: Value::Null,
             },
             script,
         )?;
+        deleted.push((table, candidate));
     }
     let mutation_count = deleted
         .len()
-        .checked_add(cascaded_edges.len())
+        .checked_add(cascaded_count)
         .ok_or_else(|| FastDbError::Engine("cascade mutation count overflowed usize".into()))?;
     if statement.return_clause.is_some() {
         let rows = deleted

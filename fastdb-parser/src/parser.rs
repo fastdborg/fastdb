@@ -1216,7 +1216,10 @@ impl<'a> Parser<'a> {
             }
             let mut statements = Vec::new();
             loop {
-                let statement = parser.parse_statement()?;
+                parser.event_action_boundary = true;
+                let statement = parser.parse_statement();
+                parser.event_action_boundary = false;
+                let statement = statement?;
                 parser.check_collection_limit(
                     statements.len() + 1,
                     LimitKind::Statements,
@@ -1224,7 +1227,7 @@ impl<'a> Parser<'a> {
                     statement.span(),
                 )?;
                 statements.push(statement);
-                if parser.eat(&TokenKind::Semicolon) {
+                if parser.eat(&TokenKind::Semicolon) || parser.eat(&TokenKind::Comma) {
                     if parser.at(&TokenKind::RightParen) {
                         let close = parser.advance().clone();
                         return Ok(ScriptBlock {
@@ -3509,7 +3512,9 @@ impl<'a> Parser<'a> {
             || self.at(&TokenKind::RightParen)
             || self.at(&TokenKind::Eof)
             || (self.event_action_boundary
-                && (self.at(&TokenKind::Comment) || self.at(&TokenKind::Drop)))
+                && (self.at(&TokenKind::Comment)
+                    || self.at(&TokenKind::Drop)
+                    || self.at(&TokenKind::Comma)))
         {
             return Ok(());
         }

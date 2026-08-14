@@ -293,6 +293,20 @@ and depth limit of 16, reject transaction-control statements, and detect a
 same-event/same-record recursion cycle. Event actions never bypass graph,
 schema, FTS, vector, or transaction maintenance.
 
+A three-record CREATE probe had each event query the table count. The event
+observed one, then two, then three records, establishing that the reference
+finishes a record's synchronous event actions before applying the next source
+record. A multi-record UPDATE probe selected all candidates first: an event on
+the first record changed the third record to `100`, but the outer statement
+later applied its already selected input image and left the third record at
+`1`. A multi-record DELETE probe made the first record's event conflict with a
+later record; the conflict rolled the entire statement back. FastDB follows
+these boundaries: source candidates are fixed before UPDATE/DELETE mutation,
+while each record and all of its event actions complete before the next record.
+Standalone data-mutation statements that may fire an event use the same
+internal transaction path as explicit transactions, so any source or event
+failure rolls back the complete statement.
+
 ## Sequence and module stop probes
 
 The fixed reference canonicalized `DEFINE SEQUENCE basic` as `DEFINE SEQUENCE

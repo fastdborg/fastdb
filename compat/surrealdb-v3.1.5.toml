@@ -7583,11 +7583,11 @@ area = "Scripting and schema"
 title = "DEFINE EVENT"
 phase = 15
 disposition = "target"
-status = "Partial"
-syntax = "Synchronous DEFINE EVENT supports IF NOT EXISTS/OVERWRITE, default or explicit WHEN, block/parenthesized/single actions, COMMENT, lexical event-name order, characterized context values, nested writes, relation cascades, redacted failure rollback, and bounded recursion/invocations; per-record event visibility within multi-record mutation statements remains under Phase 15 completion work and ASYNC fails explicitly."
+status = "Supported"
+syntax = "Synchronous DEFINE EVENT supports IF NOT EXISTS/OVERWRITE, default or explicit WHEN, block/parenthesized/single and comma-separated actions, COMMENT, lexical event-name order, characterized context values, per-record visibility in multi-record mutations, nested writes, relation cascades, redacted failure rollback, and bounded recursion/invocations. ASYNC fails explicitly."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/event", "docs/compat-research/phase15.md#synchronous-events"]
 parser_evidence = ["P15-PARSE-009"]
-execution_evidence = ["P15-API-013", "P15-API-014", "P15-API-015", "P15-API-016", "P15-API-017", "P15-CATALOG-004", "P15-CATALOG-005"]
+execution_evidence = ["P15-API-013", "P15-API-014", "P15-API-015", "P15-API-016", "P15-API-017", "P15-API-018", "P15-API-019", "P15-API-020", "P15-API-021", "P15-CATALOG-004", "P15-CATALOG-005"]
 stop_report = ""
 
 [[capability]]

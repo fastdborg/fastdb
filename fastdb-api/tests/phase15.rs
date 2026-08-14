@@ -1425,3 +1425,143 @@ fn p15_api_017_insert_and_upsert_emit_create_or_update_events() {
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_018_batch_create_fires_each_event_before_the_next_record() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 DEFINE EVENT ordering ON item WHEN $value.id = item:1 \
+                   THEN { DELETE item:3; }; \
+                 CREATE |item:1..=3|; \
+                 SELECT VALUE id FROM item ORDER BY id",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 3);
+        assert!(matches!(
+            &response.statements[3],
+            StatementResult::Rows(rows)
+                if rows == &vec![
+                    Value::RecordId(fastdb::RecordId::new("item", 1_i64)),
+                    Value::RecordId(fastdb::RecordId::new("item", 2_i64)),
+                    Value::RecordId(fastdb::RecordId::new("item", 3_i64)),
+                ]
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_019_multi_update_fires_each_event_before_the_next_record() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 CREATE |item:1..=3| SET n = 0; \
+                 DEFINE EVENT ordering ON item WHEN $value.id = item:1 \
+                   THEN { UPDATE item:3 SET n = 100; }; \
+                 UPDATE item SET n += 1; \
+                 SELECT VALUE n FROM item ORDER BY id",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 7);
+        assert!(matches!(
+            &response.statements[4],
+            StatementResult::Rows(rows)
+                if rows == &vec![
+                    Value::Integer(1), Value::Integer(1), Value::Integer(1)
+                ]
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_020_multi_delete_fires_each_event_before_the_next_record() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 CREATE |item:1..=3|; \
+                 DEFINE EVENT ordering ON item \
+                   WHEN $event = 'DELETE' AND $value.id = item:1 \
+                   THEN { CREATE item:3; }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("DELETE item", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE id FROM item ORDER BY id", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows)
+                if rows == &vec![
+                    Value::RecordId(fastdb::RecordId::new("item", 1_i64)),
+                    Value::RecordId(fastdb::RecordId::new("item", 2_i64)),
+                    Value::RecordId(fastdb::RecordId::new("item", 3_i64)),
+                ]
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_021_batch_insert_and_relation_events_are_per_record() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 DEFINE EVENT item_order ON item WHEN $value.id = item:a \
+                   THEN { DELETE item:c; }; \
+                 INSERT INTO item [ \
+                   { id: 'a' }, { id: 'b' }, { id: 'c' } \
+                 ]; \
+                 DEFINE TABLE person SCHEMALESS TYPE NORMAL; \
+                 DEFINE TABLE follows SCHEMALESS TYPE RELATION; \
+                 DEFINE EVENT edge_order ON follows WHEN $value.id = follows:a \
+                   THEN { DELETE follows:b; }; \
+                 INSERT RELATION INTO follows [ \
+                   { id: 'a', in: person:a, out: person:b }, \
+                   { id: 'b', in: person:b, out: person:c } \
+                 ]; \
+                 SELECT VALUE id FROM item ORDER BY id; \
+                 SELECT VALUE id FROM follows ORDER BY id",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 5);
+        assert!(matches!(
+            &response.statements[7],
+            StatementResult::Rows(rows) if rows.len() == 3
+        ));
+        assert!(matches!(
+            &response.statements[8],
+            StatementResult::Rows(rows) if rows.len() == 2
+        ));
+        connection.close().await.unwrap();
+    });
+}

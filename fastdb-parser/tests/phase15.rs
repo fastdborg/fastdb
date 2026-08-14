@@ -272,6 +272,7 @@ fn p15_parse_009_synchronous_event_lifecycle_is_structured() {
            WHEN $event = 'CREATE' THEN { CREATE log CONTENT $after; } \
            COMMENT 'audit'; \
          DEFINE EVENT OVERWRITE compact ON item THEN (CREATE log SET id = $value.id); \
+         DEFINE EVENT multi ON item THEN (CREATE log, CREATE audit); \
          DEFINE EVENT bare ON item THEN RETURN $value COMMENT 'bare'; \
          ALTER EVENT IF EXISTS audit ON TABLE item DROP WHEN \
            THEN { RETURN $before; } DROP COMMENT; \
@@ -292,7 +293,11 @@ fn p15_parse_009_synchronous_event_lifecycle_is_structured() {
         second.action.style,
         turso_fastdb_parser::EventActionStyle::Parenthesized
     );
-    let Statement::DefineEvent(bare) = &script.statements[2] else {
+    let Statement::DefineEvent(multi) = &script.statements[2] else {
+        panic!("expected multi-action DEFINE EVENT")
+    };
+    assert_eq!(multi.action.block.statements.len(), 2);
+    let Statement::DefineEvent(bare) = &script.statements[3] else {
         panic!("expected bare DEFINE EVENT")
     };
     assert_eq!(
@@ -300,13 +305,13 @@ fn p15_parse_009_synchronous_event_lifecycle_is_structured() {
         turso_fastdb_parser::EventActionStyle::Bare
     );
     assert_eq!(bare.comment.as_ref().unwrap().value, "bare");
-    let Statement::AlterEvent(alter) = &script.statements[3] else {
+    let Statement::AlterEvent(alter) = &script.statements[4] else {
         panic!("expected ALTER EVENT")
     };
     assert!(matches!(alter.changes.condition, Some(None)));
     assert!(matches!(alter.changes.action, Some(Some(_))));
     assert!(matches!(alter.changes.comment, Some(None)));
-    assert!(matches!(script.statements[4], Statement::RemoveEvent(_)));
+    assert!(matches!(script.statements[5], Statement::RemoveEvent(_)));
 
     for source in [
         "DEFINE EVENT empty ON item",
