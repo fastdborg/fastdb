@@ -1,6 +1,13 @@
 # FastDB on-disk format version 1
 
-Status: stable Core format introduced by Phase 2. Format 0 was a disposable prototype and is never upgraded in place.
+Status: retained migration input. Current FastDB opens a valid format-1 file
+and transactionally migrates it directly to format 3. The remainder of this
+document preserves the original format-1 contract as historical evidence.
+
+Status: historical stable Core format introduced by Phase 2. The Phase 6
+frontend transactionally upgrades it to format 2 on open; this document
+preserves the exact pre-upgrade contract. Format 0 was a disposable prototype
+and is never upgraded in place.
 
 ## Compatibility header and open rules
 

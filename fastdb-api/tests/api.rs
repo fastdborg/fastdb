@@ -128,13 +128,44 @@ fn p4_api_004_strict_json_typed_ids_and_reserved_key_are_collision_safe() {
     );
     let value = Value::Object(object);
     let json = fastdb::json::value_to_json(&value).unwrap();
-    assert_eq!(json["$fastdb"]["v"], 1);
+    assert_eq!(json["$fastdb"]["v"], 2);
     assert_eq!(json["$fastdb"]["t"], "object");
     assert_eq!(
-        json["$fastdb"]["value"]["record"]["$fastdb"]["id_type"],
-        "integer"
+        json["$fastdb"]["value"]["record"]["$fastdb"]["id"],
+        "v1:i:7"
     );
     assert_eq!(fastdb::json::value_from_json(json).unwrap(), value);
+}
+
+#[test]
+fn p12_api_001_format_three_values_use_public_json_envelope_two() {
+    let values = vec![
+        Value::None,
+        Value::Bytes(vec![0, 255]),
+        Value::Datetime(fastdb::DatetimeValue::parse("2026-08-13T16:00:00.123456789Z").unwrap()),
+        Value::Decimal(fastdb::DecimalValue::parse("12.3400").unwrap()),
+        Value::Duration(fastdb::DurationValue::new(12, 340_000_000).unwrap()),
+        Value::Set(fastdb::SetValue::new(vec![Value::Integer(2), Value::Integer(1)]).unwrap()),
+        Value::Range(fastdb::RangeValue::new(
+            fastdb::RangeBound::Unbounded,
+            fastdb::RangeBound::Included(Box::new(Value::Integer(3))),
+        )),
+    ];
+    for value in values {
+        let json = fastdb::json::value_to_json(&value).unwrap();
+        assert_eq!(json["$fastdb"]["v"], 2);
+        assert_eq!(fastdb::json::value_from_json(json).unwrap(), value);
+    }
+    let legacy_nested = serde_json::json!([
+        {"$fastdb":{"v":1,"t":"rid","table":"person","id_type":"integer","id":7}}
+    ]);
+    assert_eq!(
+        fastdb::json::value_from_json(legacy_nested).unwrap(),
+        Value::Array(vec![Value::RecordId(RecordId::new(
+            "person",
+            RecordIdValue::Integer(7)
+        ))])
+    );
 }
 
 #[cfg(unix)]

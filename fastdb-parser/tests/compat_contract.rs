@@ -1,86 +1,73 @@
-//! Mechanical checks for the normative compatibility matrix through Phase 3.
+//! Mechanical checks for the locked SurrealDB v3.1.5 capability inventory.
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
 
-use std::{fs, path::Path};
+use std::path::{Path, PathBuf};
+use turso_fastdb_compat::{Inventory, Status};
 
 #[test]
-fn p3_compat_001_every_feature_row_has_evidence_and_honest_status() {
-    let matrix_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../COMPAT.md");
-    let matrix = fs::read_to_string(matrix_path).unwrap();
-    let parser_tests = ["tests/phase1.rs", "tests/phase3.rs"]
-        .into_iter()
-        .map(|path| fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let integration_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fastdb-tests/tests");
-    let integration_tests = fs::read_dir(integration_dir)
-        .unwrap()
-        .filter_map(|entry| {
-            let path = entry.unwrap().path();
-            (path.extension().and_then(|value| value.to_str()) == Some("rs")).then_some(path)
-        })
-        .map(|path| fs::read_to_string(path).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n");
+fn p12_compat_002_supported_inventory_evidence_names_executable_tests() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let inventory = Inventory::from_path(&root.join("compat/surrealdb-v3.1.5.toml")).unwrap();
+    let source = collect_sources(root);
 
-    let mut row_count = 0;
-    for line in matrix.lines().filter(|line| line.starts_with("| `")) {
-        row_count += 1;
-        let normalized = line.replace("\\|", "or");
-        let columns: Vec<_> = normalized.split('|').map(str::trim).collect();
-        assert_eq!(columns.len(), 8, "malformed feature row: {line}");
-
-        let feature = columns[1].trim_matches('`');
-        let status = columns[2];
-        assert!(
-            matches!(status, "Supported" | "Partial" | "Planned" | "Unsupported"),
-            "invalid status in {feature}: {status}"
-        );
-        assert!(
-            columns[4].contains("P1-") || columns[4].contains("P2-UUID-"),
-            "missing parser test in {feature}"
-        );
-        for test_id in columns[4]
-            .split('`')
-            .filter(|part| part.starts_with("P1-") || part.starts_with("P2-UUID-"))
-        {
-            let function = test_id.to_ascii_lowercase().replace('-', "_");
-            assert!(
-                parser_tests.contains(&format!("fn {function}_")),
-                "unknown parser test {test_id} in {feature}"
-            );
+    assert!(
+        inventory.capability.len() >= 700,
+        "atomic inventory unexpectedly lost coverage"
+    );
+    for capability in &inventory.capability {
+        if capability.status != Status::Supported {
+            continue;
         }
         assert!(
-            columns[5].contains("docs/compat-research/phase1.md#")
-                || columns[5].contains("docs/compat-research/phase2.md#")
-                || columns[5].contains("docs/compat-research/phase3.md#"),
-            "missing clean-room provenance in {feature}"
+            !capability.parser_evidence.is_empty(),
+            "supported query capability {} lacks parser evidence",
+            capability.id
         );
-        assert!(
-            !columns[6].is_empty(),
-            "missing conformance disposition in {feature}"
-        );
-
-        if matches!(status, "Partial" | "Supported") {
+        for evidence in capability
+            .parser_evidence
+            .iter()
+            .chain(&capability.execution_evidence)
+        {
+            let function = evidence.to_ascii_lowercase().replace('-', "_");
             assert!(
-                columns[6].contains("P2-") || columns[6].contains("P3-"),
-                "executable row lacks execution evidence: {feature}"
+                source.contains(&format!("fn {function}_")),
+                "unknown executable evidence {evidence} in {}",
+                capability.id
             );
-            for test_id in columns[6]
-                .split('`')
-                .filter(|part| part.starts_with("P2-") || part.starts_with("P3-"))
-            {
-                let function = test_id.to_ascii_lowercase().replace('-', "_");
-                assert!(
-                    integration_tests.contains(&format!("fn {function}_"))
-                        || parser_tests.contains(&format!("fn {function}_")),
-                    "unknown execution test {test_id} in {feature}"
-                );
+        }
+    }
+}
+
+fn collect_sources(root: &Path) -> String {
+    [
+        "fastdb-parser/tests",
+        "fastdb-frontend/src",
+        "fastdb-api/tests",
+        "fastdb-cli/tests",
+        "fastdb-tests/tests",
+    ]
+    .into_iter()
+    .flat_map(|directory| rust_files(&root.join(directory)))
+    .map(|path| std::fs::read_to_string(path).unwrap())
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn rust_files(directory: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                files.push(path);
             }
         }
     }
-
-    assert!(row_count >= 40, "feature matrix unexpectedly lost coverage");
+    files.sort();
+    files
 }

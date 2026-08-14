@@ -47,7 +47,7 @@ fn p3_script_001_ordered_results_and_later_failures_keep_standalone_commits() {
     assert_eq!(row_count(&conn, "SELECT * FROM person:c"), 1);
 
     assert_eq!(
-        conn.execute("CREATE person:d SET n=4; INSERT INTO person {}")
+        conn.execute("CREATE person:d SET n=4; USE NS unsupported")
             .unwrap_err()
             .category(),
         ErrorCategory::UnsupportedSyntax
@@ -115,9 +115,7 @@ fn p3_txn_002_any_active_error_rolls_back_and_requires_cancel() {
 
     conn.execute("BEGIN; CREATE person:c SET n=1").unwrap();
     assert_eq!(
-        conn.execute("INSERT INTO person {}")
-            .unwrap_err()
-            .category(),
+        conn.execute("USE NS unsupported").unwrap_err().category(),
         ErrorCategory::UnsupportedSyntax
     );
     conn.execute("CANCEL").unwrap();

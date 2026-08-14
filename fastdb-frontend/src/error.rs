@@ -19,6 +19,7 @@ pub enum ErrorCategory {
     UnsupportedSyntax,
     Schema,
     Constraint,
+    ResourceLimit,
     Format,
     Transaction,
     Engine,
@@ -37,6 +38,8 @@ pub enum FastDbError {
     Schema(String),
     #[error("constraint violation: {0}")]
     Constraint(String),
+    #[error("resource limit exceeded: {0}")]
+    ResourceLimit(String),
     #[error("format error: {0}")]
     Format(String),
     #[error("transaction error: {0}")]
@@ -54,6 +57,7 @@ impl FastDbError {
             Self::UnsupportedSyntax(_) => ErrorCategory::UnsupportedSyntax,
             Self::Schema(_) => ErrorCategory::Schema,
             Self::Constraint(_) => ErrorCategory::Constraint,
+            Self::ResourceLimit(_) => ErrorCategory::ResourceLimit,
             Self::Format(_) => ErrorCategory::Format,
             Self::Transaction(_) => ErrorCategory::Transaction,
             Self::Engine(_) => ErrorCategory::Engine,

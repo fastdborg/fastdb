@@ -86,7 +86,9 @@ impl Native {
         for i in 0..n {
             seed.bind_at(
                 NonZeroUsize::new(1).unwrap(),
-                Value::build_text(encode_rid(format!("rec{i}"))),
+                Value::build_text(
+                    encode_rid(format!("rec{i}")).expect("benchmark RID must encode"),
+                ),
             )
             .unwrap();
             seed.bind_at(
@@ -117,7 +119,7 @@ impl Native {
     }
 
     fn create(&mut self, id: &str, name: &str) -> Record {
-        let encoded_rid = encode_rid(id);
+        let encoded_rid = encode_rid(id).expect("benchmark RID must encode");
         self.insert
             .bind_at(
                 NonZeroUsize::new(1).unwrap(),
@@ -140,7 +142,7 @@ impl Native {
         self.select_rid
             .bind_at(
                 NonZeroUsize::new(1).unwrap(),
-                Value::build_text(encode_rid(id)),
+                Value::build_text(encode_rid(id).expect("benchmark RID must encode")),
             )
             .unwrap();
         let mut record = None;
@@ -181,7 +183,7 @@ impl Native {
         self.delete
             .bind_at(
                 NonZeroUsize::new(1).unwrap(),
-                Value::build_text(encode_rid(id)),
+                Value::build_text(encode_rid(id).expect("benchmark RID must encode")),
             )
             .unwrap();
         self.delete.run_ignore_rows().unwrap();
@@ -248,7 +250,7 @@ fn cold_create(c: &mut Criterion) {
                     .unwrap();
                 s.bind_at(
                     NonZeroUsize::new(1).unwrap(),
-                    Value::build_text(encode_rid("first")),
+                    Value::build_text(encode_rid("first").expect("benchmark RID must encode")),
                 )
                 .unwrap();
                 s.bind_at(

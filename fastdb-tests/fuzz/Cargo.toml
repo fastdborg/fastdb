@@ -21,3 +21,24 @@ path = "fuzz_targets/structured_crud.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "structured_graph"
+path = "fuzz_targets/structured_graph.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "structured_fts"
+path = "fuzz_targets/structured_fts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "structured_vector"
+path = "fuzz_targets/structured_vector.rs"
+test = false
+doc = false
+bench = false

@@ -10,28 +10,42 @@ use crate::error::{FastDbError, Result};
 use crate::execute;
 use crate::test_failpoints::{Failpoint, Failpoints};
 use crate::{Params, QueryResponse, StatementResult};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, Weak};
 use turso_core::Value;
 use turso_parser::ast::Stmt;
+
+/// Result of the supported catalog/provider/engine integrity path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckReport {
+    pub format_version: i64,
+    pub tables: usize,
+    pub indexes: usize,
+    pub fts_indexes: usize,
+    pub vector_fields: usize,
+    pub pinned_fts_exception: bool,
+}
 
 /// An open FastDB database. Phase 0 uses one connection and one writer.
 #[derive(Clone)]
 pub struct Database {
     db: Arc<turso_core::Database>,
     coordinator: Arc<Coordinator>,
+    path: PathBuf,
 }
 
 pub(crate) struct Coordinator {
     pub(crate) schema_mutex: Mutex<()>,
     pub(crate) catalog: RwLock<Option<crate::catalog::CatalogState>>,
+    maintenance: RwLock<()>,
     schema_lease: Mutex<Option<u64>>,
     schema_lease_changed: Condvar,
     next_connection_id: AtomicU64,
     catalog_generation: AtomicU64,
+    active_transactions: AtomicU64,
 }
 
 impl Coordinator {
@@ -39,10 +53,12 @@ impl Coordinator {
         Self {
             schema_mutex: Mutex::new(()),
             catalog: RwLock::new(None),
+            maintenance: RwLock::new(()),
             schema_lease: Mutex::new(None),
             schema_lease_changed: Condvar::new(),
             next_connection_id: AtomicU64::new(1),
             catalog_generation: AtomicU64::new(0),
+            active_transactions: AtomicU64::new(0),
         }
     }
 
@@ -56,6 +72,16 @@ impl Coordinator {
 
     pub(crate) fn publish_catalog_generation(&self) {
         self.catalog_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn ensure_no_active_transactions(&self) -> Result<()> {
+        if self.active_transactions.load(Ordering::Acquire) == 0 {
+            Ok(())
+        } else {
+            Err(FastDbError::Transaction(
+                "database maintenance requires all explicit transactions to finish".into(),
+            ))
+        }
     }
 
     pub(crate) fn wait_for_catalog(&self, connection_id: u64) -> Result<()> {
@@ -109,21 +135,34 @@ impl Database {
     /// Open (or create) a file-backed database at `path`.
     pub fn open(path: &str) -> Result<Self> {
         let io = turso_core::Database::io_for_path(path)?;
-        Self::open_with_io_inner(path, io)
+        Self::open_with_io_inner(path, io, None)
     }
 
-    fn open_with_io_inner(path: &str, io: Arc<dyn turso_core::IO>) -> Result<Self> {
+    fn open_with_io_inner(
+        path: &str,
+        io: Arc<dyn turso_core::IO>,
+        catalog_failpoint: Option<Failpoint>,
+    ) -> Result<Self> {
         let flags = turso_core::OpenFlags::default();
         let file = io.open_file(path, flags, true)?;
         let db_file = Arc::new(turso_core::storage::database::DatabaseFile::new(file));
         let opts = turso_core::OpenOptions::new(Arc::new(turso_core::SqliteDialect))
             .storage(db_file)
             .flags(flags)
-            .db_opts(turso_core::DatabaseOpts::default());
+            .db_opts(turso_core::DatabaseOpts::default().with_index_method(true));
         let db = turso_core::Database::open(io, path, opts)?;
         let coordinator = coordinator_for_path(path)?;
-        let database = Self { db, coordinator };
-        database.initialize_catalog()?;
+        let stored_path = if path == ":memory:" {
+            PathBuf::from(path)
+        } else {
+            normalized_database_path(path)?
+        };
+        let database = Self {
+            db,
+            coordinator,
+            path: stored_path,
+        };
+        database.initialize_catalog(catalog_failpoint)?;
         Ok(database)
     }
 
@@ -132,7 +171,15 @@ impl Database {
     #[cfg(feature = "testing")]
     #[doc(hidden)]
     pub fn open_with_io(path: &str, io: Arc<dyn turso_core::IO>) -> Result<Self> {
-        Self::open_with_io_inner(path, io)
+        Self::open_with_io_inner(path, io, None)
+    }
+
+    /// Open with one catalog failpoint armed before format migration starts.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn open_with_catalog_failpoint(path: &str, failpoint: Failpoint) -> Result<Self> {
+        let io = turso_core::Database::io_for_path(path)?;
+        Self::open_with_io_inner(path, io, Some(failpoint))
     }
 
     /// Open a private in-memory database (used by unit tests).
@@ -146,8 +193,226 @@ impl Database {
         Ok(Connection::new(conn, self.coordinator.clone()))
     }
 
-    fn initialize_catalog(&self) -> Result<()> {
+    /// Validate catalogs, provider-derived state, physical objects, and the
+    /// pinned engine integrity result through one supported path.
+    pub fn check(&self) -> Result<CheckReport> {
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .write()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
+        self.coordinator.ensure_no_active_transactions()?;
         let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+        let state = crate::catalog::load_and_validate(&connection)?;
+        let (tables, indexes, fts_indexes, vector_fields) = match &state {
+            crate::catalog::CatalogState::Empty => (0, 0, 0, 0),
+            crate::catalog::CatalogState::Ready(snapshot) => {
+                let indexes = snapshot
+                    .tables
+                    .values()
+                    .map(|table| table.indexes.len())
+                    .sum();
+                let fts_indexes = snapshot
+                    .tables
+                    .values()
+                    .flat_map(|table| table.indexes.values())
+                    .filter(|index| index.provider == crate::catalog::Provider::BuiltinFts)
+                    .count();
+                let vector_fields = snapshot
+                    .hidden_columns
+                    .values()
+                    .filter(|column| column.provider == crate::catalog::Provider::BuiltinVector)
+                    .count();
+                (snapshot.tables.len(), indexes, fts_indexes, vector_fields)
+            }
+        };
+        let allowed_fts_diagnostics = match &state {
+            crate::catalog::CatalogState::Empty => BTreeSet::new(),
+            crate::catalog::CatalogState::Ready(snapshot) => snapshot
+                .tables
+                .values()
+                .flat_map(|table| table.indexes.values())
+                .filter(|index| index.provider == crate::catalog::Provider::BuiltinFts)
+                .map(|index| {
+                    format!(
+                        "wrong # of entries in index __turso_internal_fts_dir_{}_key",
+                        index.physical_name
+                    )
+                })
+                .collect(),
+        };
+        let mut statement = connection.conn.prepare("PRAGMA integrity_check")?;
+        let mut diagnostics = Vec::new();
+        statement.run_with_row_callback(|row| {
+            diagnostics.push(row.get::<String>(0)?);
+            Ok(())
+        })?;
+        if diagnostics.is_empty() {
+            return Err(FastDbError::Format(
+                "engine integrity check returned no result".into(),
+            ));
+        }
+        let mut pinned_fts_exception = false;
+        for diagnostic in diagnostics {
+            if diagnostic == "ok" {
+                continue;
+            }
+            if allowed_fts_diagnostics.contains(&diagnostic) {
+                pinned_fts_exception = true;
+                continue;
+            }
+            return Err(FastDbError::Format(format!(
+                "engine integrity check failed: {diagnostic}"
+            )));
+        }
+        connection.close()?;
+        Ok(CheckReport {
+            format_version: crate::catalog::FORMAT_VERSION,
+            tables,
+            indexes,
+            fts_indexes,
+            vector_fields,
+            pinned_fts_exception,
+        })
+    }
+
+    /// Create one checkpointed, validated backup without overwriting a path.
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<CheckReport> {
+        self.backup_to_inner(destination.as_ref(), None)
+    }
+
+    /// Test-only entry point for proving that a durable temporary copy is not
+    /// published when backup is interrupted before validation.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn backup_to_with_failpoint(
+        &self,
+        destination: impl AsRef<Path>,
+        failpoint: Failpoint,
+    ) -> Result<CheckReport> {
+        self.backup_to_inner(destination.as_ref(), Some(failpoint))
+    }
+
+    fn backup_to_inner(
+        &self,
+        destination: &Path,
+        failpoint: Option<Failpoint>,
+    ) -> Result<CheckReport> {
+        if self.path == Path::new(":memory:") {
+            return Err(FastDbError::Io(
+                "an in-memory database cannot be backed up to a file".into(),
+            ));
+        }
+        let source = self.path.clone();
+        let destination_normalized = normalized_output_path(destination)?;
+        if source == destination_normalized {
+            return Err(FastDbError::Io(
+                "backup destination must differ from the source".into(),
+            ));
+        }
+        if destination.exists() {
+            return Err(FastDbError::Io("backup destination already exists".into()));
+        }
+        let parent = destination
+            .parent()
+            .ok_or_else(|| FastDbError::Io("backup destination has no parent directory".into()))?;
+        let file_name = destination
+            .file_name()
+            .ok_or_else(|| FastDbError::Io("backup destination has no file name".into()))?;
+        let temporary = parent.join(format!(
+            ".{}.fastdb-backup-{}.tmp",
+            file_name.to_string_lossy(),
+            uuid::Uuid::new_v4()
+        ));
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .write()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
+        self.coordinator.ensure_no_active_transactions()?;
+        let result = (|| {
+            let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+            connection
+                .conn
+                .checkpoint(turso_core::CheckpointMode::Truncate {
+                    upper_bound_inclusive: None,
+                })?;
+            std::fs::copy(&source, &temporary)?;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&temporary)?
+                .sync_all()?;
+            if failpoint == Some(Failpoint::AfterBackupCopy) {
+                return Err(FastDbError::Transaction(
+                    "injected failure: AfterBackupCopy".into(),
+                ));
+            }
+            connection.close()?;
+            let temporary_text = temporary
+                .to_str()
+                .ok_or_else(|| FastDbError::Io("backup path is not valid UTF-8".into()))?;
+            let report = Database::open(temporary_text)?.check()?;
+            std::fs::rename(&temporary, destination)?;
+            sync_parent(parent)?;
+            Ok(report)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    /// Rebuild one catalog-resolved index without constructing FastDB source.
+    pub fn rebuild_index(&self, table: &str, index: &str) -> Result<()> {
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .write()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
+        self.coordinator.ensure_no_active_transactions()?;
+        let _schema =
+            self.coordinator.schema_mutex.lock().map_err(|_| {
+                FastDbError::Transaction("database schema mutex is poisoned".into())
+            })?;
+        let catalog = self
+            .coordinator
+            .catalog
+            .read()
+            .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+            .clone()
+            .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
+        let snapshot = match catalog {
+            crate::catalog::CatalogState::Ready(snapshot) => snapshot,
+            crate::catalog::CatalogState::Empty => {
+                return Err(FastDbError::Schema("database has no indexes".into()))
+            }
+        };
+        let definition = snapshot
+            .tables
+            .get(table)
+            .and_then(|table| table.indexes.get(index))
+            .ok_or_else(|| {
+                FastDbError::Schema(format!("index {index:?} is not defined on table {table:?}"))
+            })?;
+        let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+        connection.with_transaction(|| {
+            connection.exec_bound(
+                crate::provider::index_provider(definition)?.rebuild_statement(definition)?,
+                vec![],
+            )
+        })?;
+        connection.close()
+    }
+
+    fn initialize_catalog(&self, catalog_failpoint: Option<Failpoint>) -> Result<()> {
+        let connection = Connection::new(self.db.connect()?, self.coordinator.clone());
+        #[cfg(feature = "testing")]
+        if let Some(failpoint) = catalog_failpoint {
+            connection.failpoints.arm(failpoint);
+        }
+        #[cfg(not(feature = "testing"))]
+        debug_assert!(catalog_failpoint.is_none());
         let _schema_guard =
             self.coordinator.schema_mutex.lock().map_err(|_| {
                 FastDbError::Transaction("database schema mutex is poisoned".into())
@@ -206,6 +471,24 @@ fn normalized_database_path(path: &str) -> Result<PathBuf> {
         .canonicalize()
         .unwrap_or_else(|_| parent.to_path_buf());
     Ok(normalized_parent.join(file_name))
+}
+
+fn normalized_output_path(path: &Path) -> Result<PathBuf> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| FastDbError::Io("output path is not valid UTF-8".into()))?;
+    normalized_database_path(text)
+}
+
+#[cfg(unix)]
+fn sync_parent(parent: &Path) -> Result<()> {
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent(_parent: &Path) -> Result<()> {
+    Ok(())
 }
 
 /// A FastDB connection wrapping one Turso connection. Not `Send`/`Sync` in
@@ -297,6 +580,7 @@ struct PreparedSelectKey {
     physical_table: String,
     uses_rid: bool,
     predicates: Vec<(String, crate::lower::PredicateOperator, ScalarKind)>,
+    provider_plan: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,7 +641,7 @@ pub(crate) struct ExecutionState {
 
 pub(crate) enum TransactionState {
     Idle,
-    Active(ActiveTransaction),
+    Active(Box<ActiveTransaction>),
     Poisoned,
     Broken,
 }
@@ -365,6 +649,7 @@ pub(crate) enum TransactionState {
 pub(crate) struct ActiveTransaction {
     pub(crate) catalog: crate::catalog::CatalogState,
     pub(crate) schema_changed: bool,
+    pub(crate) dirty_fts_tables: BTreeSet<crate::names::CatalogId>,
 }
 
 impl std::fmt::Debug for Connection {
@@ -396,6 +681,23 @@ impl Connection {
 
     /// Execute one or more statements with named value bindings.
     pub fn execute_with_params(&self, source: &str, params: &Params) -> Result<QueryResponse> {
+        self.execute_with_params_and_cancellation(source, params, None)
+    }
+
+    /// Execute statements with a cooperative cancellation flag supplied by an
+    /// owning API worker. Direct embedded callers use [`Self::execute_with_params`].
+    #[doc(hidden)]
+    pub fn execute_with_params_and_cancellation(
+        &self,
+        source: &str,
+        params: &Params,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Result<QueryResponse> {
+        let _maintenance = self
+            .coordinator
+            .maintenance
+            .read()
+            .map_err(|_| FastDbError::Transaction("maintenance lock is poisoned".into()))?;
         let mut execution = self.execution.lock().map_err(|_| {
             FastDbError::Transaction("connection execution lock is poisoned".into())
         })?;
@@ -411,6 +713,37 @@ impl Connection {
 
         let mut statements = Vec::new();
         let mut mutation_count = 0_u64;
+        let (catalog_parameters, custom_functions_defined) = match &execution.transaction {
+            TransactionState::Active(active) => active
+                .catalog
+                .snapshot()
+                .map(|snapshot| (snapshot.parameters.clone(), !snapshot.functions.is_empty())),
+            TransactionState::Idle | TransactionState::Poisoned | TransactionState::Broken => self
+                .coordinator
+                .catalog
+                .read()
+                .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
+                .as_ref()
+                .and_then(crate::catalog::CatalogState::snapshot)
+                .map(|snapshot| (snapshot.parameters.clone(), !snapshot.functions.is_empty())),
+        }
+        .map(|(parameters, custom_functions_defined)| {
+            (
+                parameters
+                    .into_iter()
+                    .map(|(name, parameter)| (name, parameter.value))
+                    .collect::<Params>(),
+                custom_functions_defined,
+            )
+        })
+        .unwrap_or_default();
+        let mut script = execute::ScriptRuntime::new(
+            catalog_parameters,
+            params.clone(),
+            custom_functions_defined,
+            self.conn.get_query_timeout(),
+            cancellation,
+        );
         let cached = self
             .parse_cache
             .lock()
@@ -441,7 +774,7 @@ impl Connection {
             let Some(statement) = statement else {
                 break;
             };
-            match execute::run_statement(self, &mut execution, statement, source, params) {
+            match execute::run_statement(self, &mut execution, statement, source, &mut script) {
                 Ok(result) => {
                     statements.push(result.result);
                     mutation_count = mutation_count
@@ -473,6 +806,15 @@ impl Connection {
     /// Close this connection and request the engine's clean-shutdown checkpoint.
     pub fn close(&self) -> Result<()> {
         self.invalidate_caches();
+        if let Ok(mut execution) = self.execution.lock() {
+            if matches!(execution.transaction, TransactionState::Active(_)) {
+                self.coordinator
+                    .active_transactions
+                    .fetch_sub(1, Ordering::AcqRel);
+                execution.transaction = TransactionState::Broken;
+                self.coordinator.release_schema_lease(self.connection_id);
+            }
+        }
         self.conn.close().map_err(FastDbError::from)
     }
 
@@ -498,6 +840,9 @@ impl Connection {
         self.coordinator.wait_for_catalog(self.connection_id)?;
         self.invalidate_prepared_cache();
         self.exec_bound(crate::lower::begin_immediate(), vec![])?;
+        self.coordinator
+            .active_transactions
+            .fetch_add(1, Ordering::AcqRel);
         let catalog = self
             .coordinator
             .catalog
@@ -505,10 +850,11 @@ impl Connection {
             .map_err(|_| FastDbError::Transaction("catalog cache lock is poisoned".into()))?
             .clone()
             .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))?;
-        state.transaction = TransactionState::Active(ActiveTransaction {
+        state.transaction = TransactionState::Active(Box::new(ActiveTransaction {
             catalog,
             schema_changed: false,
-        });
+            dirty_fts_tables: BTreeSet::new(),
+        }));
         Ok(StatementResult::None)
     }
 
@@ -546,6 +892,9 @@ impl Connection {
             self.coordinator.publish_catalog_generation();
         }
         state.transaction = TransactionState::Idle;
+        self.coordinator
+            .active_transactions
+            .fetch_sub(1, Ordering::AcqRel);
         self.coordinator.release_schema_lease(self.connection_id);
         self.invalidate_prepared_cache();
         Ok(StatementResult::None)
@@ -558,6 +907,9 @@ impl Connection {
                     .check_failpoint(Failpoint::RollbackFailure)
                     .and_then(|()| self.exec_bound(crate::lower::rollback(), vec![]));
                 self.coordinator.release_schema_lease(self.connection_id);
+                self.coordinator
+                    .active_transactions
+                    .fetch_sub(1, Ordering::AcqRel);
                 match rollback {
                     Ok(()) => state.transaction = TransactionState::Idle,
                     Err(error) => {
@@ -592,6 +944,9 @@ impl Connection {
             .check_failpoint(Failpoint::RollbackFailure)
             .and_then(|()| self.exec_bound(crate::lower::rollback(), vec![]));
         self.coordinator.release_schema_lease(self.connection_id);
+        self.coordinator
+            .active_transactions
+            .fetch_sub(1, Ordering::AcqRel);
         match rollback {
             Ok(()) => {
                 state.transaction = TransactionState::Poisoned;
@@ -736,6 +1091,79 @@ impl Connection {
             .ok_or_else(|| FastDbError::Engine("catalog cache was not initialized".into()))
     }
 
+    /// Install a test-only hidden-column provider fixture. Both names are
+    /// opaque IDs; no logical identifier or source text reaches Turso.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn install_test_provider(&self, encoded_document: &str) -> Result<TestProviderHandle> {
+        let table = crate::names::physical_table_name(crate::names::CatalogId::new_random());
+        let hidden_column =
+            crate::names::physical_hidden_column_name(crate::names::CatalogId::new_random());
+        let derived = crate::provider::derive_test_hidden_value(encoded_document)?;
+        self.with_transaction(|| {
+            self.exec_bound(
+                crate::lower::test_provider_table_ddl(&table, &hidden_column)?,
+                vec![],
+            )?;
+            let (insert, bindings) = crate::lower::test_provider_insert_stmt(
+                &table,
+                &hidden_column,
+                encoded_document,
+                derived,
+            )?;
+            self.exec_bound(insert, bindings)
+        })?;
+        Ok(TestProviderHandle {
+            table,
+            hidden_column,
+        })
+    }
+
+    /// Update a test provider's document and derived state in one real
+    /// transaction, with a failure boundary between the physical writes.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn write_test_provider(
+        &self,
+        handle: &TestProviderHandle,
+        encoded_document: &str,
+    ) -> Result<()> {
+        let derived = crate::provider::derive_test_hidden_value(encoded_document)?;
+        self.with_transaction(|| {
+            let (update, bindings) =
+                crate::lower::test_provider_update_document_stmt(&handle.table, encoded_document)?;
+            self.exec_bound(update, bindings)?;
+            self.check_failpoint(Failpoint::AfterTestProviderDocument)?;
+            let (update, bindings) = crate::lower::test_provider_update_hidden_stmt(
+                &handle.table,
+                &handle.hidden_column,
+                derived,
+            )?;
+            self.exec_bound(update, bindings)
+        })
+    }
+
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn read_test_provider(&self, handle: &TestProviderHandle) -> Result<(String, i64)> {
+        let rows = self.collect_rows(
+            crate::lower::test_provider_select_stmt(&handle.table, &handle.hidden_column)?,
+            vec![],
+        )?;
+        let row = rows
+            .first()
+            .filter(|_| rows.len() == 1)
+            .ok_or_else(|| FastDbError::Engine("test provider row is missing".into()))?;
+        match row.as_slice() {
+            [turso_core::Value::Text(document), turso_core::Value::Numeric(turso_core::Numeric::Integer(derived))] => {
+                Ok((document.as_str().to_string(), *derived))
+            }
+            _ => Err(FastDbError::Engine(
+                "test provider returned an unexpected row shape".into(),
+            )),
+        }
+    }
+
     /// Explain the actual canonical composite filter lowering.
     #[cfg(feature = "testing")]
     #[doc(hidden)]
@@ -854,8 +1282,7 @@ impl Drop for Connection {
     }
 }
 
-#[cfg(feature = "testing")]
-fn explain_statement(connection: &Connection, select_stmt: Stmt) -> Result<Vec<String>> {
+pub(crate) fn explain_statement(connection: &Connection, select_stmt: Stmt) -> Result<Vec<String>> {
     let explain_cmd = turso_parser::ast::Cmd::ExplainQueryPlan(select_stmt);
     let explain_sql = explain_cmd.to_string();
     let mut reparsed = turso_parser::parser::Parser::new(explain_sql.as_bytes())
@@ -906,6 +1333,50 @@ impl Connection {
         predicates: &[(String, crate::lower::PredicateOperator, crate::Value)],
         allow_cache: bool,
     ) -> Result<Vec<Vec<Value>>> {
+        self.collect_prepared_select(
+            stmt,
+            bindings,
+            physical_table,
+            uses_rid,
+            predicates,
+            allow_cache,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn collect_vector_candidates(
+        &self,
+        stmt: Stmt,
+        bindings: crate::lower::Bindings,
+        physical_table: &str,
+        uses_rid: bool,
+        predicates: &[(String, crate::lower::PredicateOperator, crate::Value)],
+        allow_cache: bool,
+        plan_key: String,
+    ) -> Result<Vec<Vec<Value>>> {
+        self.collect_prepared_select(
+            stmt,
+            bindings,
+            physical_table,
+            uses_rid,
+            predicates,
+            allow_cache,
+            Some(plan_key),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_prepared_select(
+        &self,
+        stmt: Stmt,
+        bindings: crate::lower::Bindings,
+        physical_table: &str,
+        uses_rid: bool,
+        predicates: &[(String, crate::lower::PredicateOperator, crate::Value)],
+        allow_cache: bool,
+        provider_plan: Option<String>,
+    ) -> Result<Vec<Vec<Value>>> {
         if !allow_cache {
             return self.collect_rows(stmt, bindings);
         }
@@ -918,6 +1389,7 @@ impl Connection {
                 .iter()
                 .map(|(path, operator, value)| Ok((path.clone(), *operator, scalar_kind(value)?)))
                 .collect::<Result<Vec<_>>>()?,
+            provider_plan,
         };
         let cached_statement = {
             let mut cache = self.prepared_select_cache.lock().map_err(|_| {
@@ -1015,6 +1487,14 @@ pub struct CacheStats {
     pub prepared_misses: u64,
 }
 
+#[cfg(feature = "testing")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct TestProviderHandle {
+    table: String,
+    hidden_column: String,
+}
+
 fn scalar_kind(value: &crate::Value) -> Result<ScalarKind> {
     match value {
         crate::Value::Null => Ok(ScalarKind::Null),
@@ -1022,16 +1502,28 @@ fn scalar_kind(value: &crate::Value) -> Result<ScalarKind> {
         crate::Value::Integer(_) => Ok(ScalarKind::Integer),
         crate::Value::Float(_) => Ok(ScalarKind::Float),
         crate::Value::Str(_) => Ok(ScalarKind::String),
-        crate::Value::Array(_) | crate::Value::Object(_) | crate::Value::RecordId(_) => Err(
-            FastDbError::Engine("prepared SELECT cache received a non-scalar predicate".into()),
-        ),
+        crate::Value::None
+        | crate::Value::Decimal(_)
+        | crate::Value::Bytes(_)
+        | crate::Value::Duration(_)
+        | crate::Value::Datetime(_)
+        | crate::Value::Uuid(_)
+        | crate::Value::Array(_)
+        | crate::Value::Object(_)
+        | crate::Value::Set(_)
+        | crate::Value::Range(_)
+        | crate::Value::Regex(_)
+        | crate::Value::RecordId(_)
+        | crate::Value::Table(_)
+        | crate::Value::File(_) => Err(FastDbError::Engine(
+            "prepared SELECT cache received a non-scalar predicate".into(),
+        )),
     }
 }
 
 /// The SQLite parser annotates unaliased result expressions with their source
 /// text. Directly constructed AST omits that display-only metadata; it does
 /// not affect planning, so remove it before the test-only round-trip check.
-#[cfg(feature = "testing")]
 fn strip_parser_implicit_result_names(cmd: &mut turso_parser::ast::Cmd) {
     use turso_parser::ast::{As, Cmd, OneSelect, ResultColumn, Stmt};
 

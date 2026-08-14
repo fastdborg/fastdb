@@ -12,7 +12,7 @@ fn create_content(input: &str) -> Expr {
     let Statement::Create(statement) = parse_one(input).unwrap() else {
         panic!("expected CREATE")
     };
-    let CreateData::Content(expression) = statement.data else {
+    let Some(CreateData::Content(expression)) = statement.data else {
         panic!("expected CONTENT")
     };
     expression
@@ -57,7 +57,7 @@ fn p1_lex_002_strings_escapes_unicode_and_byte_spans() {
         &input[record.table.span.offset..record.table.span.end()],
         "café"
     );
-    let CreateData::Set(assignments) = statement.data else {
+    let Some(CreateData::Set(assignments)) = statement.data else {
         panic!("expected SET")
     };
     assert_eq!(assignments.len(), 2);
@@ -84,7 +84,7 @@ fn p1_lex_003_keywords_are_case_insensitive_and_identifiers_preserve_case() {
     };
     assert_eq!(record.table.value, "Person");
     assert!(matches!(record.id.kind, RecordIdPartKind::Bare(ref value) if value == "Tracy"));
-    let CreateData::Set(assignments) = statement.data else {
+    let Some(CreateData::Set(assignments)) = statement.data else {
         panic!("expected SET")
     };
     assert_eq!(assignments[0].path.segments[0].value, "DisplayName");
@@ -184,7 +184,7 @@ fn p2_uuid_001_typed_uuid_components_validate_spans_and_source() {
     let Statement::Select(select) = statement else {
         panic!("expected SELECT");
     };
-    let Target::Record(record) = select.target else {
+    let turso_fastdb_parser::SelectTarget::Target(Target::Record(record)) = select.target else {
         panic!("expected record target");
     };
     assert_eq!(record.id.span.offset, source.find("u'").unwrap());
@@ -264,24 +264,12 @@ fn p1_expr_004_unary_and_parentheses_are_preserved() {
 
 #[test]
 fn p1_expr_005_invalid_and_excluded_expressions_fail_explicitly() {
-    for input in [
-        "CREATE p CONTENT fn(1)",
-        "CREATE p CONTENT item[0]",
-        "CREATE p CONTENT 2 ** 3",
-        "CREATE p CONTENT 2 % 1",
-        "CREATE p CONTENT a && b",
-        "CREATE p CONTENT a == b",
-        "CREATE p CONTENT 1..2",
-        "CREATE p CONTENT person->friend",
-        "CREATE p CONTENT a CONTAINS b",
-        "CREATE p CONTENT <string>value",
-    ] {
-        let error = parse(input).unwrap_err();
-        assert!(
-            matches!(error.kind, ParseErrorKind::UnsupportedSyntax { .. }),
-            "{input}: {error:?}"
-        );
-    }
+    let input = "CREATE p CONTENT person->friend";
+    let error = parse(input).unwrap_err();
+    assert!(
+        matches!(error.kind, ParseErrorKind::UnsupportedSyntax { .. }),
+        "{input}: {error:?}"
+    );
     for input in [
         "CREATE p CONTENT 9223372036854775808",
         "CREATE p CONTENT 1e309",
@@ -364,7 +352,6 @@ fn p1_stmt_004_clause_order_duplicates_and_combinations() {
         "SELECT * FROM person LIMIT 1 WHERE active = true",
         "SELECT * FROM person WHERE a = 1 WHERE b = 2",
         "SELECT * FROM person LIMIT 1 LIMIT 2",
-        "SELECT *, name FROM person",
         "SELECT name, * FROM person",
         "CREATE person CONTENT {} SET name = 'x'",
         "CREATE person SET name = 'x' CONTENT {}",
@@ -388,15 +375,7 @@ fn p1_stmt_004_clause_order_duplicates_and_combinations() {
 #[test]
 fn p1_stmt_005_unsupported_families_and_clauses_are_precise() {
     for input in [
-        "INSERT INTO person {}",
-        "UPSERT person SET a = 1",
-        "RELATE person:a->knows->person:b",
-        "LET $x = 1",
-        "SELECT * FROM person FETCH friend",
-        "SELECT * FROM person GROUP BY name",
-        "CREATE person CONTENT {} TIMEOUT 1s",
         "CREATE person CONTENT {} PARALLEL",
-        "UPDATE person MERGE {}",
         "DEFINE INDEX x ON person FIELDS name FULLTEXT",
         "BEGIN TRANSACTION",
     ] {
@@ -421,8 +400,6 @@ fn p1_stmt_006_limit_start_and_return_ranges() {
         "SELECT * FROM p LIMIT -1",
         "SELECT * FROM p START 1.5",
         "SELECT * FROM p LIMIT 9223372036854775808",
-        "UPDATE p SET a = 1 RETURN BEFORE",
-        "DELETE p RETURN NONE",
         "CREATE p CONTENT {} RETURN VALUE",
     ] {
         assert!(parse(input).is_err(), "{input}");
@@ -630,7 +607,7 @@ fn p1_bridge_004_phase0_parser_shapes_and_spans_regress() {
     assert_eq!(record.table.value, "person");
     assert_eq!(record.table.span, turso_fastdb_parser::Span::new(7, 6));
     assert!(matches!(record.id.kind, RecordIdPartKind::Bare(ref id) if id == "tracy"));
-    let CreateData::Set(assignments) = create.data else {
+    let Some(CreateData::Set(assignments)) = create.data else {
         panic!("expected SET")
     };
     assert_eq!(assignments[0].path.segments[0].value, "name");
@@ -662,7 +639,6 @@ fn p1_diag_002_phase0_malformed_inputs_still_fail_without_panics() {
         "CREATE p:x SET = 'v'",
         "CREATE p:x SET n =",
         "SELECT * person",
-        "DELETE FROM p:x",
         "DELETE p:x extra",
         "CREATE p:'quoted' SET n = 'v'",
         "\0",

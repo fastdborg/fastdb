@@ -23,3 +23,15 @@ harness = false
 [[bin]]
 name = "phase5-release-bench"
 path = "src/bin/phase5_release.rs"
+
+[[bin]]
+name = "phase7-graph-bench"
+path = "src/bin/phase7_graph.rs"
+
+[[bin]]
+name = "phase8-fts-bench"
+path = "src/bin/phase8_fts.rs"
+
+[[bin]]
+name = "phase9-vector-bench"
+path = "src/bin/phase9_vector.rs"

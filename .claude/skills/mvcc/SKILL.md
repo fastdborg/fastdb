@@ -1,6 +1,6 @@
 ---
 name: mvcc
-description: Overview of Experimental MVCC feature - snapshot isolation, versioning, limitations
+description: Overview of experimental MVCC snapshot isolation, recovery, GC, checkpointing, memory behavior, and production limitations
 ---
 # MVCC Guide (Experimental)
 
@@ -71,15 +71,35 @@ PRAGMA mvcc_checkpoint_threshold = <pages>;
 
 Process: acquire lock → begin pager txn → write rows → commit → truncate log → fsync → release.
 
-## Current Limitations
+## Recovery and Garbage Collection
 
-**Not implemented:**
-- Garbage collection (old versions accumulate)
-- Recovery from logical log on restart
+The current source implements logical-log restart recovery, durable checkpoint
+watermarks, interrupted-checkpoint reconciliation, and fail-closed corruption
+handling. See `docs/internals/mvcc/RECOVERY_SEMANTICS.md`.
 
-**Known issues:**
-- Checkpoint blocks other transactions, even reads!
-- No spilling to disk; memory use concerns
+Checkpoint and inline GC reclaim versions using the active-reader low-water
+mark and the durable checkpoint boundary. See
+`docs/internals/mvcc/GC.md`. Use the `memory-benchmark` skill and its
+`update-churn` profile when evaluating sustained growth.
+
+## Current Production Limitations
+
+- The upstream manual still labels MVCC experimental and not production-ready,
+  and warns that queries may be incorrect or panic.
+- The supported truncate checkpoint is stop-the-world and blocks both readers
+  and writers. Passive checkpointing is separately experimental and has
+  documented snapshot/GC constraints.
+- Startup eagerly loads database state into memory; sustained long-reader and
+  large-database memory bounds are not a production guarantee.
+- Fundamental concurrency/cursor/rowid tests remain ignored for known or
+  intermittent failures, including non-overlapping concurrent writes and an
+  MVCC cursor model test.
+- `core/mvcc/mod.rs` still records phantom/read-skew/write-skew gaps beyond the
+  implemented snapshot behavior.
+
+FastDB Phase 11 rejected the retained pin, `v0.8.0-pre.4`, and upstream `main`
+at `069b5431e86779d70df3940711bb61f8601db069`. Do not enable MVCC in FastDB
+without a new exact-SHA qualification audit.
 
 ## Testing
 
@@ -104,3 +124,4 @@ fn test_something() {
 
 - `core/mvcc/mod.rs` documents data anomalies (dirty reads, lost updates, etc.)
 - Snapshot isolation vs serializability: MVCC provides the former, not the latter
+- `docs/phase11-mvcc-audit.md` records FastDB's exact-SHA production gate

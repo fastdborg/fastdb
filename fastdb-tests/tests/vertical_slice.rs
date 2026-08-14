@@ -65,7 +65,7 @@ fn file_backed_vertical_slice() {
         );
         assert_eq!(meta.len(), 1, "exactly one metadata row");
         assert_eq!(meta[0][0], "1");
-        assert_eq!(meta[0][1], "1", "format_version == 1");
+        assert_eq!(meta[0][1], "3", "format_version == 3");
         assert_eq!(meta[0][2], "1", "dialect_version == 1");
 
         // 8b. One person catalog row.

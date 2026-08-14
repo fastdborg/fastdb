@@ -27,12 +27,20 @@ fn p5_json_001_nested_reserved_envelopes_round_trip_and_reject_spoofing() {
     ]))]);
     let encoded = fastdb::json::value_to_json(&value).unwrap();
     assert_eq!(fastdb::json::value_from_json(encoded).unwrap(), value);
+    assert_eq!(
+        fastdb::json::value_from_json(serde_json::json!({"$fastdb": "user data"})).unwrap(),
+        Value::Object(Object::from([(
+            "$fastdb".into(),
+            Value::Str("user data".into())
+        )]))
+    );
 
     for invalid in [
-        serde_json::json!({"$fastdb":{"v":2,"t":"object","value":{}}}),
+        serde_json::json!({"$fastdb":{"v":3,"t":"object","value":{}}}),
         serde_json::json!({"$fastdb":{"v":1,"t":"rid","table":"t","id_type":"integer","id":"1"}}),
         serde_json::json!({"$fastdb":{"v":1,"t":"rid","table":"t","id_type":"uuid","id":"00000000-0000-1000-8000-000000000000"}}),
         serde_json::json!({"$fastdb":{"v":1,"t":"object","value":{},"extra":true}}),
+        serde_json::json!({"$fastdb":{"v":2,"t":"object","value":{},"extra":true}}),
     ] {
         assert_eq!(
             fastdb::json::value_from_json(invalid)

@@ -1,0 +1,2 @@
+fastdb-parser/fuzz/corpus/** binary
+fastdb-tests/fuzz/corpus/** binary

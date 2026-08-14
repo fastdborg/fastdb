@@ -11,6 +11,7 @@ pub enum TokenKind {
     Update,
     Delete,
     Define,
+    Alter,
     Table,
     Field,
     Index,
@@ -33,23 +34,53 @@ pub enum TokenKind {
     As,
     Asc,
     Desc,
+    All,
+    Collate,
+    Numeric,
+    Rand,
+    At,
     On,
     Type,
     Fields,
     Unique,
     Schemaless,
     Schemafull,
+    Normal,
+    Relation,
+    In,
+    Out,
+    To,
+    Enforced,
     Null,
     True,
     False,
     Not,
     And,
     Or,
+    Is,
+    Contains,
+    ContainsNot,
+    ContainsAll,
+    ContainsAny,
+    ContainsNone,
+    Inside,
+    NotInside,
+    AllInside,
+    AnyInside,
+    NoneInside,
     BoolType,
     IntType,
     FloatType,
     NumberType,
+    DecimalType,
     StringType,
+    BytesType,
+    DatetimeType,
+    DurationType,
+    UuidType,
+    RegexType,
+    FileType,
+    RangeType,
     ObjectType,
     ArrayType,
     RecordType,
@@ -57,9 +88,15 @@ pub enum TokenKind {
     Transaction,
     Insert,
     Upsert,
+    Ignore,
+    Into,
+    Values,
+    Duplicate,
+    Key,
     Relate,
     Let,
     Remove,
+    Rebuild,
     Info,
     Use,
     Live,
@@ -68,14 +105,33 @@ pub enum TokenKind {
     Throw,
     For,
     If,
+    Else,
+    Break,
+    Continue,
+    Param,
+    Function,
+    Exists,
+    Overwrite,
+    Drop,
+    Comment,
+    Compact,
+    Always,
+    Reference,
     Timeout,
+    Version,
     Fetch,
     Group,
     Split,
     Omit,
     Explain,
+    Analyze,
+    Full,
+    Format,
+    Json,
     With,
+    Using,
     Value,
+    Diff,
     Merge,
     Patch,
     Replace,
@@ -89,11 +145,25 @@ pub enum TokenKind {
     Fulltext,
     Search,
     Analyzer,
+    Tokenizers,
+    Highlights,
+    Functions,
+    Filters,
     Parallel,
+    FtsMatch(Option<u32>),
+    KnnStart,
+    KnnEnd,
+    ForwardArrow,
+    ReverseArrow,
+    BidirectionalArrow,
+    DoubleColon,
     Colon,
     Star,
     Dot,
     Equal,
+    ExactEqual,
+    AnyEqual,
+    AllEqual,
     NotEqual,
     Less,
     LessEqual,
@@ -102,6 +172,14 @@ pub enum TokenKind {
     Plus,
     Minus,
     Slash,
+    Percent,
+    Power,
+    Range,
+    RangeInclusive,
+    NullCoalesce,
+    TruthyCoalesce,
+    Pipe,
+    Dollar,
     Comma,
     Semicolon,
     LeftParen,
@@ -130,6 +208,8 @@ impl TokenKind {
             Self::String(_) => "string literal".into(),
             Self::QuotedIdent(_) => "backtick-quoted identifier".into(),
             Self::UnsupportedOperator(op) => format!("operator {op:?}"),
+            Self::FtsMatch(None) => "operator @@".into(),
+            Self::FtsMatch(Some(reference)) => format!("operator @{reference}@"),
             Self::Eof => "end of input".into(),
             other => other.fixed_description().into(),
         }
@@ -142,6 +222,7 @@ impl TokenKind {
             Self::Update => "keyword UPDATE",
             Self::Delete => "keyword DELETE",
             Self::Define => "keyword DEFINE",
+            Self::Alter => "keyword ALTER",
             Self::Table => "keyword TABLE",
             Self::Field => "keyword FIELD",
             Self::Index => "keyword INDEX",
@@ -164,23 +245,53 @@ impl TokenKind {
             Self::As => "keyword AS",
             Self::Asc => "keyword ASC",
             Self::Desc => "keyword DESC",
+            Self::All => "keyword ALL",
+            Self::Collate => "keyword COLLATE",
+            Self::Numeric => "keyword NUMERIC",
+            Self::Rand => "keyword RAND",
+            Self::At => "keyword AT",
             Self::On => "keyword ON",
             Self::Type => "keyword TYPE",
             Self::Fields => "keyword FIELDS",
             Self::Unique => "keyword UNIQUE",
             Self::Schemaless => "keyword SCHEMALESS",
             Self::Schemafull => "keyword SCHEMAFULL",
+            Self::Normal => "keyword NORMAL",
+            Self::Relation => "keyword RELATION",
+            Self::In => "keyword IN",
+            Self::Out => "keyword OUT",
+            Self::To => "keyword TO",
+            Self::Enforced => "keyword ENFORCED",
             Self::Null => "keyword NULL",
             Self::True => "keyword TRUE",
             Self::False => "keyword FALSE",
             Self::Not => "keyword NOT",
             Self::And => "keyword AND",
             Self::Or => "keyword OR",
+            Self::Is => "keyword IS",
+            Self::Contains => "keyword CONTAINS",
+            Self::ContainsNot => "keyword CONTAINSNOT",
+            Self::ContainsAll => "keyword CONTAINSALL",
+            Self::ContainsAny => "keyword CONTAINSANY",
+            Self::ContainsNone => "keyword CONTAINSNONE",
+            Self::Inside => "keyword INSIDE",
+            Self::NotInside => "keyword NOTINSIDE",
+            Self::AllInside => "keyword ALLINSIDE",
+            Self::AnyInside => "keyword ANYINSIDE",
+            Self::NoneInside => "keyword NONEINSIDE",
             Self::BoolType => "type BOOL",
             Self::IntType => "type INT",
             Self::FloatType => "type FLOAT",
             Self::NumberType => "type NUMBER",
+            Self::DecimalType => "type DECIMAL",
             Self::StringType => "type STRING",
+            Self::BytesType => "type BYTES",
+            Self::DatetimeType => "type DATETIME",
+            Self::DurationType => "type DURATION",
+            Self::UuidType => "type UUID",
+            Self::RegexType => "type REGEX",
+            Self::FileType => "type FILE",
+            Self::RangeType => "type RANGE",
             Self::ObjectType => "type OBJECT",
             Self::ArrayType => "type ARRAY",
             Self::RecordType => "type RECORD",
@@ -188,9 +299,15 @@ impl TokenKind {
             Self::Transaction => "keyword TRANSACTION",
             Self::Insert => "keyword INSERT",
             Self::Upsert => "keyword UPSERT",
+            Self::Ignore => "keyword IGNORE",
+            Self::Into => "keyword INTO",
+            Self::Values => "keyword VALUES",
+            Self::Duplicate => "keyword DUPLICATE",
+            Self::Key => "keyword KEY",
             Self::Relate => "keyword RELATE",
             Self::Let => "keyword LET",
             Self::Remove => "keyword REMOVE",
+            Self::Rebuild => "keyword REBUILD",
             Self::Info => "keyword INFO",
             Self::Use => "keyword USE",
             Self::Live => "keyword LIVE",
@@ -199,14 +316,33 @@ impl TokenKind {
             Self::Throw => "keyword THROW",
             Self::For => "keyword FOR",
             Self::If => "keyword IF",
+            Self::Else => "keyword ELSE",
+            Self::Break => "keyword BREAK",
+            Self::Continue => "keyword CONTINUE",
+            Self::Param => "keyword PARAM",
+            Self::Function => "keyword FUNCTION",
+            Self::Exists => "keyword EXISTS",
+            Self::Overwrite => "keyword OVERWRITE",
+            Self::Drop => "keyword DROP",
+            Self::Comment => "keyword COMMENT",
+            Self::Compact => "keyword COMPACT",
+            Self::Always => "keyword ALWAYS",
+            Self::Reference => "keyword REFERENCE",
             Self::Timeout => "keyword TIMEOUT",
+            Self::Version => "keyword VERSION",
             Self::Fetch => "keyword FETCH",
             Self::Group => "keyword GROUP",
             Self::Split => "keyword SPLIT",
             Self::Omit => "keyword OMIT",
             Self::Explain => "keyword EXPLAIN",
+            Self::Analyze => "keyword ANALYZE",
+            Self::Full => "keyword FULL",
+            Self::Format => "keyword FORMAT",
+            Self::Json => "keyword JSON",
             Self::With => "keyword WITH",
+            Self::Using => "keyword USING",
             Self::Value => "keyword VALUE",
+            Self::Diff => "keyword DIFF",
             Self::Merge => "keyword MERGE",
             Self::Patch => "keyword PATCH",
             Self::Replace => "keyword REPLACE",
@@ -220,11 +356,24 @@ impl TokenKind {
             Self::Fulltext => "keyword FULLTEXT",
             Self::Search => "keyword SEARCH",
             Self::Analyzer => "keyword ANALYZER",
+            Self::Tokenizers => "keyword TOKENIZERS",
+            Self::Highlights => "keyword HIGHLIGHTS",
+            Self::Functions => "keyword FUNCTIONS",
+            Self::Filters => "keyword FILTERS",
             Self::Parallel => "keyword PARALLEL",
+            Self::KnnStart => "'<|'",
+            Self::KnnEnd => "'|>'",
+            Self::ForwardArrow => "'->'",
+            Self::ReverseArrow => "'<-'",
+            Self::BidirectionalArrow => "'<->'",
+            Self::DoubleColon => "'::'",
             Self::Colon => "':'",
             Self::Star => "'*'",
             Self::Dot => "'.'",
             Self::Equal => "'='",
+            Self::ExactEqual => "'=='",
+            Self::AnyEqual => "'?='",
+            Self::AllEqual => "'*='",
             Self::NotEqual => "'!='",
             Self::Less => "'<'",
             Self::LessEqual => "'<='",
@@ -233,6 +382,14 @@ impl TokenKind {
             Self::Plus => "'+'",
             Self::Minus => "'-'",
             Self::Slash => "'/'",
+            Self::Percent => "'%'",
+            Self::Power => "'**'",
+            Self::Range => "'..'",
+            Self::RangeInclusive => "'..='",
+            Self::NullCoalesce => "'??'",
+            Self::TruthyCoalesce => "'?:'",
+            Self::Pipe => "'|'",
+            Self::Dollar => "'$'",
             Self::Comma => "','",
             Self::Semicolon => "';'",
             Self::LeftParen => "'('",
@@ -241,7 +398,10 @@ impl TokenKind {
             Self::RightBracket => "']'",
             Self::LeftBrace => "'{'",
             Self::RightBrace => "'}'",
-            Self::UnsupportedOperator(_) | Self::Ident(_) | Self::Parameter(_) => unreachable!(),
+            Self::UnsupportedOperator(_)
+            | Self::FtsMatch(_)
+            | Self::Ident(_)
+            | Self::Parameter(_) => unreachable!(),
             Self::Number(_)
             | Self::Duration(_)
             | Self::String(_)
@@ -339,6 +499,11 @@ impl Lexer<'_> {
 
         let single = |kind| Ok(Token::new(kind, Span::new(start, 1)));
         match ch {
+            ':' if self.peek_next() == Some(':') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::DoubleColon, Span::new(start, 2)))
+            }
             ':' => {
                 self.bump();
                 single(TokenKind::Colon)
@@ -382,10 +547,7 @@ impl Lexer<'_> {
             '-' if self.peek_next() == Some('>') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("->"),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::ForwardArrow, Span::new(start, 2)))
             }
             '-' => {
                 self.bump();
@@ -394,10 +556,12 @@ impl Lexer<'_> {
             '*' if self.peek_next() == Some('*') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("**"),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::Power, Span::new(start, 2)))
+            }
+            '*' if self.peek_next() == Some('=') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::AllEqual, Span::new(start, 2)))
             }
             '*' => {
                 self.bump();
@@ -407,13 +571,16 @@ impl Lexer<'_> {
                 self.bump();
                 single(TokenKind::Slash)
             }
+            '.' if self.starts_with("..=") => {
+                self.bump();
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::RangeInclusive, Span::new(start, 3)))
+            }
             '.' if self.peek_next() == Some('.') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator(".."),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::Range, Span::new(start, 2)))
             }
             '.' => {
                 self.bump();
@@ -422,10 +589,7 @@ impl Lexer<'_> {
             '=' if self.peek_next() == Some('=') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("=="),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::ExactEqual, Span::new(start, 2)))
             }
             '=' => {
                 self.bump();
@@ -438,15 +602,31 @@ impl Lexer<'_> {
             }
             '!' => {
                 self.bump();
+                single(TokenKind::Not)
+            }
+            '<' if self.starts_with("<->") => {
+                self.bump();
+                self.bump();
+                self.bump();
                 Ok(Token::new(
-                    TokenKind::UnsupportedOperator("!"),
-                    Span::new(start, 1),
+                    TokenKind::BidirectionalArrow,
+                    Span::new(start, 3),
                 ))
+            }
+            '<' if self.peek_next() == Some('-') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::ReverseArrow, Span::new(start, 2)))
             }
             '<' if self.peek_next() == Some('=') => {
                 self.bump();
                 self.bump();
                 Ok(Token::new(TokenKind::LessEqual, Span::new(start, 2)))
+            }
+            '<' if self.peek_next() == Some('|') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::KnnStart, Span::new(start, 2)))
             }
             '<' => {
                 self.bump();
@@ -461,30 +641,74 @@ impl Lexer<'_> {
                 self.bump();
                 single(TokenKind::Greater)
             }
+            '|' if self.peek_next() == Some('>') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::KnnEnd, Span::new(start, 2)))
+            }
+            '@' => self.lex_fts_match(start),
             '%' => {
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("%"),
-                    Span::new(start, 1),
-                ))
+                single(TokenKind::Percent)
+            }
+            '?' if self.peek_next() == Some('=') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::AnyEqual, Span::new(start, 2)))
+            }
+            '?' if self.peek_next() == Some('?') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::NullCoalesce, Span::new(start, 2)))
+            }
+            '?' if self.peek_next() == Some(':') => {
+                self.bump();
+                self.bump();
+                Ok(Token::new(TokenKind::TruthyCoalesce, Span::new(start, 2)))
             }
             '&' if self.peek_next() == Some('&') => {
                 self.bump();
                 self.bump();
-                Ok(Token::new(
-                    TokenKind::UnsupportedOperator("&&"),
-                    Span::new(start, 2),
-                ))
+                Ok(Token::new(TokenKind::And, Span::new(start, 2)))
             }
             '|' if self.peek_next() == Some('|') => {
                 self.bump();
                 self.bump();
+                Ok(Token::new(TokenKind::Or, Span::new(start, 2)))
+            }
+            '|' => {
+                self.bump();
+                single(TokenKind::Pipe)
+            }
+            '$' if self.peek_next().is_some_and(is_identifier_start) => self.lex_parameter(start),
+            '$' => {
+                self.bump();
+                single(TokenKind::Dollar)
+            }
+            '×' => {
+                self.bump();
                 Ok(Token::new(
-                    TokenKind::UnsupportedOperator("||"),
-                    Span::new(start, 2),
+                    TokenKind::Star,
+                    Span::new(start, '×'.len_utf8()),
                 ))
             }
-            '$' => self.lex_parameter(start),
+            '÷' => {
+                self.bump();
+                Ok(Token::new(
+                    TokenKind::Slash,
+                    Span::new(start, '÷'.len_utf8()),
+                ))
+            }
+            '∋' => self.lex_unicode_operator(start, TokenKind::Contains),
+            '∌' => self.lex_unicode_operator(start, TokenKind::ContainsNot),
+            '∈' => self.lex_unicode_operator(start, TokenKind::Inside),
+            '∉' => self.lex_unicode_operator(start, TokenKind::NotInside),
+            '⊇' => self.lex_unicode_operator(start, TokenKind::ContainsAll),
+            '⊃' => self.lex_unicode_operator(start, TokenKind::ContainsAny),
+            '⊅' => self.lex_unicode_operator(start, TokenKind::ContainsNone),
+            '⊆' => self.lex_unicode_operator(start, TokenKind::AllInside),
+            '⊂' => self.lex_unicode_operator(start, TokenKind::AnyInside),
+            '⊄' => self.lex_unicode_operator(start, TokenKind::NoneInside),
             '\'' | '"' => self.lex_string(start, ch),
             '`' => self.lex_quoted_identifier(start),
             value if value.is_ascii_digit() => self.lex_number(start),
@@ -525,6 +749,11 @@ impl Lexer<'_> {
             }
             return Ok(());
         }
+    }
+
+    fn lex_unicode_operator(&mut self, start: usize, kind: TokenKind) -> Result<Token, ParseError> {
+        let width = self.bump().expect("operator is present").len_utf8();
+        Ok(Token::new(kind, Span::new(start, width)))
     }
 
     fn lex_identifier(&mut self, start: usize) -> Result<Token, ParseError> {
@@ -569,6 +798,50 @@ impl Lexer<'_> {
         ))
     }
 
+    fn lex_fts_match(&mut self, start: usize) -> Result<Token, ParseError> {
+        self.bump();
+        if self.peek().is_none() {
+            return Err(ParseError::new(
+                ParseErrorKind::UnexpectedCharacter { ch: '@' },
+                Span::new(start, 1),
+            ));
+        }
+        if self.peek() == Some('@') {
+            self.bump();
+            return Ok(Token::new(TokenKind::FtsMatch(None), Span::new(start, 2)));
+        }
+
+        let digits_start = self.position;
+        while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            self.bump();
+        }
+        if self.position == digits_start || self.peek() != Some('@') {
+            while self
+                .peek()
+                .is_some_and(|ch| !ch.is_whitespace() && !matches!(ch, ';' | ',' | ')' | ']'))
+            {
+                self.bump();
+            }
+            return Err(ParseError::unsupported(
+                "only @@ and @<digits>@ FTS match operators are supported",
+                Span::new(start, self.position - start),
+            ));
+        }
+        let reference = self.source[digits_start..self.position]
+            .parse::<u32>()
+            .map_err(|_| {
+                ParseError::unsupported(
+                    "FTS match references must fit an unsigned 32-bit integer",
+                    Span::new(start, self.position - start + 1),
+                )
+            })?;
+        self.bump();
+        Ok(Token::new(
+            TokenKind::FtsMatch(Some(reference)),
+            Span::new(start, self.position - start),
+        ))
+    }
+
     fn lex_number(&mut self, start: usize) -> Result<Token, ParseError> {
         while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
             self.bump();
@@ -600,14 +873,30 @@ impl Lexer<'_> {
         }
         if self.peek().is_some_and(is_identifier_start) {
             let suffix_start = self.position;
-            while self.peek().is_some_and(is_identifier_continue) {
+            while self.peek().is_some_and(char::is_alphabetic) {
                 self.bump();
             }
             let suffix = &self.source[suffix_start..self.position];
-            if matches!(
-                suffix,
-                "ns" | "us" | "ms" | "s" | "m" | "h" | "d" | "w" | "y"
-            ) {
+            if is_duration_suffix(suffix) {
+                while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                    while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                        self.bump();
+                    }
+                    let suffix_start = self.position;
+                    while self.peek().is_some_and(char::is_alphabetic) {
+                        self.bump();
+                    }
+                    let suffix = &self.source[suffix_start..self.position];
+                    if !is_duration_suffix(suffix) {
+                        return Err(ParseError::new(
+                            ParseErrorKind::InvalidNumber {
+                                literal: self.source[start..self.position].to_string(),
+                                reason: "duration component has an unknown unit",
+                            },
+                            Span::new(start, self.position - start),
+                        ));
+                    }
+                }
                 return Ok(Token::new(
                     TokenKind::Duration(self.source[start..self.position].to_string()),
                     Span::new(start, self.position - start),
@@ -753,6 +1042,13 @@ impl Lexer<'_> {
     }
 }
 
+fn is_duration_suffix(value: &str) -> bool {
+    matches!(
+        value,
+        "ns" | "us" | "µs" | "ms" | "s" | "m" | "h" | "d" | "w" | "y"
+    )
+}
+
 fn is_identifier_start(ch: char) -> bool {
     ch == '_' || ch.is_alphabetic()
 }
@@ -769,27 +1065,53 @@ fn classify_identifier(value: &str) -> TokenKind {
     }
     keyword! {
         "create" => Create, "select" => Select, "update" => Update, "delete" => Delete,
-        "define" => Define, "table" => Table, "field" => Field, "index" => Index,
+        "define" => Define, "alter" => Alter, "table" => Table, "field" => Field, "index" => Index,
         "begin" => Begin, "commit" => Commit, "cancel" => Cancel, "only" => Only,
         "content" => Content, "set" => Set, "return" => Return, "after" => After,
         "none" => None, "before" => Before, "from" => From, "where" => Where,
         "order" => Order, "by" => By, "limit" => Limit, "start" => Start,
-        "as" => As, "asc" => Asc, "desc" => Desc, "on" => On, "type" => Type,
+        "as" => As, "asc" => Asc, "desc" => Desc, "all" => All,
+        "collate" => Collate, "numeric" => Numeric, "rand" => Rand, "at" => At,
+        "on" => On, "type" => Type,
         "fields" => Fields, "unique" => Unique, "schemaless" => Schemaless,
-        "schemafull" => Schemafull, "null" => Null, "true" => True, "false" => False,
-        "not" => Not, "and" => And, "or" => Or, "bool" => BoolType, "int" => IntType,
+        "schemafull" => Schemafull, "normal" => Normal, "relation" => Relation,
+        "in" => In, "out" => Out, "to" => To, "enforced" => Enforced,
+        "null" => Null, "true" => True, "false" => False,
+        "not" => Not, "and" => And, "or" => Or, "is" => Is,
+        "contains" => Contains, "containsnot" => ContainsNot,
+        "containsall" => ContainsAll, "containsany" => ContainsAny,
+        "containsnone" => ContainsNone, "inside" => Inside,
+        "notinside" => NotInside, "allinside" => AllInside,
+        "anyinside" => AnyInside, "noneinside" => NoneInside,
+        "bool" => BoolType, "int" => IntType,
         "float" => FloatType, "number" => NumberType, "string" => StringType,
+        "decimal" => DecimalType, "bytes" => BytesType, "datetime" => DatetimeType,
+        "duration" => DurationType, "uuid" => UuidType, "regex" => RegexType,
+        "file" => FileType, "range" => RangeType,
         "object" => ObjectType, "array" => ArrayType, "record" => RecordType,
         "option" => OptionType, "transaction" => Transaction, "insert" => Insert,
-        "upsert" => Upsert, "relate" => Relate, "let" => Let, "remove" => Remove,
+        "upsert" => Upsert, "ignore" => Ignore, "into" => Into, "values" => Values,
+        "duplicate" => Duplicate, "key" => Key,
+        "relate" => Relate, "let" => Let, "remove" => Remove,
+        "rebuild" => Rebuild,
         "info" => Info, "use" => Use, "live" => Live, "show" => Show, "sleep" => Sleep,
-        "throw" => Throw, "for" => For, "if" => If, "timeout" => Timeout,
+        "throw" => Throw, "for" => For, "if" => If, "else" => Else,
+        "break" => Break, "continue" => Continue, "param" => Param, "function" => Function,
+        "exists" => Exists, "overwrite" => Overwrite, "drop" => Drop,
+        "comment" => Comment, "compact" => Compact, "always" => Always,
+        "reference" => Reference, "timeout" => Timeout, "version" => Version,
         "fetch" => Fetch, "group" => Group, "split" => Split, "omit" => Omit,
-        "explain" => Explain, "with" => With, "value" => Value, "merge" => Merge,
+        "explain" => Explain, "analyze" => Analyze, "full" => Full,
+        "format" => Format, "json" => Json,
+        "with" => With, "using" => Using, "value" => Value,
+        "diff" => Diff,
+        "merge" => Merge,
         "patch" => Patch, "replace" => Replace, "unset" => Unset,
         "permissions" => Permissions, "assert" => Assert, "default" => Default,
         "readonly" => Readonly, "changefeed" => Changefeed, "view" => View,
         "fulltext" => Fulltext, "search" => Search, "analyzer" => Analyzer,
+        "tokenizers" => Tokenizers, "highlights" => Highlights,
+        "functions" => Functions, "filters" => Filters,
         "parallel" => Parallel,
     }
     TokenKind::Ident(value.to_string())

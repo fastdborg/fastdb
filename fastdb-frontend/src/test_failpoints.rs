@@ -15,10 +15,52 @@ pub enum Failpoint {
     AfterBootstrap,
     /// After the no-op migration row update, before commit.
     AfterMigration,
+    /// After format-2 table metadata columns are added.
+    AfterFormat2TableColumns,
+    /// After format-2 index metadata columns are added.
+    AfterFormat2IndexColumns,
+    /// After the new format-2 catalogs are created.
+    AfterFormat2Catalogs,
+    /// After migrated format-2 ownership validates, before header publication.
+    AfterFormat2Validation,
+    /// After the format-3 document encoding column is added.
+    AfterFormat3Metadata,
+    /// After format-3 provider auxiliary-version columns are added.
+    AfterFormat3ProviderColumns,
+    /// After the sealed format-3 catalogs are created.
+    AfterFormat3Catalogs,
+    /// After complete format-3 ownership validates, before header publication.
+    AfterFormat3Validation,
     /// After the logical-table catalog row is inserted.
     AfterCatalogRow,
     /// After the hidden physical table is created.
     AfterPhysicalDdl,
+    /// After graph hidden-column rows are persisted.
+    AfterGraphHiddenCatalog,
+    /// After the forward graph adjacency index is persisted and created.
+    AfterGraphForwardIndex,
+    /// After the reverse graph adjacency index is persisted and created.
+    AfterGraphReverseIndex,
+    /// After an edge document and all hidden endpoints are inserted.
+    AfterGraphEdgeInsert,
+    /// After a Surreal analyzer and FTS capability are cataloged.
+    AfterFtsAnalyzerCatalog,
+    /// After FTS hidden-column ownership rows are cataloged.
+    AfterFtsHiddenCatalog,
+    /// After one FTS hidden physical TEXT column is added.
+    AfterFtsPhysicalColumn,
+    /// After existing documents are backfilled into FTS hidden columns.
+    AfterFtsBackfill,
+    /// After the custom FTS provider index is created.
+    AfterFtsProviderIndex,
+    /// After vector hidden-column ownership is cataloged.
+    AfterVectorHiddenCatalog,
+    /// After the native vector BLOB column is added.
+    AfterVectorPhysicalColumn,
+    /// After existing documents are backfilled into native vector storage.
+    AfterVectorBackfill,
+    /// After a backup temporary file is durable, before it is validated or published.
+    AfterBackupCopy,
     /// After existing rows pass a new field definition.
     AfterFieldValidation,
     /// After a field catalog row is written.
@@ -29,6 +71,14 @@ pub enum Failpoint {
     AfterIndexPhysicalDdl,
     /// After an index catalog row is written.
     AfterIndexCatalogRow,
+    /// After the physical B-tree is dropped, before its catalog row is removed.
+    AfterIndexRemovePhysical,
+    /// After the B-tree catalog row is removed, before commit.
+    AfterIndexRemoveCatalog,
+    /// After the engine rebuilds a B-tree, before commit.
+    AfterIndexRebuild,
+    /// After a test provider updates `doc`, before its derived column update.
+    AfterTestProviderDocument,
     /// After the record INSERT is prepared, before it is executed.
     AfterRecordPrepare,
     /// After the record is inserted, before COMMIT.
@@ -41,6 +91,8 @@ pub enum Failpoint {
     BeforeDeleteMutations,
     /// After one physical DELETE mutation, before statement completion.
     AfterDeleteMutation,
+    /// After the source record mutation, before its first synchronous event action.
+    BeforeEventActions,
     /// After the body succeeds and the (optional) real COMMIT would run.
     /// Simulates a COMMIT-time failure so the commit-failure rollback path is
     /// exercised deterministically. A separate integration test wraps Turso's
@@ -49,27 +101,58 @@ pub enum Failpoint {
     /// Before transaction cleanup issues `ROLLBACK`. Used to prove that the
     /// original and cleanup failures are reported together.
     RollbackFailure,
+    /// After the sealed view catalog row is persisted, before backfill.
+    AfterViewCatalog,
+    /// After old materialized rows are removed, before replacement rows publish.
+    DuringViewRefresh,
 }
 
 #[derive(Default)]
 pub struct Failpoints {
     after_bootstrap: AtomicBool,
     after_migration: AtomicBool,
+    after_format2_table_columns: AtomicBool,
+    after_format2_index_columns: AtomicBool,
+    after_format2_catalogs: AtomicBool,
+    after_format2_validation: AtomicBool,
+    after_format3_metadata: AtomicBool,
+    after_format3_provider_columns: AtomicBool,
+    after_format3_catalogs: AtomicBool,
+    after_format3_validation: AtomicBool,
     after_catalog_row: AtomicBool,
     after_physical_ddl: AtomicBool,
+    after_graph_hidden_catalog: AtomicBool,
+    after_graph_forward_index: AtomicBool,
+    after_graph_reverse_index: AtomicBool,
+    after_graph_edge_insert: AtomicBool,
+    after_fts_analyzer_catalog: AtomicBool,
+    after_fts_hidden_catalog: AtomicBool,
+    after_fts_physical_column: AtomicBool,
+    after_fts_backfill: AtomicBool,
+    after_fts_provider_index: AtomicBool,
+    after_vector_hidden_catalog: AtomicBool,
+    after_vector_physical_column: AtomicBool,
+    after_vector_backfill: AtomicBool,
     after_field_validation: AtomicBool,
     after_field_catalog_row: AtomicBool,
     after_index_validation: AtomicBool,
     after_index_physical_ddl: AtomicBool,
     after_index_catalog_row: AtomicBool,
+    after_index_remove_physical: AtomicBool,
+    after_index_remove_catalog: AtomicBool,
+    after_index_rebuild: AtomicBool,
+    after_test_provider_document: AtomicBool,
     after_record_prepare: AtomicBool,
     after_record_insert: AtomicBool,
     before_update_mutations: AtomicBool,
     after_update_mutation: AtomicBool,
     before_delete_mutations: AtomicBool,
     after_delete_mutation: AtomicBool,
+    before_event_actions: AtomicBool,
     commit_failure: AtomicBool,
     rollback_failure: AtomicBool,
+    after_view_catalog: AtomicBool,
+    during_view_refresh: AtomicBool,
 }
 
 impl Failpoints {
@@ -79,8 +162,57 @@ impl Failpoints {
         let armed = match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.load(Ordering::SeqCst),
             Failpoint::AfterMigration => self.after_migration.load(Ordering::SeqCst),
+            Failpoint::AfterFormat2TableColumns => {
+                self.after_format2_table_columns.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2IndexColumns => {
+                self.after_format2_index_columns.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2Catalogs => self.after_format2_catalogs.load(Ordering::SeqCst),
+            Failpoint::AfterFormat2Validation => {
+                self.after_format2_validation.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Metadata => self.after_format3_metadata.load(Ordering::SeqCst),
+            Failpoint::AfterFormat3ProviderColumns => {
+                self.after_format3_provider_columns.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Catalogs => self.after_format3_catalogs.load(Ordering::SeqCst),
+            Failpoint::AfterFormat3Validation => {
+                self.after_format3_validation.load(Ordering::SeqCst)
+            }
             Failpoint::AfterCatalogRow => self.after_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.load(Ordering::SeqCst),
+            Failpoint::AfterGraphHiddenCatalog => {
+                self.after_graph_hidden_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphForwardIndex => {
+                self.after_graph_forward_index.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphReverseIndex => {
+                self.after_graph_reverse_index.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphEdgeInsert => self.after_graph_edge_insert.load(Ordering::SeqCst),
+            Failpoint::AfterFtsAnalyzerCatalog => {
+                self.after_fts_analyzer_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsHiddenCatalog => {
+                self.after_fts_hidden_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsPhysicalColumn => {
+                self.after_fts_physical_column.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsBackfill => self.after_fts_backfill.load(Ordering::SeqCst),
+            Failpoint::AfterFtsProviderIndex => {
+                self.after_fts_provider_index.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorHiddenCatalog => {
+                self.after_vector_hidden_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorPhysicalColumn => {
+                self.after_vector_physical_column.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorBackfill => self.after_vector_backfill.load(Ordering::SeqCst),
+            Failpoint::AfterBackupCopy => false,
             Failpoint::AfterFieldValidation => self.after_field_validation.load(Ordering::SeqCst),
             Failpoint::AfterFieldCatalogRow => self.after_field_catalog_row.load(Ordering::SeqCst),
             Failpoint::AfterIndexValidation => self.after_index_validation.load(Ordering::SeqCst),
@@ -88,14 +220,27 @@ impl Failpoints {
                 self.after_index_physical_ddl.load(Ordering::SeqCst)
             }
             Failpoint::AfterIndexCatalogRow => self.after_index_catalog_row.load(Ordering::SeqCst),
+            Failpoint::AfterIndexRemovePhysical => {
+                self.after_index_remove_physical.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexRemoveCatalog => {
+                self.after_index_remove_catalog.load(Ordering::SeqCst)
+            }
+            Failpoint::AfterIndexRebuild => self.after_index_rebuild.load(Ordering::SeqCst),
+            Failpoint::AfterTestProviderDocument => {
+                self.after_test_provider_document.load(Ordering::SeqCst)
+            }
             Failpoint::AfterRecordPrepare => self.after_record_prepare.load(Ordering::SeqCst),
             Failpoint::AfterRecordInsert => self.after_record_insert.load(Ordering::SeqCst),
             Failpoint::BeforeUpdateMutations => self.before_update_mutations.load(Ordering::SeqCst),
             Failpoint::AfterUpdateMutation => self.after_update_mutation.load(Ordering::SeqCst),
             Failpoint::BeforeDeleteMutations => self.before_delete_mutations.load(Ordering::SeqCst),
             Failpoint::AfterDeleteMutation => self.after_delete_mutation.load(Ordering::SeqCst),
+            Failpoint::BeforeEventActions => self.before_event_actions.load(Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.load(Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.load(Ordering::SeqCst),
+            Failpoint::AfterViewCatalog => self.after_view_catalog.load(Ordering::SeqCst),
+            Failpoint::DuringViewRefresh => self.during_view_refresh.load(Ordering::SeqCst),
         };
         if armed {
             return Err(FastDbError::Transaction(format!(
@@ -110,8 +255,67 @@ impl Failpoints {
         match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.store(true, Ordering::SeqCst),
             Failpoint::AfterMigration => self.after_migration.store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat2TableColumns => self
+                .after_format2_table_columns
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat2IndexColumns => self
+                .after_format2_index_columns
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat2Catalogs => {
+                self.after_format2_catalogs.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2Validation => {
+                self.after_format2_validation.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Metadata => {
+                self.after_format3_metadata.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3ProviderColumns => self
+                .after_format3_provider_columns
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFormat3Catalogs => {
+                self.after_format3_catalogs.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Validation => {
+                self.after_format3_validation.store(true, Ordering::SeqCst)
+            }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(true, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(true, Ordering::SeqCst),
+            Failpoint::AfterGraphHiddenCatalog => self
+                .after_graph_hidden_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterGraphForwardIndex => {
+                self.after_graph_forward_index.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphReverseIndex => {
+                self.after_graph_reverse_index.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterGraphEdgeInsert => {
+                self.after_graph_edge_insert.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsAnalyzerCatalog => self
+                .after_fts_analyzer_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterFtsHiddenCatalog => {
+                self.after_fts_hidden_catalog.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsPhysicalColumn => {
+                self.after_fts_physical_column.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsBackfill => self.after_fts_backfill.store(true, Ordering::SeqCst),
+            Failpoint::AfterFtsProviderIndex => {
+                self.after_fts_provider_index.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorHiddenCatalog => self
+                .after_vector_hidden_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterVectorPhysicalColumn => self
+                .after_vector_physical_column
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterVectorBackfill => {
+                self.after_vector_backfill.store(true, Ordering::SeqCst)
+            }
+            Failpoint::AfterBackupCopy => {}
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(true, Ordering::SeqCst)
             }
@@ -127,6 +331,16 @@ impl Failpoints {
             Failpoint::AfterIndexCatalogRow => {
                 self.after_index_catalog_row.store(true, Ordering::SeqCst)
             }
+            Failpoint::AfterIndexRemovePhysical => self
+                .after_index_remove_physical
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterIndexRemoveCatalog => self
+                .after_index_remove_catalog
+                .store(true, Ordering::SeqCst),
+            Failpoint::AfterIndexRebuild => self.after_index_rebuild.store(true, Ordering::SeqCst),
+            Failpoint::AfterTestProviderDocument => self
+                .after_test_provider_document
+                .store(true, Ordering::SeqCst),
             Failpoint::AfterRecordPrepare => {
                 self.after_record_prepare.store(true, Ordering::SeqCst)
             }
@@ -143,8 +357,13 @@ impl Failpoints {
             Failpoint::AfterDeleteMutation => {
                 self.after_delete_mutation.store(true, Ordering::SeqCst)
             }
+            Failpoint::BeforeEventActions => {
+                self.before_event_actions.store(true, Ordering::SeqCst)
+            }
             Failpoint::CommitFailure => self.commit_failure.store(true, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(true, Ordering::SeqCst),
+            Failpoint::AfterViewCatalog => self.after_view_catalog.store(true, Ordering::SeqCst),
+            Failpoint::DuringViewRefresh => self.during_view_refresh.store(true, Ordering::SeqCst),
         }
     }
 
@@ -153,8 +372,67 @@ impl Failpoints {
         match fp {
             Failpoint::AfterBootstrap => self.after_bootstrap.store(false, Ordering::SeqCst),
             Failpoint::AfterMigration => self.after_migration.store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat2TableColumns => self
+                .after_format2_table_columns
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat2IndexColumns => self
+                .after_format2_index_columns
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat2Catalogs => {
+                self.after_format2_catalogs.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat2Validation => {
+                self.after_format2_validation.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Metadata => {
+                self.after_format3_metadata.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3ProviderColumns => self
+                .after_format3_provider_columns
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFormat3Catalogs => {
+                self.after_format3_catalogs.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFormat3Validation => {
+                self.after_format3_validation.store(false, Ordering::SeqCst)
+            }
             Failpoint::AfterCatalogRow => self.after_catalog_row.store(false, Ordering::SeqCst),
             Failpoint::AfterPhysicalDdl => self.after_physical_ddl.store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphHiddenCatalog => self
+                .after_graph_hidden_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphForwardIndex => self
+                .after_graph_forward_index
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphReverseIndex => self
+                .after_graph_reverse_index
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterGraphEdgeInsert => {
+                self.after_graph_edge_insert.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsAnalyzerCatalog => self
+                .after_fts_analyzer_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFtsHiddenCatalog => {
+                self.after_fts_hidden_catalog.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterFtsPhysicalColumn => self
+                .after_fts_physical_column
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterFtsBackfill => self.after_fts_backfill.store(false, Ordering::SeqCst),
+            Failpoint::AfterFtsProviderIndex => {
+                self.after_fts_provider_index.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterVectorHiddenCatalog => self
+                .after_vector_hidden_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterVectorPhysicalColumn => self
+                .after_vector_physical_column
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterVectorBackfill => {
+                self.after_vector_backfill.store(false, Ordering::SeqCst)
+            }
+            Failpoint::AfterBackupCopy => {}
             Failpoint::AfterFieldValidation => {
                 self.after_field_validation.store(false, Ordering::SeqCst)
             }
@@ -170,6 +448,16 @@ impl Failpoints {
             Failpoint::AfterIndexCatalogRow => {
                 self.after_index_catalog_row.store(false, Ordering::SeqCst)
             }
+            Failpoint::AfterIndexRemovePhysical => self
+                .after_index_remove_physical
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterIndexRemoveCatalog => self
+                .after_index_remove_catalog
+                .store(false, Ordering::SeqCst),
+            Failpoint::AfterIndexRebuild => self.after_index_rebuild.store(false, Ordering::SeqCst),
+            Failpoint::AfterTestProviderDocument => self
+                .after_test_provider_document
+                .store(false, Ordering::SeqCst),
             Failpoint::AfterRecordPrepare => {
                 self.after_record_prepare.store(false, Ordering::SeqCst)
             }
@@ -186,8 +474,13 @@ impl Failpoints {
             Failpoint::AfterDeleteMutation => {
                 self.after_delete_mutation.store(false, Ordering::SeqCst)
             }
+            Failpoint::BeforeEventActions => {
+                self.before_event_actions.store(false, Ordering::SeqCst)
+            }
             Failpoint::CommitFailure => self.commit_failure.store(false, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(false, Ordering::SeqCst),
+            Failpoint::AfterViewCatalog => self.after_view_catalog.store(false, Ordering::SeqCst),
+            Failpoint::DuringViewRefresh => self.during_view_refresh.store(false, Ordering::SeqCst),
         }
     }
 
@@ -196,21 +489,48 @@ impl Failpoints {
         for fp in [
             Failpoint::AfterBootstrap,
             Failpoint::AfterMigration,
+            Failpoint::AfterFormat2TableColumns,
+            Failpoint::AfterFormat2IndexColumns,
+            Failpoint::AfterFormat2Catalogs,
+            Failpoint::AfterFormat2Validation,
+            Failpoint::AfterFormat3Metadata,
+            Failpoint::AfterFormat3ProviderColumns,
+            Failpoint::AfterFormat3Catalogs,
+            Failpoint::AfterFormat3Validation,
             Failpoint::AfterCatalogRow,
             Failpoint::AfterPhysicalDdl,
+            Failpoint::AfterGraphHiddenCatalog,
+            Failpoint::AfterGraphForwardIndex,
+            Failpoint::AfterGraphReverseIndex,
+            Failpoint::AfterGraphEdgeInsert,
+            Failpoint::AfterFtsAnalyzerCatalog,
+            Failpoint::AfterFtsHiddenCatalog,
+            Failpoint::AfterFtsPhysicalColumn,
+            Failpoint::AfterFtsBackfill,
+            Failpoint::AfterFtsProviderIndex,
+            Failpoint::AfterVectorHiddenCatalog,
+            Failpoint::AfterVectorPhysicalColumn,
+            Failpoint::AfterVectorBackfill,
             Failpoint::AfterFieldValidation,
             Failpoint::AfterFieldCatalogRow,
             Failpoint::AfterIndexValidation,
             Failpoint::AfterIndexPhysicalDdl,
             Failpoint::AfterIndexCatalogRow,
+            Failpoint::AfterIndexRemovePhysical,
+            Failpoint::AfterIndexRemoveCatalog,
+            Failpoint::AfterIndexRebuild,
+            Failpoint::AfterTestProviderDocument,
             Failpoint::AfterRecordPrepare,
             Failpoint::AfterRecordInsert,
             Failpoint::BeforeUpdateMutations,
             Failpoint::AfterUpdateMutation,
             Failpoint::BeforeDeleteMutations,
             Failpoint::AfterDeleteMutation,
+            Failpoint::BeforeEventActions,
             Failpoint::CommitFailure,
             Failpoint::RollbackFailure,
+            Failpoint::AfterViewCatalog,
+            Failpoint::DuringViewRefresh,
         ] {
             self.disarm(fp);
         }

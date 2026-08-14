@@ -4,7 +4,7 @@
 mod common;
 
 use tempfile::tempdir;
-use turso_fastdb::{catalog::CatalogState, Database, ErrorCategory, Failpoint};
+use turso_fastdb::{catalog::CatalogState, Database, ErrorCategory};
 
 #[test]
 fn p2_cat_001_empty_open_is_read_only_and_bootstrap_shape_is_exact() {
@@ -24,17 +24,22 @@ fn p2_cat_001_empty_open_is_read_only_and_bootstrap_shape_is_exact() {
             .unwrap();
         let metadata = common::native_rows(
             conn.native(),
-            "SELECT singleton,format_version,dialect_version,database_id,creation_version,last_migration FROM __fastdb_meta",
+            "SELECT singleton,format_version,dialect_version,database_id,creation_version,last_migration,document_encoding_version FROM __fastdb_meta",
         );
         assert_eq!(metadata.len(), 1);
-        assert_eq!(&metadata[0][..3], ["1", "1", "1"]);
+        assert_eq!(&metadata[0][..3], ["1", "3", "1"]);
         assert_eq!(metadata[0][3].len(), 32);
-        assert_eq!(metadata[0][5], "1");
+        assert_eq!(metadata[0][5], "3");
+        assert_eq!(metadata[0][6], "2");
         let catalogs = common::native_rows(
             conn.native(),
             "SELECT name,sql FROM sqlite_schema WHERE type='table' AND name LIKE '__fastdb_%' ORDER BY name",
         );
-        assert_eq!(catalogs.len(), 5, "four catalogs plus one physical table");
+        assert_eq!(
+            catalogs.len(),
+            15,
+            "fourteen catalogs plus one physical table"
+        );
         assert!(catalogs.iter().all(|row| row[1].ends_with(" STRICT")));
     }
     Database::open(path).unwrap();
@@ -88,7 +93,7 @@ fn p2_cat_002_refuses_nonfastdb_phase0_future_and_unknown_migration_on_open() {
 }
 
 #[test]
-fn p2_cat_003_migration_is_atomic_idempotent_and_cache_publishes_after_commit() {
+fn p2_cat_003_format_two_reload_is_idempotent_and_preserves_the_cache() {
     let directory = tempdir().unwrap();
     let file = directory.path().join("migration.fastdb");
     let path = file.to_str().unwrap();
@@ -96,24 +101,13 @@ fn p2_cat_003_migration_is_atomic_idempotent_and_cache_publishes_after_commit() 
     let conn = db.connect().unwrap();
     conn.execute("CREATE person:tracy SET name='Tracy'")
         .unwrap();
-    common::native_exec(conn.native(), "UPDATE __fastdb_meta SET last_migration=0");
     let before = conn.catalog_state().unwrap();
-    conn.arm_failpoint(Failpoint::AfterMigration);
-    assert_eq!(
-        conn.reload_catalog().unwrap_err().category(),
-        ErrorCategory::Transaction
-    );
-    assert_eq!(
-        common::native_rows(conn.native(), "SELECT last_migration FROM __fastdb_meta")[0][0],
-        "0"
-    );
-    assert_eq!(conn.catalog_state().unwrap(), before);
-    conn.disarm_all_failpoints();
     conn.reload_catalog().unwrap();
     assert_eq!(
         common::native_rows(conn.native(), "SELECT last_migration FROM __fastdb_meta")[0][0],
-        "1"
+        "3"
     );
+    assert_eq!(conn.catalog_state().unwrap(), before);
     conn.reload_catalog().unwrap();
     assert_eq!(
         conn.catalog_state()
@@ -122,7 +116,7 @@ fn p2_cat_003_migration_is_atomic_idempotent_and_cache_publishes_after_commit() 
             .unwrap()
             .metadata
             .last_migration,
-        1
+        3
     );
 }
 

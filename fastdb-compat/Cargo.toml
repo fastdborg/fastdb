@@ -1,0 +1,12 @@
+# FastDB compatibility inventory tooling (Phase 12). FastDB-authored.
+# MIT licensed; publish stays disabled until explicit alpha packaging.
+[package]
+name = "turso_fastdb_compat"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml = "=0.8.22"

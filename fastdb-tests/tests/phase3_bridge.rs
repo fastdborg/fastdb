@@ -128,10 +128,10 @@ fn p3_bridge_003_excluded_syntax_stays_spanned_and_unsupported() {
     let connection = database.connect().unwrap();
     for source in [
         "SELECT * FROM ONLY person",
-        "UPDATE ONLY person:a SET name='a'",
-        "DELETE FROM person",
         "SELECT * FROM person WHERE lower(name)='a'",
-        "SELECT * FROM person FETCH friend",
+        "RELATE person:a->likes->person:b OR UPDATE",
+        "LIVE SELECT * FROM person",
+        "CREATE person:a VERSION d'2024-01-01T00:00:00Z'",
     ] {
         let error = connection.execute(source).unwrap_err();
         assert_eq!(

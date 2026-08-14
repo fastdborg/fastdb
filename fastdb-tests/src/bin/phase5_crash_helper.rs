@@ -48,6 +48,42 @@ fn main() {
             connection.close().unwrap();
             return;
         }
+        "migrate-format2" => {
+            // Opening the copied format-1 fixture performs and commits the
+            // format-2 migration. Exit without close to exercise recovery at
+            // the post-publication process boundary.
+        }
+        "graph-write" => {
+            connection
+                .execute(
+                    "DEFINE TABLE links TYPE RELATION FROM person TO post ENFORCED; \
+                     CREATE person:one CONTENT {}; CREATE post:one CONTENT {}; \
+                     RELATE person:one->links->post:one SET weight=1",
+                )
+                .unwrap();
+        }
+        "graph-cascade" => {
+            connection.execute("DELETE person:one").unwrap();
+        }
+        "fts-write" => {
+            connection
+                .execute(
+                    "CREATE doc:one SET text = 'recovered search'; \
+                     DEFINE ANALYZER blankish TOKENIZERS blank; \
+                     DEFINE INDEX text_idx ON doc FIELDS text FULLTEXT ANALYZER blankish; \
+                     CREATE doc:two SET text = 'recovered second'",
+                )
+                .unwrap();
+        }
+        "vector-write" => {
+            connection
+                .execute(
+                    "CREATE point:one SET embedding = [1,0]; \
+                     DEFINE FIELD embedding ON point TYPE array<float, 2>; \
+                     CREATE point:two SET embedding = [0,1]",
+                )
+                .unwrap();
+        }
         _ => panic!("unknown crash point {point}"),
     }
     // Test-only abrupt process boundary: bypass Rust drops and engine close.

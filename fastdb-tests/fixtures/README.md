@@ -10,9 +10,35 @@ SurrealDB source, tests, fixtures, expected output, or fuzz corpus.
   artifact, then changes only `__fastdb_meta.last_migration` from 1 to 0 via
   the pinned Turso CLI. Opening it exercises FastDB's transactional 0-to-1
   migration.
+- `phase6-format2.fastdb` starts from `phase3-format1.fastdb` and was upgraded
+  by the Phase 6 FastDB frontend at commit `998354ed8` plus the uncommitted
+  Phase 6 implementation. It preserves the same independently authored table,
+  index, and record data while recording format/migration version 2 and the
+  three empty provider catalogs.
+- `phase7-format2-graph.fastdb` contains independently authored person nodes,
+  relation records, and both mandatory adjacency indexes in format 2.
+- `phase8-format2-fts.fastdb` contains three independently authored article
+  documents, a blank analyzer, one Surreal-surface full-text index, its hidden
+  TEXT representation, and the pinned provider's physical index state.
+- `phase9-format2-vector.fastdb` contains three independently authored point
+  documents, one fixed two-dimensional vector field, normalized public arrays,
+  and catalog-owned native `vector64` BLOBs.
+- `phase12-format3.fastdb` starts from the independently authored Phase 6
+  fixture, migrates it through the Phase 12 frontend to format 3, and adds one
+  Phase 12 record. It retains the ordinary expression index and contains the
+  exact current metadata/provider columns plus seven empty sealed catalogs.
 
 Generation date: 2026-08-13. Behavioral data and expected assertions were
 written for FastDB and are not adapted from another implementation. SHA-256
 digests are recorded in `SHA256SUMS` and checked by the Phase 5 verification
 and CI provenance step. `P5-FIXTURE-001` checks open/migration/reopen,
 mutation, integrity, and actual expression-index selection.
+`P6-FMT-004` performs the equivalent reopen, mutation, integrity, and plan
+checks against the committed format-2 artifact.
+`P8-FTS-012` reopens the FTS artifact, proves provider selection, mutates it,
+and verifies that provider maintenance remains live.
+`P9-VECTOR-008` reopens the vector artifact, proves exact scan execution,
+mutates it, and verifies that native vector maintenance remains live.
+The fixture provenance step verifies its digest. `P12-FORMAT-004` reopens it
+without migration, mutates it, checks integrity, and proves that its expression
+index remains selected.

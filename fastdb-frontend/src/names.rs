@@ -1,10 +1,12 @@
 //! Opaque physical-name and stable format-1 record-ID codecs.
 
-use crate::decode::RecordIdValue;
+use crate::decode::{decode_value, encode_value, RecordIdValue, Value};
 use crate::error::FastDbError;
+use base64::Engine as _;
 
 pub const TABLE_NAME_PREFIX: &str = "__fastdb_t_";
 pub const INDEX_NAME_PREFIX: &str = "__fastdb_i_";
+pub const HIDDEN_COLUMN_NAME_PREFIX: &str = "__fastdb_h_";
 pub const HEX_LEN: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,6 +52,10 @@ pub fn physical_index_name(id: IndexId) -> String {
     format!("{INDEX_NAME_PREFIX}{}", id.to_hex())
 }
 
+pub fn physical_hidden_column_name(id: CatalogId) -> String {
+    format!("{HIDDEN_COLUMN_NAME_PREFIX}{}", id.to_hex())
+}
+
 pub fn validate_physical_name(name: &str, prefix: &str) -> Result<(), FastDbError> {
     let rest = name
         .strip_prefix(prefix)
@@ -57,12 +63,25 @@ pub fn validate_physical_name(name: &str, prefix: &str) -> Result<(), FastDbErro
     CatalogId::from_hex(rest).map(|_| ())
 }
 
-pub fn encode_rid(value: impl Into<RecordIdValue>) -> String {
-    match value.into() {
+pub fn encode_rid(value: impl Into<RecordIdValue>) -> Result<String, FastDbError> {
+    Ok(match value.into() {
         RecordIdValue::String(value) => format!("v1:s:{}:{value}", value.len()),
         RecordIdValue::Integer(value) => format!("v1:i:{value}"),
         RecordIdValue::Uuid(value) => format!("v1:u:{}", value.hyphenated()),
-    }
+        RecordIdValue::Array(values) => encode_complex_rid(Value::Array(values))?,
+        RecordIdValue::Object(values) => encode_complex_rid(Value::Object(values))?,
+    })
+}
+
+fn encode_complex_rid(value: Value) -> Result<String, FastDbError> {
+    validate_complex_rid_value(&value, 0)?;
+    let json = encode_value(&value)?;
+    let bytes = serde_json::to_vec(&json)
+        .map_err(|_| FastDbError::Schema("complex record ID cannot be encoded".into()))?;
+    Ok(format!(
+        "v1:c:{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    ))
 }
 
 pub fn decode_rid(encoded: &str) -> Result<RecordIdValue, FastDbError> {
@@ -93,7 +112,67 @@ pub fn decode_rid(encoded: &str) -> Result<RecordIdValue, FastDbError> {
         }
         return Ok(RecordIdValue::Uuid(parsed));
     }
+    if let Some(value) = payload.strip_prefix("c:") {
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(value)
+            .map_err(|_| FastDbError::format("complex record ID is not canonical base64url"))?;
+        let json = serde_json::from_slice(&bytes)
+            .map_err(|_| FastDbError::format("complex record ID is not valid JSON"))?;
+        let decoded = decode_value(json)?;
+        validate_complex_rid_value(&decoded, 0)
+            .map_err(|error| FastDbError::format(error.to_string()))?;
+        let component = match decoded {
+            Value::Array(values) => RecordIdValue::Array(values),
+            Value::Object(values) => RecordIdValue::Object(values),
+            _ => {
+                return Err(FastDbError::format(
+                    "complex record ID must be an array or object",
+                ))
+            }
+        };
+        if encode_rid(&component)? != encoded {
+            return Err(FastDbError::format(
+                "complex record ID is not canonically encoded",
+            ));
+        }
+        return Ok(component);
+    }
     Err(FastDbError::format("record ID has an unknown type tag"))
+}
+
+fn validate_complex_rid_value(value: &Value, depth: usize) -> Result<(), FastDbError> {
+    if depth > 64 {
+        return Err(FastDbError::Schema(
+            "complex record ID nesting exceeds 64 levels".into(),
+        ));
+    }
+    match value {
+        Value::None
+        | Value::Null
+        | Value::Bool(_)
+        | Value::Integer(_)
+        | Value::Float(_)
+        | Value::Decimal(_)
+        | Value::Str(_)
+        | Value::Bytes(_)
+        | Value::Duration(_)
+        | Value::Datetime(_)
+        | Value::Uuid(_)
+        | Value::Regex(_) => Ok(()),
+        Value::Array(values) => values
+            .iter()
+            .try_for_each(|value| validate_complex_rid_value(value, depth + 1)),
+        Value::Object(values) => values
+            .values()
+            .try_for_each(|value| validate_complex_rid_value(value, depth + 1)),
+        Value::Set(values) => values
+            .as_slice()
+            .iter()
+            .try_for_each(|value| validate_complex_rid_value(value, depth + 1)),
+        Value::Range(_) | Value::RecordId(_) | Value::Table(_) | Value::File(_) => Err(
+            FastDbError::Schema("complex record ID contains an unsupported value type".into()),
+        ),
+    }
 }
 
 fn decode_string_rid(value: &str) -> Result<String, FastDbError> {
@@ -148,11 +227,11 @@ mod tests {
             ),
         ];
         for value in values {
-            assert_eq!(decode_rid(&encode_rid(&value)).unwrap(), value);
+            assert_eq!(decode_rid(&encode_rid(&value).unwrap()).unwrap(), value);
         }
         assert_ne!(
-            encode_rid(RecordIdValue::String("1".into())),
-            encode_rid(RecordIdValue::Integer(1))
+            encode_rid(RecordIdValue::String("1".into())).unwrap(),
+            encode_rid(RecordIdValue::Integer(1)).unwrap()
         );
     }
 

@@ -11,3 +11,6 @@ publish = false
 miette = { workspace = true, features = ["fancy"] }
 thiserror = { workspace = true }
 uuid = { version = "1.11.0", default-features = false }
+
+[dev-dependencies]
+turso_fastdb_compat = { path = "../fastdb-compat" }

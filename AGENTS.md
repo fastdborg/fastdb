@@ -8,7 +8,17 @@ Before changing code or repository structure:
 
 1. Read this file completely.
 2. Read [`revised_plan.md`](revised_plan.md) for the product and architecture contract.
-3. Read the plan for the active phase. Phase 5 is the completed technical baseline; [`plan-phase5.md`](plan-phase5.md) and [`docs/phase5-report.md`](docs/phase5-report.md) preserve its historical gates and evidence. Author a new authoritative phase plan before broadening the compatibility surface. Earlier phase reports preserve their completed evidence.
+3. Read the plan for the active phase. Phase 11 stopped at its mandatory MVCC
+   audit; [`plan-phase11.md`](plan-phase11.md) and
+   [`docs/phase11-mvcc-audit.md`](docs/phase11-mvcc-audit.md) preserve the stop
+   evidence. Phases 12–15 completed format 3, the locked compatibility
+   inventory, bounded expressions/functions, CRUD/query expansion, and the
+   scripting/schema/view/event surface. [`plan-phase15.md`](plan-phase15.md),
+   [`docs/phase15-report.md`](docs/phase15-report.md), and
+   [`docs/phase15-architecture-stops.md`](docs/phase15-architecture-stops.md)
+   preserve the latest contract, evidence, and explicit stops. Author the
+   authoritative Phase 16 plan before graph-completion work. Earlier plans and
+   reports remain historical evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -33,8 +43,13 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Initial Turso engineering baseline: commit `977383ff40edc44ef410af062ed0d2322252a869`.
 - Behavioral compatibility reference: SurrealDB `v3.1.5`.
 - Durability default: stable Turso WAL with full durability.
-- Delivery surfaces for the MVP: an embedded Rust library and the `fastdb` CLI.
-- Current implementation stage: Core Phase 5 release hardening is technically complete. Compatibility expansion toward the first public alpha is next; verification is local and GitHub Actions is not an alpha release gate.
+- Active delivery surfaces: the embedded Rust library and `fastdb` CLI, later
+  extended by the Phase 19 server and Phase 21 Rust/TypeScript/Go/PHP SDKs.
+- Current implementation stage: Phase 11 stopped because no stable
+  parallel-writer candidate qualified. Phases 12–15 are technically complete
+  locally; Phase 16 planning is next. The implemented on-disk format is
+  version 3; serialized stable WAL remains the only supported concurrency mode
+  through Phase 22.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
 
 Before implementation, audit the then-current Turso `main` as required by the plans. Retain the baseline above unless a newer commit is deliberately audited and the pin, plans, reports, and CI evidence are updated together. Never build CI or releases from a floating branch.
@@ -60,7 +75,10 @@ Apply these invariants across phases:
 - Keep Turso's `SqliteDialect` for persisted internal schema so `sqlite_schema` contains valid SQLite/Turso definitions.
 - Static, reviewed internal DDL is allowed. It must not contain interpolated user data or logical user identifiers.
 - Avoid Turso core changes. If one appears unavoidable, stop at the applicable gate and write a design note. Any later approved change must be isolated, independently tested, and suitable for upstream submission.
-- Use the engine's stable facilities. Experimental MVCC and experimental multiprocess WAL are outside the MVP.
+- Use the engine's stable facilities. Experimental multiprocess WAL is outside
+  the active track. Parallel writers are prohibited until dormant Phase 23
+  qualifies a new exact stable implementation; serialized stable WAL remains
+  the default.
 - Unsupported syntax must fail explicitly. Never accept and ignore a clause.
 
 The MVP parser is independently authored: a hand-written lexer, recursive-descent statement parser, and Pratt expression parser with source spans, nesting/token limits, and structured diagnostics.
@@ -78,6 +96,11 @@ The SQL above is a storage illustration, not a user-input translation template.
 
 - Physical table and index names are deterministic, opaque names derived from immutable catalog IDs. Never interpolate logical user identifiers into physical SQL names.
 - `rid` contains the immutable canonical record identifier. `doc` contains user content only; synthesize the typed `id` field while decoding results.
+- Format 3 retains opaque catalog-managed hidden typed columns for relation
+  endpoints, FTS text, and native vectors, and adds sealed catalogs for later
+  functions, parameters, views, events, permissions, users, and accesses. All
+  derived state remains invisible in public documents and must change
+  atomically with `doc`.
 - Catalogs and format metadata are versioned. Refuse unknown future versions before mutation.
 - First-use bootstrap, implicit schemaless table registration, physical table creation, and the associated record mutation must be atomic.
 - Schema changes use a database-level schema mutex while preserving transaction rollback.
@@ -98,7 +121,13 @@ FastDB compatibility work may use:
 
 It must not copy, translate, adapt, or vendor SurrealDB source code, test files, fixtures, expected-output files, fuzz corpora, or implementation details. Keep behavioral research notes under `docs/compat-research/` and keep implementation tests independently authored.
 
-`COMPAT.md`, once created, is the normative public feature matrix. Every item must be labeled supported, partial, unsupported, or planned. “SurrealQL-compatible subset” does not mean sponsorship, certification, or complete compatibility.
+`compat/surrealdb-v3.1.5.toml` is the locked machine-readable inventory and
+`COMPAT.md` is its normative public view. Every atomic item must be labeled
+supported, partial, unsupported, or planned and both representations must stay
+mechanically synchronized. Partial is temporary during Phases 13–21; Phase 22
+permits only Supported or an approved Unsupported architecture stop.
+“SurrealQL-compatible subset” does not mean sponsorship, certification, or
+complete compatibility.
 
 ## Licensing and Provenance
 
@@ -147,12 +176,49 @@ Keep work within the active phase unless the user explicitly changes scope.
 | 3 | Complete the MVP CRUD, parameters, result, and transaction semantics. |
 | 4 | Deliver the embedded Rust API and CLI. |
 | 5 | Fuzz, crash-test, benchmark, document, and harden the MVP for release. |
+| 6 | Transactionally migrate to format 2 and establish the sealed multimodel provider, AST, explain, and index-maintenance foundation. |
+| 7 | Add typed relation records, fixed-depth traversal, two-way adjacency indexes, and atomic cascade behavior. |
+| 8 | Add a characterized SurrealQL FTS subset plus a labeled FastDB/Turso FTS extension over one provider. |
+| 9 | Add fixed-dimension native vector storage and exact bounded vector search; define the 0.1 alpha-candidate surface. |
+| 10 | Add resource limits, deterministic close, backup/restore/check/rebuild tooling, and operational evidence. |
+| 11 | Preserve the completed audit stop: no candidate qualified and no parallel-writer/API change was made. |
+| 12 | Lock the compatibility inventory, migrate transactionally to format 3, and add richer collision-safe values. |
+| 13 | Complete bounded expressions, operators, built-in functions, and deny-by-default external capabilities. |
+| 14 | Complete CRUD, subqueries, aggregation, grouping, and richer query clauses. |
+| 15 | Add scripting, custom schema behavior, views, functions, parameters, and atomic events. |
+| 16 | Complete graph relations and bounded recursive/filtered traversal. |
+| 17 | Complete analyzers/search and add FastDB-owned non-geospatial specialized indexes including ANN. |
+| 18 | Add embedded authentication, principals, roles, and row/field/function authorization. |
+| 19 | Add the secure single-database HTTP/WebSocket server over the FastDB API. |
+| 20 | Add the multi-database control plane and read-only FastDB ATTACH/DETACH extension. |
+| 21 | Add local/remote Rust, TypeScript, Go, and PHP SDKs through a versioned FastDB C ABI. |
+| 22 | Resolve the locked matrix and pass broad-compatibility hardening without a production-ready claim. |
+| 23 | Dormant Core 1.0 gate: re-audit parallel writers only when a new stable exact candidate exists. |
 
-Phase 2 established stable format version 1, Phase 3 completed the synchronous frontend contract, Phase 4 delivered the worker-backed asynchronous Rust API, transaction guard, and CLI, and Phase 5 completed local hardening. Broader compatibility work toward alpha is the next Core track; the proprietary cloud service remains later and separate.
+Phase 2 established stable format version 1, Phase 3 completed the synchronous
+frontend contract, Phase 4 delivered the worker-backed asynchronous Rust API,
+transaction guard, and CLI, Phase 5 completed local hardening, Phase 6
+established format 2 plus the sealed provider and maintenance foundation, and
+Phase 7 added graph records and bounded traversal, Phase 8 added dual-syntax
+full-text search, Phase 9 added exact native vector scans, and Phase 10 added
+bounded resource controls plus backup, restore, check, rebuild, lifecycle, and
+observability tooling. Phase 11 completed its audit but stopped before
+implementation, Phase 12 locked the inventory, established format 3, and
+added richer collision-safe values, Phase 13 completed bounded expressions
+and context-neutral functions, Phase 14 completed the characterized CRUD/query
+expansion, and Phase 15 completed bounded scripting, custom functions and
+parameters, materialized views, synchronous events, and richer schema
+lifecycle behavior. Phase 9 remains a historical alpha-candidate milestone and
+Phase 11 remains a stopped audit, not a beta. Phases 12–22 form the approved
+pre-1.0 compatibility track; Phase 23 is the dormant Core 1.0 gate. None
+authorizes publishing. The proprietary cloud service remains separately scoped
+and separately authorized.
 
 ## Cloud and Business Context
 
-The planned business is a managed FastDB service at `cloud.fastdb.org`, but cloud implementation is not on the Phase 1 critical path.
+The planned business is a managed FastDB service at `cloud.fastdb.org`, but
+cloud implementation is outside the active Phase 12–22 Core track and requires
+a separately approved plan.
 
 - Local and self-hosted Core use is available under the MIT License.
 - Do not assume a permanent free managed tier; the initial hypothesis is bounded `$5`, `$20`, and `$100` plans, with a capped trial or one-time credit if economical.
@@ -171,7 +237,13 @@ Plan extensions around explicit capabilities and typed physical representations,
 - Ordinary scalar features may remain JSONB-only.
 - Frequently queried typed values may use catalog-managed hidden/generated columns plus ordinary B-tree indexes.
 - Specialized features may use a dedicated provider with typed encoding, lowering hooks, index lifecycle, planner support, and result decoding.
-- Vector exact-distance operations may later use stable Turso vector functions. ANN search must wait for a production-quality stable vector index and should use a native vector representation, not a JSON array.
+- Phase 8 FTS and Phase 9 exact vectors must use sealed cataloged providers and
+  native hidden representations while preserving the public document model.
+- Phase 9 uses stable Turso vector functions for exact scans. Phase 17 may add
+  FastDB-owned HNSW/MTREE providers over catalog-derived state, but must not
+  expose the pinned toy sparse-IVF method, Turso's experimental provider ABI,
+  or an unqualified Turso core change. Public vectors remain arrays; hidden
+  exact storage uses native `vector64`.
 - A focused geospatial subset may later use canonical geometry/WKB plus selected predicates and spatial indexes.
 - Full PostGIS compatibility is a separate major project and must not be implied by Turso's PostgreSQL syntax frontend.
 
@@ -186,6 +258,9 @@ Plan extensions around explicit capabilities and typed physical representations,
 - Run relevant unchanged Turso suites whenever frontend work crosses JSONB, optimizer, transaction, WAL, or I/O behavior.
 - Benchmarks compare equivalent physical schemas, values, durability, and result materialization. Preserve commands, environment, raw measurements, and ratios.
 - Do not claim “production-ready,” complete compatibility, cloud readiness, ACID certification, or absolute performance without published evidence.
+- Keep Phase 11's failed audit as historical evidence. Do not promote
+  experimental MVCC on product documentation alone; dormant Phase 23 must
+  repeat the exact-SHA audit from scratch when a new stable candidate exists.
 
 Use the exact commands required by the active phase plan. Discover package names with `cargo metadata`; at minimum, finish applicable formatting, linting, targeted tests, integration tests, unchanged upstream regression tests, and release-mode benchmarks.
 
@@ -201,6 +276,12 @@ For each task:
 6. Review the diff for generated SQL, provenance, accidental core edits, silent syntax acceptance, and unrelated changes.
 7. Report the outcome, commands run, remaining risks, and any stop condition.
 
-Phase completion requires every checkbox in that phase's Definition of Done, not merely working happy-path code. Phase 5's original release stop is retained as historical evidence in its report and superseded by the MIT/private-cloud decision recorded in `docs/licensing.md` and the current gates in `docs/release-readiness.md`.
+Phase completion requires every checkbox in that phase's Definition of Done,
+not merely working happy-path code. Phase 5's original release stop is retained
+as historical evidence in its report and superseded by the MIT/private-cloud
+decision recorded in `docs/licensing.md` and the current gates in
+`docs/release-readiness.md`. The phrase “production-ready FastDB Core 1.0” is
+reserved until dormant Phase 23 and its subsequent release gate pass; tagging,
+publishing, signing, and uploading remain separately authorized operations.
 
 Update this file only when durable project-wide decisions change. Put detailed implementation recipes in phase plans, observed results in reports, and temporary work status in normal task tracking.

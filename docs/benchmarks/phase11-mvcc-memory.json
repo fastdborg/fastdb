@@ -1,0 +1,48 @@
+{
+  "format": "fastdb-phase11-mvcc-memory-audit-v1",
+  "engine_sha": "977383ff40edc44ef410af062ed0d2322252a869",
+  "date": "2026-08-13",
+  "qualification_result": "rejected",
+  "configuration": {
+    "mode": "mvcc",
+    "workload": "update-churn",
+    "batch_size": 100,
+    "connections": 4,
+    "mvcc_checkpoint_threshold_bytes": 16384,
+    "build": "release",
+    "allocator": "dhat"
+  },
+  "runs": [
+    {
+      "iterations": 50,
+      "baseline_bytes": 6848512,
+      "peak_bytes": 29790208,
+      "final_bytes": 25563136,
+      "net_growth_bytes": 18714624,
+      "heap_current_bytes": 1639408,
+      "dhat_at_end_bytes": 1598744,
+      "heap_peak_bytes": 2469217,
+      "total_allocs": 5401055,
+      "total_bytes_allocated": 972045348,
+      "db_file_bytes": 319488,
+      "log_file_bytes": 16289,
+      "elapsed_ms": 11052
+    },
+    {
+      "iterations": 200,
+      "baseline_bytes": 6967296,
+      "peak_bytes": 31006720,
+      "final_bytes": 26775552,
+      "net_growth_bytes": 19808256,
+      "heap_current_bytes": 1278304,
+      "dhat_at_end_bytes": 1237640,
+      "heap_peak_bytes": 3159704,
+      "total_allocs": 18830351,
+      "total_bytes_allocated": 3465789317,
+      "db_file_bytes": 327680,
+      "log_file_bytes": 0,
+      "elapsed_ms": 39876
+    }
+  ],
+  "interpretation": "Narrow update-churn samples show active GC/checkpointing and no proportional retained-heap growth. They do not prove sustained long-reader, large-startup, provider-index, checkpoint-latency, or correctness gates and do not qualify MVCC for FastDB Core 1.0."
+}
