@@ -1,12 +1,12 @@
 # FastDB Phase 15 — Scripting, schema, views, and events
 
-Status: authoritative implementation plan; implementation in progress
+Status: technically complete locally; see `docs/phase15-report.md`
 
 Starting checkpoint: `a027a777d`
 
 ## 1. Purpose and boundary
 
-Phase 15 implements the 41 currently Unsupported capabilities assigned to
+Phase 15 implements the 40 initially Unsupported capabilities assigned to
 Phase 15 in the locked SurrealDB `v3.1.5` inventory and preserves the two
 already Supported basic table/field capabilities. It adds bounded SurrealQL
 scripting, canonical database parameters and custom functions, richer table
@@ -31,7 +31,7 @@ arbitrary native or unbounded code.
 
 ## 2. Locked capability target
 
-The Phase 15 target is the locked 43-row set:
+The Phase 15 target is the locked 42-row set:
 
 - eight ALTER rows: API, BUCKET, EVENT, FIELD, FUNCTION, PARAM, SEQUENCE, and
   TABLE;
@@ -354,7 +354,7 @@ bounded worker behavior, or the existing Rust/CLI result contract.
 
 ## 16. Definition of done
 
-Phase 15 is complete only when all 43 locked Phase 15 rows are Supported or a
+Phase 15 is complete only when all 42 locked Phase 15 rows are Supported or a
 remaining target has an approved narrow architecture stop; no Phase 15 Partial
 row remains. Every Supported row names passing parser and execution evidence.
 All catalog, storage, crash, resource, API/CLI, compatibility, regression,

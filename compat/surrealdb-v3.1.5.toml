@@ -2,7 +2,7 @@
 schema_version = 1
 reference = "SurrealDB v3.1.5"
 reference_version = "3.1.5"
-active_phase = 15
+active_phase = 16
 granularity_locked = true
 inventory_date = "2026-08-14"
 binary_url = "https://github.com/surrealdb/surrealdb/releases/download/v3.1.5/surreal-v3.1.5.linux-amd64.tgz"

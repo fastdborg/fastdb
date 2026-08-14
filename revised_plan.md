@@ -1234,4 +1234,7 @@ After Phase 22, separately plan and gate:
 - [SurrealDB architecture and storage backends](https://surrealdb.com/docs/architecture)
 - [SurrealDB Cloud pricing](https://surrealdb.com/pricing)
 
+### How We Built a Zero-Disk, S3-Tiered Storage Engine for SQLite
+- [How We Built a Zero-Disk, S3-Tiered Storage Engine for SQLite](https://x.com/NathanFlurry/status/2083202564775117263)
+
 These references inform design and behavioral research. They do not grant permission to copy SurrealDB implementation or tests, and links to moving `main` branches do not replace the recorded engine and behavior pins.

@@ -11,13 +11,14 @@ Before changing code or repository structure:
 3. Read the plan for the active phase. Phase 11 stopped at its mandatory MVCC
    audit; [`plan-phase11.md`](plan-phase11.md) and
    [`docs/phase11-mvcc-audit.md`](docs/phase11-mvcc-audit.md) preserve the stop
-   evidence. Phases 12–14 completed format 3, the locked compatibility
-   inventory, bounded expressions/functions, and the CRUD/query expansion.
-   [`plan-phase14.md`](plan-phase14.md), [`docs/phase14-report.md`](docs/phase14-report.md),
-   and [`docs/phase14-architecture-stops.md`](docs/phase14-architecture-stops.md)
-   preserve the latest contract, evidence, and explicit versioned-history
-   boundary. Author the authoritative Phase 15 plan before scripting/schema/
-   view/event expansion. Earlier plans and reports remain historical evidence.
+   evidence. Phases 12–15 completed format 3, the locked compatibility
+   inventory, bounded expressions/functions, CRUD/query expansion, and the
+   scripting/schema/view/event surface. [`plan-phase15.md`](plan-phase15.md),
+   [`docs/phase15-report.md`](docs/phase15-report.md), and
+   [`docs/phase15-architecture-stops.md`](docs/phase15-architecture-stops.md)
+   preserve the latest contract, evidence, and explicit stops. Author the
+   authoritative Phase 16 plan before graph-completion work. Earlier plans and
+   reports remain historical evidence.
 4. Inspect the actual repository state. The planning workspace may not yet have been converted into the Turso-derived monorepo.
 5. After the Turso import, find and obey any more-specific `AGENTS.md` files below the directory being changed.
 6. Use `cargo metadata` and the checked-out source instead of guessing current package names or APIs.
@@ -45,8 +46,8 @@ FastDB is a clean-room, SurrealQL-compatible document database frontend built on
 - Active delivery surfaces: the embedded Rust library and `fastdb` CLI, later
   extended by the Phase 19 server and Phase 21 Rust/TypeScript/Go/PHP SDKs.
 - Current implementation stage: Phase 11 stopped because no stable
-  parallel-writer candidate qualified. Phases 12–14 are technically complete
-  locally; Phase 15 planning is next. The implemented on-disk format is
+  parallel-writer candidate qualified. Phases 12–15 are technically complete
+  locally; Phase 16 planning is next. The implemented on-disk format is
   version 3; serialized stable WAL remains the only supported concurrency mode
   through Phase 22.
 - Phase 0 format version `0` is disposable and must not be presented as a stable format.
@@ -204,8 +205,10 @@ bounded resource controls plus backup, restore, check, rebuild, lifecycle, and
 observability tooling. Phase 11 completed its audit but stopped before
 implementation, Phase 12 locked the inventory, established format 3, and
 added richer collision-safe values, Phase 13 completed bounded expressions
-and context-neutral functions, and Phase 14 completed the characterized CRUD/
-query expansion. Phase 9 remains a historical alpha-candidate milestone and
+and context-neutral functions, Phase 14 completed the characterized CRUD/query
+expansion, and Phase 15 completed bounded scripting, custom functions and
+parameters, materialized views, synchronous events, and richer schema
+lifecycle behavior. Phase 9 remains a historical alpha-candidate milestone and
 Phase 11 remains a stopped audit, not a beta. Phases 12–22 form the approved
 pre-1.0 compatibility track; Phase 23 is the dormant Core 1.0 gate. None
 authorizes publishing. The proprietary cloud service remains separately scoped

@@ -4,12 +4,12 @@
 
 FastDB implements a clean-room SurrealQL-compatible subset pinned to SurrealDB `v3.1.5`. Parser acceptance alone does not mean execution support, and compatibility does not imply sponsorship or certification. See `CLEAN_ROOM.md`.
 
-The locked inventory contains 756 atomic capabilities: 532 Supported, 0 Partial, and 224 Unsupported. `Partial` is allowed only for the active Phase 15; all future-phase targets remain Unsupported until their implementation phase.
+The locked inventory contains 756 atomic capabilities: 532 Supported, 0 Partial, and 224 Unsupported. `Partial` is allowed only for the active Phase 16; all future-phase targets remain Unsupported until their implementation phase.
 
 ## Status legend
 
 - **Supported**: executable behavior has conformance evidence.
-- **Partial**: an atomic Phase 15 capability is actively being implemented.
+- **Partial**: an atomic Phase 16 capability is actively being implemented.
 - **Unsupported**: unavailable, excluded, dormant, or awaiting its assigned phase.
 
 Native FTS syntax and ATTACH/DETACH are FastDB extensions and do not count as SurrealQL compatibility. Geospatial/geometry, history/changefeeds/time-series retention, Realtime/LIVE/KILL, GraphQL, GQL, multiprocess access, and parallel writers are advertised as unavailable.

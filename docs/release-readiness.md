@@ -1,7 +1,7 @@
 # FastDB pre-1.0 and Core 1.0 release-readiness gates
 
-Status: Phase 11 stopped at its mandatory MVCC audit. Phases 12–14 are
-technically complete locally; Phase 15 planning is next on the serialized
+Status: Phase 11 stopped at its mandatory MVCC audit. Phases 12–15 are
+technically complete locally; Phase 16 planning is next on the serialized
 stable-WAL pre-1.0 track. No alpha, beta, pre-1.0 package publication, or Core
 1.0 release is authorized.
 
@@ -86,9 +86,11 @@ compatibility.
 
 ### Phase 15 — Scripting, schema, views, and events
 
-- [ ] Add bounded control flow, custom functions/parameters, views, events,
+- [x] Add bounded control flow, custom functions/parameters, views, events,
       defaults, assertions, computed/readonly fields, and matching INFO/REMOVE.
-- [ ] Prove event atomicity, recursion/resource limits, rollback, and reopen.
+- [x] Prove event atomicity, recursion/resource limits, rollback, and reopen;
+      retain explicit architecture stops for the 13 rows that cannot meet the
+      format-3, stable-WAL, server-security, or sealed-provider contracts.
 
 ### Phase 16 — Graph completion
 
