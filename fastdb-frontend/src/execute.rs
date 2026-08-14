@@ -135,6 +135,8 @@ const MAX_LOOP_ITERATIONS: usize = 10_000;
 const MAX_SLEEP: Duration = Duration::from_secs(5);
 const MAX_FUNCTION_CALLS: usize = 10_000;
 const MAX_FUNCTION_RECURSION: usize = 32;
+const MAX_EVENT_INVOCATIONS: usize = 10_000;
+const MAX_EVENT_RECURSION: usize = 16;
 
 pub(crate) struct ScriptRuntime {
     bindings: Params,
@@ -146,6 +148,10 @@ pub(crate) struct ScriptRuntime {
     function_calls: usize,
     function_depth: usize,
     function_mutations: u64,
+    event_invocations: usize,
+    event_depth: usize,
+    event_mutations: u64,
+    active_events: BTreeSet<String>,
     deadline: Option<Instant>,
     cancellation: Option<Arc<AtomicBool>>,
 }
@@ -168,6 +174,10 @@ impl ScriptRuntime {
             function_calls: 0,
             function_depth: 0,
             function_mutations: 0,
+            event_invocations: 0,
+            event_depth: 0,
+            event_mutations: 0,
+            active_events: BTreeSet::new(),
             deadline: (!timeout.is_zero())
                 .then(|| Instant::now().checked_add(timeout))
                 .flatten(),
@@ -279,22 +289,23 @@ pub(crate) fn run_statement(
     source: &str,
     script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
-    let implicit_function_transaction = matches!(execution.transaction, TransactionState::Idle)
-        && statement_invokes_custom_function(&statement);
-    if implicit_function_transaction {
+    let implicit_frontend_transaction = matches!(execution.transaction, TransactionState::Idle)
+        && (statement_invokes_custom_function(&statement)
+            || statement_may_fire_events(conn, execution, &statement)?);
+    if implicit_frontend_transaction {
         conn.begin_explicit(execution)?;
     }
     let outcome = run_script_statement(conn, execution, statement, source, script);
     let mut outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
-            if implicit_function_transaction {
+            if implicit_frontend_transaction {
                 let _ = conn.cancel_explicit(execution);
             }
             return Err(error);
         }
     };
-    if implicit_function_transaction
+    if implicit_frontend_transaction
         && matches!(outcome.flow, ScriptFlow::Break | ScriptFlow::Continue)
     {
         let _ = conn.cancel_explicit(execution);
@@ -302,18 +313,20 @@ pub(crate) fn run_statement(
             "loop control escaped its enclosing FOR statement".into(),
         ));
     }
-    if implicit_function_transaction {
+    if implicit_frontend_transaction {
         if let Err(error) = conn.commit_explicit(execution) {
             let _ = conn.cancel_explicit(execution);
             return Err(error);
         }
     }
     let function_mutations = std::mem::take(&mut script.function_mutations);
+    let event_mutations = std::mem::take(&mut script.event_mutations);
     outcome.execution.mutation_count = outcome
         .execution
         .mutation_count
         .checked_add(function_mutations)
-        .ok_or_else(|| FastDbError::Engine("function mutation count overflowed u64".into()))?;
+        .and_then(|count| count.checked_add(event_mutations))
+        .ok_or_else(|| FastDbError::Engine("nested mutation count overflowed u64".into()))?;
     match outcome.flow {
         ScriptFlow::Normal => Ok(outcome.execution),
         ScriptFlow::Return(value) => Ok(StatementExecution {
@@ -327,6 +340,32 @@ pub(crate) fn run_statement(
             "CONTINUE is only valid inside a FOR loop".into(),
         )),
     }
+}
+
+fn statement_may_fire_events(
+    conn: &Connection,
+    execution: &ExecutionState,
+    statement: &Statement,
+) -> Result<bool> {
+    if !matches!(
+        statement,
+        Statement::Create(_)
+            | Statement::Insert(_)
+            | Statement::Relate(_)
+            | Statement::Update(_)
+            | Statement::Upsert(_)
+            | Statement::Delete(_)
+    ) {
+        return Ok(false);
+    }
+    Ok(catalog_for_read(conn, execution)?
+        .snapshot()
+        .is_some_and(|snapshot| {
+            snapshot
+                .tables
+                .values()
+                .any(|table| !table.events.is_empty())
+        }))
 }
 
 fn statement_invokes_custom_function(statement: &Statement) -> bool {
@@ -436,6 +475,15 @@ fn run_script_statement(
         Statement::RemoveFunction(statement) => run_remove_function(conn, execution, statement)
             .map(StatementExecution::read_only)
             .map(ScriptOutcome::normal),
+        Statement::DefineEvent(statement) => run_define_event(conn, execution, statement, source)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::AlterEvent(statement) => run_alter_event(conn, execution, statement, source)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
+        Statement::RemoveEvent(statement) => run_remove_event(conn, execution, statement)
+            .map(StatementExecution::read_only)
+            .map(ScriptOutcome::normal),
         Statement::InfoDatabase(_) => run_info_database(conn, execution)
             .map(StatementExecution::read_only)
             .map(ScriptOutcome::normal),
@@ -473,19 +521,25 @@ fn run_script_statement(
                 Statement::Create(statement) => {
                     run_create(conn, execution, statement, &params, script)
                 }
-                Statement::Insert(statement) => run_insert(conn, execution, statement, &params),
-                Statement::Relate(statement) => run_relate(conn, execution, statement, &params),
+                Statement::Insert(statement) => {
+                    run_insert(conn, execution, statement, &params, script)
+                }
+                Statement::Relate(statement) => {
+                    run_relate(conn, execution, statement, &params, script)
+                }
                 Statement::Select(statement) => {
                     run_select(conn, execution, statement, &params, script)
                         .map(StatementExecution::read_only)
                 }
                 Statement::Update(statement) => {
-                    run_update(conn, execution, statement, &params, false)
+                    run_update(conn, execution, statement, &params, false, script)
                 }
                 Statement::Upsert(statement) => {
-                    run_update(conn, execution, statement, &params, true)
+                    run_update(conn, execution, statement, &params, true, script)
                 }
-                Statement::Delete(statement) => run_delete(conn, execution, statement, &params),
+                Statement::Delete(statement) => {
+                    run_delete(conn, execution, statement, &params, script)
+                }
                 Statement::DefineTable(statement) => {
                     run_define_table(conn, execution, statement, source)
                         .map(StatementExecution::read_only)
@@ -529,6 +583,9 @@ fn run_script_statement(
                 | Statement::DefineFunction(_)
                 | Statement::AlterFunction(_)
                 | Statement::RemoveFunction(_)
+                | Statement::DefineEvent(_)
+                | Statement::AlterEvent(_)
+                | Statement::RemoveEvent(_)
                 | Statement::InfoDatabase(_)
                 | Statement::AlterTable(_)
                 | Statement::RemoveTable(_)
@@ -915,6 +972,101 @@ fn run_script_block(
     })();
     script.pop_scope();
     result
+}
+
+struct EventInvocation<'a> {
+    table_name: &'a str,
+    kind: &'static str,
+    id: &'a RecordId,
+    before: Value,
+    after: Value,
+    input: Value,
+}
+
+fn run_table_events(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    invocation: EventInvocation<'_>,
+    script: &mut ScriptRuntime,
+) -> Result<()> {
+    let events = catalog_for_read(conn, execution)?
+        .snapshot()
+        .and_then(|snapshot| snapshot.tables.get(invocation.table_name))
+        .map(|table| table.events.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if !events.is_empty() {
+        conn.check_failpoint(Failpoint::BeforeEventActions)?;
+    }
+    for event in events {
+        if script.event_invocations == MAX_EVENT_INVOCATIONS {
+            return Err(FastDbError::ResourceLimit(format!(
+                "event invocations exceed {MAX_EVENT_INVOCATIONS}"
+            )));
+        }
+        if script.event_depth == MAX_EVENT_RECURSION {
+            return Err(FastDbError::ResourceLimit(format!(
+                "event recursion exceeds {MAX_EVENT_RECURSION}"
+            )));
+        }
+        let active_key = format!(
+            "{}:{}:{}:{}",
+            event.id.to_hex(),
+            invocation.kind,
+            invocation.id.table,
+            encode_rid(&invocation.id.id)?
+        );
+        if !script.active_events.insert(active_key.clone()) {
+            return Err(FastDbError::ResourceLimit(format!(
+                "event {:?} recursively targeted the same record",
+                event.logical_name
+            )));
+        }
+        script.event_invocations += 1;
+        script.event_depth += 1;
+        script.push_scope();
+        script.bind("event".into(), Value::Str(invocation.kind.into()));
+        script.bind("before".into(), invocation.before.clone());
+        script.bind("after".into(), invocation.after.clone());
+        script.bind(
+            "value".into(),
+            if invocation.kind == "DELETE" {
+                invocation.before.clone()
+            } else {
+                invocation.after.clone()
+            },
+        );
+        script.bind("input".into(), invocation.input.clone());
+        let result = (|| {
+            if let Some(condition) = &event.condition {
+                let value = evaluate_script_expression(conn, execution, condition, script)?;
+                if !script_value_truthy(&value) {
+                    return Ok(0);
+                }
+            }
+            let outcome = run_script_block(
+                conn,
+                execution,
+                event.action.block.clone(),
+                &event.definition,
+                script,
+            )?;
+            if matches!(outcome.flow, ScriptFlow::Break | ScriptFlow::Continue) {
+                return Err(FastDbError::Schema(
+                    "event action leaked loop control".into(),
+                ));
+            }
+            Ok(outcome.execution.mutation_count)
+        })();
+        script.pop_scope();
+        script.event_depth -= 1;
+        script.active_events.remove(&active_key);
+        let mutation_count = result?;
+        script.event_mutations = script
+            .event_mutations
+            .checked_add(mutation_count)
+            .ok_or_else(|| FastDbError::Engine("event mutation count overflowed u64".into()))?;
+    }
+    Ok(())
 }
 
 fn run_script_if(
@@ -1361,6 +1513,16 @@ fn run_remove_function(
                 "function fn::{logical_name} is required by fn::{dependent}"
             )));
         }
+        if let Some((table, event)) = snapshot.tables.values().find_map(|table| {
+            table.events.values().find_map(|event| {
+                event_uses_function(event, &logical_name)
+                    .then_some((table.logical_name.as_str(), event.logical_name.as_str()))
+            })
+        }) {
+            return Err(FastDbError::Constraint(format!(
+                "function fn::{logical_name} is required by event {event:?} on table {table:?}"
+            )));
+        }
         catalog::remove_function(conn, &function)?;
         snapshot.functions.remove(&logical_name);
         Ok(())
@@ -1368,23 +1530,266 @@ fn run_remove_function(
     Ok(StatementResult::None)
 }
 
+fn run_define_event(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::DefineEventStatement,
+    source: &str,
+) -> Result<StatementResult> {
+    validate_stored_script_block(&statement.action.block, "events")?;
+    let condition_source = statement
+        .condition
+        .as_ref()
+        .map(|condition| {
+            source_slice(source, condition.span)
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .transpose()?
+        .unwrap_or_else(|| "true".to_string());
+    let action_source = source_slice(source, statement.action.span)?
+        .trim()
+        .to_string();
+    let comment = statement
+        .comment
+        .as_ref()
+        .map(|comment| comment.value.clone());
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        validate_event_dependencies(
+            snapshot,
+            &statement.name.value,
+            statement.condition.as_ref(),
+            &statement.action.block,
+        )?;
+        let table = snapshot
+            .tables
+            .get(&statement.table.value)
+            .cloned()
+            .ok_or_else(|| {
+                FastDbError::Schema(format!("table {:?} is not defined", statement.table.value))
+            })?;
+        if let Some(existing) = table.events.get(&statement.name.value).cloned() {
+            if statement.if_not_exists.is_some() {
+                return Ok(());
+            }
+            if statement.overwrite.is_none() {
+                return Err(FastDbError::Constraint(format!(
+                    "event {:?} is already defined on table {:?}",
+                    statement.name.value, statement.table.value
+                )));
+            }
+            catalog::remove_event(conn, &existing)?;
+        }
+        let definition = catalog::canonical_event_definition(
+            &statement.name.value,
+            &statement.table.value,
+            &condition_source,
+            &action_source,
+            comment.as_deref(),
+        );
+        let canonical = turso_fastdb_parser::parse_one(&definition).map_err(FastDbError::from)?;
+        let Statement::DefineEvent(canonical) = canonical else {
+            return Err(FastDbError::Engine(
+                "canonical event definition has the wrong statement kind".into(),
+            ));
+        };
+        let event = catalog::allocate_event(
+            table.id,
+            catalog::NewEventDefinition {
+                logical_name: statement.name.value.clone(),
+                condition: canonical.condition,
+                condition_source: condition_source.clone(),
+                action: canonical.action,
+                action_source: action_source.clone(),
+                comment: comment.clone(),
+                definition,
+            },
+        )?;
+        catalog::persist_event(conn, &event)?;
+        snapshot
+            .tables
+            .get_mut(&statement.table.value)
+            .expect("event table was validated")
+            .events
+            .insert(statement.name.value.clone(), event);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn run_alter_event(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::AlterEventStatement,
+    source: &str,
+) -> Result<StatementResult> {
+    if let Some(Some(action)) = &statement.changes.action {
+        validate_stored_script_block(&action.block, "events")?;
+    }
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(existing) = snapshot
+            .tables
+            .get(&statement.table.value)
+            .and_then(|table| table.events.get(&statement.name.value))
+            .cloned()
+        else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "event {:?} is not defined on table {:?}",
+                statement.name.value, statement.table.value
+            )));
+        };
+        let mut replacement = existing.clone();
+        if let Some(condition) = &statement.changes.condition {
+            match condition {
+                Some(condition) => {
+                    replacement.condition_source =
+                        source_slice(source, condition.span)?.trim().to_string();
+                    replacement.condition = Some(condition.clone());
+                }
+                None => {
+                    replacement.condition = None;
+                    replacement.condition_source = "true".to_string();
+                }
+            }
+        }
+        if let Some(Some(action)) = &statement.changes.action {
+            replacement.action_source = source_slice(source, action.span)?.trim().to_string();
+            replacement.action = action.clone();
+        }
+        // SurrealDB v3.1.5 accepts DROP THEN while retaining the mandatory
+        // action. Preserve that characterized behavior instead of inventing
+        // an action-less event state.
+        if let Some(comment) = &statement.changes.comment {
+            replacement.comment = comment.clone();
+        }
+        validate_event_dependencies(
+            snapshot,
+            &statement.name.value,
+            replacement.condition.as_ref(),
+            &replacement.action.block,
+        )?;
+        replacement.definition = catalog::canonical_event_definition(
+            &replacement.logical_name,
+            &statement.table.value,
+            &replacement.condition_source,
+            &replacement.action_source,
+            replacement.comment.as_deref(),
+        );
+        let canonical =
+            turso_fastdb_parser::parse_one(&replacement.definition).map_err(FastDbError::from)?;
+        let Statement::DefineEvent(canonical) = canonical else {
+            return Err(FastDbError::Engine(
+                "canonical event definition has the wrong statement kind".into(),
+            ));
+        };
+        replacement.condition = canonical.condition;
+        replacement.action = canonical.action;
+        catalog::remove_event(conn, &existing)?;
+        catalog::persist_event(conn, &replacement)?;
+        snapshot
+            .tables
+            .get_mut(&statement.table.value)
+            .expect("event table was validated")
+            .events
+            .insert(statement.name.value.clone(), replacement);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn run_remove_event(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::RemoveEventStatement,
+) -> Result<StatementResult> {
+    with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let Some(event) = snapshot
+            .tables
+            .get(&statement.table.value)
+            .and_then(|table| table.events.get(&statement.name.value))
+            .cloned()
+        else {
+            if statement.if_exists.is_some() {
+                return Ok(());
+            }
+            return Err(FastDbError::Schema(format!(
+                "event {:?} is not defined on table {:?}",
+                statement.name.value, statement.table.value
+            )));
+        };
+        catalog::remove_event(conn, &event)?;
+        snapshot
+            .tables
+            .get_mut(&statement.table.value)
+            .expect("event table was validated")
+            .events
+            .remove(&statement.name.value);
+        Ok(())
+    })?;
+    Ok(StatementResult::None)
+}
+
+fn validate_event_dependencies(
+    snapshot: &CatalogSnapshot,
+    event_name: &str,
+    condition: Option<&Expr>,
+    action: &turso_fastdb_parser::ScriptBlock,
+) -> Result<()> {
+    let mut dependencies = function_dependencies(action);
+    if let Some(condition) = condition {
+        collect_function_expression_dependencies(condition, &mut dependencies);
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    for (dependency, arity) in dependencies {
+        let expected = snapshot
+            .functions
+            .get(&dependency)
+            .map(|function| function.arguments.len())
+            .ok_or_else(|| {
+                FastDbError::Schema(format!(
+                    "event {event_name:?} references undefined function fn::{dependency}"
+                ))
+            })?;
+        if arity != expected {
+            return Err(FastDbError::Schema(format!(
+                "event {event_name:?} calls fn::{dependency} with {arity} arguments; {expected} required"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_function_block(block: &turso_fastdb_parser::ScriptBlock) -> Result<()> {
+    validate_stored_script_block(block, "custom functions")
+}
+
+fn validate_stored_script_block(
+    block: &turso_fastdb_parser::ScriptBlock,
+    owner: &'static str,
+) -> Result<()> {
     for statement in &block.statements {
         match statement {
             Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {
-                return Err(FastDbError::Schema(
-                    "custom functions cannot control transactions".into(),
-                ));
+                return Err(FastDbError::Schema(format!(
+                    "{owner} cannot control transactions"
+                )));
             }
             Statement::If(statement) => {
                 for (_, block) in &statement.branches {
-                    validate_function_block(block)?;
+                    validate_stored_script_block(block, owner)?;
                 }
                 if let Some(block) = &statement.otherwise {
-                    validate_function_block(block)?;
+                    validate_stored_script_block(block, owner)?;
                 }
             }
-            Statement::For(statement) => validate_function_block(&statement.body)?,
+            Statement::For(statement) => validate_stored_script_block(&statement.body, owner)?,
             _ => {}
         }
     }
@@ -1437,7 +1842,36 @@ fn validate_function_call_sites(
             }
         }
     }
+    for table in snapshot.tables.values() {
+        for event in table.events.values() {
+            let mut dependencies = function_dependencies(&event.action.block);
+            if let Some(condition) = &event.condition {
+                collect_function_expression_dependencies(condition, &mut dependencies);
+            }
+            for (_, arity) in dependencies
+                .into_iter()
+                .filter(|(dependency, _)| dependency == logical_name)
+            {
+                if arity != argument_count {
+                    return Err(FastDbError::Constraint(format!(
+                        "changing fn::{logical_name} would invalidate event {:?} on table {:?}",
+                        event.logical_name, table.logical_name
+                    )));
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+fn event_uses_function(event: &catalog::EventDefinition, logical_name: &str) -> bool {
+    let mut dependencies = function_dependencies(&event.action.block);
+    if let Some(condition) = &event.condition {
+        collect_function_expression_dependencies(condition, &mut dependencies);
+    }
+    dependencies
+        .into_iter()
+        .any(|(dependency, _)| dependency == logical_name)
 }
 
 fn function_dependencies(block: &turso_fastdb_parser::ScriptBlock) -> Vec<(String, usize)> {
@@ -1898,6 +2332,16 @@ fn run_info_table(
         ("tables".into(), Value::Object(BTreeMap::new())),
     ]);
     root.insert(
+        "events".into(),
+        Value::Object(
+            table
+                .events
+                .iter()
+                .map(|(name, event)| (name.clone(), Value::Str(event.definition.clone())))
+                .collect(),
+        ),
+    );
+    root.insert(
         "fields".into(),
         Value::Object(
             table
@@ -2189,6 +2633,7 @@ fn run_create(
             let mut document = prepared
                 .remove(&(table_name.clone(), encode_rid(id_value)?))
                 .ok_or_else(|| FastDbError::Engine("prepared CREATE document is missing".into()))?;
+            let input = Value::Object(document.clone());
             reject_stored_id(&document)?;
             normalize_schema_document(
                 &table,
@@ -2216,7 +2661,7 @@ fn run_create(
                 "record ID already exists or violates a declared unique index",
             )?;
             conn.check_failpoint(Failpoint::AfterRecordInsert)?;
-            values.push((id.clone(), full_record_value(&id, &document)));
+            values.push((id.clone(), full_record_value(&id, &document), input));
         }
         Ok(values)
     })?;
@@ -2227,10 +2672,25 @@ fn run_create(
     {
         mark_fts_dirty(execution, table_name);
     }
+    for (id, after, input) in &values {
+        run_table_events(
+            conn,
+            execution,
+            EventInvocation {
+                table_name: &id.table,
+                kind: "CREATE",
+                id,
+                before: Value::Null,
+                after: after.clone(),
+                input: input.clone(),
+            },
+            script,
+        )?;
+    }
     let mutation_count = values.len();
     let returned = values
         .into_iter()
-        .filter_map(|(id, value)| {
+        .filter_map(|(id, value, _)| {
             mutation_return(
                 statement.return_clause.as_ref(),
                 &Value::Null,
@@ -2411,10 +2871,11 @@ fn run_insert(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::InsertStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
     let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
     if statement.relation.is_some() {
-        return run_insert_relation(conn, execution, statement, params);
+        return run_insert_relation(conn, execution, statement, params, script);
     }
     let table_name = statement.table.value.clone();
     let input_documents = evaluate_insert_documents(&statement.data, &table_name, params)?;
@@ -2449,6 +2910,7 @@ fn run_insert(
         }
         let mut outcomes = Vec::new();
         for input in &input_documents {
+            let event_input = Value::Object(input.clone());
             let (id, mut document) = normalize_insert_document(&table_name, input.clone())?;
             let existing = read_candidates(
                 conn,
@@ -2516,9 +2978,11 @@ fn run_insert(
                     "INSERT ON DUPLICATE KEY violates a declared unique index",
                 )?;
                 outcomes.push((
+                    "UPDATE",
                     candidate.id.clone(),
                     before,
                     full_candidate_with_document(&candidate, &document),
+                    event_input,
                 ));
                 continue;
             }
@@ -2547,17 +3011,38 @@ fn run_insert(
                 conn.exec_bound(insert, bindings),
                 "INSERT violates a declared unique index",
             )?;
-            outcomes.push((id.clone(), Value::Null, full_record_value(&id, &document)));
+            outcomes.push((
+                "CREATE",
+                id.clone(),
+                Value::Null,
+                full_record_value(&id, &document),
+                event_input,
+            ));
         }
         Ok(outcomes)
     })?;
     if !outcomes.is_empty() {
         mark_fts_dirty(execution, &table_name);
     }
+    for (event_kind, id, before, after, input) in &outcomes {
+        run_table_events(
+            conn,
+            execution,
+            EventInvocation {
+                table_name: &table_name,
+                kind: event_kind,
+                id,
+                before: before.clone(),
+                after: after.clone(),
+                input: input.clone(),
+            },
+            script,
+        )?;
+    }
     let mutation_count = outcomes.len();
     let rows = outcomes
         .into_iter()
-        .filter_map(|(id, before, after)| {
+        .filter_map(|(_, id, before, after, _)| {
             mutation_return(
                 statement.return_clause.as_ref(),
                 &before,
@@ -2633,6 +3118,7 @@ fn run_insert_relation(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::InsertStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
     let relation_name = statement.table.value.clone();
     let inputs = evaluate_insert_documents(&statement.data, &relation_name, params)?
@@ -2717,6 +3203,11 @@ fn run_insert_relation(
             .collect::<Vec<_>>();
         let mut outcomes = Vec::new();
         for (id, from, to, input_document) in &inputs {
+            let mut event_input = input_document.clone();
+            event_input.insert("id".into(), Value::RecordId(id.clone()));
+            event_input.insert("in".into(), Value::RecordId(from.clone()));
+            event_input.insert("out".into(), Value::RecordId(to.clone()));
+            let event_input = Value::Object(event_input);
             let from_table = snapshot.tables[&from.table].clone();
             let to_table = snapshot.tables[&to.table].clone();
             if relation
@@ -2808,11 +3299,13 @@ fn run_insert_relation(
                 )?;
                 conn.exec_bound(update, bindings)?;
                 outcomes.push((
+                    "UPDATE",
                     id.clone(),
                     from.clone(),
                     to.clone(),
                     before,
                     full_edge_value(id, from, to, &document),
+                    event_input,
                 ));
                 continue;
             }
@@ -2844,11 +3337,13 @@ fn run_insert_relation(
             conn.exec_bound(insert, bindings)?;
             conn.check_failpoint(Failpoint::AfterGraphEdgeInsert)?;
             outcomes.push((
+                "CREATE",
                 id.clone(),
                 from.clone(),
                 to.clone(),
                 Value::Null,
                 full_edge_value(id, from, to, &document),
+                event_input,
             ));
         }
         Ok(outcomes)
@@ -2856,10 +3351,25 @@ fn run_insert_relation(
     if !outcomes.is_empty() {
         mark_fts_dirty(execution, &relation_name);
     }
+    for (event_kind, id, _, _, before, after, input) in &outcomes {
+        run_table_events(
+            conn,
+            execution,
+            EventInvocation {
+                table_name: &relation_name,
+                kind: event_kind,
+                id,
+                before: before.clone(),
+                after: after.clone(),
+                input: input.clone(),
+            },
+            script,
+        )?;
+    }
     let mutation_count = outcomes.len();
     let rows = outcomes
         .into_iter()
-        .filter_map(|(id, from, to, before, after)| {
+        .filter_map(|(_, id, from, to, before, after, _)| {
             mutation_return(
                 statement.return_clause.as_ref(),
                 &before,
@@ -2907,6 +3417,7 @@ fn run_relate(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::RelateStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
     let from = resolve_relate_endpoint(&statement.from, params)?;
     let to = resolve_relate_endpoint(&statement.to, params)?;
@@ -2941,6 +3452,10 @@ fn run_relate(
         }
     };
     reject_stored_edge_fields(&document)?;
+    let mut event_input = document.clone();
+    event_input.insert("in".into(), Value::RecordId(from.clone()));
+    event_input.insert("out".into(), Value::RecordId(to.clone()));
+    let event_input = Value::Object(event_input);
 
     let catalogs_missing = !catalog_for_read(conn, execution)?
         .snapshot()
@@ -3059,6 +3574,19 @@ fn run_relate(
         Ok(full_edge_value(&edge_id, &from, &to, &document))
     })?;
     mark_fts_dirty(execution, &relation_name);
+    run_table_events(
+        conn,
+        execution,
+        EventInvocation {
+            table_name: &relation_name,
+            kind: "CREATE",
+            id: &edge_id,
+            before: Value::Null,
+            after: value.clone(),
+            input: event_input,
+        },
+        script,
+    )?;
 
     let returned = mutation_return(
         statement.return_clause.as_ref(),
@@ -4320,6 +4848,7 @@ fn run_update(
     statement: turso_fastdb_parser::UpdateStatement,
     params: &Params,
     upsert: bool,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
     let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
     let targets = resolve_mutation_targets(statement.target.clone(), params)?;
@@ -4469,6 +4998,7 @@ fn run_update(
                     )
                 }
             };
+            let event_input = Value::Object(document.clone());
             if table.kind == TableKind::Relation {
                 reject_stored_edge_fields(&document)?;
             } else {
@@ -4510,21 +5040,44 @@ fn run_update(
                 Some((from, to)) => full_edge_value(&id, from, to, &document),
                 None => full_record_value(&id, &document),
             };
-            outcomes.push((table_name, id.clone(), endpoints, before, after));
+            outcomes.push((
+                if existing { "UPDATE" } else { "CREATE" },
+                table_name,
+                id.clone(),
+                endpoints,
+                before,
+                after,
+                event_input,
+            ));
         }
         Ok(outcomes)
     })?;
     for table_name in outcomes
         .iter()
-        .map(|(table, ..)| table)
+        .map(|(_, table, ..)| table)
         .collect::<BTreeSet<_>>()
     {
         mark_fts_dirty(execution, table_name);
     }
+    for (event_kind, table_name, id, _, before, after, input) in &outcomes {
+        run_table_events(
+            conn,
+            execution,
+            EventInvocation {
+                table_name,
+                kind: event_kind,
+                id,
+                before: before.clone(),
+                after: after.clone(),
+                input: input.clone(),
+            },
+            script,
+        )?;
+    }
     let mutation_count = outcomes.len();
     let rows = outcomes
         .into_iter()
-        .filter_map(|(_, id, endpoints, before, after)| {
+        .filter_map(|(_, _, id, endpoints, before, after, _)| {
             mutation_return(
                 statement.return_clause.as_ref(),
                 &before,
@@ -4549,13 +5102,14 @@ fn run_delete(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::DeleteStatement,
     params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementExecution> {
     let _timeout = StatementTimeoutGuard::install(conn, statement.timeout.as_ref(), params)?;
     let targets = resolve_mutation_targets(statement.target.clone(), params)?;
     let (deleted, cascaded_edges) = data_mutation(conn, execution, || {
         let catalog = catalog_for_read(conn, execution)?;
         let Some(snapshot) = catalog.snapshot() else {
-            return Ok((Vec::new(), 0));
+            return Ok((Vec::new(), Vec::new()));
         };
         let mut deleted = Vec::new();
         let mut seen = BTreeSet::new();
@@ -4591,7 +5145,11 @@ fn run_delete(
             ));
         }
         conn.check_failpoint(Failpoint::BeforeDeleteMutations)?;
-        let mut connected_edges = BTreeSet::new();
+        let explicit = deleted
+            .iter()
+            .map(|(table, candidate)| (table.physical_name.clone(), candidate.encoded_rid.clone()))
+            .collect::<BTreeSet<_>>();
+        let mut connected_edges = BTreeMap::new();
         for (table, candidate) in &deleted {
             if table.kind == TableKind::Normal {
                 for relation in snapshot
@@ -4602,12 +5160,38 @@ fn run_delete(
                     for encoded_edge in
                         connected_edge_ids(conn, snapshot, relation, table, &candidate.id.id)?
                     {
-                        connected_edges.insert((relation.physical_name.clone(), encoded_edge));
+                        let key = (relation.physical_name.clone(), encoded_edge.clone());
+                        if explicit.contains(&key) || connected_edges.contains_key(&key) {
+                            continue;
+                        }
+                        let edge_id = decode_rid(&encoded_edge)?;
+                        let edge = read_candidates(
+                            conn,
+                            snapshot,
+                            relation,
+                            CandidateReadOptions {
+                                id: Some(&edge_id),
+                                range: None,
+                                condition: None,
+                                params,
+                                allow_cache: false,
+                                fts: None,
+                                vector: None,
+                            },
+                        )?
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| {
+                            FastDbError::format(
+                                "graph adjacency points to a missing relation record",
+                            )
+                        })?;
+                        connected_edges.insert(key, (relation.clone(), edge));
                     }
                 }
             }
         }
-        for (physical_table, encoded_edge) in &connected_edges {
+        for (physical_table, encoded_edge) in connected_edges.keys() {
             let (delete, bindings) =
                 lower::physical_delete_by_rid_stmt(physical_table, encoded_edge)?;
             conn.exec_bound(delete, bindings)?;
@@ -4619,7 +5203,7 @@ fn run_delete(
             conn.exec_bound(delete, bindings)?;
             conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
         }
-        Ok((deleted, connected_edges.len()))
+        Ok((deleted, connected_edges.into_values().collect::<Vec<_>>()))
     })?;
     for table_name in deleted
         .iter()
@@ -4628,12 +5212,27 @@ fn run_delete(
     {
         mark_fts_dirty(execution, table_name);
     }
-    if cascaded_edges > 0 {
+    if !cascaded_edges.is_empty() {
         mark_relation_fts_dirty(execution);
+    }
+    for (table, candidate) in deleted.iter().chain(&cascaded_edges) {
+        run_table_events(
+            conn,
+            execution,
+            EventInvocation {
+                table_name: &table.logical_name,
+                kind: "DELETE",
+                id: &candidate.id,
+                before: full_candidate_value(candidate),
+                after: Value::Null,
+                input: Value::Null,
+            },
+            script,
+        )?;
     }
     let mutation_count = deleted
         .len()
-        .checked_add(cascaded_edges)
+        .checked_add(cascaded_edges.len())
         .ok_or_else(|| FastDbError::Engine("cascade mutation count overflowed usize".into()))?;
     if statement.return_clause.is_some() {
         let rows = deleted

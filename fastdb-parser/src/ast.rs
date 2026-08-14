@@ -84,6 +84,9 @@ pub enum Statement {
     DefineFunction(DefineFunctionStatement),
     AlterFunction(AlterFunctionStatement),
     RemoveFunction(RemoveFunctionStatement),
+    DefineEvent(DefineEventStatement),
+    AlterEvent(AlterEventStatement),
+    RemoveEvent(RemoveEventStatement),
     InfoDatabase(InfoDatabaseStatement),
     AlterTable(AlterTableStatement),
     RemoveTable(RemoveTableStatement),
@@ -122,6 +125,9 @@ impl Statement {
             Self::DefineFunction(stmt) => stmt.span,
             Self::AlterFunction(stmt) => stmt.span,
             Self::RemoveFunction(stmt) => stmt.span,
+            Self::DefineEvent(stmt) => stmt.span,
+            Self::AlterEvent(stmt) => stmt.span,
+            Self::RemoveEvent(stmt) => stmt.span,
             Self::InfoDatabase(stmt) => stmt.span,
             Self::AlterTable(stmt) => stmt.span,
             Self::RemoveTable(stmt) => stmt.span,
@@ -233,6 +239,59 @@ pub struct RemoveFunctionStatement {
     pub span: Span,
     pub if_exists: Option<Span>,
     pub name: Vec<Identifier>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventActionStyle {
+    Block,
+    Parenthesized,
+    Bare,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventAction {
+    pub span: Span,
+    pub block: ScriptBlock,
+    pub style: EventActionStyle,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefineEventStatement {
+    pub span: Span,
+    pub if_not_exists: Option<Span>,
+    pub overwrite: Option<Span>,
+    pub name: Identifier,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
+    pub condition: Option<Expr>,
+    pub action: EventAction,
+    pub comment: Option<Spanned<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AlterEventChanges {
+    pub condition: Option<Option<Expr>>,
+    pub action: Option<Option<EventAction>>,
+    pub comment: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterEventStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub name: Identifier,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
+    pub changes: AlterEventChanges,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoveEventStatement {
+    pub span: Span,
+    pub if_exists: Option<Span>,
+    pub name: Identifier,
+    pub table_keyword: Option<Span>,
+    pub table: Identifier,
 }
 
 #[derive(Debug, Clone, PartialEq)]

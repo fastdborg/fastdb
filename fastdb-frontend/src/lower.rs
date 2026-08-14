@@ -1439,6 +1439,26 @@ pub fn functions_stmt() -> Stmt {
     )
 }
 
+pub fn events_stmt() -> Stmt {
+    one_select(
+        [
+            "event_id",
+            "table_id",
+            "logical_name",
+            "when_source",
+            "then_source",
+            "expression_version",
+            "recursion_limit",
+            "definition",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::EVENTS_TABLE,
+        None,
+    )
+}
+
 pub fn capabilities_stmt() -> Stmt {
     one_select(
         ["provider", "min_provider_version", "min_encoding_version"]
@@ -1899,6 +1919,58 @@ pub fn function_delete(function_id: &str) -> (Stmt, Bindings) {
         },
         vec![text(function_id)],
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn event_insert(
+    event_id: &str,
+    table_id: &str,
+    logical_name: &str,
+    when_source: &str,
+    then_source: &str,
+    expression_version: i64,
+    recursion_limit: i64,
+    definition: &str,
+) -> (Stmt, Bindings) {
+    insert_values(
+        crate::catalog::EVENTS_TABLE,
+        &[
+            "event_id",
+            "table_id",
+            "logical_name",
+            "when_source",
+            "then_source",
+            "expression_version",
+            "recursion_limit",
+            "definition",
+        ],
+        vec![
+            var(1),
+            var(2),
+            var(3),
+            var(4),
+            var(5),
+            numlit(expression_version),
+            numlit(recursion_limit),
+            var(6),
+        ],
+        vec![
+            text(event_id),
+            text(table_id),
+            text(logical_name),
+            text(when_source),
+            text(then_source),
+            text(definition),
+        ],
+    )
+}
+
+pub fn event_delete(event_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("event_id", crate::catalog::EVENTS_TABLE, event_id)
+}
+
+pub fn events_delete_table(table_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("table_id", crate::catalog::EVENTS_TABLE, table_id)
 }
 
 pub fn parameter_delete(parameter_id: &str) -> (Stmt, Bindings) {

@@ -1213,6 +1213,22 @@ fn validate_statement_limits(
                 validate_statement_limits(nested, params, limits)?;
             }
         }
+        Statement::DefineEvent(statement) => {
+            expressions.extend(statement.condition.iter());
+            for nested in &statement.action.block.statements {
+                validate_statement_limits(nested, params, limits)?;
+            }
+        }
+        Statement::AlterEvent(statement) => {
+            if let Some(Some(condition)) = &statement.changes.condition {
+                expressions.push(condition);
+            }
+            if let Some(Some(action)) = &statement.changes.action {
+                for nested in &action.block.statements {
+                    validate_statement_limits(nested, params, limits)?;
+                }
+            }
+        }
         Statement::DefineTable(_)
         | Statement::DefineAnalyzer(_)
         | Statement::RemoveIndex(_)
@@ -1222,6 +1238,7 @@ fn validate_statement_limits(
         | Statement::RemoveParam(_)
         | Statement::AlterFunction(_)
         | Statement::RemoveFunction(_)
+        | Statement::RemoveEvent(_)
         | Statement::InfoDatabase(_)
         | Statement::AlterTable(_)
         | Statement::RemoveTable(_)

@@ -247,6 +247,52 @@ atomically. Union/literal types, FLEXIBLE, permission predicates, full
 reference actions, mixed table ANY, and views remain Partial rather than being
 accepted without behavior.
 
+## Synchronous events
+
+The public [DEFINE EVENT](https://surrealdb.com/docs/reference/query-language/statements/define/event)
+and [ALTER EVENT](https://surrealdb.com/docs/reference/query-language/statements/alter/event)
+pages supplied syntax candidates. The fixed `v3.1.5` binary then established
+the synchronous subset independently. A definition with no WHEN clause was
+reported by `INFO FOR TABLE` with `WHEN true`; block, parenthesized, and bare
+single-statement actions all executed. A definition without THEN was rejected.
+Phase 15 rejects ASYNC, RETRY, and MAXDEPTH explicitly instead of silently
+changing their separate-transaction semantics.
+
+Two events were deliberately defined in reverse name order. Both appended
+their name to the same record when a source record was created:
+
+```surql
+DEFINE EVENT z ON item WHEN $event = 'CREATE'
+  THEN { UPSERT event_order:state SET marks += ['z'] };
+DEFINE EVENT a ON item WHEN $event = 'CREATE'
+  THEN { UPSERT event_order:state SET marks += ['a'] };
+CREATE item:a;
+SELECT * FROM event_order:state;
+```
+
+The resulting array was `['a', 'z']`, establishing deterministic lexical event
+name order rather than definition order. An `ALTER EVENT ... DROP WHEN DROP
+THEN` probe retained `WHEN true` and the prior action in `INFO FOR TABLE`; the
+fixed reference does not publish an action-less synchronous event.
+
+A separate CREATE/UPDATE/DELETE probe captured `$event`, `$before`, `$after`,
+`$value`, and `$input`. CREATE exposed no before image, the complete after/value
+record, and the input document without the synthesized ID. UPDATE exposed both
+complete images, used after for value, and exposed the update input. DELETE
+exposed the complete before/value record and no after/input. Event actions ran
+inside the triggering transaction, and an action error rolled back the source
+mutation and earlier event writes together.
+
+FastDB persists a canonical definition plus independently parsed WHEN/action
+source in the sealed format-3 event catalog. Reopen checks table ownership,
+AST version, recursion policy, sources, and canonical definition before any
+query executes. CREATE, INSERT, RELATE, UPDATE, UPSERT, DELETE, and graph node
+cascade deletion all invoke the same frontend event path. Event bodies share
+the request deadline and script-step limits, have a 10,000-invocation ceiling
+and depth limit of 16, reject transaction-control statements, and detect a
+same-event/same-record recursion cycle. Event actions never bypass graph,
+schema, FTS, vector, or transaction maintenance.
+
 ## Sequence and module stop probes
 
 The fixed reference canonicalized `DEFINE SEQUENCE basic` as `DEFINE SEQUENCE

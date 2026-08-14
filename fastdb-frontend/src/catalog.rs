@@ -73,6 +73,7 @@ pub const BUILTIN_FTS_ANALYZER_PROVIDER: &str = "BUILTIN_FTS_SURREAL_BLANK";
 pub const BUILTIN_VECTOR_PROVIDER_VERSION: i64 = 1;
 pub const BUILTIN_VECTOR_ENCODING_VERSION: i64 = 1;
 pub const BUILTIN_VECTOR_PROVIDER: &str = "BUILTIN_VECTOR_EXACT";
+pub const EVENT_RECURSION_LIMIT: i64 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableKind {
@@ -145,6 +146,7 @@ pub struct TableDefinition {
     pub comment: Option<String>,
     pub fields: BTreeMap<String, FieldRule>,
     pub indexes: BTreeMap<String, IndexDefinition>,
+    pub events: BTreeMap<String, EventDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,6 +176,29 @@ pub struct FunctionDefinition {
     pub body: turso_fastdb_parser::ScriptBlock,
     pub body_source: String,
     pub permissions: turso_fastdb_parser::SchemaPermissions,
+    pub definition: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventDefinition {
+    pub id: CatalogId,
+    pub table_id: CatalogId,
+    pub logical_name: String,
+    pub condition: Option<turso_fastdb_parser::Expr>,
+    pub condition_source: String,
+    pub action: turso_fastdb_parser::EventAction,
+    pub action_source: String,
+    pub comment: Option<String>,
+    pub definition: String,
+}
+
+pub struct NewEventDefinition {
+    pub logical_name: String,
+    pub condition: Option<turso_fastdb_parser::Expr>,
+    pub condition_source: String,
+    pub action: turso_fastdb_parser::EventAction,
+    pub action_source: String,
+    pub comment: Option<String>,
     pub definition: String,
 }
 
@@ -309,6 +334,7 @@ pub fn allocate_table(
         comment: None,
         fields: BTreeMap::new(),
         indexes: BTreeMap::new(),
+        events: BTreeMap::new(),
     })
 }
 
@@ -557,6 +583,7 @@ pub fn replace_table(conn: &Connection, table: &TableDefinition) -> Result<()> {
 pub fn remove_table_catalog(conn: &Connection, table: &TableDefinition) -> Result<()> {
     let table_id = table.id.to_hex();
     for (statement, bindings) in [
+        lower::events_delete_table(&table_id),
         lower::hidden_columns_delete_table(&table_id),
         lower::indexes_delete_table(&table_id),
         lower::fields_delete_table(&table_id),
@@ -680,6 +707,44 @@ pub fn persist_function(conn: &Connection, function: &FunctionDefinition) -> Res
 
 pub fn remove_function(conn: &Connection, function: &FunctionDefinition) -> Result<()> {
     let (statement, bindings) = lower::function_delete(&function.id.to_hex());
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn allocate_event(table_id: CatalogId, input: NewEventDefinition) -> Result<EventDefinition> {
+    if input.logical_name.is_empty() || is_reserved_logical_name(&input.logical_name) {
+        return Err(FastDbError::Constraint(
+            "event has an invalid logical name".into(),
+        ));
+    }
+    Ok(EventDefinition {
+        id: CatalogId::new_random(),
+        table_id,
+        logical_name: input.logical_name,
+        condition: input.condition,
+        condition_source: input.condition_source,
+        action: input.action,
+        action_source: input.action_source,
+        comment: input.comment,
+        definition: input.definition,
+    })
+}
+
+pub fn persist_event(conn: &Connection, event: &EventDefinition) -> Result<()> {
+    let (statement, bindings) = lower::event_insert(
+        &event.id.to_hex(),
+        &event.table_id.to_hex(),
+        &event.logical_name,
+        &event.condition_source,
+        &event.action_source,
+        EXPRESSION_VERSION,
+        EVENT_RECURSION_LIMIT,
+        &event.definition,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn remove_event(conn: &Connection, event: &EventDefinition) -> Result<()> {
+    let (statement, bindings) = lower::event_delete(&event.id.to_hex());
     conn.exec_bound(statement, bindings)
 }
 
@@ -858,6 +923,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
         capabilities: load_capabilities(conn)?,
     };
     validate_future_catalogs_empty(conn)?;
+    load_events(conn, &mut snapshot)?;
     load_fields(conn, &mut snapshot)?;
     load_indexes(conn, &mut snapshot)?;
     validate_table_definition_ownership(&snapshot)?;
@@ -1071,6 +1137,140 @@ fn load_functions(conn: &Connection) -> Result<BTreeMap<String, FunctionDefiniti
         }
     }
     Ok(functions)
+}
+
+fn load_events(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> {
+    let rows = conn.collect_rows(lower::events_stmt(), vec![])?;
+    let mut ids = BTreeSet::new();
+    for row in rows {
+        if row.len() != 8 {
+            return Err(FastDbError::format("event catalog row has wrong width"));
+        }
+        let id = CatalogId::from_hex(&format_text(&row[0], "event_id")?)?;
+        let table_id = CatalogId::from_hex(&format_text(&row[1], "table_id")?)?;
+        let logical_name = format_text(&row[2], "logical_name")?;
+        if logical_name.is_empty() || is_reserved_logical_name(&logical_name) {
+            return Err(FastDbError::format(
+                "event catalog has an invalid logical name",
+            ));
+        }
+        let condition_source = format_text(&row[3], "when_source")?;
+        let action_source = format_text(&row[4], "then_source")?;
+        if condition_source.is_empty()
+            || action_source.is_empty()
+            || format_integer(&row[5], "expression_version")? != EXPRESSION_VERSION
+            || format_integer(&row[6], "recursion_limit")? != EVENT_RECURSION_LIMIT
+        {
+            return Err(FastDbError::format(
+                "event expression version or recursion limit is unsupported",
+            ));
+        }
+        let definition = format_text(&row[7], "definition")?;
+        let parsed = turso_fastdb_parser::parse_one(&definition)
+            .map_err(|_| FastDbError::format("event definition cannot be parsed"))?;
+        let turso_fastdb_parser::Statement::DefineEvent(parsed) = parsed else {
+            return Err(FastDbError::format(
+                "event definition has the wrong statement kind",
+            ));
+        };
+        let parsed_condition_source = parsed
+            .condition
+            .as_ref()
+            .map(|condition| {
+                definition
+                    .get(condition.span.offset..condition.span.end())
+                    .ok_or_else(|| FastDbError::format("event WHEN span is invalid"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let parsed_action_source = definition
+            .get(parsed.action.span.offset..parsed.action.span.end())
+            .ok_or_else(|| FastDbError::format("event THEN span is invalid"))?;
+        let table = snapshot
+            .tables
+            .values_mut()
+            .find(|table| table.id == table_id)
+            .ok_or_else(|| FastDbError::format("event belongs to an unknown table"))?;
+        let comment = parsed.comment.as_ref().map(|comment| comment.value.clone());
+        if parsed.if_not_exists.is_some()
+            || parsed.overwrite.is_some()
+            || parsed.name.value != logical_name
+            || parsed.table.value != table.logical_name
+            || parsed_condition_source != condition_source
+            || parsed_action_source != action_source
+            || canonical_event_definition(
+                &logical_name,
+                &table.logical_name,
+                &condition_source,
+                &action_source,
+                comment.as_deref(),
+            ) != definition
+        {
+            return Err(FastDbError::format(
+                "event definition does not match catalog ownership",
+            ));
+        }
+        let event = EventDefinition {
+            id,
+            table_id,
+            logical_name: logical_name.clone(),
+            condition: parsed.condition,
+            condition_source,
+            action: parsed.action,
+            action_source,
+            comment,
+            definition,
+        };
+        if !ids.insert(id) || table.events.insert(logical_name, event).is_some() {
+            return Err(FastDbError::format(
+                "event catalog contains duplicate ownership",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn canonical_event_definition(
+    logical_name: &str,
+    table_name: &str,
+    condition_source: &str,
+    action_source: &str,
+    comment: Option<&str>,
+) -> String {
+    let mut definition = format!(
+        "DEFINE EVENT {} ON TABLE {}",
+        render_catalog_identifier(logical_name),
+        render_catalog_identifier(table_name),
+    );
+    definition.push_str(" WHEN ");
+    definition.push_str(condition_source.trim());
+    definition.push_str(" THEN ");
+    definition.push_str(action_source.trim());
+    if let Some(comment) = comment {
+        definition.push_str(" COMMENT ");
+        definition.push_str(&render_catalog_string(comment));
+    }
+    definition
+}
+
+fn render_catalog_identifier(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        && value
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        value.to_string()
+    } else {
+        format!("`{}`", value.replace('`', "``"))
+    }
+}
+
+fn render_catalog_string(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
 pub fn canonical_function_definition(
@@ -1302,7 +1502,6 @@ fn create_format_three_catalogs(conn: &Connection) -> Result<()> {
 fn validate_future_catalogs_empty(conn: &Connection) -> Result<()> {
     for (table, id_column) in [
         (VIEWS_TABLE, "view_id"),
-        (EVENTS_TABLE, "event_id"),
         (PERMISSIONS_TABLE, "permission_id"),
         (USERS_TABLE, "user_id"),
         (ACCESSES_TABLE, "access_id"),
@@ -1442,6 +1641,7 @@ fn load_table_rows(
                         comment,
                         fields: BTreeMap::new(),
                         indexes: BTreeMap::new(),
+                        events: BTreeMap::new(),
                     },
                 )
                 .is_some()

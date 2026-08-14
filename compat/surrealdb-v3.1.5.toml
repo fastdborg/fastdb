@@ -7401,11 +7401,11 @@ area = "Scripting and schema"
 title = "ALTER EVENT"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Characterized ALTER EVENT clauses update canonical metadata atomically."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "ALTER EVENT updates or drops the synchronous WHEN, THEN, and COMMENT metadata atomically; IF EXISTS is idempotent and ASYNC options fail explicitly."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/event", "docs/compat-research/phase15.md#synchronous-events"]
+parser_evidence = ["P15-PARSE-009"]
+execution_evidence = ["P15-API-013", "P15-CATALOG-004"]
 stop_report = ""
 
 [[capability]]
@@ -7583,11 +7583,11 @@ area = "Scripting and schema"
 title = "DEFINE EVENT"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "Synchronous events execute atomically with recursion, time, statement, and output limits."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/event"]
-parser_evidence = []
-execution_evidence = []
+status = "Partial"
+syntax = "Synchronous DEFINE EVENT supports IF NOT EXISTS/OVERWRITE, default or explicit WHEN, block/parenthesized/single actions, COMMENT, lexical event-name order, characterized context values, nested writes, relation cascades, redacted failure rollback, and bounded recursion/invocations; per-record event visibility within multi-record mutation statements remains under Phase 15 completion work and ASYNC fails explicitly."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/event", "docs/compat-research/phase15.md#synchronous-events"]
+parser_evidence = ["P15-PARSE-009"]
+execution_evidence = ["P15-API-013", "P15-API-014", "P15-API-015", "P15-API-016", "P15-API-017", "P15-CATALOG-004", "P15-CATALOG-005"]
 stop_report = ""
 
 [[capability]]
@@ -7778,11 +7778,11 @@ area = "Scripting and schema"
 title = "INFO EVENT"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "INFO EVENT returns structured authorized definitions."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "INFO FOR TABLE returns the characterized events object of canonical definitions for the trusted local Owner surface."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/info", "docs/compat-research/phase15.md#synchronous-events"]
+parser_evidence = ["P15-PARSE-009"]
+execution_evidence = ["P15-API-013"]
 stop_report = ""
 
 [[capability]]
@@ -7960,11 +7960,11 @@ area = "Scripting and schema"
 title = "complete REMOVE EVENT"
 phase = 15
 disposition = "target"
-status = "Unsupported"
-syntax = "REMOVE EVENT executes atomically with dependency validation."
-provenance = ["https://surrealdb.com/docs/reference/query-language/statements/overview"]
-parser_evidence = []
-execution_evidence = []
+status = "Supported"
+syntax = "REMOVE EVENT removes the table-owned synchronous event atomically; IF EXISTS is idempotent and explicit transaction rollback restores it."
+provenance = ["https://surrealdb.com/docs/reference/query-language/statements/remove", "docs/compat-research/phase15.md#synchronous-events"]
+parser_evidence = ["P15-PARSE-009"]
+execution_evidence = ["P15-API-013", "P15-CATALOG-004"]
 stop_report = ""
 
 [[capability]]

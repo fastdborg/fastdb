@@ -4,7 +4,7 @@
 mod common;
 
 use tempfile::tempdir;
-use turso_fastdb::{Database, ErrorCategory};
+use turso_fastdb::{Database, ErrorCategory, Failpoint, StatementResult};
 
 #[test]
 fn p15_catalog_001_parameter_corruption_fails_closed_without_mutation() {
@@ -125,4 +125,74 @@ fn p15_catalog_003_table_and_field_metadata_corruption_fails_closed() {
         );
         assert_eq!(std::fs::read(&file).unwrap(), before, "{name}");
     }
+}
+
+#[test]
+fn p15_catalog_004_event_corruption_fails_closed_without_mutation() {
+    let directory = tempdir().unwrap();
+    for (name, mutation) in [
+        ("owner", "UPDATE __fastdb_events SET logical_name='other'"),
+        (
+            "version",
+            "UPDATE __fastdb_events SET expression_version=99",
+        ),
+        (
+            "action",
+            "UPDATE __fastdb_events SET then_source='{ RETURN $before; }'",
+        ),
+    ] {
+        let file = directory.path().join(format!("event-{name}.fastdb"));
+        {
+            let database = Database::open(file.to_str().unwrap()).unwrap();
+            let connection = database.connect().unwrap();
+            connection
+                .execute(
+                    "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                     DEFINE EVENT stable ON item THEN { RETURN $after; }",
+                )
+                .unwrap();
+            common::native_exec(connection.native(), mutation);
+            connection.close().unwrap();
+        }
+        let before = std::fs::read(&file).unwrap();
+        assert_eq!(
+            Database::open(file.to_str().unwrap())
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Format,
+            "{name}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before, "{name}");
+    }
+}
+
+#[test]
+fn p15_catalog_005_event_boundary_failure_rolls_back_source_and_action() {
+    let database = Database::open_memory().unwrap();
+    let connection = database.connect().unwrap();
+    connection
+        .execute(
+            "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+             DEFINE EVENT audit ON item THEN { CREATE log; }",
+        )
+        .unwrap();
+    connection.arm_failpoint(Failpoint::BeforeEventActions);
+    assert_eq!(
+        connection
+            .execute("CREATE item:rolled_back")
+            .unwrap_err()
+            .category(),
+        ErrorCategory::Transaction
+    );
+    connection.disarm_all_failpoints();
+    for table in ["item", "log"] {
+        assert!(matches!(
+            connection
+                .execute(&format!("SELECT * FROM {table}"))
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(ref rows) if rows.is_empty()
+        ));
+    }
+    connection.close().unwrap();
 }

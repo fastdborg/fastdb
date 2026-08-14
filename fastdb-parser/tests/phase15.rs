@@ -264,3 +264,60 @@ fn p15_parse_008_stopped_sequence_module_and_server_api_fail_explicitly() {
         );
     }
 }
+
+#[test]
+fn p15_parse_009_synchronous_event_lifecycle_is_structured() {
+    let script = parse(
+        "DEFINE EVENT IF NOT EXISTS audit ON TABLE item \
+           WHEN $event = 'CREATE' THEN { CREATE log CONTENT $after; } \
+           COMMENT 'audit'; \
+         DEFINE EVENT OVERWRITE compact ON item THEN (CREATE log SET id = $value.id); \
+         DEFINE EVENT bare ON item THEN RETURN $value COMMENT 'bare'; \
+         ALTER EVENT IF EXISTS audit ON TABLE item DROP WHEN \
+           THEN { RETURN $before; } DROP COMMENT; \
+         REMOVE EVENT IF EXISTS audit ON TABLE item",
+    )
+    .unwrap();
+    let Statement::DefineEvent(first) = &script.statements[0] else {
+        panic!("expected DEFINE EVENT")
+    };
+    assert!(first.if_not_exists.is_some());
+    assert!(first.condition.is_some());
+    assert_eq!(first.action.block.statements.len(), 1);
+    assert_eq!(first.comment.as_ref().unwrap().value, "audit");
+    let Statement::DefineEvent(second) = &script.statements[1] else {
+        panic!("expected parenthesized DEFINE EVENT")
+    };
+    assert_eq!(
+        second.action.style,
+        turso_fastdb_parser::EventActionStyle::Parenthesized
+    );
+    let Statement::DefineEvent(bare) = &script.statements[2] else {
+        panic!("expected bare DEFINE EVENT")
+    };
+    assert_eq!(
+        bare.action.style,
+        turso_fastdb_parser::EventActionStyle::Bare
+    );
+    assert_eq!(bare.comment.as_ref().unwrap().value, "bare");
+    let Statement::AlterEvent(alter) = &script.statements[3] else {
+        panic!("expected ALTER EVENT")
+    };
+    assert!(matches!(alter.changes.condition, Some(None)));
+    assert!(matches!(alter.changes.action, Some(Some(_))));
+    assert!(matches!(alter.changes.comment, Some(None)));
+    assert!(matches!(script.statements[4], Statement::RemoveEvent(_)));
+
+    for source in [
+        "DEFINE EVENT empty ON item",
+        "DEFINE EVENT IF NOT EXISTS OVERWRITE e ON item THEN RETURN NONE",
+        "DEFINE EVENT e ON item ASYNC THEN RETURN NONE",
+        "DEFINE EVENT e ON item THEN ()",
+        "ALTER EVENT e ON item",
+        "ALTER EVENT e ON item ASYNC",
+        "ALTER EVENT e ON item WHEN true WHEN false",
+        "REMOVE EVENT e item",
+    ] {
+        assert!(parse_one(source).is_err(), "{source}");
+    }
+}

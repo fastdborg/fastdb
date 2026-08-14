@@ -91,6 +91,8 @@ pub enum Failpoint {
     BeforeDeleteMutations,
     /// After one physical DELETE mutation, before statement completion.
     AfterDeleteMutation,
+    /// After the source record mutation, before its first synchronous event action.
+    BeforeEventActions,
     /// After the body succeeds and the (optional) real COMMIT would run.
     /// Simulates a COMMIT-time failure so the commit-failure rollback path is
     /// exercised deterministically. A separate integration test wraps Turso's
@@ -142,6 +144,7 @@ pub struct Failpoints {
     after_update_mutation: AtomicBool,
     before_delete_mutations: AtomicBool,
     after_delete_mutation: AtomicBool,
+    before_event_actions: AtomicBool,
     commit_failure: AtomicBool,
     rollback_failure: AtomicBool,
 }
@@ -227,6 +230,7 @@ impl Failpoints {
             Failpoint::AfterUpdateMutation => self.after_update_mutation.load(Ordering::SeqCst),
             Failpoint::BeforeDeleteMutations => self.before_delete_mutations.load(Ordering::SeqCst),
             Failpoint::AfterDeleteMutation => self.after_delete_mutation.load(Ordering::SeqCst),
+            Failpoint::BeforeEventActions => self.before_event_actions.load(Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.load(Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.load(Ordering::SeqCst),
         };
@@ -345,6 +349,9 @@ impl Failpoints {
             Failpoint::AfterDeleteMutation => {
                 self.after_delete_mutation.store(true, Ordering::SeqCst)
             }
+            Failpoint::BeforeEventActions => {
+                self.before_event_actions.store(true, Ordering::SeqCst)
+            }
             Failpoint::CommitFailure => self.commit_failure.store(true, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(true, Ordering::SeqCst),
         }
@@ -457,6 +464,9 @@ impl Failpoints {
             Failpoint::AfterDeleteMutation => {
                 self.after_delete_mutation.store(false, Ordering::SeqCst)
             }
+            Failpoint::BeforeEventActions => {
+                self.before_event_actions.store(false, Ordering::SeqCst)
+            }
             Failpoint::CommitFailure => self.commit_failure.store(false, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(false, Ordering::SeqCst),
         }
@@ -504,6 +514,7 @@ impl Failpoints {
             Failpoint::AfterUpdateMutation,
             Failpoint::BeforeDeleteMutations,
             Failpoint::AfterDeleteMutation,
+            Failpoint::BeforeEventActions,
             Failpoint::CommitFailure,
             Failpoint::RollbackFailure,
         ] {

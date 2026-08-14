@@ -742,7 +742,40 @@ fn p15_api_010_function_dependencies_block_dangling_catalog_state() {
         );
         connection
             .execute(
-                "REMOVE FUNCTION fn::dependent; REMOVE FUNCTION fn::base",
+                "REMOVE FUNCTION fn::dependent; DEFINE TABLE item",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection
+            .execute(
+                "DEFINE EVENT dependency ON item THEN RETURN fn::base(1)",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("REMOVE FUNCTION fn::base", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        assert_eq!(
+            connection
+                .execute(
+                    "DEFINE FUNCTION OVERWRITE fn::base($x: int, $y: int) { RETURN $x + $y; }",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        connection
+            .execute(
+                "REMOVE EVENT dependency ON item; REMOVE FUNCTION fn::base",
                 params! {},
             )
             .await
@@ -1109,6 +1142,285 @@ fn p15_api_012_field_rules_normalize_validate_and_persist() {
                     if value.get("count") == Some(&Value::Float(3.0))
                         && value.get("stamp") == Some(&Value::Integer(4))
                         && value.get("code") == Some(&Value::Str("changed".into())))
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_013_event_definitions_persist_alter_remove_and_roll_back() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("events.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 DEFINE EVENT audit ON item WHEN $event = 'CREATE' \
+                   THEN { RETURN $after; } COMMENT 'audit'; \
+                 DEFINE EVENT IF NOT EXISTS audit ON item THEN { RETURN NONE; }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let info = connection
+            .query("INFO FOR TABLE item", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("events"), Some(Value::Object(events))
+                    if matches!(events.get("audit"), Some(Value::Str(definition))
+                        if definition == "DEFINE EVENT audit ON TABLE item WHEN $event = 'CREATE' THEN { RETURN $after; } COMMENT 'audit'"))
+        ));
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        connection
+            .execute(
+                "ALTER EVENT audit ON item DROP WHEN \
+                   THEN (RETURN $before) COMMENT 'changed'; \
+                 ALTER EVENT IF EXISTS missing ON item DROP COMMENT",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let info = connection
+            .query("INFO FOR TABLE item", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("events"), Some(Value::Object(events))
+                    if matches!(events.get("audit"), Some(Value::Str(definition))
+                        if definition == "DEFINE EVENT audit ON TABLE item WHEN true THEN (RETURN $before) COMMENT 'changed'"))
+        ));
+
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("REMOVE EVENT audit ON item", params! {})
+            .await
+            .unwrap();
+        transaction.rollback().await.unwrap();
+        assert!(matches!(
+            &connection
+                .query("INFO FOR TABLE item", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("events"), Some(Value::Object(events)) if events.contains_key("audit"))
+        ));
+        connection
+            .execute(
+                "REMOVE EVENT audit ON item; REMOVE EVENT IF EXISTS audit ON item",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_014_events_execute_in_name_order_with_characterized_context() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 DEFINE EVENT capture ON item THEN { \
+                   CREATE log CONTENT { \
+                     kind: $event, before: $before, after: $after, \
+                     value: $value, input: $input \
+                   }; \
+                 }; \
+                 DEFINE EVENT z_order ON item WHEN $event = 'CREATE' \
+                   THEN { UPSERT ordering:state SET markers += ['z']; }; \
+                 DEFINE EVENT a_order ON item WHEN $event = 'CREATE' \
+                   THEN { UPSERT ordering:state SET markers += ['a']; }; \
+                 CREATE item:a SET n = 1; \
+                 UPDATE item:a SET n = 2; \
+                 DELETE item:a; \
+                 SELECT kind, before, after, value, input FROM log ORDER BY kind; \
+                 SELECT VALUE markers FROM ordering:state",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 8);
+        let StatementResult::Rows(events) = &response.statements[7] else {
+            panic!("expected captured event rows")
+        };
+        assert_eq!(events.len(), 3);
+        let Value::Object(created) = &events[0] else {
+            panic!("expected CREATE event")
+        };
+        assert_eq!(created.get("kind"), Some(&Value::Str("CREATE".into())));
+        assert_eq!(created.get("before"), Some(&Value::Null));
+        assert!(
+            matches!(created.get("after"), Some(Value::Object(value)) if value.get("n") == Some(&Value::Integer(1)))
+        );
+        assert!(
+            matches!(created.get("input"), Some(Value::Object(value)) if value.get("n") == Some(&Value::Integer(1)))
+        );
+        let Value::Object(deleted) = &events[1] else {
+            panic!("expected DELETE event")
+        };
+        assert_eq!(deleted.get("kind"), Some(&Value::Str("DELETE".into())));
+        assert_eq!(deleted.get("after"), Some(&Value::Null));
+        assert_eq!(deleted.get("value"), deleted.get("before"));
+        assert_eq!(deleted.get("input"), Some(&Value::Null));
+        let Value::Object(updated) = &events[2] else {
+            panic!("expected UPDATE event")
+        };
+        assert_eq!(updated.get("kind"), Some(&Value::Str("UPDATE".into())));
+        assert!(
+            matches!(updated.get("before"), Some(Value::Object(value)) if value.get("n") == Some(&Value::Integer(1)))
+        );
+        assert!(
+            matches!(updated.get("after"), Some(Value::Object(value)) if value.get("n") == Some(&Value::Integer(2)))
+        );
+        assert!(matches!(
+            &response.statements[8],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::Array(vec![
+                    Value::Str("a".into()), Value::Str("z".into())
+                ])]
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_015_event_failure_and_recursion_roll_back_atomically() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 DEFINE EVENT fail ON item THEN { \
+                   CREATE log SET source = $after.id; THROW 'event-secret'; \
+                 }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let error = connection
+            .execute("CREATE item:rolled_back SET n = 1", params! {})
+            .await
+            .unwrap_err();
+        assert_eq!(error.category(), ErrorCategory::Schema);
+        assert!(!error.detail().contains("event-secret"));
+        for table in ["item", "log"] {
+            assert!(matches!(
+                &connection
+                    .query(&format!("SELECT * FROM {table}"), params! {})
+                    .await
+                    .unwrap()
+                    .statements[0],
+                StatementResult::Rows(rows) if rows.is_empty()
+            ));
+        }
+
+        connection
+            .execute(
+                "REMOVE EVENT fail ON item; \
+                 DEFINE EVENT recursive ON item THEN { UPDATE item:loop SET n += 1; }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let error = connection
+            .execute("CREATE item:loop SET n = 0", params! {})
+            .await
+            .unwrap_err();
+        assert_eq!(error.category(), ErrorCategory::ResourceLimit);
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM item:loop", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.is_empty()
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_016_relation_events_cover_create_and_node_cascade_delete() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE TABLE person SCHEMALESS TYPE NORMAL; \
+                 DEFINE TABLE follows SCHEMALESS TYPE RELATION; \
+                 DEFINE EVENT edge_audit ON follows THEN { \
+                   CREATE edge_log SET kind = $event, edge = $value.id; \
+                 }; \
+                 CREATE person:a; CREATE person:b; \
+                 RELATE person:a->follows->person:b; \
+                 DELETE person:a; \
+                 SELECT VALUE kind FROM edge_log ORDER BY kind; \
+                 SELECT * FROM follows",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 7);
+        assert!(matches!(
+            &response.statements[7],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::Str("CREATE".into()), Value::Str("DELETE".into())]
+        ));
+        assert!(matches!(
+            &response.statements[8],
+            StatementResult::Rows(rows) if rows.is_empty()
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_017_insert_and_upsert_emit_create_or_update_events() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE TABLE item SCHEMALESS TYPE NORMAL; \
+                 DEFINE EVENT audit ON item THEN { \
+                   CREATE changes SET kind = $event, source = $value.id; \
+                 }; \
+                 INSERT INTO item { id: 'a', n: 1 }; \
+                 INSERT INTO item { id: 'a', n: 2 } \
+                   ON DUPLICATE KEY UPDATE n = $input.n; \
+                 UPSERT item:b SET n = 1; \
+                 UPSERT item:b SET n = 2; \
+                 SELECT VALUE kind FROM changes ORDER BY kind",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mutation_count, 8);
+        assert!(matches!(
+            &response.statements[6],
+            StatementResult::Rows(rows)
+                if rows == &vec![
+                    Value::Str("CREATE".into()),
+                    Value::Str("CREATE".into()),
+                    Value::Str("UPDATE".into()),
+                    Value::Str("UPDATE".into()),
+                ]
         ));
         connection.close().await.unwrap();
     });

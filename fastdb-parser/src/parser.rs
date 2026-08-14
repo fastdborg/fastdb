@@ -182,6 +182,7 @@ struct Parser<'a> {
     position: usize,
     limits: &'a ParserLimits,
     depth: usize,
+    event_action_boundary: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -191,6 +192,7 @@ impl<'a> Parser<'a> {
             position: 0,
             limits,
             depth: 0,
+            event_action_boundary: false,
         }
     }
 
@@ -936,6 +938,9 @@ impl<'a> Parser<'a> {
             TokenKind::Function => Ok(Statement::DefineFunction(
                 self.parse_define_function(start)?,
             )),
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("event") => Ok(
+                Statement::DefineEvent(self.parse_define_event(start)?),
+            ),
             TokenKind::Ident(value) if value.eq_ignore_ascii_case("sequence") => {
                 Err(ParseError::unsupported(
                     "SurrealDB sequence allocation cannot preserve its non-rollback semantics on serialized stable WAL",
@@ -1090,6 +1095,154 @@ impl<'a> Parser<'a> {
         Ok(name)
     }
 
+    fn parse_define_event(&mut self, start: Span) -> Result<DefineEventStatement, ParseError> {
+        self.expect_ident_keyword("event", "keyword EVENT")?;
+        let if_not_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            self.expect(&TokenKind::Not, "keyword NOT after IF")?;
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF NOT")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let overwrite = self.take(&TokenKind::Overwrite).map(|token| token.span);
+        if let (Some(_), Some(overwrite_span)) = (if_not_exists, overwrite) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "DEFINE EVENT cannot combine IF NOT EXISTS and OVERWRITE",
+                },
+                overwrite_span,
+            ));
+        }
+        let name = self.expect_identifier("an event name")?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("an event table")?;
+        let mut condition = None;
+        let mut action = None;
+        let mut comment = None;
+        loop {
+            if self.eat_ident_keyword("async") {
+                return Err(ParseError::unsupported(
+                    "asynchronous events are outside the synchronous Phase 15 event contract",
+                    self.previous_span(),
+                ));
+            }
+            if self.eat_ident_keyword("when") {
+                if condition.is_some() {
+                    return Err(self.duplicate_clause("WHEN"));
+                }
+                condition = Some(self.parse_expression()?);
+                continue;
+            }
+            if self.eat_ident_keyword("then") {
+                if action.is_some() {
+                    return Err(self.duplicate_clause("THEN"));
+                }
+                action = Some(self.parse_event_action()?);
+                continue;
+            }
+            if self.at(&TokenKind::Comment) {
+                if comment.is_some() {
+                    return Err(self.duplicate_clause("COMMENT"));
+                }
+                comment = self.parse_optional_comment()?;
+                continue;
+            }
+            break;
+        }
+        let action = action.ok_or_else(|| {
+            ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "DEFINE EVENT requires at least one THEN action",
+                },
+                table.span,
+            )
+        })?;
+        Ok(DefineEventStatement {
+            span: Span::new(start.offset, self.previous_end() - start.offset),
+            if_not_exists,
+            overwrite,
+            name,
+            table_keyword,
+            table,
+            condition,
+            action,
+            comment,
+        })
+    }
+
+    fn parse_event_action(&mut self) -> Result<EventAction, ParseError> {
+        if self.at(&TokenKind::LeftBrace) {
+            let block = self.parse_script_block()?;
+            return Ok(EventAction {
+                span: block.span,
+                block,
+                style: EventActionStyle::Block,
+            });
+        }
+        if self.at(&TokenKind::LeftParen) {
+            let block = self.parse_parenthesized_script_block()?;
+            return Ok(EventAction {
+                span: block.span,
+                block,
+                style: EventActionStyle::Parenthesized,
+            });
+        }
+        self.event_action_boundary = true;
+        let statement = self.parse_statement();
+        self.event_action_boundary = false;
+        let statement = statement?;
+        let span = statement.span();
+        Ok(EventAction {
+            span,
+            block: ScriptBlock {
+                span,
+                statements: vec![statement],
+            },
+            style: EventActionStyle::Bare,
+        })
+    }
+
+    fn parse_parenthesized_script_block(&mut self) -> Result<ScriptBlock, ParseError> {
+        let open = self.expect(&TokenKind::LeftParen, "'(' before event action")?;
+        self.with_depth(|parser| {
+            if parser.at(&TokenKind::RightParen) {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "event THEN action cannot be empty",
+                    },
+                    parser.peek().span,
+                ));
+            }
+            let mut statements = Vec::new();
+            loop {
+                let statement = parser.parse_statement()?;
+                parser.check_collection_limit(
+                    statements.len() + 1,
+                    LimitKind::Statements,
+                    parser.limits.max_statements,
+                    statement.span(),
+                )?;
+                statements.push(statement);
+                if parser.eat(&TokenKind::Semicolon) {
+                    if parser.at(&TokenKind::RightParen) {
+                        let close = parser.advance().clone();
+                        return Ok(ScriptBlock {
+                            span: open.span.union(close.span),
+                            statements,
+                        });
+                    }
+                    continue;
+                }
+                let close = parser.expect(&TokenKind::RightParen, "')' after event action")?;
+                return Ok(ScriptBlock {
+                    span: open.span.union(close.span),
+                    statements,
+                });
+            }
+        })
+    }
+
     fn parse_schema_permissions(&mut self) -> Result<Option<SchemaPermissions>, ParseError> {
         if !self.eat(&TokenKind::Permissions) {
             return Ok(None);
@@ -1118,6 +1271,9 @@ impl<'a> Parser<'a> {
                 "ALTER API execution belongs to the authenticated Phase 19 server",
                 self.peek().span,
             ));
+        }
+        if self.at_ident_keyword("event") {
+            return self.parse_alter_event(start).map(Statement::AlterEvent);
         }
         if self.eat(&TokenKind::Field) {
             let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
@@ -1319,6 +1475,101 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    fn parse_alter_event(&mut self, start: Span) -> Result<AlterEventStatement, ParseError> {
+        self.expect_ident_keyword("event", "keyword EVENT")?;
+        let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let name = self.expect_identifier("an event name")?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("an event table")?;
+        let mut changes = AlterEventChanges::default();
+        loop {
+            if self.eat_ident_keyword("async") {
+                return Err(ParseError::unsupported(
+                    "asynchronous events are outside the synchronous Phase 15 event contract",
+                    self.previous_span(),
+                ));
+            }
+            if self.eat(&TokenKind::Drop) {
+                if self.eat_ident_keyword("async") {
+                    return Err(ParseError::unsupported(
+                        "asynchronous events are outside the synchronous Phase 15 event contract",
+                        self.previous_span(),
+                    ));
+                }
+                if self.eat_ident_keyword("when") {
+                    if changes.condition.is_some() {
+                        return Err(self.duplicate_clause("WHEN"));
+                    }
+                    changes.condition = Some(None);
+                    continue;
+                }
+                if self.eat_ident_keyword("then") {
+                    if changes.action.is_some() {
+                        return Err(self.duplicate_clause("THEN"));
+                    }
+                    changes.action = Some(None);
+                    continue;
+                }
+                if self.eat(&TokenKind::Comment) {
+                    if changes.comment.is_some() {
+                        return Err(self.duplicate_clause("COMMENT"));
+                    }
+                    changes.comment = Some(None);
+                    continue;
+                }
+                return Err(self.unexpected("WHEN, THEN, COMMENT, or ASYNC after DROP"));
+            }
+            if self.eat_ident_keyword("when") {
+                if changes.condition.is_some() {
+                    return Err(self.duplicate_clause("WHEN"));
+                }
+                changes.condition = Some(Some(self.parse_expression()?));
+                continue;
+            }
+            if self.eat_ident_keyword("then") {
+                if changes.action.is_some() {
+                    return Err(self.duplicate_clause("THEN"));
+                }
+                changes.action = Some(Some(self.parse_event_action()?));
+                continue;
+            }
+            if self.at(&TokenKind::Comment) {
+                if changes.comment.is_some() {
+                    return Err(self.duplicate_clause("COMMENT"));
+                }
+                changes.comment = Some(Some(
+                    self.parse_optional_comment()?
+                        .expect("COMMENT was present")
+                        .value,
+                ));
+                continue;
+            }
+            break;
+        }
+        if changes.condition.is_none() && changes.action.is_none() && changes.comment.is_none() {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: "ALTER EVENT requires at least one supported clause",
+                },
+                table.span,
+            ));
+        }
+        Ok(AlterEventStatement {
+            span: Span::new(start.offset, self.previous_end() - start.offset),
+            if_exists,
+            name,
+            table_keyword,
+            table,
+            changes,
+        })
+    }
+
     fn parse_remove(&mut self) -> Result<Statement, ParseError> {
         if matches!(&self.tokens[self.position + 1].kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("sequence"))
         {
@@ -1334,6 +1585,10 @@ impl<'a> Parser<'a> {
                 self.tokens[self.position + 1].span,
             ));
         }
+        if matches!(&self.tokens[self.position + 1].kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("event"))
+        {
+            return self.parse_remove_event().map(Statement::RemoveEvent);
+        }
         if self.at_offset(1, &TokenKind::Field) {
             return self.parse_remove_field().map(Statement::RemoveField);
         }
@@ -1348,6 +1603,28 @@ impl<'a> Parser<'a> {
         }
         self.parse_index_maintenance(false)
             .map(Statement::RemoveIndex)
+    }
+
+    fn parse_remove_event(&mut self) -> Result<RemoveEventStatement, ParseError> {
+        let start = self.expect(&TokenKind::Remove, "keyword REMOVE")?.span;
+        self.expect_ident_keyword("event", "keyword EVENT")?;
+        let if_exists = if let Some(if_token) = self.take(&TokenKind::If) {
+            let exists = self.expect(&TokenKind::Exists, "keyword EXISTS after IF")?;
+            Some(if_token.span.union(exists.span))
+        } else {
+            None
+        };
+        let name = self.expect_identifier("an event name")?;
+        self.expect(&TokenKind::On, "keyword ON")?;
+        let table_keyword = self.take(&TokenKind::Table).map(|token| token.span);
+        let table = self.expect_identifier("an event table")?;
+        Ok(RemoveEventStatement {
+            span: start.union(table.span),
+            if_exists,
+            name,
+            table_keyword,
+            table,
+        })
     }
 
     fn parse_remove_field(&mut self) -> Result<RemoveFieldStatement, ParseError> {
@@ -3229,7 +3506,10 @@ impl<'a> Parser<'a> {
     fn ensure_statement_boundary(&self) -> Result<(), ParseError> {
         if self.at(&TokenKind::Semicolon)
             || self.at(&TokenKind::RightBrace)
+            || self.at(&TokenKind::RightParen)
             || self.at(&TokenKind::Eof)
+            || (self.event_action_boundary
+                && (self.at(&TokenKind::Comment) || self.at(&TokenKind::Drop)))
         {
             return Ok(());
         }
@@ -3367,6 +3647,38 @@ impl<'a> Parser<'a> {
         Err(self.unexpected_at(&token, expected))
     }
 
+    fn at_ident_keyword(&self, expected: &str) -> bool {
+        matches!(&self.peek().kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case(expected))
+    }
+
+    fn eat_ident_keyword(&mut self, expected: &str) -> bool {
+        if self.at_ident_keyword(expected) {
+            self.position += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_ident_keyword(
+        &mut self,
+        value: &str,
+        expected: &'static str,
+    ) -> Result<Token, ParseError> {
+        if self.at_ident_keyword(value) {
+            let token = self.peek().clone();
+            self.position += 1;
+            Ok(token)
+        } else if self.at(&TokenKind::Eof) {
+            Err(ParseError::new(
+                ParseErrorKind::UnexpectedEof { expected },
+                self.peek().span,
+            ))
+        } else {
+            Err(self.unexpected(expected))
+        }
+    }
+
     fn expect_parameter(&mut self, expected: &'static str) -> Result<Identifier, ParseError> {
         let token = self.peek().clone();
         match token.kind {
@@ -3431,6 +3743,10 @@ impl<'a> Parser<'a> {
 
     fn previous_end(&self) -> usize {
         self.tokens[self.position.saturating_sub(1)].span.end()
+    }
+
+    fn previous_span(&self) -> Span {
+        self.tokens[self.position.saturating_sub(1)].span
     }
 
     fn unexpected(&self, expected: &'static str) -> ParseError {
