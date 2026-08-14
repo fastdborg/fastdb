@@ -1368,6 +1368,33 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    fn parse_reference_delete_action(
+        &mut self,
+    ) -> Result<Option<ReferenceDeleteAction>, ParseError> {
+        if !self.eat(&TokenKind::On) {
+            return Ok(None);
+        }
+        self.expect(&TokenKind::Delete, "keyword DELETE after REFERENCE ON")?;
+        let token = self.advance().clone();
+        let action = match token.kind {
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("cascade") => {
+                ReferenceDeleteAction::Cascade
+            }
+            TokenKind::Ident(value) if value.eq_ignore_ascii_case("reject") => {
+                ReferenceDeleteAction::Reject
+            }
+            TokenKind::Unset => ReferenceDeleteAction::Unset,
+            TokenKind::Ignore => ReferenceDeleteAction::Ignore,
+            _ => {
+                return Err(self.unexpected_at(
+                    &token,
+                    "CASCADE, REJECT, UNSET, or IGNORE after REFERENCE ON DELETE",
+                ))
+            }
+        };
+        Ok(Some(action))
+    }
+
     fn parse_alter(&mut self) -> Result<Statement, ParseError> {
         let start = self.expect(&TokenKind::Alter, "keyword ALTER")?.span;
         if matches!(&self.peek().kind, TokenKind::Ident(value) if value.eq_ignore_ascii_case("sequence"))
@@ -1437,13 +1464,7 @@ impl<'a> Parser<'a> {
             } else if self.eat(&TokenKind::Readonly) {
                 AlterFieldChange::Readonly
             } else if self.eat(&TokenKind::Reference) {
-                if self.at(&TokenKind::On) {
-                    return Err(ParseError::unsupported(
-                        "REFERENCE ON DELETE actions require the Phase 15 reference provider",
-                        self.peek().span,
-                    ));
-                }
-                AlterFieldChange::Reference
+                AlterFieldChange::Reference(self.parse_reference_delete_action()?)
             } else if self.at(&TokenKind::Permissions) {
                 let permissions = self
                     .parse_schema_permissions()?
@@ -2140,6 +2161,7 @@ impl<'a> Parser<'a> {
         let mut assert = None;
         let mut readonly = None;
         let mut reference = None;
+        let mut reference_action = None;
         let mut permissions = None;
         let mut comment = None;
         loop {
@@ -2181,12 +2203,6 @@ impl<'a> Parser<'a> {
                     ));
                 }
             } else if let Some(token) = self.take(&TokenKind::Reference) {
-                if self.at(&TokenKind::On) {
-                    return Err(ParseError::unsupported(
-                        "REFERENCE ON DELETE actions require the Phase 15 reference provider",
-                        self.peek().span,
-                    ));
-                }
                 if reference.replace(token.span).is_some() {
                     return Err(ParseError::new(
                         ParseErrorKind::DuplicateClause {
@@ -2195,6 +2211,7 @@ impl<'a> Parser<'a> {
                         token.span,
                     ));
                 }
+                reference_action = self.parse_reference_delete_action()?;
             } else if self.at(&TokenKind::Permissions) {
                 if permissions.is_some() {
                     return Err(self.duplicate_clause("PERMISSIONS"));
@@ -2225,6 +2242,7 @@ impl<'a> Parser<'a> {
             assert,
             readonly,
             reference,
+            reference_action,
             permissions,
             comment,
         })

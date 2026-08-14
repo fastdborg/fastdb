@@ -2800,6 +2800,24 @@ pub fn physical_all_rows_stmt(opaque_table: &str) -> Result<Stmt, FastDbError> {
     physical_select_stmt(opaque_table, None, &[]).map(|(statement, _)| statement)
 }
 
+pub fn physical_count_rows_stmt(opaque_table: &str) -> Result<Stmt, FastDbError> {
+    validate_physical_name(opaque_table, TABLE_NAME_PREFIX)?;
+    Ok(one_select(
+        vec![ResultColumn::Expr(
+            Box::new(Expr::FunctionCallStar {
+                name: nm("count"),
+                filter_over: FunctionTail {
+                    filter_clause: None,
+                    over_clause: None,
+                },
+            }),
+            None,
+        )],
+        opaque_table,
+        None,
+    ))
+}
+
 pub fn physical_delete_by_rid_stmt(
     opaque_table: &str,
     encoded_rid: &str,

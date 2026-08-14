@@ -258,11 +258,20 @@ that optional, unrestricted value behavior.
 FastDB applies defaults, computed VALUE expressions, type normalization,
 readonly checks, assertions, and all derived graph/FTS/vector maintenance in
 one statement transaction. Stored expression source and AST are reparsed and
-ownership-checked on reopen. Simple REFERENCE metadata is accepted only for
-record-valued fields; ON DELETE actions remain explicit until the dependency
-provider is implemented. Field removal refuses live index dependencies and
-removes catalog-owned native-vector columns and the last vector capability
-atomically.
+ownership-checked on reopen. REFERENCE metadata is accepted only for
+record-valued fields. Independent probes established that dangling writes are
+accepted, bare REFERENCE and `ON DELETE IGNORE` leave dangling values,
+`REJECT` aborts the deletion, `CASCADE` deletes the complete referencing
+record, and `UNSET` removes a direct field or only matching array/set members.
+FastDB applies those actions recursively with deterministic cycle handling,
+depth/mutation/scan ceilings, schema validation, provider recomputation,
+events, view refresh, and statement-wide rollback. Required fields can make an
+UNSET fail, matching the observed atomic reference behavior. Reference and
+native-vector failpoints prove rollback across document and derived-state
+boundaries. `ALTER FIELD TYPE` transactionally drops/adds/backfills native
+vector columns when dimensions or physical representation change. Field
+removal refuses live index dependencies and removes catalog-owned native-vector
+columns and the last vector capability atomically.
 
 Additional type probes accepted `int | string`, `'open' | 'closed'`,
 `record<person | company>`, `array<int | string>`, and `object FLEXIBLE`.
@@ -272,8 +281,7 @@ output normalized `option<record<target>>` to `none | record<target>` and
 preserved typed-record table sets. FastDB keeps its own canonical internal type
 spelling but implements those value constraints, flexible schemafull paths,
 alter/drop lifecycle, reopen validation, and collision-safe document storage.
-Full reference actions and mixed table ANY remain incomplete rather than being
-accepted without behavior.
+Mixed table ANY remains incomplete rather than being accepted without behavior.
 
 ## Synchronous events
 

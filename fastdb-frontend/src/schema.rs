@@ -333,6 +333,7 @@ pub struct FieldRule {
     pub assert: Option<SchemaExpression>,
     pub readonly: bool,
     pub reference: bool,
+    pub reference_action: Option<turso_fastdb_parser::ReferenceDeleteAction>,
     pub permissions: turso_fastdb_parser::SchemaPermissions,
     pub comment: Option<String>,
 }
@@ -606,6 +607,7 @@ mod tests {
             assert: None,
             readonly: false,
             reference: false,
+            reference_action: None,
             permissions: turso_fastdb_parser::SchemaPermissions::Full,
             comment: None,
         }

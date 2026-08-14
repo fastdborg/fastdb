@@ -230,10 +230,54 @@ fn p15_parse_007_field_clauses_and_lifecycle_are_structured() {
     for source in [
         "DEFINE FIELD IF NOT EXISTS OVERWRITE score ON item TYPE int",
         "DEFINE FIELD score ON item DEFAULT",
-        "DEFINE FIELD score ON item REFERENCE ON DELETE CASCADE",
+        "DEFINE FIELD score ON item REFERENCE ON DELETE UNKNOWN",
         "ALTER FIELD score ON item",
         "ALTER FIELD score ON item DROP",
         "REMOVE FIELD score item",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn p15_parse_013_reference_delete_actions_are_structured() {
+    let script = parse(
+        "DEFINE FIELD cascade ON child TYPE option<record<target>> \
+           REFERENCE ON DELETE CASCADE; \
+         DEFINE FIELD reject ON child TYPE record<target> \
+           REFERENCE ON DELETE REJECT; \
+         DEFINE FIELD unset ON child TYPE array<record<target>> \
+           REFERENCE ON DELETE UNSET; \
+         DEFINE FIELD ignored ON child TYPE set<record<target>> \
+           REFERENCE ON DELETE IGNORE; \
+         ALTER FIELD cascade ON child REFERENCE ON DELETE IGNORE",
+    )
+    .unwrap();
+    for (statement, expected) in script.statements[..4].iter().zip([
+        turso_fastdb_parser::ReferenceDeleteAction::Cascade,
+        turso_fastdb_parser::ReferenceDeleteAction::Reject,
+        turso_fastdb_parser::ReferenceDeleteAction::Unset,
+        turso_fastdb_parser::ReferenceDeleteAction::Ignore,
+    ]) {
+        let Statement::DefineField(field) = statement else {
+            panic!("expected field definition")
+        };
+        assert_eq!(field.reference_action, Some(expected));
+    }
+    assert!(matches!(
+        script.statements[4],
+        Statement::AlterField(turso_fastdb_parser::AlterFieldStatement {
+            change: turso_fastdb_parser::AlterFieldChange::Reference(Some(
+                turso_fastdb_parser::ReferenceDeleteAction::Ignore
+            )),
+            ..
+        })
+    ));
+
+    for source in [
+        "DEFINE FIELD x ON child TYPE record REFERENCE ON CASCADE",
+        "DEFINE FIELD x ON child TYPE record REFERENCE ON DELETE DEFAULT",
+        "ALTER FIELD x ON child REFERENCE ON DELETE",
     ] {
         assert!(parse(source).is_err(), "{source}");
     }

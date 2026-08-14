@@ -2009,3 +2009,264 @@ fn p15_api_027_conditional_permission_metadata_is_atomic_and_persistent() {
         database.check().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_028_reference_delete_actions_cascade_reject_unset_and_ignore() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("reference-actions.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE target; DEFINE TABLE child; DEFINE TABLE grand; \
+                 DEFINE TABLE unset_holder; DEFINE TABLE blocker; \
+                 DEFINE FIELD target_ref ON child TYPE option<record<target>> \
+                   REFERENCE ON DELETE CASCADE; \
+                 DEFINE FIELD child_ref ON grand TYPE option<record<child>> \
+                   REFERENCE ON DELETE CASCADE; \
+                 DEFINE FIELD direct ON unset_holder TYPE option<record<target>> \
+                   REFERENCE ON DELETE UNSET; \
+                 DEFINE FIELD refs ON unset_holder TYPE array<record<target>> \
+                   REFERENCE ON DELETE UNSET; \
+                 DEFINE FIELD stale ON blocker TYPE option<record<target>> \
+                   REFERENCE ON DELETE REJECT; \
+                 CREATE target:x; CREATE target:y; \
+                 CREATE child:a SET target_ref = target:x; \
+                 CREATE grand:g SET child_ref = child:a; \
+                 CREATE unset_holder:u SET direct = target:x, refs = [target:x, target:y, target:x]; \
+                 CREATE blocker:b SET stale = target:x",
+                params! {},
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            connection
+                .execute("DELETE target:x", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM target:x", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.len() == 1
+        ));
+
+        connection
+            .execute(
+                "ALTER FIELD stale ON blocker REFERENCE ON DELETE IGNORE; \
+                 DELETE target:x",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let response = connection
+            .query(
+                "SELECT * FROM target:x; SELECT * FROM child:a; SELECT * FROM grand:g; \
+                 SELECT * FROM unset_holder:u; SELECT VALUE stale FROM blocker:b",
+                params! {},
+            )
+            .await
+            .unwrap();
+        for result in &response.statements[..3] {
+            assert!(matches!(result, StatementResult::Rows(rows) if rows.is_empty()));
+        }
+        assert!(matches!(
+            &response.statements[3],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(row)
+                    if !row.contains_key("direct")
+                        && row.get("refs") == Some(&Value::Array(vec![
+                            Value::RecordId(fastdb::RecordId::new("target", "y")),
+                        ])))
+        ));
+        assert!(matches!(
+            &response.statements[4],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::RecordId(fastdb::RecordId::new("target", "x"))]
+        ));
+        connection
+            .execute(
+                "DEFINE TABLE cycle; \
+                 DEFINE FIELD next ON cycle TYPE option<record<cycle>> \
+                   REFERENCE ON DELETE CASCADE; \
+                 CREATE cycle:a SET next=cycle:b; CREATE cycle:b SET next=cycle:a; \
+                 DELETE cycle:a; \
+                 DEFINE TABLE required_holder SCHEMAFULL; \
+                 DEFINE FIELD target_ref ON required_holder TYPE record<target> \
+                   REFERENCE ON DELETE UNSET; \
+                 CREATE target:z; CREATE required_holder:z SET target_ref=target:z",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM cycle", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.is_empty()
+        ));
+        assert_eq!(
+            connection
+                .execute("DELETE target:z", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        assert!(matches!(
+            &connection
+                .query("SELECT * FROM target:z", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.len() == 1
+        ));
+        connection
+            .execute(
+                "ALTER FIELD stale ON blocker REFERENCE ON DELETE REJECT; \
+                 CREATE target:q; CREATE blocker:q SET stale=target:q; \
+                 DELETE [target:q, blocker:q]",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let jointly_deleted = connection
+            .query(
+                "SELECT * FROM target:q; SELECT * FROM blocker:q",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(jointly_deleted
+            .statements
+            .iter()
+            .all(|result| matches!(result, StatementResult::Rows(rows) if rows.is_empty())));
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let info = connection
+            .query("INFO FOR TABLE unset_holder", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("fields"), Some(Value::Object(fields))
+                    if matches!(fields.get("refs"), Some(Value::Str(definition))
+                        if definition.contains("REFERENCE ON DELETE UNSET")))
+        ));
+        connection.close().await.unwrap();
+        database.check().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_029_alter_field_rebuilds_native_vector_representation() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("alter-vector.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item; \
+                 DEFINE FIELD embedding ON item TYPE option<array>; \
+                 DEFINE FIELD secondary ON item TYPE option<array<float,2>>; \
+                 CREATE item:a SET embedding=[1,2], secondary=[3,4]; \
+                 ALTER FIELD embedding ON item TYPE option<array<float,2>>",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(database.check().await.unwrap().vector_fields, 2);
+        assert!(matches!(
+            &connection
+                .query(
+                    "SELECT VALUE id FROM item WHERE embedding <|1,EUCLIDEAN|> [1,2]",
+                    params! {},
+                )
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::RecordId(fastdb::RecordId::new("item", "a"))]
+        ));
+        assert_eq!(
+            connection
+                .execute(
+                    "ALTER FIELD embedding ON item TYPE option<array<float,3>>",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        assert_eq!(database.check().await.unwrap().vector_fields, 2);
+        connection
+            .execute(
+                "UPDATE item:a SET embedding=NONE; \
+                 ALTER FIELD embedding ON item TYPE option<array<float,3>>; \
+                 UPDATE item:a SET embedding=[1,2,3]",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &connection
+                .query(
+                    "SELECT VALUE id FROM item WHERE embedding <|1,COSINE|> [1,2,3]",
+                    params! {},
+                )
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::RecordId(fastdb::RecordId::new("item", "a"))]
+        ));
+        connection
+            .execute("REMOVE FIELD secondary ON item", params! {})
+            .await
+            .unwrap();
+        assert_eq!(database.check().await.unwrap().vector_fields, 1);
+        connection
+            .execute(
+                "ALTER FIELD embedding ON item TYPE option<array>",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(database.check().await.unwrap().vector_fields, 0);
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        assert_eq!(database.check().await.unwrap().vector_fields, 0);
+        let connection = database.connect().unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE embedding FROM item:a", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::Array(vec![
+                    Value::Float(1.0),
+                    Value::Float(2.0),
+                    Value::Float(3.0),
+                ])]
+        ));
+        connection.close().await.unwrap();
+    });
+}

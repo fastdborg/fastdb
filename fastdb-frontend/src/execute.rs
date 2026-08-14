@@ -5439,6 +5439,317 @@ fn run_update(
     StatementExecution::mutation(result, mutation_count)
 }
 
+const MAX_REFERENCE_CASCADE_DEPTH: usize = 32;
+const MAX_REFERENCE_CASCADE_MUTATIONS: usize = 10_000;
+
+#[derive(Debug)]
+struct CascadedMutation {
+    table: TableDefinition,
+    before: Candidate,
+    after: Option<Candidate>,
+}
+
+fn value_references_record(value: &Value, target: &RecordId) -> bool {
+    match value {
+        Value::RecordId(record) => record == target,
+        Value::Array(values) => values
+            .iter()
+            .any(|value| value_references_record(value, target)),
+        Value::Set(values) => values
+            .as_slice()
+            .iter()
+            .any(|value| value_references_record(value, target)),
+        _ => false,
+    }
+}
+
+/// Remove a target from a reference value. Returns `false` when the complete
+/// field value must be removed.
+fn unset_reference_value(value: &mut Value, target: &RecordId) -> Result<bool> {
+    match value {
+        Value::RecordId(record) => Ok(record != target),
+        Value::Array(values) => {
+            values.retain(|value| !value_references_record(value, target));
+            Ok(true)
+        }
+        Value::Set(values) => {
+            let retained = values
+                .clone()
+                .into_vec()
+                .into_iter()
+                .filter(|value| !value_references_record(value, target))
+                .collect::<Vec<_>>();
+            *values = decode::SetValue::new(retained)?;
+            Ok(true)
+        }
+        _ => Ok(true),
+    }
+}
+
+fn reference_scan_row_count(conn: &Connection, table: &TableDefinition) -> Result<usize> {
+    let rows = conn.collect_rows(
+        lower::physical_count_rows_stmt(&table.physical_name)?,
+        vec![],
+    )?;
+    let [row] = rows.as_slice() else {
+        return Err(FastDbError::Engine(
+            "reference scan count returned an unexpected row count".into(),
+        ));
+    };
+    let Some(turso_core::Value::Numeric(turso_core::Numeric::Integer(count))) = row.first() else {
+        return Err(FastDbError::Engine(
+            "reference scan count returned a non-integer".into(),
+        ));
+    };
+    usize::try_from(*count)
+        .map_err(|_| FastDbError::Engine("reference scan count is outside usize".into()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn delete_candidate_with_cascades(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+    table: &TableDefinition,
+    candidate: Candidate,
+    params: &Params,
+    planned_deletes: &BTreeSet<(String, String)>,
+    visited: &mut BTreeSet<(String, String)>,
+    mutations: &mut Vec<CascadedMutation>,
+    depth: usize,
+) -> Result<()> {
+    if depth == MAX_REFERENCE_CASCADE_DEPTH {
+        return Err(FastDbError::ResourceLimit(format!(
+            "reference cascade depth exceeds {MAX_REFERENCE_CASCADE_DEPTH}"
+        )));
+    }
+    let key = (table.logical_name.clone(), candidate.encoded_rid.clone());
+    if !visited.insert(key.clone()) {
+        return Ok(());
+    }
+    if visited.len() > MAX_REFERENCE_CASCADE_MUTATIONS {
+        return Err(FastDbError::ResourceLimit(format!(
+            "reference cascade mutations exceed {MAX_REFERENCE_CASCADE_MUTATIONS}"
+        )));
+    }
+
+    let target = candidate.id.clone();
+    let mut dependents = Vec::new();
+    let mut scanned_rows = 0_usize;
+    for referencing_table in snapshot.tables.values() {
+        let actionable_fields = referencing_table
+            .fields
+            .values()
+            .filter_map(|field| field.reference_action.map(|action| (field, action)))
+            .filter(|(_, action)| {
+                !matches!(action, turso_fastdb_parser::ReferenceDeleteAction::Ignore)
+            })
+            .collect::<Vec<_>>();
+        if actionable_fields.is_empty() {
+            continue;
+        }
+        scanned_rows = scanned_rows
+            .checked_add(reference_scan_row_count(conn, referencing_table)?)
+            .ok_or_else(|| {
+                FastDbError::ResourceLimit("reference scan row count overflowed".into())
+            })?;
+        if scanned_rows > MAX_REFERENCE_CASCADE_MUTATIONS {
+            return Err(FastDbError::ResourceLimit(format!(
+                "reference scan rows exceed {MAX_REFERENCE_CASCADE_MUTATIONS}"
+            )));
+        }
+        for referencing_candidate in read_candidates(
+            conn,
+            snapshot,
+            referencing_table,
+            CandidateReadOptions {
+                id: None,
+                range: None,
+                condition: None,
+                params,
+                allow_cache: false,
+                fts: None,
+                vector: None,
+            },
+        )? {
+            let dependent_key = (
+                referencing_table.logical_name.clone(),
+                referencing_candidate.encoded_rid.clone(),
+            );
+            if dependent_key == key
+                || visited.contains(&dependent_key)
+                || planned_deletes.contains(&dependent_key)
+            {
+                continue;
+            }
+            let actions = actionable_fields
+                .iter()
+                .filter(|(field, _)| {
+                    crate::path::get_path(&referencing_candidate.document, &field.path)
+                        .is_some_and(|value| value_references_record(value, &target))
+                })
+                .map(|(field, action)| (field.path.clone(), *action))
+                .collect::<Vec<_>>();
+            if !actions.is_empty() {
+                dependents.push((referencing_table.clone(), referencing_candidate, actions));
+            }
+        }
+    }
+
+    if dependents.iter().any(|(_, _, actions)| {
+        actions
+            .iter()
+            .any(|(_, action)| matches!(action, turso_fastdb_parser::ReferenceDeleteAction::Reject))
+    }) {
+        return Err(FastDbError::Constraint(format!(
+            "record {target} is still referenced by an ON DELETE REJECT field"
+        )));
+    }
+
+    for (referencing_table, referencing_candidate, actions) in dependents {
+        if actions.iter().any(|(_, action)| {
+            matches!(action, turso_fastdb_parser::ReferenceDeleteAction::Cascade)
+        }) {
+            delete_candidate_with_cascades(
+                conn,
+                snapshot,
+                &referencing_table,
+                referencing_candidate,
+                params,
+                planned_deletes,
+                visited,
+                mutations,
+                depth + 1,
+            )?;
+            continue;
+        }
+        let unset_paths = actions
+            .into_iter()
+            .filter_map(|(path, action)| {
+                matches!(action, turso_fastdb_parser::ReferenceDeleteAction::Unset).then_some(path)
+            })
+            .collect::<Vec<_>>();
+        if unset_paths.is_empty() {
+            continue;
+        }
+        let mut document = referencing_candidate.document.clone();
+        for path in unset_paths {
+            let keep = crate::path::get_path_mut(&mut document, &path)
+                .map(|value| unset_reference_value(value, &target))
+                .transpose()?
+                .unwrap_or(true);
+            if !keep {
+                crate::path::remove_path(&mut document, &path)?;
+            }
+        }
+        let mut internal_table = referencing_table.clone();
+        for field in internal_table.fields.values_mut() {
+            field.readonly = false;
+        }
+        normalize_schema_document(
+            &internal_table,
+            &mut document,
+            Some(&referencing_candidate.document),
+            &referencing_candidate.id,
+            referencing_candidate
+                .endpoints
+                .as_ref()
+                .map(|(from, to)| (from, to)),
+            params,
+            &snapshot.functions,
+            false,
+        )?;
+        validate_index_values(&referencing_table, &document)?;
+        let hidden = derived_hidden_values(snapshot, &referencing_table, &document)?;
+        let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
+            &referencing_table.physical_name,
+            &referencing_candidate.encoded_rid,
+            &decode::encode_doc(&document)?,
+            &hidden,
+        )?;
+        contextual_constraint(
+            conn.exec_bound(update, bindings),
+            "reference UNSET violates a declared unique index",
+        )?;
+        conn.check_failpoint(Failpoint::AfterUpdateMutation)?;
+        let mut after = referencing_candidate.clone();
+        after.document = document;
+        if mutations.len() == MAX_REFERENCE_CASCADE_MUTATIONS {
+            return Err(FastDbError::ResourceLimit(format!(
+                "reference cascade mutations exceed {MAX_REFERENCE_CASCADE_MUTATIONS}"
+            )));
+        }
+        mutations.push(CascadedMutation {
+            table: referencing_table,
+            before: referencing_candidate,
+            after: Some(after),
+        });
+    }
+
+    if table.kind == TableKind::Normal {
+        let mut connected_edges = BTreeMap::new();
+        for relation in snapshot
+            .tables
+            .values()
+            .filter(|table| table.kind == TableKind::Relation)
+        {
+            for encoded_edge in connected_edge_ids(conn, snapshot, relation, table, &target.id)? {
+                let edge_id = decode_rid(&encoded_edge)?;
+                let edge = read_candidates(
+                    conn,
+                    snapshot,
+                    relation,
+                    CandidateReadOptions {
+                        id: Some(&edge_id),
+                        range: None,
+                        condition: None,
+                        params,
+                        allow_cache: false,
+                        fts: None,
+                        vector: None,
+                    },
+                )?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    FastDbError::format("graph adjacency points to a missing relation record")
+                })?;
+                connected_edges
+                    .entry((relation.logical_name.clone(), encoded_edge))
+                    .or_insert_with(|| (relation.clone(), edge));
+            }
+        }
+        for (_, (relation, edge)) in connected_edges {
+            delete_candidate_with_cascades(
+                conn,
+                snapshot,
+                &relation,
+                edge,
+                params,
+                planned_deletes,
+                visited,
+                mutations,
+                depth + 1,
+            )?;
+        }
+    }
+
+    let (delete, bindings) =
+        lower::physical_delete_by_rid_stmt(&table.physical_name, &candidate.encoded_rid)?;
+    conn.exec_bound(delete, bindings)?;
+    conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
+    if mutations.len() == MAX_REFERENCE_CASCADE_MUTATIONS {
+        return Err(FastDbError::ResourceLimit(format!(
+            "reference cascade mutations exceed {MAX_REFERENCE_CASCADE_MUTATIONS}"
+        )));
+    }
+    mutations.push(CascadedMutation {
+        table: table.clone(),
+        before: candidate,
+        after: None,
+    });
+    Ok(())
+}
+
 fn run_delete(
     conn: &Connection,
     execution: &mut ExecutionState,
@@ -5490,16 +5801,20 @@ fn run_delete(
         Ok(selected)
     })?;
     conn.check_failpoint(Failpoint::BeforeDeleteMutations)?;
+    let planned_deletes = selected
+        .iter()
+        .map(|(table, candidate)| (table.logical_name.clone(), candidate.encoded_rid.clone()))
+        .collect::<BTreeSet<_>>();
     let mut deleted = Vec::with_capacity(selected.len());
     let mut cascaded_count = 0_usize;
     for (selected_table, selected_candidate) in selected {
-        let deleted_one = data_mutation(conn, execution, || {
+        let cascaded = data_mutation(conn, execution, || {
             let catalog = catalog_for_read(conn, execution)?;
             let Some(snapshot) = catalog.snapshot() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
             let Some(table) = snapshot.tables.get(&selected_table.logical_name).cloned() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
             let Some(candidate) = read_candidates(
                 conn,
@@ -5517,98 +5832,71 @@ fn run_delete(
             )?
             .into_iter()
             .next() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
-            let mut connected_edges = BTreeMap::new();
-            if table.kind == TableKind::Normal {
-                for relation in snapshot
-                    .tables
-                    .values()
-                    .filter(|table| table.kind == TableKind::Relation)
-                {
-                    for encoded_edge in
-                        connected_edge_ids(conn, snapshot, relation, &table, &candidate.id.id)?
-                    {
-                        let edge_id = decode_rid(&encoded_edge)?;
-                        let Some(edge) = read_candidates(
-                            conn,
-                            snapshot,
-                            relation,
-                            CandidateReadOptions {
-                                id: Some(&edge_id),
-                                range: None,
-                                condition: None,
-                                params,
-                                allow_cache: false,
-                                fts: None,
-                                vector: None,
-                            },
-                        )?
-                        .into_iter()
-                        .next() else {
-                            return Err(FastDbError::format(
-                                "graph adjacency points to a missing relation record",
-                            ));
-                        };
-                        connected_edges
-                            .entry((relation.physical_name.clone(), encoded_edge))
-                            .or_insert_with(|| (relation.clone(), edge));
-                    }
-                }
-            }
-            for (physical_table, encoded_edge) in connected_edges.keys() {
-                let (delete, bindings) =
-                    lower::physical_delete_by_rid_stmt(physical_table, encoded_edge)?;
-                conn.exec_bound(delete, bindings)?;
-                conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
-            }
-            let (delete, bindings) =
-                lower::physical_delete_by_rid_stmt(&table.physical_name, &candidate.encoded_rid)?;
-            conn.exec_bound(delete, bindings)?;
-            conn.check_failpoint(Failpoint::AfterDeleteMutation)?;
-            Ok(Some((
-                table,
+            let mut mutations = Vec::new();
+            delete_candidate_with_cascades(
+                conn,
+                snapshot,
+                &table,
                 candidate,
-                connected_edges.into_values().collect::<Vec<_>>(),
-            )))
+                params,
+                &planned_deletes,
+                &mut BTreeSet::new(),
+                &mut mutations,
+                0,
+            )?;
+            Ok(mutations)
         })?;
-        let Some((table, candidate, cascaded_edges)) = deleted_one else {
+        if cascaded.is_empty() {
             continue;
-        };
-        for (relation, edge) in &cascaded_edges {
-            mark_fts_dirty(execution, &relation.logical_name);
+        }
+        let selected_key = (
+            selected_table.logical_name.clone(),
+            selected_candidate.encoded_rid.clone(),
+        );
+        for mutation in &cascaded {
+            mark_fts_dirty(execution, &mutation.table.logical_name);
+            let kind = if mutation.after.is_some() {
+                "UPDATE"
+            } else {
+                "DELETE"
+            };
             run_table_events(
                 conn,
                 execution,
                 EventInvocation {
-                    table_name: &relation.logical_name,
-                    kind: "DELETE",
-                    id: &edge.id,
-                    before: full_candidate_value(edge),
-                    after: Value::Null,
+                    table_name: &mutation.table.logical_name,
+                    kind,
+                    id: &mutation.before.id,
+                    before: full_candidate_value(&mutation.before),
+                    after: mutation
+                        .after
+                        .as_ref()
+                        .map_or(Value::Null, full_candidate_value),
                     input: Value::Null,
                 },
                 script,
             )?;
         }
+        let selected_mutation = cascaded.iter().find(|mutation| {
+            mutation.after.is_none()
+                && mutation.table.logical_name == selected_key.0
+                && mutation.before.encoded_rid == selected_key.1
+        });
+        if let Some(selected_mutation) = selected_mutation {
+            deleted.push((
+                selected_mutation.table.clone(),
+                selected_mutation.before.clone(),
+            ));
+        }
         cascaded_count = cascaded_count
-            .checked_add(cascaded_edges.len())
+            .checked_add(
+                cascaded
+                    .len()
+                    .saturating_sub(usize::from(selected_mutation.is_some())),
+            )
             .ok_or_else(|| FastDbError::Engine("cascade mutation count overflowed usize".into()))?;
-        mark_fts_dirty(execution, &table.logical_name);
-        run_table_events(
-            conn,
-            execution,
-            EventInvocation {
-                table_name: &table.logical_name,
-                kind: "DELETE",
-                id: &candidate.id,
-                before: full_candidate_value(&candidate),
-                after: Value::Null,
-                input: Value::Null,
-            },
-            script,
-        )?;
-        deleted.push((table, candidate));
     }
     let mutation_count = deleted
         .len()
@@ -8354,6 +8642,7 @@ fn run_define_field(
         assert,
         readonly: statement.readonly.is_some(),
         reference: statement.reference.is_some(),
+        reference_action: statement.reference_action,
         permissions: statement.permissions,
         comment: statement
             .comment
@@ -8369,6 +8658,19 @@ fn run_define_field(
             .ok_or_else(|| {
                 FastDbError::Schema(format!("table {:?} is not defined", statement.table.value))
             })?;
+        if snapshot.views.contains_key(&table.logical_name)
+            && matches!(
+                rule.reference_action,
+                Some(
+                    turso_fastdb_parser::ReferenceDeleteAction::Cascade
+                        | turso_fastdb_parser::ReferenceDeleteAction::Unset
+                )
+            )
+        {
+            return Err(FastDbError::Schema(
+                "materialized views cannot own mutating reference actions".into(),
+            ));
+        }
         if table.kind == TableKind::Relation
             && rule
                 .path
@@ -8657,6 +8959,10 @@ fn canonical_field_definition(table: &TableDefinition, field: &FieldRule) -> Str
     }
     if field.reference {
         definition.push_str(" REFERENCE");
+        if let Some(action) = field.reference_action {
+            definition.push_str(" ON DELETE ");
+            definition.push_str(action.as_str());
+        }
     }
     if let Some(default) = &field.default {
         definition.push_str(" DEFAULT");
@@ -8686,6 +8992,44 @@ fn canonical_field_definition(table: &TableDefinition, field: &FieldRule) -> Str
     definition
 }
 
+fn compact_vector_hidden_ordinals(
+    conn: &Connection,
+    snapshot: &mut CatalogSnapshot,
+    table_id: crate::names::CatalogId,
+) -> Result<()> {
+    let mut columns = snapshot
+        .hidden_columns
+        .values()
+        .filter_map(|column| {
+            if column.table_id != table_id {
+                return None;
+            }
+            let catalog::HiddenColumnRole::Vector64(ordinal) = column.role else {
+                return None;
+            };
+            Some((ordinal, column.id))
+        })
+        .collect::<Vec<_>>();
+    columns.sort_unstable();
+    for (new_ordinal, (old_ordinal, column_id)) in columns.into_iter().enumerate() {
+        if old_ordinal == new_ordinal {
+            continue;
+        }
+        let mut column = snapshot
+            .hidden_columns
+            .get(&column_id)
+            .cloned()
+            .expect("collected vector hidden column exists");
+        column.role = catalog::HiddenColumnRole::Vector64(new_ordinal);
+        column.options_json = format!("{{\"ordinal\":{new_ordinal},\"role\":\"vector64\"}}");
+        let (delete, bindings) = lower::hidden_column_delete(&column.id.to_hex());
+        conn.exec_bound(delete, bindings)?;
+        catalog::persist_hidden_column(conn, &column)?;
+        snapshot.hidden_columns.insert(column.id, column);
+    }
+    Ok(())
+}
+
 fn run_alter_field(
     conn: &Connection,
     execution: &mut ExecutionState,
@@ -8713,17 +9057,10 @@ fn run_alter_field(
                 table.logical_name
             )));
         };
+        let old_vector_dimension = replacement.ty.vector_dimension();
         match statement.change {
             turso_fastdb_parser::AlterFieldChange::Type(ty) => {
                 let ty = FieldType::from_parser(&ty);
-                if ty.vector_dimension() != replacement.ty.vector_dimension()
-                    && (ty.vector_dimension().is_some()
-                        || replacement.ty.vector_dimension().is_some())
-                {
-                    return Err(FastDbError::Schema(
-                        "ALTER FIELD cannot change the native vector representation".into(),
-                    ));
-                }
                 replacement.ty = ty;
                 replacement.required = replacement.ty.required();
             }
@@ -8751,7 +9088,10 @@ fn run_alter_field(
                 });
             }
             turso_fastdb_parser::AlterFieldChange::Readonly => replacement.readonly = true,
-            turso_fastdb_parser::AlterFieldChange::Reference => replacement.reference = true,
+            turso_fastdb_parser::AlterFieldChange::Reference(action) => {
+                replacement.reference = true;
+                replacement.reference_action = action;
+            }
             turso_fastdb_parser::AlterFieldChange::Permissions(permissions) => {
                 replacement.permissions = permissions
             }
@@ -8770,7 +9110,10 @@ fn run_alter_field(
             turso_fastdb_parser::AlterFieldChange::DropValue => replacement.value = None,
             turso_fastdb_parser::AlterFieldChange::DropAssert => replacement.assert = None,
             turso_fastdb_parser::AlterFieldChange::DropReadonly => replacement.readonly = false,
-            turso_fastdb_parser::AlterFieldChange::DropReference => replacement.reference = false,
+            turso_fastdb_parser::AlterFieldChange::DropReference => {
+                replacement.reference = false;
+                replacement.reference_action = None;
+            }
             turso_fastdb_parser::AlterFieldChange::DropComment => replacement.comment = None,
         }
         if replacement.reference && !replacement.ty.supports_reference() {
@@ -8783,6 +9126,19 @@ fn run_alter_field(
                 "FLEXIBLE requires an object-compatible field type".into(),
             ));
         }
+        if snapshot.views.contains_key(&table.logical_name)
+            && matches!(
+                replacement.reference_action,
+                Some(
+                    turso_fastdb_parser::ReferenceDeleteAction::Cascade
+                        | turso_fastdb_parser::ReferenceDeleteAction::Unset
+                )
+            )
+        {
+            return Err(FastDbError::Schema(
+                "materialized views cannot own mutating reference actions".into(),
+            ));
+        }
         let mut candidate_fields = table.fields.clone();
         candidate_fields.insert(path_key.clone(), replacement.clone());
         schema::validate_field_relationships(
@@ -8792,27 +9148,107 @@ fn run_alter_field(
             &replacement,
         )?;
         let functions = snapshot.functions.clone();
-        for (rid, mut document) in read_documents(conn, &table)? {
-            validate_candidate_field_document(
-                &table,
-                &candidate_fields,
-                &replacement,
-                &mut document,
-            )?;
+        let mut rows = read_documents(conn, &table)?;
+        for (rid, document) in &mut rows {
+            validate_candidate_field_document(&table, &candidate_fields, &replacement, document)?;
             validate_field_assertion(
                 &replacement,
-                &document,
-                &RecordId::new(&table.logical_name, decode_rid(&rid)?),
+                document,
+                &RecordId::new(&table.logical_name, decode_rid(rid)?),
                 &functions,
             )?;
-            let hidden = derived_hidden_values(snapshot, &table, &document)?;
+        }
+
+        let new_vector_dimension = replacement.ty.vector_dimension();
+        if old_vector_dimension != new_vector_dimension {
+            let old_column = snapshot
+                .hidden_columns
+                .values()
+                .find(|column| {
+                    column.table_id == table.id
+                        && column.field_path_key.as_deref() == Some(path_key.as_str())
+                        && matches!(column.role, catalog::HiddenColumnRole::Vector64(_))
+                })
+                .cloned();
+            if old_vector_dimension.is_some() != old_column.is_some() {
+                return Err(FastDbError::format(
+                    "vector field ownership disagrees with its hidden column",
+                ));
+            }
+            let old_vector_ordinal = old_column.as_ref().and_then(|column| {
+                let catalog::HiddenColumnRole::Vector64(ordinal) = column.role else {
+                    return None;
+                };
+                Some(ordinal)
+            });
+            if let Some(column) = old_column {
+                conn.exec_bound(
+                    lower::physical_drop_hidden_column_ddl(
+                        &table.physical_name,
+                        &column.physical_name,
+                    )?,
+                    vec![],
+                )?;
+                let (delete, bindings) = lower::hidden_column_delete(&column.id.to_hex());
+                conn.exec_bound(delete, bindings)?;
+                snapshot.hidden_columns.remove(&column.id);
+            }
+            if let Some(dimension) = new_vector_dimension {
+                let ordinal = old_vector_ordinal.unwrap_or_else(|| {
+                    snapshot
+                        .hidden_columns
+                        .values()
+                        .filter(|column| {
+                            column.table_id == table.id
+                                && matches!(column.role, catalog::HiddenColumnRole::Vector64(_))
+                        })
+                        .count()
+                });
+                let column = catalog::allocate_vector_hidden_column(
+                    table.id,
+                    path_key.clone(),
+                    dimension,
+                    ordinal,
+                );
+                catalog::persist_hidden_column(conn, &column)?;
+                if !snapshot.capabilities.contains_key(BUILTIN_VECTOR_PROVIDER) {
+                    catalog::persist_vector_capability(conn)?;
+                }
+                conn.check_failpoint(Failpoint::AfterVectorHiddenCatalog)?;
+                conn.exec_bound(
+                    lower::physical_add_vector_column_ddl(
+                        &table.physical_name,
+                        &column.physical_name,
+                    )?,
+                    vec![],
+                )?;
+                conn.check_failpoint(Failpoint::AfterVectorPhysicalColumn)?;
+                snapshot.hidden_columns.insert(column.id, column);
+                snapshot.capabilities.insert(
+                    BUILTIN_VECTOR_PROVIDER.to_string(),
+                    CapabilityRequirement {
+                        provider: BUILTIN_VECTOR_PROVIDER.to_string(),
+                        min_provider_version: BUILTIN_VECTOR_PROVIDER_VERSION,
+                        min_encoding_version: BUILTIN_VECTOR_ENCODING_VERSION,
+                    },
+                );
+            } else {
+                compact_vector_hidden_ordinals(conn, snapshot, table.id)?;
+            }
+        }
+
+        for (rid, document) in &rows {
+            let hidden = derived_hidden_values(snapshot, &table, document)?;
             let (update, bindings) = lower::physical_update_document_with_hidden_stmt(
                 &table.physical_name,
-                &rid,
-                &decode::encode_doc(&document)?,
+                rid,
+                &decode::encode_doc(document)?,
                 &hidden,
             )?;
             conn.exec_bound(update, bindings)?;
+        }
+        if old_vector_dimension != new_vector_dimension {
+            conn.check_failpoint(Failpoint::AfterVectorBackfill)?;
         }
         replacement.definition = canonical_field_definition(&table, &replacement);
         catalog::remove_field(conn, &table, &path_key)?;
@@ -8823,6 +9259,21 @@ fn run_alter_field(
             .expect("altered table exists")
             .fields
             .insert(path_key.clone(), replacement);
+        if old_vector_dimension.is_some()
+            && new_vector_dimension.is_none()
+            && !snapshot.tables.values().any(|table| {
+                table
+                    .fields
+                    .values()
+                    .any(|field| field.ty.vector_dimension().is_some())
+            })
+            && snapshot
+                .capabilities
+                .remove(BUILTIN_VECTOR_PROVIDER)
+                .is_some()
+        {
+            catalog::remove_capability(conn, BUILTIN_VECTOR_PROVIDER)?;
+        }
         Ok(())
     })?;
     Ok(StatementResult::None)
@@ -8916,6 +9367,7 @@ fn run_remove_field(
             let (delete, bindings) = lower::hidden_column_delete(&column.id.to_hex());
             conn.exec_bound(delete, bindings)?;
             snapshot.hidden_columns.remove(&column.id);
+            compact_vector_hidden_ordinals(conn, snapshot, table.id)?;
         }
         catalog::remove_field(conn, &table, &path_key)?;
         snapshot
@@ -9373,7 +9825,7 @@ fn derive_vector64(
     let Some(value) = crate::path::get_path(document, path) else {
         return Ok(None);
     };
-    if matches!(value, Value::Null) {
+    if matches!(value, Value::None | Value::Null) {
         return Ok(None);
     }
     let Value::Array(elements) = value else {

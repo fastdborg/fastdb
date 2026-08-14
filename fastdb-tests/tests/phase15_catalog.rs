@@ -4,7 +4,7 @@
 mod common;
 
 use tempfile::tempdir;
-use turso_fastdb::{Database, ErrorCategory, Failpoint, StatementResult};
+use turso_fastdb::{Database, ErrorCategory, Failpoint, StatementResult, Value};
 
 #[test]
 fn p15_catalog_001_parameter_corruption_fails_closed_without_mutation() {
@@ -311,5 +311,88 @@ fn p15_catalog_007_view_publication_boundaries_roll_back_source_and_derived_rows
             panic!("expected rows")
         };
         assert_eq!(rows, &vec![turso_fastdb::Value::Integer(1)], "{table}");
+    }
+}
+
+#[test]
+fn p15_catalog_008_reference_cascade_failpoints_roll_back_all_derived_mutations() {
+    for failpoint in [
+        Failpoint::AfterUpdateMutation,
+        Failpoint::AfterDeleteMutation,
+    ] {
+        let database = Database::open_memory().unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE target; DEFINE TABLE child; DEFINE TABLE holder; \
+                 DEFINE FIELD parent ON child TYPE option<record<target>> \
+                   REFERENCE ON DELETE CASCADE; \
+                 DEFINE FIELD parent ON holder TYPE option<record<target>> \
+                   REFERENCE ON DELETE UNSET; \
+                 CREATE target:x; CREATE child:a SET parent=target:x; \
+                 CREATE holder:a SET parent=target:x",
+            )
+            .unwrap();
+        connection.arm_failpoint(failpoint);
+        assert_eq!(
+            connection
+                .execute("DELETE target:x")
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Transaction,
+            "{failpoint:?}"
+        );
+        connection.disarm_all_failpoints();
+        let response = connection
+            .execute("SELECT * FROM target:x; SELECT * FROM child:a; SELECT * FROM holder:a")
+            .unwrap();
+        assert!(response
+            .statements
+            .iter()
+            .all(|result| matches!(result, StatementResult::Rows(rows) if rows.len() == 1)));
+        assert!(matches!(
+            &response.statements[2],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(row)
+                    if row.get("parent") == Some(&Value::RecordId(turso_fastdb::RecordId::new("target", "x"))))
+        ));
+    }
+}
+
+#[test]
+fn p15_catalog_009_vector_alter_failpoints_roll_back_catalog_and_physical_state() {
+    for failpoint in [
+        Failpoint::AfterVectorHiddenCatalog,
+        Failpoint::AfterVectorPhysicalColumn,
+        Failpoint::AfterVectorBackfill,
+    ] {
+        let database = Database::open_memory().unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item; DEFINE FIELD embedding ON item TYPE option<array>; \
+                 CREATE item:a SET embedding=[1,2]",
+            )
+            .unwrap();
+        connection.arm_failpoint(failpoint);
+        assert_eq!(
+            connection
+                .execute("ALTER FIELD embedding ON item TYPE option<array<float,2>>")
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Transaction,
+            "{failpoint:?}"
+        );
+        connection.disarm_all_failpoints();
+        assert_eq!(database.check().unwrap().vector_fields, 0, "{failpoint:?}");
+        let response = connection.execute("INFO FOR TABLE item").unwrap();
+        assert!(matches!(
+            &response.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("fields"), Some(Value::Object(fields))
+                    if matches!(fields.get("embedding"), Some(Value::Str(definition))
+                        if definition.contains("TYPE option<array>")
+                            && !definition.contains("array<float")))
+        ));
     }
 }

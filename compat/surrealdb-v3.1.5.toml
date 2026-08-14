@@ -7414,11 +7414,11 @@ area = "Scripting and schema"
 title = "ALTER FIELD"
 phase = 15
 disposition = "target"
-status = "Partial"
-syntax = "TYPE (including unions, literals, typed records, and typed collections), FLEXIBLE, DEFAULT, VALUE, ASSERT, READONLY, simple REFERENCE, FULL/NONE/conditional permissions metadata, and COMMENT changes execute atomically; native-vector representation changes and reference actions remain incomplete."
+status = "Supported"
+syntax = "TYPE (including transactional native-vector representation changes, unions, literals, typed records, and typed collections), FLEXIBLE, DEFAULT, VALUE, ASSERT, READONLY, REFERENCE with bounded CASCADE/REJECT/UNSET/IGNORE actions, FULL/NONE/conditional permissions metadata, and COMMENT changes execute atomically."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/field", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-007", "P15-PARSE-011", "P15-PARSE-012"]
-execution_evidence = ["P15-API-012", "P15-API-026", "P15-API-027", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-007", "P15-PARSE-011", "P15-PARSE-012", "P15-PARSE-013"]
+execution_evidence = ["P15-API-012", "P15-API-026", "P15-API-027", "P15-API-028", "P15-API-029", "P15-CATALOG-003", "P15-CATALOG-008", "P15-CATALOG-009"]
 stop_report = ""
 
 [[capability]]
@@ -7609,11 +7609,11 @@ area = "Scripting and schema"
 title = "complete DEFINE FIELD"
 phase = 15
 disposition = "target"
-status = "Partial"
-syntax = "ANY, unions, literals, typed records and collections, FLEXIBLE objects, DEFAULT/ALWAYS, ASSERT, VALUE, READONLY, simple REFERENCE, FULL/NONE/conditional permissions metadata, comments, IF NOT EXISTS, and same-type OVERWRITE execute; reference actions remain incomplete."
+status = "Supported"
+syntax = "ANY, unions, literals, typed records and collections, FLEXIBLE objects, DEFAULT/ALWAYS, ASSERT, VALUE, READONLY, REFERENCE with bounded CASCADE/REJECT/UNSET/IGNORE actions, FULL/NONE/conditional permissions metadata, comments, IF NOT EXISTS, and same-type OVERWRITE execute."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/field", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-007", "P15-PARSE-011", "P15-PARSE-012"]
-execution_evidence = ["P15-API-012", "P15-API-026", "P15-API-027", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-007", "P15-PARSE-011", "P15-PARSE-012", "P15-PARSE-013"]
+execution_evidence = ["P15-API-012", "P15-API-026", "P15-API-027", "P15-API-028", "P15-CATALOG-003", "P15-CATALOG-008"]
 stop_report = ""
 
 [[capability]]

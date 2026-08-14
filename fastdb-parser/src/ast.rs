@@ -622,6 +622,7 @@ pub struct DefineFieldStatement {
     pub assert: Option<Expr>,
     pub readonly: Option<Span>,
     pub reference: Option<Span>,
+    pub reference_action: Option<ReferenceDeleteAction>,
     pub permissions: SchemaPermissions,
     pub comment: Option<Spanned<String>>,
 }
@@ -651,7 +652,7 @@ pub enum AlterFieldChange {
     Value(Expr),
     Assert(Expr),
     Readonly,
-    Reference,
+    Reference(Option<ReferenceDeleteAction>),
     Permissions(SchemaPermissions),
     Comment(String),
     DropType,
@@ -662,6 +663,25 @@ pub enum AlterFieldChange {
     DropReadonly,
     DropReference,
     DropComment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceDeleteAction {
+    Cascade,
+    Reject,
+    Unset,
+    Ignore,
+}
+
+impl ReferenceDeleteAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cascade => "CASCADE",
+            Self::Reject => "REJECT",
+            Self::Unset => "UNSET",
+            Self::Ignore => "IGNORE",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

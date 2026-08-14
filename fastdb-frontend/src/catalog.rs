@@ -1934,6 +1934,7 @@ fn load_fields(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> 
             assert,
             readonly: parsed.readonly.is_some(),
             reference: parsed.reference.is_some(),
+            reference_action: parsed.reference_action,
             permissions: parsed.permissions,
             comment: parsed.comment.map(|comment| comment.value),
         };
