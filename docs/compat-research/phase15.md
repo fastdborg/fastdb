@@ -208,6 +208,25 @@ missing table. FastDB stores this metadata in the table definition owned by the
 opaque table catalog row, parses and ownership-checks it on reopen, and keeps
 permission enforcement reserved for Phase 18's non-Owner sessions.
 
+Conditional permission probes grouped actions and preserved predicates:
+
+```surql
+DEFINE TABLE item PERMISSIONS
+  FOR select WHERE $auth != NONE,
+  FOR create, update WHERE $value != NONE,
+  FOR delete NONE;
+DEFINE FIELD score ON item TYPE int PERMISSIONS
+  FOR select WHERE $value > 0,
+  FOR create, update WHERE $value < 10;
+```
+
+`ALTER TABLE` and `ALTER FIELD` accepted the same `FULL`, `NONE`, and `WHERE`
+forms. Fields rejected a delete action. FastDB stores the independently parsed
+predicate AST and source atomically, validates it on reopen, and returns the
+canonical metadata through INFO. Trusted embedded Owner sessions deliberately
+continue to bypass it until Phase 18 introduces principals and authorization;
+metadata support here is not an early authorization claim.
+
 The following independently authored field family established mutation order
 and lifecycle behavior:
 
@@ -253,8 +272,8 @@ output normalized `option<record<target>>` to `none | record<target>` and
 preserved typed-record table sets. FastDB keeps its own canonical internal type
 spelling but implements those value constraints, flexible schemafull paths,
 alter/drop lifecycle, reopen validation, and collision-safe document storage.
-Permission predicates, full reference actions, and mixed table ANY remain
-incomplete rather than being accepted without behavior.
+Full reference actions and mixed table ANY remain incomplete rather than being
+accepted without behavior.
 
 ## Synchronous events
 

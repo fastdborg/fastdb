@@ -157,7 +157,7 @@ impl<'a> StatementCursor<'a> {
             return Err(ParseError::new(ParseErrorKind::EmptyInput, tokens[0].span));
         }
 
-        let mut script = Parser::new(tokens, &self.limits).parse_script()?;
+        let mut script = Parser::new(tokens, &self.limits, self.source).parse_script()?;
         let statement = script
             .statements
             .pop()
@@ -181,16 +181,18 @@ struct Parser<'a> {
     tokens: Vec<Token>,
     position: usize,
     limits: &'a ParserLimits,
+    source: &'a str,
     depth: usize,
     event_action_boundary: bool,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: Vec<Token>, limits: &'a ParserLimits) -> Self {
+    fn new(tokens: Vec<Token>, limits: &'a ParserLimits, source: &'a str) -> Self {
         Self {
             tokens,
             position: 0,
             limits,
+            source,
             depth: 0,
             event_action_boundary: false,
         }
@@ -987,17 +989,10 @@ impl<'a> Parser<'a> {
         let name = self.expect_parameter("a database parameter")?;
         self.expect(&TokenKind::Value, "keyword VALUE")?;
         let value = self.parse_expression()?;
-        let permissions = if self.eat(&TokenKind::Permissions) {
-            if self.eat(&TokenKind::Full) {
-                SchemaPermissions::Full
-            } else if self.eat(&TokenKind::None) {
-                SchemaPermissions::None
-            } else {
-                return Err(self.unexpected("FULL or NONE after PERMISSIONS"));
-            }
-        } else {
-            SchemaPermissions::Full
-        };
+        let permissions = self
+            .parse_schema_permissions()?
+            .unwrap_or(SchemaPermissions::Full);
+        self.validate_simple_permissions(&permissions, "parameter")?;
         Ok(DefineParamStatement {
             span: Span::new(start.offset, self.previous_end() - start.offset),
             if_not_exists,
@@ -1061,6 +1056,7 @@ impl<'a> Parser<'a> {
         let permissions = self
             .parse_schema_permissions()?
             .unwrap_or(SchemaPermissions::Full);
+        self.validate_simple_permissions(&permissions, "function")?;
         Ok(DefineFunctionStatement {
             span: Span::new(start.offset, self.previous_end() - start.offset),
             if_not_exists,
@@ -1255,8 +1251,121 @@ impl<'a> Parser<'a> {
         } else if self.eat(&TokenKind::None) {
             Ok(Some(SchemaPermissions::None))
         } else {
-            Err(self.unexpected("FULL or NONE after PERMISSIONS"))
+            let mut clauses = Vec::new();
+            let mut seen = Vec::new();
+            loop {
+                let start = self.expect(&TokenKind::For, "FULL, NONE, or FOR after PERMISSIONS")?;
+                let mut actions = vec![self.parse_schema_permission_action()?];
+                while self.at(&TokenKind::Comma) && !self.at_offset(1, &TokenKind::For) {
+                    self.advance();
+                    actions.push(self.parse_schema_permission_action()?);
+                    self.check_element_count(actions.len(), start.span)?;
+                }
+                for action in &actions {
+                    if seen.contains(action) {
+                        return Err(ParseError::new(
+                            ParseErrorKind::InvalidCombination {
+                                what: "duplicate permission action",
+                            },
+                            start.span,
+                        ));
+                    }
+                    seen.push(*action);
+                }
+                let value = if self.eat(&TokenKind::Full) {
+                    SchemaPermissionValue::Full
+                } else if self.eat(&TokenKind::None) {
+                    SchemaPermissionValue::None
+                } else {
+                    self.expect(
+                        &TokenKind::Where,
+                        "FULL, NONE, or WHERE after permission actions",
+                    )?;
+                    let expression = self.parse_expression()?;
+                    let source = self
+                        .source
+                        .get(expression.span.offset..expression.span.end())
+                        .ok_or_else(|| {
+                            ParseError::new(
+                                ParseErrorKind::InvalidCombination {
+                                    what: "permission expression span is outside the source",
+                                },
+                                expression.span,
+                            )
+                        })?
+                        .to_string();
+                    SchemaPermissionValue::Where { expression, source }
+                };
+                let end = self.previous_end();
+                clauses.push(SchemaPermissionClause {
+                    span: Span::new(start.span.offset, end - start.span.offset),
+                    actions,
+                    value,
+                });
+                self.check_element_count(clauses.len(), start.span)?;
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if !self.at(&TokenKind::For) {
+                    return Err(self.unexpected("FOR after permission clause comma"));
+                }
+            }
+            Ok(Some(SchemaPermissions::Specific(clauses)))
         }
+    }
+
+    fn parse_schema_permission_action(&mut self) -> Result<SchemaPermissionAction, ParseError> {
+        let token = self.advance().clone();
+        match token.kind {
+            TokenKind::Select => Ok(SchemaPermissionAction::Select),
+            TokenKind::Create => Ok(SchemaPermissionAction::Create),
+            TokenKind::Update => Ok(SchemaPermissionAction::Update),
+            TokenKind::Delete => Ok(SchemaPermissionAction::Delete),
+            _ => Err(self.unexpected_at(&token, "select, create, update, or delete")),
+        }
+    }
+
+    fn validate_simple_permissions(
+        &self,
+        permissions: &SchemaPermissions,
+        target: &'static str,
+    ) -> Result<(), ParseError> {
+        if matches!(permissions, SchemaPermissions::Specific(_)) {
+            return Err(ParseError::new(
+                ParseErrorKind::InvalidCombination {
+                    what: match target {
+                        "parameter" => "parameter permissions accept only FULL or NONE",
+                        "function" => "function permissions accept only FULL or NONE",
+                        _ => "this schema target accepts only FULL or NONE permissions",
+                    },
+                },
+                self.peek().span,
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_field_permissions(
+        &self,
+        permissions: &SchemaPermissions,
+    ) -> Result<(), ParseError> {
+        if let SchemaPermissions::Specific(clauses) = permissions {
+            if clauses
+                .iter()
+                .any(|clause| clause.actions.contains(&SchemaPermissionAction::Delete))
+            {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "field permissions do not accept delete actions",
+                    },
+                    clauses
+                        .iter()
+                        .find(|clause| clause.actions.contains(&SchemaPermissionAction::Delete))
+                        .map_or(self.peek().span, |clause| clause.span),
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn parse_alter(&mut self) -> Result<Statement, ParseError> {
@@ -1336,10 +1445,11 @@ impl<'a> Parser<'a> {
                 }
                 AlterFieldChange::Reference
             } else if self.at(&TokenKind::Permissions) {
-                AlterFieldChange::Permissions(
-                    self.parse_schema_permissions()?
-                        .expect("PERMISSIONS was present"),
-                )
+                let permissions = self
+                    .parse_schema_permissions()?
+                    .expect("PERMISSIONS was present");
+                self.validate_field_permissions(&permissions)?;
+                AlterFieldChange::Permissions(permissions)
             } else if self.at(&TokenKind::Comment) {
                 AlterFieldChange::Comment(
                     self.parse_optional_comment()?
@@ -1437,6 +1547,7 @@ impl<'a> Parser<'a> {
                     name.last().expect("name is nonempty").span,
                 )
             })?;
+            self.validate_simple_permissions(&permissions, "function")?;
             return Ok(Statement::AlterFunction(AlterFunctionStatement {
                 span: Span::new(start.offset, self.previous_end() - start.offset),
                 name,
@@ -1455,17 +1566,14 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let permissions = if self.eat(&TokenKind::Permissions) {
-            if self.eat(&TokenKind::Full) {
-                Some(SchemaPermissions::Full)
-            } else if self.eat(&TokenKind::None) {
-                Some(SchemaPermissions::None)
-            } else {
-                return Err(self.unexpected("FULL or NONE after PERMISSIONS"));
-            }
+        let permissions = if self.at(&TokenKind::Permissions) {
+            self.parse_schema_permissions()?
         } else {
             None
         };
+        if let Some(permissions) = &permissions {
+            self.validate_simple_permissions(permissions, "parameter")?;
+        }
         if value.is_none() && permissions.is_none() {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCombination {
@@ -2101,6 +2209,8 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
+        let permissions = permissions.unwrap_or(SchemaPermissions::Full);
+        self.validate_field_permissions(&permissions)?;
         Ok(DefineFieldStatement {
             span: Span::new(start.offset, self.previous_end() - start.offset),
             if_not_exists,
@@ -2115,7 +2225,7 @@ impl<'a> Parser<'a> {
             assert,
             readonly,
             reference,
-            permissions: permissions.unwrap_or(SchemaPermissions::Full),
+            permissions,
             comment,
         })
     }

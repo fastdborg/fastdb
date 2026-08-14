@@ -1176,7 +1176,7 @@ fn load_functions(conn: &Connection) -> Result<BTreeMap<String, FunctionDefiniti
                 &logical_name,
                 &arguments,
                 &body_source,
-                parsed.permissions,
+                &parsed.permissions,
             ) != definition
         {
             return Err(FastDbError::format(
@@ -1481,17 +1481,14 @@ pub fn canonical_function_definition(
     logical_name: &str,
     arguments: &[FunctionArgumentDefinition],
     body_source: &str,
-    permissions: turso_fastdb_parser::SchemaPermissions,
+    permissions: &turso_fastdb_parser::SchemaPermissions,
 ) -> String {
     let arguments = arguments
         .iter()
         .map(|argument| format!("${}: {}", argument.name, argument.ty))
         .collect::<Vec<_>>()
         .join(", ");
-    let permissions = match permissions {
-        turso_fastdb_parser::SchemaPermissions::Full => "FULL",
-        turso_fastdb_parser::SchemaPermissions::None => "NONE",
-    };
+    let permissions = permissions.to_source();
     format!(
         "DEFINE FUNCTION fn::{logical_name}({arguments}) {} PERMISSIONS {permissions}",
         body_source.trim()

@@ -295,6 +295,47 @@ fn p15_parse_011_union_literal_typed_record_and_flexible_types_are_structured() 
 }
 
 #[test]
+fn p15_parse_012_conditional_schema_permissions_are_structured() {
+    let script = parse(
+        "DEFINE TABLE item TYPE NORMAL PERMISSIONS \
+           FOR select WHERE $auth != NONE, \
+           FOR create, update WHERE $value != NONE, FOR delete NONE; \
+         DEFINE FIELD score ON item TYPE int PERMISSIONS \
+           FOR select WHERE $value > 0, FOR create, update WHERE $value < 10; \
+         ALTER TABLE item PERMISSIONS FOR select FULL, FOR create, update NONE; \
+         ALTER FIELD score ON item PERMISSIONS FOR select NONE, FOR create, update FULL",
+    )
+    .unwrap();
+
+    let Statement::DefineTable(table) = &script.statements[0] else {
+        panic!("expected table definition")
+    };
+    assert_eq!(
+        table.permissions.to_source(),
+        "FOR select WHERE $auth != NONE, FOR create, update WHERE $value != NONE, FOR delete NONE"
+    );
+    let Statement::DefineField(field) = &script.statements[1] else {
+        panic!("expected field definition")
+    };
+    assert_eq!(
+        field.permissions.to_source(),
+        "FOR select WHERE $value > 0, FOR create, update WHERE $value < 10"
+    );
+    assert!(matches!(script.statements[2], Statement::AlterTable(_)));
+    assert!(matches!(script.statements[3], Statement::AlterField(_)));
+
+    for source in [
+        "DEFINE TABLE item PERMISSIONS FOR select FULL, FOR select NONE",
+        "DEFINE FIELD x ON item PERMISSIONS FOR delete NONE",
+        "DEFINE FIELD x ON item PERMISSIONS FOR select, delete NONE",
+        "DEFINE PARAM $x VALUE 1 PERMISSIONS FOR select FULL",
+        "DEFINE FUNCTION fn::x() { RETURN 1; } PERMISSIONS FOR select FULL",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn p15_parse_008_stopped_sequence_module_and_server_api_fail_explicitly() {
     for source in [
         "DEFINE SEQUENCE ids BATCH 1 START 0 TIMEOUT 1s",

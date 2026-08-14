@@ -165,6 +165,7 @@ fn validate_statement(statement: &Statement, source_len: usize) {
                     }
                 }
             }
+            validate_permissions(parent, &statement.permissions, source_len);
         }
         Statement::DefineField(statement) => {
             validate_path(parent, &statement.path, source_len);
@@ -173,6 +174,7 @@ fn validate_statement(statement: &Statement, source_len: usize) {
             }
             child(parent, statement.table.span, source_len);
             validate_schema_type(parent, &statement.ty, source_len);
+            validate_permissions(parent, &statement.permissions, source_len);
         }
         Statement::DefineAnalyzer(statement) => {
             child(parent, statement.name.span, source_len);
@@ -219,6 +221,23 @@ fn validate_statement(statement: &Statement, source_len: usize) {
             }
         }
         Statement::Begin(_) | Statement::Commit(_) | Statement::Cancel(_) => {}
+    }
+}
+
+fn validate_permissions(
+    parent: Span,
+    permissions: &turso_fastdb_parser::SchemaPermissions,
+    source_len: usize,
+) {
+    if let turso_fastdb_parser::SchemaPermissions::Specific(clauses) = permissions {
+        for clause in clauses {
+            child(parent, clause.span, source_len);
+            if let turso_fastdb_parser::SchemaPermissionValue::Where { expression, .. } =
+                &clause.value
+            {
+                validate_expr(clause.span, expression, source_len);
+            }
+        }
     }
 }
 

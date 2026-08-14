@@ -1586,7 +1586,7 @@ fn run_define_param(
     let value = evaluate_script_expression(conn, execution, &statement.value, script)?;
     let value_source = source_slice(source, statement.value.span)?;
     let definition =
-        canonical_parameter_definition(&statement.name.value, value_source, statement.permissions);
+        canonical_parameter_definition(&statement.name.value, value_source, &statement.permissions);
     let mut published = None;
     with_schema_mutation(conn, execution, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
@@ -1608,7 +1608,7 @@ fn run_define_param(
             &statement.name.value,
             value.clone(),
             value_source.to_string(),
-            statement.permissions,
+            statement.permissions.clone(),
             definition.clone(),
         )?;
         catalog::persist_parameter(conn, &parameter)?;
@@ -1654,9 +1654,12 @@ fn run_alter_param(
         let value_source = value_source
             .clone()
             .unwrap_or_else(|| existing.value_source.clone());
-        let permissions = statement.permissions.unwrap_or(existing.permissions);
+        let permissions = statement
+            .permissions
+            .clone()
+            .unwrap_or_else(|| existing.permissions.clone());
         let definition =
-            canonical_parameter_definition(&statement.name.value, &value_source, permissions);
+            canonical_parameter_definition(&statement.name.value, &value_source, &permissions);
         let replacement = catalog::allocate_parameter(
             &statement.name.value,
             value.clone(),
@@ -1681,12 +1684,9 @@ fn run_alter_param(
 fn canonical_parameter_definition(
     name: &str,
     value_source: &str,
-    permissions: turso_fastdb_parser::SchemaPermissions,
+    permissions: &turso_fastdb_parser::SchemaPermissions,
 ) -> String {
-    let permissions = match permissions {
-        turso_fastdb_parser::SchemaPermissions::Full => "FULL",
-        turso_fastdb_parser::SchemaPermissions::None => "NONE",
-    };
+    let permissions = permissions.to_source();
     format!("DEFINE PARAM ${name} VALUE {value_source} PERMISSIONS {permissions}")
 }
 
@@ -1746,7 +1746,7 @@ fn run_define_function(
         &logical_name,
         &arguments,
         &body_source,
-        statement.permissions,
+        &statement.permissions,
     );
     with_schema_mutation(conn, execution, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
@@ -1769,7 +1769,7 @@ fn run_define_function(
             arguments,
             statement.body.clone(),
             body_source,
-            statement.permissions,
+            statement.permissions.clone(),
             definition,
         )?;
         catalog::persist_function(conn, &function)?;
@@ -1793,12 +1793,12 @@ fn run_alter_function(
             )));
         };
         let mut replacement = existing.clone();
-        replacement.permissions = statement.permissions;
+        replacement.permissions = statement.permissions.clone();
         replacement.definition = catalog::canonical_function_definition(
             &logical_name,
             &replacement.arguments,
             &replacement.body_source,
-            statement.permissions,
+            &statement.permissions,
         );
         catalog::remove_function(conn, &existing)?;
         catalog::persist_function(conn, &replacement)?;
@@ -2594,7 +2594,7 @@ fn canonical_table_definition(
         return Ok(canonical_view_definition(
             &table.logical_name,
             &view.select_source,
-            table.permissions,
+            &table.permissions,
             table.comment.as_deref(),
         ));
     }
@@ -2631,10 +2631,8 @@ fn canonical_table_definition(
         TableMode::Schemaless => "SCHEMALESS",
         TableMode::Schemafull => "SCHEMAFULL",
     });
-    definition.push_str(match table.permissions {
-        turso_fastdb_parser::SchemaPermissions::Full => " PERMISSIONS FULL",
-        turso_fastdb_parser::SchemaPermissions::None => " PERMISSIONS NONE",
-    });
+    definition.push_str(" PERMISSIONS ");
+    definition.push_str(&table.permissions.to_source());
     if let Some(comment) = &table.comment {
         definition.push_str(" COMMENT ");
         definition.push_str(&render_schema_string(comment));
@@ -7834,7 +7832,7 @@ fn run_define_table(
             replacement.mode = statement.mode.value;
             replacement.definition = Some(definition.clone());
             replacement.drop = statement.drop.is_some();
-            replacement.permissions = statement.permissions;
+            replacement.permissions = statement.permissions.clone();
             replacement.comment = statement.comment.as_ref().map(|value| value.value.clone());
             if let TableKindSyntax::Relation(relation) = &statement.kind {
                 for endpoint in [relation.input.as_ref(), relation.output.as_ref()]
@@ -7939,7 +7937,7 @@ fn run_define_table(
             .get_mut(&statement.name.value)
             .expect("defined table was published");
         table.drop = statement.drop.is_some();
-        table.permissions = statement.permissions;
+        table.permissions = statement.permissions.clone();
         table.comment = statement.comment.as_ref().map(|value| value.value.clone());
         catalog::replace_table(conn, table)?;
         Ok(())
@@ -7963,7 +7961,7 @@ fn run_define_view(
     let definition = canonical_view_definition(
         &statement.name.value,
         &select_source,
-        statement.permissions,
+        &statement.permissions,
         statement
             .comment
             .as_ref()
@@ -8005,7 +8003,7 @@ fn run_define_view(
             replacement.definition = Some(definition.clone());
             replacement.mode = TableMode::Schemaless;
             replacement.drop = false;
-            replacement.permissions = statement.permissions;
+            replacement.permissions = statement.permissions.clone();
             replacement.comment = statement.comment.as_ref().map(|value| value.value.clone());
             catalog::replace_table(conn, &replacement)?;
             catalog::remove_view(conn, &old_view)?;
@@ -8040,7 +8038,7 @@ fn run_define_view(
             .tables
             .get_mut(&statement.name.value)
             .expect("view table was registered");
-        table.permissions = statement.permissions;
+        table.permissions = statement.permissions.clone();
         table.comment = statement.comment.as_ref().map(|value| value.value.clone());
         catalog::replace_table(conn, table)?;
         let view = catalog::allocate_view(
@@ -8133,17 +8131,14 @@ fn view_dependency_reaches(
 fn canonical_view_definition(
     logical_name: &str,
     select_source: &str,
-    permissions: turso_fastdb_parser::SchemaPermissions,
+    permissions: &turso_fastdb_parser::SchemaPermissions,
     comment: Option<&str>,
 ) -> String {
     let mut definition = format!(
         "DEFINE TABLE {} TYPE NORMAL SCHEMALESS AS {} PERMISSIONS {}",
         render_schema_identifier(logical_name),
         select_source.trim(),
-        match permissions {
-            turso_fastdb_parser::SchemaPermissions::Full => "FULL",
-            turso_fastdb_parser::SchemaPermissions::None => "NONE",
-        }
+        permissions.to_source()
     );
     if let Some(comment) = comment {
         definition.push_str(" COMMENT ");
@@ -8682,10 +8677,8 @@ fn canonical_field_definition(table: &TableDefinition, field: &FieldRule) -> Str
         definition.push_str(" ASSERT ");
         definition.push_str(&assert.source);
     }
-    definition.push_str(match field.permissions {
-        turso_fastdb_parser::SchemaPermissions::Full => " PERMISSIONS FULL",
-        turso_fastdb_parser::SchemaPermissions::None => " PERMISSIONS NONE",
-    });
+    definition.push_str(" PERMISSIONS ");
+    definition.push_str(&field.permissions.to_source());
     if let Some(comment) = &field.comment {
         definition.push_str(" COMMENT ");
         definition.push_str(&render_schema_string(comment));

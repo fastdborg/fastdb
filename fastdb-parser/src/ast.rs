@@ -196,10 +196,75 @@ pub struct AlterParamStatement {
     pub permissions: Option<SchemaPermissions>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SchemaPermissions {
     Full,
     None,
+    Specific(Vec<SchemaPermissionClause>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaPermissionClause {
+    pub span: Span,
+    pub actions: Vec<SchemaPermissionAction>,
+    pub value: SchemaPermissionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaPermissionAction {
+    Select,
+    Create,
+    Update,
+    Delete,
+}
+
+impl SchemaPermissionAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Select => "select",
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Delete => "delete",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SchemaPermissionValue {
+    Full,
+    None,
+    Where { expression: Expr, source: String },
+}
+
+impl SchemaPermissions {
+    pub fn to_source(&self) -> String {
+        match self {
+            Self::Full => "FULL".into(),
+            Self::None => "NONE".into(),
+            Self::Specific(clauses) => clauses
+                .iter()
+                .map(|clause| {
+                    let actions = clause
+                        .actions
+                        .iter()
+                        .map(|action| action.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let value = match &clause.value {
+                        SchemaPermissionValue::Full => "FULL",
+                        SchemaPermissionValue::None => "NONE",
+                        SchemaPermissionValue::Where { source, .. } => source.trim(),
+                    };
+                    if matches!(clause.value, SchemaPermissionValue::Where { .. }) {
+                        format!("FOR {actions} WHERE {value}")
+                    } else {
+                        format!("FOR {actions} {value}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

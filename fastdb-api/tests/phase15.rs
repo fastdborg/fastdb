@@ -1919,3 +1919,93 @@ fn p15_api_026_richer_field_types_and_flexible_objects_persist() {
         database.check().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_027_conditional_permission_metadata_is_atomic_and_persistent() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("conditional-permissions.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE item TYPE NORMAL PERMISSIONS \
+                   FOR select WHERE $auth != NONE, \
+                   FOR create, update WHERE $value != NONE, FOR delete NONE; \
+                 DEFINE FIELD score ON item TYPE int PERMISSIONS \
+                   FOR select WHERE $value > 0, FOR create, update WHERE $value < 10; \
+                 CREATE item:a SET score = 12",
+                params! {},
+            )
+            .await
+            .unwrap();
+        let info = connection
+            .query("INFO FOR DB; INFO FOR TABLE item", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("tables"), Some(Value::Object(tables))
+                    if matches!(tables.get("item"), Some(Value::Str(definition))
+                        if definition.contains("FOR select WHERE $auth != NONE")
+                            && definition.contains("FOR delete NONE")))
+        ));
+        assert!(matches!(
+            &info.statements[1],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("fields"), Some(Value::Object(fields))
+                    if matches!(fields.get("score"), Some(Value::Str(definition))
+                        if definition.contains("FOR select WHERE $value > 0")
+                            && definition.contains("FOR create, update WHERE $value < 10")))
+        ));
+
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute(
+                "ALTER TABLE item PERMISSIONS NONE; \
+                 ALTER FIELD score ON item PERMISSIONS NONE",
+                params! {},
+            )
+            .await
+            .unwrap();
+        transaction.rollback().await.unwrap();
+        connection
+            .execute(
+                "ALTER TABLE item PERMISSIONS \
+                   FOR select FULL, FOR create, update NONE, FOR delete WHERE $auth != NONE; \
+                 ALTER FIELD score ON item PERMISSIONS \
+                   FOR select NONE, FOR create, update FULL",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let info = connection
+            .query("INFO FOR DB; INFO FOR TABLE item", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &info.statements[0],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("tables"), Some(Value::Object(tables))
+                    if matches!(tables.get("item"), Some(Value::Str(definition))
+                        if definition.contains("FOR select FULL")
+                            && definition.contains("FOR delete WHERE $auth != NONE")))
+        ));
+        assert!(matches!(
+            &info.statements[1],
+            StatementResult::Value(Value::Object(root))
+                if matches!(root.get("fields"), Some(Value::Object(fields))
+                    if matches!(fields.get("score"), Some(Value::Str(definition))
+                        if definition.contains("FOR select NONE")
+                            && definition.contains("FOR create, update FULL")))
+        ));
+        connection.close().await.unwrap();
+        database.check().await.unwrap();
+    });
+}

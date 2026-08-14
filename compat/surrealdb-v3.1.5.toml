@@ -7415,10 +7415,10 @@ title = "ALTER FIELD"
 phase = 15
 disposition = "target"
 status = "Partial"
-syntax = "TYPE (including unions, literals, typed records, and typed collections), FLEXIBLE, DEFAULT, VALUE, ASSERT, READONLY, simple REFERENCE, FULL/NONE permissions metadata, and COMMENT changes execute atomically; native-vector representation changes, reference actions, and permission predicates remain incomplete."
+syntax = "TYPE (including unions, literals, typed records, and typed collections), FLEXIBLE, DEFAULT, VALUE, ASSERT, READONLY, simple REFERENCE, FULL/NONE/conditional permissions metadata, and COMMENT changes execute atomically; native-vector representation changes and reference actions remain incomplete."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/field", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-007", "P15-PARSE-011"]
-execution_evidence = ["P15-API-012", "P15-API-026", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-007", "P15-PARSE-011", "P15-PARSE-012"]
+execution_evidence = ["P15-API-012", "P15-API-026", "P15-API-027", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7505,11 +7505,11 @@ area = "Scripting and schema"
 title = "ALTER TABLE"
 phase = 15
 disposition = "target"
-status = "Partial"
-syntax = "SCHEMAFULL/SCHEMALESS, FULL/NONE permissions metadata, COMMENT, DROP COMMENT, and IF EXISTS execute atomically; permission predicates remain incomplete and excluded CHANGEFEED plus unavailable keyspace COMPACT reject explicitly."
+status = "Supported"
+syntax = "SCHEMAFULL/SCHEMALESS, FULL/NONE/conditional permissions metadata, COMMENT, DROP COMMENT, and IF EXISTS execute atomically; excluded CHANGEFEED and unavailable keyspace COMPACT reject explicitly."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/table", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-006"]
-execution_evidence = ["P15-API-011", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-006", "P15-PARSE-012"]
+execution_evidence = ["P15-API-011", "P15-API-027", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7610,10 +7610,10 @@ title = "complete DEFINE FIELD"
 phase = 15
 disposition = "target"
 status = "Partial"
-syntax = "ANY, unions, literals, typed records and collections, FLEXIBLE objects, DEFAULT/ALWAYS, ASSERT, VALUE, READONLY, simple REFERENCE, FULL/NONE permissions metadata, comments, IF NOT EXISTS, and same-type OVERWRITE execute; reference actions and permission predicates remain incomplete."
+syntax = "ANY, unions, literals, typed records and collections, FLEXIBLE objects, DEFAULT/ALWAYS, ASSERT, VALUE, READONLY, simple REFERENCE, FULL/NONE/conditional permissions metadata, comments, IF NOT EXISTS, and same-type OVERWRITE execute; reference actions remain incomplete."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/field", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-007", "P15-PARSE-011"]
-execution_evidence = ["P15-API-012", "P15-API-026", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-007", "P15-PARSE-011", "P15-PARSE-012"]
+execution_evidence = ["P15-API-012", "P15-API-026", "P15-API-027", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7701,10 +7701,10 @@ title = "complete DEFINE TABLE"
 phase = 15
 disposition = "target"
 status = "Partial"
-syntax = "NORMAL/RELATION, DROP, schema mode, materialized views, FULL/NONE permissions metadata, comments, IF NOT EXISTS, and same-kind OVERWRITE execute; mixed TYPE ANY and permission predicates remain incomplete while excluded CHANGEFEED rejects explicitly."
+syntax = "NORMAL/RELATION, DROP, schema mode, materialized views, FULL/NONE/conditional permissions metadata, comments, IF NOT EXISTS, and same-kind OVERWRITE execute; mixed TYPE ANY remains incomplete while excluded CHANGEFEED rejects explicitly."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/table", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-006"]
-execution_evidence = ["P15-API-011", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-006", "P15-PARSE-012"]
+execution_evidence = ["P15-API-011", "P15-API-027", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
