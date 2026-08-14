@@ -326,3 +326,29 @@ fn p15_parse_009_synchronous_event_lifecycle_is_structured() {
         assert!(parse_one(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn p15_parse_010_materialized_table_view_is_structured() {
+    let statement = parse_one(
+        "DEFINE TABLE IF NOT EXISTS totals AS SELECT category, count() AS total \
+         FROM source WHERE active = true GROUP BY category PERMISSIONS NONE COMMENT 'derived'",
+    )
+    .unwrap();
+    let Statement::DefineTable(table) = statement else {
+        panic!("expected DEFINE TABLE")
+    };
+    let view = table.view.expect("view SELECT");
+    assert!(table.if_not_exists.is_some());
+    assert!(view.condition.is_some());
+    assert!(view.group.is_some());
+    assert_eq!(table.comment.unwrap().value, "derived");
+
+    for source in [
+        "DEFINE TABLE edge TYPE RELATION AS SELECT * FROM source",
+        "DEFINE TABLE strict SCHEMAFULL AS SELECT * FROM source",
+        "DEFINE TABLE dropped DROP AS SELECT * FROM source",
+        "DEFINE TABLE old VIEW SELECT * FROM source",
+    ] {
+        assert!(parse_one(source).is_err(), "{source}");
+    }
+}

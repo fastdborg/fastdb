@@ -486,6 +486,7 @@ pub struct DefineTableStatement {
     pub drop: Option<Span>,
     pub mode: Spanned<TableMode>,
     pub kind: TableKindSyntax,
+    pub view: Option<Box<SelectStatement>>,
     pub permissions: SchemaPermissions,
     pub comment: Option<Spanned<String>>,
 }

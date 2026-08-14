@@ -1921,12 +1921,28 @@ impl<'a> Parser<'a> {
                 self.peek().span,
             ));
         }
-        if self.at(&TokenKind::As) || self.at(&TokenKind::View) {
+        if self.at(&TokenKind::View) {
             return Err(ParseError::unsupported(
-                "table views are owned by the Phase 15 view provider",
+                "DEFINE TABLE VIEW spelling is not part of the characterized v3.1.5 surface",
                 self.peek().span,
             ));
         }
+        let view = if let Some(as_token) = self.take(&TokenKind::As) {
+            if drop.is_some()
+                || !matches!(kind, TableKindSyntax::Normal { .. })
+                || mode.value != TableMode::Schemaless
+            {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCombination {
+                        what: "table views must be non-DROP, NORMAL, and SCHEMALESS",
+                    },
+                    as_token.span,
+                ));
+            }
+            Some(Box::new(self.parse_select()?))
+        } else {
+            None
+        };
         let permissions = self
             .parse_schema_permissions()?
             .unwrap_or(SchemaPermissions::None);
@@ -1954,6 +1970,7 @@ impl<'a> Parser<'a> {
             drop,
             mode,
             kind,
+            view,
             permissions,
             comment,
         })

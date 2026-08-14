@@ -1439,6 +1439,23 @@ pub fn functions_stmt() -> Stmt {
     )
 }
 
+pub fn views_stmt() -> Stmt {
+    one_select(
+        [
+            "view_id",
+            "logical_name",
+            "definition",
+            "ast_version",
+            "dependencies_json",
+        ]
+        .into_iter()
+        .map(|name| ResultColumn::Expr(Box::new(id(name)), None))
+        .collect(),
+        crate::catalog::VIEWS_TABLE,
+        None,
+    )
+}
+
 pub fn events_stmt() -> Stmt {
     one_select(
         [
@@ -1919,6 +1936,36 @@ pub fn function_delete(function_id: &str) -> (Stmt, Bindings) {
         },
         vec![text(function_id)],
     )
+}
+
+pub fn view_insert(
+    view_id: &str,
+    logical_name: &str,
+    definition: &str,
+    ast_version: i64,
+    dependencies_json: &str,
+) -> (Stmt, Bindings) {
+    insert_values(
+        crate::catalog::VIEWS_TABLE,
+        &[
+            "view_id",
+            "logical_name",
+            "definition",
+            "ast_version",
+            "dependencies_json",
+        ],
+        vec![var(1), var(2), var(3), numlit(ast_version), var(4)],
+        vec![
+            text(view_id),
+            text(logical_name),
+            text(definition),
+            text(dependencies_json),
+        ],
+    )
+}
+
+pub fn view_delete(view_id: &str) -> (Stmt, Bindings) {
+    catalog_delete_by("view_id", crate::catalog::VIEWS_TABLE, view_id)
 }
 
 #[allow(clippy::too_many_arguments)]

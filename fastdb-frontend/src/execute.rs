@@ -367,10 +367,11 @@ fn statement_may_fire_events(
     Ok(catalog_for_read(conn, execution)?
         .snapshot()
         .is_some_and(|snapshot| {
-            snapshot
-                .tables
-                .values()
-                .any(|table| !table.events.is_empty())
+            !snapshot.views.is_empty()
+                || snapshot
+                    .tables
+                    .values()
+                    .any(|table| !table.events.is_empty())
         }))
 }
 
@@ -384,6 +385,7 @@ fn statement_requires_multi_record_transaction(statement: &Statement) -> bool {
         | Statement::Update(_)
         | Statement::Upsert(_)
         | Statement::Delete(_) => true,
+        Statement::DefineTable(statement) => statement.view.is_some(),
         _ => false,
     }
 }
@@ -561,7 +563,7 @@ fn run_script_statement(
                     run_delete(conn, execution, statement, &params, script)
                 }
                 Statement::DefineTable(statement) => {
-                    run_define_table(conn, execution, statement, source)
+                    run_define_table(conn, execution, statement, source, &params, script)
                         .map(StatementExecution::read_only)
                 }
                 Statement::DefineField(statement) => {
@@ -1009,6 +1011,7 @@ fn run_table_events(
     invocation: EventInvocation<'_>,
     script: &mut ScriptRuntime,
 ) -> Result<()> {
+    refresh_dependent_views(conn, execution, invocation.table_name, script)?;
     let events = catalog_for_read(conn, execution)?
         .snapshot()
         .and_then(|snapshot| snapshot.tables.get(invocation.table_name))
@@ -1085,6 +1088,305 @@ fn run_table_events(
             .event_mutations
             .checked_add(mutation_count)
             .ok_or_else(|| FastDbError::Engine("event mutation count overflowed u64".into()))?;
+    }
+    Ok(())
+}
+
+const VIEW_INTERNAL_FIELD_PREFIX: &str = "\0fastdb-view:";
+const MAX_VIEW_DEPENDENCY_DEPTH: usize = 128;
+
+fn refresh_dependent_views(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    source_table: &str,
+    script: &mut ScriptRuntime,
+) -> Result<()> {
+    refresh_dependent_views_at_depth(conn, execution, source_table, script, 0)
+}
+
+fn refresh_dependent_views_at_depth(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    source_table: &str,
+    script: &mut ScriptRuntime,
+    depth: usize,
+) -> Result<()> {
+    if depth == MAX_VIEW_DEPENDENCY_DEPTH {
+        return Err(FastDbError::ResourceLimit(format!(
+            "view dependency depth exceeds {MAX_VIEW_DEPENDENCY_DEPTH}"
+        )));
+    }
+    let snapshot = catalog_for_read(conn, execution)?
+        .snapshot()
+        .cloned()
+        .ok_or_else(|| FastDbError::format("view refresh requires a catalog"))?;
+    let Some(source_id) = snapshot.tables.get(source_table).map(|table| table.id) else {
+        return Ok(());
+    };
+    let views = snapshot
+        .views
+        .values()
+        .filter(|view| view.dependencies.contains(&source_id))
+        .map(|view| view.logical_name.clone())
+        .collect::<Vec<_>>();
+    for view_name in views {
+        refresh_view(conn, execution, &view_name, script)?;
+        refresh_dependent_views_at_depth(conn, execution, &view_name, script, depth + 1)?;
+    }
+    Ok(())
+}
+
+fn refresh_view(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    view_name: &str,
+    script: &mut ScriptRuntime,
+) -> Result<()> {
+    let snapshot = catalog_for_read(conn, execution)?
+        .snapshot()
+        .cloned()
+        .ok_or_else(|| FastDbError::format("view refresh requires a catalog"))?;
+    let view = snapshot
+        .views
+        .get(view_name)
+        .cloned()
+        .ok_or_else(|| FastDbError::format("view refresh target is missing"))?;
+    let table = snapshot
+        .tables
+        .get(view_name)
+        .cloned()
+        .ok_or_else(|| FastDbError::format("view physical table is missing"))?;
+    let rows = evaluate_view_rows(conn, execution, &snapshot, &view, script)?;
+    let functions = snapshot.functions.clone();
+    data_mutation(conn, execution, || {
+        for (encoded_rid, _) in read_documents(conn, &table)? {
+            let (delete, bindings) =
+                lower::physical_delete_by_rid_stmt(&table.physical_name, &encoded_rid)?;
+            conn.exec_bound(delete, bindings)?;
+        }
+        conn.check_failpoint(Failpoint::DuringViewRefresh)?;
+        for (id_value, mut document) in rows {
+            let id = RecordId::new(view_name, id_value.clone());
+            reject_stored_id(&document)?;
+            normalize_schema_document(
+                &table,
+                &mut document,
+                None,
+                &id,
+                None,
+                &Params::new(),
+                &functions,
+                true,
+            )?;
+            validate_index_values(&table, &document)?;
+            let hidden = derived_hidden_values(&snapshot, &table, &document)?;
+            let (insert, bindings) = lower::physical_insert_document_with_hidden_stmt(
+                &table.physical_name,
+                &encode_rid(&id_value)?,
+                &decode::encode_doc(&document)?,
+                &hidden,
+            )?;
+            contextual_constraint(
+                conn.exec_bound(insert, bindings),
+                "materialized view produced duplicate record identities or index values",
+            )?;
+        }
+        Ok(())
+    })?;
+    mark_fts_dirty(execution, view_name);
+    Ok(())
+}
+
+fn evaluate_view_rows(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    snapshot: &CatalogSnapshot,
+    view: &catalog::ViewDefinition,
+    script: &mut ScriptRuntime,
+) -> Result<Vec<(RecordIdValue, BTreeMap<String, Value>)>> {
+    let source_name = view_source_name(&view.select)?;
+    let source = snapshot
+        .tables
+        .get(source_name)
+        .ok_or_else(|| FastDbError::format("view source table is missing"))?;
+    if read_documents(conn, source)?
+        .into_iter()
+        .any(|(_, document)| {
+            document
+                .keys()
+                .any(|key| key.starts_with(VIEW_INTERNAL_FIELD_PREFIX))
+        })
+    {
+        return Err(FastDbError::Constraint(
+            "view source document uses a reserved materialization field".into(),
+        ));
+    }
+
+    let mut select = view.select.clone();
+    let span = Span::new(select.span.offset, 0);
+    let mut identity_aliases = Vec::new();
+    match &select.group {
+        Some(GroupClause::By(keys)) => {
+            let ProjectionList::Fields(projections) = &mut select.projections else {
+                return Err(FastDbError::Schema(
+                    "grouped views require explicit projections".into(),
+                ));
+            };
+            for (ordinal, key) in keys.iter().cloned().enumerate() {
+                let alias = format!("{VIEW_INTERNAL_FIELD_PREFIX}group:{ordinal}");
+                projections.push(turso_fastdb_parser::Projection {
+                    span: key.span,
+                    expression: key,
+                    alias: Some(turso_fastdb_parser::Spanned::new(alias.clone(), span)),
+                });
+                identity_aliases.push(alias);
+            }
+        }
+        Some(GroupClause::All(_)) => {}
+        None => {
+            let alias = format!("{VIEW_INTERNAL_FIELD_PREFIX}source-id");
+            let id_path = turso_fastdb_parser::FieldPath {
+                segments: vec![turso_fastdb_parser::Spanned::new("id".into(), span)],
+                span,
+            };
+            let projection = turso_fastdb_parser::Projection {
+                span,
+                expression: Expr::new(ExprKind::FieldPath(id_path), span),
+                alias: Some(turso_fastdb_parser::Spanned::new(alias.clone(), span)),
+            };
+            match &mut select.projections {
+                ProjectionList::All(_) => {
+                    select.projections = ProjectionList::Fields(vec![projection]);
+                    select.include_all = true;
+                }
+                ProjectionList::Fields(projections) => projections.push(projection),
+            }
+            identity_aliases.push(alias);
+        }
+    }
+
+    let StatementResult::Rows(values) =
+        run_select(conn, execution, select, &Params::new(), script)?
+    else {
+        return Err(FastDbError::Schema(
+            "materialized view SELECT must return rows".into(),
+        ));
+    };
+    if values.len() > 100_000 {
+        return Err(FastDbError::ResourceLimit(
+            "materialized view exceeds 100,000 rows".into(),
+        ));
+    }
+    values
+        .into_iter()
+        .map(|value| {
+            let Value::Object(mut document) = value else {
+                return Err(FastDbError::Schema(
+                    "materialized view rows must be objects".into(),
+                ));
+            };
+            let id = match &view.select.group {
+                Some(GroupClause::By(_)) => RecordIdValue::Array(
+                    identity_aliases
+                        .iter()
+                        .map(|alias| {
+                            document.remove(alias).ok_or_else(|| {
+                                FastDbError::Engine("view group identity is missing".into())
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                ),
+                Some(GroupClause::All(_)) => RecordIdValue::Array(Vec::new()),
+                None => {
+                    let Value::RecordId(source_id) =
+                        document.remove(&identity_aliases[0]).ok_or_else(|| {
+                            FastDbError::Engine("view source identity is missing".into())
+                        })?
+                    else {
+                        return Err(FastDbError::format(
+                            "view source identity is not a record ID",
+                        ));
+                    };
+                    source_id.id
+                }
+            };
+            document.remove("id");
+            Ok((id, document))
+        })
+        .collect()
+}
+
+pub(crate) fn validate_materialized_views(
+    conn: &Connection,
+    snapshot: &CatalogSnapshot,
+) -> Result<()> {
+    if snapshot.views.is_empty() {
+        return Ok(());
+    }
+    let mut execution = ExecutionState {
+        transaction: TransactionState::Active(Box::new(crate::connection::ActiveTransaction {
+            catalog: CatalogState::Ready(Box::new(snapshot.clone())),
+            schema_changed: false,
+            dirty_fts_tables: BTreeSet::new(),
+        })),
+    };
+    let mut script = ScriptRuntime::new(Params::new(), Params::new(), Duration::ZERO, None);
+    for view in snapshot.views.values() {
+        let table = snapshot
+            .tables
+            .get(&view.logical_name)
+            .ok_or_else(|| FastDbError::format("view physical table is missing"))?;
+        let mut expected = BTreeMap::new();
+        for (id_value, mut document) in
+            evaluate_view_rows(conn, &mut execution, snapshot, view, &mut script)?
+        {
+            let id = RecordId::new(&view.logical_name, id_value.clone());
+            normalize_schema_document(
+                table,
+                &mut document,
+                None,
+                &id,
+                None,
+                &Params::new(),
+                &snapshot.functions,
+                true,
+            )?;
+            validate_index_values(table, &document)?;
+            if expected.insert(encode_rid(&id_value)?, document).is_some() {
+                return Err(FastDbError::format(
+                    "materialized view definition produces duplicate identities",
+                ));
+            }
+        }
+        let actual = read_documents(conn, table)?
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        if actual != expected {
+            return Err(FastDbError::format(format!(
+                "materialized view {:?} does not match its authoritative sources",
+                view.logical_name
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn view_source_name(select: &turso_fastdb_parser::SelectStatement) -> Result<&str> {
+    match &select.target {
+        SelectTarget::Target(Target::Table(table)) if select.additional_targets.is_empty() => {
+            Ok(&table.name.value)
+        }
+        _ => Err(FastDbError::Schema(
+            "materialized views require exactly one table source".into(),
+        )),
+    }
+}
+
+fn reject_direct_view_write(snapshot: &CatalogSnapshot, table_name: &str) -> Result<()> {
+    if snapshot.views.contains_key(table_name) {
+        return Err(FastDbError::Constraint(format!(
+            "materialized view {table_name:?} is read-only"
+        )));
     }
     Ok(())
 }
@@ -2288,6 +2590,14 @@ fn canonical_table_definition(
     snapshot: &CatalogSnapshot,
     table: &TableDefinition,
 ) -> Result<String> {
+    if let Some(view) = snapshot.views.get(&table.logical_name) {
+        return Ok(canonical_view_definition(
+            &table.logical_name,
+            &view.select_source,
+            table.permissions,
+            table.comment.as_deref(),
+        ));
+    }
     let mut definition = format!(
         "DEFINE TABLE {}{} TYPE ",
         render_schema_identifier(&table.logical_name),
@@ -2406,6 +2716,12 @@ fn run_alter_table(
                 statement.name.value
             )));
         };
+        let existing_view = snapshot.views.get(&statement.name.value).cloned();
+        if existing_view.is_some() && statement.mode.is_some() {
+            return Err(FastDbError::Schema(
+                "materialized views remain SCHEMALESS; alter fields instead of table mode".into(),
+            ));
+        }
         let mut replacement = existing;
         if let Some(mode) = statement.mode {
             if mode.value == TableMode::Schemafull {
@@ -2427,6 +2743,16 @@ fn run_alter_table(
         }
         replacement.definition = Some(canonical_table_definition(snapshot, &replacement)?);
         catalog::replace_table(conn, &replacement)?;
+        if let Some(mut view) = existing_view {
+            catalog::remove_view(conn, &view)?;
+            view.definition = replacement
+                .definition
+                .clone()
+                .expect("altered view has a canonical definition");
+            catalog::persist_view(conn, &view)?;
+            conn.check_failpoint(Failpoint::AfterViewCatalog)?;
+            snapshot.views.insert(view.logical_name.clone(), view);
+        }
         snapshot
             .tables
             .insert(statement.name.value.clone(), replacement);
@@ -2464,6 +2790,16 @@ fn run_remove_table(
                 table.logical_name, relation.logical_name
             )));
         }
+        if let Some(view) = snapshot
+            .views
+            .values()
+            .find(|view| view.id != table.id && view.dependencies.contains(&table.id))
+        {
+            return Err(FastDbError::Constraint(format!(
+                "table {:?} is required by materialized view {:?}",
+                table.logical_name, view.logical_name
+            )));
+        }
         let mut cascaded = false;
         if table.kind == TableKind::Normal {
             for relation in snapshot
@@ -2498,6 +2834,9 @@ fn run_remove_table(
             lower::physical_drop_table_ddl(&table.physical_name)?,
             vec![],
         )?;
+        if let Some(view) = snapshot.views.remove(&statement.name.value) {
+            catalog::remove_view(conn, &view)?;
+        }
         catalog::remove_table_catalog(conn, &table)?;
         snapshot.tables.remove(&statement.name.value);
         snapshot
@@ -2635,6 +2974,7 @@ fn run_create(
                 .get(table_name)
                 .cloned()
                 .expect("table inserted or already present");
+            reject_direct_view_write(snapshot, table_name)?;
             if table.kind == TableKind::Relation {
                 return Err(FastDbError::Schema(
                     "relation records must be created with RELATE".into(),
@@ -2908,6 +3248,7 @@ fn run_insert(
                 .get(&table_name)
                 .cloned()
                 .expect("insert table exists after registration");
+            reject_direct_view_write(snapshot, &table_name)?;
             if table.kind == TableKind::Relation {
                 return Err(FastDbError::Schema(
                     "relation tables require INSERT RELATION or RELATE".into(),
@@ -4888,6 +5229,7 @@ fn run_update(
             let Some(table) = snapshot.tables.get(table_name).cloned() else {
                 continue;
             };
+            reject_direct_view_write(snapshot, table_name)?;
             if table.drop {
                 return Err(FastDbError::Constraint(format!(
                     "table {table_name:?} is DROP and rejects {}",
@@ -5119,6 +5461,7 @@ fn run_delete(
             let Some(table) = snapshot.tables.get(table_name).cloned() else {
                 continue;
             };
+            reject_direct_view_write(snapshot, table_name)?;
             let candidates = read_candidates(
                 conn,
                 snapshot,
@@ -7454,7 +7797,12 @@ fn run_define_table(
     execution: &mut ExecutionState,
     statement: turso_fastdb_parser::DefineTableStatement,
     source: &str,
+    _params: &Params,
+    script: &mut ScriptRuntime,
 ) -> Result<StatementResult> {
+    if statement.view.is_some() {
+        return run_define_view(conn, execution, statement, source, script);
+    }
     let definition = source_slice(source, statement.span)?.to_string();
     with_schema_mutation(conn, execution, |state| {
         let snapshot = ensure_snapshot(conn, state)?;
@@ -7597,6 +7945,211 @@ fn run_define_table(
         Ok(())
     })?;
     Ok(StatementResult::None)
+}
+
+fn run_define_view(
+    conn: &Connection,
+    execution: &mut ExecutionState,
+    statement: turso_fastdb_parser::DefineTableStatement,
+    source: &str,
+    script: &mut ScriptRuntime,
+) -> Result<StatementResult> {
+    let select = *statement
+        .view
+        .clone()
+        .expect("view dispatcher checks SELECT presence");
+    validate_view_select(&select)?;
+    let select_source = source_slice(source, select.span)?.trim().to_string();
+    let definition = canonical_view_definition(
+        &statement.name.value,
+        &select_source,
+        statement.permissions,
+        statement
+            .comment
+            .as_ref()
+            .map(|comment| comment.value.as_str()),
+    );
+    let changed = with_schema_mutation(conn, execution, |state| {
+        let snapshot = ensure_snapshot(conn, state)?;
+        let source_name = view_source_name(&select)?;
+        let source_table = snapshot.tables.get(source_name).cloned().ok_or_else(|| {
+            FastDbError::Schema(format!("view source table {source_name:?} is not defined"))
+        })?;
+        if let Some(existing) = snapshot.tables.get(&statement.name.value).cloned() {
+            if statement.if_not_exists.is_some() {
+                return Ok(false);
+            }
+            if statement.overwrite.is_none() {
+                return Err(FastDbError::Constraint(format!(
+                    "table {:?} is already defined",
+                    statement.name.value
+                )));
+            }
+            let old_view = snapshot
+                .views
+                .get(&statement.name.value)
+                .cloned()
+                .ok_or_else(|| {
+                    FastDbError::Schema(
+                        "DEFINE TABLE OVERWRITE cannot convert a stored table into a view".into(),
+                    )
+                })?;
+            if source_table.id == existing.id
+                || view_dependency_reaches(snapshot, source_table.id, existing.id)
+            {
+                return Err(FastDbError::Schema(
+                    "materialized view dependency graph would contain a cycle".into(),
+                ));
+            }
+            let mut replacement = existing;
+            replacement.definition = Some(definition.clone());
+            replacement.mode = TableMode::Schemaless;
+            replacement.drop = false;
+            replacement.permissions = statement.permissions;
+            replacement.comment = statement.comment.as_ref().map(|value| value.value.clone());
+            catalog::replace_table(conn, &replacement)?;
+            catalog::remove_view(conn, &old_view)?;
+            let view = catalog::allocate_view(
+                replacement.id,
+                &replacement.logical_name,
+                select.clone(),
+                select_source.clone(),
+                vec![source_table.id],
+                definition.clone(),
+            )?;
+            catalog::persist_view(conn, &view)?;
+            snapshot
+                .tables
+                .insert(replacement.logical_name.clone(), replacement);
+            snapshot.views.insert(view.logical_name.clone(), view);
+            return Ok(true);
+        }
+        if source_name == statement.name.value {
+            return Err(FastDbError::Schema(
+                "a materialized view cannot select from itself".into(),
+            ));
+        }
+        register_normal_table(
+            conn,
+            snapshot,
+            &statement.name.value,
+            TableMode::Schemaless,
+            Some(definition.clone()),
+        )?;
+        let table = snapshot
+            .tables
+            .get_mut(&statement.name.value)
+            .expect("view table was registered");
+        table.permissions = statement.permissions;
+        table.comment = statement.comment.as_ref().map(|value| value.value.clone());
+        catalog::replace_table(conn, table)?;
+        let view = catalog::allocate_view(
+            table.id,
+            &statement.name.value,
+            select.clone(),
+            select_source.clone(),
+            vec![source_table.id],
+            definition.clone(),
+        )?;
+        catalog::persist_view(conn, &view)?;
+        conn.check_failpoint(Failpoint::AfterViewCatalog)?;
+        snapshot.views.insert(view.logical_name.clone(), view);
+        Ok(true)
+    })?;
+    if changed {
+        refresh_view(conn, execution, &statement.name.value, script)?;
+        refresh_dependent_views(conn, execution, &statement.name.value, script)?;
+    }
+    Ok(StatementResult::None)
+}
+
+fn validate_view_select(select: &turso_fastdb_parser::SelectStatement) -> Result<()> {
+    view_source_name(select)?;
+    if select.value.is_some()
+        || select.only.is_some()
+        || !select.fetch.is_empty()
+        || !select.split.is_empty()
+        || select.order_random.is_some()
+    {
+        return Err(FastDbError::Schema(
+            "materialized views require object rows and reject ONLY, VALUE, FETCH, SPLIT, and random ordering"
+                .into(),
+        ));
+    }
+    if eval::validate_parameter_references(&Statement::Select(select.clone()), &Params::new())
+        .is_err()
+    {
+        return Err(FastDbError::Schema(
+            "materialized view definitions cannot contain parameters".into(),
+        ));
+    }
+    validate_projection_shapes(&select.projections, false)?;
+    let mut expressions = Vec::new();
+    if let ProjectionList::Fields(projections) = &select.projections {
+        for projection in projections {
+            if projection
+                .alias
+                .as_ref()
+                .is_some_and(|alias| alias.value.starts_with(VIEW_INTERNAL_FIELD_PREFIX))
+            {
+                return Err(FastDbError::Schema(
+                    "view projection alias uses a reserved materialization field".into(),
+                ));
+            }
+            expressions.push(&projection.expression);
+        }
+    }
+    expressions.extend(select.condition.iter());
+    if let Some(GroupClause::By(keys)) = &select.group {
+        expressions.extend(keys);
+    }
+    expressions.extend(select.limit_expression.iter());
+    expressions.extend(select.start_expression.iter());
+    for expression in expressions {
+        validate_schema_expression_safety(expression)?;
+    }
+    Ok(())
+}
+
+fn view_dependency_reaches(
+    snapshot: &CatalogSnapshot,
+    current: crate::names::CatalogId,
+    target: crate::names::CatalogId,
+) -> bool {
+    if current == target {
+        return true;
+    }
+    snapshot
+        .views
+        .values()
+        .find(|view| view.id == current)
+        .is_some_and(|view| {
+            view.dependencies
+                .iter()
+                .any(|dependency| view_dependency_reaches(snapshot, *dependency, target))
+        })
+}
+
+fn canonical_view_definition(
+    logical_name: &str,
+    select_source: &str,
+    permissions: turso_fastdb_parser::SchemaPermissions,
+    comment: Option<&str>,
+) -> String {
+    let mut definition = format!(
+        "DEFINE TABLE {} TYPE NORMAL SCHEMALESS AS {} PERMISSIONS {}",
+        render_schema_identifier(logical_name),
+        select_source.trim(),
+        match permissions {
+            turso_fastdb_parser::SchemaPermissions::Full => "FULL",
+            turso_fastdb_parser::SchemaPermissions::None => "NONE",
+        }
+    );
+    if let Some(comment) = comment {
+        definition.push_str(" COMMENT ");
+        definition.push_str(&render_schema_string(comment));
+    }
+    definition
 }
 
 fn validate_existing_relation_edges(

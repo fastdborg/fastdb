@@ -307,6 +307,37 @@ Standalone data-mutation statements that may fire an event use the same
 internal transaction path as explicit transactions, so any source or event
 failure rolls back the complete statement.
 
+## Materialized table views
+
+Public table-view syntax supplied the initial candidate. Independent probes
+against the fixed `v3.1.5` binary established that `DEFINE TABLE view AS
+SELECT ...` backfills immediately and appears in `INFO FOR DB` as a SCHEMALESS
+`TYPE ANY` table with its SELECT definition. Ungrouped view rows retain the
+source record component under the view table name: `source:a` becomes
+`view:a`. Grouped rows use an array of group keys, so a category `x` becomes
+`view:['x']`. Source CREATE, UPDATE, and DELETE refreshed rows immediately.
+The reference also allowed a direct write into a view; FastDB deliberately
+rejects that write because catalog-owned derived documents must remain
+rebuildable from authoritative sources.
+
+A source-table event querying its view observed the already refreshed row,
+which places view maintenance before source-event actions. Defining an event
+on the view itself did not fire when a source write refreshed the materialized
+row. FastDB follows both boundaries. Its sealed `__fastdb_views` row owns the
+canonical definition, AST version, and immutable dependency IDs, while the
+ordinary opaque table owns the derived documents and any B-tree, FTS, or
+vector representations. Creation/backfill, per-record source refresh,
+downstream view refresh, provider maintenance, and events share one statement
+transaction. Reopen and the supported integrity path independently recompute
+each bounded view and reject catalog, dependency, or derived-row divergence.
+
+Phase 15 supports deterministic, parameter-free, single-source object SELECTs
+with projections, filters, grouping, ordering, and pagination. Multiple or
+expression targets, SELECT VALUE/ONLY, FETCH, SPLIT, random ordering, ambient
+functions, and parameterized definitions fail before publication because
+their durable dependency or identity semantics are not unambiguous under this
+provider.
+
 ## Sequence and module stop probes
 
 The fixed reference canonicalized `DEFINE SEQUENCE basic` as `DEFINE SEQUENCE

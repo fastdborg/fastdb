@@ -156,8 +156,19 @@ pub struct CatalogSnapshot {
     pub analyzers: BTreeMap<String, AnalyzerDefinition>,
     pub parameters: BTreeMap<String, ParameterDefinition>,
     pub functions: BTreeMap<String, FunctionDefinition>,
+    pub views: BTreeMap<String, ViewDefinition>,
     pub hidden_columns: BTreeMap<CatalogId, HiddenColumnDefinition>,
     pub capabilities: BTreeMap<String, CapabilityRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewDefinition {
+    pub id: CatalogId,
+    pub logical_name: String,
+    pub select: turso_fastdb_parser::SelectStatement,
+    pub select_source: String,
+    pub dependencies: Vec<CatalogId>,
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -544,6 +555,7 @@ pub fn bootstrap(conn: &Connection) -> Result<CatalogSnapshot> {
         analyzers: BTreeMap::new(),
         parameters: BTreeMap::new(),
         functions: BTreeMap::new(),
+        views: BTreeMap::new(),
         hidden_columns: BTreeMap::new(),
         capabilities: BTreeMap::new(),
     })
@@ -707,6 +719,53 @@ pub fn persist_function(conn: &Connection, function: &FunctionDefinition) -> Res
 
 pub fn remove_function(conn: &Connection, function: &FunctionDefinition) -> Result<()> {
     let (statement, bindings) = lower::function_delete(&function.id.to_hex());
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn allocate_view(
+    id: CatalogId,
+    logical_name: &str,
+    select: turso_fastdb_parser::SelectStatement,
+    select_source: String,
+    dependencies: Vec<CatalogId>,
+    definition: String,
+) -> Result<ViewDefinition> {
+    if logical_name.is_empty() || is_reserved_logical_name(logical_name) {
+        return Err(FastDbError::Constraint(
+            "view has an invalid logical name".into(),
+        ));
+    }
+    Ok(ViewDefinition {
+        id,
+        logical_name: logical_name.to_string(),
+        select,
+        select_source,
+        dependencies,
+        definition,
+    })
+}
+
+pub fn persist_view(conn: &Connection, view: &ViewDefinition) -> Result<()> {
+    let dependencies = view
+        .dependencies
+        .iter()
+        .map(|id| id.to_hex())
+        .collect::<Vec<_>>();
+    let dependencies_json = serde_json::to_string(&dependencies).map_err(|error| {
+        FastDbError::Engine(format!("failed to encode view dependencies: {error}"))
+    })?;
+    let (statement, bindings) = lower::view_insert(
+        &view.id.to_hex(),
+        &view.logical_name,
+        &view.definition,
+        EXPRESSION_VERSION,
+        &dependencies_json,
+    );
+    conn.exec_bound(statement, bindings)
+}
+
+pub fn remove_view(conn: &Connection, view: &ViewDefinition) -> Result<()> {
+    let (statement, bindings) = lower::view_delete(&view.id.to_hex());
     conn.exec_bound(statement, bindings)
 }
 
@@ -919,9 +978,11 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
         analyzers: load_analyzers(conn)?,
         parameters: load_parameters(conn)?,
         functions: load_functions(conn)?,
+        views: BTreeMap::new(),
         hidden_columns: load_hidden_columns(conn)?,
         capabilities: load_capabilities(conn)?,
     };
+    load_views(conn, &mut snapshot)?;
     validate_future_catalogs_empty(conn)?;
     load_events(conn, &mut snapshot)?;
     load_fields(conn, &mut snapshot)?;
@@ -932,6 +993,7 @@ pub fn load_and_validate(conn: &Connection) -> Result<CatalogState> {
     validate_vector_catalog(&snapshot)?;
     validate_physical_objects(&schema, &snapshot, FORMAT_VERSION)?;
     validate_vector_storage(conn, &snapshot)?;
+    crate::execute::validate_materialized_views(conn, &snapshot)?;
     Ok(CatalogState::Ready(Box::new(snapshot)))
 }
 
@@ -1139,6 +1201,148 @@ fn load_functions(conn: &Connection) -> Result<BTreeMap<String, FunctionDefiniti
     Ok(functions)
 }
 
+fn load_views(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> {
+    let rows = conn.collect_rows(lower::views_stmt(), vec![])?;
+    let mut ids = BTreeSet::new();
+    for row in rows {
+        if row.len() != 5 {
+            return Err(FastDbError::format("view catalog row has wrong width"));
+        }
+        let id = CatalogId::from_hex(&format_text(&row[0], "view_id")?)?;
+        let logical_name = format_text(&row[1], "logical_name")?;
+        let definition = format_text(&row[2], "definition")?;
+        if format_integer(&row[3], "ast_version")? != EXPRESSION_VERSION {
+            return Err(FastDbError::format(
+                "view catalog has an unsupported AST version",
+            ));
+        }
+        let dependencies_json = format_text(&row[4], "dependencies_json")?;
+        let dependency_hex: Vec<String> = serde_json::from_str(&dependencies_json)
+            .map_err(|_| FastDbError::format("view dependencies are malformed"))?;
+        if serde_json::to_string(&dependency_hex).map_err(|error| {
+            FastDbError::Engine(format!("failed to encode view dependencies: {error}"))
+        })? != dependencies_json
+        {
+            return Err(FastDbError::format(
+                "view dependencies are not canonically encoded",
+            ));
+        }
+        let dependencies = dependency_hex
+            .iter()
+            .map(|value| CatalogId::from_hex(value))
+            .collect::<Result<Vec<_>>>()?;
+        if dependencies.is_empty()
+            || dependencies.windows(2).any(|pair| pair[0] >= pair[1])
+            || dependencies.contains(&id)
+        {
+            return Err(FastDbError::format(
+                "view dependencies are empty, duplicated, unsorted, or self-referential",
+            ));
+        }
+        let table = snapshot.tables.get(&logical_name).ok_or_else(|| {
+            FastDbError::format("view catalog belongs to an unknown physical table")
+        })?;
+        if table.id != id || table.kind != TableKind::Normal {
+            return Err(FastDbError::format(
+                "view catalog ownership does not match its physical table",
+            ));
+        }
+        let parsed = turso_fastdb_parser::parse_one(&definition)
+            .map_err(|_| FastDbError::format("view definition cannot be parsed"))?;
+        let turso_fastdb_parser::Statement::DefineTable(parsed) = parsed else {
+            return Err(FastDbError::format(
+                "view definition has the wrong statement kind",
+            ));
+        };
+        let select = *parsed
+            .view
+            .ok_or_else(|| FastDbError::format("view definition has no SELECT"))?;
+        let source_name = match &select.target {
+            turso_fastdb_parser::SelectTarget::Target(turso_fastdb_parser::Target::Table(
+                source,
+            )) if select.additional_targets.is_empty() => &source.name.value,
+            _ => {
+                return Err(FastDbError::format(
+                    "view definition has unsupported source ownership",
+                ));
+            }
+        };
+        let source = snapshot
+            .tables
+            .get(source_name)
+            .ok_or_else(|| FastDbError::format("view depends on an unknown table"))?;
+        if dependencies != vec![source.id]
+            || parsed.if_not_exists.is_some()
+            || parsed.overwrite.is_some()
+            || parsed.name.value != logical_name
+            || parsed.drop.is_some()
+            || parsed.mode.value != TableMode::Schemaless
+            || !matches!(
+                parsed.kind,
+                turso_fastdb_parser::TableKindSyntax::Normal { .. }
+            )
+            || table.definition.as_deref() != Some(definition.as_str())
+        {
+            return Err(FastDbError::format(
+                "view definition does not match catalog ownership",
+            ));
+        }
+        let select_source = definition
+            .get(select.span.offset..select.span.end())
+            .ok_or_else(|| FastDbError::format("view SELECT span is invalid"))?
+            .to_string();
+        let view = ViewDefinition {
+            id,
+            logical_name: logical_name.clone(),
+            select,
+            select_source,
+            dependencies,
+            definition,
+        };
+        if !ids.insert(id) || snapshot.views.insert(logical_name, view).is_some() {
+            return Err(FastDbError::format(
+                "view catalog contains duplicate ownership",
+            ));
+        }
+    }
+    validate_view_dependency_cycles(snapshot)
+}
+
+fn validate_view_dependency_cycles(snapshot: &CatalogSnapshot) -> Result<()> {
+    fn visit(
+        id: CatalogId,
+        snapshot: &CatalogSnapshot,
+        visiting: &mut BTreeSet<CatalogId>,
+        visited: &mut BTreeSet<CatalogId>,
+    ) -> Result<()> {
+        if visited.contains(&id) {
+            return Ok(());
+        }
+        if !visiting.insert(id) {
+            return Err(FastDbError::format(
+                "view dependency graph contains a cycle",
+            ));
+        }
+        if let Some(view) = snapshot.views.values().find(|view| view.id == id) {
+            for dependency in &view.dependencies {
+                if snapshot.views.values().any(|view| view.id == *dependency) {
+                    visit(*dependency, snapshot, visiting, visited)?;
+                }
+            }
+        }
+        visiting.remove(&id);
+        visited.insert(id);
+        Ok(())
+    }
+
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    for view in snapshot.views.values() {
+        visit(view.id, snapshot, &mut visiting, &mut visited)?;
+    }
+    Ok(())
+}
+
 fn load_events(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> {
     let rows = conn.collect_rows(lower::events_stmt(), vec![])?;
     let mut ids = BTreeSet::new();
@@ -1331,6 +1535,7 @@ fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
             analyzers: BTreeMap::new(),
             parameters: BTreeMap::new(),
             functions: BTreeMap::new(),
+            views: BTreeMap::new(),
             hidden_columns: BTreeMap::new(),
             capabilities: BTreeMap::new(),
         };
@@ -1362,6 +1567,7 @@ fn migrate_format_one_to_three(conn: &Connection) -> Result<()> {
             analyzers: load_analyzers(conn)?,
             parameters: BTreeMap::new(),
             functions: BTreeMap::new(),
+            views: BTreeMap::new(),
             hidden_columns: load_hidden_columns_v2(conn)?,
             capabilities: load_capabilities(conn)?,
         };
@@ -1409,6 +1615,7 @@ fn migrate_format_two_to_three(conn: &Connection) -> Result<()> {
             analyzers: load_analyzers(conn)?,
             parameters: BTreeMap::new(),
             functions: BTreeMap::new(),
+            views: BTreeMap::new(),
             hidden_columns: load_hidden_columns_v2(conn)?,
             capabilities: load_capabilities(conn)?,
         };
@@ -1452,6 +1659,7 @@ fn apply_format_three(conn: &Connection, prior: &CatalogSnapshot) -> Result<()> 
         analyzers: load_analyzers(conn)?,
         parameters: load_parameters(conn)?,
         functions: load_functions(conn)?,
+        views: BTreeMap::new(),
         hidden_columns: load_hidden_columns(conn)?,
         capabilities: load_capabilities(conn)?,
     };
@@ -1501,7 +1709,6 @@ fn create_format_three_catalogs(conn: &Connection) -> Result<()> {
 
 fn validate_future_catalogs_empty(conn: &Connection) -> Result<()> {
     for (table, id_column) in [
-        (VIEWS_TABLE, "view_id"),
         (PERMISSIONS_TABLE, "permission_id"),
         (USERS_TABLE, "user_id"),
         (ACCESSES_TABLE, "access_id"),

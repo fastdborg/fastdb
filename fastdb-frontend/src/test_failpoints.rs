@@ -101,6 +101,10 @@ pub enum Failpoint {
     /// Before transaction cleanup issues `ROLLBACK`. Used to prove that the
     /// original and cleanup failures are reported together.
     RollbackFailure,
+    /// After the sealed view catalog row is persisted, before backfill.
+    AfterViewCatalog,
+    /// After old materialized rows are removed, before replacement rows publish.
+    DuringViewRefresh,
 }
 
 #[derive(Default)]
@@ -147,6 +151,8 @@ pub struct Failpoints {
     before_event_actions: AtomicBool,
     commit_failure: AtomicBool,
     rollback_failure: AtomicBool,
+    after_view_catalog: AtomicBool,
+    during_view_refresh: AtomicBool,
 }
 
 impl Failpoints {
@@ -233,6 +239,8 @@ impl Failpoints {
             Failpoint::BeforeEventActions => self.before_event_actions.load(Ordering::SeqCst),
             Failpoint::CommitFailure => self.commit_failure.load(Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.load(Ordering::SeqCst),
+            Failpoint::AfterViewCatalog => self.after_view_catalog.load(Ordering::SeqCst),
+            Failpoint::DuringViewRefresh => self.during_view_refresh.load(Ordering::SeqCst),
         };
         if armed {
             return Err(FastDbError::Transaction(format!(
@@ -354,6 +362,8 @@ impl Failpoints {
             }
             Failpoint::CommitFailure => self.commit_failure.store(true, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(true, Ordering::SeqCst),
+            Failpoint::AfterViewCatalog => self.after_view_catalog.store(true, Ordering::SeqCst),
+            Failpoint::DuringViewRefresh => self.during_view_refresh.store(true, Ordering::SeqCst),
         }
     }
 
@@ -469,6 +479,8 @@ impl Failpoints {
             }
             Failpoint::CommitFailure => self.commit_failure.store(false, Ordering::SeqCst),
             Failpoint::RollbackFailure => self.rollback_failure.store(false, Ordering::SeqCst),
+            Failpoint::AfterViewCatalog => self.after_view_catalog.store(false, Ordering::SeqCst),
+            Failpoint::DuringViewRefresh => self.during_view_refresh.store(false, Ordering::SeqCst),
         }
     }
 
@@ -517,6 +529,8 @@ impl Failpoints {
             Failpoint::BeforeEventActions,
             Failpoint::CommitFailure,
             Failpoint::RollbackFailure,
+            Failpoint::AfterViewCatalog,
+            Failpoint::DuringViewRefresh,
         ] {
             self.disarm(fp);
         }

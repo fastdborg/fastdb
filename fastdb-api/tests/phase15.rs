@@ -1565,3 +1565,262 @@ fn p15_api_021_batch_insert_and_relation_events_are_per_record() {
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_022_materialized_views_refresh_group_and_are_read_only() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let mut connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "DEFINE TABLE source SCHEMALESS; \
+                 CREATE source:a SET category = 'x', n = 1; \
+                 CREATE source:b SET category = 'x', n = 2; \
+                 CREATE source:c SET category = 'y', n = 4; \
+                 DEFINE TABLE filtered AS \
+                   SELECT category, n * 2 AS doubled FROM source WHERE n >= 2; \
+                 DEFINE TABLE totals AS \
+                   SELECT category, count() AS total, math::sum(n) AS sum \
+                   FROM source GROUP BY category; \
+                 UPDATE source:a SET n = 3; \
+                 SELECT * FROM filtered ORDER BY id; \
+                 SELECT * FROM totals ORDER BY category",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &response.statements[7],
+            StatementResult::Rows(rows)
+                if rows.len() == 3
+                    && matches!(&rows[0], Value::Object(row)
+                        if row.get("doubled") == Some(&Value::Integer(6)))
+        ));
+        assert!(matches!(
+            &response.statements[8],
+            StatementResult::Rows(rows)
+                if rows.len() == 2
+                    && matches!(&rows[0], Value::Object(row)
+                        if row.get("total") == Some(&Value::Integer(2)))
+        ));
+        assert_eq!(
+            connection
+                .execute("CREATE filtered:x SET doubled = 100", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Constraint
+        );
+
+        let mut transaction = connection.transaction().await.unwrap();
+        transaction
+            .execute("UPDATE source:b SET n = 9", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &transaction
+                .query("SELECT VALUE doubled FROM filtered:b", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows.as_slice() == [Value::Integer(18)]
+        ));
+        transaction.rollback().await.unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE doubled FROM filtered:b", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(4)]
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_023_materialized_views_reopen_and_dependency_removal_is_safe() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("views.fastdb");
+        {
+            let database = Builder::new_local(&path).build().await.unwrap();
+            let connection = database.connect().unwrap();
+            connection
+                .execute(
+                    "DEFINE TABLE source SCHEMALESS; \
+                     CREATE source:a SET n = 2; \
+                     DEFINE TABLE derived AS SELECT n FROM source WHERE n > 0",
+                    params! {},
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                connection
+                    .execute("REMOVE TABLE source", params! {})
+                    .await
+                    .unwrap_err()
+                    .category(),
+                ErrorCategory::Constraint
+            );
+            connection.close().await.unwrap();
+        }
+        {
+            let database = Builder::new_local(&path).build().await.unwrap();
+            let connection = database.connect().unwrap();
+            assert!(matches!(
+                &connection
+                    .query("SELECT VALUE n FROM derived:a", params! {})
+                    .await
+                    .unwrap()
+                    .statements[0],
+                StatementResult::Rows(rows) if rows == &vec![Value::Integer(2)]
+            ));
+            connection
+                .execute("UPDATE source:a SET n = 5", params! {})
+                .await
+                .unwrap();
+            assert!(matches!(
+                &connection
+                    .query("SELECT VALUE n FROM derived:a", params! {})
+                    .await
+                    .unwrap()
+                    .statements[0],
+                StatementResult::Rows(rows) if rows == &vec![Value::Integer(5)]
+            ));
+            connection
+                .execute("REMOVE TABLE derived; REMOVE TABLE source", params! {})
+                .await
+                .unwrap();
+            connection.close().await.unwrap();
+            database.check().await.unwrap();
+        }
+    });
+}
+
+#[test]
+fn p15_api_024_view_chains_overwrite_and_cycles_are_atomic() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE source SCHEMALESS; \
+                 CREATE source:a SET n = 2; \
+                 DEFINE TABLE v_first AS SELECT n * 2 AS metric FROM source; \
+                 DEFINE TABLE v_second AS SELECT metric FROM v_first",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection
+            .execute("UPDATE source:a SET n = 3", params! {})
+            .await
+            .unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE metric FROM v_second:a", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(6)]
+        ));
+        connection
+            .execute(
+                "DEFINE TABLE OVERWRITE v_first AS SELECT n * 3 AS metric FROM source",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE metric FROM v_second:a", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(9)]
+        ));
+        assert_eq!(
+            connection
+                .execute(
+                    "DEFINE TABLE OVERWRITE v_first AS SELECT metric FROM v_second",
+                    params! {},
+                )
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE metric FROM v_first:a", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(9)]
+        ));
+        connection.close().await.unwrap();
+    });
+}
+
+#[test]
+fn p15_api_025_view_refresh_maintains_btree_fts_and_vector_state() {
+    block_on(async {
+        let database = Builder::new_memory().build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE source SCHEMALESS; \
+                 CREATE source:a SET n=1, body='old text', embedding=[1,0]; \
+                 CREATE source:b SET n=2, body='other text', embedding=[0,1]; \
+                 DEFINE TABLE derived AS SELECT n, body, embedding FROM source; \
+                 DEFINE FIELD n ON derived TYPE int; \
+                 DEFINE FIELD body ON derived TYPE string; \
+                 DEFINE FIELD embedding ON derived TYPE array<float, 2>; \
+                 DEFINE INDEX n_idx ON derived FIELDS n; \
+                 DEFINE ANALYZER blankish TOKENIZERS blank; \
+                 DEFINE INDEX body_idx ON derived FIELDS body \
+                   FULLTEXT ANALYZER blankish HIGHLIGHTS",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE source:a SET n=3, body='fresh text', embedding=[0.9,0.1]",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE n FROM derived WHERE n=3", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Integer(3)]
+        ));
+        assert!(matches!(
+            &connection
+                .query("SELECT VALUE body FROM derived WHERE body @1@ 'fresh'", params! {})
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows) if rows == &vec![Value::Str("fresh text".into())]
+        ));
+        assert!(matches!(
+            &connection
+                .query(
+                    "SELECT VALUE id FROM derived \
+                     WHERE embedding <|1,EUCLIDEAN|> [1,0]",
+                    params! {},
+                )
+                .await
+                .unwrap()
+                .statements[0],
+            StatementResult::Rows(rows)
+                if rows == &vec![Value::RecordId(fastdb::RecordId::new("derived", "a"))]
+        ));
+        connection.close().await.unwrap();
+    });
+}

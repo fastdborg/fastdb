@@ -196,3 +196,120 @@ fn p15_catalog_005_event_boundary_failure_rolls_back_source_and_action() {
     }
     connection.close().unwrap();
 }
+
+#[test]
+fn p15_catalog_006_view_catalog_corruption_fails_closed() {
+    let directory = tempdir().unwrap();
+    for (name, mutation) in [
+        ("version", "UPDATE __fastdb_views SET ast_version=99"),
+        (
+            "dependencies",
+            "UPDATE __fastdb_views SET dependencies_json='[]'",
+        ),
+        (
+            "ownership",
+            "UPDATE __fastdb_views SET logical_name='other'",
+        ),
+    ] {
+        let file = directory.path().join(format!("view-{name}.fastdb"));
+        {
+            let database = Database::open(file.to_str().unwrap()).unwrap();
+            let connection = database.connect().unwrap();
+            connection
+                .execute(
+                    "DEFINE TABLE source SCHEMALESS; \
+                     CREATE source:a SET n=1; \
+                     DEFINE TABLE derived AS SELECT n FROM source",
+                )
+                .unwrap();
+            common::native_exec(connection.native(), mutation);
+            connection.close().unwrap();
+        }
+        let before = std::fs::read(&file).unwrap();
+        assert_eq!(
+            Database::open(file.to_str().unwrap())
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Format,
+            "{name}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before, "{name}");
+    }
+
+    let file = directory.path().join("view-derived.fastdb");
+    {
+        let database = Database::open(file.to_str().unwrap()).unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE source SCHEMALESS; \
+                 CREATE source:a SET n=1; \
+                 DEFINE TABLE derived AS SELECT n FROM source",
+            )
+            .unwrap();
+        let physical = common::physical_name_for(connection.native(), "derived").unwrap();
+        common::native_exec(
+            connection.native(),
+            &format!("UPDATE {physical} SET doc=jsonb('{{\"n\":9}}')"),
+        );
+        connection.close().unwrap();
+    }
+    let before = std::fs::read(&file).unwrap();
+    assert_eq!(
+        Database::open(file.to_str().unwrap())
+            .unwrap_err()
+            .category(),
+        ErrorCategory::Format
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+}
+
+#[test]
+fn p15_catalog_007_view_publication_boundaries_roll_back_source_and_derived_rows() {
+    let database = Database::open_memory().unwrap();
+    let connection = database.connect().unwrap();
+    connection
+        .execute("DEFINE TABLE source SCHEMALESS; CREATE source:a SET n=1")
+        .unwrap();
+
+    connection.arm_failpoint(Failpoint::AfterViewCatalog);
+    assert_eq!(
+        connection
+            .execute("DEFINE TABLE derived AS SELECT n FROM source")
+            .unwrap_err()
+            .category(),
+        ErrorCategory::Transaction
+    );
+    connection.disarm_all_failpoints();
+    let StatementResult::Rows(rows) = &connection
+        .execute("SELECT * FROM derived")
+        .unwrap()
+        .statements[0]
+    else {
+        panic!("expected rows")
+    };
+    assert!(rows.is_empty());
+
+    connection
+        .execute("DEFINE TABLE derived AS SELECT n FROM source")
+        .unwrap();
+    connection.arm_failpoint(Failpoint::DuringViewRefresh);
+    assert_eq!(
+        connection
+            .execute("UPDATE source:a SET n=2")
+            .unwrap_err()
+            .category(),
+        ErrorCategory::Transaction
+    );
+    connection.disarm_all_failpoints();
+    for table in ["source", "derived"] {
+        let StatementResult::Rows(rows) = &connection
+            .execute(&format!("SELECT VALUE n FROM {table}:a"))
+            .unwrap()
+            .statements[0]
+        else {
+            panic!("expected rows")
+        };
+        assert_eq!(rows, &vec![turso_fastdb::Value::Integer(1)], "{table}");
+    }
+}
