@@ -1067,7 +1067,7 @@ fn validate_statement_limits(
     limits: &ResourceLimits,
 ) -> Result<()> {
     use turso_fastdb_parser::{
-        CreateData, InsertData, ProjectionList, ReturnKind, SchemaTypeKind, Statement, UpdateData,
+        CreateData, InsertData, ProjectionList, ReturnKind, Statement, UpdateData,
     };
 
     let mut expressions = Vec::new();
@@ -1133,26 +1133,14 @@ fn validate_statement_limits(
         }
         Statement::Delete(statement) => expressions.extend(statement.condition.iter()),
         Statement::DefineField(statement) => {
-            let mut ty = &statement.ty.kind;
-            while let SchemaTypeKind::Option(inner) = ty {
-                ty = &inner.kind;
-            }
-            if let SchemaTypeKind::FixedFloatArray(dimension) = ty {
-                let dimension = usize::try_from(dimension.value).unwrap_or(usize::MAX);
-                check_vector_dimension(dimension, limits)?;
-            }
+            validate_schema_type_limits(&statement.ty.kind, limits)?;
             expressions.extend(statement.default.iter().map(|default| &default.value));
             expressions.extend(statement.value.iter());
             expressions.extend(statement.assert.iter());
         }
         Statement::AlterField(statement) => match &statement.change {
             turso_fastdb_parser::AlterFieldChange::Type(ty) => {
-                if let SchemaTypeKind::FixedFloatArray(dimension) = &ty.kind {
-                    check_vector_dimension(
-                        usize::try_from(dimension.value).unwrap_or(usize::MAX),
-                        limits,
-                    )?;
-                }
+                validate_schema_type_limits(&ty.kind, limits)?;
             }
             turso_fastdb_parser::AlterFieldChange::Default(default) => {
                 expressions.push(&default.value)
@@ -1198,16 +1186,7 @@ fn validate_statement_limits(
         }
         Statement::DefineFunction(statement) => {
             for argument in &statement.arguments {
-                let mut ty = &argument.ty.kind;
-                while let SchemaTypeKind::Option(inner) = ty {
-                    ty = &inner.kind;
-                }
-                if let SchemaTypeKind::FixedFloatArray(dimension) = ty {
-                    check_vector_dimension(
-                        usize::try_from(dimension.value).unwrap_or(usize::MAX),
-                        limits,
-                    )?;
-                }
+                validate_schema_type_limits(&argument.ty.kind, limits)?;
             }
             for nested in &statement.body.statements {
                 validate_statement_limits(nested, params, limits)?;
@@ -1403,6 +1382,33 @@ fn check_vector_expression(
     };
     if let Some(dimension) = dimension {
         check_vector_dimension(dimension, limits)?;
+    }
+    Ok(())
+}
+
+fn validate_schema_type_limits(
+    ty: &turso_fastdb_parser::SchemaTypeKind,
+    limits: &ResourceLimits,
+) -> Result<()> {
+    use turso_fastdb_parser::SchemaTypeKind;
+    match ty {
+        SchemaTypeKind::Union(variants) => {
+            for variant in variants {
+                validate_schema_type_limits(&variant.kind, limits)?;
+            }
+        }
+        SchemaTypeKind::TypedArray { element, .. } | SchemaTypeKind::Option(element) => {
+            validate_schema_type_limits(&element.kind, limits)?;
+        }
+        SchemaTypeKind::Set {
+            element: Some(element),
+            ..
+        } => validate_schema_type_limits(&element.kind, limits)?,
+        SchemaTypeKind::FixedFloatArray(dimension) => check_vector_dimension(
+            usize::try_from(dimension.value).unwrap_or(usize::MAX),
+            limits,
+        )?,
+        _ => {}
     }
     Ok(())
 }

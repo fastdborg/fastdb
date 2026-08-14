@@ -1292,6 +1292,8 @@ impl<'a> Parser<'a> {
             let change = if self.eat(&TokenKind::Drop) {
                 if self.eat(&TokenKind::Type) {
                     AlterFieldChange::DropType
+                } else if self.eat_ident_keyword("flexible") {
+                    AlterFieldChange::DropFlexible
                 } else if self.eat(&TokenKind::Default) {
                     AlterFieldChange::DropDefault
                 } else if self.eat(&TokenKind::Value) {
@@ -1309,6 +1311,8 @@ impl<'a> Parser<'a> {
                 }
             } else if self.eat(&TokenKind::Type) {
                 AlterFieldChange::Type(self.parse_schema_type()?)
+            } else if self.eat_ident_keyword("flexible") {
+                AlterFieldChange::Flexible
             } else if let Some(token) = self.take(&TokenKind::Default) {
                 let always = self.take(&TokenKind::Always).map(|token| token.span);
                 let value = self.parse_expression()?;
@@ -2018,6 +2022,11 @@ impl<'a> Parser<'a> {
                 kind: SchemaTypeKind::Any,
             }
         };
+        let flexible = if self.at_ident_keyword("flexible") {
+            Some(self.advance().span)
+        } else {
+            None
+        };
         let mut default = None;
         let mut value = None;
         let mut assert = None;
@@ -2100,6 +2109,7 @@ impl<'a> Parser<'a> {
             table_keyword,
             table,
             ty,
+            flexible,
             default,
             value,
             assert,
@@ -2699,8 +2709,75 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_schema_type(&mut self) -> Result<SchemaType, ParseError> {
+        let first = self.parse_schema_type_atom()?;
+        if !self.at(&TokenKind::Pipe) {
+            return Ok(first);
+        }
+        let mut span = first.span;
+        let mut variants = vec![first];
+        while self.eat(&TokenKind::Pipe) {
+            let variant = self.parse_schema_type_atom()?;
+            span = span.union(variant.span);
+            variants.push(variant);
+            self.check_element_count(variants.len(), span)?;
+        }
+        Ok(SchemaType {
+            span,
+            kind: SchemaTypeKind::Union(variants),
+        })
+    }
+
+    fn parse_schema_type_atom(&mut self) -> Result<SchemaType, ParseError> {
         let token = self.advance().clone();
         let kind = match token.kind {
+            TokenKind::None => SchemaTypeKind::Literal(SchemaTypeLiteral::None),
+            TokenKind::Null => SchemaTypeKind::Literal(SchemaTypeLiteral::Null),
+            TokenKind::True => SchemaTypeKind::Literal(SchemaTypeLiteral::Bool(true)),
+            TokenKind::False => SchemaTypeKind::Literal(SchemaTypeLiteral::Bool(false)),
+            TokenKind::String(value) => SchemaTypeKind::Literal(SchemaTypeLiteral::String(value)),
+            TokenKind::Number(value) => {
+                let expression = parse_number_expression(value, token.span)?;
+                match expression.kind {
+                    ExprKind::Integer(value) => {
+                        SchemaTypeKind::Literal(SchemaTypeLiteral::Integer(value))
+                    }
+                    ExprKind::Float(value) => {
+                        SchemaTypeKind::Literal(SchemaTypeLiteral::Float(value))
+                    }
+                    _ => unreachable!("number parser returns a numeric expression"),
+                }
+            }
+            TokenKind::Plus | TokenKind::Minus => {
+                let sign: i8 = if matches!(token.kind, TokenKind::Minus) {
+                    -1
+                } else {
+                    1
+                };
+                let number = self.advance().clone();
+                let TokenKind::Number(value) = number.kind else {
+                    return Err(self.unexpected_at(&number, "a numeric literal schema type"));
+                };
+                let span = token.span.union(number.span);
+                if !value.contains(['.', 'e', 'E']) {
+                    return Ok(SchemaType {
+                        span,
+                        kind: SchemaTypeKind::Literal(SchemaTypeLiteral::Integer(
+                            parse_signed_integer(&value, sign, span)?,
+                        )),
+                    });
+                }
+                let expression = parse_number_expression(value, span)?;
+                return Ok(SchemaType {
+                    span,
+                    kind: SchemaTypeKind::Literal(match expression.kind {
+                        ExprKind::Integer(_) => {
+                            unreachable!("integer schema literals return before float parsing")
+                        }
+                        ExprKind::Float(value) => SchemaTypeLiteral::Float(value * sign as f64),
+                        _ => unreachable!("number parser returns a numeric expression"),
+                    }),
+                });
+            }
             TokenKind::Ident(ref value) if value.eq_ignore_ascii_case("any") => SchemaTypeKind::Any,
             TokenKind::BoolType => SchemaTypeKind::Bool,
             TokenKind::IntType => SchemaTypeKind::Int,
@@ -2772,7 +2849,23 @@ impl<'a> Parser<'a> {
                 length: None,
             },
             TokenKind::RangeType => SchemaTypeKind::Range,
-            TokenKind::RecordType => SchemaTypeKind::Record,
+            TokenKind::RecordType if self.eat(&TokenKind::Less) => {
+                let mut tables = Vec::new();
+                loop {
+                    let table = self.expect_identifier("a table name in record<...>")?;
+                    tables.push(table);
+                    self.check_element_count(tables.len(), token.span)?;
+                    if !self.eat(&TokenKind::Pipe) {
+                        break;
+                    }
+                }
+                let close = self.expect(&TokenKind::Greater, "'>' after record tables")?;
+                return Ok(SchemaType {
+                    span: token.span.union(close.span),
+                    kind: SchemaTypeKind::Record { tables },
+                });
+            }
+            TokenKind::RecordType => SchemaTypeKind::Record { tables: Vec::new() },
             TokenKind::OptionType => {
                 self.expect(&TokenKind::Less, "'<' after option")?;
                 self.enter_depth(token.span)?;

@@ -240,6 +240,61 @@ fn p15_parse_007_field_clauses_and_lifecycle_are_structured() {
 }
 
 #[test]
+fn p15_parse_011_union_literal_typed_record_and_flexible_types_are_structured() {
+    let script = parse(
+        "DEFINE FIELD state ON item TYPE 'open' | 'closed' | none; \
+         DEFINE FIELD payload ON item TYPE object FLEXIBLE; \
+         DEFINE FIELD owner ON item TYPE record<person | company>; \
+         DEFINE FIELD values ON item TYPE array<int | string>; \
+         ALTER FIELD payload ON item FLEXIBLE; \
+         ALTER FIELD payload ON item DROP FLEXIBLE",
+    )
+    .unwrap();
+
+    let Statement::DefineField(state) = &script.statements[0] else {
+        panic!("expected literal union field")
+    };
+    assert!(matches!(
+        &state.ty.kind,
+        turso_fastdb_parser::SchemaTypeKind::Union(variants) if variants.len() == 3
+    ));
+    let Statement::DefineField(payload) = &script.statements[1] else {
+        panic!("expected flexible object field")
+    };
+    assert!(payload.flexible.is_some());
+    let Statement::DefineField(owner) = &script.statements[2] else {
+        panic!("expected typed record field")
+    };
+    assert!(matches!(
+        &owner.ty.kind,
+        turso_fastdb_parser::SchemaTypeKind::Record { tables }
+            if tables.iter().map(|table| table.value.as_str()).eq(["person", "company"])
+    ));
+    let Statement::DefineField(values) = &script.statements[3] else {
+        panic!("expected typed array field")
+    };
+    assert!(matches!(
+        &values.ty.kind,
+        turso_fastdb_parser::SchemaTypeKind::TypedArray { element, .. }
+            if matches!(&element.kind, turso_fastdb_parser::SchemaTypeKind::Union(variants) if variants.len() == 2)
+    ));
+    assert!(matches!(
+        script.statements[4],
+        Statement::AlterField(turso_fastdb_parser::AlterFieldStatement {
+            change: turso_fastdb_parser::AlterFieldChange::Flexible,
+            ..
+        })
+    ));
+    assert!(matches!(
+        script.statements[5],
+        Statement::AlterField(turso_fastdb_parser::AlterFieldStatement {
+            change: turso_fastdb_parser::AlterFieldChange::DropFlexible,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn p15_parse_008_stopped_sequence_module_and_server_api_fail_explicitly() {
     for source in [
         "DEFINE SEQUENCE ids BATCH 1 START 0 TIMEOUT 1s",

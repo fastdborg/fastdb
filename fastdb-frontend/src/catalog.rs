@@ -1930,6 +1930,7 @@ fn load_fields(conn: &Connection, snapshot: &mut CatalogSnapshot) -> Result<()> 
             ty,
             required,
             definition,
+            flexible: parsed.flexible.is_some(),
             default,
             default_always,
             value,

@@ -8,6 +8,8 @@ use turso_fastdb_parser::{SchemaType, SchemaTypeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldType {
+    Union(Vec<FieldType>),
+    Literal(FieldTypeLiteral),
     Any,
     Bool,
     Int,
@@ -36,13 +38,44 @@ pub enum FieldType {
         length: Option<u32>,
     },
     Range,
-    Record,
+    Record {
+        tables: Vec<String>,
+    },
     Option(Box<FieldType>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldTypeLiteral {
+    None,
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(u64),
+    String(String),
 }
 
 impl FieldType {
     pub fn from_parser(value: &SchemaType) -> Self {
         match &value.kind {
+            SchemaTypeKind::Union(variants) => {
+                Self::Union(variants.iter().map(Self::from_parser).collect())
+            }
+            SchemaTypeKind::Literal(literal) => Self::Literal(match literal {
+                turso_fastdb_parser::SchemaTypeLiteral::None => FieldTypeLiteral::None,
+                turso_fastdb_parser::SchemaTypeLiteral::Null => FieldTypeLiteral::Null,
+                turso_fastdb_parser::SchemaTypeLiteral::Bool(value) => {
+                    FieldTypeLiteral::Bool(*value)
+                }
+                turso_fastdb_parser::SchemaTypeLiteral::Integer(value) => {
+                    FieldTypeLiteral::Integer(*value)
+                }
+                turso_fastdb_parser::SchemaTypeLiteral::Float(value) => {
+                    FieldTypeLiteral::Float(value.to_bits())
+                }
+                turso_fastdb_parser::SchemaTypeLiteral::String(value) => {
+                    FieldTypeLiteral::String(value.clone())
+                }
+            }),
             SchemaTypeKind::Any => Self::Any,
             SchemaTypeKind::Bool => Self::Bool,
             SchemaTypeKind::Int => Self::Int,
@@ -73,14 +106,22 @@ impl FieldType {
                 length: length.as_ref().map(|length| length.value as u32),
             },
             SchemaTypeKind::Range => Self::Range,
-            SchemaTypeKind::Record => Self::Record,
+            SchemaTypeKind::Record { tables } => Self::Record {
+                tables: tables.iter().map(|table| table.value.clone()).collect(),
+            },
             SchemaTypeKind::Option(inner) => Self::Option(Box::new(Self::from_parser(inner))),
         }
     }
 
     pub fn parse_canonical(value: &str) -> Result<Self> {
-        let (parsed, consumed) = parse_type(value)?;
-        if consumed != value.len() || parsed.canonical() != value {
+        let source = format!("DEFINE FIELD value ON value TYPE {value}");
+        let statement = turso_fastdb_parser::parse_one(&source)
+            .map_err(|_| FastDbError::format("stored field type AST is invalid"))?;
+        let turso_fastdb_parser::Statement::DefineField(field) = statement else {
+            return Err(FastDbError::format("stored field type AST is invalid"));
+        };
+        let parsed = Self::from_parser(&field.ty);
+        if parsed.canonical() != value {
             return Err(FastDbError::format(
                 "stored field type AST is not canonical",
             ));
@@ -90,6 +131,12 @@ impl FieldType {
 
     pub fn canonical(&self) -> String {
         match self {
+            Self::Union(variants) => variants
+                .iter()
+                .map(Self::canonical)
+                .collect::<Vec<_>>()
+                .join("|"),
+            Self::Literal(literal) => literal.canonical(),
             Self::Any => "any".into(),
             Self::Bool => "bool".into(),
             Self::Int => "int".into(),
@@ -120,35 +167,93 @@ impl FieldType {
                 (None, Some(_)) => unreachable!("set length requires an element type"),
             },
             Self::Range => "range".into(),
-            Self::Record => "record".into(),
+            Self::Record { tables } if tables.is_empty() => "record".into(),
+            Self::Record { tables } => format!(
+                "record<{}>",
+                tables
+                    .iter()
+                    .map(|table| render_type_identifier(table))
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
             Self::Option(inner) => format!("option<{}>", inner.canonical()),
         }
     }
 
-    pub const fn required(&self) -> bool {
-        !matches!(self, Self::Any | Self::Option(_))
+    pub fn required(&self) -> bool {
+        match self {
+            Self::Any | Self::Option(_) | Self::Literal(FieldTypeLiteral::None) => false,
+            Self::Union(variants) => {
+                let mut index = 0;
+                while index < variants.len() {
+                    if !variants[index].required() {
+                        return false;
+                    }
+                    index += 1;
+                }
+                true
+            }
+            _ => true,
+        }
     }
 
-    pub const fn base_is_object(&self) -> bool {
+    pub fn base_is_object(&self) -> bool {
         match self {
             Self::Any | Self::Object => true,
+            Self::Union(variants) => {
+                let mut index = 0;
+                while index < variants.len() {
+                    if variants[index].base_is_object() {
+                        return true;
+                    }
+                    index += 1;
+                }
+                false
+            }
             Self::Option(inner) => inner.base_is_object(),
             _ => false,
         }
     }
 
-    pub const fn vector_dimension(&self) -> Option<u32> {
+    pub fn vector_dimension(&self) -> Option<u32> {
         match self {
             Self::Vector { dimension } => Some(*dimension),
             Self::Option(inner) => inner.vector_dimension(),
+            Self::Union(variants) => {
+                let mut dimension = None;
+                let mut index = 0;
+                while index < variants.len() {
+                    if let Some(candidate) = variants[index].vector_dimension() {
+                        if dimension.is_some() && dimension != Some(candidate) {
+                            return None;
+                        }
+                        dimension = Some(candidate);
+                    } else if variants[index].required() {
+                        return None;
+                    }
+                    index += 1;
+                }
+                dimension
+            }
             _ => None,
         }
     }
 
-    pub const fn supports_reference(&self) -> bool {
+    pub fn supports_reference(&self) -> bool {
         match self {
-            Self::Record => true,
+            Self::Record { .. } => true,
             Self::Option(inner) => inner.supports_reference(),
+            Self::Union(variants) => {
+                let mut found_reference = false;
+                for variant in variants {
+                    if variant.supports_reference() {
+                        found_reference = true;
+                    } else if variant.required() {
+                        return false;
+                    }
+                }
+                found_reference
+            }
             Self::TypedArray { element, .. } => element.supports_reference(),
             Self::Set {
                 element: Some(element),
@@ -158,12 +263,53 @@ impl FieldType {
         }
     }
 
-    pub const fn base_is_any(&self) -> bool {
+    pub fn base_is_any(&self) -> bool {
         match self {
             Self::Any => true,
             Self::Option(inner) => inner.base_is_any(),
+            Self::Union(variants) => {
+                let mut index = 0;
+                while index < variants.len() {
+                    if variants[index].base_is_any() {
+                        return true;
+                    }
+                    index += 1;
+                }
+                false
+            }
             _ => false,
         }
+    }
+}
+
+impl FieldTypeLiteral {
+    fn canonical(&self) -> String {
+        match self {
+            Self::None => "none".into(),
+            Self::Null => "null".into(),
+            Self::Bool(value) => value.to_string(),
+            Self::Integer(value) => value.to_string(),
+            Self::Float(bits) => format!("{:?}", f64::from_bits(*bits)),
+            Self::String(value) => {
+                format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+            }
+        }
+    }
+}
+
+fn render_type_identifier(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        && value
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        value.to_string()
+    } else {
+        format!("`{}`", value.replace('`', "``"))
     }
 }
 
@@ -178,6 +324,7 @@ pub struct FieldRule {
     pub path: Vec<String>,
     pub path_key: String,
     pub ty: FieldType,
+    pub flexible: bool,
     pub required: bool,
     pub definition: String,
     pub default: Option<SchemaExpression>,
@@ -246,6 +393,33 @@ pub fn validate_document(
 fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> {
     if matches!(ty, FieldType::Any) {
         return Ok(false);
+    }
+    if let FieldType::Union(variants) = ty {
+        for variant in variants {
+            let mut candidate = value.clone();
+            if let Ok(changed) = validate_type(variant, &mut candidate, path) {
+                *value = candidate;
+                return Ok(changed);
+            }
+        }
+        return type_mismatch(ty, path);
+    }
+    if let FieldType::Literal(literal) = ty {
+        let matches = match (literal, &*value) {
+            (FieldTypeLiteral::None, Value::None) | (FieldTypeLiteral::Null, Value::Null) => true,
+            (FieldTypeLiteral::Bool(expected), Value::Bool(actual)) => expected == actual,
+            (FieldTypeLiteral::Integer(expected), Value::Integer(actual)) => expected == actual,
+            (FieldTypeLiteral::Float(expected), Value::Float(actual)) => {
+                *expected == actual.to_bits()
+            }
+            (FieldTypeLiteral::String(expected), Value::Str(actual)) => expected == actual,
+            _ => false,
+        };
+        return if matches {
+            Ok(false)
+        } else {
+            type_mismatch(ty, path)
+        };
     }
     if matches!(value, Value::Null) {
         return Err(FastDbError::Schema(format!(
@@ -347,8 +521,12 @@ fn validate_type(ty: &FieldType, value: &mut Value, path: &str) -> Result<bool> 
         | (FieldType::Object, Value::Object(_))
         | (FieldType::Array, Value::Array(_))
         | (FieldType::Range, Value::Range(_))
-        | (FieldType::Record, Value::RecordId(_))
         | (FieldType::Float, Value::Float(_)) => Ok(false),
+        (FieldType::Record { tables }, Value::RecordId(record))
+            if tables.is_empty() || tables.iter().any(|table| table == &record.table) =>
+        {
+            Ok(false)
+        }
         (FieldType::Float, value @ Value::Integer(_)) => {
             let Value::Integer(integer) = value else {
                 unreachable!();
@@ -385,7 +563,7 @@ fn validate_declared_paths(
         let allowed = fields.values().any(|field| {
             prefix == &field.path
                 || is_prefix(prefix, &field.path)
-                || (field.ty.base_is_any() && is_prefix(&field.path, prefix))
+                || ((field.ty.base_is_any() || field.flexible) && is_prefix(&field.path, prefix))
         });
         if !allowed {
             let path = crate::path::canonical_path(prefix.iter().map(String::as_str))?;
@@ -405,121 +583,6 @@ fn is_prefix(left: &[String], right: &[String]) -> bool {
     left.len() <= right.len() && left.iter().zip(right).all(|(left, right)| left == right)
 }
 
-fn parse_type(value: &str) -> Result<(FieldType, usize)> {
-    if let Some(rest) = value.strip_prefix("array<float,") {
-        let Some(close) = rest.find('>') else {
-            return Err(FastDbError::format(
-                "stored fixed vector type is missing its closing delimiter",
-            ));
-        };
-        let dimension = rest[..close]
-            .parse::<u32>()
-            .map_err(|_| FastDbError::format("stored fixed vector dimension is invalid"))?;
-        if dimension == 0 || dimension > 65_536 {
-            return Err(FastDbError::format(
-                "stored fixed vector dimension is outside the supported range",
-            ));
-        }
-        return Ok((
-            FieldType::Vector { dimension },
-            "array<float,".len() + close + 1,
-        ));
-    }
-    if let Some(rest) = value.strip_prefix("array<") {
-        let (element, consumed) = parse_type(rest)?;
-        let suffix = &rest[consumed..];
-        let (length, suffix_consumed) = parse_collection_suffix(suffix)?;
-        return Ok((
-            FieldType::TypedArray {
-                element: Box::new(element),
-                length,
-            },
-            "array<".len() + consumed + suffix_consumed,
-        ));
-    }
-    if let Some(rest) = value.strip_prefix("set<") {
-        let (element, consumed) = parse_type(rest)?;
-        let suffix = &rest[consumed..];
-        let (length, suffix_consumed) = parse_collection_suffix(suffix)?;
-        return Ok((
-            FieldType::Set {
-                element: Some(Box::new(element)),
-                length,
-            },
-            "set<".len() + consumed + suffix_consumed,
-        ));
-    }
-    for (name, ty) in [
-        ("any", FieldType::Any),
-        ("bool", FieldType::Bool),
-        ("int", FieldType::Int),
-        ("float", FieldType::Float),
-        ("number", FieldType::Number),
-        ("decimal", FieldType::Decimal),
-        ("string", FieldType::String),
-        ("bytes", FieldType::Bytes),
-        ("datetime", FieldType::Datetime),
-        ("duration", FieldType::Duration),
-        ("uuid", FieldType::Uuid),
-        ("regex", FieldType::Regex),
-        ("file", FieldType::File),
-        ("table", FieldType::Table),
-        ("object", FieldType::Object),
-        ("array", FieldType::Array),
-        (
-            "set",
-            FieldType::Set {
-                element: None,
-                length: None,
-            },
-        ),
-        ("range", FieldType::Range),
-        ("record", FieldType::Record),
-    ] {
-        if value.starts_with(name) {
-            return Ok((ty, name.len()));
-        }
-    }
-    let Some(rest) = value.strip_prefix("option<") else {
-        return Err(FastDbError::format("stored field type AST is unknown"));
-    };
-    let (inner, consumed) = parse_type(rest)?;
-    if rest.as_bytes().get(consumed) != Some(&b'>') {
-        return Err(FastDbError::format(
-            "stored option type AST is missing its closing delimiter",
-        ));
-    }
-    Ok((
-        FieldType::Option(Box::new(inner)),
-        "option<".len() + consumed + 1,
-    ))
-}
-
-fn parse_collection_suffix(value: &str) -> Result<(Option<u32>, usize)> {
-    if value.starts_with('>') {
-        return Ok((None, 1));
-    }
-    let Some(rest) = value.strip_prefix(',') else {
-        return Err(FastDbError::format(
-            "stored typed collection is missing its closing delimiter",
-        ));
-    };
-    let Some(close) = rest.find('>') else {
-        return Err(FastDbError::format(
-            "stored typed collection is missing its closing delimiter",
-        ));
-    };
-    let length = rest[..close]
-        .parse::<u32>()
-        .map_err(|_| FastDbError::format("stored typed collection length is invalid"))?;
-    if length == 0 || length > 65_536 {
-        return Err(FastDbError::format(
-            "stored typed collection length is outside the supported range",
-        ));
-    }
-    Ok((Some(length), 1 + close + 1))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +598,7 @@ mod tests {
             path,
             required: ty.required(),
             ty,
+            flexible: false,
             definition: "test".into(),
             default: None,
             default_always: false,

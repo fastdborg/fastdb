@@ -8310,6 +8310,11 @@ fn run_define_field(
         ));
     }
     let ty = FieldType::from_parser(&statement.ty);
+    if statement.flexible.is_some() && !ty.base_is_object() {
+        return Err(FastDbError::Schema(
+            "FLEXIBLE requires an object-compatible field type".into(),
+        ));
+    }
     if statement.reference.is_some() && !ty.supports_reference() {
         return Err(FastDbError::Schema(
             "REFERENCE requires a record or record collection field type".into(),
@@ -8346,6 +8351,7 @@ fn run_define_field(
         path_key: path_key.clone(),
         required: ty.required(),
         ty,
+        flexible: statement.flexible.is_some(),
         definition,
         default,
         default_always,
@@ -8651,6 +8657,9 @@ fn canonical_field_definition(table: &TableDefinition, field: &FieldRule) -> Str
         render_schema_identifier(&table.logical_name),
         field.ty.canonical(),
     );
+    if field.flexible {
+        definition.push_str(" FLEXIBLE");
+    }
     if field.reference {
         definition.push_str(" REFERENCE");
     }
@@ -8725,6 +8734,7 @@ fn run_alter_field(
                 replacement.ty = ty;
                 replacement.required = replacement.ty.required();
             }
+            turso_fastdb_parser::AlterFieldChange::Flexible => replacement.flexible = true,
             turso_fastdb_parser::AlterFieldChange::Default(default) => {
                 validate_schema_expression_safety(&default.value)?;
                 replacement.default_always = default.always.is_some();
@@ -8759,6 +8769,7 @@ fn run_alter_field(
                 replacement.ty = FieldType::Any;
                 replacement.required = false;
             }
+            turso_fastdb_parser::AlterFieldChange::DropFlexible => replacement.flexible = false,
             turso_fastdb_parser::AlterFieldChange::DropDefault => {
                 replacement.default = None;
                 replacement.default_always = false;
@@ -8772,6 +8783,11 @@ fn run_alter_field(
         if replacement.reference && !replacement.ty.supports_reference() {
             return Err(FastDbError::Schema(
                 "REFERENCE requires a record or record collection field type".into(),
+            ));
+        }
+        if replacement.flexible && !replacement.ty.base_is_object() {
+            return Err(FastDbError::Schema(
+                "FLEXIBLE requires an object-compatible field type".into(),
             ));
         }
         let mut candidate_fields = table.fields.clone();

@@ -253,8 +253,24 @@ fn validate_path(parent: Span, path: &FieldPath, source_len: usize) {
 
 fn validate_schema_type(parent: Span, ty: &SchemaType, source_len: usize) {
     child(parent, ty.span, source_len);
-    if let SchemaTypeKind::Option(inner) = &ty.kind {
-        validate_schema_type(ty.span, inner, source_len);
+    match &ty.kind {
+        SchemaTypeKind::Union(variants) => {
+            for variant in variants {
+                validate_schema_type(ty.span, variant, source_len);
+            }
+        }
+        SchemaTypeKind::TypedArray { element, .. }
+        | SchemaTypeKind::Option(element) => validate_schema_type(ty.span, element, source_len),
+        SchemaTypeKind::Set {
+            element: Some(element),
+            ..
+        } => validate_schema_type(ty.span, element, source_len),
+        SchemaTypeKind::Record { tables } => {
+            for table in tables {
+                child(ty.span, table.span, source_len);
+            }
+        }
+        _ => {}
     }
 }
 

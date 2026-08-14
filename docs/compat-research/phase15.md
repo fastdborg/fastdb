@@ -243,9 +243,18 @@ ownership-checked on reopen. Simple REFERENCE metadata is accepted only for
 record-valued fields; ON DELETE actions remain explicit until the dependency
 provider is implemented. Field removal refuses live index dependencies and
 removes catalog-owned native-vector columns and the last vector capability
-atomically. Union/literal types, FLEXIBLE, permission predicates, full
-reference actions, mixed table ANY, and views remain Partial rather than being
-accepted without behavior.
+atomically.
+
+Additional type probes accepted `int | string`, `'open' | 'closed'`,
+`record<person | company>`, `array<int | string>`, and `object FLEXIBLE`.
+The fixed reference rejected values outside each union/literal/table set and
+accepted otherwise-undeclared descendants below the flexible object. Its INFO
+output normalized `option<record<target>>` to `none | record<target>` and
+preserved typed-record table sets. FastDB keeps its own canonical internal type
+spelling but implements those value constraints, flexible schemafull paths,
+alter/drop lifecycle, reopen validation, and collision-safe document storage.
+Permission predicates, full reference actions, and mixed table ANY remain
+incomplete rather than being accepted without behavior.
 
 ## Synchronous events
 

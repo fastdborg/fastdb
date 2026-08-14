@@ -7415,10 +7415,10 @@ title = "ALTER FIELD"
 phase = 15
 disposition = "target"
 status = "Partial"
-syntax = "TYPE, DEFAULT, VALUE, ASSERT, READONLY, simple REFERENCE, FULL/NONE permissions metadata, and COMMENT changes execute atomically; native-vector representation changes, reference actions, FLEXIBLE, and permission predicates remain incomplete."
+syntax = "TYPE (including unions, literals, typed records, and typed collections), FLEXIBLE, DEFAULT, VALUE, ASSERT, READONLY, simple REFERENCE, FULL/NONE permissions metadata, and COMMENT changes execute atomically; native-vector representation changes, reference actions, and permission predicates remain incomplete."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/alter/field", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-007"]
-execution_evidence = ["P15-API-012", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-007", "P15-PARSE-011"]
+execution_evidence = ["P15-API-012", "P15-API-026", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]
@@ -7610,10 +7610,10 @@ title = "complete DEFINE FIELD"
 phase = 15
 disposition = "target"
 status = "Partial"
-syntax = "ANY, current scalar/collection types, DEFAULT/ALWAYS, ASSERT, VALUE, READONLY, simple REFERENCE, FULL/NONE permissions metadata, comments, IF NOT EXISTS, and same-type OVERWRITE execute; unions, literals, FLEXIBLE, reference actions, and permission predicates remain incomplete."
+syntax = "ANY, unions, literals, typed records and collections, FLEXIBLE objects, DEFAULT/ALWAYS, ASSERT, VALUE, READONLY, simple REFERENCE, FULL/NONE permissions metadata, comments, IF NOT EXISTS, and same-type OVERWRITE execute; reference actions and permission predicates remain incomplete."
 provenance = ["https://surrealdb.com/docs/reference/query-language/statements/define/field", "docs/compat-research/phase15.md#table-and-field-schema"]
-parser_evidence = ["P15-PARSE-007"]
-execution_evidence = ["P15-API-012", "P15-CATALOG-003"]
+parser_evidence = ["P15-PARSE-007", "P15-PARSE-011"]
+execution_evidence = ["P15-API-012", "P15-API-026", "P15-CATALOG-003"]
 stop_report = ""
 
 [[capability]]

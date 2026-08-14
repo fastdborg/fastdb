@@ -551,6 +551,7 @@ pub struct DefineFieldStatement {
     pub table_keyword: Option<Span>,
     pub table: Identifier,
     pub ty: SchemaType,
+    pub flexible: Option<Span>,
     pub default: Option<FieldDefaultClause>,
     pub value: Option<Expr>,
     pub assert: Option<Expr>,
@@ -580,6 +581,7 @@ pub struct AlterFieldStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlterFieldChange {
     Type(SchemaType),
+    Flexible,
     Default(FieldDefaultClause),
     Value(Expr),
     Assert(Expr),
@@ -588,6 +590,7 @@ pub enum AlterFieldChange {
     Permissions(SchemaPermissions),
     Comment(String),
     DropType,
+    DropFlexible,
     DropDefault,
     DropValue,
     DropAssert,
@@ -682,6 +685,8 @@ pub struct SchemaType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SchemaTypeKind {
+    Union(Vec<SchemaType>),
+    Literal(SchemaTypeLiteral),
     Any,
     Bool,
     Int,
@@ -708,8 +713,20 @@ pub enum SchemaTypeKind {
         length: Option<NonnegativeInteger>,
     },
     Range,
-    Record,
+    Record {
+        tables: Vec<Identifier>,
+    },
     Option(Box<SchemaType>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SchemaTypeLiteral {
+    None,
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    String(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

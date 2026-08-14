@@ -909,6 +909,33 @@ fn cast_value(value: EvalValue, ty: &SchemaType) -> Result<EvalValue> {
 
 fn cast_present(value: Value, ty: &SchemaTypeKind) -> Result<Value> {
     match ty {
+        SchemaTypeKind::Union(variants) => {
+            for variant in variants {
+                if let Ok(value) = cast_present(value.clone(), &variant.kind) {
+                    return Ok(value);
+                }
+            }
+            Err(FastDbError::Schema(
+                "value cannot be cast to the requested union".into(),
+            ))
+        }
+        SchemaTypeKind::Literal(literal) => {
+            let expected = match literal {
+                turso_fastdb_parser::SchemaTypeLiteral::None => Value::None,
+                turso_fastdb_parser::SchemaTypeLiteral::Null => Value::Null,
+                turso_fastdb_parser::SchemaTypeLiteral::Bool(value) => Value::Bool(*value),
+                turso_fastdb_parser::SchemaTypeLiteral::Integer(value) => Value::Integer(*value),
+                turso_fastdb_parser::SchemaTypeLiteral::Float(value) => Value::Float(*value),
+                turso_fastdb_parser::SchemaTypeLiteral::String(value) => Value::Str(value.clone()),
+            };
+            if value == expected {
+                Ok(value)
+            } else {
+                Err(FastDbError::Schema(
+                    "value does not match the requested literal type".into(),
+                ))
+            }
+        }
         SchemaTypeKind::Any => Ok(value),
         SchemaTypeKind::Option(_) if matches!(value, Value::None | Value::Null) => Ok(value),
         SchemaTypeKind::Option(inner) => cast_present(value, &inner.kind),
@@ -1049,9 +1076,22 @@ fn cast_present(value: Value, ty: &SchemaTypeKind) -> Result<Value> {
             ))),
             _ => Err(FastDbError::Schema("value cannot be cast to range".into())),
         },
-        SchemaTypeKind::Record => match value {
-            Value::RecordId(_) => Ok(value),
-            Value::Str(value) => parse_record_string(&value).map(Value::RecordId),
+        SchemaTypeKind::Record { tables } => match value {
+            Value::RecordId(record)
+                if tables.is_empty() || tables.iter().any(|table| table.value == record.table) =>
+            {
+                Ok(Value::RecordId(record))
+            }
+            Value::Str(value) => {
+                let record = parse_record_string(&value)?;
+                if tables.is_empty() || tables.iter().any(|table| table.value == record.table) {
+                    Ok(Value::RecordId(record))
+                } else {
+                    Err(FastDbError::Schema(
+                        "record does not belong to an allowed table".into(),
+                    ))
+                }
+            }
             _ => Err(FastDbError::Schema("value cannot be cast to record".into())),
         },
     }

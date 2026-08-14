@@ -1824,3 +1824,98 @@ fn p15_api_025_view_refresh_maintains_btree_fts_and_vector_state() {
         connection.close().await.unwrap();
     });
 }
+
+#[test]
+fn p15_api_026_richer_field_types_and_flexible_objects_persist() {
+    block_on(async {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("rich-field-types.fastdb");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute(
+                "DEFINE TABLE person; DEFINE TABLE company; DEFINE TABLE other; \
+                 DEFINE TABLE item SCHEMAFULL TYPE NORMAL; \
+                 DEFINE FIELD state ON item TYPE 'open' | 'closed' | none; \
+                 DEFINE FIELD payload ON item TYPE object FLEXIBLE; \
+                 DEFINE FIELD owner ON item TYPE record<person | company>; \
+                 DEFINE FIELD values ON item TYPE array<int | string>; \
+                 CREATE item:a CONTENT { \
+                   state: 'open', payload: { nested: { ok: true } }, \
+                   owner: person:a, values: [1, 'two'] \
+                 }; \
+                 CREATE item:b CONTENT { \
+                   payload: { arbitrary: 1 }, owner: company:b, values: [] \
+                 }",
+                params! {},
+            )
+            .await
+            .unwrap();
+
+        for source in [
+            "CREATE item:bad_state CONTENT { state: 'other', payload: {}, owner: person:a, values: [] }",
+            "CREATE item:bad_owner CONTENT { payload: {}, owner: other:a, values: [] }",
+            "CREATE item:bad_array CONTENT { payload: {}, owner: person:a, values: [true] }",
+        ] {
+            assert_eq!(
+                connection
+                    .execute(source, params! {})
+                    .await
+                    .unwrap_err()
+                    .category(),
+                ErrorCategory::Schema,
+                "{source}"
+            );
+        }
+
+        connection
+            .execute(
+                "UPDATE item:a SET payload = {}; \
+                 UPDATE item:b SET payload = {}; \
+                 ALTER FIELD payload ON item DROP FLEXIBLE",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("UPDATE item:a SET payload = { nested: true }", params! {})
+                .await
+                .unwrap_err()
+                .category(),
+            ErrorCategory::Schema
+        );
+        connection
+            .execute(
+                "ALTER FIELD payload ON item FLEXIBLE; \
+                 UPDATE item:a SET payload = { nested: true }",
+                params! {},
+            )
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+        drop(database);
+
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        let response = connection
+            .query(
+                "SELECT state, payload, owner, values FROM item:a",
+                params! {},
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &response.statements[0],
+            StatementResult::Rows(rows)
+                if matches!(&rows[0], Value::Object(row)
+                    if row.get("state") == Some(&Value::Str("open".into()))
+                        && matches!(row.get("payload"), Some(Value::Object(payload))
+                            if payload.get("nested") == Some(&Value::Bool(true)))
+                        && row.get("owner") == Some(&Value::RecordId(fastdb::RecordId::new("person", "a")))
+                        && row.get("values") == Some(&Value::Array(vec![Value::Integer(1), Value::Str("two".into())])))
+        ));
+        connection.close().await.unwrap();
+        database.check().await.unwrap();
+    });
+}
