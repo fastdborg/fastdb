@@ -676,6 +676,21 @@ fn lower_source(
     }
     Ok(())
 }
+fn order_base(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Collate(expr, _) => order_base(expr),
+        Expr::Parenthesized(exprs) if exprs.len() == 1 => order_base(&exprs[0]),
+        _ => expr,
+    }
+}
+fn replace_order_base(expr: &mut Expr, value: Expr) {
+    match expr {
+        Expr::Collate(expr, _) => replace_order_base(expr, value),
+        Expr::Parenthesized(exprs) if exprs.len() == 1 => replace_order_base(&mut exprs[0], value),
+        _ => *expr = value,
+    }
+}
+
 fn order_position(expr: &Expr) -> Option<i64> {
     match expr {
         Expr::Literal(Literal::Numeric(n)) => n.parse().ok(),
@@ -717,11 +732,14 @@ fn lower_distinct(
     for (i, sorted) in order.iter_mut().enumerate() {
         if let Some(output) = order_outputs[i] {
             let name = quote(&format!("__fastdb_out_{output}"));
-            sorted.expr = Box::new(expression(&if typed[output] {
-                format!("__fastdb_sort_encoded({name})")
-            } else {
-                name
-            })?);
+            replace_order_base(
+                &mut sorted.expr,
+                expression(&if typed[output] {
+                    format!("__fastdb_sort_encoded({name})")
+                } else {
+                    name
+                })?,
+            );
             continue;
         }
         let name = format!("__fastdb_order_{i}");
@@ -1333,11 +1351,11 @@ impl Connection {
         for sorted in &mut select.order_by {
             // Aliases refer to the original expression, not the encoded typed
             // projection, so sorting keeps SQL scalar semantics.
-            let position = order_position(&sorted.expr);
+            let position = order_position(order_base(&sorted.expr));
             if distinct && position.is_some_and(|i| i <= 0 || i as usize > columns.len()) {
                 return Err(Error::Validation("ORDER BY position out of range".into()));
             }
-            let alias_index = match sorted.expr.as_ref() {
+            let alias_index = match order_base(&sorted.expr) {
                 Expr::Id(n) | Expr::Name(n) => names
                     .iter()
                     .position(|name| name.eq_ignore_ascii_case(n.as_str())),
@@ -1346,7 +1364,7 @@ impl Connection {
                     .map(|i| i as usize - 1),
             };
             let alias_index = alias_index.or_else(|| original_columns.iter().position(|column| {
-                matches!(column, ResultColumn::Expr(expr, _) if expr.as_ref() == sorted.expr.as_ref())
+                matches!(column, ResultColumn::Expr(expr, _) if expr.as_ref() == order_base(&sorted.expr))
             }));
             order_outputs.push(alias_index);
             if let Some(i) = alias_index {
@@ -1357,7 +1375,7 @@ impl Connection {
                     let ResultColumn::Expr(expr, _) = &columns[i] else {
                         unreachable!("rewritten projection")
                     };
-                    sorted.expr = expr.clone();
+                    replace_order_base(&mut sorted.expr, *expr.clone());
                 }
                 if typed[i] {
                     let ResultColumn::Expr(e, _) = &columns[i] else {
@@ -1374,7 +1392,7 @@ impl Connection {
                     if !matches!(&e, Expr::FunctionCall { .. }) {
                         e = expression(&format!("__fastdb_sort_encoded({e})"))?;
                     }
-                    sorted.expr = Box::new(e);
+                    replace_order_base(&mut sorted.expr, e);
                 }
             } else if let Some((i, path)) = scope.field(&sorted.expr)? {
                 let mut e = scope.accessor(i, &path, true)?;

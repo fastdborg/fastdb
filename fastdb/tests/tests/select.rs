@@ -489,3 +489,44 @@ fn distinct_orders_the_projected_volatile_value() {
         );
     }
 }
+
+#[test]
+fn collated_order_aliases_match_relational_precedence_and_distinct() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(v,n)");
+    for (v, n) in [("a", "z"), ("B", "y"), ("c", "x"), ("a", "w")] {
+        query(&c, &format!("INSERT INTO docs {{v:'{v}',n:'{n}'}}"));
+        query(&c, &format!("INSERT INTO baseline VALUES ('{v}','{n}')"));
+    }
+    for distinct in ["", "DISTINCT "] {
+        for order in [
+            "n COLLATE NOCASE",
+            "(n) COLLATE NOCASE DESC",
+            "(1) COLLATE NOCASE",
+            "v COLLATE NOCASE",
+        ] {
+            let collection = query(
+                &c,
+                &format!("SELECT {distinct}v AS n FROM docs ORDER BY {order}"),
+            );
+            let ordinary = query(
+                &c,
+                &format!("SELECT {distinct}v AS n FROM baseline ORDER BY {order}"),
+            );
+            assert_eq!(collection.rows, ordinary.rows, "{distinct}{order}");
+        }
+    }
+    query(&c, "CREATE TABLE rel(x)");
+    query(&c, "INSERT INTO rel VALUES ('A'),('a')");
+    assert_eq!(
+        query(
+            &c,
+            "SELECT DISTINCT d.v,r.x COLLATE NOCASE AS x FROM docs d CROSS JOIN rel r ORDER BY d.v"
+        )
+        .rows
+        .len(),
+        3
+    );
+}

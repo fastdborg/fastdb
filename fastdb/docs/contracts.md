@@ -176,3 +176,8 @@ Collection expression labels restore public namespace function names and dotted 
 Collection DISTINCT now groups scalar comparison values while retaining an original typed projection as each group's representative. Numeric integer/float equality and boolean 0/1 comparison follow the pinned engine; null and missing projections deduplicate together. Text stays distinct from numbers, record target names compare case-insensitively with typed keys, and binary values retain their own representation. Equivalent rows with different numeric/boolean representations may return any representative; callers needing a fixed type should project an explicit conversion. Explicit scalar COLLATE expressions retain native collation behavior.
 
 An outer grouping query performs deduplication after source aggregates/windows, followed by ORDER BY and LIMIT/OFFSET. INSERT SELECT can consume these results through normal validation and atomic writes. Objects, arrays, vectors and fetched documents still have no generic DISTINCT equality in V1; use scalar projections. This implementation can require engine temporary grouping/sorting storage and still needs resource/performance qualification. It does not enable CTEs/derived user sources or freeze broader typed comparison semantics.
+
+
+## Collated ordering aliases
+
+ORDER BY resolves projected names and positions through COLLATE and single-expression parentheses, preserving those wrappers when lowering typed values or DISTINCT outputs. A projected alias takes precedence over a same-named stored field in these forms, matching the pinned relational frontend. Qualification still addresses a source field. Alias references embedded in arbitrary arithmetic/function expressions remain part of the broader alias-resolution gap.

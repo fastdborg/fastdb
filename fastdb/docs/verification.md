@@ -260,3 +260,12 @@ A CLI probe reproduced internal deep-path markers in expression column names and
 Lowering places the source projection behind an inner LIMIT -1 to retain its evaluation boundary, groups scalar comparison keys in an outer query, and applies order/limit there. Projected ordering expressions reuse output values rather than evaluating them again. Each equivalence class retains an original typed representative, whose numeric/boolean representation is unspecified when equivalent inputs differ. Objects, arrays, vectors and fetched documents remain outside generic DISTINCT equality.
 
 No dependencies or upstream implementation files changed. Temporary grouping/sorting storage, broader mixed-type/collation/volatile-expression coverage, performance and release qualification remain pending; full V1 remains incomplete.
+
+
+## Collated and parenthesized ordering aliases — 2026-09-06
+
+A CLI comparison reproduced a wrong ordering for SELECT v AS n ORDER BY n COLLATE BINARY when the collection also stored a different n field. ORDER BY now resolves aliases/positions through COLLATE and single-expression parentheses and preserves those wrappers during typed and DISTINCT lowering.
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 123 Rust tests, fourteen Node tests and TypeScript declarations. One new regression compares collated alias/position ordering with the pinned ordinary relational frontend, with and without DISTINCT, including alias/field name collisions. It also checks multi-column DISTINCT with a collection/relational cross join and explicit NOCASE collation. Existing volatile ordering tests remain green.
+
+A separate probe still shows incorrect alias resolution for ORDER BY n+0 when n is also a stored field; arbitrary arithmetic/function alias references remain unfinished and must be addressed before V1. No dependencies or upstream implementation files changed.
