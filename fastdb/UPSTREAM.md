@@ -26,3 +26,5 @@ The separate FastDB native addon reuses pinned napi 3.8.3, napi-derive 3.5.2 and
 The frontend enables serde_json's float_roundtrip feature to prevent one-bit numeric changes when reading stored tagged values. This changes a feature of the combined build, without upgrading the dependency or changing the stored format.
 
 The FastDB CLI directly depends on Rustyline 15.0.0 already pinned in the upstream lockfile, with default features disabled and file history enabled. The lockfile adds only that dependency edge; upstream CLI source and dependency versions are unchanged.
+
+The CLI's Unix SIGINT listener also uses signal-hook 0.3.18 already pinned in the upstream lockfile. Its dependency edge is FastDB-only; no upstream dependency versions or implementation files change.

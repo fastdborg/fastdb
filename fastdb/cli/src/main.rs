@@ -1,4 +1,6 @@
 mod input;
+#[cfg(unix)]
+mod signals;
 use fastdb::{Database, ExecutionReport, Parameters, TransferFormat};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 fn output(
@@ -73,7 +75,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                println!("Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C at the prompt clears pending input; it does not roll back a transaction.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.");
+                println!("Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.");
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}").into()),
@@ -122,6 +124,12 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let input_limit = input_limit.unwrap_or(16 * 1024 * 1024);
     let db = Database::open(path.as_deref().unwrap_or(":memory:"))?;
     let conn = db.connect()?;
+    #[cfg(unix)]
+    let _interrupts = if terminal {
+        Some(signals::Interrupts::new(conn.interrupt_handle())?)
+    } else {
+        None
+    };
     if let Some(directory) = migrations {
         let plan = migration_plan(&directory)?;
         println!("{}", serde_json::to_string(&conn.migrate(&plan)?)?);
@@ -276,7 +284,7 @@ fn run_interactive(
                 writeln!(
                     prompt,
                     "End statements with a semicolon. .clear discards pending input; .quit exits.
-Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTerminal editing supports arrows and history. Ctrl-C clears input, preserving active transactions.\nHistory stays in memory unless --history PATH is supplied; leading spaces omit entries."
+Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTerminal editing supports arrows and history. Ctrl-C clears pending input or cancels running engine work.\nHistory stays in memory unless --history PATH is supplied; leading spaces omit entries."
                 )?;
                 continue;
             }

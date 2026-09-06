@@ -69,11 +69,11 @@ class Terminal:
         self.wait(lambda: (rows is None or len(self.rows) >= rows)
                   and (prompt is None or prompt in self.text))
 
-    def close(self):
+    def close(self, expected_status=0):
         if self.child.poll() is None:
             os.write(self.master, b".quit\n")
         status = self.child.wait(timeout=10)
-        assert status == 0, (status, self.text, self.rows)
+        assert status == expected_status, (status, self.text, self.rows)
         self.child.stdout.close()
         os.close(self.master)
 
@@ -138,7 +138,39 @@ def main():
             assert terminal.child.wait(timeout=10) == 0
         finally:
             terminal.cleanup()
-    print("CLI terminal editing, history, prompt interruption and JSON isolation passed")
+        terminal = Terminal(binary)
+        try:
+            values = ",".join(f"({n})" for n in range(1, 81))
+            terminal.send(("CREATE TABLE numbers(x INTEGER); INSERT INTO numbers VALUES " + values + "; CREATE TABLE sink(x INTEGER);\n").encode(), rows=3, prompt=b"fastdb> ")
+            source = " FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c CROSS JOIN numbers d"
+            for statement in ["SELECT sum(a.x+b.x+c.x+d.x)" + source,
+                              "INSERT INTO sink SELECT a.x" + source]:
+                outer = statement.startswith("SELECT")
+                if outer:
+                    terminal.send(b"BEGIN; INSERT INTO sink VALUES (123);\n", rows=len(terminal.rows) + 2, prompt=b"fastdb(tx)> ")
+                before = len(terminal.rows)
+                label = b"fastdb(tx)> " if outer else b"fastdb> "
+                # A flushed marker proves readline has returned and the batch
+                # has started. Repeat Ctrl-C through possible prepare windows.
+                terminal.send(("SELECT 42; " + statement + "; SELECT 99;\n").encode(), rows=before + 1)
+                deadline = time.monotonic() + 10
+                while len(terminal.rows) < before + 2:
+                    assert time.monotonic() < deadline, "query did not cancel"
+                    os.write(terminal.master, b"\x03")
+                    poll = time.monotonic() + 0.1
+                    terminal.wait(lambda: len(terminal.rows) >= before + 2 or time.monotonic() >= poll)
+                terminal.wait(lambda: label in terminal.text)
+                assert len(terminal.rows) == before + 2, terminal.rows
+                assert terminal.rows[-1]["error"]["code"] == "FDB_CANCELLED", terminal.rows[-1]
+                assert terminal.rows[-1]["transaction"]["after"] == ("active" if outer else "autocommit")
+                terminal.send(b"SELECT count(*) FROM sink;\n", rows=before + 3, prompt=label)
+                assert terminal.rows[-1]["rows"][0][0]["value"] == (1 if outer else 0)
+                if outer:
+                    terminal.send(b"ROLLBACK;\n", rows=before + 4, prompt=b"fastdb> ")
+            terminal.close(expected_status=1)
+        finally:
+            terminal.cleanup()
+    print("CLI terminal editing, history, Ctrl-C cancellation and JSON isolation passed")
 
 
 if __name__ == "__main__":
