@@ -188,6 +188,16 @@ impl Scope {
         }
         Ok(false)
     }
+    fn native_column(&self, expr: &Expr) -> Result<bool> {
+        match expr {
+            Expr::Collate(value, _) | Expr::Unary(UnaryOperator::Positive, value) => {
+                self.native_column(value)
+            }
+            Expr::Parenthesized(values) if values.len() == 1 => self.native_column(&values[0]),
+            _ if native_column_reference(expr) => Ok(!self.preserved(&mut expr.clone())?),
+            _ => Ok(false),
+        }
+    }
     fn sql_argument(&self, expr: &mut Expr) -> Result<()> {
         if self.preserved(expr)? {
             *expr = expression(&format!("__fastdb_sql_scalar({expr})"))?;
@@ -620,14 +630,30 @@ impl Scope {
             } => {
                 let (mut value, mut lower, mut upper) =
                     (*lhs.clone(), *start.clone(), *end.clone());
-                if self.preserved(&mut value)?
-                    && self.preserved(&mut lower)?
-                    && self.preserved(&mut upper)?
-                {
+                let value_typed = self.preserved(&mut value)?;
+                let lower_typed = self.preserved(&mut lower)?;
+                let upper_typed = self.preserved(&mut upper)?;
+                if value_typed && lower_typed && upper_typed {
                     let negate = if *not { "NOT " } else { "" };
                     *expr = expression(&format!(
                         "{negate}__fastdb_between({value}, {lower}, {upper})"
                     ))?;
+                    return Ok(());
+                }
+                if !value_typed && (lower_typed || upper_typed) && self.native_column(&value)? {
+                    // Keep the native BETWEEN node: the engine applies the
+                    // column's affinity independently to each bound. Typed
+                    // bounds are converted once, retaining raw binary bytes.
+                    for (bound, lowered, typed) in
+                        [(start, lower, lower_typed), (end, upper, upper_typed)]
+                    {
+                        if typed {
+                            **bound =
+                                expression(&format!("__fastdb_range_scalar({lowered}, {value})"))?;
+                        } else {
+                            self.lower(bound)?;
+                        }
+                    }
                     return Ok(());
                 }
                 self.lower(lhs)?;

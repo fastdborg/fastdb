@@ -526,5 +526,42 @@ mod between_tests {
             );
             assert_eq!(CALLS.load(Ordering::SeqCst), 1);
         }
+        c.execute(
+            "CREATE TABLE native_between(value INTEGER)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO native_between VALUES (7)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        for negate in ["", "NOT "] {
+            for (lower, upper, calls) in [
+                ("record::id(type::record('docs',between_tick()))", "10", 1),
+                ("1", "record::id(type::record('docs',between_tick()))", 1),
+                (
+                    "record::id(type::record('docs',between_tick()))",
+                    "record::id(type::record('docs',between_tick()))",
+                    2,
+                ),
+            ] {
+                CALLS.store(0, Ordering::SeqCst);
+                let rows = c
+                    .execute(
+                        &format!(
+                            "SELECT value {negate}BETWEEN {lower} AND {upper} FROM native_between"
+                        ),
+                        &crate::Parameters::new(),
+                    )
+                    .unwrap()
+                    .rows;
+                assert_eq!(
+                    rows,
+                    vec![vec![Value::Integer(i64::from(negate.is_empty()))]]
+                );
+                assert_eq!(CALLS.load(Ordering::SeqCst), calls);
+            }
+        }
     }
 }

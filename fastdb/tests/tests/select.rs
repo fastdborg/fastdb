@@ -1931,3 +1931,72 @@ fn mixed_native_ranges_preserve_payload_order_affinity_and_collation() {
         }
     }
 }
+
+#[test]
+fn native_column_between_document_bounds_matches_sql() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE bounds");
+    query(&c, "CREATE TABLE baseline(lo,hi,nlo,nhi,tlo,thi)");
+    query(
+        &c,
+        "CREATE TABLE native(k INTEGER,value BLOB,n INTEGER,t TEXT COLLATE NOCASE)",
+    );
+    for (lo, hi) in [
+        ("X'02'", "X'ff'"),
+        ("X''", "X'0a'"),
+        ("NULL", "X'0a'"),
+        ("X'0a'", "NULL"),
+        ("X'ff'", "X'02'"),
+    ] {
+        query(&c,&format!("INSERT INTO bounds (lo,hi,nlo,nhi,tlo,thi) VALUES ({lo},{hi},'2','10','alpha','gamma')"));
+        query(
+            &c,
+            &format!("INSERT INTO baseline VALUES ({lo},{hi},'2','10','alpha','gamma')"),
+        );
+    }
+    query(&c,"INSERT INTO native VALUES (1,X'',1,'AARDVARK'),(2,X'02',2,'BETA'),(3,X'0a',10,'GAMMA'),(4,X'ff',11,'zeta'),(5,NULL,NULL,NULL)");
+    for not in ["", "NOT "] {
+        for (value, lo, hi) in [
+            ("n.value", "d.lo", "d.hi"),
+            ("n.value", "d.lo", "X'0a'"),
+            ("n.value", "X'02'", "d.hi"),
+            ("n.n", "d.nlo", "d.nhi"),
+            ("+n.n", "d.nlo", "d.nhi"),
+            ("n.t", "d.tlo", "d.thi"),
+            ("n.t COLLATE BINARY", "d.tlo", "d.thi"),
+        ] {
+            let sql=format!("SELECT n.k,{value} {not}BETWEEN {lo} AND {hi} AS result FROM SOURCE d JOIN native n ON 1 ORDER BY d.lo,d.hi,n.k");
+            assert_eq!(
+                query(&c, &sql.replace("SOURCE", "bounds")).rows,
+                query(&c, &sql.replace("SOURCE", "baseline")).rows,
+                "{sql}"
+            );
+        }
+    }
+    assert_eq!(query(&c,"SELECT count(*) FROM native n LEFT JOIN bounds d ON n.n BETWEEN d.nlo AND d.nhi WHERE d.nlo IS NULL").rows,vec![vec![Value::Integer(3)]]);
+    assert_eq!(query(&c,"WITH d AS (SELECT nlo,nhi FROM bounds) SELECT count(*) FROM native n JOIN d ON n.n BETWEEN d.nlo AND d.nhi").rows,vec![vec![Value::Integer(10)]]);
+    query(&c, "CREATE TABLE copied(n INTEGER CHECK(n<5))");
+    query(&c, "BEGIN");
+    let error = c.execute("INSERT INTO copied SELECT n.n FROM native n JOIN bounds d ON n.n BETWEEN d.nlo AND d.nhi", &Parameters::new()).unwrap_err();
+    assert_eq!(error.code(), "FDB_CONSTRAINT");
+    assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
+    query(&c, "INSERT INTO copied VALUES (1)");
+    query(&c, "ROLLBACK");
+    assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
+    query(&c, "CREATE TABLE refs");
+    query(&c, "INSERT INTO refs {lo:bounds:a,hi:bounds:z}");
+    for not in ["", "NOT "] {
+        let sql =
+            format!("SELECT n.value {not}BETWEEN d.lo AND d.hi FROM refs d JOIN native n ON n.k=1");
+        assert!(c
+            .execute(&sql, &Parameters::new())
+            .unwrap_err()
+            .to_string()
+            .contains("mixed record/scalar ordering"));
+        assert_eq!(
+            query(&c, &sql.replace("n.k=1", "n.k=5")).rows,
+            vec![vec![Value::Null]]
+        );
+    }
+}
