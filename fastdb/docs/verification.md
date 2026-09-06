@@ -221,3 +221,12 @@ A cancelled index build leaves neither catalog metadata nor physical index stora
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 113 Rust tests, fourteen Node tests and strict TypeScript declarations. A new Rust visitor test verifies early stopping, consumer-error preservation of prior writes, and lexical splitting before execution. A new Node test exercises both synchronous and worker clients: UTF-8 byte offsets, explicit transaction state after duplicate insertion, typed results, lexical rejection before writes, and stopping on an unrepresentable numeric result before a later insertion.
 
 The bridge converts each statement result before executing the next statement. Statement and encoding errors are returned as batch entries; lexical errors throw or reject. Batches add no implicit transaction or rollback, and consumer errors leave prior execution effects intact. No dependencies or upstream implementation files changed. Results remain materialized; bounded script/result memory, streaming and broader release qualification remain open.
+
+
+## CLI report delivery before later execution — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 115 Rust tests, fourteen Node tests and TypeScript declarations. Two new CLI tests inject write and flush failures through the actual report writer with a real engine connection. They verify that later writes/COMMIT do not execute, committed prior work remains, and an active transaction remains available for rollback. Existing CLI subprocess tests retain lexical-error, execution-error and report-shape coverage.
+
+A separate local Linux subprocess smoke redirected stdout to /dev/full: the CLI exited nonzero without a panic, and reopening the database confirmed that the first CREATE persisted while the later INSERT never ran. This device smoke is local evidence, not a cross-platform test.
+
+The CLI now visits reports between statements and flushes each JSON line before advancing. It no longer holds all batch reports at once. Full script input, each statement's rows and report serialization remain materialized; bounded row streaming and interactive UX remain open. No dependency or upstream implementation files changed.

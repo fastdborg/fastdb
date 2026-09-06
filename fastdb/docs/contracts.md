@@ -150,3 +150,10 @@ Deterministic progress-callback tests now interrupt collection UPDATE, DELETE an
 Rust `visit_batch(script, visitor)` visits each owned BatchExecution between statements. Returning false stops successfully; a visitor error returns that error. Both leave earlier execution/transaction effects intact. Statement execution errors are visited once and stop the script regardless of the visitor's return value. Full lexical splitting precedes any execution. `execute_batch` now collects through this shared path.
 
 The native Node bridge uses visitation to encode each result before advancing, preserving earlier reports and stopping if a value cannot be represented by the portable encoding. This does not add implicit rollback for result-consumer errors. Sync/async Node executeBatch return per-statement errors as data; pre-execution lexical errors use the normal thrown/rejected error envelope.
+
+
+## CLI output failure ordering
+
+Script execution emits and flushes each statement's JSON report before advancing. A write, flush, or serialization failure stops execution and exits nonzero through the CLI error path. Previously executed effects remain intact: output delivery is not a commit acknowledgement and does not undo committed statements. If an explicit transaction is still active, normal connection close rolls it back; a COMMIT already executed cannot be undone by failing to deliver its report. The line-oriented mode also propagates output errors instead of panicking and stops reading further statements on those errors.
+
+The CLI no longer retains reports for the entire script. Input and lexical splitting still materialize the full script, and each statement's rows and JSON report remain materialized. This is per-statement delivery, not bounded-memory row streaming or an interactive shell.

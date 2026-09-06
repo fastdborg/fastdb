@@ -1,6 +1,7 @@
 use fastdb::{Database, ExecutionReport, Parameters, TransferFormat};
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead, Read, Write};
 fn output(
+    writer: &mut impl Write,
     report: ExecutionReport,
     offset: Option<usize>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -16,7 +17,8 @@ fn output(
     if let Some(offset) = offset {
         output["offset"] = offset.into();
     }
-    println!("{}", serde_json::to_string(&output)?);
+    writeln!(writer, "{}", serde_json::to_string(&output)?)?;
+    writer.flush()?;
     Ok(failed)
 }
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
@@ -85,42 +87,62 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
         }
         return Ok(std::process::ExitCode::SUCCESS);
     }
+    let mut writer = io::stdout().lock();
     let mut failed = false;
     if line_mode {
         for line in io::stdin().lock().lines() {
             let line = line?;
             if !line.trim().is_empty() {
-                failed |= output(conn.execute_report(&line, &Parameters::new()), None)?;
+                failed |= output(
+                    &mut writer,
+                    conn.execute_report(&line, &Parameters::new()),
+                    None,
+                )?;
             }
         }
     } else {
         let mut script = String::new();
         io::stdin().read_to_string(&mut script)?;
-        match conn.execute_batch(&script) {
-            Ok(reports) => {
-                for report in reports {
-                    failed |= output(report.execution, Some(report.offset))?;
-                }
-            }
-            Err(error) => {
-                let state = conn.transaction_state();
-                output(
-                    ExecutionReport {
-                        result: Err(error),
-                        transaction_before: state,
-                        transaction_after: state,
-                    },
-                    None,
-                )?;
-                failed = true;
-            }
-        }
+        failed = run_script(&conn, &script, &mut writer)?;
     }
     Ok(if failed {
         std::process::ExitCode::FAILURE
     } else {
         std::process::ExitCode::SUCCESS
     })
+}
+
+fn run_script(
+    conn: &fastdb::Connection,
+    script: &str,
+    writer: &mut impl Write,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut failed = false;
+    let mut output_error = None;
+    let execution = conn.visit_batch(script, |report| {
+        match output(writer, report.execution, Some(report.offset)) {
+            Ok(statement_failed) => failed |= statement_failed,
+            Err(error) => output_error = Some(error),
+        }
+        Ok(output_error.is_none())
+    });
+    if let Some(error) = output_error {
+        return Err(error);
+    }
+    if let Err(error) = execution {
+        let state = conn.transaction_state();
+        output(
+            writer,
+            ExecutionReport {
+                result: Err(error),
+                transaction_before: state,
+                transaction_after: state,
+            },
+            None,
+        )?;
+        failed = true;
+    }
+    Ok(failed)
 }
 
 fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std::error::Error>> {
@@ -152,4 +174,90 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
     }
     plan.sort_by_key(|m| m.version);
     Ok(plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailingOutput {
+        flushes: usize,
+        fail_flush: bool,
+    }
+    impl Write for FailingOutput {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.flushes == 1 && !self.fail_flush {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.fail_flush {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn output_failure_stops_scripts_before_later_writes() {
+        for fail_flush in [false, true] {
+            let db = Database::open(":memory:").unwrap();
+            let conn = db.connect().unwrap();
+            conn.execute("CREATE TABLE samples(value INTEGER)", &Parameters::new())
+                .unwrap();
+            let mut writer = FailingOutput {
+                flushes: 0,
+                fail_flush,
+            };
+            let script = if fail_flush {
+                "INSERT INTO samples VALUES (1); INSERT INTO samples VALUES (2);"
+            } else {
+                "INSERT INTO samples VALUES (1); SELECT * FROM samples; INSERT INTO samples VALUES (2);"
+            };
+            let error = run_script(&conn, script, &mut writer).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<io::Error>().unwrap().kind(),
+                io::ErrorKind::BrokenPipe
+            );
+            assert_eq!(writer.flushes, 1);
+            assert_eq!(
+                conn.execute("SELECT * FROM samples", &Parameters::new())
+                    .unwrap()
+                    .rows,
+                vec![vec![fastdb::Value::Integer(1)]]
+            );
+            assert_eq!(
+                conn.transaction_state(),
+                fastdb::TransactionState::Autocommit
+            );
+        }
+    }
+
+    #[test]
+    fn output_failure_preserves_explicit_transaction_for_caller() {
+        let db = Database::open(":memory:").unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("CREATE TABLE samples(value INTEGER)", &Parameters::new())
+            .unwrap();
+        conn.execute("BEGIN", &Parameters::new()).unwrap();
+        let mut writer = FailingOutput {
+            flushes: 0,
+            fail_flush: true,
+        };
+        assert!(run_script(
+            &conn,
+            "INSERT INTO samples VALUES (1); COMMIT;",
+            &mut writer
+        )
+        .is_err());
+        assert_eq!(conn.transaction_state(), fastdb::TransactionState::Active);
+        conn.execute("ROLLBACK", &Parameters::new()).unwrap();
+        assert!(conn
+            .execute("SELECT * FROM samples", &Parameters::new())
+            .unwrap()
+            .rows
+            .is_empty());
+    }
 }
