@@ -221,7 +221,58 @@ fn lower_comparison(
         Expr::Cast { type_name, .. } => Some(type_name.clone()),
         _ => None,
     };
+    // Numeric/text results already have the same SQL and comparison-key form.
+    // Avoid deep conversion wrappers in boolean chains prepared by the engine.
+    let scalar_result = match expr {
+        Expr::Literal(value) => !matches!(value, Literal::Blob(_)),
+        Expr::FunctionCall { name, .. } => matches!(
+            name.as_str().to_ascii_lowercase().as_str(),
+            "length"
+                | "lower"
+                | "upper"
+                | "trim"
+                | "ltrim"
+                | "rtrim"
+                | "abs"
+                | "round"
+                | "typeof"
+                | "unicode"
+                | "instr"
+                | "replace"
+        ),
+        Expr::Unary(_, _)
+        | Expr::IsNull(_)
+        | Expr::NotNull(_)
+        | Expr::Between { .. }
+        | Expr::InList { .. }
+        | Expr::Like { .. } => true,
+        Expr::Binary(_, op, _) => {
+            op.is_comparison()
+                || matches!(
+                    op,
+                    Operator::Add
+                        | Operator::Subtract
+                        | Operator::Multiply
+                        | Operator::Divide
+                        | Operator::Modulus
+                        | Operator::Concat
+                        | Operator::BitwiseAnd
+                        | Operator::BitwiseOr
+                        | Operator::LeftShift
+                        | Operator::RightShift
+                        | Operator::And
+                        | Operator::Or
+                )
+        }
+        Expr::Cast {
+            type_name: Some(t), ..
+        } => !t.name.eq_ignore_ascii_case("blob"),
+        _ => false,
+    };
     lower_mode(expr, doc, bindings, FieldBinding::Sql)?;
+    if scalar_result {
+        return Ok(());
+    }
     *expr = parse_check(&format!("__fastdb_unwrap(__fastdb_pack({expr}))"))?;
     if let Some(type_name) = cast_type {
         *expr = Expr::Cast {
@@ -250,6 +301,14 @@ fn lower_mode(
         Expr::Literal(_) => {}
         Expr::Variable(_) => return Err(invalid("CHECK cannot contain bound parameters")),
         Expr::Binary(a, op, b) => {
+            if matches!(
+                op,
+                Operator::Equals | Operator::NotEquals | Operator::Is | Operator::IsNot
+            ) {
+                lower_comparison(a, doc, bindings)?;
+                lower_comparison(b, doc, bindings)?;
+                return Ok(());
+            }
             if matches!(
                 op,
                 Operator::Add
@@ -351,9 +410,9 @@ fn lower_mode(
             }
         }
         Expr::InList { lhs, rhs, .. } => {
-            lower(lhs, doc, bindings)?;
+            lower_comparison(lhs, doc, bindings)?;
             for e in rhs {
-                lower(e, doc, bindings)?;
+                lower_comparison(e, doc, bindings)?;
             }
         }
         Expr::Parenthesized(es) => {

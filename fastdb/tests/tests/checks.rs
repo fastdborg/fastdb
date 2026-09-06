@@ -683,3 +683,82 @@ fn simple_case_checks_match_binary_values_and_persist() {
         1
     );
 }
+
+#[test]
+fn binary_check_equality_and_membership_use_typed_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary-comparisons.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,payload) VALUES (docs:saved,1,X'31')",
+        );
+        for (field, check) in [
+            ("valid", "payload=X'31'"),
+            ("reversed", "X'31' IS payload"),
+            ("different", "payload!=X'32' AND payload IS NOT X'32'"),
+            ("functions", "substr(payload,1,1)=payload"),
+            ("members", "X'31' IN (payload,substr(payload,1,1))"),
+            ("negative", "payload NOT IN (X'32',X'33')"),
+            ("casts", "CAST(payload AS INTEGER)='1'"),
+            ("collated", "CAST(X'61' AS TEXT) COLLATE NOCASE='A'"),
+        ] {
+            q(&c, &format!("UPDATE docs SET {field}=1"));
+            q(
+                &c,
+                &format!("DEFINE FIELD {field} ON docs TYPE integer CHECK({check})"),
+            );
+        }
+        q(&c, "UPDATE docs SET nullable_probe=1");
+        assert_eq!(c.execute("DEFINE FIELD nullable_probe ON docs TYPE integer CHECK(payload NOT IN (X'32',NULL))", &Parameters::new()).unwrap_err().code(), "FDB_VALIDATION");
+        q(&c, "CREATE TABLE guards");
+        let bytes = b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"String\":\"saved\"}}}";
+        c.execute(
+            "INSERT INTO guards (valid,payload,reference) VALUES (1,$bytes,$record)",
+            &Parameters::from([
+                ("$bytes".into(), Value::Binary(bytes.to_vec())),
+                (
+                    "$record".into(),
+                    Value::Record(Record {
+                        table: "docs".into(),
+                        key: Key::String("saved".into()),
+                    }),
+                ),
+            ]),
+        )
+        .unwrap();
+        q(&c, "DEFINE FIELD valid ON guards TYPE integer CHECK(payload!=reference AND payload NOT IN (reference))");
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        for sql in [
+            "UPDATE docs SET payload=X'32'",
+            "INSERT INTO docs (valid,payload) VALUES (1,X'32')",
+            "UPSERT docs:saved {payload:null}",
+        ] {
+            assert_eq!(
+                c.execute(sql, &Parameters::new()).unwrap_err().code(),
+                "FDB_VALIDATION"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        }
+        q(&c, "ROLLBACK");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "UPDATE docs SET payload=X'31'");
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'32'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(
+        c.lookup_index("docs", "docs_payload", &Value::Binary(b"1".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}
