@@ -18,5 +18,10 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.88 --profile minimal --component rustfmt --component clippy
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.19.0
+      - name: Install Node declaration checker
+        run: npm ci --prefix fastdb/bindings/node --ignore-scripts
       - name: FastDB checks
         run: fastdb/scripts/check.sh

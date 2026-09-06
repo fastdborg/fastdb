@@ -1988,6 +1988,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastdb-node"
+version = "0.1.0"
+dependencies = [
+ "fastdb",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "serde_json",
+]
+
+[[package]]
 name = "fastdb-tests"
 version = "0.1.0"
 dependencies = [

@@ -151,3 +151,10 @@ No dependencies or upstream implementation files changed. The versioned transfer
 `fastdb/scripts/check.sh` passed scoped formatting, Clippy with warnings denied, and all 101 tests. Three new API tests verify exact-source idempotence and changed/missing-history rejection; atomic pending-run rollback of relational DDL, collection writes and history after validation and engine-aborting runtime failures; corrected retries; transaction-control/PRAGMA/ATTACH/VACUUM/TEMP rejection before writes; ordered versions and autocommit requirements. A CLI subprocess test applies numerically ordered files to a persistent database, reopens and skips them, then rejects an edited applied file.
 
 No dependencies or upstream implementation files changed. The ledger retains exact SQL rather than hashes. Concurrent-runner stress, interrupted-commit/recovery/ledger-upgrade rehearsal, total resource limits, restore workflows and remaining V1 qualification are not yet complete.
+
+
+## Initial native Node client and TypeScript declarations — 2026-09-06
+
+`fastdb/scripts/check.sh` passed scoped formatting/Clippy for five packages, all 101 Rust tests, the native addon build, four Node tests and strict TypeScript declaration checks with pinned TypeScript 5.8.3. Native tests cover int64 extremes, typed IDs, negative zero, binary/vector values, nested objects/arrays, unsafe-Number rejection, validation and engine-abort transaction reports, explicit close/reopen persistence, cardinality helpers, and prototype-looking field names. Linux x86_64 with Node 24.19.0 is the current runtime evidence.
+
+The root lockfile adds only the fastdb-node package entry, reusing existing pinned N-API packages; upstream implementation files remain unchanged. The scoped workflow now pins setup-node and Node 24.19.0 and installs only the declaration checker from its package lock. Hosted CI has not run. The addon is synchronous and private; broader frontend query semantics, native batch/migration/transfer methods, async/cancellation, lifecycle stress, cross-platform prebuilds and release packaging remain unfinished.

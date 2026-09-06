@@ -280,3 +280,17 @@ mod float_bits {
         Ok(value)
     }
 }
+
+impl Value {
+    /// A single tagged value using the document transfer v1 value encoding.
+    pub fn to_portable_value(&self) -> Result<serde_json::Value> {
+        self.validate()?;
+        Ok(serde_json::to_value(Portable::from(self.clone()))?)
+    }
+    /// Decode a tagged transfer v1 value and validate its logical type.
+    pub fn from_portable_value(value: serde_json::Value) -> Result<Self> {
+        let value = Self::from(serde_json::from_value::<Portable>(value)?);
+        value.validate()?;
+        Ok(value)
+    }
+}

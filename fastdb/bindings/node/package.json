@@ -1,0 +1,17 @@
+{
+  "name": "@fastdb/node",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "node --test test.cjs",
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module commonjs types.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}

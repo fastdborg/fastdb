@@ -5,10 +5,10 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 ## Repository and tooling
 
 - Local Git checkout: `turso/`, branch `feat/embedded-foundation` (local `main` is the baseline), upstream v0.7.2 at `046e9cbf67d22491e8ecc941ec2891b02a9f3cad`.
-- Four workspace crates: fastql-parser, fastdb, fastdb-cli, fastdb-tests. All product crates are unpublished 0.1.0 prototypes.
+- Five workspace crates: fastql-parser, fastdb, fastdb-cli, fastdb-tests, fastdb-node. All product crates are unpublished 0.1.0 prototypes.
 - Scoped script: `fastdb/scripts/check.sh`; one Ubuntu CI YAML, read-only permissions, timeout and cancellation. Inherited workflow files moved unchanged to `.github/upstream-workflows/`.
 - Remote FastDB fork owner is unresolved. No origin remote, push, PR, branch protection, or hosted FastDB CI result exists yet.
-- Local toolchain is installed under `/tmp/fastdb-cargo` and `/tmp/fastdb-rustup`. Run with PATH prefixed by `/tmp/fastdb-cargo/bin`, CARGO_HOME and RUSTUP_HOME set accordingly, and RUSTUP_TOOLCHAIN=1.88.0. These temporary tools may need reinstalling on another machine/session.
+- Local toolchain is installed under `/tmp/fastdb-cargo` and `/tmp/fastdb-rustup`. Run with PATH prefixed by `/tmp/fastdb-cargo/bin`, CARGO_HOME and RUSTUP_HOME set accordingly, and RUSTUP_TOOLCHAIN=1.88.0. These temporary tools may need reinstalling on another machine/session. Native checks also require Node and `npm ci --prefix fastdb/bindings/node --ignore-scripts`; CI pins Node 24.19.0.
 
 ## Implemented subset
 
@@ -16,6 +16,7 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 - Nested objects/arrays, tagged persisted values, bool/int64/null/binary distinction, UUIDv7 automatic IDs.
 - Field definitions (basic types, required/nullable, nested paths, overwrite) and single-path managed scalar/reference indexes with unique/nonunique variants. Rust APIs and initial FastQL declarations.
 - Statement savepoints, transactional catalog/index maintenance, mixed ordinary SQL/document transactions.
+- Initial native synchronous Node client with TypeScript declarations, bigint/typed-value conversion, query/cardinality methods, transaction errors and explicit close.
 - Forward migration runner and CLI directory loading, exact-source history checks, and atomic pending runs.
 - Versioned typed JSON/NDJSON collection import/export through Rust APIs and CLI, with atomic validated inserts and decimal-string int64 encoding.
 - Rust query cardinality helpers, execute_batch with byte offsets and stop-on-error reports, and a multiline script CLI with tagged JSON output.
@@ -42,14 +43,14 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 
 ## Verification
 
-The scoped test suite includes parser collision probes; persistent CRUD/reopen; mixed transaction rollback; failed unique inserts/updates/index builds; validation-definition rollback; typed round trips; numeric/index identity; a child process that exits without closing an active transaction; and differential ordinary SQL probes against the pinned engine. On 2026-09-06, `fastdb/scripts/check.sh` passed formatting, Clippy with warnings denied for the FastDB packages, and all 101 tests (including four migration tests, four transfer tests, three window tests, two mixed-star tests, two grouping tests, five bundled-runtime/function tests, six vector tests, four forward-link tests, three batch tests, three transaction-report tests and two CLI subprocess tests, seven RETURNING tests, four INSERT SELECT tests, four CASE tests, five SQL-helper tests, six document-expression tests, seven CHECK/upgrade tests, seven catalog lifecycle/version tests, the subprocess helper, five collection SELECT tests, and seven SQL-shaped write/constructor tests). This is local Linux evidence; hosted CI has not run. The process-exit test is a basic recovery smoke, not interrupted-checkpoint or power-loss certification.
+The scoped test suite includes parser collision probes; persistent CRUD/reopen; mixed transaction rollback; failed unique inserts/updates/index builds; validation-definition rollback; typed round trips; numeric/index identity; a child process that exits without closing an active transaction; and differential ordinary SQL probes against the pinned engine. On 2026-09-06, `fastdb/scripts/check.sh` passed formatting, Clippy with warnings denied for the FastDB packages, and all 101 Rust tests plus four native Node tests and strict TypeScript declaration checks (Rust coverage includes four migration tests, four transfer tests, three window tests, two mixed-star tests, two grouping tests, five bundled-runtime/function tests, six vector tests, four forward-link tests, three batch tests, three transaction-report tests and two CLI subprocess tests, seven RETURNING tests, four INSERT SELECT tests, four CASE tests, five SQL-helper tests, six document-expression tests, seven CHECK/upgrade tests, seven catalog lifecycle/version tests, the subprocess helper, five collection SELECT tests, and seven SQL-shaped write/constructor tests). This is local Linux evidence; hosted CI has not run. The process-exit test is a basic recovery smoke, not interrupted-checkpoint or power-loss certification.
 
 ## Next implementation work
 
 1. Complete the SQL-shaped write contract (broader INSERT SELECT sources and further supported statement forms) and replace the remaining conservative managed-name guard. Complete collection read cases: subqueries/CTEs, grouping alias/type coverage and DISTINCT/window semantics, arbitrary-depth paths, compound/derived typed expressions, and broader index planning. Preserve baseline parameter/alias forms and ordinary SQL errors. The old fallback guard still rejects some harmless strings and is not a final compatibility/security boundary.
 2. Finish expression type propagation through comparisons and remaining SQL expressions; broader CHECK eligibility, expanded inspection and index planning, stable errors/results, cancellation and resource limits. Namespace collisions, metadata format validation, multi-connection schema races, and managed object dependency access need full coverage.
 3. Complete forward-link resource/planner coverage and upstream vector representation/operation coverage; qualify the initial bundled QuickJS catalog, limits, performance and platform packaging. All five pinned vector encodings now have initial validation; broader numerical/resource/platform and benchmark evidence remains pending.
-4. Native Node/TypeScript client and complete Rust packaging; lossless cross-language wire encoding; CLI interactive/streaming UX, broader import/export coverage, migration qualification, schema/query-plan inspection.
+4. Complete native Node/TypeScript APIs, async/cancellation/lifecycle and release packaging, plus Rust packaging; lossless cross-language wire encoding; CLI interactive/streaming UX, broader import/export coverage, migration qualification, schema/query-plan inspection.
 5. Complete all master-plan/FastQL release gates: broad differential coverage, interrupted commits/checkpoints, restore/upgrade rehearsal, bounded crash/fuzz/stress, resource limits, benchmarks and platform packaging smoke tests. External pilots and business evidence are also not present.
 
 Keep upstream implementation files unchanged. No cloud implementation or V2/V3 features have begun.
