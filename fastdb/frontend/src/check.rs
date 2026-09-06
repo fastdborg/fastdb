@@ -304,7 +304,11 @@ fn lower_mode(
                 lower(e, doc, bindings)?;
             }
             for (a, b) in when_then_pairs {
-                lower(a, doc, bindings)?;
+                if base.is_none() {
+                    lower_mode(a, doc, bindings, FieldBinding::Sql)?;
+                } else {
+                    lower(a, doc, bindings)?;
+                }
                 lower_mode(b, doc, bindings, binding)?;
             }
             if let Some(e) = else_expr {
@@ -368,7 +372,7 @@ impl Connection {
         };
         let mut expr = parse_check(sql)?;
         let mut bindings = Vec::new();
-        lower(&mut expr, None, &mut bindings)?;
+        lower_mode(&mut expr, None, &mut bindings, FieldBinding::Sql)?;
         // Preparation validates supported function signatures even on an empty
         // collection. It never executes an expression or reads a table.
         self.engine
@@ -388,7 +392,7 @@ impl Connection {
             let result = (|| -> Result<bool> {
                 let mut expr = parse_check(sql)?;
                 let mut bindings = Vec::new();
-                lower(&mut expr, Some(doc), &mut bindings)?;
+                lower_mode(&mut expr, Some(doc), &mut bindings, FieldBinding::Sql)?;
                 let mut statement = self
                     .engine
                     .prepare(format!("SELECT CASE WHEN ({expr}) THEN 1 ELSE 0 END"))?;

@@ -347,4 +347,11 @@ A regression reproducing a preparation stack overflow now accepts the combined b
 
 WHERE, HAVING, JOIN ON, aggregate FILTER and searched CASE conditions now unwrap preserved binary operands to payload bytes before native truth conversion. Simple CASE keeps its existing equality-oriented lowering. Differential tests against BLOB columns cover numeric ASCII, nonnumeric, empty and NULL values, inner/left joins, count/sum filters, grouped HAVING and DELETE/RETURNING rollback with index restoration. The change does not add outer-join index pushdown.
 
-CHECK has a separate candidate-binding path; bare CHECK truth predicates and searched CASE conditions still need the matching correction. General expression type propagation and resource accounting remain release work.
+CHECK has a separate candidate-binding path; its matching truth correction is described below. General expression type propagation and resource accounting remain release work.
+
+
+## CHECK truth conversion
+
+Top-level CHECK truth evaluation and searched CASE conditions bind preserved binary fields as payload bytes. CASE results inherit the surrounding binding mode, so a CHECK returning a binary payload also uses native truth conversion. Simple CASE conditions and comparison operands retain equality-oriented binding.
+
+A persistent regression accepts positive and negative numeric binary payloads, rejects zero/nonnumeric/empty/NULL payloads, isolates searched CASE by skipping a nullable first constraint, and checks retained transaction/index state plus reopened enforcement. NULL CHECK results still fail under the FastDB validation contract. Reapply affected prototype definitions to validate stored documents; opening alone does not revalidate them. Comparison/literal propagation, simple CASE identity handling and general resource limits remain release work.

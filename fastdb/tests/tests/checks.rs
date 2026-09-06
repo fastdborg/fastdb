@@ -559,3 +559,60 @@ fn long_check_boolean_chains_prepare_and_validate() {
     q(&c, "ROLLBACK");
     q(&c, "UPDATE docs SET payload=X'3132'");
 }
+
+#[test]
+fn binary_check_truth_conditions_persist_and_reject_false_payloads() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary-truth.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,searched,payload) VALUES (docs:saved,1,1,X'31')",
+        );
+        q(
+            &c,
+            "DEFINE FIELD valid ON docs TYPE integer NULLABLE CHECK(payload)",
+        );
+        q(&c, "DEFINE FIELD searched ON docs TYPE integer CHECK(CASE WHEN payload THEN payload ELSE X'30' END)");
+        q(&c, "UPDATE docs SET valid=NULL");
+        q(&c, "UPDATE docs SET valid=1");
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        for value in ["X'30'", "X''", "X'6162'", "NULL"] {
+            for assignment in ["payload", "valid=NULL,payload"] {
+                let sql = format!("UPDATE docs SET {assignment}={value}");
+                assert_eq!(
+                    c.execute(&sql, &Parameters::new()).unwrap_err().code(),
+                    "FDB_VALIDATION",
+                    "{sql}"
+                );
+                assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            }
+        }
+        assert_eq!(
+            c.lookup_index("docs", "docs_payload", &Value::Binary(b"1".to_vec()))
+                .unwrap()
+                .len(),
+            1
+        );
+        q(&c, "ROLLBACK");
+        q(&c, "UPDATE docs SET payload=X'2D32'");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'30'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(
+        c.lookup_index("docs", "docs_payload", &Value::Binary(b"-2".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}
