@@ -1194,3 +1194,50 @@ fn binary_membership_normalizes_literals_fields_and_function_results() {
         1
     );
 }
+
+#[test]
+fn native_function_membership_preserves_binary_and_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(
+        &c,
+        "CREATE TABLE baseline(data BLOB, label TEXT, number INTEGER)",
+    );
+    for values in ["X'02','A',2", "X'0A','b',3", "NULL,NULL,NULL"] {
+        query(
+            &c,
+            &format!("INSERT INTO docs (data,label,number) VALUES ({values})"),
+        );
+        query(&c, &format!("INSERT INTO baseline VALUES ({values})"));
+    }
+    for predicate in [
+        "substr(X'0203',1,1) IN (data)",
+        "(substr(X'0203',1,1)) NOT IN (data,NULL)",
+        "substr(X'0203',1,1) IN (data,X'02')",
+        "lower('A') COLLATE NOCASE IN (label)",
+        "(lower('A') COLLATE NOCASE) NOT IN (label,NULL)",
+        "abs(-2) IN (number,3)",
+        "abs(-2) IN ('2')",
+        "CAST('2' AS INTEGER) IN ('2')",
+        "CAST('a' AS TEXT) COLLATE NOCASE IN ('A')",
+    ] {
+        let sql = |table| format!("SELECT {predicate} AS matched FROM {table} ORDER BY data");
+        assert_eq!(
+            query(&c, &sql("docs")).rows,
+            query(&c, &sql("baseline")).rows,
+            "{predicate}"
+        );
+    }
+    let bytes =
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"String\":\"a\"}}}";
+    let hex = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(
+        query(
+            &c,
+            &format!("SELECT substr(X'{hex}',1) IN (docs:a) AS matched FROM docs LIMIT 1")
+        )
+        .rows,
+        vec![vec![Value::Integer(0)]]
+    );
+}

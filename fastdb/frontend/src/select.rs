@@ -158,6 +158,27 @@ impl Scope {
             self.lower(expr)
         }
     }
+    fn membership_key(&self, expr: &mut Expr) -> Result<bool> {
+        // Keep explicit collation outside the scalar conversion. Native CAST
+        // expressions retain their own path because they carry SQL affinity.
+        match expr {
+            Expr::Collate(value, _) => return self.membership_key(value),
+            Expr::Parenthesized(values) if values.len() == 1 => {
+                return self.membership_key(&mut values[0]);
+            }
+            _ => {}
+        }
+        if self.preserved(expr)? {
+            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            return Ok(true);
+        }
+        if matches!(expr, Expr::FunctionCall { .. }) {
+            self.typed(expr)?;
+            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
     fn typed(&self, expr: &mut Expr) -> Result<()> {
         if !self.preserved(expr)? {
             self.lower(expr)?;
@@ -441,10 +462,10 @@ impl Scope {
             }
             Expr::InList { lhs, rhs, .. } => {
                 let mut value = *lhs.clone();
-                if self.preserved(&mut value)? {
+                if self.membership_key(&mut value)? {
                     // Use one collision-resistant scalar representation for the
                     // whole list, including native functions returning blobs.
-                    **lhs = expression(&format!("__fastdb_unwrap({value})"))?;
+                    **lhs = value;
                     for value in rhs.iter_mut() {
                         self.typed(value)?;
                         **value = expression(&format!("__fastdb_unwrap({value})"))?;
