@@ -93,3 +93,82 @@ test('Node transfers preserve values and roll back duplicate imports', () => {
   }
   source.close();
 });
+test('async worker preserves submission order, typed values and graceful close', async t => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  t.after(() => db.close());
+  await db.migrate([{ version: 1n, name: 'create', sql: 'CREATE TABLE docs;' }]);
+  const begin = db.execute('BEGIN');
+  const insert = db.execute('INSERT INTO docs DOCUMENT $doc', { $doc: { id: new Record('docs','p1'), value: 9223372036854775807n, bytes: Buffer.from([255]) } });
+  const read = db.exactlyOne('SELECT * FROM docs');
+  const rollback = db.execute('ROLLBACK');
+  const missing = db.all('SELECT * FROM docs');
+  const [started, , row, , rows] = await Promise.all([begin,insert,read,rollback,missing]);
+  assert.equal(started.transaction.after, 'active');
+  assert.deepEqual(row[0].id, new Record('docs','p1'));
+  assert.equal(row[0].value, 9223372036854775807n);
+  assert.deepEqual(row[0].bytes, Buffer.from([255]));
+  assert.deepEqual(rows, []);
+  const queued = db.execute('INSERT INTO docs {id:docs:p2}');
+  const close = db.close();
+  assert.equal(db.close(), close);
+  await assert.rejects(db.all('SELECT * FROM docs'), /closing or closed/);
+  await queued; await close;
+});
+test('async worker leaves event loop responsive and rejects excess queued requests', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  try {
+    await db.execute('CREATE TABLE numbers(x INTEGER)');
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100}, (_,i) => `(${i+1})`).join(','));
+    let completed = false;
+    const computation = db.execute('SELECT sum(a.x) FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c').finally(() => { completed = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(completed, false);
+    assert.deepEqual((await computation).rows, [[50500000n]]);
+    const requests = Array.from({length: 257}, () => db.execute('SELECT 1'));
+    const results = Promise.allSettled(requests);
+    let ticked = false;
+    await new Promise(resolve => setImmediate(() => { ticked = true; resolve(); }));
+    const settled = await results;
+    assert.equal(ticked, true);
+    assert.equal(settled.filter(r => r.status === 'fulfilled').length, 256);
+    assert.equal(settled[256].reason.code, 'FDB_LIMIT');
+    assert.deepEqual(await db.exactlyOne('SELECT 2'), [2n]);
+  } finally { await db.close(); }
+});
+test('async worker reports errors, transfers data and closes active transactions', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-async-'));
+  let db;
+  try {
+    await assert.rejects(AsyncDatabase.open(path.join(dir, 'missing', 'db')));
+    const file = path.join(dir, 'test.db');
+    db = await AsyncDatabase.open(file);
+    await db.execute('CREATE TABLE docs');
+    await db.execute('INSERT INTO docs {id:docs:p1,value:1}');
+    const data = await db.exportDocuments('docs','ndjson');
+    await db.execute('DELETE FROM docs:p1');
+    assert.equal((await db.importDocuments('docs',data,'ndjson')).imported,1);
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {id:docs:p2}');
+    await assert.rejects(db.execute('SELECT array::append(1,2)'), e => e.transaction.after === 'autocommit');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {id:docs:p3}');
+    await db.close();
+    db = await AsyncDatabase.open(file);
+    assert.equal((await db.all('SELECT * FROM docs')).length,1);
+    await db.close();
+  } finally { if (db) await db.close(); fs.rmSync(dir,{recursive:true,force:true}); }
+});
+test('independent async workers isolate connections and failures', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const databases = await Promise.all([AsyncDatabase.open(), AsyncDatabase.open()]);
+  try {
+    await Promise.all(databases.map(db => db.execute('CREATE TABLE docs')));
+    await Promise.all(databases.map((db,i) => db.execute('INSERT INTO docs {value:$value}', { $value: BigInt(i) })));
+    assert.deepEqual(await Promise.all(databases.map(db => db.exactlyOne('SELECT value FROM docs'))), [[0n], [1n]]);
+    await assert.rejects(databases[0].execute('SELECT array::append(1,2)'));
+    assert.deepEqual(await databases[1].exactlyOne('SELECT value FROM docs'), [1n]);
+  } finally { await Promise.all(databases.map(db => db.close())); }
+});

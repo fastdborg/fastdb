@@ -1,4 +1,4 @@
-import { Database, Record, Vector, Value } from './index';
+import { AsyncDatabase, Database, Record, Vector, Value } from './index';
 const db = new Database();
 const row: Value[] = db.exactlyOne('SELECT $id', { $id: new Record('docs', 1n) });
 const rows: Value[][] = db.all('SELECT $blob', { $blob: new Uint8Array([1,2]) });
@@ -18,3 +18,14 @@ db.migrate([{version: 1, name: 'create', sql: ''}]);
 // @ts-expect-error no implicit CSV format
 db.exportDocuments('docs', 'csv');
 db.close();
+
+async function checkAsync() {
+  const asyncDb = await AsyncDatabase.open();
+  const result: Value[][] = await asyncDb.all('SELECT 1');
+  const exported: string = await asyncDb.exportDocuments('docs');
+  void result; void exported;
+  await asyncDb.close();
+}
+void checkAsync;
+// @ts-expect-error async construction must wait for native opening
+new AsyncDatabase();

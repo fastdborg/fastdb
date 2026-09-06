@@ -19,3 +19,16 @@ export class Database {
   first(sql: string, parameters?: Parameters): Value[] | undefined;
   exactlyOne(sql: string, parameters?: Parameters): Value[];
 }
+
+export class AsyncDatabase {
+  private constructor();
+  static open(path?: string): Promise<AsyncDatabase>;
+  close(): Promise<void>;
+  migrate(migrations: Migration[]): Promise<MigrationReport>;
+  exportDocuments(table: string, format?: TransferFormat): Promise<string>;
+  importDocuments(table: string, input: string, format?: TransferFormat): Promise<ImportReport>;
+  execute(sql: string, parameters?: Parameters): Promise<QueryResult>;
+  all(sql: string, parameters?: Parameters): Promise<Value[][]>;
+  first(sql: string, parameters?: Parameters): Promise<Value[] | undefined>;
+  exactlyOne(sql: string, parameters?: Parameters): Promise<Value[]>;
+}

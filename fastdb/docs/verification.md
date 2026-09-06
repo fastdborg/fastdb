@@ -165,3 +165,10 @@ The root lockfile adds only the fastdb-node package entry, reusing existing pinn
 `fastdb/scripts/check.sh` passed scoped formatting/Clippy, all 101 Rust tests, six native Node tests and strict TypeScript declaration checks. Two new native tests verify migration versions above the JavaScript safe-integer boundary, repeated/edited history, engine-abort rollback and corrected retries, JSON/NDJSON typed round trips, duplicate-import rollback, explicit-transaction observations after malformed input and invalid-format rejection. All operations call the existing checked Rust migration/transfer APIs through a shared native report envelope.
 
 No dependencies, upstream implementation files or CI configuration changed. The methods remain synchronous and materialized; batch APIs, async/cancellation, frontend semantic gaps and release packaging remain V1 work.
+
+
+## Dedicated-worker asynchronous Node client — 2026-09-06
+
+`fastdb/scripts/check.sh` passed scoped formatting/Clippy, all 101 Rust tests, ten native Node tests and strict TypeScript declarations. Four new async tests verify ordered transaction submissions, typed data across worker messages, migration/transfer methods, queue-count rejection and recovery, idempotent close draining accepted work, open failure cleanup, engine-abort reports, active-transaction close/reopen rollback, and isolation between two workers. A million-row native cross-join aggregate verifies that a caller-side event-loop callback runs before the query completes. Tests close workers on failure as well as success.
+
+No dependencies or upstream implementation files changed. Database work runs on one dedicated worker per AsyncDatabase; caller-side encoding/decoding and message copies remain materialized. Queue byte accounting, forced worker failures, cancellation, broader lifecycle/resource stress and packaging still need release-level qualification.

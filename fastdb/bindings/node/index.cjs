@@ -66,6 +66,15 @@ function unwrap(raw) {
   }
   return report;
 }
+function migrationPlan(migrations) {
+  const plan = migrations.map(m => {
+      if (typeof m.version !== 'bigint' || typeof m.name !== 'string' || typeof m.sql !== 'string') {
+        throw new TypeError('migration requires bigint version, string name and SQL');
+      }
+      return { version: encode(m.version).value, name: m.name, sql: m.sql };
+    });
+  return plan;
+}
 class Database {
   #native;
   constructor(path = ':memory:') { this.#native = new NativeDatabase(path); }
@@ -84,12 +93,7 @@ class Database {
     return { ...report.execution.result, transaction: report.transaction };
   }
   migrate(migrations) {
-    const plan = migrations.map(m => {
-      if (typeof m.version !== 'bigint' || typeof m.name !== 'string' || typeof m.sql !== 'string') {
-        throw new TypeError('migration requires bigint version, string name and SQL');
-      }
-      return { version: encode(m.version).value, name: m.name, sql: m.sql };
-    });
+    const plan = migrationPlan(migrations);
     const report = unwrap(this.#native.migrate(JSON.stringify(plan)));
     return { alreadyApplied: report.execution.result.alreadyApplied,
       applied: report.execution.result.applied.map(BigInt), transaction: report.transaction };
@@ -105,3 +109,90 @@ class Database {
 exports.Database = Database;
 exports.Record = Record;
 exports.Vector = Vector;
+
+
+const asyncConstruction = Symbol('AsyncDatabase');
+class AsyncDatabase {
+  #worker; #pending = new Map(); #next = 0; #bytes = 0;
+  #ready; #readyResolve; #readyReject; #exited;
+  #failure; #closing = false; #closePromise;
+  constructor(path, token) {
+    if (token !== asyncConstruction) throw new TypeError('use AsyncDatabase.open()');
+    const { Worker } = require('node:worker_threads');
+    this.#ready = new Promise((resolve, reject) => { this.#readyResolve = resolve; this.#readyReject = reject; });
+    this.#worker = new Worker(require.resolve('./worker.cjs'), { workerData: { path } });
+    this.#exited = new Promise(resolve => this.#worker.once('exit', code => {
+      if (!this.#closing || this.#pending.size) this.#fail(new Error(`database worker exited (${code})`));
+      resolve();
+    }));
+    this.#worker.on('error', error => this.#fail(error));
+    this.#worker.on('messageerror', error => this.#fail(error));
+    this.#worker.on('message', message => {
+      if (message.ready) { this.#readyResolve(); return; }
+      const pending = this.#pending.get(message.id);
+      if (!pending) return;
+      this.#pending.delete(message.id); this.#bytes -= pending.bytes;
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result);
+    });
+  }
+  static async open(path = ':memory:') {
+    const db = new AsyncDatabase(path, asyncConstruction);
+    try { await db.#ready; return db; }
+    catch (error) { await db.#exited; throw error; }
+  }
+  #fail(error) {
+    this.#failure = error;
+    this.#readyReject(error);
+    for (const pending of this.#pending.values()) pending.reject(error);
+    this.#pending.clear(); this.#bytes = 0;
+  }
+  #request(method, args, closing = false) {
+    if (this.#failure) return Promise.reject(this.#failure);
+    if (this.#closing && !closing) return Promise.reject(new Error('database is closing or closed'));
+    const bytes = args.reduce((size, arg) => size + Buffer.byteLength(arg), 0);
+    if (!closing && (this.#pending.size >= 256 || this.#bytes + bytes > 128 * 1024 * 1024)) {
+      const error = new RangeError('database worker queue limit exceeded'); error.code = 'FDB_LIMIT';
+      return Promise.reject(error);
+    }
+    const id = ++this.#next;
+    return new Promise((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject, bytes }); this.#bytes += bytes;
+      try { this.#worker.postMessage({ id, method, args }); }
+      catch (error) { this.#pending.delete(id); this.#bytes -= bytes; reject(error); }
+    });
+  }
+  close() {
+    if (!this.#closePromise) {
+      this.#closing = true;
+      this.#closePromise = this.#request('close', [], true).then(() => this.#exited);
+    }
+    return this.#closePromise;
+  }
+  async execute(sql, parameters = {}) {
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)]));
+    const result = report.execution.result;
+    return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+  }
+  async exportDocuments(table, format = 'json') {
+    return unwrap(await this.#request('exportDocuments', [table, format])).execution.result;
+  }
+  async importDocuments(table, input, format = 'json') {
+    const report = unwrap(await this.#request('importDocuments', [table, input, format]));
+    return { ...report.execution.result, transaction: report.transaction };
+  }
+  async migrate(migrations) {
+    const report = unwrap(await this.#request('migrate', [JSON.stringify(migrationPlan(migrations))]));
+    return { alreadyApplied: report.execution.result.alreadyApplied,
+      applied: report.execution.result.applied.map(BigInt), transaction: report.transaction };
+  }
+  async all(sql, parameters) { return (await this.execute(sql, parameters)).rows; }
+  async first(sql, parameters) { return (await this.all(sql, parameters))[0]; }
+  async exactlyOne(sql, parameters) {
+    const rows = await this.all(sql, parameters);
+    if (rows.length !== 1) throw new RangeError(`expected exactly one row, got ${rows.length}`);
+    return rows[0];
+  }
+}
+exports.AsyncDatabase = AsyncDatabase;
