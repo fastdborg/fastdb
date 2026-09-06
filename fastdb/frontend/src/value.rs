@@ -71,3 +71,42 @@ pub(crate) fn validate_record(r: &Record) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn stored_numbers_round_trip_binary64_bits() {
+        let mut bits = 0x1234_5678_9abc_def0u64;
+        let edges = [
+            0,
+            1,
+            0x8000_0000_0000_0000,
+            0x000f_ffff_ffff_ffff,
+            0x0010_0000_0000_0000,
+            0x7fef_ffff_ffff_ffff,
+            0xffef_ffff_ffff_ffff,
+        ];
+        for candidate in edges.into_iter().chain((0..4096).map(|_| {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            bits
+        })) {
+            let number = f64::from_bits(candidate);
+            if !number.is_finite() {
+                continue;
+            }
+            let encoded = Value::Number(number).encode().unwrap();
+            let Value::Number(actual) = Value::decode(&encoded).unwrap() else {
+                panic!("number type lost")
+            };
+            assert_eq!(
+                actual.to_bits(),
+                candidate,
+                "encoding {}",
+                String::from_utf8_lossy(&encoded)
+            );
+        }
+    }
+}

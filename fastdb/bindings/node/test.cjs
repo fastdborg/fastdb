@@ -10,7 +10,7 @@ test('native typed parameters and values preserve identities and binary64', () =
   db.execute('CREATE TABLE docs');
   const vectorBytes = Buffer.alloc(8); vectorBytes.writeFloatLE(1, 0); vectorBytes.writeFloatLE(2, 4);
   const doc = { id: new Record('docs', 9223372036854775807n), min: -9223372036854775808n,
-    zero: -0, fraction: 1.25, yes: true, nil: null, text: 'docs:p1', bytes: Buffer.from([0,255]),
+    zero: -0, fraction: 1.25, delicate: 2.291712365432881e-9, yes: true, nil: null, text: 'docs:p1', bytes: Buffer.from([0,255]),
     vector: new Vector(vectorBytes), nested: { type: 'Integer', value: 'user text' }, list: [1n, 'a'] };
   db.execute('INSERT INTO docs DOCUMENT $doc', { $doc: doc });
   assert.deepEqual(db.exactlyOne('SELECT * FROM docs')[0], doc);

@@ -22,3 +22,5 @@ Local integration changes:
 The root planning directory is not a Git repository. The ancestry-preserving checkout lives in `turso/`; product source is `turso/fastdb/`.
 
 The separate FastDB native addon reuses pinned napi 3.8.3, napi-derive 3.5.2 and napi-build 2.3.1 from the existing lockfile. It depends on FastDB rather than the upstream Node binding and does not enable that binding's FTS feature. The frontend additionally embeds pinned rquickjs 0.12.2 for its fixed bundled string catalog.
+
+The frontend enables serde_json's float_roundtrip feature to prevent one-bit numeric changes when reading stored tagged values. This changes a feature of the combined build, without upgrading the dependency or changing the stored format.
