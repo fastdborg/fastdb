@@ -524,11 +524,7 @@ impl Connection {
                 };
                 doc.insert("id".into(), Value::Record(record));
                 let doc = self.upsert(&table, doc)?;
-                Ok(if returning {
-                    QueryResult::documents(vec![doc], 1)
-                } else {
-                    QueryResult::command(1)
-                })
+                self.object_returning(&table, returning, vec![doc], params)
             }),
             Statement::PatchWhere {
                 table,
@@ -564,12 +560,7 @@ impl Connection {
                             .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
                     );
                 }
-                let count = docs.len() as i64;
-                Ok(if returning {
-                    QueryResult::documents(docs, count)
-                } else {
-                    QueryResult::command(count)
-                })
+                self.object_returning(&table, returning, docs, params)
             }),
             Statement::RemoveField { table, path } => {
                 self.remove_field(&table, &path)?;
@@ -636,14 +627,10 @@ impl Connection {
                 table,
                 value,
                 returning,
-            } => {
+            } => self.atomic(|| {
                 let doc = self.insert(&table, object(value)?)?;
-                Ok(if returning {
-                    QueryResult::documents(vec![doc], 1)
-                } else {
-                    QueryResult::command(1)
-                })
-            }
+                self.object_returning(&table, returning, vec![doc], params)
+            }),
             Statement::SelectRecord(record) => Ok(QueryResult::documents(
                 self.get(&record)?.into_iter().collect(),
                 0,
@@ -654,32 +641,18 @@ impl Connection {
                 returning,
             } => self.atomic(|| {
                 let Some(before) = self.get(&target)? else {
-                    return Ok(if returning {
-                        QueryResult::documents(Vec::new(), 0)
-                    } else {
-                        QueryResult::command(0)
-                    });
+                    return self.object_returning(&target.table, returning, Vec::new(), params);
                 };
                 let Value::Object(patch) = self.evaluate(value, params, Some(&before))? else {
                     return Err(Error::Validation("expected object patch".into()));
                 };
                 let doc = self.patch(&target, patch)?;
-                let count = i64::from(doc.is_some());
-                Ok(if returning {
-                    QueryResult::documents(doc.into_iter().collect(), count)
-                } else {
-                    QueryResult::command(count)
-                })
+                self.object_returning(&target.table, returning, doc.into_iter().collect(), params)
             }),
-            Statement::Delete { target, returning } => {
+            Statement::Delete { target, returning } => self.atomic(|| {
                 let doc = self.delete(&target)?;
-                let count = i64::from(doc.is_some());
-                Ok(if returning {
-                    QueryResult::documents(doc.into_iter().collect(), count)
-                } else {
-                    QueryResult::command(count)
-                })
-            }
+                self.object_returning(&target.table, returning, doc.into_iter().collect(), params)
+            }),
             Statement::Sql(sql) => self.sql(&sql, params),
         }
     }

@@ -8,7 +8,7 @@ use turso_parser::ast::*;
 fn unsupported(message: &str) -> Error {
     Error::Unsupported(message.into())
 }
-fn validate_returning(columns: &[ResultColumn]) -> Result<()> {
+pub(crate) fn validate_returning(columns: &[ResultColumn]) -> Result<()> {
     for column in columns {
         if let ResultColumn::Expr(expr, _) = column {
             safe_value_expression(expr)?;
@@ -144,6 +144,59 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
     }
 }
 impl Connection {
+    pub(crate) fn object_returning(
+        &self,
+        table: &str,
+        projection: Option<String>,
+        documents: Vec<Document>,
+        params: &Parameters,
+    ) -> Result<QueryResult> {
+        let Some(projection) = projection else {
+            return Ok(QueryResult::command(documents.len() as i64));
+        };
+        for token in fastql_parser::tokenize(&projection)? {
+            if matches!(
+                token.kind,
+                fastql_parser::Kind::Word | fastql_parser::Kind::Identifier
+            ) && token.text.to_ascii_lowercase().starts_with("__fastdb_")
+            {
+                return Err(unsupported("managed names in RETURNING"));
+            }
+        }
+        let Cmd::Stmt(Stmt::Select(select)) =
+            parsed(&expand_records(&format!("SELECT {projection}"))?)?
+        else {
+            return Err(unsupported("RETURNING projection"));
+        };
+        if select.with.is_some()
+            || !select.body.compounds.is_empty()
+            || !select.order_by.is_empty()
+            || select.limit.is_some()
+        {
+            return Err(unsupported("RETURNING clauses"));
+        }
+        let OneSelect::Select {
+            columns,
+            from: None,
+            where_clause: None,
+            group_by: None,
+            window_clause,
+            distinctness: None,
+        } = select.body.select
+        else {
+            return Err(unsupported("RETURNING projection list only"));
+        };
+        if !window_clause.is_empty() {
+            return Err(unsupported("RETURNING windows"));
+        }
+        validate_returning(&columns)?;
+        self.returning_rows(
+            &QualifiedName::single(Name::from_string(crate::quote(table))),
+            &columns,
+            documents,
+            params,
+        )
+    }
     pub(crate) fn collection_write(
         &self,
         sql: &str,

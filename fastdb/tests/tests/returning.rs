@@ -105,3 +105,84 @@ fn insert_select_returning_and_qualified_snapshot_fields() {
         .iter()
         .all(|r| matches!(&r[1], Value::Object(_))));
 }
+#[test]
+fn object_writes_share_typed_returning_snapshots() {
+    let (_db, c) = setup();
+    let inserted = q(
+        &c,
+        "INSERT INTO posts {id:posts:p1,n:2,tags:[true]} RETURNING id,tags",
+    );
+    assert!(matches!(&inserted.rows[0][0], Value::Record(_)));
+    assert_eq!(
+        inserted.rows[0][1],
+        Value::Array(vec![Value::Boolean(true)])
+    );
+    assert_eq!(
+        q(&c, "UPDATE posts:p1 {n:n+1} RETURNING n").rows,
+        vec![vec![Value::Integer(3)]]
+    );
+    assert_eq!(
+        q(&c, "UPSERT posts:p1 {n:n+1} RETURNING n").rows,
+        vec![vec![Value::Integer(4)]]
+    );
+    assert_eq!(
+        q(&c, "UPSERT posts:p2 {n:5} RETURNING record::id(id) AS key").rows,
+        vec![vec![Value::String("p2".into())]]
+    );
+    let updated = q(&c, "UPDATE posts {n:n+1} WHERE n >= 4 RETURNING n;");
+    assert_eq!(updated.rows.len(), 2);
+    assert_eq!(
+        q(&c, "DELETE FROM posts:p1 RETURNING n").rows,
+        vec![vec![Value::Integer(5)]]
+    );
+    assert_eq!(
+        q(&c, "UPDATE posts:p2 {n:7} RETURNING ';'").rows,
+        vec![vec![Value::String(";".into())]]
+    );
+    let absent = q(&c, "DELETE FROM posts:missing RETURNING n, id");
+    assert_eq!(absent.columns, vec!["n", "id"]);
+    assert!(absent.rows.is_empty());
+}
+#[test]
+fn object_returning_syntax_errors_rollback_and_cannot_read_other_sources() {
+    let (_db, c) = setup();
+    for projection in [
+        "n FROM posts",
+        "(SELECT 1)",
+        "count(*)",
+        "__fastdb_value(1,2)",
+        "n; DELETE FROM posts",
+    ] {
+        let sql = format!("INSERT INTO posts {{id:posts:p1,n:1}} RETURNING {projection}");
+        assert!(c.execute(&sql, &Parameters::new()).is_err(), "{sql}");
+        assert!(q(&c, "SELECT * FROM posts").rows.is_empty());
+    }
+    q(&c, "INSERT INTO posts {id:posts:p1,n:1}");
+    assert!(c
+        .execute("DELETE FROM posts:p1 RETURNING sum(n)", &Parameters::new())
+        .is_err());
+    assert_eq!(
+        q(&c, "SELECT n FROM posts").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+}
+#[test]
+fn predicate_returning_distinguishes_quoted_fields_strings_and_nested_calls() {
+    let (_db, c) = setup();
+    q(
+        &c,
+        "INSERT INTO posts {id:posts:p1,n:1,\"returning\":'RETURNING'}",
+    );
+    let params = Parameters::from([
+        ("$n".into(), Value::Integer(2)),
+        ("$flag".into(), Value::Boolean(true)),
+    ]);
+    let result=c.execute("UPDATE posts {n:$n} WHERE \"returning\"='RETURNING' AND (n=1) RETURNING coalesce(n,0) AS n,$flag AS flag",&params).unwrap();
+    assert_eq!(
+        result.rows,
+        vec![vec![Value::Integer(2), Value::Boolean(true)]]
+    );
+    let empty = q(&c, "UPDATE posts {n:3} WHERE n < 0 RETURNING n");
+    assert_eq!(empty.columns, vec!["n"]);
+    assert!(empty.rows.is_empty());
+}

@@ -71,13 +71,13 @@ pub enum Statement {
         table: String,
         value: Expr,
         predicate: Option<String>,
-        returning: bool,
+        returning: Option<String>,
     },
     Upsert {
         table: String,
         target: Option<Record>,
         value: Expr,
-        returning: bool,
+        returning: Option<String>,
     },
     RemoveField {
         table: String,
@@ -113,17 +113,17 @@ pub enum Statement {
     Insert {
         table: String,
         value: Expr,
-        returning: bool,
+        returning: Option<String>,
     },
     SelectRecord(Record),
     Patch {
         target: Record,
         value: Expr,
-        returning: bool,
+        returning: Option<String>,
     },
     Delete {
         target: Record,
-        returning: bool,
+        returning: Option<String>,
     },
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -312,15 +312,37 @@ impl Parser<'_> {
         self.eat(";");
         self.pos == self.tokens.len()
     }
-    fn returning(&mut self) -> Result<bool> {
-        let returning = self.eat("RETURNING");
-        if returning && !self.eat("*") {
-            return Err(self.error("expected RETURNING *"));
-        }
+    fn returning(&mut self) -> Result<Option<String>> {
+        let projection = if self.eat("RETURNING") {
+            let start = self
+                .tokens
+                .get(self.pos)
+                .ok_or_else(|| self.error("expected RETURNING projection"))?
+                .start;
+            let mut end = self.tokens.len();
+            if end > self.pos
+                && self.tokens[end - 1].kind == Kind::Symbol
+                && self.tokens[end - 1].text == ";"
+            {
+                end -= 1;
+            }
+            if end <= self.pos
+                || self.tokens[self.pos..end]
+                    .iter()
+                    .any(|t| t.kind == Kind::Symbol && t.text == ";")
+            {
+                return Err(self.error("expected one RETURNING projection list"));
+            }
+            let projection = self.input[start..self.tokens[end - 1].end].to_owned();
+            self.pos = end;
+            Some(projection)
+        } else {
+            None
+        };
         if !self.end() {
             return Err(self.error("unexpected trailing syntax"));
         }
-        Ok(returning)
+        Ok(projection)
     }
     fn path(&mut self) -> Result<Vec<String>> {
         let mut path = vec![self.name()?];
@@ -866,15 +888,30 @@ pub fn parse(input: &str) -> Result<Statement> {
                         .ok_or_else(|| p.error("expected WHERE predicate"))?
                         .start;
                     let mut end = p.tokens.len();
-                    if end > p.pos && p.tokens[end - 1].text == ";" {
+                    if end > p.pos
+                        && p.tokens[end - 1].kind == Kind::Symbol
+                        && p.tokens[end - 1].text == ";"
+                    {
                         end -= 1;
                     }
-                    if end >= p.pos + 2
-                        && p.tokens[end - 2].kind == Kind::Word
-                        && p.tokens[end - 2].text.eq_ignore_ascii_case("RETURNING")
-                        && p.tokens[end - 1].text == "*"
-                    {
-                        end -= 2;
+                    let mut depth = 0;
+                    for i in p.pos..end {
+                        let token = &p.tokens[i];
+                        if token.kind == Kind::Symbol {
+                            match token.text.as_str() {
+                                "(" | "[" | "{" => depth += 1,
+                                ")" | "]" | "}" => depth -= 1,
+                                _ => {}
+                            }
+                        }
+                        if depth == 0
+                            && i > p.pos
+                            && token.kind == Kind::Word
+                            && token.text.eq_ignore_ascii_case("RETURNING")
+                        {
+                            end = i;
+                            break;
+                        }
                     }
                     if end <= p.pos {
                         return Err(p.error("expected WHERE predicate"));
