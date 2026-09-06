@@ -211,8 +211,14 @@ impl Connection {
             name.to_ascii_lowercase().as_str(),
             "vector32"
                 | "vector64"
+                | "vector32_sparse"
+                | "vector8"
+                | "vector1bit"
+                | "vector_concat"
+                | "vector_slice"
                 | "vector_distance_cos"
                 | "vector_distance_l2"
+                | "vector_distance_jaccard"
                 | "vector_distance_dot"
                 | "vector_extract"
         ) {
@@ -226,9 +232,23 @@ impl Connection {
                 .map(|i| format!("?{i}"))
                 .collect::<Vec<_>>()
                 .join(",");
+            let native = if name.eq_ignore_ascii_case("vector_concat") {
+                "__fastdb_vector_concat"
+            } else {
+                name
+            };
             let value =
-                self.scalar_expression(&format!("{}({slots})", crate::quote(name)), &args)?;
-            if matches!(name.to_ascii_lowercase().as_str(), "vector32" | "vector64") {
+                self.scalar_expression(&format!("{}({slots})", crate::quote(native)), &args)?;
+            if matches!(
+                name.to_ascii_lowercase().as_str(),
+                "vector32"
+                    | "vector64"
+                    | "vector32_sparse"
+                    | "vector8"
+                    | "vector1bit"
+                    | "vector_concat"
+                    | "vector_slice"
+            ) {
                 let Value::Binary(bytes) = value else {
                     return Err(Error::Storage("vector constructor result".into()));
                 };

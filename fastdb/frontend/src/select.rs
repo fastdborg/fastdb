@@ -153,9 +153,20 @@ impl Scope {
         };
         if matches!(
             name.as_str().to_ascii_lowercase().as_str(),
-            "vector32" | "vector64"
+            "vector32"
+                | "vector64"
+                | "vector32_sparse"
+                | "vector8"
+                | "vector1bit"
+                | "vector_concat"
+                | "vector_slice"
         ) {
-            if args.len() != 1
+            let expected = match name.as_str().to_ascii_lowercase().as_str() {
+                "vector_concat" => 2,
+                "vector_slice" => 3,
+                _ => 1,
+            };
+            if args.len() != expected
                 || distinctness.is_some()
                 || filter_over.over_clause.is_some()
                 || filter_over.filter_clause.is_some()
@@ -164,8 +175,22 @@ impl Scope {
             {
                 return Err(unsupported("vector constructor arguments"));
             }
-            self.typed(&mut args[0])?;
-            args[0] = Box::new(expression(&format!("__fastdb_vector_input({})", args[0]))?);
+            let vector_args = if name.as_str().eq_ignore_ascii_case("vector_concat") {
+                2
+            } else {
+                1
+            };
+            for (i, arg) in args.iter_mut().enumerate() {
+                if i < vector_args {
+                    self.typed(arg)?;
+                    *arg = Box::new(expression(&format!("__fastdb_vector_input({arg})"))?);
+                } else {
+                    self.lower(arg)?;
+                }
+            }
+            if name.as_str().eq_ignore_ascii_case("vector_concat") {
+                *name = Name::exact("__fastdb_vector_concat".into());
+            }
             *expr = expression(&format!("__fastdb_vector_value({expr})"))?;
             return Ok(true);
         }
@@ -249,6 +274,7 @@ impl Scope {
                 name.as_str().to_ascii_lowercase().as_str(),
                 "vector_distance_cos"
                     | "vector_distance_l2"
+                    | "vector_distance_jaccard"
                     | "vector_distance_dot"
                     | "vector_extract"
             ) {

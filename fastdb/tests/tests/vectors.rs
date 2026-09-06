@@ -111,3 +111,99 @@ fn vector_definition_checks_existing_values_and_reports_dimensions() {
     let info = q(&c, "INFO FOR TABLE points");
     assert!(format!("{info:?}").contains("vector<3>"));
 }
+#[test]
+fn sparse_quantized_and_bit_vectors_round_trip_in_native_encodings() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let expected;
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE points");
+        q(&c, "DEFINE FIELD v ON points TYPE vector<3> REQUIRED");
+        for (i, constructor) in ["vector32_sparse", "vector8", "vector1bit"]
+            .iter()
+            .enumerate()
+        {
+            q(&c,&format!("INSERT INTO points {{id:type::record('points',{i}),v:{constructor}('[1,0,-1]')}}"));
+            let native = q(&c, &format!("SELECT {constructor}('[1,0,-1]')"));
+            let stored = q(
+                &c,
+                &format!("SELECT v FROM points WHERE id=type::record('points',{i})"),
+            );
+            let (Value::Binary(native), Value::Vector(stored)) =
+                (&native.rows[0][0], &stored.rows[0][0])
+            else {
+                panic!("native and typed vector outputs");
+            };
+            assert_eq!(native, stored);
+        }
+        q(&c, "UPDATE points SET converted=vector32(v)");
+        expected = q(&c, "SELECT v FROM points ORDER BY id").rows;
+        for row in &expected {
+            assert_eq!(row[0].vector_dimensions().unwrap(), 3);
+        }
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(q(&c, "SELECT v FROM points ORDER BY id").rows, expected);
+}
+#[test]
+fn vector_slices_concatenation_and_bit_distance_use_typed_operands() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE points");
+    q(
+        &c,
+        "INSERT INTO points {v:vector32_sparse('[1,0,3]'),b:vector1bit('[1,-1,1]')}",
+    );
+    q(
+        &c,
+        "UPDATE points SET part=vector_slice(v,0,2),joined=vector_concat(v,v)",
+    );
+    let rows=q(&c,"SELECT part,joined,vector_distance_jaccard(b,vector1bit('[1,-1,1]')) AS distance FROM points").rows;
+    assert_eq!(rows[0][0].vector_dimensions().unwrap(), 2);
+    assert_eq!(rows[0][1].vector_dimensions().unwrap(), 6);
+    assert_eq!(
+        q(
+            &c,
+            "SELECT vector_extract(vector32(joined)) AS v FROM points"
+        )
+        .rows[0][0],
+        Value::String("[1,0,3,1,0,3]".into())
+    );
+    assert!(matches!(rows[0][2],Value::Number(n) if n.abs()<1e-6));
+    assert!(c
+        .execute(
+            "UPDATE points SET v=vector_slice(v,0,99)",
+            &Parameters::new()
+        )
+        .is_err());
+}
+#[test]
+fn malformed_vector_metadata_is_rejected_without_native_parsing() {
+    for bytes in [
+        vec![3],
+        vec![0, 255, 3],
+        vec![4],
+        vec![0, 0, 4],
+        vec![9],
+        vec![0, 0, 0, 0, 9],
+        vec![0, 0, 0, 0, 5],
+    ] {
+        assert!(Value::Vector(bytes).validate().is_err());
+    }
+    let mut sparse = 1.0f32.to_le_bytes().to_vec();
+    sparse.extend(9u32.to_le_bytes());
+    sparse.extend(3u32.to_le_bytes());
+    sparse.push(9);
+    assert!(Value::Vector(sparse).validate().is_err());
+    let mut zero = 3u32.to_le_bytes().to_vec();
+    zero.push(9);
+    assert_eq!(Value::Vector(zero).vector_dimensions().unwrap(), 3);
+    let mut quantized = vec![0; 4];
+    quantized.extend(f32::NAN.to_le_bytes());
+    quantized.extend(0f32.to_le_bytes());
+    quantized.extend([0, 1, 4]);
+    assert!(Value::Vector(quantized).validate().is_err());
+}

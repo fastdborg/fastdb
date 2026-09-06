@@ -9,6 +9,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
         let api = connection.engine._build_turso_ext();
         let result = [
             (
+                c"__fastdb_vector_concat",
+                vector_concat as turso_ext::ScalarFunction,
+                2,
+            ),
+            (
                 c"__fastdb_vector_input",
                 vector_input as turso_ext::ScalarFunction,
                 1,
@@ -325,6 +330,30 @@ fn vector_value(args: &[ExtValue]) -> ExtValue {
             .to_blob()
             .ok_or_else(|| Error::Storage("vector constructor returned non-blob".into()))?;
         Ok(ExtValue::from_blob(Value::Vector(bytes).encode()?))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_vector_concat")]
+fn vector_concat(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [a, b] = args else {
+            return Err(Error::Validation("vector concat arity".into()));
+        };
+        let input = |v: &ExtValue| -> Result<turso_core::Value> {
+            if let Some(bytes) = v.to_blob() {
+                crate::vectors::dimensions(&bytes)?;
+                return Ok(turso_core::Value::Blob(bytes));
+            }
+            if let Some(text) = v.to_text() {
+                return Ok(crate::text(text));
+            }
+            Err(Error::Validation("invalid vector concat input".into()))
+        };
+        let turso_core::Value::Blob(bytes) = crate::vectors::concat(input(a)?, input(b)?)? else {
+            unreachable!("vector result");
+        };
+        Ok(ExtValue::from_blob(bytes))
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
