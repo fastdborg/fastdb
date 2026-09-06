@@ -4,6 +4,7 @@ use turso_parser::{ast::*, parser::Parser};
 
 #[derive(Clone)]
 struct Source {
+    table: SelectTable,
     alias: String,
     collection: Option<Collection>,
 }
@@ -478,6 +479,7 @@ fn source(connection: &Connection, table: &SelectTable) -> Result<Source> {
         ));
     }
     Ok(Source {
+        table: table.clone(),
         alias: alias
             .as_ref()
             .map_or(name.name.as_str(), |a| a.name().as_str())
@@ -847,7 +849,6 @@ impl Connection {
         if select.with.is_some() || !select.body.compounds.is_empty() || !window_clause.is_empty() {
             return Err(unsupported("CTEs, compound SELECT or windows"));
         }
-        let original_columns = columns.clone();
         let scope = Scope {
             sources,
             params: params.clone(),
@@ -876,6 +877,8 @@ impl Connection {
                 return Err(unsupported("managed names"));
             }
         }
+        *columns = expand_stars(self, &scope, columns)?;
+        let original_columns = columns.clone();
         let mut typed = Vec::new();
         let mut fetched = Vec::new();
         let mut names = Vec::new();
@@ -1171,7 +1174,7 @@ fn reject_group_aliases(expr: &Expr, columns: &[ResultColumn]) -> Result<()> {
             continue;
         }
         // An alias identical to its simple field needs no substitution.
-        if matches!(original.as_ref(), Expr::Id(n) | Expr::Name(n) if n.as_str().eq_ignore_ascii_case(alias.name().as_str()))
+        if matches!(original.as_ref(), Expr::Id(n) | Expr::Name(n) | Expr::Qualified(_, n) | Expr::DoublyQualified(_, _, n) if n.as_str().eq_ignore_ascii_case(alias.name().as_str()))
         {
             continue;
         }
@@ -1188,4 +1191,64 @@ fn reject_group_aliases(expr: &Expr, columns: &[ResultColumn]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// Prepare, but do not execute, a native star query so views, generated columns,
+// hidden columns and quoted names follow the pinned engine's own expansion.
+fn expand_stars(
+    connection: &Connection,
+    scope: &Scope,
+    columns: &[ResultColumn],
+) -> Result<Vec<ResultColumn>> {
+    let mut expanded = Vec::new();
+    for column in columns {
+        let sources: Vec<&Source> = match column {
+            ResultColumn::Star => scope.sources.iter().collect(),
+            ResultColumn::TableStar(name) => vec![scope
+                .sources
+                .iter()
+                .find(|s| s.alias.eq_ignore_ascii_case(name.as_str()))
+                .ok_or_else(|| Error::Validation("unknown star qualifier".into()))?],
+            _ => {
+                expanded.push(column.clone());
+                continue;
+            }
+        };
+        if sources.is_empty() {
+            return Err(Error::Validation("star requires a source".into()));
+        }
+        for source in sources {
+            if source.collection.is_some() {
+                expanded.push(ResultColumn::TableStar(Name::from_string(quote(
+                    &source.alias,
+                ))));
+                continue;
+            }
+            let Cmd::Stmt(Stmt::Select(mut probe)) = parsed("SELECT * FROM placeholder")? else {
+                unreachable!()
+            };
+            let OneSelect::Select {
+                from: Some(from), ..
+            } = &mut probe.body.select
+            else {
+                unreachable!()
+            };
+            from.select = Box::new(source.table.clone());
+            let statement = connection
+                .engine
+                .prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())?;
+            for i in 0..statement.num_columns() {
+                let name = statement.get_column_name(i).into_owned();
+                expanded.push(ResultColumn::Expr(
+                    Box::new(expression(&format!(
+                        "{}.{}",
+                        quote(&source.alias),
+                        quote(&name)
+                    ))?),
+                    Some(As::As(Name::from_string(quote(&name)))),
+                ));
+            }
+        }
+    }
+    Ok(expanded)
 }
