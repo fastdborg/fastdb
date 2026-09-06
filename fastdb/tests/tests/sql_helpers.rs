@@ -206,3 +206,63 @@ fn native_binary_arguments_and_casts_use_payload_bytes() {
         1
     );
 }
+
+#[test]
+fn binary_operator_inputs_match_native_payload_coercion() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(data BLOB)");
+    for hex in ["3132", "30", "2D33", "", "6162"] {
+        q(&c, &format!("INSERT INTO docs (data) VALUES (X'{hex}')"));
+        q(&c, &format!("INSERT INTO baseline VALUES (X'{hex}')"));
+    }
+    q(&c, "INSERT INTO docs (data) VALUES (NULL)");
+    q(&c, "INSERT INTO baseline VALUES (NULL)");
+    for expr in [
+        "data+1",
+        "1+data",
+        "data-1",
+        "data*2",
+        "data/2",
+        "data%5",
+        "data&3",
+        "data|1",
+        "data<<1",
+        "data>>1",
+        "data||'!'",
+        "-data",
+        "~data",
+        "NOT data",
+        "data AND 1",
+        "data OR 0",
+        "+data",
+        "hex(+data)",
+        "(data+1)*2",
+        "(data+1) IN (13)",
+    ] {
+        let sql = |table| format!("SELECT {expr} AS value FROM {table} ORDER BY data");
+        assert_eq!(
+            q(&c, &sql("docs")).rows,
+            q(&c, &sql("baseline")).rows,
+            "{expr}"
+        );
+    }
+    q(&c, "CREATE INDEX docs_data ON docs(data)");
+    q(&c, "BEGIN");
+    assert_eq!(q(&c, "UPDATE docs SET data=CAST(data+1 AS BLOB) WHERE data=X'3132' RETURNING hex(data) AS bytes").rows,
+               vec![vec![Value::String("3133".into())]]);
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(b"13".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(b"12".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}

@@ -214,6 +214,9 @@ impl Scope {
         Ok(())
     }
     fn helper(&self, expr: &mut Expr) -> Result<bool> {
+        if let Expr::Unary(UnaryOperator::Positive, value) = expr {
+            return self.preserved(value);
+        }
         if let Expr::Case {
             base,
             when_then_pairs,
@@ -427,6 +430,25 @@ impl Scope {
             Expr::Binary(a, op, b) => {
                 if matches!(
                     op,
+                    Operator::Add
+                        | Operator::Subtract
+                        | Operator::Multiply
+                        | Operator::Divide
+                        | Operator::Modulus
+                        | Operator::Concat
+                        | Operator::BitwiseAnd
+                        | Operator::BitwiseOr
+                        | Operator::LeftShift
+                        | Operator::RightShift
+                        | Operator::And
+                        | Operator::Or
+                ) {
+                    self.sql_argument(a)?;
+                    self.sql_argument(b)?;
+                    return Ok(());
+                }
+                if matches!(
+                    op,
                     Operator::Equals | Operator::NotEquals | Operator::Is | Operator::IsNot
                 ) {
                     if blob_literal(a) && !blob_literal(b) && self.preserved(&mut b.clone())? {
@@ -452,9 +474,11 @@ impl Scope {
                 self.lower(a)?;
                 self.lower(b)?;
             }
-            Expr::Unary(_, e) | Expr::IsNull(e) | Expr::NotNull(e) | Expr::Collate(e, _) => {
-                self.lower(e)?
-            }
+            Expr::Unary(UnaryOperator::Positive, e)
+            | Expr::IsNull(e)
+            | Expr::NotNull(e)
+            | Expr::Collate(e, _) => self.lower(e)?,
+            Expr::Unary(_, e) => self.sql_argument(e)?,
             Expr::Cast { expr: e, .. } => self.sql_argument(e)?,
             Expr::Between {
                 lhs,
