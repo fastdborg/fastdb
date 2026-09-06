@@ -56,7 +56,7 @@ test('close is idempotent and persistence survives reopening', () => {
 test('prototype-looking object fields remain own data properties', () => {
   const db = new Database();
   const value = JSON.parse('{"__proto__":{"safe":true},"constructor":"data"}');
-  assert.deepEqual(db.exactlyOne('SELECT array::new($value) AS value', { $value: value })[0][0], value);
+  assert.deepEqual(db.exactlyOne('SELECT $value AS value', { $value: value })[0], value);
   assert.equal({}.safe, undefined);
   db.close();
 });

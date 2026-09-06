@@ -124,3 +124,10 @@ Interruption is cooperative and connection-wide. It is not tied to a request ID,
 The frontend enables serde_json's `float_roundtrip` feature when decoding tagged persisted values. Without it, the former reader changed some finite values by one binary64 unit: `2.291712365432881e-9` decoded to bits 4477615450478306381 instead of the original 4477615450478306380. The writer already emitted a round-trippable decimal; this is a reader correction, with no stored-format or catalog-version change. Existing original payloads decode with the corrected precision. Values already read and rewritten with the old rounding error cannot be reconstructed from the rewritten payload alone.
 
 Tests compare binary64 bits, including signed zero, finite extremes and subnormals, across encode/decode and database close/reopen with scalar index lookup. Transfer-v1 continues using hexadecimal binary64 bits. Cargo feature unification enables the precision option for serde_json in the combined FastDB build; dependency versions and upstream source remain unchanged. Wider numerical/index/collation and upgrade qualification remains part of V1 release work.
+
+
+## Standalone typed parameters
+
+A source-free SELECT without CTEs or compound branches now enters typed lowering when parameters include a Boolean, Record, Object, Array or Vector. Direct parameter projections preserve those tags, including numbered placeholders. Ordinary scalar-only SQL continues through the native path. Standalone alias predicates use the original scalar expression rather than treating encoded typed projection bytes as SQL truth values; typed helper arguments can retain alias values. Fetched aliases remain ineligible for predicates/grouping because fetching occurs after the engine projection.
+
+DISTINCT is accepted for a source-free SELECT because its input has at most one row; this does not enable DISTINCT over collection projections or define composite equality. Missing SQL names still fail. Full source-query alias/type propagation, composite ordering/grouping and broader CTE/compound queries remain V1 work.

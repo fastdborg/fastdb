@@ -13,6 +13,7 @@ struct Scope {
     params: Parameters,
     consumed: std::cell::RefCell<std::collections::BTreeSet<String>>,
     fetched_aliases: std::cell::RefCell<std::collections::BTreeSet<String>>,
+    standalone_aliases: std::cell::RefCell<std::collections::BTreeMap<String, (Expr, bool)>>,
 }
 impl Scope {
     fn field(&self, expr: &Expr) -> Result<Option<(usize, Vec<String>)>> {
@@ -43,6 +44,9 @@ impl Scope {
             }
             if matches!(expr, Expr::Id(n) if !n.quoted() && (n.as_str().eq_ignore_ascii_case("true") || n.as_str().eq_ignore_ascii_case("false")))
             {
+                return Ok(None);
+            }
+            if self.sources.is_empty() {
                 return Ok(None);
             }
             if self.sources.len() != 1 {
@@ -80,7 +84,28 @@ impl Scope {
             path
         ))
     }
+    fn standalone_alias(&self, expr: &Expr) -> Option<(Expr, bool)> {
+        let name = match expr {
+            Expr::Id(n)
+                if !n.quoted()
+                    && (n.as_str().eq_ignore_ascii_case("true")
+                        || n.as_str().eq_ignore_ascii_case("false")) =>
+            {
+                return None
+            }
+            Expr::Id(n) | Expr::Name(n) => n.as_str(),
+            _ => return None,
+        };
+        self.standalone_aliases
+            .borrow()
+            .get(&name.to_ascii_lowercase())
+            .cloned()
+    }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
+        if let Some((value, true)) = self.standalone_alias(expr) {
+            *expr = value;
+            return Ok(true);
+        }
         if let Some((i, path)) = self.field(expr)? {
             *expr = self.accessor(i, &path, true)?;
             return Ok(true);
@@ -286,6 +311,14 @@ impl Scope {
         Ok(())
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        if let Some((value, typed)) = self.standalone_alias(expr) {
+            *expr = if typed {
+                expression(&format!("__fastdb_unwrap({value})"))?
+            } else {
+                value
+            };
+            return Ok(());
+        }
         if let Expr::FunctionCall { name, args, .. } = expr {
             if matches!(
                 name.as_str().to_ascii_lowercase().as_str(),
@@ -861,10 +894,27 @@ impl Connection {
                 }
             }
         }
-        if !trusted && sources.iter().all(|s| s.collection.is_none()) && expanded == sql {
+        let standalone_typed_parameters = from.is_none()
+            && select.with.is_none()
+            && select.body.compounds.is_empty()
+            && params.values().any(|v| {
+                matches!(
+                    v,
+                    Value::Boolean(_)
+                        | Value::Record(_)
+                        | Value::Object(_)
+                        | Value::Array(_)
+                        | Value::Vector(_)
+                )
+            });
+        if !trusted
+            && sources.iter().all(|s| s.collection.is_none())
+            && expanded == sql
+            && !standalone_typed_parameters
+        {
             return Ok(None);
         }
-        if matches!(distinctness, Some(Distinctness::Distinct)) {
+        if !sources.is_empty() && matches!(distinctness, Some(Distinctness::Distinct)) {
             return Err(unsupported("DISTINCT over typed projections"));
         }
         if select.with.is_some() || !select.body.compounds.is_empty() {
@@ -875,6 +925,7 @@ impl Connection {
             params: params.clone(),
             consumed: Default::default(),
             fetched_aliases: Default::default(),
+            standalone_aliases: Default::default(),
         };
         for (i, s) in scope.sources.iter().enumerate() {
             if scope.sources[..i]
@@ -999,6 +1050,24 @@ impl Connection {
             .map(|(name, _)| name.to_ascii_lowercase())
             .collect();
         *columns = rewritten;
+        if scope.sources.is_empty() {
+            for ((name, column), typed) in names.iter().zip(columns.iter()).zip(&typed) {
+                if scope
+                    .fetched_aliases
+                    .borrow()
+                    .contains(&name.to_ascii_lowercase())
+                {
+                    continue;
+                }
+                if let ResultColumn::Expr(value, _) = column {
+                    scope
+                        .standalone_aliases
+                        .borrow_mut()
+                        .entry(name.to_ascii_lowercase())
+                        .or_insert_with(|| (*value.clone(), *typed));
+                }
+            }
+        }
         let candidates = scope
             .sources
             .iter()
@@ -1071,11 +1140,15 @@ impl Connection {
                         *expr = Box::new(expression(&format!("coalesce({original}, NULL)"))?);
                     }
                 }
-                reject_group_aliases(expr, &original_columns)?;
+                if !scope.sources.is_empty() {
+                    reject_group_aliases(expr, &original_columns)?;
+                }
                 scope.lower(expr)?;
             }
             if let Some(expr) = &mut group.having {
-                reject_group_aliases(expr, &original_columns)?;
+                if !scope.sources.is_empty() {
+                    reject_group_aliases(expr, &original_columns)?;
+                }
                 scope.lower(expr)?;
             }
         }

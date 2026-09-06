@@ -186,3 +186,10 @@ The first regression exposed the pinned engine's run_collect_rows conflation of 
 A deterministic encode/decode test reproduced a one-bit error in the former JSON reader for 2.291712365432881e-9. Enabling the existing serde_json float_roundtrip feature fixes that regression without changing serialized format or dependency versions. The test probes 4,096 deterministic bit patterns plus boundary cases, skipping non-finite inputs. A real-engine test verifies scalar/nested numeric bits and matching scalar-index lookups after close/reopen, including the failing value, subnormals, signed zero and finite extremes. The Node typed-document test includes the previously failing number.
 
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 104 Rust tests, eleven native Node tests and TypeScript declaration checks. No upstream implementation files or lockfile entries changed. Feature unification affects serde_json in the combined build and is recorded in UPSTREAM.md; broader numerical and upgrade qualification remains pending.
+
+
+## Standalone typed parameter projections — 2026-09-06
+
+`fastdb/scripts/check.sh` passed scoped formatting/Clippy, all 107 Rust tests, eleven native Node tests and strict TypeScript declarations. Three new Rust tests verify direct named/numbered composite, record, vector and boolean projections; source-free DISTINCT and empty results; scalar WHERE/GROUP BY/HAVING alias handling and first-match case-insensitive aliases; retained scalar-query behavior and missing-name errors; and rejection of predicates/grouping on post-fetch aliases. The Node prototype-looking-field regression now uses SELECT $value directly instead of a helper wrapper.
+
+No dependencies or upstream implementation files changed. This covers the current source-free SELECT lowering subset, not complete alias/type propagation through relational sources, subqueries/CTEs, compound queries or composite ordering/grouping. Remaining V1 requirements stay open.
