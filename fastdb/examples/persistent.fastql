@@ -1,0 +1,10 @@
+CREATE TABLE users;
+DEFINE FIELD name ON users TYPE string REQUIRED;
+CREATE UNIQUE INDEX users_name ON users (name);
+INSERT INTO users {id: users:u1, name: 'Alice', profile: {city: 'Bangkok'}} RETURNING *;
+BEGIN;
+UPDATE users:u1 {name: 'Temporary'} RETURNING *;
+ROLLBACK;
+SELECT users:u1;
+UPDATE users:u1 {name: 'Alice Chen'} RETURNING *;
+DELETE FROM users:u1 RETURNING *;

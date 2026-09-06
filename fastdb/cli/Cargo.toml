@@ -1,0 +1,10 @@
+[package]
+name = "fastdb-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+fastdb = { path = "../frontend" }
+serde_json.workspace = true

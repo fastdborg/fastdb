@@ -1,0 +1,51 @@
+use super::*;
+#[test]
+fn sql_is_preserved() {
+    for sql in [
+        "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
+        "CREATE TABLE posts AS SELECT 1;",
+        "CREATE TABLE posts ();",
+        "SELECT r'posts:p1'",
+        "SELECT :name, @name, $name::suffix, ?1, ?",
+        "SELECT [posts:p1], 'users:u1'",
+        "SELECT 1 AS document",
+        "SELECT 'a; b' /* ; */;",
+    ] {
+        assert_eq!(
+            parse(sql).expect("SQL dispatch"),
+            Statement::Sql(sql.into())
+        );
+    }
+}
+#[test]
+fn collection_and_records() {
+    assert_eq!(
+        parse("CREATE TABLE IF NOT EXISTS posts; -- hi").expect("collection"),
+        Statement::CreateCollection {
+            name: "posts".into(),
+            if_not_exists: true
+        }
+    );
+    assert_eq!(
+        parse("SELECT posts:`123`;").expect("record"),
+        Statement::SelectRecord(Record {
+            table: "posts".into(),
+            key: Key::String("123".into())
+        })
+    );
+    assert_eq!(
+        parse("SELECT posts:-9223372036854775808").expect("record"),
+        Statement::SelectRecord(Record {
+            table: "posts".into(),
+            key: Key::Integer(i64::MIN)
+        })
+    );
+    assert!(parse("SELECT posts:9223372036854775808").is_err());
+}
+#[test]
+fn document_nested_arrays_and_duplicate_keys() {
+    let Statement::Insert { value: Expr::Object(fields), .. } = parse("INSERT INTO posts {id: posts:p1, tags: [1, [2, 3], {name: 'a]b'}], profile: {city: 'Bangkok'},} RETURNING *;").expect("nested literal") else { panic!("expected insert"); };
+    assert!(matches!(fields["tags"], Expr::Array(_)));
+    assert!(parse("INSERT INTO posts {a: 1, a: 2}").is_err());
+    assert!(parse("INSERT INTO posts {id: posts:``}").is_err());
+}

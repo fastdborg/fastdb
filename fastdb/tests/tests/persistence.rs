@@ -1,0 +1,318 @@
+use fastdb::{Database, Document, Field, FieldType, Key, Parameters, Record, Value};
+fn record(key: &str) -> Record {
+    Record {
+        table: "users".into(),
+        key: Key::String(key.into()),
+    }
+}
+fn field(path: &[&str], kind: FieldType, required: bool) -> Field {
+    Field {
+        path: path.iter().map(|p| (*p).into()).collect(),
+        kind,
+        required,
+        nullable: false,
+    }
+}
+fn query(c: &fastdb::Connection, sql: &str) -> fastdb::QueryResult {
+    c.execute(sql, &Parameters::new()).expect(sql)
+}
+#[test]
+fn persistent_crud_validation_indexes_and_mixed_rollback() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("db");
+    let path = path.to_str().expect("path");
+    {
+        let db = Database::open(path).expect("open");
+        let c = db.connect().expect("connect");
+        query(&c, "CREATE TABLE users;");
+        c.define_field("users", field(&["name"], FieldType::String, true), false)
+            .expect("field");
+        c.create_index("users", "users_email", vec!["email".into()], true)
+            .expect("index");
+        query(&c, "INSERT INTO users {id: users:u1, name: 'Alice', email: 'a@x', profile: {city: 'Bangkok'}, tags: [1, [2], true]} RETURNING *;");
+        assert_eq!(
+            c.lookup_index("users", "users_email", &Value::String("a@x".into()))
+                .expect("lookup")
+                .len(),
+            1
+        );
+        assert!(c
+            .execute(
+                "INSERT INTO users {id: users:bad, name: 1}",
+                &Parameters::new()
+            )
+            .is_err());
+        assert!(c.get(&record("bad")).expect("read").is_none());
+        assert!(c
+            .execute(
+                "INSERT INTO users {id: users:u2, name: 'Duplicate', email: 'a@x'}",
+                &Parameters::new()
+            )
+            .is_err());
+        assert!(c.get(&record("u2")).expect("read").is_none());
+        query(
+            &c,
+            "CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT)",
+        );
+        query(&c, "BEGIN");
+        query(&c, "INSERT INTO accounts VALUES (1, 'pending')");
+        query(&c, "UPDATE users:u1 {email: 'b@x'}");
+        assert!(c
+            .lookup_index("users", "users_email", &Value::String("a@x".into()))
+            .expect("old key")
+            .is_empty());
+        query(&c, "ROLLBACK");
+        assert!(query(&c, "SELECT * FROM accounts").rows.is_empty());
+        assert_eq!(
+            c.lookup_index("users", "users_email", &Value::String("a@x".into()))
+                .expect("restored index")
+                .len(),
+            1
+        );
+        query(&c, "UPDATE users:u1 {email: 'c@x'} RETURNING *");
+        query(
+            &c,
+            "INSERT INTO users {id: users:u2, name: 'Bob', email: 'b@x'}",
+        );
+        assert!(c
+            .execute("UPDATE users:u2 {email: 'c@x'}", &Parameters::new())
+            .is_err());
+        assert_eq!(
+            c.lookup_index("users", "users_email", &Value::String("b@x".into()))
+                .expect("failed update rollback")
+                .len(),
+            1
+        );
+    }
+    {
+        let db = Database::open(path).expect("reopen");
+        let c = db.connect().expect("connect");
+        assert_eq!(
+            c.get(&record("u1")).expect("read").expect("exists")["name"],
+            Value::String("Alice".into())
+        );
+        assert_eq!(
+            c.lookup_index("users", "users_email", &Value::String("c@x".into()))
+                .expect("persisted index")
+                .len(),
+            1
+        );
+        query(&c, "DELETE FROM users:u1 RETURNING *");
+        assert!(c
+            .lookup_index("users", "users_email", &Value::String("c@x".into()))
+            .expect("deleted index")
+            .is_empty());
+        assert!(c.get(&record("u1")).expect("deleted record").is_none());
+    }
+}
+#[test]
+fn typed_round_trips_and_definition_build_failure() {
+    let db = Database::open(":memory:").expect("open");
+    let c = db.connect().expect("connect");
+    query(&c, "CREATE TABLE users");
+    let doc = Document::from([
+        ("id".into(), Value::Record(record("typed"))),
+        ("integer".into(), Value::Integer(i64::MAX)),
+        ("null".into(), Value::Null),
+        ("binary".into(), Value::Binary(vec![0, 255])),
+        ("boolean".into(), Value::Boolean(true)),
+        (
+            "object".into(),
+            Value::Object(Document::from([(
+                "type".into(),
+                Value::String("Record".into()),
+            )])),
+        ),
+    ]);
+    let params = Parameters::from([("$doc".into(), Value::Object(doc.clone()))]);
+    c.execute("INSERT INTO users DOCUMENT $doc", &params)
+        .expect("bound doc");
+    assert_eq!(c.get(&record("typed")).expect("read"), Some(doc));
+    assert!(c
+        .define_field(
+            "users",
+            field(&["integer"], FieldType::String, false),
+            false
+        )
+        .is_err());
+    c.define_field(
+        "users",
+        field(&["integer"], FieldType::Integer, false),
+        false,
+    )
+    .expect("failed definition left no metadata");
+    query(&c, "INSERT INTO users {id: users:1, email: 'same'}");
+    query(&c, "INSERT INTO users {id: users:`1`, email: 'same'}");
+    assert!(c
+        .create_index("users", "email_idx", vec!["email".into()], true)
+        .is_err());
+    c.create_index("users", "email_idx", vec!["email".into()], false)
+        .expect("failed build rollback");
+    assert_eq!(
+        c.lookup_index("users", "email_idx", &Value::String("same".into()))
+            .expect("lookup")
+            .len(),
+        2
+    );
+    assert!(c
+        .insert("users", Document::from([("id".into(), Value::Integer(1))]))
+        .is_err());
+}
+#[test]
+fn sql_boundaries_and_ordinary_tables() {
+    let db = Database::open(":memory:").expect("open");
+    let c = db.connect().expect("connect");
+    query(&c, "CREATE TABLE users");
+    for sql in [
+        "INSERT INTO users (id) VALUES (1)",
+        "DELETE FROM __fastdb_catalog",
+        "DELETE FROM [__fastdb_catalog]",
+        "DELETE FROM '__fastdb_catalog'",
+        "PRAGMA writable_schema=ON",
+        "SELECT 1; DELETE FROM __fastdb_catalog",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    query(
+        &c,
+        "CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT)",
+    );
+    query(&c, "CREATE TABLE IF NOT EXISTS accounts;");
+    query(&c, "INSERT INTO accounts VALUES (1, 'Alice')");
+    assert_eq!(
+        query(&c, "SELECT id FROM accounts")
+            .exactly_one()
+            .expect("one"),
+        vec![Value::Integer(1)]
+    );
+    query(&c, "CREATE TABLE copy AS SELECT * FROM accounts");
+    assert_eq!(
+        query(&c, "SELECT id FROM copy").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+}
+
+#[test]
+fn fastql_persistent_example_is_executable() {
+    let db = Database::open(":memory:").expect("open");
+    let c = db.connect().expect("connect");
+    query(&c, "CREATE TABLE users");
+    query(&c, "DEFINE FIELD name ON users TYPE string REQUIRED");
+    query(&c, "DEFINE FIELD profile.city ON users TYPE string");
+    query(&c, "CREATE UNIQUE INDEX users_name ON users (name)");
+    query(&c, "CREATE INDEX users_city ON users (profile.city)");
+    query(
+        &c,
+        "INSERT INTO users {name: 'Alice', profile: {city: 'Bangkok'}} RETURNING *",
+    );
+    assert_eq!(
+        c.lookup_index("users", "users_city", &Value::String("Bangkok".into()))
+            .expect("lookup")
+            .len(),
+        1
+    );
+    assert!(c
+        .execute("INSERT INTO users {name: 'Alice'}", &Parameters::new())
+        .is_err());
+    query(&c, "CREATE TABLE relational (name TEXT)");
+    query(&c, "CREATE INDEX relational_name ON relational (name)");
+}
+
+#[test]
+fn abrupt_exit_child() {
+    let Ok(path) = std::env::var("FASTDB_CRASH_TEST_PATH") else {
+        return;
+    };
+    let db = Database::open(&path).expect("open child");
+    let c = db.connect().expect("connect child");
+    query(&c, "CREATE TABLE users");
+    query(&c, "CREATE UNIQUE INDEX users_name ON users (name)");
+    query(
+        &c,
+        "INSERT INTO users {id: users:committed, name: 'durable'}",
+    );
+    query(&c, "BEGIN");
+    query(&c, "UPDATE users:committed {name: 'uncommitted'}");
+    query(&c, "INSERT INTO users {id: users:pending, name: 'pending'}");
+    // No destructors, close, or application rollback run at process exit.
+    std::process::exit(0);
+}
+#[test]
+fn recovery_after_abrupt_process_exit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("crash.db");
+    let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", "abrupt_exit_child", "--nocapture"])
+        .env("FASTDB_CRASH_TEST_PATH", &path)
+        .status()
+        .expect("child process");
+    assert!(status.success());
+    let db = Database::open(path.to_str().expect("path")).expect("recover");
+    let c = db.connect().expect("connect");
+    assert!(c.get(&record("pending")).expect("read pending").is_none());
+    assert_eq!(
+        c.lookup_index("users", "users_name", &Value::String("durable".into()))
+            .expect("committed index")
+            .len(),
+        1
+    );
+    assert!(c
+        .lookup_index("users", "users_name", &Value::String("uncommitted".into()))
+        .expect("uncommitted index")
+        .is_empty());
+}
+
+#[test]
+fn indexed_values_follow_numeric_null_and_record_identity() {
+    let db = Database::open(":memory:").expect("open");
+    let c = db.connect().expect("connect");
+    query(&c, "CREATE TABLE users");
+    query(&c, "CREATE UNIQUE INDEX scalar_key ON users (key)");
+    query(&c, "INSERT INTO users {id: users:a, key: 1}");
+    assert!(c
+        .execute(
+            "INSERT INTO users {id: users:b, key: 1.0}",
+            &Parameters::new()
+        )
+        .is_err());
+    assert!(c
+        .execute(
+            "INSERT INTO users {id: users:b, key: true}",
+            &Parameters::new()
+        )
+        .is_err());
+    query(&c, "INSERT INTO users {id: users:b, key: '1'}");
+    query(&c, "INSERT INTO users {id: users:c, key: null}");
+    query(&c, "INSERT INTO users {id: users:d}");
+    query(&c, "INSERT INTO users {id: users:e, key: users:a}");
+    assert_eq!(
+        c.lookup_index("users", "scalar_key", &Value::Number(1.0))
+            .expect("numeric equality")
+            .len(),
+        1
+    );
+    assert_eq!(
+        c.lookup_index("users", "scalar_key", &Value::Record(record("a")))
+            .expect("record identity")
+            .len(),
+        1
+    );
+    let forged = Value::Binary(
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"users\",\"key\":{\"String\":\"a\"}}}"
+            .to_vec(),
+    );
+    c.insert(
+        "users",
+        Document::from([
+            ("id".into(), Value::Record(record("binary"))),
+            ("key".into(), forged.clone()),
+        ]),
+    )
+    .expect("binary is distinct from record");
+    assert_eq!(
+        c.lookup_index("users", "scalar_key", &forged)
+            .expect("binary lookup")
+            .len(),
+        1
+    );
+}

@@ -3,6 +3,10 @@
 [workspace]
 resolver = "2"
 members = [
+    "fastdb/parser",
+    "fastdb/frontend",
+    "fastdb/cli",
+    "fastdb/tests",
     "bindings/java",
     "bindings/javascript",
     "bindings/javascript/sync",

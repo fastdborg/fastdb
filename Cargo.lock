@@ -1966,10 +1966,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastdb"
+version = "0.1.0"
+dependencies = [
+ "fastql-parser",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.16",
+ "turso_core",
+]
+
+[[package]]
+name = "fastdb-cli"
+version = "0.1.0"
+dependencies = [
+ "fastdb",
+ "serde_json",
+]
+
+[[package]]
+name = "fastdb-tests"
+version = "0.1.0"
+dependencies = [
+ "fastdb",
+ "fastql-parser",
+ "tempfile",
+ "turso_core",
+]
+
+[[package]]
 name = "fastdivide"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9afc2bd4d5a73106dd53d10d73d3401c2f32730ba2c0b93ddb888a8983680471"
+
+[[package]]
+name = "fastql-parser"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.16",
+]
 
 [[package]]
 name = "fastrand"
