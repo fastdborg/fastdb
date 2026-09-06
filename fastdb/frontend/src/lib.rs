@@ -240,11 +240,7 @@ impl Connection {
             &[text(&name)],
         )?;
         match rows.first().and_then(|r| r.first()) {
-            Some(EngineValue::Text(t)) => {
-                let collection: Collection = serde_json::from_str(t.as_str())?;
-                catalog::validate_version(&collection)?;
-                Ok(collection)
-            }
+            Some(EngineValue::Text(t)) => catalog::decode(t.as_str(), &name),
             None => Err(Error::NotFound(name)),
             _ => Err(Error::Storage("invalid collection metadata".into())),
         }
@@ -303,6 +299,9 @@ impl Connection {
         }
         if field.path[0] == "id" {
             return Err(Error::Validation("id has a fixed type".into()));
+        }
+        if let FieldType::Record(target) = &field.kind {
+            canonical(target)?;
         }
         self.check_definition(&field)?;
         self.atomic(|| {

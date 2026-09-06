@@ -31,6 +31,58 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
     }
     Ok(())
 }
+pub(crate) fn decode(metadata: &str, name: &str) -> Result<Collection> {
+    let c: Collection = serde_json::from_str(metadata)
+        .map_err(|e| Error::Storage(format!("invalid collection metadata: {e}")))?;
+    let validate = || -> Result<()> {
+        validate_version(&c)?;
+        if canonical(name)? != name || c.name != name {
+            return Err(Error::Storage("collection metadata name mismatch".into()));
+        }
+        let storage = |prefix: &str, name: &str| {
+            format!(
+                "{prefix}{}",
+                name.as_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            )
+        };
+        if c.storage != storage("__fastdb_c_", name) {
+            return Err(Error::Storage(
+                "collection storage identity mismatch".into(),
+            ));
+        }
+        let mut paths = std::collections::BTreeSet::new();
+        for field in &c.fields {
+            crate::validate_path(&field.path)?;
+            if field.path[0] == "id" || !paths.insert(&field.path) {
+                return Err(Error::Storage(
+                    "invalid or duplicate field definition".into(),
+                ));
+            }
+            if let FieldType::Record(target) = &field.kind {
+                // The Rust field API has always accepted case-insensitive
+                // record targets; validate the name without rejecting that form.
+                canonical(target)?;
+            }
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for index in &c.indexes {
+            crate::validate_path(&index.path)?;
+            if canonical(&index.name)? != index.name
+                || !names.insert(&index.name)
+                || index.storage != storage("__fastdb_i_", &index.name)
+            {
+                return Err(Error::Storage("invalid index identity".into()));
+            }
+            compatible_index(&c, &index.path)?;
+        }
+        Ok(())
+    };
+    validate().map_err(|e| Error::Storage(format!("invalid collection metadata: {e}")))?;
+    Ok(c)
+}
 pub(crate) fn compatible_index(c: &Collection, path: &[String]) -> Result<()> {
     for field in &c.fields {
         let incompatible = if field.path == path {
@@ -70,17 +122,18 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
 }
 impl Connection {
     fn collections(&self) -> Result<Vec<Collection>> {
-        self.run("SELECT metadata FROM __fastdb_catalog ORDER BY name", &[])?
-            .into_iter()
-            .map(|row| match &row[0] {
-                EngineValue::Text(t) => {
-                    let collection: Collection = serde_json::from_str(t.as_str())?;
-                    validate_version(&collection)?;
-                    Ok(collection)
-                }
-                _ => Err(Error::Storage("invalid catalog entry".into())),
-            })
-            .collect()
+        self.run(
+            "SELECT name,metadata FROM __fastdb_catalog ORDER BY name",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| match row.as_slice() {
+            [EngineValue::Text(name), EngineValue::Text(metadata)] => {
+                decode(metadata.as_str(), name.as_str())
+            }
+            _ => Err(Error::Storage("invalid catalog entry".into())),
+        })
+        .collect()
     }
     pub fn upsert(&self, table: &str, mut doc: Document) -> Result<Document> {
         self.atomic(|| {
@@ -329,4 +382,125 @@ impl Connection {
 }
 fn object_row(names: &[String], row: Vec<Value>) -> Value {
     Value::Object(names.iter().cloned().zip(row).collect())
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    #[test]
+    fn malformed_metadata_cannot_redirect_storage_or_weaken_definitions() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let q = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+        q("CREATE TABLE docs");
+        q("DEFINE FIELD value ON docs TYPE integer REQUIRED");
+        q("CREATE UNIQUE INDEX value_idx ON docs(value)");
+        q("INSERT INTO docs {value:1}");
+        q("CREATE TABLE sentinel(value INTEGER)");
+        q("INSERT INTO sentinel VALUES (99)");
+        let original = serde_json::to_value(c.catalog("docs").unwrap()).unwrap();
+        let mutations: Vec<(&str, serde_json::Value)> = vec![
+            ("/name", "other".into()),
+            ("/storage", "sentinel".into()),
+            ("/storage", "__fastdb_c_6f74686572".into()),
+            ("/fields/0/path", serde_json::json!([])),
+            ("/fields/0/path", serde_json::json!(["id"])),
+            (
+                "/fields/0/kind",
+                serde_json::json!({"Record":"__fastdb_bad"}),
+            ),
+            ("/fields/0/kind", serde_json::json!({"Vector":0})),
+            ("/fields/0/kind", "Object".into()),
+            (
+                "/fields",
+                serde_json::json!([original["fields"][0], original["fields"][0]]),
+            ),
+            ("/indexes/0/name", "VALUE_IDX".into()),
+            ("/indexes/0/storage", "sentinel".into()),
+            ("/indexes/0/path", serde_json::json!([""])),
+            (
+                "/indexes",
+                serde_json::json!([original["indexes"][0], original["indexes"][0]]),
+            ),
+        ];
+        let mut invalid = vec!["{".to_owned(), "null".into()];
+        for (path, value) in mutations {
+            let mut metadata = original.clone();
+            *metadata.pointer_mut(path).unwrap() = value;
+            invalid.push(metadata.to_string());
+        }
+        for metadata in invalid {
+            c.run(
+                "UPDATE __fastdb_catalog SET metadata=?1 WHERE name='docs'",
+                &[text(&metadata)],
+            )
+            .unwrap();
+            assert_eq!(
+                c.catalog("docs").unwrap_err().code(),
+                "FDB_STORAGE",
+                "{metadata}"
+            );
+            assert_eq!(
+                c.collections().unwrap_err().code(),
+                "FDB_STORAGE",
+                "{metadata}"
+            );
+            assert_eq!(
+                c.execute("DROP TABLE docs", &Parameters::new())
+                    .unwrap_err()
+                    .code(),
+                "FDB_STORAGE",
+                "{metadata}"
+            );
+            assert_eq!(
+                c.run("SELECT value FROM sentinel", &[]).unwrap(),
+                vec![vec![EngineValue::from_i64(99)]]
+            );
+        }
+        c.run(
+            "UPDATE __fastdb_catalog SET metadata=?1 WHERE name='docs'",
+            &[text(&original.to_string())],
+        )
+        .unwrap();
+        assert_eq!(
+            c.lookup_index("docs", "value_idx", &Value::Integer(1))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(c
+            .execute("INSERT INTO docs {value:1.5}", &Parameters::new())
+            .is_err());
+        let mut legacy = original;
+        legacy.as_object_mut().unwrap().remove("version");
+        c.run(
+            "UPDATE __fastdb_catalog SET metadata=?1 WHERE name='docs'",
+            &[text(&legacy.to_string())],
+        )
+        .unwrap();
+        assert_eq!(c.catalog("docs").unwrap().version, 1);
+        assert_eq!(
+            c.lookup_index("docs", "value_idx", &Value::Integer(1))
+                .unwrap()
+                .len(),
+            1
+        );
+        let reference = |target: &str| crate::Field {
+            path: vec!["parent".into()],
+            kind: FieldType::Record(target.into()),
+            required: false,
+            nullable: true,
+            check: None,
+        };
+        assert_eq!(
+            c.define_field("docs", reference("__fastdb_bad"), false)
+                .unwrap_err()
+                .code(),
+            "FDB_VALIDATION"
+        );
+        c.define_field("docs", reference("Docs"), false).unwrap();
+        assert!(
+            matches!(&c.catalog("docs").unwrap().fields[1].kind,FieldType::Record(target) if target=="Docs")
+        );
+    }
 }
