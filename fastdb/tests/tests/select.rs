@@ -1651,3 +1651,92 @@ fn quoted_internal_functions_are_rejected_across_collection_queries_and_writes()
         ]]
     );
 }
+
+#[test]
+fn mixed_native_columns_preserve_binary_equality_affinity_and_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(
+        &c,
+        "CREATE TABLE native(value BLOB,n INTEGER,t TEXT COLLATE NOCASE)",
+    );
+    query(&c, "CREATE TABLE baseline(value BLOB,n TEXT,t TEXT)");
+    for value in ["X'31'", "X'32'", "NULL"] {
+        query(
+            &c,
+            &format!("INSERT INTO docs (value,n,t) VALUES ({value},'1','hello')"),
+        );
+        query(
+            &c,
+            &format!("INSERT INTO baseline VALUES ({value},'1','hello')"),
+        );
+    }
+    query(
+        &c,
+        "INSERT INTO native VALUES (X'31',1,'HELLO'),(X'32',2,'other'),(NULL,3,NULL)",
+    );
+    for predicate in [
+        "d.value=n.value",
+        "n.value=d.value",
+        "d.value<>n.value",
+        "d.value IS n.value",
+        "n.value IS NOT d.value",
+        "d.n=n.n",
+        "n.n=d.n",
+        "d.t=n.t",
+        "d.t COLLATE NOCASE=n.t",
+        "d.t COLLATE BINARY=n.t COLLATE NOCASE",
+        "n.t=d.t",
+        "d.value=(n.value COLLATE BINARY)",
+    ] {
+        let template = format!("SELECT count(*) FROM SOURCE d JOIN native n ON {predicate}");
+        assert_eq!(
+            query(&c, &template.replace("SOURCE", "docs")).rows,
+            query(&c, &template.replace("SOURCE", "baseline")).rows,
+            "{predicate}"
+        );
+    }
+    assert_eq!(
+        query(
+            &c,
+            "SELECT count(*) FROM docs d LEFT JOIN native n ON d.value=n.value WHERE n.n IS NULL"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    query(&c, "CREATE TABLE record_bytes(value BLOB)");
+    let record = Value::Record(Record {
+        table: "docs".into(),
+        key: Key::String("a".into()),
+    });
+    c.execute(
+        "INSERT INTO record_bytes VALUES ($value)",
+        &Parameters::from([("$value".into(), record.clone())]),
+    )
+    .unwrap();
+    let bytes = query(&c, "SELECT value FROM record_bytes").rows[0][0].clone();
+    query(&c, "CREATE TABLE typed");
+    c.execute(
+        "INSERT INTO typed (ref,data) VALUES ($ref,$data)",
+        &Parameters::from([("$ref".into(), record), ("$data".into(), bytes)]),
+    )
+    .unwrap();
+    assert_eq!(query(&c, "SELECT t.ref=r.value,t.data=r.value,r.value=t.ref,r.value=t.data FROM typed t JOIN record_bytes r ON 1").rows,
+        vec![vec![Value::Integer(0),Value::Integer(1),Value::Integer(0),Value::Integer(1)]]);
+    query(&c, "CREATE TABLE copied(value BLOB)");
+    query(&c, "BEGIN");
+    query(
+        &c,
+        "INSERT INTO copied SELECT d.value FROM docs d JOIN native n ON d.value=n.value",
+    );
+    assert_eq!(
+        query(&c, "SELECT hex(value) FROM copied ORDER BY value").rows,
+        vec![
+            vec![Value::String("31".into())],
+            vec![Value::String("32".into())]
+        ]
+    );
+    query(&c, "ROLLBACK");
+    assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
+}

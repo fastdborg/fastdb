@@ -486,9 +486,42 @@ impl Scope {
                     Operator::Equals | Operator::NotEquals | Operator::Is | Operator::IsNot
                 ) {
                     let (mut left, mut right) = (*a.clone(), *b.clone());
-                    if self.comparison_key(&mut left)? && self.comparison_key(&mut right)? {
+                    let left_key = self.comparison_key(&mut left)?;
+                    let right_key = self.comparison_key(&mut right)?;
+                    if left_key && right_key {
                         **a = left;
                         **b = right;
+                        return Ok(());
+                    }
+                    let native = if !left_key && right_key && native_column_reference(&left) {
+                        Some((&left, true))
+                    } else if left_key && !right_key && native_column_reference(&right) {
+                        Some((&right, false))
+                    } else {
+                        None
+                    };
+                    if let Some((column, on_left)) = native {
+                        // Only BLOB values need a comparison key. Keep the raw
+                        // column in the other branch so native affinity and
+                        // implicit collation survive expression lowering.
+                        let key = format!("__fastdb_unwrap(__fastdb_pack({column}))");
+                        let binary = if on_left {
+                            format!("{key} {op} {right}")
+                        } else {
+                            format!("{left} {op} {key}")
+                        };
+                        // Accessor arguments refer to physical BLOB columns.
+                        // Visit the native column first so their incidental
+                        // collation cannot hide its declared collation. Keep
+                        // explicit COLLATE precedence in the original order.
+                        let scalar = if !on_left && !native_column_collation(column) {
+                            format!("{right} {op} {left}")
+                        } else {
+                            format!("{left} {op} {right}")
+                        };
+                        *expr = expression(&format!(
+                            "CASE WHEN typeof({column})='blob' THEN {binary} ELSE {scalar} END"
+                        ))?;
                         return Ok(());
                     }
                 }
@@ -772,6 +805,31 @@ fn source(connection: &Connection, table: &SelectTable) -> Result<Source> {
         collection,
     })
 }
+fn native_column_collation(expr: &Expr) -> bool {
+    match expr {
+        Expr::Collate(_, _) => true,
+        Expr::Unary(UnaryOperator::Positive, value) => native_column_collation(value),
+        Expr::Parenthesized(values) if values.len() == 1 => native_column_collation(&values[0]),
+        _ => false,
+    }
+}
+
+fn native_column_reference(expr: &Expr) -> bool {
+    match expr {
+        Expr::Id(_)
+        | Expr::Name(_)
+        | Expr::Qualified(_, _)
+        | Expr::DoublyQualified(_, _, _)
+        | Expr::Column { .. }
+        | Expr::RowId { .. } => true,
+        Expr::Collate(value, _) | Expr::Unary(UnaryOperator::Positive, value) => {
+            native_column_reference(value)
+        }
+        Expr::Parenthesized(values) if values.len() == 1 => native_column_reference(&values[0]),
+        _ => false,
+    }
+}
+
 // Alias values are already lowered. Convert their native result without walking
 // through generated typed protocol calls a second time.
 fn native_alias_key(expr: &mut Expr) -> Result<bool> {
