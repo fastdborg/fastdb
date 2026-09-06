@@ -616,3 +616,70 @@ fn binary_check_truth_conditions_persist_and_reject_false_payloads() {
         1
     );
 }
+
+#[test]
+fn simple_case_checks_match_binary_values_and_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("simple-case.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,payload) VALUES (docs:saved,1,X'31')",
+        );
+        q(&c, "DEFINE FIELD valid ON docs TYPE integer CHECK(CASE payload WHEN X'31' THEN 1 ELSE 0 END)");
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        for value in ["X'32'", "X''", "NULL"] {
+            let sql = format!("UPDATE docs SET payload={value}");
+            assert_eq!(
+                c.execute(&sql, &Parameters::new()).unwrap_err().code(),
+                "FDB_VALIDATION"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        }
+        q(&c, "ROLLBACK");
+        for (field, check) in [
+            (
+                "functions",
+                "CASE substr(payload,1,1) WHEN X'31' THEN 1 ELSE 0 END",
+            ),
+            ("reversed", "CASE X'31' WHEN payload THEN 1 ELSE 0 END"),
+            (
+                "casts",
+                "CASE CAST(payload AS INTEGER) WHEN 1 THEN 1 ELSE 0 END",
+            ),
+            (
+                "cast_text",
+                "CASE CAST(payload AS INTEGER) WHEN '1' THEN 0 ELSE 1 END",
+            ),
+            (
+                "nested",
+                "CASE (CASE WHEN valid THEN payload ELSE X'' END) WHEN X'31' THEN 1 ELSE 0 END",
+            ),
+        ] {
+            q(&c, &format!("UPDATE docs SET {field}=1"));
+            q(
+                &c,
+                &format!("DEFINE FIELD {field} ON docs TYPE integer CHECK({check})"),
+            );
+        }
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'32'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    q(&c, "UPDATE docs SET payload=X'31'");
+    assert_eq!(
+        c.lookup_index("docs", "docs_payload", &Value::Binary(b"1".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}

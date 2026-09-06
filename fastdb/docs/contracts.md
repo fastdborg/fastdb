@@ -361,4 +361,11 @@ A persistent regression accepts positive and negative numeric binary payloads, r
 
 SQL-shaped simple CASE now normalizes a supported base expression and WHEN operands through the same collision-resistant scalar conversion used by membership. This handles typed binary fields, literals, function results and casts; explicit collation and cast affinity remain attached to the comparison operands. The lowered expression remains a simple CASE with one base expression, preserving native base-evaluation and branch-selection structure. Typed result branches retain their existing handling.
 
-Differential tests cover reversed literal/field roles, native functions on either side, numeric cast affinity, NOCASE text casts, NULL matching and binary results. UPDATE/RETURNING with rollback verifies index restoration. CHECK uses separate lowering and still needs corresponding simple-CASE propagation; arbitrary relational-column affinity/type flow and general equality/resource qualification remain open.
+Differential tests cover reversed literal/field roles, native functions on either side, numeric cast affinity, NOCASE text casts, NULL matching and binary results. UPDATE/RETURNING with rollback verifies index restoration. CHECK uses separate lowering with corresponding simple-CASE propagation described below; arbitrary relational-column affinity/type flow and general equality/resource qualification remain open.
+
+
+## CHECK simple CASE comparison keys
+
+CHECK simple CASE now converts its base and WHEN values to collision-resistant scalar keys. Direct candidate fields keep their typed keys; native results are packed before conversion. Parentheses, unary plus, explicit built-in collation, casts and nested CASE result branches retain their appropriate comparison handling. Function and expression eligibility is validated before generated internal conversions are added.
+
+Persistent tests cover literal/field reversal, substr results, nested CASE, numeric casts, rejected updates, transaction/index preservation and reopened enforcement. The pinned engine does not match integer 1 with text '1' in simple CASE even with an integer cast on the base; an ordinary-table probe verified this behavior, and the regression preserves it. This is not a promise of full SQLite CASE affinity compatibility. Reapply affected prototype definitions to validate existing documents. General CHECK equality/membership literal propagation and resource bounds remain unfinished; stored encodings are unchanged.

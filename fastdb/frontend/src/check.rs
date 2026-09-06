@@ -165,6 +165,72 @@ fn balance_boolean(expr: &mut Expr) {
     }
     *expr = terms.pop().expect("boolean chain contains operands");
 }
+// Candidate references already have typed keys. Native expression results must
+// be packed first so a binary payload cannot impersonate a record key.
+fn lower_comparison(
+    expr: &mut Expr,
+    doc: Option<&Document>,
+    bindings: &mut Vec<EngineValue>,
+) -> Result<()> {
+    if bind_field(expr, doc, bindings, FieldBinding::Key)? {
+        return Ok(());
+    }
+    match expr {
+        Expr::Parenthesized(values) => {
+            for value in values {
+                lower_comparison(value, doc, bindings)?;
+            }
+            return Ok(());
+        }
+        Expr::Unary(UnaryOperator::Positive, value) => {
+            return lower_comparison(value, doc, bindings)
+        }
+        Expr::Collate(value, name) => {
+            if !matches!(
+                name.as_str().to_ascii_lowercase().as_str(),
+                "binary" | "nocase" | "rtrim"
+            ) {
+                return Err(invalid("CHECK requires a built-in collation"));
+            }
+            return lower_comparison(value, doc, bindings);
+        }
+        Expr::Case {
+            base,
+            when_then_pairs,
+            else_expr,
+        } => {
+            if let Some(value) = base {
+                lower_comparison(value, doc, bindings)?;
+            }
+            for (condition, value) in when_then_pairs {
+                if base.is_none() {
+                    lower_mode(condition, doc, bindings, FieldBinding::Sql)?;
+                } else {
+                    lower_comparison(condition, doc, bindings)?;
+                }
+                lower_comparison(value, doc, bindings)?;
+            }
+            if let Some(value) = else_expr {
+                lower_comparison(value, doc, bindings)?;
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+    let cast_type = match expr {
+        Expr::Cast { type_name, .. } => Some(type_name.clone()),
+        _ => None,
+    };
+    lower_mode(expr, doc, bindings, FieldBinding::Sql)?;
+    *expr = parse_check(&format!("__fastdb_unwrap(__fastdb_pack({expr}))"))?;
+    if let Some(type_name) = cast_type {
+        *expr = Expr::Cast {
+            expr: Box::new(expr.clone()),
+            type_name,
+        };
+    }
+    Ok(())
+}
 fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue>) -> Result<()> {
     lower_mode(expr, doc, bindings, FieldBinding::Key)
 }
@@ -301,13 +367,13 @@ fn lower_mode(
             else_expr,
         } => {
             if let Some(e) = base {
-                lower(e, doc, bindings)?;
+                lower_comparison(e, doc, bindings)?;
             }
             for (a, b) in when_then_pairs {
                 if base.is_none() {
                     lower_mode(a, doc, bindings, FieldBinding::Sql)?;
                 } else {
-                    lower(a, doc, bindings)?;
+                    lower_comparison(a, doc, bindings)?;
                 }
                 lower_mode(b, doc, bindings, binding)?;
             }
