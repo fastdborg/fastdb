@@ -497,3 +497,7 @@ Current collection CTE support requires references to earlier definitions; forwa
 A leading nonrecursive WITH on INSERT SELECT now uses the same typed source lowering as source-form WITH. Collection targets retain positional field mapping, evaluated-value validation, index maintenance and statement rollback. Native targets retain their conflict policies, native RETURNING and one-statement execution. Native-only statements still delegate their original SQL.
 
 The managed-source route scopes the leading CTE definitions to the SELECT source. Subqueries and table-membership expressions in native UPSERT/RETURNING clauses are rejected before execution on this route, preventing a CTE reference from silently resolving to an unrelated physical table after lowering. Ordinary target-column RETURNING remains supported. Leading-WITH VALUES, UPDATE/DELETE, dual outer/source WITH scopes and broader cross-clause CTE typing remain unfinished.
+
+## CTE cancellation verification
+
+Controlled cancellation checks now cover early mixed-CTE read/write execution and collection inserts from CTE/derived sources after engine change counters advance. At the tested points, interruption propagates as FDB_CANCELLED, existing outer transactions remain active, prior work survives, and no partial target documents or index entries remain. Retrying after clearing the test hook succeeds; explicit rollback restores the committed state. These tests do not guarantee outer-transaction preservation for all engine errors or establish a complete request deadline.

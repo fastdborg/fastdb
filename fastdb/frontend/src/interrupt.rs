@@ -55,6 +55,8 @@ mod tests {
             "UPDATE docs SET value=value+100",
             "DELETE FROM docs WHERE value>0",
             "INSERT INTO docs (value) SELECT value+100 FROM docs",
+            "WITH a AS (SELECT value+100 AS value FROM docs) INSERT INTO docs (value) SELECT value FROM a",
+            "INSERT INTO docs (value) SELECT a.value FROM (SELECT value+100 AS value FROM docs) a",
         ]
         .into_iter()
         .flat_map(|statement| [false, true].map(|outer| (statement, outer)))
@@ -279,5 +281,70 @@ mod tests {
             .lookup_index("docs", "values_idx", &Value::Integer(1))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn interrupted_cte_lowering_and_reads_do_not_fall_back_or_run_writes() {
+        use std::sync::atomic::AtomicUsize;
+        let statements = [
+            "WITH l AS (SELECT * FROM labels), a AS (SELECT value FROM docs) SELECT a.value,l.value FROM a JOIN l ON a.value=l.value",
+            "WITH l AS (SELECT * FROM labels), a AS (SELECT value FROM docs) INSERT INTO copied (value) SELECT a.value FROM a JOIN l ON a.value=l.value",
+        ];
+        for statement in statements {
+            for after in [1, 5, 20] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                q(&c, "CREATE TABLE docs");
+                q(&c, "CREATE TABLE copied");
+                q(&c, "CREATE UNIQUE INDEX copied_value ON copied(value)");
+                q(&c, "CREATE TABLE labels(value INTEGER)");
+                q(&c, "CREATE TABLE prior(value INTEGER)");
+                for value in 1..=3 {
+                    q(&c, &format!("INSERT INTO docs {{value:{value}}}"));
+                    q(&c, &format!("INSERT INTO labels VALUES ({value})"));
+                }
+                q(&c, "BEGIN");
+                q(&c, "INSERT INTO prior VALUES (99)");
+                let steps = Arc::new(AtomicUsize::new(0));
+                let count = steps.clone();
+                c.engine.set_progress_handler(
+                    1,
+                    Some(Box::new(move || {
+                        count.fetch_add(1, Ordering::SeqCst) + 1 == after
+                    })),
+                );
+                let report = c.execute_report(statement, &Parameters::new());
+                c.engine.set_progress_handler(0, None);
+                assert!(
+                    steps.load(Ordering::SeqCst) >= after,
+                    "interruption point not reached"
+                );
+                assert_eq!(
+                    report.result.unwrap_err().code(),
+                    "FDB_CANCELLED",
+                    "step {after}: {statement}"
+                );
+                assert_eq!(report.transaction_after, crate::TransactionState::Active);
+                assert_eq!(
+                    q(&c, "SELECT * FROM prior").rows,
+                    vec![vec![Value::Integer(99)]]
+                );
+                assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
+                for value in 1..=3 {
+                    assert!(c
+                        .lookup_index("copied", "copied_value", &Value::Integer(value))
+                        .unwrap()
+                        .is_empty());
+                }
+                assert_eq!(
+                    q(&c, "SELECT count(*) FROM docs").rows,
+                    vec![vec![Value::Integer(3)]]
+                );
+                q(&c, statement);
+                q(&c, "ROLLBACK");
+                assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
+                assert!(q(&c, "SELECT * FROM prior").rows.is_empty());
+            }
+        }
     }
 }
