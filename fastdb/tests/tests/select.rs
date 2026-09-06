@@ -1284,3 +1284,47 @@ fn cast_and_scalar_membership_keep_native_affinity() {
         );
     }
 }
+
+#[test]
+fn binary_predicate_contexts_use_native_truth_conversion() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(data BLOB)");
+    for hex in ["31", "30", "2D32", "", "6162"] {
+        query(&c, &format!("INSERT INTO docs (data) VALUES (X'{hex}')"));
+        query(&c, &format!("INSERT INTO baseline VALUES (X'{hex}')"));
+    }
+    query(&c, "INSERT INTO docs (data) VALUES (NULL)");
+    query(&c, "INSERT INTO baseline VALUES (NULL)");
+    for template in [
+        "SELECT data FROM SOURCE WHERE data ORDER BY data",
+        "SELECT CASE WHEN data THEN 1 ELSE 0 END AS truth FROM SOURCE ORDER BY data",
+        "SELECT data FROM SOURCE GROUP BY data HAVING data ORDER BY data",
+        "SELECT count(*) FILTER (WHERE data) AS total FROM SOURCE",
+        "SELECT sum(1) FILTER (WHERE data) AS total FROM SOURCE",
+        "SELECT count(*) AS total FROM SOURCE a JOIN SOURCE b ON a.data",
+        "SELECT count(*) AS total FROM SOURCE a LEFT JOIN SOURCE b ON a.data",
+    ] {
+        assert_eq!(
+            query(&c, &template.replace("SOURCE", "docs")).rows,
+            query(&c, &template.replace("SOURCE", "baseline")).rows,
+            "{template}"
+        );
+    }
+    query(&c, "CREATE INDEX docs_data ON docs(data)");
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(&c, "DELETE FROM docs WHERE data RETURNING data")
+            .rows
+            .len(),
+        2
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(b"1".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}

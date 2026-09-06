@@ -227,7 +227,11 @@ impl Scope {
                 self.lower(base)?;
             }
             for (condition, value) in when_then_pairs {
-                self.lower(condition)?;
+                if base.is_none() {
+                    self.sql_argument(condition)?;
+                } else {
+                    self.lower(condition)?;
+                }
                 self.typed(value)?;
             }
             if let Some(value) = else_expr {
@@ -544,7 +548,11 @@ impl Scope {
                     self.lower(e)?;
                 }
                 for (a, b) in when_then_pairs {
-                    self.lower(a)?;
+                    if base.is_none() {
+                        self.sql_argument(a)?;
+                    } else {
+                        self.lower(a)?;
+                    }
                     self.lower(b)?;
                 }
                 if let Some(e) = else_expr {
@@ -578,7 +586,7 @@ impl Scope {
                     self.lower(&mut s.expr)?;
                 }
                 if let Some(e) = &mut filter_over.filter_clause {
-                    self.lower(e)?;
+                    self.sql_argument(e)?;
                 }
             }
             Expr::FunctionCallStar { filter_over, .. } => {
@@ -586,7 +594,7 @@ impl Scope {
                     self.lower_window(window)?;
                 }
                 if let Some(e) = &mut filter_over.filter_clause {
-                    self.lower(e)?;
+                    self.sql_argument(e)?;
                 }
             }
             Expr::Literal(_)
@@ -1578,7 +1586,7 @@ impl Connection {
                 lower_source(&mut join.table, &scope.sources[i + 1], None)?;
                 if let Some(constraint) = &mut join.constraint {
                     match constraint {
-                        JoinConstraint::On(e) => scope.lower(e)?,
+                        JoinConstraint::On(e) => scope.sql_argument(e)?,
                         JoinConstraint::Using(_) => return Err(unsupported("USING joins")),
                     }
                 }
@@ -1589,7 +1597,7 @@ impl Connection {
             }
         }
         if let Some(expr) = where_clause {
-            scope.lower(expr)?;
+            scope.sql_argument(expr)?;
         }
         if let Some(group) = group_by {
             // Ordinals refer to the original expression: grouping the encoded
@@ -1620,7 +1628,7 @@ impl Connection {
                         }
                     }
                 }
-                scope.lower(expr)?;
+                scope.sql_argument(expr)?;
                 // Window source expressions retain their own name-resolution scope.
                 if !scope.sources.is_empty() {
                     scope.standalone_aliases.borrow_mut().clear();

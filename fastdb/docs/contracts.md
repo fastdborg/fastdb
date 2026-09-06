@@ -326,7 +326,7 @@ Differential tests cover BLOB, INTEGER, REAL, NUMERIC and TEXT casts; collation 
 
 SQL-shaped expressions now pass preserved binary payloads to arithmetic (+, -, *, /, %), concatenation, bitwise/shift operators, AND/OR, unary minus, bitwise complement and NOT. Native coercion and NULL behavior are delegated to the pinned engine. Unary plus preserves the typed operand while retaining its SQL role of removing affinity. Equality and managed index keys keep their separate collision-resistant representation.
 
-Differential tests cover numeric ASCII, nonnumeric, empty and NULL binary values, nested arithmetic and membership, unary-plus projection/function input, and UPDATE/RETURNING with rollback/index restoration. CHECK uses a separate lowering path; its matching operator correction is described below. Bare binary truth predicates, CASE conditions, LIKE/JSON operators, general equality type propagation and full aggregate/window behavior still need qualification. Persisted encodings are unchanged.
+Differential tests cover numeric ASCII, nonnumeric, empty and NULL binary values, nested arithmetic and membership, unary-plus projection/function input, and UPDATE/RETURNING with rollback/index restoration. CHECK uses a separate lowering path; its matching operator correction is described below. Bare binary truth predicates and searched CASE conditions are covered below; LIKE/JSON operators, simple CASE equality propagation, general equality type propagation and full aggregate/window behavior still need qualification. Persisted encodings are unchanged.
 
 
 ## CHECK scalar operator payloads
@@ -341,3 +341,10 @@ A persistent regression defines constraints over existing binary data, rejects i
 CHECK lowering balances homogeneous AND and OR chains before engine preparation. It preserves operand order and does not reorder unlike operators or cross other expression forms. Explicit parentheses preserve the balanced tree through SQL serialization. This reduces preparation recursion for long left-associated chains; it does not change stored CHECK text or catalog versions.
 
 A regression reproducing a preparation stack overflow now accepts the combined binary-operator CHECK on the default Rust test thread. Coverage includes a long OR chain with NULL, existing-data definition, candidate updates, retained transaction state and index restoration after rejected updates. General expression depth/input limits and stack safety outside these chains remain release work.
+
+
+## Binary truth predicates
+
+WHERE, HAVING, JOIN ON, aggregate FILTER and searched CASE conditions now unwrap preserved binary operands to payload bytes before native truth conversion. Simple CASE keeps its existing equality-oriented lowering. Differential tests against BLOB columns cover numeric ASCII, nonnumeric, empty and NULL values, inner/left joins, count/sum filters, grouped HAVING and DELETE/RETURNING rollback with index restoration. The change does not add outer-join index pushdown.
+
+CHECK has a separate candidate-binding path; bare CHECK truth predicates and searched CASE conditions still need the matching correction. General expression type propagation and resource accounting remain release work.
