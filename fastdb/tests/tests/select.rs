@@ -1447,3 +1447,67 @@ fn native_binary_aliases_keep_comparison_keys_in_having_and_order() {
                    query(&c, &template.replace("SOURCE", "baseline")).rows, "{template}");
     }
 }
+
+#[test]
+fn where_aliases_resolve_source_expressions_and_keep_index_candidates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(city TEXT,amount INTEGER)");
+    for (city, amount) in [("A", 1), ("B", 2)] {
+        query(
+            &c,
+            &format!("INSERT INTO docs {{city:'{city}',amount:{amount},place:'stored'}}"),
+        );
+        query(
+            &c,
+            &format!("INSERT INTO baseline VALUES ('{city}',{amount})"),
+        );
+    }
+    for template in [
+        "SELECT city AS place FROM SOURCE WHERE place='A'",
+        "SELECT lower(city) AS place FROM SOURCE WHERE place='a'",
+        "SELECT amount+1 AS next FROM SOURCE WHERE next>2",
+        "SELECT 7 AS key FROM SOURCE WHERE key=7 ORDER BY city",
+        "SELECT city AS place FROM SOURCE WHERE place IN ('A','B') ORDER BY place",
+    ] {
+        assert_eq!(
+            query(&c, &template.replace("SOURCE", "docs")).rows,
+            query(&c, &template.replace("SOURCE", "baseline")).rows,
+            "{template}"
+        );
+    }
+    assert_eq!(
+        query(
+            &c,
+            "SELECT city AS place FROM docs d WHERE d.place='stored'"
+        )
+        .rows
+        .len(),
+        2
+    );
+    query(&c, "CREATE INDEX docs_city ON docs(city)");
+    let plan = query(
+        &c,
+        "EXPLAIN QUERY PLAN SELECT city AS place FROM docs WHERE place='A'",
+    );
+    assert!(format!("{:?}", plan.rows).contains("SEARCH i"));
+    assert!(c
+        .execute(
+            "SELECT sum(amount) AS total FROM docs WHERE total>1",
+            &Parameters::new()
+        )
+        .is_err());
+    query(&c, "CREATE TABLE results");
+    query(&c, "BEGIN");
+    query(
+        &c,
+        "INSERT INTO results (place) SELECT city AS place FROM docs WHERE place='A'",
+    );
+    assert_eq!(
+        query(&c, "SELECT place FROM results").rows,
+        vec![vec![Value::String("A".into())]]
+    );
+    query(&c, "ROLLBACK");
+    assert!(query(&c, "SELECT place FROM results").rows.is_empty());
+}

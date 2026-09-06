@@ -418,3 +418,10 @@ Differential tests cover HAVING equality/membership with binary substr aliases, 
 Explicit projection aliases now resolve in unqualified GROUP BY references, including supported scalar expressions and COLLATE/parenthesis wrappers. Substitution uses the original source expression without recursively resolving its names as other aliases. Projected integer constants are protected from becoming a second ordinal; ordinal GROUP BY retains its existing source-expression path.
 
 For collections, an explicit alias takes precedence over a same-named stored field. Qualified paths retain stored-field meaning. This deterministic rule differs from the pinned ordinary relational GROUP BY column-first rule; it avoids data-dependent resolution as optional document fields appear. Ordinary relational delegation is unchanged. Tests cover expressions, constants, collation, stored-field collisions, binary/record keys and rejection of aggregate grouping aliases. WHERE aliases, composite keys, derived queries and broad volatile/resource qualification remain unfinished.
+
+
+## Collection WHERE aliases
+
+Collection WHERE now substitutes explicit projection aliases with their original source expressions before index-candidate selection. As in collection GROUP BY, an alias takes precedence over a same-named stored field; qualification addresses the stored field. Substitution does not recursively resolve source-expression names as other aliases. Ordinary relational statements retain native resolution.
+
+Tests cover direct/computed aliases, constants, membership, qualified collisions, a retained managed-index SEARCH plan, aggregate-alias rejection and collection-target INSERT SELECT rollback. INSERT SELECT from a collection into an ordinary relational target remains unsupported. Aliases are expression substitutions, not materialized variables or a single-evaluation guarantee for volatile expressions. JOIN ON aliases, mixed-column propagation, derived queries and full resource/volatile qualification remain unfinished.

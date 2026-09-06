@@ -1605,6 +1605,11 @@ impl Connection {
                 }
             }
         }
+        if !scope.sources.is_empty() {
+            if let Some(predicate) = where_clause {
+                expand_projection_aliases(predicate, &original_columns, false)?;
+            }
+        }
         let candidates = scope
             .sources
             .iter()
@@ -1666,7 +1671,7 @@ impl Connection {
             for expr in &mut group.exprs {
                 let ordinal = expand_group_position(expr, &original_columns)?;
                 if !ordinal && !scope.sources.is_empty() {
-                    expand_group_aliases(expr, &original_columns)?;
+                    expand_projection_aliases(expr, &original_columns, true)?;
                 }
                 scope.lower(expr)?;
             }
@@ -1868,14 +1873,18 @@ fn expand_group_position(expr: &mut Expr, columns: &[ResultColumn]) -> Result<bo
     Ok(true)
 }
 
-fn expand_group_aliases(expr: &mut Expr, columns: &[ResultColumn]) -> Result<()> {
+fn expand_projection_aliases(
+    expr: &mut Expr,
+    columns: &[ResultColumn],
+    protect_ordinals: bool,
+) -> Result<()> {
     let mut aliases = std::collections::BTreeMap::new();
     for column in columns {
         let ResultColumn::Expr(original, Some(alias)) = column else {
             continue;
         };
         if alias.is_explicit() {
-            let value = if projection_position(original).is_some() {
+            let value = if protect_ordinals && projection_position(original).is_some() {
                 expression(&format!("coalesce({original}, NULL)"))?
             } else {
                 *original.clone()
