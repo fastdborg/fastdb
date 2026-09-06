@@ -455,26 +455,64 @@ impl Scope {
         Ok(())
     }
 }
-fn public_expression_name(expr: &Expr) -> String {
-    let mut name = expr
-        .to_string()
-        .replace("__fastdb_record_value", "type::record")
-        .replace("__fastdb_fetch", "record::fetch");
-    for (internal, public) in [
-        ("string_slugify", "string::slugify"),
-        ("string_normalize", "string::normalize"),
-        ("record_id", "record::id"),
-        ("record_table", "record::table"),
-        ("array_new", "array::new"),
-        ("array_append", "array::append"),
-        ("doc_get", "doc::get"),
-        ("doc_has", "doc::has"),
-        ("doc_row", "doc::row"),
-    ] {
-        name = name.replace(&format!("__fastdb_h_{internal}"), public);
+fn public_expression_name(expr: &Expr) -> Result<String> {
+    use fastql_parser::Kind;
+    let sql = expr.to_string();
+    let tokens = fastql_parser::tokenize(&sql)?;
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut i = 0;
+    while i + 1 < tokens.len() {
+        let token = &tokens[i];
+        if !matches!(token.kind, Kind::Word | Kind::Identifier) || tokens[i + 1].text != "(" {
+            i += 1;
+            continue;
+        }
+        if token.text == "__fastdb_path" {
+            let mut end = i + 2;
+            let mut parts = Vec::new();
+            while end < tokens.len() && matches!(tokens[end].kind, Kind::Word | Kind::Identifier) {
+                parts.push(quote(&tokens[end].text));
+                end += 1;
+                if tokens.get(end).is_some_and(|t| t.text == ",") {
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+            if parts.len() >= 4 && tokens.get(end).is_some_and(|t| t.text == ")") {
+                out.push_str(&sql[copied..token.start]);
+                out.push_str(&parts.join("."));
+                copied = tokens[end].end;
+                i = end + 1;
+                continue;
+            }
+        }
+        let public = match token.text.as_str() {
+            "__fastdb_record_value" => Some("type::record"),
+            "__fastdb_fetch" => Some("record::fetch"),
+            "__fastdb_h_string_slugify" => Some("string::slugify"),
+            "__fastdb_h_string_normalize" => Some("string::normalize"),
+            "__fastdb_h_record_id" => Some("record::id"),
+            "__fastdb_h_record_table" => Some("record::table"),
+            "__fastdb_h_array_new" => Some("array::new"),
+            "__fastdb_h_array_append" => Some("array::append"),
+            "__fastdb_h_doc_get" => Some("doc::get"),
+            "__fastdb_h_doc_has" => Some("doc::has"),
+            "__fastdb_h_doc_row" => Some("doc::row"),
+            _ => None,
+        };
+        if let Some(public) = public {
+            out.push_str(&sql[copied..token.start]);
+            out.push_str(public);
+            copied = token.end;
+        }
+        i += 1;
     }
-    name
+    out.push_str(&sql[copied..]);
+    Ok(out)
 }
+
 fn unsupported(feature: &str) -> Error {
     Error::Unsupported(format!("{feature} is not implemented for collections"))
 }
@@ -1031,16 +1069,13 @@ impl Connection {
                 ResultColumn::Expr(expr, alias) => {
                     let mut expr = *expr.clone();
                     let field = scope.field(&expr)?;
-                    let name = alias
-                        .as_ref()
-                        .filter(|a| a.is_explicit())
-                        .map(|a| a.name().as_str().to_owned())
-                        .unwrap_or_else(|| {
-                            field.as_ref().map_or_else(
-                                || public_expression_name(&expr),
-                                |(_, path)| path.last().expect("nonempty path").clone(),
-                            )
-                        });
+                    let name = if let Some(alias) = alias.as_ref().filter(|a| a.is_explicit()) {
+                        alias.name().as_str().to_owned()
+                    } else if let Some((_, path)) = &field {
+                        path.last().expect("nonempty path").clone()
+                    } else {
+                        public_expression_name(&expr)?
+                    };
                     let is_fetch = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch");
                     fetched.push(is_fetch);
                     if is_fetch {

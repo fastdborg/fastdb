@@ -244,3 +244,10 @@ FastDB rewrites longer qualified paths into a temporary AST marker and resolves 
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 118 Rust tests, fourteen Node tests and TypeScript declarations. A new real-engine RETURNING regression covers deep qualified paths in object INSERT snapshots, UPDATE expressions/predicates and final snapshots, INSERT SELECT sources, DELETE snapshots, and empty-result metadata. It verifies boolean preservation, scalar-index replacement, validation-failure preservation, explicit DELETE rollback and data/index restoration after a failing RETURNING qualifier.
 
 The write parser now shares the existing bounded deep-path expansion before pinned AST parsing; UPDATE target normalization remains in place. No dependencies or upstream implementation files changed. This closes the initial write/RETURNING parsing gap for deep qualified paths within the supported query subset. Derived sources/CTEs, array subscripting, full expression/type propagation and release qualification remain open.
+
+
+## Public expression column labels — 2026-09-06
+
+A CLI probe reproduced internal deep-path markers in expression column names and accidental replacement of internal-looking substrings inside literal labels. Label rendering now recognizes function tokens and restores public dotted paths/namespaces without changing literal text.
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 119 Rust tests, fourteen Node tests and TypeScript declarations. A new collection SELECT regression verifies deep expression labels, literal text containing internal names or function-like syntax, namespace function labels, returned values and matching RETURNING labels. Repeating the CLI probe confirmed the corrected public path and unchanged literal label. No dependencies or upstream implementation files changed. Explicit aliases remain recommended for stable application labels; full result/type/compatibility and release qualification remain open.

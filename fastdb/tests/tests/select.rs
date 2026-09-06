@@ -284,3 +284,25 @@ fn deep_paths_handle_quoting_comments_and_depth_limits() {
         vec![vec![Value::Integer(9)]]
     );
 }
+
+#[test]
+fn expression_column_names_preserve_literals_and_render_public_paths() {
+    let (_db, c) = setup();
+    query(
+        &c,
+        "INSERT INTO users {id:users:labels,profile:{address:{city:'Paris'}}}",
+    );
+    let result=query(&c,"SELECT upper(users.profile.address.city), '__fastdb_fetch', coalesce(NULL,'__fastdb_h_doc_get'), record::id(id), lower('__fastdb_path(x,y,z,w)') FROM users WHERE id=users:labels");
+    assert_eq!(
+        result.columns[0],
+        r#"upper ("users"."profile"."address"."city")"#
+    );
+    assert_eq!(result.columns[1], "'__fastdb_fetch'");
+    assert!(result.columns[2].contains("'__fastdb_h_doc_get'"));
+    assert!(result.columns[3].starts_with("record::id"));
+    assert!(result.columns[4].contains("'__fastdb_path(x,y,z,w)'"));
+    assert_eq!(result.rows[0][0], Value::String("PARIS".into()));
+    let returned=query(&c,"UPDATE users SET profile.address.city='Rome' WHERE id=users:labels RETURNING upper(users.profile.address.city)");
+    assert_eq!(returned.columns[0], result.columns[0]);
+    assert_eq!(returned.rows[0][0], Value::String("ROME".into()));
+}
