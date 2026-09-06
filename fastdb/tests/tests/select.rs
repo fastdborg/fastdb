@@ -1598,3 +1598,56 @@ fn join_predicates_resolve_projection_aliases_before_typed_lowering() {
     query(&c, "ROLLBACK");
     assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
 }
+
+#[test]
+fn quoted_internal_functions_are_rejected_across_collection_queries_and_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "INSERT INTO docs {id:docs:a,n:1}");
+    for sql in [
+        "SELECT '__fastdb_pack'(1) FROM docs",
+        "SELECT '__FASTDB_PACK' /* comment */ (1) FROM docs",
+        "SELECT n FROM docs WHERE '__fastdb_pack'(1) IS NOT NULL",
+        "SELECT n FROM docs ORDER BY '__fastdb_pack'(n)",
+        "INSERT INTO docs (id,n) VALUES (docs:b,'__fastdb_pack'(1))",
+        "INSERT INTO docs (n) SELECT '__fastdb_pack'(1) FROM docs",
+        "UPDATE docs SET n='__fastdb_pack'(1)",
+        "DELETE FROM docs WHERE '__fastdb_pack'(1) IS NOT NULL",
+        "UPDATE docs SET n=2 RETURNING '__fastdb_pack'(n)",
+        "INSERT INTO docs {id:docs:b,n:2} RETURNING '__fastdb_pack'(n)",
+        "UPDATE docs:a {n:2} RETURNING '__fastdb_pack'(n)",
+        "DELETE docs:a RETURNING '__fastdb_pack'(n)",
+    ] {
+        assert_eq!(
+            c.execute(sql, &Parameters::new()).unwrap_err().code(),
+            "FDB_UNSUPPORTED",
+            "{sql}"
+        );
+        assert_eq!(
+            query(&c, "SELECT n FROM docs").rows,
+            vec![vec![Value::Integer(1)]],
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        query(
+            &c,
+            "SELECT '__fastdb_pack',record::id(id),lower('__fastdb_literal') FROM docs"
+        )
+        .rows,
+        vec![vec![
+            Value::String("__fastdb_pack".into()),
+            Value::String("a".into()),
+            Value::String("__fastdb_literal".into())
+        ]]
+    );
+    query(&c, "UPDATE docs SET label='__fastdb_pack' WHERE id=docs:a");
+    assert_eq!(
+        query(&c, "UPDATE docs:a {n:2} RETURNING '__fastdb_pack',n").rows,
+        vec![vec![
+            Value::String("__fastdb_pack".into()),
+            Value::Integer(2)
+        ]]
+    );
+}

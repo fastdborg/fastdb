@@ -2,6 +2,25 @@
 use turso_core::{Result, WalkControl};
 use turso_parser::ast::*;
 
+// FastQL is not always parseable before expansion. Inspect the original token
+// roles so generated helper names never need an exception here. SQLite also
+// accepts single-quoted function names; ordinary string values remain data.
+pub(crate) fn internal_names(sql: &str) -> crate::Result<()> {
+    use fastql_parser::Kind;
+    let tokens = fastql_parser::tokenize(sql)?;
+    for (i, token) in tokens.iter().enumerate() {
+        let name = matches!(token.kind, Kind::Word | Kind::Identifier)
+            || (token.kind == Kind::String
+                && tokens
+                    .get(i + 1)
+                    .is_some_and(|next| matches!(next.text.as_str(), "(" | ".")));
+        if name && token.text.to_ascii_lowercase().starts_with("__fastdb_") {
+            return Err(crate::Error::Unsupported("managed names".into()));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn tokens(sql: &str) -> crate::Result<Vec<fastql_parser::Token>> {
     let Ok(mut cmd) = crate::select::parsed(sql) else {
         return Ok(fastql_parser::tokenize(sql)?);

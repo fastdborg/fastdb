@@ -1499,17 +1499,8 @@ impl Connection {
         }
         // Validate user expressions before introducing any internal function or
         // storage name. The existing write guard continues covering other SQL.
-        for token in fastql_parser::tokenize(sql)? {
-            if trusted {
-                break;
-            }
-            if matches!(
-                token.kind,
-                fastql_parser::Kind::Word | fastql_parser::Kind::Identifier
-            ) && token.text.to_ascii_lowercase().starts_with("__fastdb_")
-            {
-                return Err(unsupported("managed names"));
-            }
+        if !trusted {
+            crate::guard::internal_names(sql)?;
         }
         *columns = expand_stars(self, &scope, columns)?;
         let original_columns = columns.clone();

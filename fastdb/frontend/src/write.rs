@@ -157,15 +157,7 @@ impl Connection {
         let Some(projection) = projection else {
             return Ok(QueryResult::command(documents.len() as i64));
         };
-        for token in fastql_parser::tokenize(&projection)? {
-            if matches!(
-                token.kind,
-                fastql_parser::Kind::Word | fastql_parser::Kind::Identifier
-            ) && token.text.to_ascii_lowercase().starts_with("__fastdb_")
-            {
-                return Err(unsupported("managed names in RETURNING"));
-            }
-        }
+        crate::guard::internal_names(&projection)?;
         let Cmd::Stmt(Stmt::Select(select)) = parsed(&expand_paths(&expand_records(&format!(
             "SELECT {projection}"
         ))?)?)?
@@ -285,15 +277,7 @@ impl Connection {
         {
             return Err(unsupported("attached collection writes"));
         }
-        for token in fastql_parser::tokenize(sql)? {
-            if matches!(
-                token.kind,
-                fastql_parser::Kind::Word | fastql_parser::Kind::Identifier
-            ) && token.text.to_ascii_lowercase().starts_with("__fastdb_")
-            {
-                return Err(unsupported("managed names in document writes"));
-            }
-        }
+        crate::guard::internal_names(sql)?;
         self.atomic(|| match statement {
             Stmt::Insert {
                 with,
