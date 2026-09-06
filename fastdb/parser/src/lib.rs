@@ -765,7 +765,20 @@ pub fn parse(input: &str) -> Result<Statement> {
         }
         let kind = p.name()?.to_ascii_lowercase();
         let target = if p.eat("<") {
-            let target = p.name()?;
+            let target = if kind == "vector" {
+                let token = p
+                    .tokens
+                    .get(p.pos)
+                    .ok_or_else(|| p.error("expected vector dimension"))?;
+                if token.kind != Kind::Number {
+                    return Err(p.error("expected vector dimension"));
+                }
+                let value = token.text.clone();
+                p.pos += 1;
+                value
+            } else {
+                p.name()?
+            };
             if !p.eat(">") {
                 return Err(p.error("expected >"));
             }

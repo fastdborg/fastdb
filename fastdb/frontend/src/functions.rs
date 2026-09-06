@@ -8,6 +8,16 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
     unsafe {
         let api = connection.engine._build_turso_ext();
         let result = [
+            (
+                c"__fastdb_vector_input",
+                vector_input as turso_ext::ScalarFunction,
+                1,
+            ),
+            (
+                c"__fastdb_vector_value",
+                vector_value as turso_ext::ScalarFunction,
+                1,
+            ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
             (
                 c"__fastdb_nullable",
@@ -282,6 +292,39 @@ fn nullable(args: &[ExtValue]) -> ExtValue {
         } else {
             Ok(ExtValue::from_blob(value.encode()?))
         }
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_vector_input")]
+fn vector_input(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [arg] = args else {
+            return Err(Error::Validation("vector input arity".into()));
+        };
+        match decode_arg(arg)? {
+            Value::Vector(bytes) | Value::Binary(bytes) => {
+                crate::vectors::dimensions(&bytes)?;
+                Ok(ExtValue::from_blob(bytes))
+            }
+            Value::String(text) => Ok(ExtValue::from_text(text)),
+            _ => Err(Error::Validation(
+                "vector input requires vector, blob or engine vector text".into(),
+            )),
+        }
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+#[scalar(name = "__fastdb_vector_value")]
+fn vector_value(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [arg] = args else {
+            return Err(Error::Validation("vector constructor arity".into()));
+        };
+        let bytes = arg
+            .to_blob()
+            .ok_or_else(|| Error::Storage("vector constructor returned non-blob".into()))?;
+        Ok(ExtValue::from_blob(Value::Vector(bytes).encode()?))
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }

@@ -207,6 +207,37 @@ impl Connection {
         self.scalar_expression(&format!("?1 {op} ?2"), &[a, b])
     }
     fn call_document_function(&self, name: &str, mut args: Vec<Value>) -> Result<Value> {
+        if matches!(
+            name.to_ascii_lowercase().as_str(),
+            "vector32"
+                | "vector64"
+                | "vector_distance_cos"
+                | "vector_distance_l2"
+                | "vector_distance_dot"
+                | "vector_extract"
+        ) {
+            for arg in &mut args {
+                if let Value::Vector(bytes) | Value::Binary(bytes) = arg {
+                    crate::vectors::dimensions(bytes)?;
+                    *arg = Value::Binary(bytes.clone());
+                }
+            }
+            let slots = (1..=args.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let value =
+                self.scalar_expression(&format!("{}({slots})", crate::quote(name)), &args)?;
+            if matches!(name.to_ascii_lowercase().as_str(), "vector32" | "vector64") {
+                let Value::Binary(bytes) = value else {
+                    return Err(Error::Storage("vector constructor result".into()));
+                };
+                let value = Value::Vector(bytes);
+                value.validate()?;
+                return Ok(value);
+            }
+            return Ok(value);
+        }
         match name.to_ascii_lowercase().as_str() {
             "type::record" => match args.as_slice() {
                 [Value::String(table), key] => {

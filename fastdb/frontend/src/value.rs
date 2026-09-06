@@ -32,6 +32,7 @@ impl Value {
         match self {
             Self::Number(n) if !n.is_finite() => Err(Error::Validation("non-finite number".into())),
             Self::Record(r) => validate_record(r),
+            Self::Vector(bytes) => crate::vectors::dimensions(bytes).map(|_| ()),
             Self::Object(fields) => {
                 for value in fields.values() {
                     value.validate_at(depth + 1)?;

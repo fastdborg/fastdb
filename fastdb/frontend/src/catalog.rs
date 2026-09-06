@@ -19,6 +19,11 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
             collection.version
         )));
     }
+    for field in &collection.fields {
+        if let FieldType::Vector(dims) = field.kind {
+            crate::vectors::validate_dimension(dims)?;
+        }
+    }
     if collection.version == 1 && collection.fields.iter().any(|f| f.check.is_some()) {
         return Err(Error::Storage(
             "CHECK metadata requires catalog version 2".into(),
@@ -29,7 +34,10 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
 pub(crate) fn compatible_index(c: &Collection, path: &[String]) -> Result<()> {
     for field in &c.fields {
         let incompatible = if field.path == path {
-            matches!(field.kind, FieldType::Object | FieldType::Array)
+            matches!(
+                field.kind,
+                FieldType::Object | FieldType::Array | FieldType::Vector(_)
+            )
         } else if path.starts_with(&field.path) {
             !matches!(field.kind, FieldType::Object)
         } else {
@@ -235,6 +243,7 @@ impl Connection {
                                     FieldType::Object => "object".into(),
                                     FieldType::Array => "array".into(),
                                     FieldType::Record(target) => format!("record<{target}>"),
+                                    FieldType::Vector(dims) => format!("vector<{dims}>"),
                                 }),
                             ),
                             ("required", Value::Boolean(f.required)),

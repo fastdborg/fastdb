@@ -151,6 +151,24 @@ impl Scope {
         else {
             return Ok(false);
         };
+        if matches!(
+            name.as_str().to_ascii_lowercase().as_str(),
+            "vector32" | "vector64"
+        ) {
+            if args.len() != 1
+                || distinctness.is_some()
+                || filter_over.over_clause.is_some()
+                || filter_over.filter_clause.is_some()
+                || !order_by.is_empty()
+                || !within_group.is_empty()
+            {
+                return Err(unsupported("vector constructor arguments"));
+            }
+            self.typed(&mut args[0])?;
+            args[0] = Box::new(expression(&format!("__fastdb_vector_input({})", args[0]))?);
+            *expr = expression(&format!("__fastdb_vector_value({expr})"))?;
+            return Ok(true);
+        }
         let is_null_helper = name.as_str().eq_ignore_ascii_case("coalesce")
             || name.as_str().eq_ignore_ascii_case("ifnull");
         if (is_null_helper || name.as_str().starts_with("__fastdb_h_"))
@@ -226,6 +244,21 @@ impl Scope {
         Ok(true)
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        if let Expr::FunctionCall { name, args, .. } = expr {
+            if matches!(
+                name.as_str().to_ascii_lowercase().as_str(),
+                "vector_distance_cos"
+                    | "vector_distance_l2"
+                    | "vector_distance_dot"
+                    | "vector_extract"
+            ) {
+                for arg in args {
+                    self.typed(arg)?;
+                    *arg = Box::new(expression(&format!("__fastdb_vector_input({arg})"))?);
+                }
+                return Ok(());
+            }
+        }
         if matches!(expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch") {
             return Err(unsupported(
                 "record::fetch is allowed only as a top-level SELECT projection",

@@ -9,6 +9,7 @@ mod select;
 mod transaction;
 mod update;
 mod value;
+mod vectors;
 mod write;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, sync::Arc};
@@ -106,6 +107,7 @@ pub enum FieldType {
     Object,
     Array,
     Record(String),
+    Vector(usize),
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Field {
@@ -273,6 +275,9 @@ impl Connection {
     }
     pub fn define_field(&self, table: &str, field: Field, overwrite: bool) -> Result<()> {
         validate_path(&field.path)?;
+        if let FieldType::Vector(dims) = field.kind {
+            vectors::validate_dimension(dims)?;
+        }
         if field.path[0] == "id" {
             return Err(Error::Validation("id has a fixed type".into()));
         }
@@ -589,6 +594,11 @@ impl Connection {
                     ("object", None) => FieldType::Object,
                     ("array", None) => FieldType::Array,
                     ("record", Some(target)) => FieldType::Record(canonical(&target)?),
+                    ("vector", Some(target)) => FieldType::Vector(
+                        target
+                            .parse()
+                            .map_err(|_| Error::Validation("invalid vector dimension".into()))?,
+                    ),
                     _ => return Err(Error::Unsupported("field type is not implemented".into())),
                 };
                 self.define_field(
@@ -832,6 +842,9 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
                         | (FieldType::Array, Value::Array(_))
                 ) =>
             {
+                continue
+            }
+            Some(Value::Vector(bytes)) if matches!(&f.kind, FieldType::Vector(dims) if vectors::dimensions(bytes)? == *dims) => {
                 continue
             }
             Some(Value::Record(r)) if matches!(&f.kind, FieldType::Record(target) if target.eq_ignore_ascii_case(&r.table)) => {
