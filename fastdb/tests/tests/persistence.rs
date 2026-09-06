@@ -11,6 +11,7 @@ fn field(path: &[&str], kind: FieldType, required: bool) -> Field {
         kind,
         required,
         nullable: false,
+        check: None,
     }
 }
 fn query(c: &fastdb::Connection, sql: &str) -> fastdb::QueryResult {

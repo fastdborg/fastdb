@@ -1,5 +1,6 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
 mod catalog;
+mod check;
 mod functions;
 mod select;
 mod update;
@@ -107,6 +108,8 @@ pub struct Field {
     pub kind: FieldType,
     pub required: bool,
     pub nullable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Index {
@@ -117,7 +120,7 @@ struct Index {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Collection {
-    #[serde(default = "catalog::version")]
+    #[serde(default = "catalog::legacy_version")]
     version: u32,
     name: String,
     storage: String,
@@ -217,10 +220,12 @@ impl Connection {
         }
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
+        let mut collection = collection.clone();
+        collection.version = catalog::version();
         self.run(
             "UPDATE __fastdb_catalog SET metadata = ?1 WHERE name = ?2",
             &[
-                text(&serde_json::to_string(collection)?),
+                text(&serde_json::to_string(&collection)?),
                 text(&collection.name),
             ],
         )?;
@@ -266,6 +271,7 @@ impl Connection {
         if field.path[0] == "id" {
             return Err(Error::Validation("id has a fixed type".into()));
         }
+        self.check_definition(&field)?;
         self.atomic(|| {
             let mut c = self.catalog(table)?;
             let existing = c.fields.iter().position(|f| f.path == field.path);
@@ -281,7 +287,7 @@ impl Connection {
                 catalog::compatible_index(&c, &index.path)?;
             }
             for doc in self.documents(&c)? {
-                validate_document(&c, &doc)?;
+                self.validate_candidate(&c, &doc)?;
             }
             self.save_catalog(&c)
         })
@@ -391,7 +397,7 @@ impl Connection {
                 );
             }
             normalize_document_id(&c, &mut doc)?;
-            validate_document(&c, &doc)?;
+            self.validate_candidate(&c, &doc)?;
             self.run(
                 &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
                 &[
@@ -415,13 +421,12 @@ impl Connection {
                 return Ok(None);
             };
             doc.extend(patch.clone());
-            validate_document(&c, &doc)?;
             self.replace_document(&c, &doc)?;
             Ok(Some(doc))
         })
     }
     fn replace_document(&self, c: &Collection, doc: &Document) -> Result<()> {
-        validate_document(c, doc)?;
+        self.validate_candidate(c, doc)?;
         let id = EngineValue::Blob(doc["id"].encode()?);
         self.run(
             &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
@@ -518,6 +523,7 @@ impl Connection {
                 target,
                 required,
                 nullable,
+                check,
                 overwrite,
             } => {
                 let kind = match (kind.as_str(), target) {
@@ -537,6 +543,7 @@ impl Connection {
                         kind,
                         required,
                         nullable,
+                        check,
                     },
                     overwrite,
                 )?;

@@ -1,4 +1,4 @@
-# Embedded alpha contracts (format 1, not a V1 release)
+# Embedded alpha contracts (value format 1, catalog version 2; not a V1 release)
 
 Full V1 scope remains defined in the parent FastDB.md and FastQL.md plans. This implementation is an initial persistent slice; the list below is not a reduction of release scope.
 
@@ -18,6 +18,8 @@ SQL-shaped VALUES/SET writes preserve a direct typed parameter or copied documen
 
 Record literals in expression positions and type::record(target,key) compile to a private pure constructor. Direct record projections retain the typed value; arbitrary type propagation through scalar functions remains incomplete. The Rust parameter map addresses anonymous/numbered slots as ?1, ?2, etc. The pinned engine rejects namespace-like $name::suffix parameters; FastDB preserves that baseline error.
 
-Catalog records now include version 1. Missing version markers from the initial prototype are read as version 1; an unknown version is rejected before collection operations. This is backward reading of the initial representation, not a general migration runner or a completed upgrade rehearsal.
+Catalog writes now use version 2. Missing version markers from the initial prototype are read as version 1; version 1 remains readable when it has no CHECK metadata. Unknown versions and version-1 entries containing CHECKs are rejected. Publishing validation metadata upgrades its catalog entry atomically. This is backward reading of the initial representation, not a general migration runner or a completed upgrade rehearsal.
 
 UPSERT requires a typed id and either inserts or shallow-patches that id atomically. Target-form bodies omit id. DROP INDEX removes both its managed storage and catalog entry; DROP TABLE on a collection removes all owned indexes and validation metadata. Both are transactional, and collection drop leaves weak references unchanged. REMOVE FIELD retains stored values and indexes. A validator cannot change an indexed path into an incompatible object/array or non-object parent. INFO returns logical metadata under an info-valued column; its serialization remains provisional.
+
+Field CHECK evaluates a side-effect-free SQL expression against bound final-candidate fields. False and SQL NULL fail; missing optional and permitted-null fields skip their attached check. New/overwritten definitions validate existing data before publication. User parameters, database reads, aggregates, windows, current-time expressions and non-eligible functions are rejected even on an empty collection. The approved function/operator set is listed in status.md; ordinary relational SQL CHECK constraints retain engine behavior. New CHECK metadata requires catalog version 2 to avoid silently weakening validation in version-aware older builds.

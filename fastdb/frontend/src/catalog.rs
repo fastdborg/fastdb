@@ -7,14 +7,22 @@ use turso_core::Value as EngineValue;
 use turso_parser::ast::{Cmd, Stmt};
 
 pub(crate) const fn version() -> u32 {
+    2
+}
+pub(crate) const fn legacy_version() -> u32 {
     1
 }
 pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
-    if collection.version != version() {
+    if !matches!(collection.version, 1 | 2) {
         return Err(Error::Storage(format!(
             "unsupported collection metadata version {}",
             collection.version
         )));
+    }
+    if collection.version == 1 && collection.fields.iter().any(|f| f.check.is_some()) {
+        return Err(Error::Storage(
+            "CHECK metadata requires catalog version 2".into(),
+        ));
     }
     Ok(())
 }
@@ -231,6 +239,12 @@ impl Connection {
                             ),
                             ("required", Value::Boolean(f.required)),
                             ("nullable", Value::Boolean(f.nullable)),
+                            (
+                                "check",
+                                f.check
+                                    .as_ref()
+                                    .map_or(Value::Null, |s| Value::String(s.clone())),
+                            ),
                         ])
                     })
                     .collect();

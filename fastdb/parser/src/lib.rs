@@ -55,6 +55,7 @@ pub enum Statement {
         target: Option<String>,
         required: bool,
         nullable: bool,
+        check: Option<String>,
         overwrite: bool,
     },
     CreateIndex {
@@ -543,6 +544,34 @@ pub fn parse(input: &str) -> Result<Statement> {
         };
         let required = p.eat("REQUIRED");
         let nullable = p.eat("NULLABLE");
+        let check = if p.eat("CHECK") {
+            if !p.eat("(") {
+                return Err(p.error("expected CHECK (expression)"));
+            }
+            let start = p.tokens[p.pos - 1].end;
+            let mut depth = 1usize;
+            let mut end = None;
+            while let Some(token) = p.tokens.get(p.pos) {
+                if token.kind == Kind::Symbol {
+                    if token.text == "(" {
+                        depth += 1;
+                    }
+                    if token.text == ")" {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(token.start);
+                            p.pos += 1;
+                            break;
+                        }
+                    }
+                }
+                p.pos += 1;
+            }
+            let end = end.ok_or_else(|| p.error("unterminated CHECK expression"))?;
+            Some(input[start..end].trim().to_owned())
+        } else {
+            None
+        };
         if !p.end() {
             return Err(p.error("unsupported field definition clause"));
         }
@@ -553,6 +582,7 @@ pub fn parse(input: &str) -> Result<Statement> {
             target,
             required,
             nullable,
+            check,
             overwrite,
         });
     }
