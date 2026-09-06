@@ -1056,3 +1056,76 @@ fn binary_literals_match_typed_fields_and_managed_index_keys() {
         .rows
         .is_empty());
 }
+
+#[test]
+fn binary_payload_order_and_ranges_match_native_blobs() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(data BLOB)");
+    for hex in ["", "00", "02", "0200", "0A", "FF"] {
+        query(&c, &format!("INSERT INTO docs (data) VALUES (X'{hex}')"));
+        query(&c, &format!("INSERT INTO baseline VALUES (X'{hex}')"));
+    }
+    for distinct in ["", "DISTINCT "] {
+        for tail in [
+            "ORDER BY data",
+            "ORDER BY data DESC",
+            "WHERE data < X'0A' ORDER BY data",
+            "WHERE data >= (X'02') ORDER BY data",
+            "WHERE data BETWEEN X'02' AND X'0A' ORDER BY data",
+            "WHERE data NOT BETWEEN X'02' AND X'0A' ORDER BY data",
+        ] {
+            let sql = |table: &str| format!("SELECT {distinct}data FROM {table} {tail}");
+            assert_eq!(
+                query(&c, &sql("docs")).rows,
+                query(&c, &sql("baseline")).rows,
+                "{distinct}{tail}"
+            );
+        }
+    }
+    assert_eq!(
+        query(
+            &c,
+            "SELECT (X'02')=X'02' AS same,X'02'<X'0A' AS smaller FROM docs LIMIT 1"
+        )
+        .rows,
+        vec![vec![Value::Integer(1), Value::Integer(1)]]
+    );
+    assert_eq!(
+        query(&c, "SELECT X'02' AS bytes FROM docs LIMIT 1").rows,
+        vec![vec![Value::Binary(vec![2])]]
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT X'02' IN (X'02',X'03') AS member FROM docs LIMIT 1"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    query(&c, "CREATE INDEX docs_data ON docs(data)");
+    assert_eq!(
+        query(
+            &c,
+            "SELECT data FROM docs WHERE data IN (X'02',X'0A') ORDER BY data"
+        )
+        .rows,
+        vec![vec![Value::Binary(vec![2])], vec![Value::Binary(vec![10])]]
+    );
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(
+            &c,
+            "DELETE FROM docs WHERE data BETWEEN X'02' AND X'0A' RETURNING data"
+        )
+        .rows
+        .len(),
+        3
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        query(&c, "SELECT data FROM docs ORDER BY data").rows,
+        query(&c, "SELECT data FROM baseline ORDER BY data").rows
+    );
+}

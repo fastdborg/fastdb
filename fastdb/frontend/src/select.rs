@@ -118,6 +118,10 @@ impl Scope {
             }
             return Ok(typed);
         }
+        if blob_literal(expr) {
+            *expr = expression(&format!("__fastdb_pack({})", order_base(expr)))?;
+            return Ok(true);
+        }
         if let Some((i, path)) = self.field(expr)? {
             *expr = self.accessor(i, &path, true)?;
             return Ok(true);
@@ -331,6 +335,9 @@ impl Scope {
         Ok(())
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        if blob_literal(expr) {
+            return Ok(());
+        }
         if let Some((value, typed)) = self.standalone_alias(expr) {
             *expr = if typed {
                 expression(&format!("__fastdb_unwrap({value})"))?
@@ -374,10 +381,10 @@ impl Scope {
                     op,
                     Operator::Equals | Operator::NotEquals | Operator::Is | Operator::IsNot
                 ) {
-                    if blob_literal(a) && self.preserved(&mut b.clone())? {
+                    if blob_literal(a) && !blob_literal(b) && self.preserved(&mut b.clone())? {
                         **a = index_literal(a)?;
                     }
-                    if blob_literal(b) && self.preserved(&mut a.clone())? {
+                    if blob_literal(b) && !blob_literal(a) && self.preserved(&mut a.clone())? {
                         **b = index_literal(b)?;
                     }
                 }
@@ -433,7 +440,7 @@ impl Scope {
                 }
             }
             Expr::InList { lhs, rhs, .. } => {
-                if self.preserved(&mut lhs.clone())? {
+                if !blob_literal(lhs) && self.preserved(&mut lhs.clone())? {
                     for value in rhs.iter_mut() {
                         **value = index_literal(value)?;
                     }
@@ -658,7 +665,10 @@ fn blob_literal(expr: &Expr) -> bool {
 // Apply the same scalar-key representation used by typed fields and parameters.
 fn index_literal(expr: &Expr) -> Result<Expr> {
     if blob_literal(expr) {
-        expression(&format!("__fastdb_unwrap(__fastdb_pack({expr}))"))
+        expression(&format!(
+            "__fastdb_unwrap(__fastdb_pack({}))",
+            order_base(expr)
+        ))
     } else {
         Ok(expr.clone())
     }

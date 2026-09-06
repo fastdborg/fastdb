@@ -121,8 +121,15 @@ fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
     scalar_result(&value)
 }
 fn ordered(value: &Value) -> Result<ExtValue> {
+    if let Value::Binary(bytes) = value {
+        let mut key = Vec::with_capacity(bytes.len() + 1);
+        key.push(0);
+        key.extend(bytes);
+        return Ok(ExtValue::from_blob(key));
+    }
     if let Value::Record(record) = &value {
-        let mut key = record.table.to_ascii_lowercase().into_bytes();
+        let mut key = vec![1];
+        key.extend(record.table.to_ascii_lowercase().into_bytes());
         key.push(0);
         match &record.key {
             crate::Key::Integer(i) => {
@@ -244,6 +251,7 @@ fn compare_values(a: &Value, b: &Value) -> Result<Option<std::cmp::Ordering>> {
         return Ok(None);
     }
     let order = match (a, b) {
+        (Value::Binary(a), Value::Binary(b)) => a.cmp(b),
         (Value::Record(a), Value::Record(b)) => a
             .table
             .to_ascii_lowercase()
