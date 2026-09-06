@@ -587,7 +587,7 @@ impl Scope {
                         *expr = expression(&format!("__fastdb_compare({left}, {right}) {op} 0"))?;
                         return Ok(());
                     }
-                    if left_typed && !right_typed && native_column_reference(&right) {
+                    if left_typed && !right_typed && self.native_column(&right)? {
                         left = expression(&format!("__fastdb_range_scalar({left}, {right})"))?;
                         // As for equality, prioritize the native column's
                         // declared collation over physical document storage.
@@ -606,7 +606,7 @@ impl Scope {
                         };
                         return Ok(());
                     }
-                    if right_typed && !left_typed && native_column_reference(&left) {
+                    if right_typed && !left_typed && self.native_column(&left)? {
                         *expr = expression(&format!(
                             "{left} {op} __fastdb_range_scalar({right}, {left})"
                         ))?;

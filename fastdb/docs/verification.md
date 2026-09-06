@@ -627,3 +627,11 @@ The new test checks both clients: empty collections with zero limits, document/i
 The scoped check log records successful formatting, Clippy with warnings denied, 221 Rust tests and seventeen Node tests, followed by the TypeScript command with no errors. The original process handle was unavailable after context handoff; no check process remained. A separate strict TypeScript run exited zero to confirm that final stage. No production source changed after these checks.
 
 Two new CLI subprocess tests cover a persistent collection with an index, count reports after reopening, exact document/byte limits, FDB_LIMIT without partial counts, retained documents after failure, missing-file rejection without creation, conflicting input modes and invalid unsigned limits. The standalone command uses the existing Rust audit and normal database opening/recovery, prints JSON and returns nonzero on failure. It performs no repair and does not establish physical page integrity or hard resource bounds. No dependencies or upstream files changed; full V1 remains incomplete.
+
+## Collated collection range resolution — 2026-09-07
+
+The existing CLI reproduced `SELECT a < b COLLATE NOCASE FROM docs` failing with a missing physical column b. Range lowering now uses the existing scope-aware native-column check for both operand positions, avoiding the native conversion path when the operand is a collated collection field.
+
+The final scoped check exited zero: formatting, Clippy with warnings denied, 222 Rust tests, seventeen Node tests and strict TypeScript checking. A new regression compares text/NULL results against native SQL across four range operators, both collated operand positions, NOCASE/BINARY, and direct/derived/CTE collection sources. Existing mixed-native range and native-column BETWEEN regressions gained parenthesized/unary-plus document cases. Initial investigation confirmed those wrappers already work through the existing helper; no redundant wrapper conversion was retained.
+
+The change does not qualify explicit-collation binary/record ordering, arbitrary native expressions, or logical BETWEEN operands with native bounds. No upstream files, dependencies or persisted encodings changed; full V1 remains incomplete.

@@ -1848,6 +1848,9 @@ fn mixed_native_ranges_preserve_payload_order_affinity_and_collation() {
             ("d.value", "n.value"),
             ("n.value", "d.value"),
             ("d.value", "(+n.value)"),
+            ("(+d.value)", "n.value"),
+            ("n.value", "(d.value)"),
+            ("+d.n", "n.n"),
             ("(n.value)", "d.value"),
             ("d.n", "n.n"),
             ("n.n", "d.n"),
@@ -1959,6 +1962,8 @@ fn native_column_between_document_bounds_matches_sql() {
     for not in ["", "NOT "] {
         for (value, lo, hi) in [
             ("n.value", "d.lo", "d.hi"),
+            ("n.value", "(+d.lo)", "(d.hi)"),
+            ("n.n", "+d.nlo", "(+d.nhi)"),
             ("n.value", "d.lo", "X'0a'"),
             ("n.value", "X'02'", "d.hi"),
             ("n.n", "d.nlo", "d.nhi"),
@@ -1998,5 +2003,44 @@ fn native_column_between_document_bounds_matches_sql() {
             query(&c, &sql.replace("n.k=1", "n.k=5")).rows,
             vec![vec![Value::Null]]
         );
+    }
+}
+
+#[test]
+fn collated_collection_ranges_resolve_fields_instead_of_native_columns() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(a,b)");
+    for values in [
+        "('alpha','BETA')",
+        "('BETA','alpha')",
+        "('alpha','ALPHA')",
+        "(NULL,'alpha')",
+    ] {
+        query(&c, &format!("INSERT INTO docs(a,b) VALUES {values}"));
+        query(&c, &format!("INSERT INTO baseline VALUES {values}"));
+    }
+    for op in ["<", "<=", ">", ">="] {
+        for (left, right) in [
+            ("a", "b COLLATE NOCASE"),
+            ("a COLLATE NOCASE", "b"),
+            ("a", "(+b) COLLATE BINARY"),
+            ("(a COLLATE NOCASE)", "b"),
+        ] {
+            let sql = format!("SELECT {left} {op} {right} FROM SOURCE ORDER BY a,b");
+            let expected = query(&c, &sql.replace("SOURCE", "baseline")).rows;
+            for source in [
+                "docs",
+                "(SELECT a,b FROM docs) d",
+                "(WITH d AS (SELECT a,b FROM docs) SELECT a,b FROM d) d",
+            ] {
+                assert_eq!(
+                    query(&c, &sql.replace("SOURCE", source)).rows,
+                    expected,
+                    "{sql}: {source}"
+                );
+            }
+        }
     }
 }
