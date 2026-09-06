@@ -131,3 +131,10 @@ Tests compare binary64 bits, including signed zero, finite extremes and subnorma
 A source-free SELECT without CTEs or compound branches now enters typed lowering when parameters include a Boolean, Record, Object, Array or Vector. Direct parameter projections preserve those tags, including numbered placeholders. Ordinary scalar-only SQL continues through the native path. Standalone alias predicates use the original scalar expression rather than treating encoded typed projection bytes as SQL truth values; typed helper arguments can retain alias values. Fetched aliases remain ineligible for predicates/grouping because fetching occurs after the engine projection.
 
 DISTINCT is accepted for a source-free SELECT because its input has at most one row; this does not enable DISTINCT over collection projections or define composite equality. Missing SQL names still fail. Full source-query alias/type propagation, composite ordering/grouping and broader CTE/compound queries remain V1 work.
+
+
+## Reference target validation
+
+Every evaluated Record value now validates its target with the same logical-name rules as indexed references: nonempty, no NUL, and no case-insensitive `__fastdb_` or `sqlite_` prefix. This applies recursively inside arrays/objects, regardless of field declarations or indexes. String keys must remain nonempty; target existence is not required for weak forward references. Target casing remains accepted, and scalar index keys, record::table and fetch resolution use the canonical target identity.
+
+The former prototype validator checked only empty target/key strings, allowing invalid nested references on unindexed writes. Those writes now fail before mutation through insert, patch, upsert, SQL-shaped writes and imports. Previously stored invalid references are also rejected when decoded; they require correction with a retained earlier prototype before upgrading. No stored-format or catalog-version change is introduced. This tightens an invalid-value gap and does not promise automatic repair or migration-free upgrades.

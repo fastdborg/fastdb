@@ -197,3 +197,13 @@ test('worker transport failures settle pending requests and permit cleanup', () 
   assert.equal(result.status, 0, result.stderr || String(result.error));
   assert.match(result.stdout, /worker-faults-complete/);
 });
+test('nested record targets follow validation even without a reference index', () => {
+  const db = new Database();
+  try {
+    db.execute('CREATE TABLE docs');
+    for (const table of ['__fastdb_catalog', 'SQLITE_schema', 'bad\0target']) {
+      assert.throws(() => db.execute('INSERT INTO docs DOCUMENT $doc', { $doc: { nested: [new Record(table, 'key')] } }), e => e.code === 'FDB_VALIDATION');
+    }
+    assert.deepEqual(db.all('SELECT * FROM docs'), []);
+  } finally { db.close(); }
+});

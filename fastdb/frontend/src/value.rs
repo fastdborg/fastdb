@@ -69,6 +69,9 @@ pub(crate) fn validate_record(r: &Record) -> Result<()> {
             "record target and string key must be nonempty".into(),
         ));
     }
+    // Use the same logical target-name rules even when the reference is nested
+    // or not indexed; indexed writes already pass through canonical().
+    crate::canonical(&r.table)?;
     Ok(())
 }
 
