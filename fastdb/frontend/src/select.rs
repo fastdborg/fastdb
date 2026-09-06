@@ -693,12 +693,21 @@ fn replace_order_base(expr: &mut Expr, value: Expr) {
     }
 }
 
-fn order_position(expr: &Expr) -> Option<i64> {
-    match expr {
+// Match the pinned engine's numeric ordinal recognition. Only one sign
+// directly on a literal is recognized; compound constant expressions are not
+// evaluated as positions. Zero represents both zero and invalid negative
+// positions. usize parsing also matches the engine's range on this platform.
+fn projection_position(expr: &Expr) -> Option<usize> {
+    match order_base(expr) {
         Expr::Literal(Literal::Numeric(n)) => n.parse().ok(),
-        Expr::Parenthesized(exprs) if exprs.len() == 1 => order_position(&exprs[0]),
-        Expr::Unary(UnaryOperator::Positive, expr) => order_position(expr),
-        Expr::Unary(UnaryOperator::Negative, expr) => order_position(expr)?.checked_neg(),
+        Expr::Unary(UnaryOperator::Positive, inner) => match inner.as_ref() {
+            Expr::Literal(Literal::Numeric(n)) => n.parse().ok(),
+            _ => None,
+        },
+        Expr::Unary(UnaryOperator::Negative, inner) => match inner.as_ref() {
+            Expr::Literal(Literal::Numeric(n)) if n.parse::<usize>().is_ok() => Some(0),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -1409,8 +1418,8 @@ impl Connection {
         for sorted in &mut select.order_by {
             // Aliases refer to the original expression, not the encoded typed
             // projection, so sorting keeps SQL scalar semantics.
-            let position = order_position(order_base(&sorted.expr));
-            if distinct && position.is_some_and(|i| i <= 0 || i as usize > columns.len()) {
+            let position = projection_position(&sorted.expr);
+            if position.is_some_and(|i| i == 0 || i > columns.len()) {
                 return Err(Error::Validation("ORDER BY position out of range".into()));
             }
             let alias_index = match order_base(&sorted.expr) {
@@ -1418,8 +1427,8 @@ impl Connection {
                     .iter()
                     .position(|name| name.eq_ignore_ascii_case(n.as_str())),
                 _ => position
-                    .filter(|i| *i > 0 && *i as usize <= columns.len())
-                    .map(|i| i as usize - 1),
+                    .filter(|i| *i > 0 && *i <= columns.len())
+                    .map(|i| i - 1),
             };
             let alias_index = alias_index.or_else(|| original_columns.iter().position(|column| {
                 matches!(column, ResultColumn::Expr(expr, _) if expr.as_ref() == order_base(&sorted.expr))
@@ -1541,19 +1550,7 @@ fn expand_group_position(expr: &mut Expr, columns: &[ResultColumn]) -> Result<bo
         }
         _ => {}
     }
-    let number = match expr {
-        Expr::Literal(Literal::Numeric(n)) => n.parse::<usize>().ok(),
-        Expr::Unary(UnaryOperator::Positive, inner) => match inner.as_ref() {
-            Expr::Literal(Literal::Numeric(n)) => n.parse::<usize>().ok(),
-            _ => None,
-        },
-        Expr::Unary(UnaryOperator::Negative, inner) => match inner.as_ref() {
-            Expr::Literal(Literal::Numeric(n)) if n.parse::<usize>().is_ok() => Some(0),
-            _ => None,
-        },
-        _ => None,
-    };
-    let Some(number) = number else {
+    let Some(number) = projection_position(expr) else {
         return Ok(false);
     };
     if number == 0 || number > columns.len() {

@@ -603,3 +603,57 @@ fn order_alias_helpers_and_mixed_sources_retain_types() {
         assert_eq!(query(&c,&format!("SELECT {distinct}v AS bucket,sum(v) AS total FROM docs GROUP BY v ORDER BY abs(total) DESC")).rows,vec![vec![Value::Integer(2),Value::Integer(2)],vec![Value::Integer(1),Value::Integer(1)]]);
     }
 }
+
+#[test]
+fn ordering_ordinal_recognition_matches_pinned_constant_expression_rules() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(v INTEGER)");
+    for value in [2, 1, 3] {
+        query(&c, &format!("INSERT INTO docs {{v:{value}}}"));
+        query(&c, &format!("INSERT INTO baseline VALUES ({value})"));
+    }
+    for distinct in ["", "DISTINCT "] {
+        for order in [
+            "1",
+            "+1",
+            "(1)",
+            "((+1))",
+            "1 COLLATE BINARY",
+            "+(1)",
+            "+(+1)",
+            "-(-1)",
+            "-(+1)",
+            "1.0",
+            "1+0",
+        ] {
+            let sql =
+                |table: &str| format!("SELECT {distinct}v FROM {table} ORDER BY {order},v DESC");
+            assert_eq!(
+                query(&c, &sql("docs")).rows,
+                query(&c, &sql("baseline")).rows,
+                "{distinct}{order}"
+            );
+        }
+        for order in [
+            "0",
+            "-1",
+            "+0",
+            "(2)",
+            "9223372036854775808",
+            "18446744073709551615",
+            "-9223372036854775808",
+        ] {
+            let sql = |table: &str| format!("SELECT {distinct}v FROM {table} ORDER BY {order}");
+            assert!(
+                c.execute(&sql("baseline"), &Parameters::new()).is_err(),
+                "native {order}"
+            );
+            assert!(
+                c.execute(&sql("docs"), &Parameters::new()).is_err(),
+                "{distinct}{order}"
+            );
+        }
+    }
+}
