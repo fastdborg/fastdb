@@ -1,6 +1,6 @@
 //! SQL-shaped writes share the document validation and index-maintenance path.
 use crate::{
-    select::{expand_records, parsed},
+    select::{expand_paths, expand_records, parsed},
     Connection, Document, Error, Parameters, QueryResult, Result, Value,
 };
 use turso_parser::ast::*;
@@ -166,8 +166,9 @@ impl Connection {
                 return Err(unsupported("managed names in RETURNING"));
             }
         }
-        let Cmd::Stmt(Stmt::Select(select)) =
-            parsed(&expand_records(&format!("SELECT {projection}"))?)?
+        let Cmd::Stmt(Stmt::Select(select)) = parsed(&expand_paths(&expand_records(&format!(
+            "SELECT {projection}"
+        ))?)?)?
         else {
             return Err(unsupported("RETURNING projection"));
         };
@@ -206,7 +207,9 @@ impl Connection {
         params: &Parameters,
     ) -> Result<Option<QueryResult>> {
         let normalized = crate::update::normalize(sql)?;
-        let expanded = expand_records(normalized.as_ref().map_or(sql, |n| n.sql.as_str()))?;
+        let expanded = expand_paths(&expand_records(
+            normalized.as_ref().map_or(sql, |n| n.sql.as_str()),
+        )?)?;
         let Ok(Cmd::Stmt(statement)) = parsed(&expanded) else {
             return Ok(None);
         };

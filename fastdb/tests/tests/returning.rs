@@ -186,3 +186,61 @@ fn predicate_returning_distinguishes_quoted_fields_strings_and_nested_calls() {
     assert_eq!(empty.columns, vec!["n"]);
     assert!(empty.rows.is_empty());
 }
+
+#[test]
+fn deep_paths_work_in_write_expressions_and_all_returning_snapshots() {
+    let (_db, c) = setup();
+    q(&c, "DEFINE FIELD profile.address.city ON posts TYPE string");
+    q(
+        &c,
+        "CREATE UNIQUE INDEX posts_city ON posts (profile.address.city)",
+    );
+    let inserted=q(&c,"INSERT INTO posts {id:posts:p1,profile:{address:{city:'Paris',active:true}}} RETURNING posts.profile.address.city,posts.profile.address.active");
+    assert_eq!(inserted.columns, vec!["city", "active"]);
+    assert_eq!(
+        inserted.rows,
+        vec![vec![Value::String("Paris".into()), Value::Boolean(true)]]
+    );
+    assert_eq!(q(&c,"UPDATE posts SET profile.address.city=upper(posts.profile.address.city) WHERE posts.profile.address.active=true RETURNING posts.profile.address.city").rows,vec![vec![Value::String("PARIS".into())]]);
+    assert!(c
+        .lookup_index("posts", "posts_city", &Value::String("Paris".into()))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        c.lookup_index("posts", "posts_city", &Value::String("PARIS".into()))
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(c.execute("UPDATE posts SET profile.address.city=posts.profile.address.active RETURNING posts.profile.address.city",&Parameters::new()).is_err());
+    assert_eq!(
+        q(&c, "SELECT posts.profile.address.city FROM posts").rows,
+        vec![vec![Value::String("PARIS".into())]]
+    );
+    q(&c, "CREATE TABLE copies");
+    assert_eq!(q(&c,"INSERT INTO copies (city,active) SELECT posts.profile.address.city,posts.profile.address.active FROM posts RETURNING city,active").rows,vec![vec![Value::String("PARIS".into()),Value::Boolean(true)]]);
+    q(&c, "BEGIN");
+    assert_eq!(q(&c,"DELETE FROM posts WHERE posts.profile.address.city='PARIS' RETURNING posts.profile.address.city").rows,vec![vec![Value::String("PARIS".into())]]);
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        c.lookup_index("posts", "posts_city", &Value::String("PARIS".into()))
+            .unwrap()
+            .len(),
+        1
+    );
+    let empty=q(&c,"UPDATE posts SET profile.address.city='unused' WHERE posts.profile.address.city='missing' RETURNING posts.profile.address.city");
+    assert_eq!(empty.columns, vec!["city"]);
+    assert!(empty.rows.is_empty());
+    assert!(c
+        .execute(
+            "DELETE FROM posts RETURNING unknown.profile.address.city",
+            &Parameters::new()
+        )
+        .is_err());
+    assert_eq!(
+        c.lookup_index("posts", "posts_city", &Value::String("PARIS".into()))
+            .unwrap()
+            .len(),
+        1
+    );
+}

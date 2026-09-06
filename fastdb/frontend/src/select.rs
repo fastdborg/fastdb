@@ -641,7 +641,7 @@ fn lower_source(
 // The pinned parser only builds names with up to three segments. Encode
 // longer paths as a temporary AST expression; Scope resolves it before SQL
 // preparation. This marker is never a registered engine function.
-fn expand_paths(sql: &str) -> Result<String> {
+pub(crate) fn expand_paths(sql: &str) -> Result<String> {
     use fastql_parser::Kind;
     let tokens = fastql_parser::tokenize(sql)?;
     let is_name = |i: usize| matches!(tokens[i].kind, Kind::Word | Kind::Identifier);
