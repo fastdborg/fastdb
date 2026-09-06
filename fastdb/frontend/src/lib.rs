@@ -1,4 +1,5 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
+mod catalog;
 mod functions;
 mod select;
 mod update;
@@ -116,6 +117,8 @@ struct Index {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Collection {
+    #[serde(default = "catalog::version")]
+    version: u32,
     name: String,
     storage: String,
     fields: Vec<Field>,
@@ -204,7 +207,11 @@ impl Connection {
             &[text(&name)],
         )?;
         match rows.first().and_then(|r| r.first()) {
-            Some(EngineValue::Text(t)) => Ok(serde_json::from_str(t.as_str())?),
+            Some(EngineValue::Text(t)) => {
+                let collection: Collection = serde_json::from_str(t.as_str())?;
+                catalog::validate_version(&collection)?;
+                Ok(collection)
+            }
             None => Err(Error::NotFound(name)),
             _ => Err(Error::Storage("invalid collection metadata".into())),
         }
@@ -227,7 +234,7 @@ impl Connection {
             // Names are collision-free UTF-8 hex, independent of user quoting.
             let storage = format!("__fastdb_c_{}", name.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
             self.run(&format!("CREATE TABLE {} (id BLOB PRIMARY KEY, doc BLOB NOT NULL)", quote(&storage)), &[])?;
-            let collection = Collection { name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new() };
+            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new() };
             self.run("INSERT INTO __fastdb_catalog VALUES (?1, ?2)", &[text(&name), text(&serde_json::to_string(&collection)?)])?; Ok(())
         })
     }
@@ -270,6 +277,9 @@ impl Connection {
                 (Some(_), false) => return Err(Error::AlreadyExists(field.path.join("."))),
                 (None, true) => return Err(Error::NotFound(field.path.join("."))),
             }
+            for index in &c.indexes {
+                catalog::compatible_index(&c, &index.path)?;
+            }
             for doc in self.documents(&c)? {
                 validate_document(&c, &doc)?;
             }
@@ -283,10 +293,42 @@ impl Connection {
         path: Vec<String>,
         unique: bool,
     ) -> Result<()> {
+        self.create_index_if(table, name, path, unique, false)
+    }
+    pub fn create_index_if(
+        &self,
+        table: &str,
+        name: &str,
+        path: Vec<String>,
+        unique: bool,
+        if_not_exists: bool,
+    ) -> Result<()> {
         validate_path(&path)?;
         let name = canonical(name)?;
         self.atomic(|| {
             let mut c = self.catalog(table)?;
+            let existing = self.run(
+                "SELECT type FROM sqlite_schema WHERE name=?1 COLLATE NOCASE",
+                &[text(&name)],
+            )?;
+            if !existing.is_empty() {
+                if if_not_exists
+                    && matches!(&existing[0][0],EngineValue::Text(t) if t.as_str()=="index")
+                {
+                    return Ok(());
+                }
+                return Err(Error::AlreadyExists(name.clone()));
+            }
+            if !self
+                .run(
+                    "SELECT name FROM __fastdb_catalog WHERE name=?1",
+                    &[text(&name)],
+                )?
+                .is_empty()
+            {
+                return Err(Error::AlreadyExists(name.clone()));
+            }
+            catalog::compatible_index(&c, &path)?;
             let storage = format!(
                 "__fastdb_i_{}",
                 name.as_bytes()
@@ -443,6 +485,32 @@ impl Connection {
             _ => Err(Error::Validation("expected a typed document object".into())),
         };
         match fastql_parser::parse(sql)? {
+            Statement::Upsert {
+                table,
+                target,
+                value,
+                returning,
+            } => {
+                let mut doc = object(value)?;
+                if let Some(target) = target {
+                    if doc.contains_key("id") {
+                        return Err(Error::Validation("target UPSERT body must omit id".into()));
+                    }
+                    doc.insert("id".into(), Value::Record(target));
+                }
+                let doc = self.upsert(&table, doc)?;
+                Ok(if returning {
+                    QueryResult::documents(vec![doc], 1)
+                } else {
+                    QueryResult::command(1)
+                })
+            }
+            Statement::RemoveField { table, path } => {
+                self.remove_field(&table, &path)?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::Info { scope, name } => self.info(&scope, name.as_deref()),
+
             Statement::DefineField {
                 table,
                 path,
@@ -475,6 +543,7 @@ impl Connection {
                 Ok(QueryResult::command(0))
             }
             Statement::CreateIndex {
+                if_not_exists,
                 table,
                 name,
                 path,
@@ -482,7 +551,7 @@ impl Connection {
                 sql,
             } => match self.catalog(&table) {
                 Ok(_) => {
-                    self.create_index(&table, &name, path, unique)?;
+                    self.create_index_if(&table, &name, path, unique, if_not_exists)?;
                     Ok(QueryResult::command(0))
                 }
                 Err(Error::NotFound(_)) => self.sql(&sql, params),
@@ -537,6 +606,9 @@ impl Connection {
         }
     }
     fn sql(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
+        if let Some(result) = self.catalog_statement(sql)? {
+            return Ok(result);
+        }
         if let Some(result) = self.collection_write(sql, params)? {
             return Ok(result);
         }

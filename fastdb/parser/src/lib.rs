@@ -34,6 +34,20 @@ pub enum Expr {
 }
 #[derive(Debug, PartialEq)]
 pub enum Statement {
+    Upsert {
+        table: String,
+        target: Option<Record>,
+        value: Expr,
+        returning: bool,
+    },
+    RemoveField {
+        table: String,
+        path: Vec<String>,
+    },
+    Info {
+        scope: String,
+        name: Option<String>,
+    },
     DefineField {
         table: String,
         path: Vec<String>,
@@ -44,6 +58,7 @@ pub enum Statement {
         overwrite: bool,
     },
     CreateIndex {
+        if_not_exists: bool,
         table: String,
         name: String,
         path: Vec<String>,
@@ -458,6 +473,54 @@ pub fn parse(input: &str) -> Result<Statement> {
         tokens: tokenize(input)?,
         pos: 0,
     };
+    if p.eat("UPSERT") {
+        let target = if p.tokens.get(p.pos + 1).is_some_and(|t| t.text == ":") {
+            Some(p.record()?)
+        } else {
+            None
+        };
+        let table = match &target {
+            Some(r) => r.table.clone(),
+            None => p.name()?,
+        };
+        if p.tokens.get(p.pos).is_none_or(|t| t.text != "{") {
+            return Err(p.error("UPSERT requires an object body"));
+        }
+        let value = p.expr(0)?;
+        let returning = p.returning()?;
+        return Ok(Statement::Upsert {
+            table,
+            target,
+            value,
+            returning,
+        });
+    }
+    p.pos = 0;
+    if p.eat("REMOVE") && p.eat("FIELD") {
+        let path = p.path()?;
+        if !p.eat("ON") {
+            return Err(p.error("expected ON"));
+        }
+        let table = p.name()?;
+        if !p.end() {
+            return Err(p.error("unexpected REMOVE FIELD clause"));
+        }
+        return Ok(Statement::RemoveField { table, path });
+    }
+    p.pos = 0;
+    if p.eat("INFO") && p.eat("FOR") {
+        let scope = p.name()?.to_ascii_lowercase();
+        let name = match scope.as_str() {
+            "db" => None,
+            "table" | "index" => Some(p.name()?),
+            _ => return Err(p.error("expected DB, TABLE, or INDEX")),
+        };
+        if !p.end() {
+            return Err(p.error("unexpected INFO clause"));
+        }
+        return Ok(Statement::Info { scope, name });
+    }
+    p.pos = 0;
     if p.eat("DEFINE") && p.eat("FIELD") {
         let overwrite = p.eat("OVERWRITE");
         let path = p.path()?;
@@ -498,6 +561,10 @@ pub fn parse(input: &str) -> Result<Statement> {
         let unique = p.eat("UNIQUE");
         if p.eat("INDEX") {
             let parsed = (|| -> Result<Statement> {
+                let if_not_exists = p.eat("IF");
+                if if_not_exists && !(p.eat("NOT") && p.eat("EXISTS")) {
+                    return Err(p.error("expected IF NOT EXISTS"));
+                }
                 let name = p.name()?;
                 if !p.eat("ON") {
                     return Err(p.error("expected ON"));
@@ -511,6 +578,7 @@ pub fn parse(input: &str) -> Result<Statement> {
                     return Err(p.error("expected index end"));
                 }
                 Ok(Statement::CreateIndex {
+                    if_not_exists,
                     table,
                     name,
                     path,
