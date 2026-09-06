@@ -390,3 +390,10 @@ Persistent tests cover inclusive binary bounds, reversed comparison, NOT BETWEEN
 =, !=, IS and IS NOT now use the shared comparison-key path when both operands support it. This extends earlier literal/field normalization to native function results, casts, scalar expressions and typed CASE results while retaining explicit collation and cast structure. Binary identity remains distinct from record identity; ordinary relational statements retain native delegation.
 
 Differential BLOB-column tests cover function/field comparisons, binary casts, NULL-aware IS operations, numeric cast coercion, NOCASE, arithmetic and CASE. DELETE/RETURNING rollback verifies index restoration. Direct fields retain their existing key accessors, keeping the primary-key SEARCH plan for ID equality. This does not add managed index candidate shapes. Mixed ordinary-column/typed-field and untyped-alias propagation, broader ranges and resource accounting remain release work.
+
+
+## Binary pattern operands
+
+SQL-shaped pattern predicates now pass preserved binary payloads for the value, pattern and optional ESCAPE operand. Differential LIKE/GLOB tests cover positive/negative matching, binary patterns, escaped wildcards, empty/NULL values and DELETE rollback. Native pinned-engine behavior governs matching; this does not promise full SQLite pattern compatibility or new REGEXP/MATCH capabilities.
+
+CHECK's existing GLOB path uses candidate payload bytes on both sides. A persistent test validates binary value/pattern fields, rejects invalid or NULL updates while retaining transaction state, and verifies reopened enforcement/index contents. CHECK LIKE/REGEXP/MATCH eligibility remains unchanged. Reapply affected prototype definitions to validate stored data; no stored encoding changes.

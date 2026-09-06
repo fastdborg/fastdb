@@ -819,3 +819,45 @@ fn binary_check_literal_ranges_validate_and_reopen() {
         1
     );
 }
+
+#[test]
+fn binary_glob_checks_validate_payloads_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary-glob.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,payload,pattern) VALUES (docs:saved,1,X'616263',X'612A')",
+        );
+        q(&c, "DEFINE FIELD valid ON docs TYPE integer CHECK(payload GLOB pattern AND payload NOT GLOB 'b*')");
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        for assignment in ["payload=X'626364'", "payload=NULL", "pattern=X'622A'"] {
+            assert_eq!(
+                c.execute(&format!("UPDATE docs SET {assignment}"), &Parameters::new())
+                    .unwrap_err()
+                    .code(),
+                "FDB_VALIDATION"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        }
+        q(&c, "ROLLBACK");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'626364'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(
+        c.lookup_index("docs", "docs_payload", &Value::Binary(b"abc".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}

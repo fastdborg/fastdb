@@ -428,10 +428,10 @@ fn lower_mode(
             if *op != LikeOperator::Glob {
                 return Err(invalid("CHECK supports fixed GLOB matching; LIKE/REGEXP/MATCH eligibility is not defined"));
             }
-            lower(lhs, doc, bindings)?;
-            lower(rhs, doc, bindings)?;
+            lower_mode(lhs, doc, bindings, FieldBinding::Sql)?;
+            lower_mode(rhs, doc, bindings, FieldBinding::Sql)?;
             if let Some(e) = escape {
-                lower(e, doc, bindings)?;
+                lower_mode(e, doc, bindings, FieldBinding::Sql)?;
             }
         }
         Expr::InList { lhs, rhs, .. } => {

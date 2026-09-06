@@ -528,10 +528,10 @@ impl Scope {
             Expr::Like {
                 lhs, rhs, escape, ..
             } => {
-                self.lower(lhs)?;
-                self.lower(rhs)?;
+                self.sql_argument(lhs)?;
+                self.sql_argument(rhs)?;
                 if let Some(e) = escape {
-                    self.lower(e)?;
+                    self.sql_argument(e)?;
                 }
             }
             Expr::InList { lhs, rhs, .. } => {

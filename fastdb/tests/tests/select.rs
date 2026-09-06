@@ -1377,3 +1377,51 @@ fn binary_equality_expressions_match_native_blobs_and_affinity() {
         1
     );
 }
+
+#[test]
+fn binary_pattern_operands_match_native_blob_behavior() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(data BLOB, pattern BLOB)");
+    for values in [
+        "X'616263',X'6125'",
+        "X'612562',X'61212562'",
+        "X'',X'25'",
+        "NULL,X'25'",
+    ] {
+        query(
+            &c,
+            &format!("INSERT INTO docs (data,pattern) VALUES ({values})"),
+        );
+        query(&c, &format!("INSERT INTO baseline VALUES ({values})"));
+    }
+    for expr in [
+        "data LIKE 'a%'",
+        "data NOT LIKE 'a%'",
+        "data GLOB 'a*'",
+        "data NOT GLOB 'a*'",
+        "data LIKE pattern",
+        "data LIKE pattern ESCAPE '!'",
+        "'abc' LIKE pattern",
+        "data LIKE 'a!%b' ESCAPE X'21'",
+    ] {
+        let sql = |table| format!("SELECT {expr} AS matched FROM {table} ORDER BY data");
+        assert_eq!(
+            query(&c, &sql("docs")).rows,
+            query(&c, &sql("baseline")).rows,
+            "{expr}"
+        );
+    }
+    query(&c, "BEGIN");
+    let expected = query(&c, "SELECT data FROM baseline WHERE data GLOB 'a*'")
+        .rows
+        .len();
+    assert_eq!(
+        query(&c, "DELETE FROM docs WHERE data GLOB 'a*' RETURNING data")
+            .rows
+            .len(),
+        expected
+    );
+    query(&c, "ROLLBACK");
+}
