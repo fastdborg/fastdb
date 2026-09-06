@@ -70,3 +70,89 @@ fn grouped_insert_select_validates_atomically() {
         vec![vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn having_aliases_match_native_precedence_and_aggregate_expressions() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE sales");
+    q(&c, "CREATE TABLE baseline(region,amount,total)");
+    for (region, amount, total) in [("a", 2, 99), ("a", 3, 99), ("b", 8, 0)] {
+        q(
+            &c,
+            &format!("INSERT INTO sales {{region:'{region}',amount:{amount},total:{total}}}"),
+        );
+        q(
+            &c,
+            &format!("INSERT INTO baseline VALUES ('{region}',{amount},{total})"),
+        );
+    }
+    for having in [
+        "total>6",
+        "abs(total)>6 AND n=1",
+        "place='a'",
+        "total>6 AND s.total=0",
+    ] {
+        for distinct in ["", "DISTINCT "] {
+            let tail = format!("GROUP BY s.region HAVING {having} ORDER BY total");
+            let projection =
+                format!("{distinct}s.region AS place,sum(s.amount) AS total,count(*) AS n");
+            assert_eq!(
+                q(&c, &format!("SELECT {projection} FROM sales s {tail}")).rows,
+                q(&c, &format!("SELECT {projection} FROM baseline s {tail}")).rows,
+                "{having}"
+            );
+        }
+    }
+    assert_eq!(
+        q(&c, "SELECT count(*) AS n FROM sales HAVING N=3").rows,
+        vec![vec![Value::Integer(3)]]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT s.region AS amount,count(*) AS n FROM sales s GROUP BY s.amount ORDER BY n"
+        )
+        .rows,
+        q(
+            &c,
+            "SELECT s.region AS amount,count(*) AS n FROM baseline s GROUP BY s.amount ORDER BY n"
+        )
+        .rows
+    );
+    q(&c, "CREATE TABLE totals");
+    q(&c,"INSERT INTO totals (region,total) SELECT region,sum(amount) AS total FROM sales GROUP BY region HAVING total>6");
+    assert_eq!(
+        q(&c, "SELECT total FROM totals").rows,
+        vec![vec![Value::Integer(8)]]
+    );
+}
+
+#[test]
+fn having_aliases_preserve_typed_helper_inputs_and_reject_fetched_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {id:docs:2,active:true}");
+    q(&c, "INSERT INTO docs {id:docs:10,active:false}");
+    assert_eq!(
+        q(
+            &c,
+            "SELECT active AS flag,count(*) AS n FROM docs GROUP BY active HAVING flag=true"
+        )
+        .rows,
+        vec![vec![Value::Boolean(true), Value::Integer(1)]]
+    );
+    let result = q(
+        &c,
+        "SELECT id AS ref,count(*) AS n FROM docs GROUP BY id HAVING record::id(ref)=10",
+    );
+    assert!(matches!(
+        &result.rows[0][0],
+        Value::Record(fastdb::Record {
+            key: fastdb::Key::Integer(10),
+            ..
+        })
+    ));
+    assert!(c.execute("SELECT record::fetch(id) AS target,count(*) AS n FROM docs GROUP BY id HAVING target IS NOT NULL",&Parameters::new()).is_err());
+}

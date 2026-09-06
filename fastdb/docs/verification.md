@@ -278,3 +278,10 @@ The previously recorded ORDER BY n+0 alias/field collision is fixed. ORDER alias
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 125 Rust tests, fourteen Node tests and TypeScript declarations. Two new tests compare arithmetic/function alias ordering against ordinary relational results with and without DISTINCT; verify ordering of a volatile projected random value through n+0; check typed record helpers, mixed collection/relational inputs, grouped aggregate aliases and invalid nested aggregates. Existing collation, pagination and volatile-expression checks remain green.
 
 No dependencies or upstream implementation files changed. This addresses ordering aliases in the supported expression subset; WHERE/GROUP/HAVING alias rules, derived-source propagation, resource/performance and release qualification remain unfinished.
+
+
+## HAVING aliases and structural GROUP BY guard — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 127 Rust tests, fourteen Node tests and TypeScript declarations. Two new grouping tests compare aggregate/scalar HAVING aliases with the pinned relational engine, including alias/source-field collisions, qualified source references, DISTINCT and INSERT SELECT. They also verify global aggregate HAVING, case-insensitive alias lookup, typed boolean/record helper inputs, fetched-value rejection and qualified GROUP BY fields whose names collide with a projection alias.
+
+HAVING receives projected expression bindings after grouping-key lowering, and those bindings are cleared before window-source lowering. The GROUP BY guard now examines expression references through the pinned AST walker instead of matching all text tokens. Renamed unqualified GROUP BY aliases remain explicitly unsupported because their precedence against variable-schema collection fields still needs a settled contract; qualified source expressions remain available. No dependencies or upstream implementation files changed. Full V1 and broader query/resource/release qualification remain incomplete.

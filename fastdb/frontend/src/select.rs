@@ -1372,9 +1372,28 @@ impl Connection {
             }
             if let Some(expr) = &mut group.having {
                 if !scope.sources.is_empty() {
-                    reject_group_aliases(expr, &original_columns)?;
+                    for ((name, column), typed) in names.iter().zip(columns.iter()).zip(&typed) {
+                        if scope
+                            .fetched_aliases
+                            .borrow()
+                            .contains(&name.to_ascii_lowercase())
+                        {
+                            continue;
+                        }
+                        if let ResultColumn::Expr(value, _) = column {
+                            scope
+                                .standalone_aliases
+                                .borrow_mut()
+                                .entry(name.to_ascii_lowercase())
+                                .or_insert_with(|| (*value.clone(), *typed));
+                        }
+                    }
                 }
                 scope.lower(expr)?;
+                // Window source expressions retain their own name-resolution scope.
+                if !scope.sources.is_empty() {
+                    scope.standalone_aliases.borrow_mut().clear();
+                }
             }
         }
         for definition in window_clause {
@@ -1536,16 +1555,22 @@ fn reject_group_aliases(expr: &Expr, columns: &[ResultColumn]) -> Result<()> {
         {
             continue;
         }
-        for token in fastql_parser::tokenize(&expr.to_string())? {
-            if matches!(
-                token.kind,
-                fastql_parser::Kind::Word | fastql_parser::Kind::Identifier
-            ) && token.text.eq_ignore_ascii_case(alias.name().as_str())
-            {
-                return Err(unsupported(
-                    "projection aliases in GROUP BY/HAVING; repeat the expression",
-                ));
+        let mut copy = expr.clone();
+        let mut found = false;
+        turso_core::walk_expr_mut(&mut copy, &mut |expr| {
+            if matches!(expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_path") {
+                return Ok(turso_core::WalkControl::SkipChildren);
             }
+            if matches!(expr, Expr::Id(name) | Expr::Name(name) if name.as_str().eq_ignore_ascii_case(alias.name().as_str()))
+            {
+                found = true;
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+        if found {
+            return Err(unsupported(
+                "projection aliases in GROUP BY; repeat or qualify the source expression",
+            ));
         }
     }
     Ok(())
