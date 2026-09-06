@@ -8,4 +8,13 @@ void row; void rows; void changed;
 new Record('docs', 1);
 // @ts-expect-error undefined is not a database value
 db.execute('SELECT $x', { $x: undefined });
+const migration = db.migrate([{version: 1n, name: 'create', sql: 'CREATE TABLE docs;'}]);
+const versions: bigint[] = migration.applied;
+const payload: string = db.exportDocuments('docs', 'ndjson');
+const count: number = db.importDocuments('docs', payload).imported;
+void versions; void count;
+// @ts-expect-error versions require bigint
+db.migrate([{version: 1, name: 'create', sql: ''}]);
+// @ts-expect-error no implicit CSV format
+db.exportDocuments('docs', 'csv');
 db.close();

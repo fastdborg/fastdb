@@ -55,20 +55,44 @@ function decode(value) {
     default: throw new Error('unsupported native value encoding');
   }
 }
+function unwrap(raw) {
+  const report = JSON.parse(raw);
+  if (report.version !== 1) throw new Error('unsupported native report version');
+  if (report.execution.error) {
+    const error = new Error(report.execution.error.message);
+    error.code = report.execution.error.code;
+    error.transaction = report.transaction;
+    throw error;
+  }
+  return report;
+}
 class Database {
   #native;
   constructor(path = ':memory:') { this.#native = new NativeDatabase(path); }
   close() { this.#native.close(); }
   execute(sql, parameters = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
-    const report = JSON.parse(this.#native.execute(sql, JSON.stringify(params)));
-    if (report.version !== 1) throw new Error('unsupported native report version');
-    if (report.execution.error) {
-      const error = new Error(report.execution.error.message);
-      error.code = report.execution.error.code; error.transaction = report.transaction; throw error;
-    }
+    const report = unwrap(this.#native.execute(sql, JSON.stringify(params)));
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+  }
+  exportDocuments(table, format = 'json') {
+    return unwrap(this.#native.exportDocuments(table, format)).execution.result;
+  }
+  importDocuments(table, input, format = 'json') {
+    const report = unwrap(this.#native.importDocuments(table, input, format));
+    return { ...report.execution.result, transaction: report.transaction };
+  }
+  migrate(migrations) {
+    const plan = migrations.map(m => {
+      if (typeof m.version !== 'bigint' || typeof m.name !== 'string' || typeof m.sql !== 'string') {
+        throw new TypeError('migration requires bigint version, string name and SQL');
+      }
+      return { version: encode(m.version).value, name: m.name, sql: m.sql };
+    });
+    const report = unwrap(this.#native.migrate(JSON.stringify(plan)));
+    return { alreadyApplied: report.execution.result.alreadyApplied,
+      applied: report.execution.result.applied.map(BigInt), transaction: report.transaction };
   }
   all(sql, parameters) { return this.execute(sql, parameters).rows; }
   first(sql, parameters) { return this.all(sql, parameters)[0]; }

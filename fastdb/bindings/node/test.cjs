@@ -60,3 +60,36 @@ test('prototype-looking object fields remain own data properties', () => {
   assert.equal({}.safe, undefined);
   db.close();
 });
+test('Node migration history retains int64 versions and failure atomicity', () => {
+  const db = new Database();
+  const plan = [{ version: 9007199254740993n, name: 'create', sql: 'CREATE TABLE docs;' }];
+  assert.deepEqual(db.migrate(plan).applied, [9007199254740993n]);
+  assert.equal(db.migrate(plan).alreadyApplied, 1);
+  const pending = [...plan, { version: 9007199254740994n, name: 'fail', sql: 'INSERT INTO docs {value:1}; SELECT array::append(1,2);' }];
+  assert.throws(() => db.migrate(pending), error => error.code === 'FDB_MIGRATION' && error.transaction.after === 'autocommit');
+  assert.deepEqual(db.all('SELECT * FROM docs'), []);
+  assert.throws(() => db.migrate([{ ...plan[0], sql: 'CREATE TABLE docs; -- edit' }]), error => error.code === 'FDB_VALIDATION');
+  pending[1].sql = 'INSERT INTO docs {value:1};';
+  assert.deepEqual(db.migrate(pending).applied, [9007199254740994n]);
+  db.close();
+});
+test('Node transfers preserve values and roll back duplicate imports', () => {
+  const source = new Database();
+  source.execute('CREATE TABLE docs');
+  source.execute('INSERT INTO docs DOCUMENT $doc', { $doc: { id: new Record('docs','p1'), value: 9223372036854775807n, zero: -0, bytes: Buffer.from([255]) } });
+  for (const format of ['json', 'ndjson']) {
+    const target = new Database();
+    target.execute('CREATE TABLE docs');
+    const payload = source.exportDocuments('docs', format);
+    assert.equal(target.importDocuments('docs', payload, format).imported, 1);
+    assert.deepEqual(target.all('SELECT * FROM docs'), source.all('SELECT * FROM docs'));
+    assert.throws(() => target.importDocuments('docs', payload, format), error => error.transaction.after === 'autocommit');
+    assert.equal(target.exportDocuments('docs', format), payload);
+    target.execute('BEGIN');
+    assert.throws(() => target.importDocuments('docs', 'bad input', format), error => error.transaction.after === 'active');
+    target.execute('ROLLBACK');
+    assert.throws(() => target.exportDocuments('docs', 'csv'), error => error.code === 'FDB_VALIDATION');
+    target.close();
+  }
+  source.close();
+});
