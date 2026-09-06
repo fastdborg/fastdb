@@ -489,3 +489,146 @@ fn ordinary_trigger_literals_persist_without_permitting_managed_references() {
     query(&c, "INSERT INTO users {id:users:p1}");
     assert_eq!(query(&c, "SELECT * FROM users").rows.len(), 1);
 }
+
+#[test]
+fn checkpointed_offline_backup_restores_schema_values_indexes_and_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.db");
+    let backup = dir.path().join("backup.db");
+    let restored = dir.path().join("restore");
+    std::fs::create_dir(&restored).unwrap();
+    let restored = restored.join("restored.db");
+    let migration = fastdb::Migration {
+        version: 1,
+        name: "initial".into(),
+        sql: "CREATE TABLE users; DEFINE FIELD name ON users TYPE string REQUIRED; DEFINE FIELD score ON users TYPE integer CHECK(score>0); DEFINE FIELD embedding ON users TYPE vector<3>; CREATE UNIQUE INDEX users_name ON users(name); CREATE INDEX users_city ON users(profile.city); CREATE TABLE audit(value TEXT); CREATE VIEW audit_view AS SELECT value FROM audit;".into(),
+    };
+    let document = Document::from([
+        ("id".into(), Value::Record(record("saved"))),
+        ("name".into(), Value::String("Alice".into())),
+        ("score".into(), Value::Integer(7)),
+        ("large".into(), Value::Integer(i64::MAX)),
+        (
+            "fraction".into(),
+            Value::Number(f64::from_bits(0x3fd5555555555555)),
+        ),
+        ("binary".into(), Value::Binary(vec![0, 255, 128])),
+        ("reference".into(), Value::Record(record("missing"))),
+        (
+            "embedding".into(),
+            Value::vector64(&[0.1, 0.2, 0.3]).unwrap(),
+        ),
+        (
+            "array".into(),
+            Value::Array(vec![Value::Null, Value::Boolean(true)]),
+        ),
+        (
+            "profile".into(),
+            Value::Object(Document::from([(
+                "city".into(),
+                Value::String("Bangkok".into()),
+            )])),
+        ),
+    ]);
+    let info;
+    {
+        let db = Database::open(source.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        c.migrate(std::slice::from_ref(&migration)).unwrap();
+        c.insert("users", document.clone()).unwrap();
+        query(&c, "INSERT INTO audit VALUES ('saved')");
+        query(&c, "BEGIN");
+        query(&c, "UPDATE users:saved {name:'rolled back'}");
+        query(&c, "INSERT INTO audit VALUES ('rolled back')");
+        query(&c, "ROLLBACK");
+        info = query(&c, "INFO FOR TABLE users").rows;
+        assert_eq!(
+            query(&c, "PRAGMA wal_checkpoint(TRUNCATE)").rows,
+            vec![vec![
+                Value::Integer(0),
+                Value::Integer(0),
+                Value::Integer(0)
+            ]]
+        );
+        let wal = source.with_file_name("source.db-wal");
+        assert_eq!(std::fs::metadata(wal).unwrap().len(), 0);
+    }
+    // All source handles are closed and this test exclusively owns the files.
+    // A main-file copy is only sufficient after the successful checkpoint.
+    std::fs::copy(&source, &backup).unwrap();
+    let snapshot_bytes = std::fs::read(&backup).unwrap();
+    {
+        let db = Database::open(source.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        query(
+            &c,
+            "UPDATE users:saved {name:'later',profile:{city:'Osaka'}}",
+        );
+        query(&c, "INSERT INTO audit VALUES ('later')");
+        query(&c, "DROP INDEX users_city");
+    }
+    // Restore into a fresh directory, without any old WAL or SHM sidecars.
+    std::fs::copy(&backup, &restored).unwrap();
+    {
+        let db = Database::open(restored.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        assert_eq!(
+            query(&c, "PRAGMA integrity_check").rows,
+            vec![vec![Value::String("ok".into())]]
+        );
+        let saved = c.get(&record("saved")).unwrap().unwrap();
+        assert_eq!(saved, document);
+        let Value::Number(fraction) = saved["fraction"] else {
+            panic!("number lost its type")
+        };
+        assert_eq!(fraction.to_bits(), 0x3fd5555555555555);
+        assert_eq!(query(&c, "INFO FOR TABLE users").rows, info);
+        assert_eq!(
+            query(&c, "SELECT * FROM audit_view").rows,
+            vec![vec![Value::String("saved".into())]]
+        );
+        let report = c.migrate(std::slice::from_ref(&migration)).unwrap();
+        assert_eq!(report.already_applied, 1);
+        assert!(report.applied.is_empty());
+        let mut changed = migration.clone();
+        changed.sql.push(' ');
+        assert_eq!(c.migrate(&[changed]).unwrap_err().code(), "FDB_VALIDATION");
+        for sql in [
+            "UPDATE users:saved {score:0}",
+            "INSERT INTO users {id:users:duplicate,name:'Alice'}",
+            "INSERT INTO users {id:users:invalid,score:1}",
+        ] {
+            assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+        }
+        assert_eq!(
+            c.lookup_index("users", "users_city", &Value::String("Bangkok".into()))
+                .unwrap(),
+            vec![document.clone()]
+        );
+        query(&c, "BEGIN");
+        query(&c, "UPDATE users:saved {profile:{city:'Paris'}}");
+        assert!(c
+            .lookup_index("users", "users_city", &Value::String("Bangkok".into()))
+            .unwrap()
+            .is_empty());
+        query(&c, "DELETE FROM users:saved");
+        assert!(c
+            .lookup_index("users", "users_city", &Value::String("Paris".into()))
+            .unwrap()
+            .is_empty());
+        query(&c, "ROLLBACK");
+        assert_eq!(
+            c.lookup_index("users", "users_city", &Value::String("Bangkok".into()))
+                .unwrap(),
+            vec![document.clone()]
+        );
+        query(&c, "INSERT INTO users {id:users:new,name:'Bob',score:2}");
+    }
+    let db = Database::open(restored.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(c.get(&record("saved")).unwrap(), Some(document));
+    assert!(c.get(&record("new")).unwrap().is_some());
+    assert_eq!(query(&c, "SELECT * FROM audit_view").rows.len(), 1);
+    // Restoring and writing the working copy never changes the backup artifact.
+    assert_eq!(std::fs::read(backup).unwrap(), snapshot_bytes);
+}
