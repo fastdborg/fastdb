@@ -640,6 +640,23 @@ impl Scope {
                     ))?;
                     return Ok(());
                 }
+                if value_typed
+                    && !lower_typed
+                    && !upper_typed
+                    && self.native_column(&lower)?
+                    && self.native_column(&upper)?
+                {
+                    // Retain BETWEEN so the engine evaluates the logical lhs
+                    // once and applies each native bound's affinity. A record
+                    // cannot be ordered against either non-null SQL bound.
+                    // Isolate the conversion in a scalar subquery so the
+                    // engine does not propagate physical document collation
+                    // (or the other bound's collation) into either comparison.
+                    **lhs = expression(&format!(
+                        "(SELECT __fastdb_range_scalar({value}, coalesce({lower}, {upper})))"
+                    ))?;
+                    return Ok(());
+                }
                 if !value_typed && (lower_typed || upper_typed) && self.native_column(&value)? {
                     // Keep the native BETWEEN node: the engine applies the
                     // column's affinity independently to each bound. Typed

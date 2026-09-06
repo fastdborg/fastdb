@@ -537,6 +537,17 @@ mod between_tests {
         )
         .unwrap();
         for negate in ["", "NOT "] {
+            CALLS.store(0, Ordering::SeqCst);
+            let rows = c.execute(&format!(
+                "SELECT record::id(type::record('docs',between_tick())) {negate}BETWEEN value AND value FROM native_between"
+            ), &crate::Parameters::new()).unwrap().rows;
+            assert_eq!(
+                rows,
+                vec![vec![Value::Integer(i64::from(negate.is_empty()))]]
+            );
+            assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        }
+        for negate in ["", "NOT "] {
             for (lower, upper, calls) in [
                 ("record::id(type::record('docs',between_tick()))", "10", 1),
                 ("1", "record::id(type::record('docs',between_tick()))", 1),

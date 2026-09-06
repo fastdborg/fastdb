@@ -2044,3 +2044,82 @@ fn collated_collection_ranges_resolve_fields_instead_of_native_columns() {
         }
     }
 }
+
+#[test]
+fn document_between_native_bounds_preserves_payloads_and_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(v,n,t)");
+    query(&c, "CREATE TABLE bounds(lo BLOB,hi BLOB,nlo INTEGER,nhi INTEGER,tlo TEXT COLLATE NOCASE,thi TEXT COLLATE NOCASE)");
+    for v in ["X''", "X'02'", "X'0a'", "X'ff'", "NULL"] {
+        query(
+            &c,
+            &format!("INSERT INTO docs(v,n,t) VALUES ({v},'10','BETA')"),
+        );
+        query(
+            &c,
+            &format!("INSERT INTO baseline VALUES ({v},'10','BETA')"),
+        );
+    }
+    query(&c, "INSERT INTO bounds(lo,hi,nlo,nhi) VALUES (X'02',X'0a',2,10),(X'ff',X'02',10,2),(NULL,X'0a',NULL,10),(X'02',NULL,2,NULL),(NULL,NULL,NULL,NULL)");
+    query(&c, "UPDATE bounds SET tlo='alpha',thi='gamma'");
+    for not in ["", "NOT "] {
+        for (v, lo, hi) in [
+            ("d.v", "b.lo", "b.hi"),
+            ("d.n", "b.nlo", "b.nhi"),
+            ("d.t", "b.tlo COLLATE NOCASE", "b.thi COLLATE NOCASE"),
+            ("d.t", "b.tlo", "b.thi"),
+            ("d.t", "b.tlo COLLATE NOCASE", "b.thi COLLATE BINARY"),
+            ("d.t", "b.tlo COLLATE BINARY", "b.thi COLLATE NOCASE"),
+            ("(+d.v)", "(+b.lo)", "(b.hi)"),
+        ] {
+            let sql = format!("SELECT {v} {not}BETWEEN {lo} AND {hi} FROM SOURCE d JOIN bounds b ON 1 ORDER BY d.v,b.lo,b.hi");
+            assert_eq!(
+                query(&c, &sql.replace("SOURCE", "docs")).rows,
+                query(
+                    &c,
+                    // Isolate the baseline column's implicit BINARY collation
+                    // so each bound supplies the comparison collation.
+                    &sql.replace("SOURCE", "baseline")
+                        .replace("d.t", "(SELECT d.t)")
+                )
+                .rows,
+                "{sql}"
+            );
+        }
+    }
+    for source in [
+        "docs d",
+        "(SELECT v,n,t FROM docs) d",
+        "(WITH d AS (SELECT v,n,t FROM docs) SELECT * FROM d) d",
+    ] {
+        let sql =
+            format!("SELECT count(*) FROM {source} JOIN bounds b ON d.v BETWEEN b.lo AND b.hi");
+        assert_eq!(query(&c, &sql).rows, vec![vec![Value::Integer(2)]]);
+    }
+    query(&c, "CREATE TABLE refs");
+    query(&c, "INSERT INTO refs {v:docs:a}");
+    for not in ["", "NOT "] {
+        let sql = format!("SELECT d.v {not}BETWEEN b.lo AND b.hi FROM refs d JOIN bounds b ON b.lo IS NULL AND b.hi IS NULL");
+        assert_eq!(query(&c, &sql).rows, vec![vec![Value::Null]]);
+        let error = c
+            .execute(
+                &sql.replace("b.hi IS NULL", "b.hi IS NOT NULL"),
+                &Parameters::new(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("mixed record/scalar ordering"));
+    }
+    query(&c, "CREATE TABLE copied(v BLOB CHECK(v<>X'0a'))");
+    query(&c, "BEGIN");
+    let error = c
+        .execute(
+            "INSERT INTO copied SELECT d.v FROM docs d JOIN bounds b ON d.v BETWEEN b.lo AND b.hi",
+            &Parameters::new(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_CONSTRAINT");
+    assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
+    query(&c, "ROLLBACK");
+}

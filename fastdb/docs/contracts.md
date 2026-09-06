@@ -508,7 +508,7 @@ For `<`, `<=`, `>` and `>=` between a preserved logical value and an ordinary SQ
 
 ## Native-column BETWEEN document bounds
 
-A native column may now use preserved document values as either or both BETWEEN/NOT BETWEEN bounds. The native BETWEEN operation retains the column's affinity and collation; typed bounds convert once to raw scalar payloads and reject non-null record/scalar ordering. NULL retains three-valued comparison behavior. Parentheses, unary plus and COLLATE around the native column retain their SQL roles. This does not cover a logical left operand with native bounds, arbitrary expressions in every position, or all wrappers around typed bounds. Conversion also reads the native column to enforce NULL-aware record rejection; volatile expressions behind native views/derived columns are not yet qualified for evaluation counts.
+A native column may now use preserved document values as either or both BETWEEN/NOT BETWEEN bounds. The native BETWEEN operation retains the column's affinity and collation; typed bounds convert once to raw scalar payloads and reject non-null record/scalar ordering. NULL retains three-valued comparison behavior. Parentheses, unary plus and COLLATE around the native column retain their SQL roles. The logical-left/native-column-bounds extension is described below; arbitrary expressions in every position remain unqualified. Conversion also reads the native column to enforce NULL-aware record rejection; volatile expressions behind native views/derived columns are not yet qualified for evaluation counts.
 
 ## Terminal editing and history
 
@@ -560,4 +560,10 @@ Success prints one JSON line with `documents`, `indexes`, `index_entries`, `enco
 
 ## Collated collection range operands
 
-Range lowering now resolves native-column identity through the source scope, including beneath COLLATE, parentheses and unary plus. A collated collection field is lowered as a document expression instead of being emitted as a nonexistent physical column. Differential tests cover text/NULL values with NOCASE and BINARY, both operand positions, all four range operators, and direct, derived and CTE collection sources. Existing binary/numeric mixed-native range and native-column BETWEEN tests also cover parenthesized/unary-plus document operands. This does not qualify binary/record ordering under explicit collation, arbitrary native expressions, or logical BETWEEN left operands with native bounds.
+Range lowering now resolves native-column identity through the source scope, including beneath COLLATE, parentheses and unary plus. A collated collection field is lowered as a document expression instead of being emitted as a nonexistent physical column. Differential tests cover text/NULL values with NOCASE and BINARY, both operand positions, all four range operators, and direct, derived and CTE collection sources. Existing binary/numeric mixed-native range and native-column BETWEEN tests also cover parenthesized/unary-plus document operands. This does not qualify binary/record ordering under explicit collation, arbitrary native expressions, or every mixed BETWEEN operand form.
+
+## Document BETWEEN native column bounds
+
+A preserved logical value may be the left operand of BETWEEN/NOT BETWEEN when both bounds resolve to native SQL columns. The logical value converts to a raw scalar (binary payloads remain raw bytes), and the native BETWEEN node applies each bound's affinity and collation. A generated scalar subquery isolates the conversion from physical document-storage collation and preserves one evaluation of the logical left expression. This internal lowering does not add general user-written scalar-subquery support.
+
+Record/scalar ordering fails when either bound is non-null; two null bounds produce NULL. This path also accepts supported column wrappers and typed derived/CTE left values. Native columns are read again for the null-aware record check, so volatile native views/derived expressions remain unqualified. Mixed typed/native bounds and arbitrary bound expressions remain outside this extension. No data/index encoding changes are made.
