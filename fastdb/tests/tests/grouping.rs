@@ -43,12 +43,18 @@ fn grouped_aggregates_match_relational_engine() {
         .rows,
         vec![vec![Value::Null, Value::Integer(2)]]
     );
-    assert!(c
-        .execute(
-            "SELECT region AS place, count(*) AS n FROM sales GROUP BY place",
-            &Parameters::new()
+    assert_eq!(
+        q(
+            &c,
+            "SELECT region AS place, count(*) AS n FROM sales GROUP BY place ORDER BY place"
         )
-        .is_err());
+        .rows,
+        q(
+            &c,
+            "SELECT region AS place, count(*) AS n FROM sales GROUP BY region ORDER BY place"
+        )
+        .rows
+    );
 }
 #[test]
 fn grouped_insert_select_validates_atomically() {
@@ -268,6 +274,81 @@ fn collated_grouping_ordinals_preserve_text_and_insert_select() {
         q(
             &c,
             "SELECT v AS key,count(*) AS v FROM baseline GROUP BY (1) ORDER BY key"
+        )
+        .rows
+    );
+}
+
+#[test]
+fn group_aliases_resolve_expressions_constants_and_explicit_field_collisions() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "CREATE TABLE baseline(city TEXT,amount INTEGER,bucket TEXT)",
+    );
+    for (city, amount) in [("A", 1), ("a", 2), ("B", 3)] {
+        q(
+            &c,
+            &format!("INSERT INTO docs {{city:'{city}',amount:{amount},bucket:'same'}}"),
+        );
+        q(
+            &c,
+            &format!("INSERT INTO baseline VALUES ('{city}',{amount},'same')"),
+        );
+    }
+    for tail in [
+        "GROUP BY place ORDER BY place",
+        "GROUP BY (place COLLATE NOCASE) ORDER BY place",
+        "GROUP BY lower(place) ORDER BY place",
+    ] {
+        let sql = |table| format!("SELECT city AS place,count(*) AS total FROM {table} {tail}");
+        assert_eq!(
+            q(&c, &sql("docs")).rows,
+            q(&c, &sql("baseline")).rows,
+            "{tail}"
+        );
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT 7 AS key,count(*) AS total FROM docs GROUP BY key"
+        )
+        .rows,
+        vec![vec![Value::Integer(7), Value::Integer(3)]]
+    );
+    assert_eq!(q(&c, "SELECT lower(city) AS bucket,count(*) AS total FROM docs GROUP BY bucket ORDER BY bucket").rows,
+               q(&c, "SELECT lower(city) AS bucket,count(*) AS total FROM baseline GROUP BY lower(city) ORDER BY bucket").rows);
+    assert_eq!(
+        q(
+            &c,
+            "SELECT lower(city) AS bucket,count(*) AS total FROM docs d GROUP BY d.bucket"
+        )
+        .rows
+        .len(),
+        1
+    );
+    assert!(c
+        .execute(
+            "SELECT sum(amount) AS total FROM docs GROUP BY total",
+            &Parameters::new()
+        )
+        .is_err());
+    q(&c, "CREATE TABLE typed");
+    q(
+        &c,
+        "INSERT INTO typed (value) VALUES (X'31'),(X'31'),(docs:1),(docs:1)",
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT value AS key,count(*) AS total FROM typed GROUP BY key ORDER BY key"
+        )
+        .rows,
+        q(
+            &c,
+            "SELECT value AS key,count(*) AS total FROM typed GROUP BY value ORDER BY key"
         )
         .rows
     );

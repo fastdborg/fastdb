@@ -1666,7 +1666,7 @@ impl Connection {
             for expr in &mut group.exprs {
                 let ordinal = expand_group_position(expr, &original_columns)?;
                 if !ordinal && !scope.sources.is_empty() {
-                    reject_group_aliases(expr, &original_columns)?;
+                    expand_group_aliases(expr, &original_columns)?;
                 }
                 scope.lower(expr)?;
             }
@@ -1868,37 +1868,41 @@ fn expand_group_position(expr: &mut Expr, columns: &[ResultColumn]) -> Result<bo
     Ok(true)
 }
 
-fn reject_group_aliases(expr: &Expr, columns: &[ResultColumn]) -> Result<()> {
+fn expand_group_aliases(expr: &mut Expr, columns: &[ResultColumn]) -> Result<()> {
+    let mut aliases = std::collections::BTreeMap::new();
     for column in columns {
         let ResultColumn::Expr(original, Some(alias)) = column else {
             continue;
         };
-        if !alias.is_explicit() {
-            continue;
-        }
-        // An alias identical to its simple field needs no substitution.
-        if matches!(original.as_ref(), Expr::Id(n) | Expr::Name(n) | Expr::Qualified(_, n) | Expr::DoublyQualified(_, _, n) if n.as_str().eq_ignore_ascii_case(alias.name().as_str()))
-        {
-            continue;
-        }
-        let mut copy = expr.clone();
-        let mut found = false;
-        turso_core::walk_expr_mut(&mut copy, &mut |expr| {
-            if matches!(expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_path") {
-                return Ok(turso_core::WalkControl::SkipChildren);
-            }
-            if matches!(expr, Expr::Id(name) | Expr::Name(name) if name.as_str().eq_ignore_ascii_case(alias.name().as_str()))
-            {
-                found = true;
-            }
-            Ok(turso_core::WalkControl::Continue)
-        })?;
-        if found {
-            return Err(unsupported(
-                "projection aliases in GROUP BY; repeat or qualify the source expression",
-            ));
+        if alias.is_explicit() {
+            let value = if projection_position(original).is_some() {
+                expression(&format!("coalesce({original}, NULL)"))?
+            } else {
+                *original.clone()
+            };
+            aliases
+                .entry(alias.name().as_str().to_ascii_lowercase())
+                .or_insert(value);
         }
     }
+    turso_core::walk_expr_mut(expr, &mut |expr| {
+        if matches!(expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_path") {
+            return Ok(turso_core::WalkControl::SkipChildren);
+        }
+        if matches!(expr, Expr::Id(name) if !name.quoted() && (name.as_str().eq_ignore_ascii_case("true") || name.as_str().eq_ignore_ascii_case("false")))
+        {
+            return Ok(turso_core::WalkControl::Continue);
+        }
+        if let Expr::Id(name) | Expr::Name(name) = expr {
+            if let Some(value) = aliases.get(&name.as_str().to_ascii_lowercase()) {
+                *expr = value.clone();
+                // References inside the source expression retain source meaning,
+                // even if they happen to name another projection alias.
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+        }
+        Ok(turso_core::WalkControl::Continue)
+    })?;
     Ok(())
 }
 
