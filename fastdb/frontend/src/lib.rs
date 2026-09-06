@@ -4,7 +4,9 @@ mod catalog;
 mod check;
 mod expression;
 mod functions;
+mod interrupt;
 mod links;
+pub use interrupt::InterruptHandle;
 mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
@@ -61,6 +63,7 @@ impl Error {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Syntax(_) => "FDB_SYNTAX",
+            Self::Engine(turso_core::LimboError::Interrupt) => "FDB_CANCELLED",
             Self::Engine(_) => "FDB_ENGINE",
             Self::Encoding(_) | Self::Storage(_) => "FDB_STORAGE",
             Self::Validation(_) => "FDB_VALIDATION",
@@ -195,7 +198,7 @@ impl Connection {
                 value.clone(),
             )?;
         }
-        Ok(statement.run_collect_rows()?)
+        collect_rows(&mut statement)
     }
     fn atomic<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         self.run("SAVEPOINT __fastdb_statement", &[])?;
@@ -725,8 +728,7 @@ impl Connection {
         let columns = (0..stmt.num_columns())
             .map(|i| stmt.get_column_name(i).into_owned())
             .collect();
-        let rows = stmt
-            .run_collect_rows()?
+        let rows = collect_rows(&mut stmt)?
             .into_iter()
             .map(|row| row.into_iter().map(from_engine).collect())
             .collect();
@@ -875,4 +877,15 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
         scalar(path_value(doc, &index.path)?.unwrap_or(&Value::Null))?;
     }
     Ok(())
+}
+
+// The pinned run_collect_rows helper conflates Interrupt with Busy. Its callback
+// counterpart preserves those errors, so all frontend reads use this adapter.
+fn collect_rows(statement: &mut turso_core::Statement) -> Result<Vec<Vec<EngineValue>>> {
+    let mut rows = Vec::new();
+    statement.run_with_row_callback(|row| {
+        rows.push(row.get_values().cloned().collect());
+        Ok(())
+    })?;
+    Ok(rows)
 }

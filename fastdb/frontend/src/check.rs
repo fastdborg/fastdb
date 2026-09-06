@@ -244,7 +244,7 @@ impl Connection {
                     statement
                         .bind_at(NonZeroUsize::new(i + 1).expect("one-based binding"), value)?;
                 }
-                let rows = statement.run_collect_rows()?;
+                let rows = crate::collect_rows(&mut statement)?;
                 Ok(matches!(
                     rows.first().and_then(|row| row.first()),
                     Some(EngineValue::Numeric(turso_core::Numeric::Integer(1)))

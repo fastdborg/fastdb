@@ -172,3 +172,22 @@ test('independent async workers isolate connections and failures', async () => {
     assert.deepEqual(await databases[1].exactlyOne('SELECT value FROM docs'), [1n]);
   } finally { await Promise.all(databases.map(db => db.close())); }
 });
+test('async interrupt reaches active native work without terminating its worker', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  let timer;
+  try {
+    assert.equal(db.interrupt(),true); // Idle requests must not poison later work.
+    await db.execute('CREATE TABLE numbers(x INTEGER)');
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100},(_,i)=>`(${i})`).join(','));
+    await db.execute('CREATE TABLE sink(x INTEGER)');
+    const operation = db.execute('INSERT INTO sink SELECT a.x FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c');
+    timer = setInterval(() => db.interrupt(), 2);
+    await assert.rejects(operation, e => e.code === 'FDB_CANCELLED' && e.transaction.after === 'autocommit');
+    clearInterval(timer); timer = undefined;
+    assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM sink'),[0n]);
+    await db.execute('INSERT INTO sink VALUES (1)');
+    assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM sink'),[1n]);
+  } finally { clearInterval(timer); await db.close(); }
+  assert.equal(db.interrupt(),false);
+});

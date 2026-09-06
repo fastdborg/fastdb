@@ -1,5 +1,5 @@
 'use strict';
-const { NativeDatabase } = require('./fastdb.node');
+const { NativeDatabase, interruptConnection } = require('./fastdb.node');
 class Record {
   constructor(table, key) {
     if (typeof table !== 'string' || !['string','bigint'].includes(typeof key)) throw new TypeError('Record requires a table and string or bigint key');
@@ -113,6 +113,7 @@ exports.Vector = Vector;
 
 const asyncConstruction = Symbol('AsyncDatabase');
 class AsyncDatabase {
+  #interruptKey;
   #worker; #pending = new Map(); #next = 0; #bytes = 0;
   #ready; #readyResolve; #readyReject; #exited;
   #failure; #closing = false; #closePromise;
@@ -128,7 +129,7 @@ class AsyncDatabase {
     this.#worker.on('error', error => this.#fail(error));
     this.#worker.on('messageerror', error => this.#fail(error));
     this.#worker.on('message', message => {
-      if (message.ready) { this.#readyResolve(); return; }
+      if (message.ready) { this.#interruptKey = message.interruptKey; this.#readyResolve(); return; }
       const pending = this.#pending.get(message.id);
       if (!pending) return;
       this.#pending.delete(message.id); this.#bytes -= pending.bytes;
@@ -136,6 +137,7 @@ class AsyncDatabase {
       else pending.resolve(message.result);
     });
   }
+  interrupt() { return this.#interruptKey !== undefined && interruptConnection(this.#interruptKey); }
   static async open(path = ':memory:') {
     const db = new AsyncDatabase(path, asyncConstruction);
     try { await db.#ready; return db; }

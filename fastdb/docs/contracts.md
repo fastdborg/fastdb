@@ -108,3 +108,12 @@ Expanded columns participate in GROUP BY ordinals and INSERT SELECT width/valida
 Collection SELECT and INSERT SELECT lower scalar window arguments, PARTITION BY and ORDER BY expressions, inline OVER clauses and named WINDOW definitions through the pinned engine. Row-number, sum and count windows have differential integration coverage. Collection field output projections retain their tagged values; window arguments and results currently use native SQL scalar types. Composite arguments and full typed window semantics remain unqualified.
 
 Pinned Turso rejects custom frame specifications and `lag` as tested; these engine errors are preserved. Frame expressions are lowered but no support beyond the native baseline is promised. Aggregate-local ORDER BY combined with OVER is rejected by the frontend before reaching an upstream assertion. Windows remain invalid in RETURNING and WHERE, and are not CHECK-eligible. Broader window functions, named-window inheritance, collation, resources and release-level coverage remain pending.
+
+
+## Cooperative engine interruption
+
+`Connection::interrupt_handle()` returns a cloneable, thread-safe weak `InterruptHandle`. Calling `interrupt()` requests interruption of currently active root engine statements. False means the connection has been dropped; true means the connection was live, not that cancellation was observed. Idle requests do not cancel subsequent work. Handles do not retain the connection or expose other engine operations.
+
+Direct engine interrupts now surface as `FDB_CANCELLED`. The frontend collects rows using the pinned engine's callback runner because its convenience `run_collect_rows` method conflates Interrupt and Busy. Actual Busy errors remain engine errors. Existing migration/error wrappers still apply, and clients must inspect transaction observations after a failure. Tests cover interrupted relational writes leaving no partial rows and successful reuse; no general promise to retain an outer transaction is made.
+
+Interruption is cooperative and connection-wide. It is not tied to a request ID, and racing request boundaries may affect whichever engine statement is active. It does not dequeue work, interrupt parsing or Rust validation, or directly stop bundled JavaScript while inside its runtime. Multi-stage FastDB operations may have gaps without an active engine statement. Per-operation cancellation tokens, AbortSignal integration, deadline/resource budgets, complex interrupted document/index writes and commit/checkpoint qualification remain release work.

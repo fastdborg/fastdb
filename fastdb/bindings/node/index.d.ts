@@ -23,6 +23,7 @@ export class Database {
 export class AsyncDatabase {
   private constructor();
   static open(path?: string): Promise<AsyncDatabase>;
+  interrupt(): boolean;
   close(): Promise<void>;
   migrate(migrations: Migration[]): Promise<MigrationReport>;
   exportDocuments(table: string, format?: TransferFormat): Promise<string>;

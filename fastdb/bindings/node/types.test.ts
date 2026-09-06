@@ -29,3 +29,10 @@ async function checkAsync() {
 void checkAsync;
 // @ts-expect-error async construction must wait for native opening
 new AsyncDatabase();
+async function checkInterrupt() {
+  const asyncDb = await AsyncDatabase.open();
+  const live: boolean = asyncDb.interrupt();
+  void live;
+  await asyncDb.close();
+}
+void checkInterrupt;

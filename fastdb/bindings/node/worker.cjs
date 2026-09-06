@@ -13,4 +13,4 @@ parentPort.on('message', ({ id, method, args }) => {
     parentPort.postMessage({ id, error: { message: error.message } });
   }
 });
-parentPort.postMessage({ ready: true });
+parentPort.postMessage({ ready: true, interruptKey: db.interruptKey() });

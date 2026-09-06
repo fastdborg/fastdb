@@ -1,10 +1,32 @@
 use napi_derive::napi;
 use std::collections::BTreeMap;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex, OnceLock,
+};
+static NEXT_INTERRUPT: AtomicU64 = AtomicU64::new(1);
+static INTERRUPTS: OnceLock<Mutex<BTreeMap<u64, fastdb::InterruptHandle>>> = OnceLock::new();
+fn interrupts() -> &'static Mutex<BTreeMap<u64, fastdb::InterruptHandle>> {
+    INTERRUPTS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+#[napi]
+pub fn interrupt_connection(key: String) -> bool {
+    let Ok(key) = key.parse::<u64>() else {
+        return false;
+    };
+    let handle = interrupts()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .cloned();
+    handle.is_some_and(|h| h.interrupt())
+}
 fn error(error: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(error.to_string())
 }
 #[napi]
 pub struct NativeDatabase {
+    interrupt_key: u64,
     inner: Option<(fastdb::Connection, fastdb::Database)>,
 }
 #[napi]
@@ -13,13 +35,25 @@ impl NativeDatabase {
     pub fn new(path: String) -> napi::Result<Self> {
         let db = fastdb::Database::open(&path).map_err(error)?;
         let conn = db.connect().map_err(error)?;
+        let interrupt_key = NEXT_INTERRUPT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+            .map_err(|_| error("interrupt identifiers exhausted"))?;
+        interrupts()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(interrupt_key, conn.interrupt_handle());
         Ok(Self {
+            interrupt_key,
             inner: Some((conn, db)),
         })
     }
     #[napi]
     pub fn close(&mut self) {
-        self.inner.take();
+        self.close_inner();
+    }
+    #[napi]
+    pub fn interrupt_key(&self) -> String {
+        self.interrupt_key.to_string()
     }
     #[napi]
     pub fn execute(&self, sql: String, parameters: String) -> napi::Result<String> {
@@ -86,7 +120,19 @@ fn transfer_format(format: &str) -> fastdb::Result<fastdb::TransferFormat> {
         )),
     }
 }
+impl Drop for NativeDatabase {
+    fn drop(&mut self) {
+        self.close_inner();
+    }
+}
 impl NativeDatabase {
+    fn close_inner(&mut self) {
+        interrupts()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.interrupt_key);
+        self.inner.take();
+    }
     fn report(
         &self,
         operation: impl FnOnce(&fastdb::Connection) -> fastdb::Result<serde_json::Value>,

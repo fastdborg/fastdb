@@ -1147,7 +1147,7 @@ impl Connection {
             .map(|i| statement.get_column_name(i).into_owned())
             .collect();
         let mut rows = Vec::new();
-        for row in statement.run_collect_rows()? {
+        for row in crate::collect_rows(&mut statement)? {
             let mut output = Vec::new();
             for (i, value) in row.into_iter().enumerate() {
                 if !explain && typed[i] {

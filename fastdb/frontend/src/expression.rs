@@ -148,7 +148,7 @@ impl Connection {
                 crate::scalar(value)?,
             )?;
         }
-        let rows = statement.run_collect_rows()?;
+        let rows = crate::collect_rows(&mut statement)?;
         let value = rows
             .into_iter()
             .next()

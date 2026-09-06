@@ -144,7 +144,7 @@ impl Connection {
                         let names = (0..statement.num_columns())
                             .map(|i| statement.get_column_name(i).into_owned())
                             .collect::<Vec<_>>();
-                        for row in statement.run_collect_rows()? {
+                        for row in crate::collect_rows(&mut statement)? {
                             let doc = names
                                 .iter()
                                 .cloned()
