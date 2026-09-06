@@ -47,3 +47,9 @@ Object/DOCUMENT INSERT, target and predicate object UPDATE, UPSERT, and direct D
 ## Transaction observations
 
 Connection::transaction_state() returns Active when the engine autocommit flag is off, otherwise Autocommit. execute_report() returns the original typed result/error plus before/after states, including failures. Active includes outer savepoints and does not promise a subsequent commit succeeds; Autocommit does not distinguish commit from rollback. Operations on one connection must be serialized by the caller. The CLI includes transaction.before/after on every executed statement's JSON line. These observations let a caller detect that an outer transaction ended after an error without parsing error messages. They do not infer the cause of the transition or replace release-level transaction failure testing.
+
+## Scripts
+
+Connection::execute_batch(script) returns BatchExecution entries containing UTF-8 byte offsets and ExecutionReport values. It stops at the first execution error, retains all earlier reports, and leaves transaction control to the script/caller. Lexical splitting is completed before execution, so an unterminated quote/comment or unbalanced delimiter produces an error before mutation. Earlier successful statements are not automatically undone by later execution errors. Scripts currently have no bound-parameter argument; individual execute calls retain parameter support.
+
+The CLI defaults to multiline semicolon-delimited scripts and stops on error. --line selects legacy line-oriented continuation. Both modes exit nonzero if any statement fails; script JSON lines also include offset. A trailing statement may omit its semicolon. These in-memory script/report APIs still require bounded execution and a frozen wire contract before release.

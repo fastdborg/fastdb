@@ -11,7 +11,7 @@ mod value;
 mod write;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, sync::Arc};
-pub use transaction::{ExecutionReport, TransactionState};
+pub use transaction::{BatchExecution, ExecutionReport, TransactionState};
 use turso_core::{
     Connection as EngineConnection, Database as EngineDatabase, Value as EngineValue,
 };

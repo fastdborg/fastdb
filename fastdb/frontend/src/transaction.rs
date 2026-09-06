@@ -41,3 +41,31 @@ impl Connection {
         }
     }
 }
+
+/// One executed script statement, located by UTF-8 byte offset.
+#[derive(Debug)]
+pub struct BatchExecution {
+    pub offset: usize,
+    pub execution: ExecutionReport,
+}
+impl Connection {
+    /// Split the full script before executing, then stop on the first failure.
+    /// There is no implicit batch transaction. Explicit transaction control
+    /// belongs to the script; a failed batch may leave it active.
+    pub fn execute_batch(&self, script: &str) -> Result<Vec<BatchExecution>> {
+        let statements = fastql_parser::split_script(script)?;
+        let mut reports = Vec::new();
+        for statement in statements {
+            let execution = self.execute_report(statement.sql, &Parameters::new());
+            let failed = execution.result.is_err();
+            reports.push(BatchExecution {
+                offset: statement.offset,
+                execution,
+            });
+            if failed {
+                break;
+            }
+        }
+        Ok(reports)
+    }
+}

@@ -1,4 +1,6 @@
 //! Additive FastQL dispatch. Unrecognized statements retain their original SQL.
+mod script;
+pub use script::{split_script, ScriptStatement};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

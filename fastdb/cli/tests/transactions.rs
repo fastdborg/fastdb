@@ -5,6 +5,7 @@ use std::{
 #[test]
 fn cli_attaches_transaction_state_to_success_and_error_lines() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+        .arg("--line")
         .arg(":memory:")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -12,7 +13,7 @@ fn cli_attaches_transaction_state_to_success_and_error_lines() {
         .unwrap();
     child.stdin.take().unwrap().write_all(b"CREATE TABLE posts\nBEGIN\nINSERT INTO posts {n:1}\nUPDATE posts SET n=2 RETURNING array::append(1,2) AS bad\nSELECT * FROM posts\n").unwrap();
     let output = child.wait_with_output().unwrap();
-    assert!(output.status.success());
+    assert!(!output.status.success());
     let rows = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
