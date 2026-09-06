@@ -336,3 +336,10 @@ Native Busy and BusySnapshot now map to FDB_BUSY and FDB_BUSY_SNAPSHOT rather th
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 139 Rust tests, fifteen Node tests and TypeScript declarations. Two new Rust tests cover primary-key, unique, NOT NULL, CHECK, foreign-key and trigger-raise failures, preservation of earlier outer-transaction work under default abort behavior, and partial row retention under ordinary INSERT OR FAIL. Existing Node and CLI tests now verify FDB_CONSTRAINT through their public error envelopes; frontend validation remains FDB_VALIDATION.
 
 The mapping uses native error variants and preserves engine messages and transaction observations. The native Constraint variant includes some runtime validation errors; the category specifies neither a finer constraint subtype nor rollback scope. No upstream files or dependencies changed. Full V1 error/result, concurrency, recovery and release qualification remain pending.
+
+
+## Parenthesized and collated grouping ordinals — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 141 Rust tests, fifteen Node tests and TypeScript declarations. Two new grouping tests first reproduced distinct typed encodings separating equivalent numeric values under GROUP BY (2), and ignored text collation under GROUP BY 1 COLLATE NOCASE. The corrected frontend substitutes the original scalar expression through the pinned engine's supported ordinal wrappers, retaining collation and protecting projected constants from a second ordinal interpretation.
+
+Differential relational-engine checks cover numeric/boolean equality, explicit and projected collation, and projection/source alias collisions. Tests also cover invalid positions, non-ordinal constant expressions and grouped INSERT SELECT. The rule intentionally mirrors the pinned engine's single-sign numeric handling rather than evaluating arbitrary constant arithmetic as an ordinal. Named grouping aliases and broader expression/derived-source qualification remain pending. No dependencies or upstream files changed; this does not establish full V1 completion.

@@ -156,3 +156,119 @@ fn having_aliases_preserve_typed_helper_inputs_and_reject_fetched_values() {
     ));
     assert!(c.execute("SELECT record::fetch(id) AS target,count(*) AS n FROM docs GROUP BY id HAVING target IS NOT NULL",&Parameters::new()).is_err());
 }
+
+#[test]
+fn grouping_ordinals_follow_native_wrappers_and_scalar_equality() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(v)");
+    for value in ["1", "1.0", "true", "2", "null"] {
+        q(&c, &format!("INSERT INTO docs {{v:{value}}}"));
+        q(&c, &format!("INSERT INTO baseline VALUES ({value})"));
+    }
+    for group in [
+        "2",
+        "(2)",
+        "+2",
+        "((+2))",
+        "2 COLLATE BINARY",
+        "(2 COLLATE BINARY)",
+    ] {
+        let counts = |table: &str| {
+            q(
+                &c,
+                &format!("SELECT count(*) AS n,v FROM {table} GROUP BY {group} ORDER BY n"),
+            )
+            .rows
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(counts("docs"), counts("baseline"), "{group}");
+        assert_eq!(
+            counts("docs"),
+            vec![Value::Integer(1), Value::Integer(1), Value::Integer(3)],
+            "{group}"
+        );
+    }
+    // The pinned engine only recognizes a single sign directly on a numeric
+    // literal. More complex expressions remain constant grouping expressions.
+    for group in ["+(2)", "-(-2)", "2.0", "2+0"] {
+        assert_eq!(
+            q(
+                &c,
+                &format!("SELECT count(*) AS n,v FROM docs GROUP BY {group}")
+            )
+            .rows[0][0],
+            Value::Integer(5),
+            "{group}"
+        );
+    }
+    for group in ["0", "(0)", "+0", "-1", "(3)", "+3", "3 COLLATE BINARY"] {
+        assert!(
+            c.execute(
+                &format!("SELECT v,count(*) FROM docs GROUP BY {group}"),
+                &Parameters::new()
+            )
+            .is_err(),
+            "{group}"
+        );
+    }
+    assert_eq!(
+        q(&c, "SELECT 7 AS key,count(*) AS n FROM docs GROUP BY (+1)").rows,
+        vec![vec![Value::Integer(7), Value::Integer(5)]]
+    );
+}
+
+#[test]
+fn collated_grouping_ordinals_preserve_text_and_insert_select() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(v)");
+    for value in ["a", "A", "b"] {
+        q(&c, &format!("INSERT INTO docs {{v:'{value}'}}"));
+        q(&c, &format!("INSERT INTO baseline VALUES ('{value}')"));
+    }
+    for group in ["1 COLLATE NOCASE", "((+1) COLLATE NOCASE)"] {
+        let tail = format!("GROUP BY {group} ORDER BY n,v");
+        assert_eq!(
+            q(&c, &format!("SELECT v,count(*) AS n FROM docs {tail}")).rows,
+            q(&c, &format!("SELECT v,count(*) AS n FROM baseline {tail}")).rows
+        );
+    }
+    for group in ["1", "(1)", "+1", "1 COLLATE BINARY"] {
+        let query = |table: &str| {
+            format!("SELECT v COLLATE NOCASE AS value,count(*) AS n FROM {table} GROUP BY {group} ORDER BY n,value")
+        };
+        assert_eq!(
+            q(&c, &query("docs")).rows,
+            q(&c, &query("baseline")).rows,
+            "projected collation: {group}"
+        );
+    }
+    q(&c, "CREATE TABLE totals");
+    q(
+        &c,
+        "INSERT INTO totals (v,n) SELECT v,count(*) FROM docs GROUP BY (1 COLLATE NOCASE)",
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM totals ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    // Ordinal substitution must not subsequently reinterpret a source name as
+    // another projection's alias.
+    assert_eq!(
+        q(
+            &c,
+            "SELECT v AS key,count(*) AS v FROM docs GROUP BY (1) ORDER BY key"
+        )
+        .rows,
+        q(
+            &c,
+            "SELECT v AS key,count(*) AS v FROM baseline GROUP BY (1) ORDER BY key"
+        )
+        .rows
+    );
+}

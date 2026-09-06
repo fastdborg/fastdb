@@ -1352,20 +1352,8 @@ impl Connection {
             // Ordinals refer to the original expression: grouping the encoded
             // projection would give different numeric/null SQL semantics.
             for expr in &mut group.exprs {
-                if let Expr::Literal(Literal::Numeric(n)) = expr.as_ref() {
-                    if let Ok(i) = n.parse::<usize>() {
-                        if i == 0 || i > original_columns.len() {
-                            return Err(Error::Validation("GROUP BY position out of range".into()));
-                        }
-                        let ResultColumn::Expr(original, _) = &original_columns[i - 1] else {
-                            return Err(unsupported("GROUP BY document star"));
-                        };
-                        // Prevent a numeric constant projection from becoming a
-                        // second ordinal when the lowered AST is reparsed.
-                        *expr = Box::new(expression(&format!("coalesce({original}, NULL)"))?);
-                    }
-                }
-                if !scope.sources.is_empty() {
+                let ordinal = expand_group_position(expr, &original_columns)?;
+                if !ordinal && !scope.sources.is_empty() {
                     reject_group_aliases(expr, &original_columns)?;
                 }
                 scope.lower(expr)?;
@@ -1540,6 +1528,44 @@ impl Connection {
             affected: 0,
         }))
     }
+}
+
+// Match the pinned engine's replace_column_number_with_copy_of_column_expr:
+// COLLATE/parentheses wrap an ordinal, but only a single sign directly on a
+// numeric literal counts. In particular, +(+1) and -( -1) remain expressions.
+fn expand_group_position(expr: &mut Expr, columns: &[ResultColumn]) -> Result<bool> {
+    match expr {
+        Expr::Collate(inner, _) => return expand_group_position(inner, columns),
+        Expr::Parenthesized(exprs) if exprs.len() == 1 => {
+            return expand_group_position(&mut exprs[0], columns);
+        }
+        _ => {}
+    }
+    let number = match expr {
+        Expr::Literal(Literal::Numeric(n)) => n.parse::<usize>().ok(),
+        Expr::Unary(UnaryOperator::Positive, inner) => match inner.as_ref() {
+            Expr::Literal(Literal::Numeric(n)) => n.parse::<usize>().ok(),
+            _ => None,
+        },
+        Expr::Unary(UnaryOperator::Negative, inner) => match inner.as_ref() {
+            Expr::Literal(Literal::Numeric(n)) if n.parse::<usize>().is_ok() => Some(0),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(number) = number else {
+        return Ok(false);
+    };
+    if number == 0 || number > columns.len() {
+        return Err(Error::Validation("GROUP BY position out of range".into()));
+    }
+    let ResultColumn::Expr(original, _) = &columns[number - 1] else {
+        return Err(unsupported("GROUP BY document star"));
+    };
+    // A constant projected integer must not become another ordinal when the
+    // generated query is parsed by the engine. Retain surrounding COLLATE.
+    *expr = expression(&format!("coalesce({original}, NULL)"))?;
+    Ok(true)
 }
 
 fn reject_group_aliases(expr: &Expr, columns: &[ResultColumn]) -> Result<()> {
