@@ -1129,3 +1129,68 @@ fn binary_payload_order_and_ranges_match_native_blobs() {
         query(&c, "SELECT data FROM baseline ORDER BY data").rows
     );
 }
+
+#[test]
+fn binary_membership_normalizes_literals_fields_and_function_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(data BLOB)");
+    for hex in ["", "02", "0A"] {
+        query(&c, &format!("INSERT INTO docs (data) VALUES (X'{hex}')"));
+        query(&c, &format!("INSERT INTO baseline VALUES (X'{hex}')"));
+    }
+    query(&c, "INSERT INTO docs (data) VALUES (NULL)");
+    query(&c, "INSERT INTO baseline VALUES (NULL)");
+    let p = Parameters::from([("$bytes".into(), Value::Binary(vec![2]))]);
+    for predicate in [
+        "X'02' IN (data)",
+        "(X'02') NOT IN (data,NULL)",
+        "X'02' IN (data,X'02',substr(X'0203',1,1))",
+        "data IN (substr(X'0203',1,1),X'0A')",
+        "data NOT IN (substr(X'0203',1,1),NULL)",
+        "X'02' IN ($bytes)",
+        "$bytes IN (data,substr(X'0203',1,1))",
+        "X'02' IN ()",
+    ] {
+        let p = if predicate.contains("$bytes") {
+            p.clone()
+        } else {
+            Parameters::new()
+        };
+        let sql = |table| format!("SELECT {predicate} AS matched FROM {table} ORDER BY data");
+        assert_eq!(
+            c.execute(&sql("docs"), &p).unwrap().rows,
+            c.execute(&sql("baseline"), &p).unwrap().rows,
+            "{predicate}"
+        );
+    }
+    assert_eq!(
+        query(&c, "SELECT X'02' IN (docs:a) AS matched FROM docs LIMIT 1").rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    let bytes =
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"String\":\"a\"}}}";
+    let hex = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(
+        query(
+            &c,
+            &format!("SELECT X'{hex}' IN (docs:a) AS matched FROM docs LIMIT 1")
+        )
+        .rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    query(&c, "CREATE INDEX docs_data ON docs(data)");
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(&c, "DELETE FROM docs WHERE X'02' IN (data) RETURNING data").rows,
+        vec![vec![Value::Binary(vec![2])]]
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(vec![2]))
+            .unwrap()
+            .len(),
+        1
+    );
+}

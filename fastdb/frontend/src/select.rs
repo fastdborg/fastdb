@@ -440,10 +440,16 @@ impl Scope {
                 }
             }
             Expr::InList { lhs, rhs, .. } => {
-                if !blob_literal(lhs) && self.preserved(&mut lhs.clone())? {
+                let mut value = *lhs.clone();
+                if self.preserved(&mut value)? {
+                    // Use one collision-resistant scalar representation for the
+                    // whole list, including native functions returning blobs.
+                    **lhs = expression(&format!("__fastdb_unwrap({value})"))?;
                     for value in rhs.iter_mut() {
-                        **value = index_literal(value)?;
+                        self.typed(value)?;
+                        **value = expression(&format!("__fastdb_unwrap({value})"))?;
                     }
+                    return Ok(());
                 }
                 self.lower(lhs)?;
                 for e in rhs {
