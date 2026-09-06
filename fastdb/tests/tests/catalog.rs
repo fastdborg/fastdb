@@ -284,3 +284,160 @@ fn unsupported_catalog_version_is_rejected() {
         vec![vec![Value::String("legacy".into())]]
     );
 }
+
+#[test]
+fn separate_connections_keep_document_and_index_snapshots_consistent() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("snapshots.db");
+    let path = path.to_str().unwrap();
+    {
+        let db = Database::open(path).unwrap();
+        let writer = db.connect().unwrap();
+        let reader = db.connect().unwrap();
+        q(&writer, "CREATE TABLE users");
+        q(&writer, "CREATE UNIQUE INDEX users_name ON users(name)");
+        q(&writer, "INSERT INTO users {id:users:u1,name:'Original'}");
+        q(&writer, "BEGIN");
+        q(&writer, "UPDATE users:u1 {name:'Pending'}");
+        assert_eq!(
+            q(&reader, "SELECT name FROM users").rows,
+            vec![vec![Value::String("Original".into())]]
+        );
+        assert_eq!(
+            reader
+                .lookup_index("users", "users_name", &Value::String("Original".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(reader
+            .lookup_index("users", "users_name", &Value::String("Pending".into()))
+            .unwrap()
+            .is_empty());
+        q(&writer, "ROLLBACK");
+        q(&reader, "BEGIN");
+        q(&reader, "SELECT * FROM users");
+        q(&writer, "UPDATE users:u1 {name:'Committed'}");
+        assert_eq!(
+            q(&reader, "SELECT name FROM users").rows,
+            vec![vec![Value::String("Original".into())]]
+        );
+        assert_eq!(
+            reader
+                .lookup_index("users", "users_name", &Value::String("Original".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(reader
+            .lookup_index("users", "users_name", &Value::String("Committed".into()))
+            .unwrap()
+            .is_empty());
+        let error = reader
+            .execute("UPDATE users:u1 {name:'Stale'}", &Parameters::new())
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                fastdb::Error::Engine(
+                    turso_core::LimboError::Busy | turso_core::LimboError::BusySnapshot
+                )
+            ),
+            "{error}"
+        );
+        assert_eq!(error.code(), "FDB_BUSY_SNAPSHOT");
+        if reader.transaction_state() == fastdb::TransactionState::Active {
+            q(&reader, "ROLLBACK");
+        }
+        assert_eq!(
+            q(&reader, "SELECT name FROM users").rows,
+            vec![vec![Value::String("Committed".into())]]
+        );
+        assert_eq!(
+            reader
+                .lookup_index("users", "users_name", &Value::String("Committed".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(reader
+            .lookup_index("users", "users_name", &Value::String("Stale".into()))
+            .unwrap()
+            .is_empty());
+        q(&reader, "UPDATE users:u1 {name:'Retry'}");
+    }
+    let db = Database::open(path).unwrap();
+    let reader = db.connect().unwrap();
+    assert_eq!(
+        q(&reader, "SELECT name FROM users").rows,
+        vec![vec![Value::String("Retry".into())]]
+    );
+    assert_eq!(
+        reader
+            .lookup_index("users", "users_name", &Value::String("Retry".into()))
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn contending_index_builds_leave_no_partial_catalog_or_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    for finish in ["COMMIT", "ROLLBACK"] {
+        let path = directory.path().join(finish);
+        let path = path.to_str().unwrap();
+        {
+            let db = Database::open(path).unwrap();
+            let a = db.connect().unwrap();
+            let b = db.connect().unwrap();
+            q(&a, "CREATE TABLE users");
+            q(&a, "INSERT INTO users {id:users:u1,name:'Alice'}");
+            q(&a, "BEGIN");
+            q(&a, "CREATE UNIQUE INDEX users_name ON users(name)");
+            let error = b
+                .execute(
+                    "CREATE UNIQUE INDEX users_name ON users(name)",
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    fastdb::Error::Engine(
+                        turso_core::LimboError::Busy | turso_core::LimboError::BusySnapshot
+                    )
+                ),
+                "{finish}: {error}"
+            );
+            assert_eq!(error.code(), "FDB_BUSY");
+            assert_eq!(b.transaction_state(), fastdb::TransactionState::Autocommit);
+            q(&a, finish);
+            q(
+                &b,
+                "CREATE UNIQUE INDEX IF NOT EXISTS users_name ON users(name)",
+            );
+            assert_eq!(
+                b.lookup_index("users", "users_name", &Value::String("Alice".into()))
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(b
+                .execute(
+                    "INSERT INTO users {id:users:u2,name:'Alice'}",
+                    &Parameters::new()
+                )
+                .is_err());
+            assert_eq!(q(&a, "SELECT * FROM users").rows.len(), 1);
+        }
+        let db = Database::open(path).unwrap();
+        let c = db.connect().unwrap();
+        assert_eq!(
+            c.lookup_index("users", "users_name", &Value::String("Alice".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}

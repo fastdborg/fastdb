@@ -234,3 +234,24 @@ test('Node batches preserve offsets and stop at execution or encoding failures',
     } finally { await db.close(); }
   }
 });
+
+test('shared-file contention exposes busy codes and preserves committed values', () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fastdb-contention-'));
+  let a,b;
+  try {
+    const file=path.join(dir,'test.db');
+    a=new Database(file); b=new Database(file);
+    a.execute('CREATE TABLE docs');
+    a.execute("INSERT INTO docs {id:docs:p1,value:1}");
+    a.execute('BEGIN');
+    a.execute("UPDATE docs:p1 {value:2}");
+    assert.throws(() => b.execute("UPDATE docs:p1 {value:3}"), e => e.code==='FDB_BUSY' && e.transaction.after==='autocommit');
+    assert.deepEqual(b.all('SELECT value FROM docs'),[[1n]]);
+    a.execute('COMMIT');
+    b.execute('BEGIN'); b.all('SELECT * FROM docs');
+    a.execute("UPDATE docs:p1 {value:4}");
+    assert.throws(() => b.execute("UPDATE docs:p1 {value:5}"), e => e.code==='FDB_BUSY_SNAPSHOT');
+    b.execute('ROLLBACK');
+    assert.deepEqual(b.all('SELECT value FROM docs'),[[4n]]);
+  } finally { b?.close(); a?.close(); fs.rmSync(dir,{recursive:true,force:true}); }
+});
