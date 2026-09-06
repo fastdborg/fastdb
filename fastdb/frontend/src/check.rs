@@ -282,6 +282,32 @@ fn lower_comparison(
     }
     Ok(())
 }
+fn typed_range_operand(expr: &Expr) -> bool {
+    if field_path(expr).is_some() {
+        return true;
+    }
+    match expr {
+        Expr::Literal(
+            Literal::Numeric(_) | Literal::String(_) | Literal::Blob(_) | Literal::Null,
+        ) => true,
+        Expr::Parenthesized(values) if values.len() == 1 => typed_range_operand(&values[0]),
+        Expr::Unary(UnaryOperator::Positive | UnaryOperator::Negative, value) => {
+            matches!(value.as_ref(), Expr::Literal(Literal::Numeric(_)))
+        }
+        _ => false,
+    }
+}
+fn lower_range_operand(
+    expr: &mut Expr,
+    doc: Option<&Document>,
+    bindings: &mut Vec<EngineValue>,
+) -> Result<()> {
+    if !bind_field(expr, doc, bindings, FieldBinding::Typed)? {
+        lower_mode(expr, doc, bindings, FieldBinding::Sql)?;
+        *expr = parse_check(&format!("__fastdb_pack({expr})"))?;
+    }
+    Ok(())
+}
 fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue>) -> Result<()> {
     lower_mode(expr, doc, bindings, FieldBinding::Key)
 }
@@ -334,11 +360,11 @@ fn lower_mode(
             if matches!(
                 op,
                 Operator::Less | Operator::LessEquals | Operator::Greater | Operator::GreaterEquals
-            ) && field_path(a).is_some()
-                && field_path(b).is_some()
+            ) && typed_range_operand(a)
+                && typed_range_operand(b)
             {
-                bind_field(a, doc, bindings, FieldBinding::Typed)?;
-                bind_field(b, doc, bindings, FieldBinding::Typed)?;
+                lower_range_operand(a, doc, bindings)?;
+                lower_range_operand(b, doc, bindings)?;
                 *expr = parse_check(&format!("__fastdb_compare({a},{b}) {op} 0"))?;
                 return Ok(());
             }
@@ -380,11 +406,10 @@ fn lower_mode(
             end,
             not,
         } => {
-            if field_path(lhs).is_some() && field_path(start).is_some() && field_path(end).is_some()
-            {
-                bind_field(lhs, doc, bindings, FieldBinding::Typed)?;
-                bind_field(start, doc, bindings, FieldBinding::Typed)?;
-                bind_field(end, doc, bindings, FieldBinding::Typed)?;
+            if typed_range_operand(lhs) && typed_range_operand(start) && typed_range_operand(end) {
+                lower_range_operand(lhs, doc, bindings)?;
+                lower_range_operand(start, doc, bindings)?;
+                lower_range_operand(end, doc, bindings)?;
                 let negate = if *not { "NOT " } else { "" };
                 *expr = parse_check(&format!("{negate}__fastdb_between({lhs},{start},{end})"))?;
                 return Ok(());

@@ -762,3 +762,60 @@ fn binary_check_equality_and_membership_use_typed_keys() {
         1
     );
 }
+
+#[test]
+fn binary_check_literal_ranges_validate_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary-ranges.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,payload) VALUES (docs:saved,1,X'02')",
+        );
+        q(&c, "DEFINE FIELD valid ON docs TYPE integer CHECK(payload >= (X'02') AND payload <= X'0A' AND payload BETWEEN X'02' AND X'0A' AND X'01' < payload AND payload NOT BETWEEN X'0B' AND X'FF')");
+        q(&c, "UPDATE docs SET number=-2");
+        q(
+            &c,
+            "DEFINE FIELD number ON docs TYPE integer CHECK(number BETWEEN -3 AND +2)",
+        );
+        assert_eq!(
+            c.execute("UPDATE docs SET number=3", &Parameters::new())
+                .unwrap_err()
+                .code(),
+            "FDB_VALIDATION"
+        );
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        for value in ["X''", "X'01'", "X'0B'", "NULL"] {
+            assert_eq!(
+                c.execute(
+                    &format!("UPDATE docs SET payload={value}"),
+                    &Parameters::new()
+                )
+                .unwrap_err()
+                .code(),
+                "FDB_VALIDATION"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        }
+        q(&c, "ROLLBACK");
+        q(&c, "UPDATE docs SET payload=X'0A'");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'0B'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(
+        c.lookup_index("docs", "docs_payload", &Value::Binary(vec![10]))
+            .unwrap()
+            .len(),
+        1
+    );
+}
