@@ -181,3 +181,10 @@ An outer grouping query performs deduplication after source aggregates/windows, 
 ## Collated ordering aliases
 
 ORDER BY resolves projected names and positions through COLLATE and single-expression parentheses, preserving those wrappers when lowering typed values or DISTINCT outputs. A projected alias takes precedence over a same-named stored field in these forms, matching the pinned relational frontend. Qualification still addresses a source field. ORDER BY alias references inside supported arithmetic and scalar/helper expressions now resolve to the projected value too. DISTINCT evaluates output-dependent ordering outside grouping and carries independent source inputs through its inner query, avoiding a second evaluation of volatile projections. Aggregate/window operations over output aliases fail explicitly; this does not complete WHERE/GROUP aliases or derived-source type propagation.
+
+
+## Ordinary SQL literals in the fallback guard
+
+The fallback managed-name guard uses a parsed, guard-only copy for covered SELECT and ordinary write contexts. It removes string value literals from that copy before scanning names, including nested/derived queries and CTEs. It never executes the copy: native preparation, parameters, result names and execution still use the original SQL. Consequently ordinary values such as 'users', '__fastdb_catalog' or 'writable_schema' are not mistaken for table/PRAGMA references. Identifier roles remain guarded, including SQLite's single-quoted table names.
+
+Unknown/unparsed statement forms retain the original conservative scan. PRAGMA arguments, table-function arguments, schema constraints, triggers, UPSERT update clauses and other uncovered contexts remain conservative. This reduces literal false positives; it does not replace the remaining name/reference guard with a complete authorization or dependency boundary.

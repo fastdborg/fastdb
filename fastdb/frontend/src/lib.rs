@@ -4,6 +4,7 @@ mod catalog;
 mod check;
 mod expression;
 mod functions;
+mod guard;
 mod interrupt;
 mod links;
 pub use interrupt::InterruptHandle;
@@ -694,10 +695,11 @@ impl Connection {
         if let Some(result) = self.collection_select(sql, params)? {
             return Ok(result);
         }
-        let tokens = fastql_parser::tokenize(sql)?;
+        let tokens = guard::tokens(sql)?;
         let collections = self.run("SELECT name FROM __fastdb_catalog", &[])?;
         for token in &tokens {
-            // Until logical SQL lowering is installed, reject collection-shaped SQL instead of letting it bypass validation.
+            // Reject unresolved managed references; value literals in covered AST
+            // contexts have been removed from this guard-only token stream.
             if matches!(
                 token.kind,
                 fastql_parser::Kind::Word

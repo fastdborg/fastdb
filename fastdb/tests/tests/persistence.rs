@@ -317,3 +317,69 @@ fn indexed_values_follow_numeric_null_and_record_identity() {
         1
     );
 }
+
+#[test]
+fn ordinary_sql_literals_are_not_managed_object_references() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE users");
+    query(&c, "CREATE TABLE ordinary(value TEXT)");
+    query(
+        &c,
+        "INSERT INTO ordinary VALUES ('users'),('__fastdb_catalog'),('writable_schema')",
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT upper('users'), '__fastdb_catalog', 'writable_schema'"
+        )
+        .rows[0][0],
+        Value::String("USERS".into())
+    );
+    assert_eq!(
+        query(&c, "SELECT value FROM ordinary WHERE value='users'").rows,
+        vec![vec![Value::String("users".into())]]
+    );
+    query(
+        &c,
+        "UPDATE ordinary SET value='users' WHERE value='writable_schema'",
+    );
+    assert_eq!(
+        query(&c, "DELETE FROM ordinary WHERE value='__fastdb_catalog'").affected,
+        1
+    );
+    assert_eq!(query(&c,"WITH c AS (SELECT 'users' AS value) SELECT value FROM c UNION ALL SELECT '__fastdb_catalog'").rows.len(),2);
+    assert_eq!(
+        query(&c, "SELECT (SELECT '__fastdb_catalog') AS nested").rows,
+        vec![vec![Value::String("__fastdb_catalog".into())]]
+    );
+    query(&c, "CREATE VIEW literal_view AS SELECT 'users' AS value");
+    assert_eq!(
+        query(&c, "SELECT * FROM literal_view").rows,
+        vec![vec![Value::String("users".into())]]
+    );
+    query(
+        &c,
+        "CREATE TABLE literal_copy AS SELECT '__fastdb_catalog' AS value",
+    );
+    assert_eq!(
+        query(&c, "SELECT * FROM literal_copy").rows,
+        vec![vec![Value::String("__fastdb_catalog".into())]]
+    );
+    assert_eq!(
+        query(&c, "SELECT value FROM (SELECT 'users' AS value) AS source").rows,
+        vec![vec![Value::String("users".into())]]
+    );
+    for sql in [
+        "SELECT * FROM '__fastdb_catalog'",
+        "SELECT (SELECT name FROM '__fastdb_catalog')",
+        "WITH c AS (SELECT * FROM '__fastdb_catalog') SELECT * FROM c",
+        "DELETE FROM '__fastdb_catalog' WHERE name='users'",
+        "PRAGMA 'writable_schema'=ON",
+        "SELECT 'users'; DELETE FROM '__fastdb_catalog'",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    query(&c, "INSERT INTO users {id:users:p1}");
+    assert_eq!(query(&c, "SELECT * FROM users").rows.len(), 1);
+}
