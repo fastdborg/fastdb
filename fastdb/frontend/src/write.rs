@@ -146,6 +146,56 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
         _ => Err(unsupported("this collection VALUES expression")),
     }
 }
+fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
+    let Stmt::Insert {
+        body: InsertBody::Select(_, upsert),
+        returning,
+        ..
+    } = statement
+    else {
+        return Ok(false);
+    };
+    let mut found = false;
+    let mut check = |expr: &Expr| -> Result<()> {
+        turso_core::walk_expr_mut(&mut expr.clone(), &mut |expr| {
+            if matches!(
+                expr,
+                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. } | Expr::InTable { .. }
+            ) {
+                found = true;
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+        Ok(())
+    };
+    for column in returning {
+        if let ResultColumn::Expr(expr, _) = column {
+            check(expr)?;
+        }
+    }
+    let mut current = upsert.as_deref();
+    while let Some(clause) = current {
+        if let Some(index) = &clause.index {
+            for target in &index.targets {
+                check(&target.expr)?;
+            }
+            if let Some(expr) = &index.where_clause {
+                check(expr)?;
+            }
+        }
+        if let UpsertDo::Set { sets, where_clause } = &clause.do_clause {
+            for set in sets {
+                check(&set.expr)?;
+            }
+            if let Some(expr) = where_clause {
+                check(expr)?;
+            }
+        }
+        current = clause.next.as_deref();
+    }
+    Ok(found)
+}
 impl Connection {
     pub(crate) fn object_returning(
         &self,
@@ -198,6 +248,7 @@ impl Connection {
         sql: &str,
         statement: &Stmt,
         params: &Parameters,
+        leading_with: bool,
     ) -> Result<Option<QueryResult>> {
         let Stmt::Insert {
             with: None,
@@ -236,7 +287,16 @@ impl Connection {
         };
         *source = empty;
         self.guard_native_sql(&guarded.to_string())?;
-        self.native_insert_source(&Stmt::Select(select.clone()).to_string(), params, statement)
+        // Moving a leading WITH into the source cannot preserve CTE scope in
+        // subqueries in UPSERT/RETURNING. Reject those on managed-source routes;
+        // native-only statements still fall back to their original SQL.
+        let restricted_clauses = leading_with && insert_clause_subqueries(&guarded)?;
+        self.native_insert_source(
+            &Stmt::Select(select.clone()).to_string(),
+            params,
+            statement,
+            restricted_clauses,
+        )
     }
     pub(crate) fn collection_write(
         &self,
@@ -247,8 +307,26 @@ impl Connection {
         let expanded = expand_paths(&expand_records(
             normalized.as_ref().map_or(sql, |n| n.sql.as_str()),
         )?)?;
-        let Ok(Cmd::Stmt(statement)) = parsed(&expanded) else {
+        let Ok(Cmd::Stmt(mut statement)) = parsed(&expanded) else {
             return Ok(None);
+        };
+        let leading_with = if let Stmt::Insert {
+            with,
+            body: InsertBody::Select(select, _),
+            ..
+        } = &mut statement
+        {
+            if with.is_some()
+                && select.with.is_none()
+                && !matches!(select.body.select, OneSelect::Values(_))
+            {
+                select.with = with.take();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
         };
         let table = match &statement {
             Stmt::Insert { tbl_name, .. } | Stmt::Delete { tbl_name, .. } => tbl_name,
@@ -266,7 +344,7 @@ impl Connection {
         match self.catalog(table.name.as_str()) {
             Ok(_) => {}
             Err(Error::NotFound(_)) => {
-                return self.relational_insert_select(sql, &statement, params)
+                return self.relational_insert_select(sql, &statement, params, leading_with)
             }
             Err(e) => return Err(e),
         };

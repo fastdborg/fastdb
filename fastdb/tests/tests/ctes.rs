@@ -137,3 +137,68 @@ fn cte_insert_sources_validate_atomically_and_reject_unsupported_definitions() {
         assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
     }
 }
+
+#[test]
+fn leading_with_insert_preserves_validation_conflicts_and_scope_boundaries() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE copied");
+    q(&c, "DEFINE FIELD flag ON copied TYPE boolean REQUIRED");
+    q(&c, "BEGIN");
+    let params = Parameters::from([("$min".into(), Value::Integer(2))]);
+    let rows=c.execute("WITH a AS (SELECT n,flag FROM docs WHERE n >= $min) INSERT INTO copied (n,flag) SELECT n,flag FROM a RETURNING n,flag",&params).unwrap().rows;
+    assert_eq!(rows, vec![vec![Value::Integer(2), Value::Boolean(false)]]);
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
+    q(
+        &c,
+        "DEFINE FIELD n ON copied TYPE integer REQUIRED CHECK (n<2)",
+    );
+    assert!(c
+        .execute(
+            "WITH a AS (SELECT n,flag FROM docs) INSERT INTO copied (n,flag) SELECT n,flag FROM a",
+            &Parameters::new()
+        )
+        .is_err());
+    assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
+    q(&c, "CREATE TABLE native(n INTEGER PRIMARY KEY)");
+    assert_eq!(
+        q(
+            &c,
+            "WITH a AS (SELECT n FROM docs) INSERT INTO native SELECT n FROM a RETURNING n"
+        )
+        .rows
+        .len(),
+        2
+    );
+    assert_eq!(
+        q(
+            &c,
+            "WITH a AS (SELECT n FROM docs) INSERT OR IGNORE INTO native SELECT n FROM a"
+        )
+        .affected,
+        0
+    );
+    assert_eq!(
+        q(
+            &c,
+            "WITH a AS (SELECT 3 AS n) INSERT INTO native SELECT n FROM a RETURNING n"
+        )
+        .rows,
+        vec![vec![Value::Integer(3)]]
+    );
+    q(&c, "CREATE TABLE a(n INTEGER)");
+    q(&c, "INSERT INTO a VALUES (99)");
+    let error=c.execute("WITH a AS (SELECT n FROM docs) INSERT OR REPLACE INTO native SELECT n FROM a RETURNING (SELECT n FROM a LIMIT 1)",&Parameters::new()).unwrap_err();
+    assert_eq!(error.code(), "FDB_UNSUPPORTED");
+    let error=c.execute("WITH a AS (SELECT n FROM docs) INSERT OR REPLACE INTO native SELECT n FROM a RETURNING n IN a",&Parameters::new()).unwrap_err();
+    assert_eq!(error.code(), "FDB_UNSUPPORTED");
+
+    assert_eq!(
+        q(&c, "SELECT n FROM native ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)]
+        ]
+    );
+}

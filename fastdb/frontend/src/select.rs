@@ -1458,6 +1458,7 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
 }
 #[derive(Default)]
 struct SelectOptions<'a> {
+    restricted_native_clauses: bool,
     ctes: Option<&'a CteSources>,
     nested: bool,
     trusted: bool,
@@ -1536,11 +1537,13 @@ impl Connection {
         sql: &str,
         params: &Parameters,
         insert: &Stmt,
+        restricted_native_clauses: bool,
     ) -> Result<Option<QueryResult>> {
         self.collection_select_options(
             sql,
             params,
             SelectOptions {
+                restricted_native_clauses,
                 trusted: true,
                 positional: true,
                 native_insert: Some(insert),
@@ -1640,6 +1643,7 @@ impl Connection {
         options: SelectOptions<'_>,
     ) -> Result<Option<LoweredSelect>> {
         let SelectOptions {
+            restricted_native_clauses,
             ctes: inherited_ctes,
             nested,
             trusted,
@@ -2210,6 +2214,11 @@ impl Connection {
             lower_distinct(select, &typed, &order_outputs)?;
         }
         if let Some(insert) = native_insert {
+            if restricted_native_clauses {
+                return Err(unsupported(
+                    "subqueries outside a leading-WITH INSERT SELECT source",
+                ));
+            }
             if explain || fetched.iter().any(|value| *value) {
                 return Err(unsupported("EXPLAIN or fetched INSERT SELECT source"));
             }
