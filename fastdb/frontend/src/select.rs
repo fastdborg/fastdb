@@ -590,14 +590,18 @@ impl Connection {
         params: &Parameters,
         trusted: bool,
     ) -> Result<Option<QueryResult>> {
-        self.collection_select_options(sql, params, trusted, trusted)
+        self.collection_select_options(sql, params, trusted, trusted, false)
     }
     pub(crate) fn collection_select_subset(
         &self,
         sql: &str,
         params: &Parameters,
     ) -> Result<Option<QueryResult>> {
-        self.collection_select_options(sql, params, false, true)
+        self.collection_select_options(sql, params, false, true, false)
+    }
+    pub(crate) fn insert_select(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
+        self.collection_select_options(sql, params, true, false, true)?
+            .ok_or_else(|| unsupported("this INSERT SELECT source"))
     }
     fn collection_select_options(
         &self,
@@ -605,6 +609,7 @@ impl Connection {
         params: &Parameters,
         trusted: bool,
         ignore_unused: bool,
+        positional: bool,
     ) -> Result<Option<QueryResult>> {
         let expanded = expand_records(sql)?;
         let Ok(mut cmd) = parsed(&expanded) else {
@@ -738,7 +743,7 @@ impl Connection {
             }
         }
         for (i, name) in names.iter().enumerate() {
-            if names[..i].contains(name) {
+            if !positional && names[..i].contains(name) {
                 return Err(Error::Validation(
                     "duplicate projection names; use AS".into(),
                 ));

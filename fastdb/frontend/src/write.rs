@@ -178,20 +178,39 @@ impl Connection {
                 if upsert.is_some() {
                     return Err(unsupported("collection ON CONFLICT; use document UPSERT"));
                 }
-                let OneSelect::Values(rows) = select.body.select else {
-                    return Err(unsupported("collection INSERT SELECT is not implemented"));
-                };
-                let mut documents = Vec::new();
-                for row in rows {
-                    if row.len() != fields.len() {
+                let values = if let OneSelect::Values(rows) = &select.body.select {
+                    if select.with.is_some()
+                        || !select.body.compounds.is_empty()
+                        || !select.order_by.is_empty()
+                        || select.limit.is_some()
+                    {
+                        return Err(unsupported("compound or modified VALUES source"));
+                    }
+                    rows.iter()
+                        .map(|row| {
+                            if row.len() != fields.len() {
+                                return Err(Error::Validation(
+                                    "INSERT field/value count mismatch".into(),
+                                ));
+                            }
+                            row.iter()
+                                .map(|expr| self.write_value(expr, params))
+                                .collect::<Result<Vec<_>>>()
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                } else {
+                    let selected = self.insert_select(&Stmt::Select(select).to_string(), params)?;
+                    if selected.columns.len() != fields.len() {
                         return Err(Error::Validation(
                             "INSERT field/value count mismatch".into(),
                         ));
                     }
-                    let mut doc = Document::new();
-                    for (field, expr) in fields.iter().zip(row) {
-                        doc.insert(field.clone(), self.write_value(&expr, params)?);
-                    }
+                    selected.rows
+                };
+                // Materialize the source before mutation, including self-inserts.
+                let mut documents = Vec::new();
+                for row in values {
+                    let doc = fields.iter().cloned().zip(row).collect();
                     documents.push(self.insert(tbl_name.name.as_str(), doc)?);
                 }
                 Ok(Some(result(documents, returning)))
