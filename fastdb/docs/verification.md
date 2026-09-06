@@ -399,3 +399,10 @@ These additions preserve native metadata values rather than claiming portable ex
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 152 Rust tests, fifteen Node tests and TypeScript declarations. The leading collection can now use a managed index for positive constant IN lists, including duplicate/null/parameter/record keys. Parentheses no longer hide eligible equality or membership predicates, and the original WHERE remains outside the filtered source to enforce residual conditions.
 
 Two regressions compare scan results with indexed results and assert actual SEARCH plans. They cover conjunction residuals, numeric equivalents, typed record target/key identity, duplicate keys, parameter binding and delete/rollback. NOT IN, OR and empty lists retain their existing planning and results. No dependency, persisted format or upstream file changed. Cost-based/multi-index/range/outer-join planning and broader resource/performance qualification remain pending.
+
+
+## Null-predicate managed candidates — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 153 Rust tests, fifteen Node tests and TypeScript declarations. Single-source IS NULL/IS NOT NULL predicates now filter managed-index entries before document ID lookup; postfix and reversed literal-null forms share that path. A regression compares results before and after index creation for missing/null/non-null fields, equality-to-null, residual predicates, update/index maintenance and delete/rollback. It also verifies a right join whose results would change under unsafe null-accepting pushdown; joined sources retain their existing planning.
+
+A native-table probe showed that pinned Turso scans rather than seeks for null predicates even with a native index. Tests therefore verify the compact index-entry scan plus document-ID lookup without claiming a null-key seek or measured speedup. Cost selection and performance qualification remain pending. No persisted format, dependency or upstream file changed; full V1 is incomplete.

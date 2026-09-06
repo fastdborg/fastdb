@@ -646,6 +646,50 @@ fn indexed_filter(
         }
         return indexed_filter(scope, source_index, rhs);
     }
+    // Null-accepting predicates cannot generally move below an outer join:
+    // filtering matched rows can manufacture new NULL-extended rows.
+    if scope.sources.len() == 1 {
+        let field = match predicate {
+            Expr::IsNull(field) => Some((field.as_ref(), false)),
+            Expr::NotNull(field) => Some((field.as_ref(), true)),
+            Expr::Binary(field, op @ (Operator::Is | Operator::IsNot), value)
+                if matches!(value.as_ref(), Expr::Literal(Literal::Null)) =>
+            {
+                Some((field.as_ref(), *op == Operator::IsNot))
+            }
+            Expr::Binary(value, op @ (Operator::Is | Operator::IsNot), field)
+                if matches!(value.as_ref(), Expr::Literal(Literal::Null)) =>
+            {
+                Some((field.as_ref(), *op == Operator::IsNot))
+            }
+            _ => None,
+        };
+        if let Some((mut field, not)) = field {
+            while let Expr::Parenthesized(es) = field {
+                if es.len() != 1 {
+                    break;
+                }
+                field = &es[0];
+            }
+            if let Some((i, path)) = scope.field(field)? {
+                if i == source_index {
+                    if let Some(index) = scope.sources[i]
+                        .collection
+                        .as_ref()
+                        .and_then(|c| c.indexes.iter().find(|idx| idx.path == path))
+                    {
+                        let key = Box::new(expression("i.key")?);
+                        let filter = if not {
+                            Expr::NotNull(key)
+                        } else {
+                            Expr::IsNull(key)
+                        };
+                        return Ok(Some((index.clone(), filter)));
+                    }
+                }
+            }
+        }
+    }
     let candidates = match predicate {
         Expr::Binary(lhs, Operator::Equals, rhs) => vec![
             (lhs.as_ref(), vec![rhs.as_ref()], false),

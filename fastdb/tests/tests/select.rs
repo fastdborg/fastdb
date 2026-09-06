@@ -906,3 +906,72 @@ fn managed_membership_preserves_typed_record_identity() {
         format!("{:?}", query(&c, &format!("EXPLAIN QUERY PLAN {sql}")).rows).contains("SEARCH i")
     );
 }
+
+#[test]
+fn managed_null_filters_preserve_missing_values_and_outer_join_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "INSERT INTO docs {id:docs:a,marker:1}");
+    query(&c, "INSERT INTO docs {id:docs:b,marker:2,key:null}");
+    query(&c, "INSERT INTO docs {id:docs:c,marker:3,key:1}");
+    query(&c, "INSERT INTO docs {id:docs:d,marker:4,key:'value'}");
+    query(&c, "CREATE TABLE ordinary(marker INTEGER)");
+    query(&c, "INSERT INTO ordinary VALUES (1),(2),(3),(4),(5)");
+    let tails = [
+        "key IS NULL",
+        "((key) IS NULL) AND marker>1",
+        "key IS NOT NULL",
+        "key NOTNULL",
+        "key=NULL",
+        "key ISNULL",
+        "NULL IS key",
+        "NULL IS NOT key",
+    ];
+    let sql = |tail: &str| format!("SELECT marker FROM docs WHERE {tail} ORDER BY marker");
+    let before = tails
+        .iter()
+        .map(|tail| query(&c, &sql(tail)).rows)
+        .collect::<Vec<_>>();
+    let join="SELECT n.marker FROM docs d RIGHT JOIN ordinary n ON d.marker=n.marker WHERE d.key IS NULL ORDER BY n.marker";
+    let joined = query(&c, join).rows;
+    assert_eq!(
+        joined,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(5)]
+        ]
+    );
+    query(&c, "CREATE INDEX docs_key ON docs(key)");
+    for (i, tail) in tails.iter().enumerate() {
+        assert_eq!(query(&c, &sql(tail)).rows, before[i], "{tail}");
+        if i < 2 {
+            let plan = format!(
+                "{:?}",
+                query(&c, &format!("EXPLAIN QUERY PLAN {}", sql(tail))).rows
+            );
+            // Pinned Turso scans native IS NULL indexes too. The useful
+            // restriction is applied to compact keys before fetching documents.
+            assert!(
+                plan.contains(" AS i") && plan.contains("SEARCH c"),
+                "{plan}"
+            );
+        }
+    }
+    assert_eq!(query(&c, join).rows, joined);
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(
+            &c,
+            "DELETE FROM docs WHERE key IS NULL AND marker>1 RETURNING marker"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(query(&c, &sql(tails[0])).rows, before[0]);
+    query(&c, "UPDATE docs SET key=9 WHERE key IS NULL");
+    assert!(query(&c, &sql(tails[0])).rows.is_empty());
+    assert_eq!(query(&c, &sql(tails[2])).rows.len(), 4);
+}
