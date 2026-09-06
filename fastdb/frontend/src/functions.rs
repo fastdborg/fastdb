@@ -25,6 +25,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
             (c"__fastdb_compare", compare as turso_ext::ScalarFunction, 2),
+            (
+                c"__fastdb_range_scalar",
+                range_scalar as turso_ext::ScalarFunction,
+                2,
+            ),
             (c"__fastdb_between", between as turso_ext::ScalarFunction, 3),
             (
                 c"__fastdb_nullable",
@@ -320,6 +325,30 @@ fn sql_scalar(args: &[ExtValue]) -> ExtValue {
             return Err(Error::Validation("SQL scalar arity".into()));
         };
         match decode_arg(value)? {
+            Value::Binary(bytes) => Ok(ExtValue::from_blob(bytes)),
+            value => scalar_result(&value),
+        }
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+// A native column retains its engine affinity/collation in the comparison.
+// Convert only the logical operand, without allowing encoded record bytes to
+// acquire an accidental order relative to ordinary SQL values.
+#[scalar(name = "__fastdb_range_scalar")]
+fn range_scalar(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value, native] = args else {
+            return Err(Error::Validation("range scalar arity".into()));
+        };
+        let value = decode_arg(value)?;
+        if native.value_type() == ValueType::Null || matches!(value, Value::Null) {
+            return Ok(ExtValue::null());
+        }
+        match value {
+            Value::Record(_) => Err(Error::Validation(
+                "mixed record/scalar ordering is unsupported".into(),
+            )),
             Value::Binary(bytes) => Ok(ExtValue::from_blob(bytes)),
             value => scalar_result(&value),
         }

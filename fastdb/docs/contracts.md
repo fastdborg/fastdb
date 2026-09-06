@@ -501,3 +501,7 @@ The managed-source route scopes the leading CTE definitions to the SELECT source
 ## CTE cancellation verification
 
 Controlled cancellation checks now cover early mixed-CTE read/write execution and collection inserts from CTE/derived sources after engine change counters advance. At the tested points, interruption propagates as FDB_CANCELLED, existing outer transactions remain active, prior work survives, and no partial target documents or index entries remain. Retrying after clearing the test hook succeeds; explicit rollback restores the committed state. These tests do not guarantee outer-transaction preservation for all engine errors or establish a complete request deadline.
+
+## Mixed native-column range comparisons
+
+For `<`, `<=`, `>` and `>=` between a preserved logical value and an ordinary SQL column, lowering converts the logical operand to a raw SQL scalar while retaining the native column's affinity and collation. Binary values compare by their payload bytes. Record/scalar ordering is rejected unless an operand is NULL, in which case the comparison is unknown. Native column parentheses, unary plus and explicit COLLATE retain their SQL roles. This path does not establish mixed BETWEEN, arbitrary native expressions or all wrappers around logical operands.

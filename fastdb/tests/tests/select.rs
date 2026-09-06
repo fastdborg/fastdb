@@ -1821,3 +1821,113 @@ fn mixed_native_membership_preserves_binary_keys_and_lhs_affinity() {
     assert_eq!(query(&c,"SELECT n.value AS picked,count(*) FROM docs d JOIN native n ON n.value IN (d.value) GROUP BY n.value HAVING picked IN (X'31')").rows,
         vec![vec![Value::Binary(vec![49]),Value::Integer(1)]]);
 }
+
+#[test]
+fn mixed_native_ranges_preserve_payload_order_affinity_and_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(value BLOB,n,t)");
+    query(
+        &c,
+        "CREATE TABLE native(value BLOB,n INTEGER,t TEXT COLLATE NOCASE)",
+    );
+    for value in ["X''", "X'02'", "X'0a'", "X'ff'", "NULL"] {
+        query(
+            &c,
+            &format!("INSERT INTO docs (value,n,t) VALUES ({value},'10','alpha')"),
+        );
+        query(
+            &c,
+            &format!("INSERT INTO baseline VALUES ({value},'10','alpha')"),
+        );
+    }
+    query(&c, "INSERT INTO native VALUES (X'02',2,'BETA'),(X'0a',10,'ALPHA'),(X'ff',20,'aardvark'),(NULL,NULL,NULL)");
+    for op in ["<", "<=", ">", ">="] {
+        for (left, right) in [
+            ("d.value", "n.value"),
+            ("n.value", "d.value"),
+            ("d.value", "(+n.value)"),
+            ("(n.value)", "d.value"),
+            ("d.n", "n.n"),
+            ("n.n", "d.n"),
+            ("d.t", "n.t"),
+            ("n.t", "d.t"),
+            ("d.t", "n.t COLLATE BINARY"),
+        ] {
+            let predicate = format!("{left} {op} {right}");
+            let template =
+                format!("SELECT {predicate} FROM SOURCE d JOIN native n ON 1 ORDER BY d.value,n.n");
+            // A collection field has no declared collation. The baseline's
+            // physical column does, so explicitly select the native column's
+            // NOCASE collation when neither operand has an explicit override.
+            let baseline = if (left == "d.t" && right == "n.t") || (left == "n.t" && right == "d.t")
+            {
+                template.replace("d.t", "d.t COLLATE NOCASE")
+            } else {
+                template.clone()
+            };
+            assert_eq!(
+                query(&c, &template.replace("SOURCE", "docs")).rows,
+                query(&c, &baseline.replace("SOURCE", "baseline")).rows,
+                "{predicate}"
+            );
+        }
+    }
+    assert_eq!(query(&c,"SELECT count(*) FROM docs d LEFT JOIN native n ON n.n=2 AND d.value<n.value WHERE n.n IS NULL").rows,vec![vec![Value::Integer(4)]]);
+    for source in [
+        "(SELECT value FROM docs)",
+        "(WITH a AS (SELECT value FROM docs) SELECT value FROM a)",
+    ] {
+        assert_eq!(
+            query(
+                &c,
+                &format!(
+                    "SELECT count(*) FROM {source} d JOIN native n ON d.value<n.value WHERE n.n=20"
+                )
+            )
+            .rows,
+            vec![vec![Value::Integer(3)]]
+        );
+    }
+    query(&c, "CREATE TABLE copied(value BLOB)");
+    query(&c, "BEGIN");
+    query(&c,"INSERT INTO copied SELECT d.value FROM docs d JOIN native n ON d.value<n.value WHERE n.n=20");
+    assert_eq!(
+        query(&c, "SELECT hex(value) FROM copied ORDER BY value").rows,
+        vec![
+            vec![Value::String("".into())],
+            vec![Value::String("02".into())],
+            vec![Value::String("0A".into())]
+        ]
+    );
+    query(&c, "ROLLBACK");
+    assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
+    query(&c, "CREATE TABLE refs");
+    query(&c, "INSERT INTO refs {value:docs:a}");
+    for op in ["<", "<=", ">", ">="] {
+        for predicate in [
+            format!("r.value {op} n.value"),
+            format!("n.value {op} r.value"),
+        ] {
+            let error = c
+                .execute(
+                    &format!("SELECT {predicate} FROM refs r JOIN native n ON n.n=2"),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("mixed record/scalar ordering"),
+                "{error}"
+            );
+            assert_eq!(
+                query(
+                    &c,
+                    &format!("SELECT {predicate} FROM refs r JOIN native n ON n.n IS NULL")
+                )
+                .rows,
+                vec![vec![Value::Null]]
+            );
+        }
+    }
+}

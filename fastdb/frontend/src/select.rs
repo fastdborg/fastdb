@@ -571,8 +571,35 @@ impl Scope {
                         | Operator::GreaterEquals
                 ) {
                     let (mut left, mut right) = (*a.clone(), *b.clone());
-                    if self.preserved(&mut left)? && self.preserved(&mut right)? {
+                    let left_typed = self.preserved(&mut left)?;
+                    let right_typed = self.preserved(&mut right)?;
+                    if left_typed && right_typed {
                         *expr = expression(&format!("__fastdb_compare({left}, {right}) {op} 0"))?;
+                        return Ok(());
+                    }
+                    if left_typed && !right_typed && native_column_reference(&right) {
+                        left = expression(&format!("__fastdb_range_scalar({left}, {right})"))?;
+                        // As for equality, prioritize the native column's
+                        // declared collation over physical document storage.
+                        // Reversing operands also reverses the range operator.
+                        *expr = if native_column_collation(&right) {
+                            expression(&format!("{left} {op} {right}"))?
+                        } else {
+                            let reverse = match op {
+                                Operator::Less => Operator::Greater,
+                                Operator::LessEquals => Operator::GreaterEquals,
+                                Operator::Greater => Operator::Less,
+                                Operator::GreaterEquals => Operator::LessEquals,
+                                _ => unreachable!("range operator checked above"),
+                            };
+                            expression(&format!("{right} {reverse} {left}"))?
+                        };
+                        return Ok(());
+                    }
+                    if right_typed && !left_typed && native_column_reference(&left) {
+                        *expr = expression(&format!(
+                            "{left} {op} __fastdb_range_scalar({right}, {left})"
+                        ))?;
                         return Ok(());
                     }
                 }
