@@ -534,6 +534,21 @@ impl Connection {
         Ok(())
     }
     pub(crate) fn validate_candidate(&self, collection: &Collection, doc: &Document) -> Result<()> {
+        self.validate_candidate_mode(collection, doc, false)
+    }
+    pub(crate) fn validate_integrity_candidate(
+        &self,
+        collection: &Collection,
+        doc: &Document,
+    ) -> Result<()> {
+        self.validate_candidate_mode(collection, doc, true)
+    }
+    fn validate_candidate_mode(
+        &self,
+        collection: &Collection,
+        doc: &Document,
+        preserve_engine_errors: bool,
+    ) -> Result<()> {
         crate::validate_document(collection, doc)?;
         for field in &collection.fields {
             let Some(sql) = &field.check else {
@@ -568,10 +583,13 @@ impl Connection {
                     )))
                 }
                 Err(error) => {
+                    if preserve_engine_errors && matches!(error, Error::Engine(_)) {
+                        return Err(error);
+                    }
                     return Err(invalid(format!(
                         "CHECK failed for field {}: {error}",
                         field.path.join(".")
-                    )))
+                    )));
                 }
             }
         }

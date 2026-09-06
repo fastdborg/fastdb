@@ -42,3 +42,15 @@ The script requires Python 3.11+ and creates an application in a temporary direc
 The consumer runs outside the workspace, so it does not load this checkout's `.cargo/config.toml`. The script removes the general RUSTFLAGS environment overrides and uses a separate reusable build directory at `target/fastdb-rust-consumer`. It exercises typed record/int64 parameters, field CHECK validation, a unique index, transaction observations, rollback, bundled QuickJS, vector values and close/reopen persistence. Temporary source, lockfile and database files are removed when it finishes. Build outputs remain cached.
 
 This is a local path-consumer check, not cargo package/publish qualification, a guarantee for arbitrary dependency unification, or a cross-platform release claim. Registry distribution of FastDB and its engine/frontend dependency graph, platform/toolchain qualification, public API stabilization and complete distribution notices remain release work.
+
+## Collection content audit
+
+```rust
+let audit = connection.check_collection_integrity(
+    "posts",
+    fastdb::IntegrityLimits::default(),
+)?;
+println!("{} documents, {} index entries", audit.documents, audit.index_entries);
+```
+
+This explicit snapshot audit checks typed IDs, field/CHECK validity and index entry consistency without repairing data. Defaults permit 100,000 documents and 64 MiB of processed encoded ID/document bytes; override the public limit fields for larger audits. FDB_LIMIT returns no partial report. These limits do not bound engine memory or elapsed time. See contracts.md for scope and error behavior; native page/B-tree checking remains separate.

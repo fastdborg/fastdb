@@ -5,6 +5,8 @@ mod check;
 mod expression;
 mod functions;
 mod guard;
+mod integrity;
+pub use integrity::{IntegrityLimits, IntegrityReport};
 mod interrupt;
 mod links;
 pub use interrupt::InterruptHandle;
