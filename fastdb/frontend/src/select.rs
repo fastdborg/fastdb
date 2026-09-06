@@ -9,6 +9,8 @@ struct Source {
 }
 struct Scope {
     sources: Vec<Source>,
+    params: Parameters,
+    consumed: std::cell::RefCell<std::collections::BTreeSet<String>>,
 }
 impl Scope {
     fn field(&self, expr: &Expr) -> Result<Option<(usize, Vec<String>)>> {
@@ -67,7 +69,139 @@ impl Scope {
             path
         ))
     }
+    fn preserved(&self, expr: &mut Expr) -> Result<bool> {
+        if let Some((i, path)) = self.field(expr)? {
+            *expr = self.accessor(i, &path, true)?;
+            return Ok(true);
+        }
+        if let Expr::Variable(var) = expr {
+            let name = var
+                .name
+                .as_ref()
+                .map_or_else(|| format!("?{}", var.index), |s| s.to_string());
+            let value = self
+                .params
+                .get(&name)
+                .ok_or_else(|| Error::Parameter(name.clone()))?;
+            let bytes = value.encode()?;
+            let hex = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+            self.consumed.borrow_mut().insert(name);
+            *expr = expression(&format!("X'{hex}'"))?;
+            return Ok(true);
+        }
+        if self.helper(expr)? {
+            return Ok(true);
+        }
+        if matches!(expr, Expr::FunctionCall{name,..} if name.as_str()=="__fastdb_record_value") {
+            self.lower(expr)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    fn typed(&self, expr: &mut Expr) -> Result<()> {
+        if !self.preserved(expr)? {
+            self.lower(expr)?;
+            *expr = expression(&format!("__fastdb_pack({expr})"))?;
+        }
+        Ok(())
+    }
+    fn helper(&self, expr: &mut Expr) -> Result<bool> {
+        if let Expr::Parenthesized(es) = expr {
+            if let [e] = es.as_mut_slice() {
+                return self.preserved(e);
+            }
+            return Ok(false);
+        }
+        let Expr::FunctionCall {
+            name,
+            args,
+            filter_over,
+            order_by,
+            within_group,
+            distinctness,
+        } = expr
+        else {
+            return Ok(false);
+        };
+        let is_null_helper = name.as_str().eq_ignore_ascii_case("coalesce")
+            || name.as_str().eq_ignore_ascii_case("ifnull");
+        if (is_null_helper || name.as_str().starts_with("__fastdb_h_"))
+            && (filter_over.filter_clause.is_some()
+                || filter_over.over_clause.is_some()
+                || !order_by.is_empty()
+                || !within_group.is_empty()
+                || distinctness.is_some())
+        {
+            return Err(unsupported("aggregate modifiers on document helpers"));
+        }
+        if name.as_str().eq_ignore_ascii_case("coalesce")
+            || name.as_str().eq_ignore_ascii_case("ifnull")
+        {
+            if args.len() < 2 || (name.as_str().eq_ignore_ascii_case("ifnull") && args.len() != 2) {
+                return Err(Error::Validation("invalid null-helper arity".into()));
+            }
+            for arg in args.iter_mut() {
+                self.typed(arg)?;
+                *arg = Box::new(expression(&format!("__fastdb_nullable({arg})"))?);
+            }
+            return Ok(true);
+        }
+        let Some(helper) = name.as_str().strip_prefix("__fastdb_h_") else {
+            return Ok(false);
+        };
+        let helper = helper.to_owned();
+        if filter_over.filter_clause.is_some()
+            || filter_over.over_clause.is_some()
+            || !order_by.is_empty()
+            || !within_group.is_empty()
+        {
+            return Err(unsupported("aggregate modifiers on document helpers"));
+        }
+        if helper == "doc_row" {
+            let [arg] = args.as_slice() else {
+                return Err(Error::Validation(
+                    "doc::row expects collection alias".into(),
+                ));
+            };
+            let alias = match arg.as_ref() {
+                Expr::Id(n) | Expr::Name(n) => n.as_str(),
+                _ => {
+                    return Err(Error::Validation(
+                        "doc::row expects collection alias".into(),
+                    ))
+                }
+            };
+            let i = self
+                .sources
+                .iter()
+                .position(|s| s.collection.is_some() && s.alias.eq_ignore_ascii_case(alias))
+                .ok_or_else(|| Error::Validation("unknown collection alias".into()))?;
+            *expr = self.accessor(i, &[], true)?;
+            return Ok(true);
+        }
+        for arg in args.iter_mut() {
+            self.typed(arg)?;
+        }
+        let tail = args
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        *expr = expression(&format!(
+            "__fastdb_helper('{helper}'{})",
+            if tail.is_empty() {
+                String::new()
+            } else {
+                format!(",{tail}")
+            }
+        ))?;
+        Ok(true)
+    }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        if self.helper(expr)? {
+            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            return Ok(());
+        }
         if let Some((i, path)) = self.field(expr)? {
             *expr = self.accessor(i, &path, false)?;
             return Ok(());
@@ -163,6 +297,23 @@ impl Scope {
         }
         Ok(())
     }
+}
+fn public_expression_name(expr: &Expr) -> String {
+    let mut name = expr
+        .to_string()
+        .replace("__fastdb_record_value", "type::record");
+    for (internal, public) in [
+        ("record_id", "record::id"),
+        ("record_table", "record::table"),
+        ("array_new", "array::new"),
+        ("array_append", "array::append"),
+        ("doc_get", "doc::get"),
+        ("doc_has", "doc::has"),
+        ("doc_row", "doc::row"),
+    ] {
+        name = name.replace(&format!("__fastdb_h_{internal}"), public);
+    }
+    name
 }
 fn unsupported(feature: &str) -> Error {
     Error::Unsupported(format!("{feature} is not implemented for collections"))
@@ -333,18 +484,33 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
     let mut i = 0;
     while i + 2 < tokens.len() {
         if i + 4 < tokens.len()
-            && tokens[i].text.eq_ignore_ascii_case("type")
             && tokens[i].kind == fastql_parser::Kind::Word
             && tokens[i + 1].text == ":"
             && tokens[i + 2].text == ":"
-            && tokens[i + 3].text.eq_ignore_ascii_case("record")
+            && tokens[i + 3].kind == fastql_parser::Kind::Word
             && tokens[i + 4].text == "("
             && tokens[i].end == tokens[i + 1].start
             && tokens[i + 1].end == tokens[i + 2].start
             && tokens[i + 2].end == tokens[i + 3].start
         {
+            let namespace = format!(
+                "{}::{}",
+                tokens[i].text.to_ascii_lowercase(),
+                tokens[i + 3].text.to_ascii_lowercase()
+            );
+            let mapped = match namespace.as_str() {
+                "type::record" => "__fastdb_record_value",
+                "record::id" => "__fastdb_h_record_id",
+                "record::table" => "__fastdb_h_record_table",
+                "array::new" => "__fastdb_h_array_new",
+                "array::append" => "__fastdb_h_array_append",
+                "doc::get" => "__fastdb_h_doc_get",
+                "doc::has" => "__fastdb_h_doc_has",
+                "doc::row" => "__fastdb_h_doc_row",
+                _ => return Err(unsupported("unknown function namespace")),
+            };
             out.push_str(&sql[copied..tokens[i].start]);
-            out.push_str("__fastdb_record_value");
+            out.push_str(mapped);
             copied = tokens[i + 3].end;
             i += 4;
             continue;
@@ -461,7 +627,7 @@ impl Connection {
                 }
             }
         }
-        if sources.iter().all(|s| s.collection.is_none()) && expanded == sql {
+        if !trusted && sources.iter().all(|s| s.collection.is_none()) && expanded == sql {
             return Ok(None);
         }
         if matches!(distinctness, Some(Distinctness::Distinct)) {
@@ -474,7 +640,11 @@ impl Connection {
         {
             return Err(unsupported("CTEs, compound SELECT, grouping or windows"));
         }
-        let scope = Scope { sources };
+        let scope = Scope {
+            sources,
+            params: params.clone(),
+            consumed: Default::default(),
+        };
         for (i, s) in scope.sources.iter().enumerate() {
             if scope.sources[..i]
                 .iter()
@@ -531,24 +701,20 @@ impl Connection {
                         .map(|a| a.name().as_str().to_owned())
                         .unwrap_or_else(|| {
                             field.as_ref().map_or_else(
-                                || {
-                                    expr.to_string()
-                                        .replace("__fastdb_record_value", "type::record")
-                                },
+                                || public_expression_name(&expr),
                                 |(_, path)| path.last().expect("nonempty path").clone(),
                             )
                         });
-                    if let Some((i, path)) = field {
-                        expr = scope.accessor(i, &path, true)?;
+                    if scope.preserved(&mut expr)? {
                         typed.push(true);
                     } else {
                         scope.lower(&mut expr)?;
-                        typed.push(matches!(&expr, Expr::FunctionCall{name,..} if name.as_str()=="__fastdb_record_value"));
+                        typed.push(false);
                     }
                     names.push(name.clone());
                     rewritten.push(ResultColumn::Expr(
                         Box::new(expr),
-                        Some(As::As(Name::exact(name))),
+                        Some(As::As(Name::from_string(quote(&name)))),
                     ));
                 }
             }
@@ -619,6 +785,9 @@ impl Connection {
                             e = expression(&format!("__fastdb_sort_encoded({e})"))?;
                         }
                     }
+                    if !matches!(&e, Expr::FunctionCall { .. }) {
+                        e = expression(&format!("__fastdb_sort_encoded({e})"))?;
+                    }
                     sorted.expr = Box::new(e);
                 }
             } else if let Some((i, path)) = scope.field(&sorted.expr)? {
@@ -627,6 +796,11 @@ impl Connection {
                     *name = Name::exact("__fastdb_sort".into());
                 }
                 sorted.expr = Box::new(e);
+            } else if scope.preserved(&mut sorted.expr)? {
+                sorted.expr = Box::new(expression(&format!(
+                    "__fastdb_sort_encoded({})",
+                    sorted.expr
+                ))?);
             } else {
                 scope.lower(&mut sorted.expr)?;
             }
@@ -635,7 +809,7 @@ impl Connection {
         let mut statement = self.engine.prepare(&lowered)?;
         for (name, value) in params {
             let Some(index) = crate::bind_index(&statement, name) else {
-                if ignore_unused {
+                if ignore_unused || scope.consumed.borrow().contains(name) {
                     continue;
                 }
                 return Err(Error::Parameter(name.clone()));

@@ -8,6 +8,14 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
     unsafe {
         let api = connection.engine._build_turso_ext();
         let result = [
+            (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
+            (
+                c"__fastdb_nullable",
+                nullable as turso_ext::ScalarFunction,
+                1,
+            ),
+            (c"__fastdb_unwrap", unwrap as turso_ext::ScalarFunction, 1),
+            (c"__fastdb_helper", helper as turso_ext::ScalarFunction, -1),
             (
                 c"__fastdb_scalar",
                 document_scalar as turso_ext::ScalarFunction,
@@ -178,6 +186,102 @@ fn sort_encoded(args: &[ExtValue]) -> ExtValue {
             .to_blob()
             .ok_or_else(|| Error::Validation("expected typed value".into()))?;
         ordered(&Value::decode(&bytes)?)
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+fn decode_arg(arg: &ExtValue) -> Result<Value> {
+    if arg.value_type() == ValueType::Null {
+        return Ok(Value::Null);
+    }
+    Value::decode(
+        &arg.to_blob()
+            .ok_or_else(|| Error::Storage("expected encoded helper argument".into()))?,
+    )
+}
+#[scalar(name = "__fastdb_pack")]
+fn pack(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [v] = args else {
+            return Err(Error::Validation("pack arity".into()));
+        };
+        let value = match v.value_type() {
+            ValueType::Null => Value::Null,
+            ValueType::Integer => Value::Integer(v.to_integer().expect("integer")),
+            ValueType::Float => Value::Number(v.to_float().expect("float")),
+            ValueType::Text => Value::String(v.to_text().expect("text").into()),
+            ValueType::Blob => Value::Binary(v.to_blob().expect("blob")),
+            _ => return Err(Error::Validation("unsupported scalar value".into())),
+        };
+        Ok(ExtValue::from_blob(value.encode()?))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+#[scalar(name = "__fastdb_unwrap")]
+fn unwrap(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [v] = args else {
+            return Err(Error::Validation("unwrap arity".into()));
+        };
+        scalar_result(&decode_arg(v)?)
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+#[scalar(name = "__fastdb_helper")]
+fn helper(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let (name, args) = args
+            .split_first()
+            .ok_or_else(|| Error::Validation("helper arity".into()))?;
+        let name = name
+            .to_text()
+            .ok_or_else(|| Error::Validation("helper name".into()))?;
+        let args = args.iter().map(decode_arg).collect::<Result<Vec<_>>>()?;
+        let value = match (name, args.as_slice()) {
+            ("array_new", _) => Value::Array(args),
+            ("array_append", [Value::Array(array), element]) => {
+                let mut array = array.clone();
+                array.push(element.clone());
+                Value::Array(array)
+            }
+            ("record_id", [Value::Record(record)]) => match &record.key {
+                crate::Key::Integer(i) => Value::Integer(*i),
+                crate::Key::String(s) => Value::String(s.clone()),
+            },
+            ("record_table", [Value::Record(record)]) => {
+                Value::String(record.table.to_ascii_lowercase())
+            }
+            ("doc_get" | "doc_has", [value, Value::String(path)]) => {
+                let found = crate::path::get(value, path)?;
+                if name == "doc_has" {
+                    Value::Boolean(found.is_some())
+                } else {
+                    found.cloned().unwrap_or(Value::Null)
+                }
+            }
+            _ => {
+                return Err(Error::Validation(
+                    "invalid document helper arguments".into(),
+                ))
+            }
+        };
+        Ok(ExtValue::from_blob(value.encode()?))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_nullable")]
+fn nullable(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [v] = args else {
+            return Err(Error::Validation("nullable arity".into()));
+        };
+        let value = decode_arg(v)?;
+        if matches!(value, Value::Null) {
+            Ok(ExtValue::null())
+        } else {
+            Ok(ExtValue::from_blob(value.encode()?))
+        }
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }

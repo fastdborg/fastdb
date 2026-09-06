@@ -262,24 +262,16 @@ impl Connection {
             return Ok(value.clone());
         }
         safe_value_expression(expr)?;
-        let mut statement = self.engine.prepare(format!("SELECT {expr}"))?;
-        bind_used(&mut statement, params)?;
-        let rows = statement.run_collect_rows()?;
-        let value = rows
-            .into_iter()
+        let rows = self
+            .collection_select_internal(&format!("SELECT {expr}"), params, true)?
+            .ok_or_else(|| Error::Storage("VALUES expression lowering failed".into()))?
+            .rows;
+        rows.into_iter()
             .next()
             .and_then(|row| row.into_iter().next())
-            .ok_or_else(|| Error::Storage("VALUES expression returned no value".into()))?;
-        if matches!(expr,Expr::FunctionCall{name,..} if name.as_str()=="__fastdb_record_value") {
-            if let turso_core::Value::Blob(bytes) = value {
-                return Value::decode(&bytes);
-            }
-            return Err(Error::Storage("record constructor result".into()));
-        }
-        let value = crate::from_engine(value);
-        value.validate()?;
-        Ok(value)
+            .ok_or_else(|| Error::Storage("VALUES expression returned no value".into()))
     }
+
     fn write_candidates(
         &self,
         table: &QualifiedName,
@@ -333,12 +325,4 @@ impl Connection {
         }
         Ok(result.rows)
     }
-}
-fn bind_used(statement: &mut turso_core::Statement, params: &Parameters) -> Result<()> {
-    for (name, value) in params {
-        if let Some(index) = crate::bind_index(statement, name) {
-            statement.bind_at(index, crate::scalar(value)?)?;
-        }
-    }
-    Ok(())
 }
