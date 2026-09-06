@@ -699,16 +699,12 @@ impl Parser<'_> {
         }
     }
 }
-pub fn parse(input: &str) -> Result<Statement> {
-    let mut p = Parser {
-        input,
-        tokens: tokenize(input)?,
-        pos: 0,
-    };
+/// Validate the shared input nesting bound for a statement or expression token list.
+pub fn validate_delimiter_depth(tokens: &[Token]) -> Result<()> {
     // Check before either FastQL recursion or delegation to the SQL parser.
     // Quoted strings/identifiers and comments cannot contribute delimiters.
     let mut delimiters = 0usize;
-    for token in &p.tokens {
+    for token in tokens {
         if token.kind != Kind::Symbol {
             continue;
         }
@@ -726,6 +722,16 @@ pub fn parse(input: &str) -> Result<Statement> {
             _ => {}
         }
     }
+    Ok(())
+}
+
+pub fn parse(input: &str) -> Result<Statement> {
+    let mut p = Parser {
+        input,
+        tokens: tokenize(input)?,
+        pos: 0,
+    };
+    validate_delimiter_depth(&p.tokens)?;
     if p.eat("UPSERT") {
         let target = if p.tokens.get(p.pos + 1).is_some_and(|t| t.text == ":") {
             Some(p.record()?)

@@ -522,6 +522,7 @@ impl Connection {
         let Some(sql) = &field.check else {
             return Ok(());
         };
+        fastql_parser::validate_delimiter_depth(&fastql_parser::tokenize(sql)?)?;
         let mut expr = parse_check(sql)?;
         let mut bindings = Vec::new();
         lower_mode(&mut expr, None, &mut bindings, FieldBinding::Sql)?;

@@ -915,3 +915,41 @@ fn json_arrow_checks_read_candidate_payloads_after_reopen() {
         1
     );
 }
+
+#[test]
+fn direct_rust_check_depth_is_rejected_before_definition_changes() {
+    let (_db, c) = setup();
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO users {id:users:prior,name:'Alice'}");
+    let before = q(&c, "INFO FOR TABLE users").rows;
+    for depth in [65, 10_000] {
+        let field = fastdb::Field {
+            path: vec!["name".into()],
+            kind: fastdb::FieldType::String,
+            required: true,
+            nullable: false,
+            check: Some(format!(
+                "{}length(name)>0{}",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            )),
+        };
+        assert_eq!(
+            c.define_field("users", field, true).unwrap_err().code(),
+            "FDB_SYNTAX"
+        );
+        assert_eq!(q(&c, "INFO FOR TABLE users").rows, before);
+        assert_eq!(
+            c.lookup_index("users", "users_name", &Value::String("Alice".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    assert!(c
+        .execute("INSERT INTO users {name:''}", &Parameters::new())
+        .is_err());
+    q(&c, "INSERT INTO users {name:'Bob'}");
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM users").rows.is_empty());
+}

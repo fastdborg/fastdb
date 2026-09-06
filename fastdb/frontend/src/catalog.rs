@@ -56,6 +56,9 @@ pub(crate) fn decode(metadata: &str, name: &str) -> Result<Collection> {
         let mut paths = std::collections::BTreeSet::new();
         for field in &c.fields {
             crate::validate_path(&field.path)?;
+            if let Some(check) = &field.check {
+                fastql_parser::validate_delimiter_depth(&fastql_parser::tokenize(check)?)?;
+            }
             if field.path[0] == "id" || !paths.insert(&field.path) {
                 return Err(Error::Storage(
                     "invalid or duplicate field definition".into(),
@@ -429,6 +432,10 @@ mod metadata_tests {
             *metadata.pointer_mut(path).unwrap() = value;
             invalid.push(metadata.to_string());
         }
+        let mut nested = original.clone();
+        nested["fields"][0]["check"] =
+            format!("{}value>0{}", "(".repeat(128), ")".repeat(128)).into();
+        invalid.push(nested.to_string());
         for metadata in invalid {
             c.run(
                 "UPDATE __fastdb_catalog SET metadata=?1 WHERE name='docs'",

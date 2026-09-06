@@ -468,4 +468,10 @@ Malformed JSON and invalid metadata produce FDB_STORAGE. The Rust field-definiti
 
 FastQL dispatch now rejects statement input with more than 64 simultaneously open parentheses, object braces or array delimiters before invoking either recursive FastQL expression parsing or the native SQL parser. The check uses SQL-aware tokens, so quoted strings, quoted identifiers and comments do not consume nesting depth. Rejection reports FDB_SYNTAX at the opening delimiter that exceeds the limit, before statement writes begin. This frontend limit applies to ordinary SQL submitted through execute as well as collection statements.
 
-This is a delimiter-depth guard, not a complete AST-depth or memory limit. Long flat operator chains, CASE nesting without delimiters, generated lowering expansion, direct API CHECK inputs, tokenization size, result materialization and caller stack sizes still need resource qualification. Passing the preflight does not prove that every expression within the limit is safe at every later stage.
+This is a delimiter-depth guard, not a complete AST-depth or memory limit. Long flat operator chains, CASE nesting without delimiters, generated lowering expansion, other direct API input bounds, tokenization size, result materialization and caller stack sizes still need resource qualification. Passing the preflight does not prove that every expression within the limit is safe at every later stage.
+
+## CHECK delimiter-depth preflight
+
+The shared 64-delimiter input check now also runs before the direct Rust define_field API parses a CHECK expression. Excessive CHECK nesting returns FDB_SYNTAX before definition changes or existing-document validation. Catalog decoding applies the same check to stored CHECK text and reports invalid metadata as FDB_STORAGE, preventing stored expressions from bypassing the preflight during subsequent writes. Generated internal expressions retain their separate lowering path.
+
+Tests reject 65 and 10,000 nested parentheses in direct field overwrites while preserving the existing CHECK, indexed documents and outer transaction; a metadata-corruption case rejects a deeply nested stored CHECK. This closes the direct/stored CHECK delimiter gap but does not complete AST-depth, flat-chain, CASE, generated-expression or allocation limits.
