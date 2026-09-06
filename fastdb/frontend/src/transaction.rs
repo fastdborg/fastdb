@@ -53,19 +53,34 @@ impl Connection {
     /// There is no implicit batch transaction. Explicit transaction control
     /// belongs to the script; a failed batch may leave it active.
     pub fn execute_batch(&self, script: &str) -> Result<Vec<BatchExecution>> {
-        let statements = fastql_parser::split_script(script)?;
         let mut reports = Vec::new();
+        self.visit_batch(script, |report| {
+            reports.push(report);
+            Ok(true)
+        })?;
+        Ok(reports)
+    }
+
+    /// Visit results between statements. False stops early; visitor errors are
+    /// returned without rolling back earlier work. Execution errors are visited
+    /// once and always stop the script. The full script is split before execution.
+    pub fn visit_batch(
+        &self,
+        script: &str,
+        mut visitor: impl FnMut(BatchExecution) -> Result<bool>,
+    ) -> Result<()> {
+        let statements = fastql_parser::split_script(script)?;
         for statement in statements {
             let execution = self.execute_report(statement.sql, &Parameters::new());
             let failed = execution.result.is_err();
-            reports.push(BatchExecution {
+            let proceed = visitor(BatchExecution {
                 offset: statement.offset,
                 execution,
-            });
-            if failed {
+            })?;
+            if failed || !proceed {
                 break;
             }
         }
-        Ok(reports)
+        Ok(())
     }
 }

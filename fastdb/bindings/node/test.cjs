@@ -207,3 +207,30 @@ test('nested record targets follow validation even without a reference index', (
     assert.deepEqual(db.all('SELECT * FROM docs'), []);
   } finally { db.close(); }
 });
+test('Node batches preserve offsets and stop at execution or encoding failures', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      const script = "-- é\nCREATE TABLE docs; BEGIN; INSERT INTO docs {id:docs:p1}; INSERT INTO docs {id:docs:p1}; COMMIT;";
+      const reports = await db.executeBatch(script);
+      assert.equal(reports.length,4);
+      assert.equal(reports[0].offset,Buffer.byteLength('-- é\n'));
+      assert.equal(reports[1].transaction.after,'active');
+      assert(reports[3].error);
+      assert.equal(reports[3].transaction.after,'active');
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT * FROM docs'),[]);
+      const failedEncoding = await db.executeBatch('SELECT 1e308*1e308; INSERT INTO docs {id:docs:later};');
+      assert.equal(failedEncoding.length,1);
+      assert.equal(failedEncoding[0].error.code,'FDB_VALIDATION');
+      assert.deepEqual(await db.all('SELECT * FROM docs'),[]);
+      const prior=await db.executeBatch('INSERT INTO docs {id:docs:before}; SELECT * FROM docs;');
+      assert.deepEqual(prior[1].result.rows[0][0].id,new Record('docs','before'));
+      assert.equal(prior[0].result.affected,1n);
+      if (db instanceof Database) assert.throws(() => db.executeBatch("INSERT INTO docs {id:docs:no}; SELECT 'unterminated"));
+      else await assert.rejects(db.executeBatch("INSERT INTO docs {id:docs:no}; SELECT 'unterminated"));
+      assert.equal((await db.all('SELECT * FROM docs')).length,1);
+    } finally { await db.close(); }
+  }
+});

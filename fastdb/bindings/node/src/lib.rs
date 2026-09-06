@@ -64,19 +64,27 @@ impl NativeDatabase {
                 .into_iter()
                 .map(|(key, value)| fastdb::Value::from_portable_value(value).map(|v| (key, v)))
                 .collect::<fastdb::Result<fastdb::Parameters>>()?;
-            let result = conn.execute(&sql, &parameters)?;
-            let rows = result
-                .rows
-                .iter()
-                .map(|row| {
-                    row.iter()
-                        .map(fastdb::Value::to_portable_value)
-                        .collect::<fastdb::Result<Vec<_>>>()
-                })
-                .collect::<fastdb::Result<Vec<_>>>()?;
-            Ok(
-                serde_json::json!({"columns":result.columns,"rows":rows,"affected":result.affected.to_string()}),
-            )
+            query_value(conn.execute(&sql, &parameters)?)
+        })
+    }
+    #[napi]
+    pub fn execute_batch(&self, script: String) -> napi::Result<String> {
+        self.report(|conn| {
+            let mut entries=Vec::new();
+            conn.visit_batch(&script, |entry| {
+                let execution=entry.execution;
+                let result=execution.result.and_then(query_value);
+                let proceed=result.is_ok();
+                let mut value=match result {
+                    Ok(result)=>serde_json::json!({"result":result}),
+                    Err(error)=>serde_json::json!({"error":{"code":error.code(),"message":error.to_string()}}),
+                };
+                value["offset"]=entry.offset.into();
+                value["transaction"]=serde_json::json!({"before":execution.transaction_before,"after":execution.transaction_after});
+                entries.push(value);
+                Ok(proceed)
+            })?;
+            Ok(serde_json::Value::Array(entries))
         })
     }
     #[napi]
@@ -149,4 +157,19 @@ impl NativeDatabase {
         };
         Ok(serde_json::json!({"version":1,"execution":result,"transaction":{"before":before,"after":conn.transaction_state()}}).to_string())
     }
+}
+
+fn query_value(result: fastdb::QueryResult) -> fastdb::Result<serde_json::Value> {
+    let rows = result
+        .rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(fastdb::Value::to_portable_value)
+                .collect::<fastdb::Result<Vec<_>>>()
+        })
+        .collect::<fastdb::Result<Vec<_>>>()?;
+    Ok(
+        serde_json::json!({"columns":result.columns,"rows":rows,"affected":result.affected.to_string()}),
+    )
 }

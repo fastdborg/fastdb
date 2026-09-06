@@ -17,7 +17,6 @@ void versions; void count;
 db.migrate([{version: 1, name: 'create', sql: ''}]);
 // @ts-expect-error no implicit CSV format
 db.exportDocuments('docs', 'csv');
-db.close();
 
 async function checkAsync() {
   const asyncDb = await AsyncDatabase.open();
@@ -36,3 +35,9 @@ async function checkInterrupt() {
   await asyncDb.close();
 }
 void checkInterrupt;
+const entries = db.executeBatch('SELECT 1;');
+for (const entry of entries) {
+  if (entry.result) { const affected: bigint = entry.result.affected; void affected; }
+  else { const code: string = entry.error.code; void code; }
+}
+db.close();

@@ -66,6 +66,13 @@ function unwrap(raw) {
   }
   return report;
 }
+function decodeBatch(raw) {
+  return unwrap(raw).execution.result.map(entry => {
+    if (entry.result) entry.result = { ...entry.result,
+      rows: entry.result.rows.map(row => row.map(decode)), affected: BigInt(entry.result.affected) };
+    return entry;
+  });
+}
 function migrationPlan(migrations) {
   const plan = migrations.map(m => {
       if (typeof m.version !== 'bigint' || typeof m.name !== 'string' || typeof m.sql !== 'string') {
@@ -85,6 +92,7 @@ class Database {
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
   }
+  executeBatch(script) { return decodeBatch(this.#native.executeBatch(script)); }
   exportDocuments(table, format = 'json') {
     return unwrap(this.#native.exportDocuments(table, format)).execution.result;
   }
@@ -194,6 +202,7 @@ class AsyncDatabase {
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
   }
+  async executeBatch(script) { return decodeBatch(await this.#request('executeBatch', [script])); }
   async exportDocuments(table, format = 'json') {
     return unwrap(await this.#request('exportDocuments', [table, format])).execution.result;
   }

@@ -143,3 +143,10 @@ The former prototype validator checked only empty target/key strings, allowing i
 ## Partial-write interruption evidence
 
 Deterministic progress-callback tests now interrupt collection UPDATE, DELETE and INSERT SELECT after the engine's total-change counter advances. In these pinned-engine cases, statement rollback restores documents and managed index entries. If an explicit outer transaction existed, it remains active and retains prior uncommitted work; later writes and explicit rollback still work. This is evidence for those interruption points, not a universal outer-transaction guarantee for every error. A partially executed index build removes its catalog declaration and physical storage on interruption and can be retried successfully. These tests use engine progress callbacks only in test code and do not add a public callback or cancellation API.
+
+
+## Batch result visitation
+
+Rust `visit_batch(script, visitor)` visits each owned BatchExecution between statements. Returning false stops successfully; a visitor error returns that error. Both leave earlier execution/transaction effects intact. Statement execution errors are visited once and stop the script regardless of the visitor's return value. Full lexical splitting precedes any execution. `execute_batch` now collects through this shared path.
+
+The native Node bridge uses visitation to encode each result before advancing, preserving earlier reports and stopping if a value cannot be represented by the portable encoding. This does not add implicit rollback for result-consumer errors. Sync/async Node executeBatch return per-statement errors as data; pre-execution lexical errors use the normal thrown/rejected error envelope.

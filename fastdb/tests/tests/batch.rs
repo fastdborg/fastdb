@@ -69,3 +69,45 @@ fn sql_trigger_bodies_and_case_end_are_single_statements() {
         vec![vec![Value::Integer(10)], vec![Value::Integer(30)]]
     );
 }
+
+#[test]
+fn batch_visitors_can_stop_without_executing_later_statements() {
+    let db = fastdb::Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let mut visited = 0;
+    c.visit_batch(
+        "CREATE TABLE samples(value INTEGER); INSERT INTO samples VALUES (1);",
+        |entry| {
+            entry.execution.result?;
+            visited += 1;
+            Ok(false)
+        },
+    )
+    .unwrap();
+    assert_eq!(visited, 1);
+    assert!(c
+        .execute("SELECT * FROM samples", &fastdb::Parameters::new())
+        .unwrap()
+        .rows
+        .is_empty());
+    let result = c.visit_batch(
+        "INSERT INTO samples VALUES (1); INSERT INTO samples VALUES (2);",
+        |entry| {
+            entry.execution.result?;
+            Err(fastdb::Error::Validation("consumer stopped".into()))
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        c.execute("SELECT value FROM samples", &fastdb::Parameters::new())
+            .unwrap()
+            .rows,
+        vec![vec![fastdb::Value::Integer(1)]]
+    );
+    assert!(c
+        .visit_batch(
+            "INSERT INTO samples VALUES (3); SELECT 'unfinished",
+            |_| panic!("lexical failure must precede visitation")
+        )
+        .is_err());
+}
