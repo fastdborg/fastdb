@@ -1,4 +1,6 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
+mod functions;
+mod select;
 mod value;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, sync::Arc};
@@ -130,9 +132,11 @@ impl Database {
         Ok(Self { engine })
     }
     pub fn connect(&self) -> Result<Connection> {
-        Ok(Connection {
+        let connection = Connection {
             engine: self.engine.connect()?,
-        })
+        };
+        functions::register(&connection)?;
+        Ok(connection)
     }
 }
 /// Connections expose only checked frontend operations, never raw engine handles.
@@ -526,6 +530,9 @@ impl Connection {
         }
     }
     fn sql(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
+        if let Some(result) = self.collection_select(sql, params)? {
+            return Ok(result);
+        }
         let tokens = fastql_parser::tokenize(sql)?;
         let collections = self.run("SELECT name FROM __fastdb_catalog", &[])?;
         for token in &tokens {

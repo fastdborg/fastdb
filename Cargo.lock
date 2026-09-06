@@ -1974,6 +1974,8 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.16",
  "turso_core",
+ "turso_ext",
+ "turso_parser",
 ]
 
 [[package]]

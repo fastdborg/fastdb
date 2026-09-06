@@ -17,6 +17,6 @@ Local integration changes:
 1. Four explicit FastDB workspace members and corresponding lockfile entries; upstream default-members unchanged.
 2. FastDB implementation, tests, scripts, and documentation under `fastdb/`.
 3. Inherited workflow YAML files moved unchanged into `.github/upstream-workflows/` so GitHub cannot execute them. Only `.github/workflows/fastdb-ci.yml` remains active. Audit this directory on every upstream merge before pushing.
-4. No upstream engine, parser, bindings, or CLI implementation changes.
+4. No upstream engine, parser, bindings, or CLI implementation changes. The frontend also directly depends on the pinned workspace parser/extension crates for AST lowering and statically linked pure accessors; registration uses the documented unsafe startup extension context API, which is freed before exposing the connection.
 
 The root planning directory is not a Git repository. The ancestry-preserving checkout lives in `turso/`; product source is `turso/fastdb/`.
