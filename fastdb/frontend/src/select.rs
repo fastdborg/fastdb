@@ -159,10 +159,12 @@ impl Scope {
         }
     }
     fn membership_key(&self, expr: &mut Expr) -> Result<bool> {
-        // Keep explicit collation outside the scalar conversion. Native CAST
-        // expressions retain their own path because they carry SQL affinity.
+        // Keep explicit collation and unary plus outside the conversion.
+        // Plus preserves the scalar value while removing SQL affinity.
         match expr {
-            Expr::Collate(value, _) => return self.membership_key(value),
+            Expr::Collate(value, _) | Expr::Unary(UnaryOperator::Positive, value) => {
+                return self.membership_key(value);
+            }
             Expr::Parenthesized(values) if values.len() == 1 => {
                 return self.membership_key(&mut values[0]);
             }
@@ -172,9 +174,34 @@ impl Scope {
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
             return Ok(true);
         }
-        if matches!(expr, Expr::FunctionCall { .. }) {
+        let cast_type = match expr {
+            Expr::Cast { type_name, .. } => Some(type_name.clone()),
+            _ => None,
+        };
+        if matches!(
+            expr,
+            Expr::FunctionCall { .. }
+                | Expr::FunctionCallStar { .. }
+                | Expr::Cast { .. }
+                | Expr::Literal(_)
+                | Expr::Unary(_, _)
+                | Expr::Binary(_, _, _)
+                | Expr::Between { .. }
+                | Expr::InList { .. }
+                | Expr::IsNull(_)
+                | Expr::NotNull(_)
+                | Expr::Like { .. }
+        ) {
             self.typed(expr)?;
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            if let Some(type_name) = cast_type {
+                // The conversion returns the already-cast scalar (or its binary
+                // key). Repeating CAST preserves its affinity for IN coercion.
+                *expr = Expr::Cast {
+                    expr: Box::new(expr.clone()),
+                    type_name,
+                };
+            }
             return Ok(true);
         }
         Ok(false)
@@ -467,8 +494,10 @@ impl Scope {
                     // whole list, including native functions returning blobs.
                     **lhs = value;
                     for value in rhs.iter_mut() {
-                        self.typed(value)?;
-                        **value = expression(&format!("__fastdb_unwrap({value})"))?;
+                        if !self.membership_key(value)? {
+                            self.typed(value)?;
+                            **value = expression(&format!("__fastdb_unwrap({value})"))?;
+                        }
                     }
                     return Ok(());
                 }

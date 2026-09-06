@@ -1241,3 +1241,46 @@ fn native_function_membership_preserves_binary_and_collation() {
         vec![vec![Value::Integer(0)]]
     );
 }
+
+#[test]
+fn cast_and_scalar_membership_keep_native_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(data BLOB, number, label)");
+    for values in ["X'32',2,'A'", "X'33','2','b'", "NULL,NULL,NULL"] {
+        query(
+            &c,
+            &format!("INSERT INTO docs (data,number,label) VALUES ({values})"),
+        );
+        query(&c, &format!("INSERT INTO baseline VALUES ({values})"));
+    }
+    for predicate in [
+        "CAST('2' AS BLOB) IN (data)",
+        "CAST('2' AS BLOB) NOT IN (data,NULL)",
+        "+X'32' IN (data)",
+        "+data IN (X'32')",
+        "data IN (+data)",
+        "X'32' IN (+data)",
+        "'a' IN (label COLLATE NOCASE)",
+        "CAST('2' AS REAL) IN (number)",
+        "CAST('2' AS NUMERIC) IN (number)",
+        "+CAST('2' AS INTEGER) IN ('2')",
+        "CAST('2' AS INTEGER) IN (number)",
+        "CAST('2' AS INTEGER) IN ('2')",
+        "CAST(2 AS TEXT) IN (number)",
+        "CAST('a' COLLATE NOCASE AS TEXT) IN (label)",
+        "CAST('a' AS TEXT) COLLATE NOCASE IN (label)",
+        "(1+1) IN (number)",
+        "2 IN (number)",
+        "NULL IN (data)",
+        "CAST(data AS TEXT) IN ('2')",
+    ] {
+        let sql = |table| format!("SELECT {predicate} AS matched FROM {table} ORDER BY data");
+        assert_eq!(
+            query(&c, &sql("docs")).rows,
+            query(&c, &sql("baseline")).rows,
+            "{predicate}"
+        );
+    }
+}
