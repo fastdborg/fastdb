@@ -1,0 +1,9 @@
+CREATE TABLE users;
+DEFINE FIELD name ON users TYPE string REQUIRED;
+CREATE INDEX users_city ON users (profile.city);
+INSERT INTO users (id, name) VALUES (users:u1, 'Alice'), (users:u2, 'Bob') RETURNING *;
+UPDATE users SET profile.city = 'Bangkok' RETURNING *;
+BEGIN;
+UPDATE users:u1 SET name = 'Temporary';
+ROLLBACK;
+SELECT u.id, u.name, u.profile.city AS city FROM users u ORDER BY u.id;

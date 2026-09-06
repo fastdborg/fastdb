@@ -11,19 +11,35 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             (
                 c"__fastdb_scalar",
                 document_scalar as turso_ext::ScalarFunction,
+                2,
             ),
             (
                 c"__fastdb_value",
                 document_value as turso_ext::ScalarFunction,
+                2,
             ),
-            (c"__fastdb_sort", document_sort as turso_ext::ScalarFunction),
+            (
+                c"__fastdb_sort",
+                document_sort as turso_ext::ScalarFunction,
+                2,
+            ),
+            (
+                c"__fastdb_record_value",
+                record_value as turso_ext::ScalarFunction,
+                2,
+            ),
+            (
+                c"__fastdb_sort_encoded",
+                sort_encoded as turso_ext::ScalarFunction,
+                1,
+            ),
         ]
         .into_iter()
-        .try_for_each(|(name, callback)| {
+        .try_for_each(|(name, callback, argc)| {
             let code = (api.register_scalar_function)(
                 api.ctx,
                 name.as_ptr(),
-                2,
+                argc,
                 true,
                 0,
                 callback,
@@ -70,23 +86,30 @@ fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
         return Ok(ExtValue::from_blob(value.encode()?));
     }
     if mode == 2 {
-        if let Value::Record(record) = &value {
-            let mut key = record.table.to_ascii_lowercase().into_bytes();
-            key.push(0);
-            match &record.key {
-                crate::Key::Integer(i) => {
-                    key.push(0);
-                    key.extend(((*i as u64) ^ (1u64 << 63)).to_be_bytes());
-                }
-                crate::Key::String(s) => {
-                    key.push(1);
-                    key.extend(s.as_bytes());
-                }
-            }
-            return Ok(ExtValue::from_blob(key));
-        }
+        return ordered(&value);
     }
-    let value = index_scalar(&value)?;
+    scalar_result(&value)
+}
+fn ordered(value: &Value) -> Result<ExtValue> {
+    if let Value::Record(record) = &value {
+        let mut key = record.table.to_ascii_lowercase().into_bytes();
+        key.push(0);
+        match &record.key {
+            crate::Key::Integer(i) => {
+                key.push(0);
+                key.extend(((*i as u64) ^ (1u64 << 63)).to_be_bytes());
+            }
+            crate::Key::String(s) => {
+                key.push(1);
+                key.extend(s.as_bytes());
+            }
+        }
+        return Ok(ExtValue::from_blob(key));
+    }
+    scalar_result(value)
+}
+fn scalar_result(value: &Value) -> Result<ExtValue> {
+    let value = index_scalar(value)?;
     use turso_core::{Numeric, Value as EngineValue};
     Ok(match value {
         EngineValue::Null => ExtValue::null(),
@@ -116,4 +139,45 @@ fn document_value(args: &[ExtValue]) -> ExtValue {
 #[scalar(name = "__fastdb_sort")]
 fn document_sort(args: &[ExtValue]) -> ExtValue {
     get(args, 2).unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_record_value")]
+fn record_value(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        if args.len() != 2 {
+            return Err(Error::Validation(
+                "record constructor expects target and key".into(),
+            ));
+        }
+        let target = args[0]
+            .to_text()
+            .ok_or_else(|| Error::Validation("record target must be text".into()))?;
+        let table = crate::canonical(target)?;
+        let key = match args[1].value_type() {
+            ValueType::Integer => crate::Key::Integer(args[1].to_integer().expect("integer value")),
+            ValueType::Text => crate::Key::String(args[1].to_text().expect("text value").into()),
+            _ => return Err(Error::Validation("record key must be text or int64".into())),
+        };
+        Ok(ExtValue::from_blob(
+            Value::Record(crate::Record { table, key }).encode()?,
+        ))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_sort_encoded")]
+fn sort_encoded(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        if args.len() != 1 {
+            return Err(Error::Validation("sort arity".into()));
+        }
+        if args[0].value_type() == ValueType::Null {
+            return Ok(ExtValue::null());
+        }
+        let bytes = args[0]
+            .to_blob()
+            .ok_or_else(|| Error::Validation("expected typed value".into()))?;
+        ordered(&Value::decode(&bytes)?)
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }

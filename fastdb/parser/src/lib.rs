@@ -558,7 +558,9 @@ pub fn parse(input: &str) -> Result<Statement> {
             continue;
         }
         let start = p.pos;
-        if p.tokens.get(start + 1).is_none_or(|t| t.text != ":") {
+        if p.tokens.get(start + 1).is_none_or(|t| t.text != ":")
+            || p.tokens.get(start + 2).is_some_and(|t| t.text == ":")
+        {
             continue;
         }
         let target = p.record()?;
@@ -570,6 +572,13 @@ pub fn parse(input: &str) -> Result<Statement> {
                 Ok(Statement::SelectRecord(target))
             }
             "UPDATE" => {
+                if p.tokens.get(p.pos).is_some_and(|t| {
+                    t.kind == Kind::Word
+                        && (t.text.eq_ignore_ascii_case("SET")
+                            || t.text.eq_ignore_ascii_case("UNSET"))
+                }) {
+                    return Ok(Statement::Sql(input.into()));
+                }
                 let value = p.expr(0)?;
                 let returning = p.returning()?;
                 Ok(Statement::Patch {

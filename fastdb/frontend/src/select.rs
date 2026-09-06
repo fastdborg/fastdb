@@ -167,7 +167,7 @@ impl Scope {
 fn unsupported(feature: &str) -> Error {
     Error::Unsupported(format!("{feature} is not implemented for collections"))
 }
-fn parsed(sql: &str) -> Result<Cmd> {
+pub(crate) fn parsed(sql: &str) -> Result<Cmd> {
     let mut parser = Parser::new(sql.as_bytes());
     let cmd = parser
         .next_cmd()
@@ -243,6 +243,9 @@ fn constant(expr: &Expr) -> bool {
     match expr {
         Expr::Literal(_) | Expr::Variable(_) => true,
         Expr::Unary(_, e) => constant(e),
+        Expr::FunctionCall { name, args, .. } if name.as_str() == "__fastdb_record_value" => {
+            args.iter().all(|e| constant(e))
+        }
         _ => false,
     }
 }
@@ -323,12 +326,29 @@ fn lower_source(
     }
     Ok(())
 }
-fn expand_records(sql: &str) -> Result<String> {
+pub(crate) fn expand_records(sql: &str) -> Result<String> {
     let tokens = fastql_parser::tokenize(sql)?;
     let mut out = String::new();
     let mut copied = 0;
     let mut i = 0;
     while i + 2 < tokens.len() {
+        if i + 4 < tokens.len()
+            && tokens[i].text.eq_ignore_ascii_case("type")
+            && tokens[i].kind == fastql_parser::Kind::Word
+            && tokens[i + 1].text == ":"
+            && tokens[i + 2].text == ":"
+            && tokens[i + 3].text.eq_ignore_ascii_case("record")
+            && tokens[i + 4].text == "("
+            && tokens[i].end == tokens[i + 1].start
+            && tokens[i + 1].end == tokens[i + 2].start
+            && tokens[i + 2].end == tokens[i + 3].start
+        {
+            out.push_str(&sql[copied..tokens[i].start]);
+            out.push_str("__fastdb_record_value");
+            copied = tokens[i + 3].end;
+            i += 4;
+            continue;
+        }
         let a = &tokens[i];
         let colon = &tokens[i + 1];
         let key = &tokens[i + 2];
@@ -348,13 +368,16 @@ fn expand_records(sql: &str) -> Result<String> {
             if let fastql_parser::Statement::SelectRecord(record) =
                 fastql_parser::parse(&format!("SELECT {}", &sql[a.start..end]))?
             {
-                let bytes = Value::Record(record).encode()?;
                 out.push_str(&sql[copied..a.start]);
-                out.push_str("X'");
-                for byte in bytes {
-                    out.push_str(&format!("{byte:02x}"));
-                }
-                out.push('\'');
+                let key = match record.key {
+                    crate::Key::Integer(i) => i.to_string(),
+                    crate::Key::String(s) => format!("'{}'", s.replace('\'', "''")),
+                };
+                out.push_str(&format!(
+                    "__fastdb_record_value('{}', {})",
+                    record.table.replace('\'', "''"),
+                    key
+                ));
                 copied = end;
                 while i < tokens.len() && tokens[i].end <= end {
                     i += 1;
@@ -375,6 +398,14 @@ impl Connection {
     ) -> Result<Option<QueryResult>> {
         // Only route statements that reference a collection table. Pure SQL
         // retains the baseline preparation/error path and original spelling.
+        self.collection_select_internal(sql, params, false)
+    }
+    pub(crate) fn collection_select_internal(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        trusted: bool,
+    ) -> Result<Option<QueryResult>> {
         let expanded = expand_records(sql)?;
         let Ok(mut cmd) = parsed(&expanded) else {
             return Ok(None);
@@ -388,7 +419,7 @@ impl Connection {
         };
         let OneSelect::Select {
             columns,
-            from: Some(from),
+            from,
             where_clause,
             group_by,
             window_clause,
@@ -398,20 +429,23 @@ impl Connection {
         else {
             return Ok(None);
         };
-        let first = match source(self, &from.select) {
-            Ok(s) => s,
-            Err(Error::Unsupported(_)) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        let mut sources = vec![first];
-        for join in &from.joins {
-            match source(self, &join.table) {
-                Ok(s) => sources.push(s),
+        let mut sources = Vec::new();
+        if let Some(from) = from {
+            let first = match source(self, &from.select) {
+                Ok(s) => s,
                 Err(Error::Unsupported(_)) => return Ok(None),
                 Err(e) => return Err(e),
+            };
+            sources.push(first);
+            for join in &from.joins {
+                match source(self, &join.table) {
+                    Ok(s) => sources.push(s),
+                    Err(Error::Unsupported(_)) => return Ok(None),
+                    Err(e) => return Err(e),
+                }
             }
         }
-        if sources.iter().all(|s| s.collection.is_none()) {
+        if sources.iter().all(|s| s.collection.is_none()) && expanded == sql {
             return Ok(None);
         }
         if matches!(distinctness, Some(Distinctness::Distinct)) {
@@ -436,6 +470,9 @@ impl Connection {
         // Validate user expressions before introducing any internal function or
         // storage name. The existing write guard continues covering other SQL.
         for token in fastql_parser::tokenize(sql)? {
+            if trusted {
+                break;
+            }
             if matches!(
                 token.kind,
                 fastql_parser::Kind::Word | fastql_parser::Kind::Identifier
@@ -478,7 +515,10 @@ impl Connection {
                         .map(|a| a.name().as_str().to_owned())
                         .unwrap_or_else(|| {
                             field.as_ref().map_or_else(
-                                || expr.to_string(),
+                                || {
+                                    expr.to_string()
+                                        .replace("__fastdb_record_value", "type::record")
+                                },
                                 |(_, path)| path.last().expect("nonempty path").clone(),
                             )
                         });
@@ -487,7 +527,7 @@ impl Connection {
                         typed.push(true);
                     } else {
                         scope.lower(&mut expr)?;
-                        typed.push(false);
+                        typed.push(matches!(&expr, Expr::FunctionCall{name,..} if name.as_str()=="__fastdb_record_value"));
                     }
                     names.push(name.clone());
                     rewritten.push(ResultColumn::Expr(
@@ -515,20 +555,22 @@ impl Connection {
                     .map_or(Ok(None), |p| indexed_equality(&scope, i, p))
             })
             .collect::<Result<Vec<_>>>()?;
-        lower_source(&mut from.select, &scope.sources[0], candidates[0].clone())?;
-        for (i, join) in from.joins.iter_mut().enumerate() {
-            // An outer join WHERE predicate must remain outside the join; using
-            // a filtered source would change NULL-extension behavior.
-            lower_source(&mut join.table, &scope.sources[i + 1], None)?;
-            if let Some(constraint) = &mut join.constraint {
-                match constraint {
-                    JoinConstraint::On(e) => scope.lower(e)?,
-                    JoinConstraint::Using(_) => return Err(unsupported("USING joins")),
+        if let Some(from) = from {
+            lower_source(&mut from.select, &scope.sources[0], candidates[0].clone())?;
+            for (i, join) in from.joins.iter_mut().enumerate() {
+                // An outer join WHERE predicate must remain outside the join; using
+                // a filtered source would change NULL-extension behavior.
+                lower_source(&mut join.table, &scope.sources[i + 1], None)?;
+                if let Some(constraint) = &mut join.constraint {
+                    match constraint {
+                        JoinConstraint::On(e) => scope.lower(e)?,
+                        JoinConstraint::Using(_) => return Err(unsupported("USING joins")),
+                    }
                 }
-            }
-            if matches!(join.operator,JoinOperator::TypedJoin(Some(t)) if t.contains(JoinType::NATURAL))
-            {
-                return Err(unsupported("NATURAL joins"));
+                if matches!(join.operator,JoinOperator::TypedJoin(Some(t)) if t.contains(JoinType::NATURAL))
+                {
+                    return Err(unsupported("NATURAL joins"));
+                }
             }
         }
         if let Some(expr) = where_clause {
@@ -555,7 +597,11 @@ impl Connection {
                     };
                     let mut e = *e.clone();
                     if let Expr::FunctionCall { name, .. } = &mut e {
-                        *name = Name::exact("__fastdb_sort".into());
+                        if name.as_str() == "__fastdb_value" {
+                            *name = Name::exact("__fastdb_sort".into());
+                        } else {
+                            e = expression(&format!("__fastdb_sort_encoded({e})"))?;
+                        }
                     }
                     sorted.expr = Box::new(e);
                 }
@@ -572,9 +618,12 @@ impl Connection {
         let lowered = cmd.to_string();
         let mut statement = self.engine.prepare(&lowered)?;
         for (name, value) in params {
-            let index = statement
-                .parameter_index(name)
-                .ok_or_else(|| Error::Parameter(name.clone()))?;
+            let Some(index) = crate::bind_index(&statement, name) else {
+                if trusted {
+                    continue;
+                }
+                return Err(Error::Parameter(name.clone()));
+            };
             statement.bind_at(index, crate::index_scalar(value)?)?;
         }
         let engine_names = (0..statement.num_columns())

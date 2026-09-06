@@ -1,7 +1,9 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
 mod functions;
 mod select;
+mod update;
 mod value;
+mod write;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, sync::Arc};
 use turso_core::{
@@ -372,23 +374,28 @@ impl Connection {
             };
             doc.extend(patch.clone());
             validate_document(&c, &doc)?;
-            let id = EngineValue::Blob(doc["id"].encode()?);
-            self.run(
-                &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
-                &[
-                    EngineValue::Blob(Value::Object(doc.clone()).encode()?),
-                    id.clone(),
-                ],
-            )?;
-            for index in &c.indexes {
-                self.run(
-                    &format!("DELETE FROM {} WHERE id = ?1", quote(&index.storage)),
-                    std::slice::from_ref(&id),
-                )?;
-                self.insert_index(index, &doc)?;
-            }
+            self.replace_document(&c, &doc)?;
             Ok(Some(doc))
         })
+    }
+    fn replace_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        validate_document(c, doc)?;
+        let id = EngineValue::Blob(doc["id"].encode()?);
+        self.run(
+            &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
+            &[
+                EngineValue::Blob(Value::Object(doc.clone()).encode()?),
+                id.clone(),
+            ],
+        )?;
+        for index in &c.indexes {
+            self.run(
+                &format!("DELETE FROM {} WHERE id = ?1", quote(&index.storage)),
+                std::slice::from_ref(&id),
+            )?;
+            self.insert_index(index, doc)?;
+        }
+        Ok(())
     }
     pub fn delete(&self, record: &Record) -> Result<Option<Document>> {
         self.atomic(|| {
@@ -530,6 +537,9 @@ impl Connection {
         }
     }
     fn sql(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
+        if let Some(result) = self.collection_write(sql, params)? {
+            return Ok(result);
+        }
         if let Some(result) = self.collection_select(sql, params)? {
             return Ok(result);
         }
@@ -561,9 +571,7 @@ impl Connection {
             return Err(Error::Unsupported("execute accepts one statement".into()));
         }
         for (name, value) in params {
-            let index = stmt
-                .parameter_index(name)
-                .ok_or_else(|| Error::Parameter(name.clone()))?;
+            let index = bind_index(&stmt, name).ok_or_else(|| Error::Parameter(name.clone()))?;
             stmt.bind_at(index, scalar(value)?)?;
         }
         let columns = (0..stmt.num_columns())
@@ -580,6 +588,12 @@ impl Connection {
             affected: stmt.n_change(),
         })
     }
+}
+fn bind_index(statement: &turso_core::Statement, name: &str) -> Option<NonZeroUsize> {
+    statement.parameter_index(name).or_else(|| {
+        let index = NonZeroUsize::new(name.strip_prefix('?')?.parse().ok()?)?;
+        statement.parameters().has_index(index).then_some(index)
+    })
 }
 fn from_engine(value: EngineValue) -> Value {
     use turso_core::Numeric;
