@@ -574,6 +574,13 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
     out.push_str(&sql[copied..]);
     Ok(out)
 }
+#[derive(Default)]
+struct SelectOptions<'a> {
+    trusted: bool,
+    ignore_unused: bool,
+    positional: bool,
+    snapshot: Option<Option<&'a crate::Document>>,
+}
 impl Connection {
     pub(crate) fn collection_select(
         &self,
@@ -590,27 +597,110 @@ impl Connection {
         params: &Parameters,
         trusted: bool,
     ) -> Result<Option<QueryResult>> {
-        self.collection_select_options(sql, params, trusted, trusted, false)
+        self.collection_select_options(
+            sql,
+            params,
+            SelectOptions {
+                trusted,
+                ignore_unused: trusted,
+                ..Default::default()
+            },
+        )
     }
     pub(crate) fn collection_select_subset(
         &self,
         sql: &str,
         params: &Parameters,
     ) -> Result<Option<QueryResult>> {
-        self.collection_select_options(sql, params, false, true, false)
+        self.collection_select_options(
+            sql,
+            params,
+            SelectOptions {
+                ignore_unused: true,
+                ..Default::default()
+            },
+        )
     }
     pub(crate) fn insert_select(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
-        self.collection_select_options(sql, params, true, false, true)?
-            .ok_or_else(|| unsupported("this INSERT SELECT source"))
+        self.collection_select_options(
+            sql,
+            params,
+            SelectOptions {
+                trusted: true,
+                positional: true,
+                ..Default::default()
+            },
+        )?
+        .ok_or_else(|| unsupported("this INSERT SELECT source"))
+    }
+    pub(crate) fn returning_rows(
+        &self,
+        table: &QualifiedName,
+        columns: &[ResultColumn],
+        documents: Vec<crate::Document>,
+        params: &Parameters,
+    ) -> Result<QueryResult> {
+        let affected = documents.len() as i64;
+        if columns.is_empty() {
+            return Ok(QueryResult::command(affected));
+        }
+        if matches!(columns, [ResultColumn::Star]) {
+            return Ok(QueryResult::documents(documents, affected));
+        }
+        let projections = columns
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let alias = table
+            .alias
+            .as_ref()
+            .map_or(table.name.as_str(), |n| n.as_str());
+        let sql = format!(
+            "SELECT {projections} FROM {} AS {}",
+            quote(table.name.as_str()),
+            quote(alias)
+        );
+        let mut result = None;
+        let inputs = if documents.is_empty() {
+            vec![None]
+        } else {
+            documents.iter().map(Some).collect()
+        };
+        for snapshot in inputs {
+            let row = self
+                .collection_select_options(
+                    &sql,
+                    params,
+                    SelectOptions {
+                        trusted: true,
+                        ignore_unused: true,
+                        snapshot: Some(snapshot),
+                        ..Default::default()
+                    },
+                )?
+                .ok_or_else(|| unsupported("RETURNING projection"))?;
+            let output = result.get_or_insert_with(|| QueryResult {
+                columns: row.columns.clone(),
+                rows: Vec::new(),
+                affected,
+            });
+            output.rows.extend(row.rows);
+        }
+        Ok(result.expect("at least metadata projection"))
     }
     fn collection_select_options(
         &self,
         sql: &str,
         params: &Parameters,
-        trusted: bool,
-        ignore_unused: bool,
-        positional: bool,
+        options: SelectOptions<'_>,
     ) -> Result<Option<QueryResult>> {
+        let SelectOptions {
+            trusted,
+            ignore_unused,
+            positional,
+            snapshot,
+        } = options;
         let expanded = expand_records(sql)?;
         let Ok(mut cmd) = parsed(&expanded) else {
             return Ok(None);
@@ -761,7 +851,31 @@ impl Connection {
             })
             .collect::<Result<Vec<_>>>()?;
         if let Some(from) = from {
-            lower_source(&mut from.select, &scope.sources[0], candidates[0].clone())?;
+            if let Some(snapshot) = snapshot {
+                let doc = Value::Object(snapshot.cloned().unwrap_or_default());
+                let id = snapshot
+                    .and_then(|d| d.get("id"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let hex = |v: &Value| -> Result<String> {
+                    Ok(v.encode()?.iter().map(|b| format!("{b:02x}")).collect())
+                };
+                let Cmd::Stmt(Stmt::Select(source)) = parsed(&format!(
+                    "SELECT X'{}' AS doc, X'{}' AS id{}",
+                    hex(&doc)?,
+                    hex(&id)?,
+                    if snapshot.is_none() { " WHERE 0" } else { "" }
+                ))?
+                else {
+                    unreachable!("snapshot SELECT");
+                };
+                from.select = Box::new(SelectTable::Select(
+                    source,
+                    Some(As::As(Name::from_string(quote(&scope.sources[0].alias)))),
+                ));
+            } else {
+                lower_source(&mut from.select, &scope.sources[0], candidates[0].clone())?;
+            }
             for (i, join) in from.joins.iter_mut().enumerate() {
                 // An outer join WHERE predicate must remain outside the join; using
                 // a filtered source would change NULL-extension behavior.

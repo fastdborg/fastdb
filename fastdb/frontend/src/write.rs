@@ -8,22 +8,13 @@ use turso_parser::ast::*;
 fn unsupported(message: &str) -> Error {
     Error::Unsupported(message.into())
 }
-fn returning_star(columns: &[ResultColumn]) -> Result<bool> {
-    match columns {
-        [] => Ok(false),
-        [ResultColumn::Star] => Ok(true),
-        _ => Err(unsupported(
-            "collection writes currently support RETURNING *",
-        )),
+fn validate_returning(columns: &[ResultColumn]) -> Result<()> {
+    for column in columns {
+        if let ResultColumn::Expr(expr, _) = column {
+            safe_value_expression(expr)?;
+        }
     }
-}
-fn result(documents: Vec<Document>, returning: bool) -> QueryResult {
-    let affected = documents.len() as i64;
-    if returning {
-        QueryResult::documents(documents, affected)
-    } else {
-        QueryResult::command(affected)
-    }
+    Ok(())
 }
 fn id(doc: &Document) -> Result<&crate::Record> {
     match doc.get("id") {
@@ -43,13 +34,44 @@ fn parameter<'a>(expr: &Expr, params: &'a Parameters) -> Result<Option<&'a Value
 }
 fn safe_value_expression(expr: &Expr) -> Result<()> {
     match expr {
-        Expr::Literal(_) | Expr::Variable(_) => Ok(()),
-        Expr::Unary(_, e) | Expr::Cast { expr: e, .. } | Expr::Collate(e, _) => {
-            safe_value_expression(e)
-        }
+        Expr::Literal(_)
+        | Expr::Variable(_)
+        | Expr::Id(_)
+        | Expr::Name(_)
+        | Expr::Qualified(..)
+        | Expr::DoublyQualified(..) => Ok(()),
+        Expr::Unary(_, e)
+        | Expr::Cast { expr: e, .. }
+        | Expr::Collate(e, _)
+        | Expr::IsNull(e)
+        | Expr::NotNull(e) => safe_value_expression(e),
         Expr::Binary(a, _, b) => {
             safe_value_expression(a)?;
             safe_value_expression(b)
+        }
+        Expr::Between {
+            lhs, start, end, ..
+        } => {
+            safe_value_expression(lhs)?;
+            safe_value_expression(start)?;
+            safe_value_expression(end)
+        }
+        Expr::InList { lhs, rhs, .. } => {
+            safe_value_expression(lhs)?;
+            for e in rhs {
+                safe_value_expression(e)?;
+            }
+            Ok(())
+        }
+        Expr::Like {
+            lhs, rhs, escape, ..
+        } => {
+            safe_value_expression(lhs)?;
+            safe_value_expression(rhs)?;
+            if let Some(e) = escape {
+                safe_value_expression(e)?;
+            }
+            Ok(())
         }
         Expr::Case {
             base,
@@ -88,6 +110,27 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
                 || !within_group.is_empty()
             {
                 return Err(unsupported("aggregate/window VALUES expressions"));
+            }
+            let function = name.as_str().to_ascii_lowercase();
+            if matches!(
+                function.as_str(),
+                "avg"
+                    | "count"
+                    | "group_concat"
+                    | "string_agg"
+                    | "sum"
+                    | "total"
+                    | "json_group_array"
+                    | "jsonb_group_array"
+                    | "json_group_object"
+                    | "jsonb_group_object"
+                    | "array_agg"
+                    | "mode"
+                    | "percentile_cont"
+                    | "percentile_disc"
+            ) || (matches!(function.as_str(), "min" | "max") && args.len() <= 1)
+            {
+                return Err(unsupported("aggregate document write expressions"));
             }
             if name.as_str().eq_ignore_ascii_case("load_extension") {
                 return Err(unsupported("extension loading in document writes"));
@@ -159,7 +202,7 @@ impl Connection {
                         "collection INSERT WITH/OR CONFLICT; use document UPSERT",
                     ));
                 }
-                let returning = returning_star(&returning)?;
+                validate_returning(&returning)?;
                 if columns.is_empty() {
                     return Err(Error::Validation(
                         "collection SQL INSERT requires a column list".into(),
@@ -213,7 +256,9 @@ impl Connection {
                     let doc = fields.iter().cloned().zip(row).collect();
                     documents.push(self.insert(tbl_name.name.as_str(), doc)?);
                 }
-                Ok(Some(result(documents, returning)))
+                Ok(Some(self.returning_rows(
+                    &tbl_name, &returning, documents, params,
+                )?))
             }
             Stmt::Update(update) => {
                 if update.with.is_some()
@@ -225,7 +270,7 @@ impl Connection {
                 {
                     return Err(unsupported("this collection UPDATE clause"));
                 }
-                let returning = returning_star(&update.returning)?;
+                validate_returning(&update.returning)?;
                 let mut fields = Vec::new();
                 let mut exprs = Vec::new();
                 for set in update.sets {
@@ -261,7 +306,12 @@ impl Connection {
                     self.replace_document(&collection, &document)?;
                     documents.push(document);
                 }
-                Ok(Some(result(documents, returning)))
+                Ok(Some(self.returning_rows(
+                    &update.tbl_name,
+                    &update.returning,
+                    documents,
+                    params,
+                )?))
             }
             Stmt::Delete {
                 with,
@@ -275,7 +325,7 @@ impl Connection {
                 if with.is_some() || indexed.is_some() || !order_by.is_empty() || limit.is_some() {
                     return Err(unsupported("this collection DELETE clause"));
                 }
-                let returning = returning_star(&returning)?;
+                validate_returning(&returning)?;
                 let rows = self.write_candidates(&tbl_name, where_clause, &[], params)?;
                 let mut documents = Vec::new();
                 for row in rows {
@@ -287,7 +337,9 @@ impl Connection {
                             Error::Storage("delete candidate disappeared".into())
                         })?);
                 }
-                Ok(Some(result(documents, returning)))
+                Ok(Some(self.returning_rows(
+                    &tbl_name, &returning, documents, params,
+                )?))
             }
             _ => unreachable!("write statement dispatched above"),
         })
