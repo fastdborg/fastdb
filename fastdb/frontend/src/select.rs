@@ -361,7 +361,20 @@ impl Scope {
             return Ok(());
         }
         match expr {
-            Expr::Binary(a, _, b) => {
+            Expr::Binary(a, op, b) => {
+                if matches!(
+                    op,
+                    Operator::Less
+                        | Operator::LessEquals
+                        | Operator::Greater
+                        | Operator::GreaterEquals
+                ) {
+                    let (mut left, mut right) = (*a.clone(), *b.clone());
+                    if self.preserved(&mut left)? && self.preserved(&mut right)? {
+                        *expr = expression(&format!("__fastdb_compare({left}, {right}) {op} 0"))?;
+                        return Ok(());
+                    }
+                }
                 self.lower(a)?;
                 self.lower(b)?;
             }

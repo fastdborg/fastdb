@@ -657,3 +657,122 @@ fn ordering_ordinal_recognition_matches_pinned_constant_expression_rules() {
         }
     }
 }
+
+#[test]
+fn typed_record_ranges_use_numeric_keys_and_preserve_write_rollback() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    for key in [-10, -2, 2, 10] {
+        c.execute("INSERT INTO docs (id,ref) VALUES (type::record('docs',$key),type::record('Docs',$key))", &Parameters::from([("$key".into(),Value::Integer(key))])).unwrap();
+    }
+    assert_eq!(
+        query(
+            &c,
+            "SELECT record::id(id) AS key FROM docs WHERE ref < docs:10 ORDER BY id"
+        )
+        .rows,
+        vec![
+            vec![Value::Integer(-10)],
+            vec![Value::Integer(-2)],
+            vec![Value::Integer(2)]
+        ]
+    );
+    assert_eq!(query(&c,"SELECT record::id(id) AS key FROM docs WHERE (ref) >= type::record('DOCS',2) ORDER BY id").rows, vec![vec![Value::Integer(2)],vec![Value::Integer(10)]]);
+    query(&c, "UPDATE docs SET flag = ref <= docs:2");
+    assert_eq!(
+        query(&c, "SELECT flag FROM docs ORDER BY id").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(1)],
+            vec![Value::Integer(1)],
+            vec![Value::Integer(0)]
+        ]
+    );
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(
+            &c,
+            "DELETE FROM docs WHERE ref > docs:2 RETURNING ref > docs:2 AS matched"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        query(&c, "SELECT count(*) FROM docs").rows,
+        vec![vec![Value::Integer(4)]]
+    );
+    let p = Parameters::from([
+        (
+            "$a".into(),
+            Value::Record(Record {
+                table: "docs".into(),
+                key: Key::Integer(10),
+            }),
+        ),
+        (
+            "$b".into(),
+            Value::Record(Record {
+                table: "DOCS".into(),
+                key: Key::String("2".into()),
+            }),
+        ),
+    ]);
+    assert_eq!(
+        c.execute("SELECT $a < $b AS value", &p).unwrap().rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    let p = Parameters::from([
+        ("$a".into(), Value::Null),
+        (
+            "$b".into(),
+            Value::Record(Record {
+                table: "docs".into(),
+                key: Key::Integer(1),
+            }),
+        ),
+    ]);
+    assert_eq!(
+        c.execute("SELECT $a < $b AS value", &p).unwrap().rows,
+        vec![vec![Value::Null]]
+    );
+    let p = Parameters::from([
+        (
+            "$a".into(),
+            Value::Record(Record {
+                table: "docs".into(),
+                key: Key::Integer(1),
+            }),
+        ),
+        ("$b".into(), Value::Integer(1)),
+    ]);
+    assert!(c.execute("SELECT $a < $b AS value", &p).is_err());
+}
+
+#[test]
+fn typed_scalar_ranges_keep_native_numeric_null_and_text_rules() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(a,b)");
+    for (a, b) in [
+        ("1", "1.0"),
+        ("9223372036854775807", "9.223372036854776e18"),
+        ("null", "2"),
+        ("true", "0"),
+        ("'a'", "'B'"),
+        ("'2'", "2"),
+    ] {
+        query(&c, &format!("INSERT INTO docs {{a:{a},b:{b}}}"));
+        query(&c, &format!("INSERT INTO baseline VALUES ({a},{b})"));
+    }
+    for op in ["<", "<=", ">", ">="] {
+        let sql = |table: &str| format!("SELECT a {op} b AS value FROM {table} ORDER BY value");
+        assert_eq!(
+            query(&c, &sql("docs")).rows,
+            query(&c, &sql("baseline")).rows,
+            "{op}"
+        );
+    }
+}

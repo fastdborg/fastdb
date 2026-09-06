@@ -24,6 +24,7 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 1,
             ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
+            (c"__fastdb_compare", compare as turso_ext::ScalarFunction, 2),
             (
                 c"__fastdb_nullable",
                 nullable as turso_ext::ScalarFunction,
@@ -232,6 +233,43 @@ fn pack(args: &[ExtValue]) -> ExtValue {
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
+#[scalar(name = "__fastdb_compare")]
+fn compare(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [a, b] = args else {
+            return Err(Error::Validation("comparison arity".into()));
+        };
+        let (a, b) = (decode_arg(a)?, decode_arg(b)?);
+        if matches!(a, Value::Null) || matches!(b, Value::Null) {
+            return Ok(ExtValue::null());
+        }
+        let order = match (&a, &b) {
+            (Value::Record(a), Value::Record(b)) => a
+                .table
+                .to_ascii_lowercase()
+                .cmp(&b.table.to_ascii_lowercase())
+                .then_with(|| match (&a.key, &b.key) {
+                    (crate::Key::Integer(a), crate::Key::Integer(b)) => a.cmp(b),
+                    (crate::Key::String(a), crate::Key::String(b)) => a.cmp(b),
+                    (crate::Key::Integer(_), crate::Key::String(_)) => std::cmp::Ordering::Less,
+                    (crate::Key::String(_), crate::Key::Integer(_)) => std::cmp::Ordering::Greater,
+                }),
+            (Value::Record(_), _) | (_, Value::Record(_)) => {
+                return Err(Error::Validation(
+                    "mixed record/scalar ordering is unsupported".into(),
+                ))
+            }
+            _ => index_scalar(&a)?.cmp(&index_scalar(&b)?),
+        };
+        Ok(ExtValue::from_integer(match order {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        }))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
 #[scalar(name = "__fastdb_unwrap")]
 fn unwrap(args: &[ExtValue]) -> ExtValue {
     let result = (|| -> Result<ExtValue> {

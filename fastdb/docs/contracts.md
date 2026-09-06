@@ -230,3 +230,12 @@ Zero, negative integer literals and positions beyond the projection list fail. F
 
 
 ORDER BY uses the same pinned-engine ordinal recognition as GROUP BY: parentheses and COLLATE can wrap a position, and a single plus directly on an integer literal is allowed. Expressions such as +(1), +(+1), -(-1), 1.0 and 1+0 remain constant expressions rather than column positions. This matters when later ordering terms determine the row order. Integer parsing follows the pinned engine's platform-sized unsigned range; recognized zero, negative and out-of-range positions produce FDB_VALIDATION in collection lowering, with or without DISTINCT. Ordinary relational delegation retains its native error classification. General expression/alias resolution remains separate from numeric ordinal recognition.
+
+
+## Initial typed range comparisons
+
+For SQL <, <=, > and >= whose two operands both retain FastDB values, collection lowering uses a typed comparator. This covers direct collection fields, typed parameters, record constructors and supported type-preserving helpers/parentheses. Record targets compare with ASCII case folding; integer keys compare numerically and precede string keys, matching object-expression record ordering. SQL NULL still propagates. A record compared with a non-null scalar through this typed path fails, matching the object-expression restriction on mixed ordering.
+
+The comparator uses the pinned engine's scalar ordering for non-record values after existing index-scalar conversion. Tests compare numeric, null and text results with affinity-free relational columns. Existing equality/index lookup paths and ordinary relational delegation are unchanged. The callback performs no database work. Runtime comparison errors follow existing engine error/transaction behavior and can end an outer transaction.
+
+This is not complete comparison propagation: expressions without two preserved operands, explicit COLLATE expressions, mixed relational-column affinity, BETWEEN, and field CHECK lowering still use their existing paths. Their broader record-range/type semantics remain release work. This change adds no persisted format or index-key change; SQL range predicates on records are not yet planned as managed index ranges.
