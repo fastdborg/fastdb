@@ -415,3 +415,12 @@ A native-table probe showed that pinned Turso scans rather than seeks for null p
 `node fastdb/scripts/check-node-package.cjs` passed against the final package manifest on Linux x64/Node 24.19.0. It packed seven files (57,929,232 compressed bytes for this debug build), installed offline into a fresh consumer outside the checkout with lifecycle scripts disabled, exercised synchronous and worker operations with int64/record values, rollback and persistence, and compiled imports from installed declarations. The temporary tarball and consumer were removed afterward. This heavier smoke is a maintainer check rather than routine CI.
 
 The package remains private and unpublished. Platform/version coverage, prebuild selection, optimized artifact sizing and complete distribution notices remain release gates. The npm lockfile change records license metadata only; dependency versions and upstream files are unchanged. Full V1 remains incomplete.
+
+
+## Standalone Rust path consumer — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 153 Rust tests, fifteen Node tests and TypeScript declarations. Separately, check-rust-client.py built and ran an offline consumer in a temporary workspace outside the checkout using Rust 1.88.0 on Linux x64. The fresh dedicated build took 1 minute 42 seconds. The consumer exercised typed record/int64 parameters, CHECK validation, unique index lookup/maintenance, transaction observations, rollback, bundled QuickJS, vector values and persistent reopen.
+
+The smoke seeded the consumer lockfile from the pinned workspace lockfile, allowed Cargo to add/prune consumer entries, and verified all 240 resolved registry/git package identities/checksums against the baseline before its locked build. Host-filtered metadata avoids fetching irrelevant platform dependencies. General Rust flag overrides were removed and the checkout's .cargo configuration was outside the consumer's search path. Temporary consumer files were cleaned up; the separate build cache remains under target/fastdb-rust-consumer.
+
+The Rust client guide documents the tested local-path workflow and the application's responsibility to retain its own lockfile. This is not registry package publication, arbitrary dependency-unification or cross-platform qualification. No dependency versions, workspace manifests/lockfile or upstream files changed. Full V1 release work remains pending.
