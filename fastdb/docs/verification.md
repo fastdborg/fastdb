@@ -251,3 +251,12 @@ The write parser now shares the existing bounded deep-path expansion before pinn
 A CLI probe reproduced internal deep-path markers in expression column names and accidental replacement of internal-looking substrings inside literal labels. Label rendering now recognizes function tokens and restores public dotted paths/namespaces without changing literal text.
 
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 119 Rust tests, fourteen Node tests and TypeScript declarations. A new collection SELECT regression verifies deep expression labels, literal text containing internal names or function-like syntax, namespace function labels, returned values and matching RETURNING labels. Repeating the CLI probe confirmed the corrected public path and unchanged literal label. No dependencies or upstream implementation files changed. Explicit aliases remain recommended for stable application labels; full result/type/compatibility and release qualification remain open.
+
+
+## Scalar DISTINCT with typed results — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 122 Rust tests, fourteen Node tests and TypeScript declarations. Three new SELECT tests cover numeric/boolean equivalence, null deduplication, text versus numbers, typed record target/key identity, binary duplicates, explicit NOCASE collation, bound pagination, aggregate/group/window evaluation, INSERT SELECT, ordering positions and unsupported array comparison. A scalar projection/pagination query is compared with an ordinary relational table on the pinned engine. A volatile random() projection is verified to return strictly ordered distinct values when ordered by alias, position or identical expression.
+
+Lowering places the source projection behind an inner LIMIT -1 to retain its evaluation boundary, groups scalar comparison keys in an outer query, and applies order/limit there. Projected ordering expressions reuse output values rather than evaluating them again. Each equivalence class retains an original typed representative, whose numeric/boolean representation is unspecified when equivalent inputs differ. Objects, arrays, vectors and fetched documents remain outside generic DISTINCT equality.
+
+No dependencies or upstream implementation files changed. Temporary grouping/sorting storage, broader mixed-type/collation/volatile-expression coverage, performance and release qualification remain pending; full V1 remains incomplete.

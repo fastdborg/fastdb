@@ -676,6 +676,94 @@ fn lower_source(
     }
     Ok(())
 }
+fn order_position(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Literal(Literal::Numeric(n)) => n.parse().ok(),
+        Expr::Parenthesized(exprs) if exprs.len() == 1 => order_position(&exprs[0]),
+        Expr::Unary(UnaryOperator::Positive, expr) => order_position(expr),
+        Expr::Unary(UnaryOperator::Negative, expr) => order_position(expr)?.checked_neg(),
+        _ => None,
+    }
+}
+
+// Group comparison values in an outer query so aggregate/window evaluation
+// happens first and pagination happens after duplicate elimination. Keep each
+// original typed projection as the representative output for its group.
+fn lower_distinct(
+    select: &mut Select,
+    typed: &[bool],
+    order_outputs: &[Option<usize>],
+) -> Result<()> {
+    let limit = select.limit.take();
+    let mut order = std::mem::take(&mut select.order_by);
+    let OneSelect::Select { columns, .. } = &mut select.body.select else {
+        return Err(unsupported("DISTINCT source"));
+    };
+    let mut output = Vec::new();
+    let mut keys = Vec::new();
+    for (i, column) in columns.iter_mut().enumerate() {
+        let ResultColumn::Expr(_, alias) = column else {
+            unreachable!("expanded projections")
+        };
+        let name = format!("__fastdb_out_{i}");
+        *alias = Some(As::As(Name::exact(name.clone())));
+        output.push(quote(&name));
+        keys.push(if typed[i] {
+            format!("__fastdb_unwrap({})", quote(&name))
+        } else {
+            quote(&name)
+        });
+    }
+    for (i, sorted) in order.iter_mut().enumerate() {
+        if let Some(output) = order_outputs[i] {
+            let name = quote(&format!("__fastdb_out_{output}"));
+            sorted.expr = Box::new(expression(&if typed[output] {
+                format!("__fastdb_sort_encoded({name})")
+            } else {
+                name
+            })?);
+            continue;
+        }
+        let name = format!("__fastdb_order_{i}");
+        columns.push(ResultColumn::Expr(
+            sorted.expr.clone(),
+            Some(As::As(Name::exact(name.clone()))),
+        ));
+        sorted.expr = Box::new(Expr::Id(Name::exact(name)));
+    }
+    // Keep volatile projections inside their own result-producing query.
+    select.limit = Some(Limit {
+        expr: Box::new(expression("-1")?),
+        offset: None,
+    });
+    let mut sql = format!(
+        "SELECT {} FROM ({select}) GROUP BY {}",
+        output.join(","),
+        keys.join(",")
+    );
+    if !order.is_empty() {
+        sql.push_str(" ORDER BY ");
+        sql.push_str(
+            &order
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    if let Some(limit) = limit {
+        sql.push_str(&format!(" LIMIT {}", limit.expr));
+        if let Some(offset) = limit.offset {
+            sql.push_str(&format!(" OFFSET {offset}"));
+        }
+    }
+    let Cmd::Stmt(Stmt::Select(lowered)) = parsed(&sql)? else {
+        unreachable!("generated SELECT")
+    };
+    *select = lowered;
+    Ok(())
+}
+
 // The pinned parser only builds names with up to three segments. Encode
 // longer paths as a temporary AST expression; Scope resolves it before SQL
 // preparation. This marker is never a registered engine function.
@@ -1002,8 +1090,9 @@ impl Connection {
         {
             return Ok(None);
         }
-        if !sources.is_empty() && matches!(distinctness, Some(Distinctness::Distinct)) {
-            return Err(unsupported("DISTINCT over typed projections"));
+        let distinct = !sources.is_empty() && matches!(distinctness, Some(Distinctness::Distinct));
+        if distinct {
+            *distinctness = None;
         }
         if select.with.is_some() || !select.body.compounds.is_empty() {
             return Err(unsupported("CTEs or compound SELECT"));
@@ -1240,23 +1329,35 @@ impl Connection {
         for definition in window_clause {
             scope.lower_window(&mut definition.window)?;
         }
+        let mut order_outputs = Vec::new();
         for sorted in &mut select.order_by {
             // Aliases refer to the original expression, not the encoded typed
             // projection, so sorting keeps SQL scalar semantics.
+            let position = order_position(&sorted.expr);
+            if distinct && position.is_some_and(|i| i <= 0 || i as usize > columns.len()) {
+                return Err(Error::Validation("ORDER BY position out of range".into()));
+            }
             let alias_index = match sorted.expr.as_ref() {
                 Expr::Id(n) | Expr::Name(n) => names
                     .iter()
                     .position(|name| name.eq_ignore_ascii_case(n.as_str())),
-                Expr::Literal(Literal::Numeric(n)) => n
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|i| *i > 0 && *i <= columns.len())
-                    .map(|i| i - 1),
-                _ => None,
+                _ => position
+                    .filter(|i| *i > 0 && *i as usize <= columns.len())
+                    .map(|i| i as usize - 1),
             };
+            let alias_index = alias_index.or_else(|| original_columns.iter().position(|column| {
+                matches!(column, ResultColumn::Expr(expr, _) if expr.as_ref() == sorted.expr.as_ref())
+            }));
+            order_outputs.push(alias_index);
             if let Some(i) = alias_index {
                 if fetched[i] {
                     return Err(unsupported("ordering on fetched values"));
+                }
+                if distinct && !typed[i] {
+                    let ResultColumn::Expr(expr, _) = &columns[i] else {
+                        unreachable!("rewritten projection")
+                    };
+                    sorted.expr = expr.clone();
                 }
                 if typed[i] {
                     let ResultColumn::Expr(e, _) = &columns[i] else {
@@ -1289,6 +1390,12 @@ impl Connection {
             } else {
                 scope.lower(&mut sorted.expr)?;
             }
+        }
+        if distinct {
+            if fetched.iter().any(|v| *v) {
+                return Err(unsupported("DISTINCT on fetched documents"));
+            }
+            lower_distinct(select, &typed, &order_outputs)?;
         }
         let lowered = cmd.to_string();
         let mut statement = self.engine.prepare(&lowered)?;

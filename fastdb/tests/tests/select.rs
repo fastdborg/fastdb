@@ -306,3 +306,186 @@ fn expression_column_names_preserve_literals_and_render_public_paths() {
     assert_eq!(returned.columns[0], result.columns[0]);
     assert_eq!(returned.rows[0][0], Value::String("ROME".into()));
 }
+
+#[test]
+fn distinct_uses_scalar_equality_and_paginates_after_deduplication() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    for (i, value) in [
+        Value::Integer(1),
+        Value::Number(1.0),
+        Value::Boolean(true),
+        Value::Integer(2),
+        Value::Null,
+        Value::Null,
+        Value::String("1".into()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        c.execute(
+            "INSERT INTO docs (id,v) VALUES (type::record('docs',$id),$v)",
+            &Parameters::from([
+                ("$id".into(), Value::Integer(i as i64)),
+                ("$v".into(), value),
+            ]),
+        )
+        .unwrap();
+    }
+    let all = query(&c, "SELECT DISTINCT v FROM docs ORDER BY v");
+    query(&c, "CREATE TABLE baseline(v)");
+    query(
+        &c,
+        "INSERT INTO baseline VALUES (1),(1.0),(1),(2),(NULL),(NULL),('1')",
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT DISTINCT v+0 AS n FROM docs ORDER BY n DESC LIMIT 2 OFFSET 1"
+        )
+        .rows,
+        query(
+            &c,
+            "SELECT DISTINCT v+0 AS n FROM baseline ORDER BY n DESC LIMIT 2 OFFSET 1"
+        )
+        .rows
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT DISTINCT count(*) AS n FROM docs GROUP BY v ORDER BY n"
+        )
+        .rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)]
+        ]
+    );
+    assert_eq!(all.rows.len(), 4);
+    assert_eq!(all.rows[0], vec![Value::Null]);
+    assert_eq!(all.rows[2], vec![Value::Integer(2)]);
+    assert_eq!(all.rows[3], vec![Value::String("1".into())]);
+    let page = c
+        .execute(
+            "SELECT DISTINCT v FROM docs ORDER BY v LIMIT $n OFFSET $skip",
+            &Parameters::from([
+                ("$n".into(), Value::Integer(1)),
+                ("$skip".into(), Value::Integer(2)),
+            ]),
+        )
+        .unwrap();
+    assert_eq!(page.rows, vec![vec![Value::Integer(2)]]);
+    assert_eq!(
+        query(&c, "SELECT DISTINCT length('x') AS n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(
+        query(&c, "SELECT DISTINCT count(*) AS n FROM docs").rows,
+        vec![vec![Value::Integer(7)]]
+    );
+    assert_eq!(query(&c,"SELECT DISTINCT row_number() OVER (ORDER BY id) AS n FROM docs ORDER BY n DESC LIMIT 2").rows,vec![vec![Value::Integer(7)],vec![Value::Integer(6)]]);
+}
+
+#[test]
+fn distinct_preserves_record_identity_collation_and_binary_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    for value in [
+        Value::Record(Record {
+            table: "Docs".into(),
+            key: Key::Integer(1),
+        }),
+        Value::Record(Record {
+            table: "docs".into(),
+            key: Key::Integer(1),
+        }),
+        Value::Record(Record {
+            table: "docs".into(),
+            key: Key::String("1".into()),
+        }),
+        Value::Binary(vec![1]),
+        Value::Binary(vec![1]),
+        Value::String("A".into()),
+        Value::String("a".into()),
+    ] {
+        c.execute(
+            "INSERT INTO docs (v) VALUES ($v)",
+            &Parameters::from([("$v".into(), value)]),
+        )
+        .unwrap();
+    }
+    let values = query(&c, "SELECT DISTINCT v FROM docs");
+    assert_eq!(values.rows.len(), 5);
+    assert_eq!(
+        values
+            .rows
+            .iter()
+            .filter(|r| matches!(&r[0], Value::Record(_)))
+            .count(),
+        2
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT DISTINCT v COLLATE NOCASE AS text FROM docs WHERE typeof(v)='text'"
+        )
+        .rows
+        .len(),
+        1
+    );
+    assert_eq!(
+        query(&c, "SELECT DISTINCT v FROM docs ORDER BY (1) LIMIT 2")
+            .rows
+            .len(),
+        2
+    );
+    for position in ["0", "99", "-1", "(99)"] {
+        assert!(c
+            .execute(
+                &format!("SELECT DISTINCT v FROM docs ORDER BY {position}"),
+                &Parameters::new()
+            )
+            .is_err());
+    }
+    query(&c, "CREATE TABLE copied");
+    assert_eq!(
+        query(&c, "INSERT INTO copied (v) SELECT DISTINCT v FROM docs").affected,
+        5
+    );
+    query(&c, "CREATE TABLE arrays");
+    query(&c, "INSERT INTO arrays {v:[1]}");
+    assert!(c
+        .execute("SELECT DISTINCT v FROM arrays", &Parameters::new())
+        .is_err());
+}
+
+#[test]
+fn distinct_orders_the_projected_volatile_value() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    for _ in 0..64 {
+        query(&c, "INSERT INTO docs {}");
+    }
+    for order in ["n", "1", "random()"] {
+        let result = query(
+            &c,
+            &format!("SELECT DISTINCT random() AS n FROM docs ORDER BY {order}"),
+        );
+        let numbers = result
+            .rows
+            .iter()
+            .map(|r| match r[0] {
+                Value::Integer(i) => i,
+                _ => panic!("integer random value"),
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            numbers.windows(2).all(|pair| pair[0] < pair[1]),
+            "{order}: {numbers:?}"
+        );
+    }
+}

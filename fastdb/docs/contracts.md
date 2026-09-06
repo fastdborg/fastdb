@@ -169,3 +169,10 @@ The same path expansion applies to SQL-shaped write expressions/predicates, INSE
 ## Expression column labels
 
 Collection expression labels restore public namespace function names and dotted qualified paths from the internal AST representation. Conversion applies to function tokens, not substrings inside string literals or quoted field names. A deep expression such as `upper(u.profile.address.city)` therefore exposes a normalized dotted expression label rather than an internal path function. SELECT and RETURNING use the same naming path. Explicit AS aliases remain the recommended stable application-facing labels; normalized whitespace and identifier quoting are not a promise to reproduce the submitted SQL text byte-for-byte.
+
+
+## Scalar DISTINCT
+
+Collection DISTINCT now groups scalar comparison values while retaining an original typed projection as each group's representative. Numeric integer/float equality and boolean 0/1 comparison follow the pinned engine; null and missing projections deduplicate together. Text stays distinct from numbers, record target names compare case-insensitively with typed keys, and binary values retain their own representation. Equivalent rows with different numeric/boolean representations may return any representative; callers needing a fixed type should project an explicit conversion. Explicit scalar COLLATE expressions retain native collation behavior.
+
+An outer grouping query performs deduplication after source aggregates/windows, followed by ORDER BY and LIMIT/OFFSET. INSERT SELECT can consume these results through normal validation and atomic writes. Objects, arrays, vectors and fetched documents still have no generic DISTINCT equality in V1; use scalar projections. This implementation can require engine temporary grouping/sorting storage and still needs resource/performance qualification. It does not enable CTEs/derived user sources or freeze broader typed comparison semantics.
