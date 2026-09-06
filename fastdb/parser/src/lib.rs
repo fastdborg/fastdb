@@ -145,8 +145,19 @@ pub struct Token {
     pub end: usize,
 }
 
+/// Maximum UTF-8 bytes accepted by one tokenizer invocation, including comments.
+pub const MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum tokens retained by one tokenizer invocation.
+pub const MAX_TOKENS: usize = 262_144;
+
 /// SQL-aware tokenization used for extension dispatch and managed-name checks.
 pub fn tokenize(input: &str) -> Result<Vec<Token>> {
+    if input.len() > MAX_INPUT_BYTES {
+        return Err(Error {
+            offset: 0,
+            message: format!("input byte limit exceeded ({MAX_INPUT_BYTES})"),
+        });
+    }
     let b = input.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -176,6 +187,12 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
             }
             i += 2;
             continue;
+        }
+        if out.len() == MAX_TOKENS {
+            return Err(Error {
+                offset: i,
+                message: format!("input token limit exceeded ({MAX_TOKENS})"),
+            });
         }
         let start = i;
         let (kind, text) = match b[i] {

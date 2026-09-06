@@ -89,3 +89,25 @@ fn delegated_sql_has_a_delimiter_depth_limit_before_engine_parsing() {
         assert!(parse(&format!("SELECT {quoted} /* {} */", "(".repeat(100))).is_ok());
     }
 }
+
+#[test]
+fn tokenizer_bounds_bytes_before_scanning_and_tokens_before_copying() {
+    let exact = " ".repeat(MAX_INPUT_BYTES);
+    assert!(tokenize(&exact).unwrap().is_empty());
+    let error = tokenize(&(exact + "é")).unwrap_err();
+    assert_eq!(error.offset, 0);
+    assert!(error.message.contains("input byte limit"));
+    let exact = "x ".repeat(MAX_TOKENS);
+    assert_eq!(
+        tokenize(&(exact.clone() + "/* ignored */")).unwrap().len(),
+        MAX_TOKENS
+    );
+    let error = tokenize(&(exact.clone() + "'next'")).unwrap_err();
+    assert_eq!(error.offset, exact.len());
+    assert!(error.message.contains("input token limit"));
+    assert!(split_script(&(exact + "x"))
+        .unwrap_err()
+        .message
+        .contains("input token limit"));
+    assert!(tokenize("SELECT 'x x x', /* x x */ 1").is_ok());
+}

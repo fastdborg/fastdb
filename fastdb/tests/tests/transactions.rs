@@ -207,3 +207,41 @@ fn excessive_sql_delimiters_fail_before_writes_and_preserve_outer_work() {
         .rows
         .is_empty());
 }
+
+#[test]
+fn oversized_lexer_inputs_fail_before_mutation_and_preserve_active_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE INDEX docs_value ON docs(value)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {value:1}");
+    for sql in [
+        format!(
+            "DELETE FROM docs; /*{}*/",
+            "x".repeat(fastql_parser::MAX_INPUT_BYTES)
+        ),
+        format!(
+            "DELETE FROM docs RETURNING {}",
+            "1,".repeat(fastql_parser::MAX_TOKENS / 2)
+        ),
+    ] {
+        let report = c.execute_report(&sql, &Parameters::new());
+        assert_eq!(report.result.unwrap_err().code(), "FDB_SYNTAX");
+        assert_eq!(report.transaction_after, State::Active);
+        assert_eq!(c.execute_batch(&sql).unwrap_err().code(), "FDB_SYNTAX");
+        assert_eq!(c.transaction_state(), State::Active);
+        assert_eq!(
+            c.lookup_index("docs", "docs_value", &Value::Integer(1))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    q(&c, "ROLLBACK");
+    assert!(c
+        .execute("SELECT * FROM docs", &Parameters::new())
+        .unwrap()
+        .rows
+        .is_empty());
+}
