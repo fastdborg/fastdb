@@ -25,6 +25,7 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
             (c"__fastdb_compare", compare as turso_ext::ScalarFunction, 2),
+            (c"__fastdb_between", between as turso_ext::ScalarFunction, 3),
             (
                 c"__fastdb_nullable",
                 nullable as turso_ext::ScalarFunction,
@@ -233,6 +234,51 @@ fn pack(args: &[ExtValue]) -> ExtValue {
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
+fn compare_values(a: &Value, b: &Value) -> Result<Option<std::cmp::Ordering>> {
+    if matches!(a, Value::Null) || matches!(b, Value::Null) {
+        return Ok(None);
+    }
+    let order = match (a, b) {
+        (Value::Record(a), Value::Record(b)) => a
+            .table
+            .to_ascii_lowercase()
+            .cmp(&b.table.to_ascii_lowercase())
+            .then_with(|| match (&a.key, &b.key) {
+                (crate::Key::Integer(a), crate::Key::Integer(b)) => a.cmp(b),
+                (crate::Key::String(a), crate::Key::String(b)) => a.cmp(b),
+                (crate::Key::Integer(_), crate::Key::String(_)) => std::cmp::Ordering::Less,
+                (crate::Key::String(_), crate::Key::Integer(_)) => std::cmp::Ordering::Greater,
+            }),
+        (Value::Record(_), _) | (_, Value::Record(_)) => {
+            return Err(Error::Validation(
+                "mixed record/scalar ordering is unsupported".into(),
+            ))
+        }
+        _ => index_scalar(a)?.cmp(&index_scalar(b)?),
+    };
+    Ok(Some(order))
+}
+
+#[scalar(name = "__fastdb_between")]
+fn between(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value, start, end] = args else {
+            return Err(Error::Validation("BETWEEN arity".into()));
+        };
+        let (value, start, end) = (decode_arg(value)?, decode_arg(start)?, decode_arg(end)?);
+        let lower = compare_values(&value, &start)?.map(|order| !order.is_lt());
+        let upper = compare_values(&value, &end)?.map(|order| !order.is_gt());
+        // SQL three-valued AND: false dominates null, otherwise unknown stays
+        // unknown. Each argument is evaluated exactly once by the engine.
+        Ok(match (lower, upper) {
+            (Some(false), _) | (_, Some(false)) => ExtValue::from_integer(0),
+            (Some(true), Some(true)) => ExtValue::from_integer(1),
+            _ => ExtValue::null(),
+        })
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
 #[scalar(name = "__fastdb_compare")]
 fn compare(args: &[ExtValue]) -> ExtValue {
     let result = (|| -> Result<ExtValue> {
@@ -240,26 +286,8 @@ fn compare(args: &[ExtValue]) -> ExtValue {
             return Err(Error::Validation("comparison arity".into()));
         };
         let (a, b) = (decode_arg(a)?, decode_arg(b)?);
-        if matches!(a, Value::Null) || matches!(b, Value::Null) {
+        let Some(order) = compare_values(&a, &b)? else {
             return Ok(ExtValue::null());
-        }
-        let order = match (&a, &b) {
-            (Value::Record(a), Value::Record(b)) => a
-                .table
-                .to_ascii_lowercase()
-                .cmp(&b.table.to_ascii_lowercase())
-                .then_with(|| match (&a.key, &b.key) {
-                    (crate::Key::Integer(a), crate::Key::Integer(b)) => a.cmp(b),
-                    (crate::Key::String(a), crate::Key::String(b)) => a.cmp(b),
-                    (crate::Key::Integer(_), crate::Key::String(_)) => std::cmp::Ordering::Less,
-                    (crate::Key::String(_), crate::Key::Integer(_)) => std::cmp::Ordering::Greater,
-                }),
-            (Value::Record(_), _) | (_, Value::Record(_)) => {
-                return Err(Error::Validation(
-                    "mixed record/scalar ordering is unsupported".into(),
-                ))
-            }
-            _ => index_scalar(&a)?.cmp(&index_scalar(&b)?),
         };
         Ok(ExtValue::from_integer(match order {
             std::cmp::Ordering::Less => -1,
@@ -396,4 +424,49 @@ fn vector_concat(args: &[ExtValue]) -> ExtValue {
         Ok(ExtValue::from_blob(bytes))
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[cfg(test)]
+mod between_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[scalar(name = "between_tick")]
+    fn tick(_: &[ExtValue]) -> ExtValue {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        ExtValue::from_integer(7)
+    }
+
+    #[test]
+    fn typed_between_evaluates_volatile_left_operand_once() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        // Test-only scalar counts actual engine evaluation, without performing
+        // database work inside its callback.
+        unsafe {
+            let api = c.engine._build_turso_ext();
+            let code = (api.register_scalar_function)(
+                api.ctx,
+                c"between_tick".as_ptr(),
+                0,
+                false,
+                0,
+                tick,
+                None,
+                None,
+            );
+            c.engine._free_extension_ctx(api);
+            assert_eq!(code, ResultCode::OK);
+        }
+        for negate in ["", "NOT "] {
+            CALLS.store(0, Ordering::SeqCst);
+            let rows=c.execute(&format!("SELECT type::record('docs',between_tick()) {negate}BETWEEN docs:2 AND docs:10 AS value"), &crate::Parameters::new()).unwrap().rows;
+            assert_eq!(
+                rows,
+                vec![vec![Value::Integer(i64::from(negate.is_empty()))]]
+            );
+            assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        }
+    }
 }

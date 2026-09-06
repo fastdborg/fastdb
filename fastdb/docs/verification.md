@@ -364,3 +364,10 @@ Coverage includes ordinary and DISTINCT collection ordering, parenthesized/colla
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 145 Rust tests, fifteen Node tests and TypeScript declarations. The previous CLI build reproduced a missing result for a stored docs:2 reference under ref < docs:10 because serialized record bytes ordered the keys lexically. A typed comparator now handles SQL range operators when both operands retain FastDB values, using numeric integer keys and case-folded target names. Non-record operands use the pinned engine scalar ordering after the existing index-scalar conversion.
 
 Two new tests cover negative/positive record keys, constructors, parentheses, bound typed values, null/mixed-type behavior, UPDATE/DELETE/RETURNING and rollback, plus differential numeric/null/text comparisons with affinity-free relational columns. The callback performs no database work. No persisted formats, indexes, dependencies or upstream files changed. Untyped expression propagation, explicit collation, BETWEEN, CHECK and mixed relational affinity remain release work; full V1 is incomplete.
+
+
+## Typed BETWEEN with single operand evaluation — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 147 Rust tests, fifteen Node tests and TypeScript declarations. Typed BETWEEN/NOT BETWEEN now share the range comparator when all three operands retain FastDB values. An integration test verifies inclusive record ranges, NOT, DELETE/RETURNING rollback, and differential numeric/text/null truth tables against the pinned relational engine. A frontend test registers a test-only volatile counter and verifies that each BETWEEN form evaluates its left operand exactly once.
+
+The callback decodes each operand once and combines comparisons with SQL three-valued AND; native NOT handles negation. It performs no database work. Existing scalar comparison behavior and persisted formats are unchanged. Mixed/unpreserved operands, explicit collation, CHECK propagation and wider V1 qualification remain pending. No dependencies or upstream files changed.

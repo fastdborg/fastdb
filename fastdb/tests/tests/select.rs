@@ -776,3 +776,54 @@ fn typed_scalar_ranges_keep_native_numeric_null_and_text_rules() {
         );
     }
 }
+
+#[test]
+fn typed_between_matches_record_ranges_and_native_null_logic() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    for key in [1, 2, 10, 20] {
+        c.execute(
+            "INSERT INTO docs (id) VALUES (type::record('docs',$key))",
+            &Parameters::from([("$key".into(), Value::Integer(key))]),
+        )
+        .unwrap();
+    }
+    assert_eq!(query(&c,"SELECT record::id(id) AS key FROM docs WHERE id BETWEEN docs:2 AND docs:10 ORDER BY id").rows,vec![vec![Value::Integer(2)],vec![Value::Integer(10)]]);
+    assert_eq!(query(&c,"SELECT record::id(id) AS key FROM docs WHERE id NOT BETWEEN docs:2 AND docs:10 ORDER BY id").rows,vec![vec![Value::Integer(1)],vec![Value::Integer(20)]]);
+    query(&c, "BEGIN");
+    assert_eq!(query(&c,"DELETE FROM docs WHERE id BETWEEN docs:2 AND docs:10 RETURNING id BETWEEN docs:2 AND docs:10 AS matched").rows,vec![vec![Value::Integer(1)],vec![Value::Integer(1)]]);
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        query(&c, "SELECT count(*) FROM docs").rows,
+        vec![vec![Value::Integer(4)]]
+    );
+    query(&c, "CREATE TABLE values_doc");
+    query(&c, "CREATE TABLE baseline(a,b,c)");
+    for (a, b, c_) in [
+        ("null", "1", "2"),
+        ("0", "1", "null"),
+        ("3", "null", "2"),
+        ("1", "null", "2"),
+        ("1", "0", "null"),
+        ("1", "0", "2"),
+        ("1.0", "true", "2"),
+        ("'a'", "'A'", "'z'"),
+    ] {
+        query(
+            &c,
+            &format!("INSERT INTO values_doc {{a:{a},b:{b},c:{c_}}}"),
+        );
+        query(&c, &format!("INSERT INTO baseline VALUES ({a},{b},{c_})"));
+    }
+    for not in ["", "NOT "] {
+        let sql = |table: &str| {
+            format!("SELECT a {not}BETWEEN b AND c AS value FROM {table} ORDER BY value")
+        };
+        assert_eq!(
+            query(&c, &sql("values_doc")).rows,
+            query(&c, &sql("baseline")).rows,
+            "{not}"
+        );
+    }
+}

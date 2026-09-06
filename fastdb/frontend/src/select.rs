@@ -384,8 +384,23 @@ impl Scope {
             | Expr::Cast { expr: e, .. }
             | Expr::Collate(e, _) => self.lower(e)?,
             Expr::Between {
-                lhs, start, end, ..
+                lhs,
+                start,
+                end,
+                not,
             } => {
+                let (mut value, mut lower, mut upper) =
+                    (*lhs.clone(), *start.clone(), *end.clone());
+                if self.preserved(&mut value)?
+                    && self.preserved(&mut lower)?
+                    && self.preserved(&mut upper)?
+                {
+                    let negate = if *not { "NOT " } else { "" };
+                    *expr = expression(&format!(
+                        "{negate}__fastdb_between({value}, {lower}, {upper})"
+                    ))?;
+                    return Ok(());
+                }
                 self.lower(lhs)?;
                 self.lower(start)?;
                 self.lower(end)?;
