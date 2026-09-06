@@ -392,3 +392,10 @@ A persistent regression verifies definition over existing data, quoted dot-conta
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 150 Rust tests, fifteen Node tests and TypeScript declarations. INFO FOR DB now lists views separately; relational table/view INFO adds kind, native table_xinfo columns and index_list entries; relational index INFO adds index_xinfo key metadata. The persistent regression verifies defaults/nullability/hidden flags, native unique and partial indexes, expression keys with descending order/collation, view discovery, managed-name hiding and index drop/rollback visibility after reopening.
 
 These additions preserve native metadata values rather than claiming portable expression-column numbering or enabling experimental features. The README and inspection contract describe the prototype shape and reserved-name behavior for autoindexes. No dependencies or upstream files changed. Wider dependency authorization, inspection protocol stabilization and remaining V1 release work remain pending.
+
+
+## Managed membership index planning — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 152 Rust tests, fifteen Node tests and TypeScript declarations. The leading collection can now use a managed index for positive constant IN lists, including duplicate/null/parameter/record keys. Parentheses no longer hide eligible equality or membership predicates, and the original WHERE remains outside the filtered source to enforce residual conditions.
+
+Two regressions compare scan results with indexed results and assert actual SEARCH plans. They cover conjunction residuals, numeric equivalents, typed record target/key identity, duplicate keys, parameter binding and delete/rollback. NOT IN, OR and empty lists retain their existing planning and results. No dependency, persisted format or upstream file changed. Cost-based/multi-index/range/outer-join planning and broader resource/performance qualification remain pending.

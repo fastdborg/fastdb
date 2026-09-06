@@ -623,35 +623,52 @@ fn constant(expr: &Expr) -> bool {
     match expr {
         Expr::Literal(_) | Expr::Variable(_) => true,
         Expr::Unary(_, e) => constant(e),
+        Expr::Parenthesized(es) if es.len() == 1 => constant(&es[0]),
         Expr::FunctionCall { name, args, .. } if name.as_str() == "__fastdb_record_value" => {
             args.iter().all(|e| constant(e))
         }
         _ => false,
     }
 }
-fn indexed_equality(
+fn indexed_filter(
     scope: &Scope,
     source_index: usize,
     predicate: &Expr,
 ) -> Result<Option<(crate::Index, Expr)>> {
-    let Expr::Binary(lhs, op, rhs) = predicate else {
-        return Ok(None);
+    if let Expr::Parenthesized(es) = predicate {
+        if es.len() == 1 {
+            return indexed_filter(scope, source_index, &es[0]);
+        }
+    }
+    if let Expr::Binary(lhs, Operator::And, rhs) = predicate {
+        if let Some(candidate) = indexed_filter(scope, source_index, lhs)? {
+            return Ok(Some(candidate));
+        }
+        return indexed_filter(scope, source_index, rhs);
+    }
+    let candidates = match predicate {
+        Expr::Binary(lhs, Operator::Equals, rhs) => vec![
+            (lhs.as_ref(), vec![rhs.as_ref()], false),
+            (rhs.as_ref(), vec![lhs.as_ref()], false),
+        ],
+        Expr::InList {
+            lhs,
+            rhs,
+            not: false,
+        } if !rhs.is_empty() => {
+            vec![(lhs.as_ref(), rhs.iter().map(|e| e.as_ref()).collect(), true)]
+        }
+        _ => return Ok(None),
     };
-    if *op == Operator::And {
-        return Ok(
-            indexed_equality(scope, source_index, lhs)?.or(indexed_equality(
-                scope,
-                source_index,
-                rhs,
-            )?),
-        );
-    }
-    if *op != Operator::Equals {
-        return Ok(None);
-    }
-    for (field, key) in [(lhs, rhs), (rhs, lhs)] {
-        if !constant(key) {
+    for (mut field, keys, membership) in candidates {
+        if !keys.iter().all(|key| constant(key)) {
             continue;
+        }
+        while let Expr::Parenthesized(es) = field {
+            if es.len() != 1 {
+                break;
+            }
+            field = &es[0];
         }
         if let Some((i, path)) = scope.field(field)? {
             if i != source_index {
@@ -662,7 +679,17 @@ fn indexed_equality(
                 .as_ref()
                 .and_then(|c| c.indexes.iter().find(|idx| idx.path == path))
             {
-                return Ok(Some((index.clone(), *key.clone())));
+                let key = Box::new(expression("i.key")?);
+                let filter = if membership {
+                    Expr::InList {
+                        lhs: key,
+                        rhs: keys.into_iter().map(|e| Box::new(e.clone())).collect(),
+                        not: false,
+                    }
+                } else {
+                    Expr::Binary(key, Operator::Equals, Box::new(keys[0].clone()))
+                };
+                return Ok(Some((index.clone(), filter)));
             }
         }
     }
@@ -676,7 +703,7 @@ fn lower_source(
     let Some(c) = &source.collection else {
         return Ok(());
     };
-    if let Some((index, key)) = candidate {
+    if let Some((index, filter)) = candidate {
         let Cmd::Stmt(Stmt::Select(mut select)) = parsed(&format!(
             "SELECT c.id, c.doc FROM {} AS i JOIN {} AS c ON c.id = i.id WHERE i.key = NULL",
             quote(&index.storage),
@@ -692,10 +719,7 @@ fn lower_source(
         else {
             return Err(unsupported("index predicate"));
         };
-        let Expr::Binary(_, _, rhs) = predicate.as_mut() else {
-            return Err(unsupported("index equality"));
-        };
-        *rhs = Box::new(key);
+        *predicate = Box::new(filter);
         *table = SelectTable::Select(select, Some(As::As(Name::exact(source.alias.clone()))));
     } else {
         *table = SelectTable::Table(
@@ -1337,7 +1361,7 @@ impl Connection {
             .map(|(i, _)| {
                 where_clause
                     .as_ref()
-                    .map_or(Ok(None), |p| indexed_equality(&scope, i, p))
+                    .map_or(Ok(None), |p| indexed_filter(&scope, i, p))
             })
             .collect::<Result<Vec<_>>>()?;
         if let Some(from) = from {

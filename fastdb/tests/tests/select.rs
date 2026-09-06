@@ -827,3 +827,82 @@ fn typed_between_matches_record_ranges_and_native_null_logic() {
         );
     }
 }
+
+#[test]
+fn managed_membership_plans_preserve_results_and_residual_predicates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    for (key, score) in [("1", 1), ("1.0", 2), ("2", 3), ("null", 4), ("'1'", 5)] {
+        query(&c, &format!("INSERT INTO docs {{key:{key},score:{score}}}"));
+    }
+    let tails = [
+        "key IN (1,2,1,NULL)",
+        "(key IN ((1),2)) AND score>1",
+        "((key) = (1)) AND score>1",
+        "key NOT IN (1,NULL)",
+        "key IN ()",
+        "key IN (1) OR score=5",
+    ];
+    let sql = |tail: &str| format!("SELECT score FROM docs WHERE {tail} ORDER BY score");
+    let before = tails
+        .iter()
+        .map(|tail| query(&c, &sql(tail)).rows)
+        .collect::<Vec<_>>();
+    query(&c, "CREATE INDEX docs_key ON docs(key)");
+    for (i, tail) in tails.iter().enumerate() {
+        assert_eq!(query(&c, &sql(tail)).rows, before[i], "{tail}");
+        let plan = query(&c, &format!("EXPLAIN QUERY PLAN {}", sql(tail)));
+        let plan = format!("{:?}", plan.rows);
+        if i < 3 {
+            assert!(plan.contains("SEARCH i"), "{tail}: {plan}");
+        }
+    }
+    let params = Parameters::from([
+        ("$a".into(), Value::Integer(1)),
+        ("$b".into(), Value::Integer(2)),
+    ]);
+    assert_eq!(
+        c.execute(
+            "SELECT score FROM docs WHERE key IN ($a,$b) ORDER BY score",
+            &params
+        )
+        .unwrap()
+        .rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)]
+        ]
+    );
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(
+            &c,
+            "DELETE FROM docs WHERE (key IN (1,2)) AND score>1 RETURNING score"
+        )
+        .rows
+        .len(),
+        2
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(query(&c, &sql(tails[0])).rows, before[0]);
+}
+
+#[test]
+fn managed_membership_preserves_typed_record_identity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "INSERT INTO docs {id:docs:a,ref:docs:1}");
+    query(&c, "INSERT INTO docs {id:docs:b,ref:docs:`1`}");
+    query(&c, "INSERT INTO docs {id:docs:c,ref:docs:2}");
+    let sql = "SELECT id FROM docs WHERE ref IN (type::record('DOCS',1),docs:2,docs:2) ORDER BY id";
+    let before = query(&c, sql).rows;
+    assert_eq!(before.len(), 2);
+    query(&c, "CREATE INDEX docs_ref ON docs(ref)");
+    assert_eq!(query(&c, sql).rows, before);
+    assert!(
+        format!("{:?}", query(&c, &format!("EXPLAIN QUERY PLAN {sql}")).rows).contains("SEARCH i")
+    );
+}
