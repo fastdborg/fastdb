@@ -205,3 +205,82 @@ fn positional_ordering_and_indexed_null_semantics() {
         .execute("SELECT DISTINCT profile FROM users", &Parameters::new())
         .is_err());
 }
+
+#[test]
+fn deeply_nested_qualified_paths_preserve_values_and_index_predicates() {
+    let (_db, c) = setup();
+    query(&c, "INSERT INTO users {id:users:deep, profile:{address:{city:'Paris',details:{active:true,ref:users:2}},\"address.city\":{label:'literal'}}}");
+    let sql = "SELECT u.profile.address.city AS city, u.profile.address.details.active AS active, u.profile.address.details.ref AS reference, u.profile.\"address.city\".label AS literal, u.profile.missing.value AS missing FROM users u WHERE u.profile.address.city='Paris'";
+    let expected = vec![vec![
+        Value::String("Paris".into()),
+        Value::Boolean(true),
+        Value::Record(Record {
+            table: "users".into(),
+            key: Key::Integer(2),
+        }),
+        Value::String("literal".into()),
+        Value::Null,
+    ]];
+    assert_eq!(query(&c, sql).rows, expected);
+    query(
+        &c,
+        "CREATE INDEX users_deep_city ON users (profile.address.city)",
+    );
+    assert_eq!(query(&c, sql).rows, expected);
+    assert_eq!(query(&c,"SELECT u.profile.address.city FROM users u WHERE u.profile.address.city='Paris' ORDER BY u.profile.address.city").columns,vec!["city"]);
+    assert_eq!(query(&c,"SELECT a.profile.address.city AS city FROM users a JOIN users b ON a.profile.address.details.ref=b.id WHERE b.id=users:2").rows,vec![vec![Value::String("Paris".into())]]);
+    assert!(c
+        .execute(
+            "SELECT __fastdb_path(u,profile,address,city) FROM users u",
+            &Parameters::new()
+        )
+        .is_err());
+    assert!(c
+        .execute(
+            "SELECT missing.profile.address.city FROM users u",
+            &Parameters::new()
+        )
+        .is_err());
+    assert_eq!(
+        query(
+            &c,
+            "SELECT 'u.profile.address.city' AS literal FROM users WHERE id=users:deep"
+        )
+        .rows,
+        vec![vec![Value::String("u.profile.address.city".into())]]
+    );
+}
+
+#[test]
+fn deep_paths_handle_quoting_comments_and_depth_limits() {
+    let (_db, c) = setup();
+    query(
+        &c,
+        r#"INSERT INTO users {id:users:quoted, profile:{"a.b":{"quo""te":7}}}"#,
+    );
+    assert_eq!(query(&c,r#"SELECT [u].profile /* gap */ .[a.b]."quo""te" AS value FROM users u WHERE id=users:quoted"#).rows,vec![vec![Value::Integer(7)]]);
+    let path = std::iter::repeat_n("missing", 64)
+        .collect::<Vec<_>>()
+        .join(".");
+    assert_eq!(
+        query(
+            &c,
+            &format!("SELECT u.{path} AS absent FROM users u WHERE id=users:2")
+        )
+        .rows,
+        vec![vec![Value::Null]]
+    );
+    let error = c
+        .execute(
+            &format!("SELECT u.{path}.extra FROM users u"),
+            &Parameters::new(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_LIMIT");
+    query(&c, "CREATE TABLE ordinary(value INTEGER)");
+    query(&c, "INSERT INTO ordinary VALUES (9)");
+    assert_eq!(
+        query(&c, "SELECT main.ordinary.value FROM ordinary").rows,
+        vec![vec![Value::Integer(9)]]
+    );
+}

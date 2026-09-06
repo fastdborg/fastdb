@@ -23,6 +23,16 @@ impl Scope {
             Expr::DoublyQualified(a, b, c) => {
                 vec![a.as_str().into(), b.as_str().into(), c.as_str().into()]
             }
+            Expr::FunctionCall { name, args, .. }
+                if name.as_str() == "__fastdb_path" && args.len() >= 4 =>
+            {
+                args.iter()
+                    .map(|arg| match arg.as_ref() {
+                        Expr::Id(name) | Expr::Name(name) => Ok(name.as_str().to_owned()),
+                        _ => Err(unsupported("invalid nested field path")),
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            }
             Expr::FieldAccess { base, field, .. } => {
                 if let Some((i, mut path)) = self.field(base)? {
                     path.push(field.as_str().into());
@@ -628,6 +638,46 @@ fn lower_source(
     }
     Ok(())
 }
+// The pinned parser only builds names with up to three segments. Encode
+// longer paths as a temporary AST expression; Scope resolves it before SQL
+// preparation. This marker is never a registered engine function.
+fn expand_paths(sql: &str) -> Result<String> {
+    use fastql_parser::Kind;
+    let tokens = fastql_parser::tokenize(sql)?;
+    let is_name = |i: usize| matches!(tokens[i].kind, Kind::Word | Kind::Identifier);
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut i = 0;
+    while i < tokens.len() {
+        if !is_name(i) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i + 2 < tokens.len() && tokens[i + 1].text == "." && is_name(i + 2) {
+            i += 2;
+        }
+        if i - start >= 6 {
+            if (i - start) / 2 > 64 {
+                return Err(Error::Limit("document path nesting exceeds 64".into()));
+            }
+            out.push_str(&sql[copied..tokens[start].start]);
+            out.push_str("__fastdb_path(");
+            for part in (start..=i).step_by(2) {
+                if part != start {
+                    out.push(',');
+                }
+                out.push_str(&quote(&tokens[part].text));
+            }
+            out.push(')');
+            copied = tokens[i].end;
+        }
+        i += 1;
+    }
+    out.push_str(&sql[copied..]);
+    Ok(out)
+}
+
 pub(crate) fn expand_records(sql: &str) -> Result<String> {
     let tokens = fastql_parser::tokenize(sql)?;
     let mut out = String::new();
@@ -832,7 +882,7 @@ impl Connection {
         params: &Parameters,
         options: SelectOptions<'_>,
     ) -> Result<Option<QueryResult>> {
-        let expanded = expand_records(sql)?;
+        let expanded = expand_paths(&expand_records(sql)?)?;
         if !options.guarded
             && fastql_parser::tokenize(&expanded)?
                 .iter()

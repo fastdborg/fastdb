@@ -230,3 +230,10 @@ The bridge converts each statement result before executing the next statement. S
 A separate local Linux subprocess smoke redirected stdout to /dev/full: the CLI exited nonzero without a panic, and reopening the database confirmed that the first CREATE persisted while the later INSERT never ran. This device smoke is local evidence, not a cross-platform test.
 
 The CLI now visits reports between statements and flushes each JSON line before advancing. It no longer holds all batch reports at once. Full script input, each statement's rows and report serialization remain materialized; bounded row streaming and interactive UX remain open. No dependency or upstream implementation files changed.
+
+
+## Deeper qualified collection SELECT paths — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 117 Rust tests, fourteen Node tests and TypeScript declarations. Two new collection SELECT tests verify paths beyond the pinned parser's three-name limit: typed boolean/record projections, missing fields, joins, ordering, equality results before/after managed-index creation, quoted keys containing dots/quotes, comments between segments, 64-field paths and FDB_LIMIT for 65 fields. They also verify rejection of unknown qualifiers/direct internal markers and retention of ordinary schema-qualified relational names and string literals. A separate CLI EXPLAIN smoke confirmed a managed index SEARCH for a deep-path predicate.
+
+FastDB rewrites longer qualified paths into a temporary AST marker and resolves it to the existing typed/scalar accessors before native preparation; no engine function or upstream parser patch is added. Deeper write-expression/RETURNING parsing, derived sources and broader resource/release qualification remain pending. No dependencies or upstream implementation files changed.

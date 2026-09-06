@@ -157,3 +157,10 @@ The native Node bridge uses visitation to encode each result before advancing, p
 Script execution emits and flushes each statement's JSON report before advancing. A write, flush, or serialization failure stops execution and exits nonzero through the CLI error path. Previously executed effects remain intact: output delivery is not a commit acknowledgement and does not undo committed statements. If an explicit transaction is still active, normal connection close rolls it back; a COMMIT already executed cannot be undone by failing to deliver its report. The line-oriented mode also propagates output errors instead of panicking and stops reading further statements on those errors.
 
 The CLI no longer retains reports for the entire script. Input and lexical splitting still materialize the full script, and each statement's rows and JSON report remain materialized. This is per-statement delivery, not bounded-memory row streaming or an interactive shell.
+
+
+## Qualified nested SELECT paths
+
+The collection SELECT lowerer accepts qualified paths beyond the pinned parser's three-name limit, such as `u.profile.address.city`, with up to 64 field segments after the source name/alias. Each quoted segment remains one literal key, including dots or doubled quote characters. Whitespace/comments between segments do not affect resolution. Typed projection results, scalar predicates, joins, ordering and managed equality-index candidates use the same resolved path. Missing fields return NULL. Unknown source qualifiers fail; nested paths do not imply record traversal. Ordinary one-, two- and three-part SQL names retain their existing parsing.
+
+This extension currently enters through collection SELECT lowering. Broader write-expression/RETURNING parsing, derived sources/CTEs and array subscripting remain separate unfinished work; the path limit is not a total query-memory budget.
