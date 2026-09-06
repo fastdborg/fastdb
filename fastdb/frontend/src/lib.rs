@@ -11,6 +11,8 @@ pub use interrupt::InterruptHandle;
 mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
+mod profile;
+pub use profile::{ProfiledQuery, QueryMetrics};
 mod select;
 mod transaction;
 mod transfer;
@@ -728,6 +730,10 @@ impl Connection {
         if let Some(result) = self.collection_select(sql, params)? {
             return Ok(result);
         }
+        self.native_profiled(sql, params)
+            .map(|profile| profile.result)
+    }
+    fn native_profiled(&self, sql: &str, params: &Parameters) -> Result<ProfiledQuery> {
         self.guard_native_sql(sql)?;
         let mut stmt = self.engine.prepare(sql)?;
         if !fastql_parser::tokenize(&sql[stmt.tail_offset()..])?.is_empty() {
@@ -744,10 +750,13 @@ impl Connection {
             .into_iter()
             .map(|row| row.into_iter().map(from_engine).collect())
             .collect();
-        Ok(QueryResult {
-            columns,
-            rows,
-            affected: stmt.n_change(),
+        Ok(ProfiledQuery {
+            result: QueryResult {
+                columns,
+                rows,
+                affected: stmt.n_change(),
+            },
+            metrics: QueryMetrics::from_statement(&stmt),
         })
     }
 }

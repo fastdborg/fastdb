@@ -14,9 +14,9 @@ The fixture has typed integer record IDs, 100 equally distributed scalar groups,
 
 The default 16-dimensional vectors are synthetic. Except for the designated nearest record, their values repeat every 997 keys. This is a reproducible functional baseline, not representative coverage of real high-dimensional embedding distributions. Loading and index construction have separate elapsed times. Each query sample measures the complete CLI round trip, including frontend work and JSON encoding/transport. It does not isolate engine execution time.
 
-Reports contain every latency sample, median, nearest-rank p95, plans, database size, binary SHA-256, source commit and dirty-worktree status. On Linux, process peak RSS comes from `/proc/PID/status`; it includes earlier work and is not isolated query allocation. On other platforms that measurement is null. Engine rows-read/fullscan counters are also explicitly null: the frontend does not yet expose the pinned engine's counters. Workload cardinality must not be presented as measured scanned rows.
+Reports contain every latency sample, median, nearest-rank p95, plans, database size, binary SHA-256, source commit and dirty-worktree status. On Linux, process peak RSS comes from `/proc/PID/status`; it includes earlier work and is not isolated query allocation. On other platforms that measurement is null. Current runs retain each sample's primary engine counters in `engine_counters`; the top-level rows-read/fullscan fields repeat the first sample. These exclude frontend catalog/lowering helper statements and Rust decoding. Original baseline reports predate profiling and retain null counters; those nulls mean unmeasured, not zero. Workload cardinality must not be presented as measured scanned rows.
 
-Remaining release evidence includes frontend counter instrumentation, optimized-build qualification under the repository's approved workflow, cold/warm cache separation, representative high-dimensional embeddings, 100k–1m scaling, concurrency, repeated independent runs and regression thresholds. This harness does not satisfy the full benchmark release gate by itself.
+Remaining release evidence includes broader counter qualification, optimized-build qualification under the repository's approved workflow, cold/warm cache separation, representative high-dimensional embeddings, 100k–1m scaling, concurrency, repeated independent runs and regression thresholds. This harness does not satisfy the full benchmark release gate by itself.
 
 ## Initial Linux dev-build evidence — 2026-09-07
 
@@ -30,3 +30,9 @@ Measured with the local Rust 1.88.0 dev CLI at commit `d732de4bd`; binary hashes
 The 100,000-row load took 310.6 seconds and index construction took 98.0 seconds. Its final process high-water RSS was 177,102,848 bytes and checkpointed database size was 76,652,544 bytes. The indexed plan used the named managed index. Scan counters are still unmeasured. This establishes a 100k synthetic debug baseline, not the full 100k–1m representative-vector gate.
 
 Raw reports: [1,000 documents](benchmark-results/2026-09-07-linux-dev-1000.json), [100,000 documents](benchmark-results/2026-09-07-linux-dev-100000.json).
+
+## Instrumented 1,000-document smoke
+
+The [instrumented report](benchmark-results/2026-09-07-linux-dev-profile-1000.json) records three samples per workload using the profiling implementation. All three samples had identical engine counters. The unindexed filter read 1,000 physical rows with 999 fullscan steps; the indexed filter read 20 physical rows with zero fullscan steps and 31 B-tree seeks. Exact-vector top-10 read 1,000 rows with 999 fullscan steps and one sort. Physical rows include index/table operations and must not be equated with returned documents.
+
+The original 100,000-document artifact has not been rerun with counters. Its null counters remain unmeasured. The instrumented smoke validates reporting and scan reduction, not the outstanding large-scale release qualification.

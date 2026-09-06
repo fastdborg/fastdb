@@ -1,0 +1,280 @@
+{
+  "format": "fastdb-benchmark-v1",
+  "created_utc": "2026-09-06T21:44:48Z",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "machine": "x86_64",
+  "binary": "/home/tan/Sites/fastdb/turso/target/debug/fastdb-cli",
+  "binary_sha256": "5c354dcc7d5724bfdcdf06f4799c24d0c2401263f954951b0e7346fd035c4fa7",
+  "commit": "ce468e60eb11e5bac2bad1229c24991a0d733abf",
+  "worktree_status": [
+    " M fastdb/README.md",
+    " M fastdb/cli/src/main.rs",
+    " M fastdb/cli/tests/scripts.rs",
+    " M fastdb/docs/benchmarks.md",
+    " M fastdb/docs/contracts.md",
+    " M fastdb/docs/status.md",
+    " M fastdb/frontend/src/lib.rs",
+    " M fastdb/frontend/src/select.rs",
+    " M fastdb/scripts/benchmark.py",
+    "?? fastdb/frontend/src/profile.rs",
+    "?? fastdb/tests/tests/profile.rs"
+  ],
+  "rows": 1000,
+  "dimensions": 16,
+  "samples": 3,
+  "load_seconds": 3.2483267200004775,
+  "index_build_seconds": 0.7489198490002309,
+  "database_bytes_after_checkpoint": 794624,
+  "workloads": [
+    {
+      "name": "unindexed_filter",
+      "sql": "SELECT count(*) FROM docs WHERE group_no=7",
+      "milliseconds": [
+        55.006056,
+        82.622353,
+        63.50762
+      ],
+      "median_ms": 63.50762,
+      "p95_ms": 82.622353,
+      "process_peak_rss_bytes": 40222720,
+      "plan": [
+        [
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SCAN __fastdb_c_646f6373 AS docs"
+          }
+        ]
+      ],
+      "engine_rows_read": 1000,
+      "engine_fullscan_steps": 999,
+      "engine_counters": [
+        {
+          "btree_seeks": 0,
+          "fullscan_steps": 999,
+          "index_steps": 0,
+          "rows_read": 1000,
+          "rows_written": 0,
+          "sort_operations": 0,
+          "vm_steps": 4025
+        },
+        {
+          "btree_seeks": 0,
+          "fullscan_steps": 999,
+          "index_steps": 0,
+          "rows_read": 1000,
+          "rows_written": 0,
+          "sort_operations": 0,
+          "vm_steps": 4025
+        },
+        {
+          "btree_seeks": 0,
+          "fullscan_steps": 999,
+          "index_steps": 0,
+          "rows_read": 1000,
+          "rows_written": 0,
+          "sort_operations": 0,
+          "vm_steps": 4025
+        }
+      ]
+    },
+    {
+      "name": "indexed_filter",
+      "sql": "SELECT count(*) FROM docs WHERE group_no=7",
+      "milliseconds": [
+        3.916791,
+        4.27825,
+        4.107048
+      ],
+      "median_ms": 4.107048,
+      "p95_ms": 4.27825,
+      "process_peak_rss_bytes": 40353792,
+      "plan": [
+        [
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SCAN docs"
+          }
+        ],
+        [
+          {
+            "type": "Integer",
+            "value": 3
+          },
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SEARCH i USING INDEX docs_group (key=?)"
+          }
+        ],
+        [
+          {
+            "type": "Integer",
+            "value": 4
+          },
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SEARCH c USING INDEX sqlite_autoindex___fastdb_c_646f6373_1 (id=?)"
+          }
+        ]
+      ],
+      "engine_rows_read": 20,
+      "engine_fullscan_steps": 0,
+      "engine_counters": [
+        {
+          "btree_seeks": 31,
+          "fullscan_steps": 0,
+          "index_steps": 20,
+          "rows_read": 20,
+          "rows_written": 0,
+          "sort_operations": 0,
+          "vm_steps": 205
+        },
+        {
+          "btree_seeks": 31,
+          "fullscan_steps": 0,
+          "index_steps": 20,
+          "rows_read": 20,
+          "rows_written": 0,
+          "sort_operations": 0,
+          "vm_steps": 205
+        },
+        {
+          "btree_seeks": 31,
+          "fullscan_steps": 0,
+          "index_steps": 20,
+          "rows_read": 20,
+          "rows_written": 0,
+          "sort_operations": 0,
+          "vm_steps": 205
+        }
+      ]
+    },
+    {
+      "name": "exact_vector_top10",
+      "sql": "SELECT record::id(id) AS key,vector_distance_cos(embedding,vector32('[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]')) AS distance FROM docs ORDER BY distance,id LIMIT 10",
+      "milliseconds": [
+        298.044737,
+        308.63214,
+        310.453286
+      ],
+      "median_ms": 308.63214,
+      "p95_ms": 310.453286,
+      "process_peak_rss_bytes": 40955904,
+      "plan": [
+        [
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SCAN __fastdb_c_646f6373 AS docs"
+          }
+        ],
+        [
+          {
+            "type": "Integer",
+            "value": 19
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "USE SORTER FOR ORDER BY"
+          }
+        ]
+      ],
+      "engine_rows_read": 1000,
+      "engine_fullscan_steps": 999,
+      "engine_counters": [
+        {
+          "btree_seeks": 0,
+          "fullscan_steps": 999,
+          "index_steps": 0,
+          "rows_read": 1000,
+          "rows_written": 0,
+          "sort_operations": 1,
+          "vm_steps": 12080
+        },
+        {
+          "btree_seeks": 0,
+          "fullscan_steps": 999,
+          "index_steps": 0,
+          "rows_read": 1000,
+          "rows_written": 0,
+          "sort_operations": 1,
+          "vm_steps": 12080
+        },
+        {
+          "btree_seeks": 0,
+          "fullscan_steps": 999,
+          "index_steps": 0,
+          "rows_read": 1000,
+          "rows_written": 0,
+          "sort_operations": 1,
+          "vm_steps": 12080
+        }
+      ]
+    }
+  ],
+  "measurement": "warm CLI round trip, including frontend execution and JSON transport; one warmup per workload",
+  "limitations": [
+    "Binary build flags/profile must be recorded separately; the default binary is unoptimized.",
+    "Linux process high-water RSS includes loading and earlier workloads, not isolated query memory.",
+    "Engine counters cover the primary statement, excluding catalog/lowering queries and Rust decoding.",
+    "Synthetic deterministic vectors and one process do not qualify production workloads, cold caches or concurrency."
+  ]
+}

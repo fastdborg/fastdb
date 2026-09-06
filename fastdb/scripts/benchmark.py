@@ -73,18 +73,22 @@ def main():
         def measure(name, sql, validate):
             print(f"measuring {name}", flush=True)
             plan, _ = query("EXPLAIN QUERY PLAN " + sql)
-            warmup, _ = query(sql)
+            warmup, _ = query(".profile " + sql)
             validate(warmup)
             times = []
+            counters = []
             for _ in range(args.samples):
-                result, elapsed = query(sql)
+                result, elapsed = query(".profile " + sql)
                 validate(result)
+                counters.append(result["profile"])
                 times.append(elapsed)
             return {"name": name, "sql": sql, "milliseconds": times,
                     "median_ms": statistics.median(times),
                     "p95_ms": sorted(times)[math.ceil(0.95 * len(times)) - 1],
                     "process_peak_rss_bytes": peak_rss(), "plan": plan["rows"],
-                    "engine_rows_read": None, "engine_fullscan_steps": None}
+                    "engine_rows_read": counters[0]["rows_read"],
+                    "engine_fullscan_steps": counters[0]["fullscan_steps"],
+                    "engine_counters": counters}
 
         try:
             query("CREATE TABLE docs")
@@ -138,7 +142,7 @@ def main():
                       "measurement": "warm CLI round trip, including frontend execution and JSON transport; one warmup per workload",
                       "limitations": ["Binary build flags/profile must be recorded separately; the default binary is unoptimized.",
                                       "Linux process high-water RSS includes loading and earlier workloads, not isolated query memory.",
-                                      "Engine scan counters are not exposed by the public frontend; null counters are unmeasured, not zero.",
+                                      "Engine counters cover the primary statement, excluding catalog/lowering queries and Rust decoding.",
                                       "Synthetic deterministic vectors and one process do not qualify production workloads, cold caches or concurrency."]}
             args.output.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps({"report": str(args.output), "rows": args.rows,

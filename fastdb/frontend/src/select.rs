@@ -1534,6 +1534,34 @@ struct LoweredSelect {
     native_insert: bool,
 }
 impl Connection {
+    /// Execute one SQL SELECT and return its primary engine statement counters.
+    /// Catalog/lowering queries and Rust decoding are excluded. FETCH and
+    /// non-SELECT statements are rejected; errors do not return partial metrics.
+    pub fn profile_select(&self, sql: &str, params: &Parameters) -> Result<crate::ProfiledQuery> {
+        let fastql_parser::Statement::Sql(sql) = fastql_parser::parse(sql)? else {
+            return Err(Error::Unsupported(
+                "profiling requires one SQL SELECT".into(),
+            ));
+        };
+        let expanded = expand_paths(&expand_records(&sql)?)?;
+        if !matches!(parsed(&expanded)?, Cmd::Stmt(Stmt::Select(_))) {
+            return Err(Error::Unsupported(
+                "profiling requires one SQL SELECT".into(),
+            ));
+        }
+        if fastql_parser::tokenize(&expanded)?
+            .iter()
+            .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch")
+        {
+            return Err(Error::Unsupported(
+                "profiling FETCH is not supported".into(),
+            ));
+        }
+        match self.lower_collection_select(&sql, &expanded, params, SelectOptions::default())? {
+            Some(plan) => self.execute_lowered_profiled(plan, params),
+            None => self.native_profiled(&sql, params),
+        }
+    }
     pub(crate) fn collection_select(
         &self,
         sql: &str,
@@ -2331,6 +2359,14 @@ impl Connection {
         plan: LoweredSelect,
         params: &Parameters,
     ) -> Result<QueryResult> {
+        self.execute_lowered_profiled(plan, params)
+            .map(|profile| profile.result)
+    }
+    fn execute_lowered_profiled(
+        &self,
+        plan: LoweredSelect,
+        params: &Parameters,
+    ) -> Result<crate::ProfiledQuery> {
         let LoweredSelect {
             command: cmd,
             typed,
@@ -2397,17 +2433,20 @@ impl Connection {
                 }
             }
         }
-        Ok(QueryResult {
-            columns: if explain || native_insert {
-                engine_names
-            } else {
-                names
-            },
-            rows,
-            affected: if native_insert {
-                statement.n_change()
-            } else {
-                0
+        Ok(crate::ProfiledQuery {
+            metrics: crate::QueryMetrics::from_statement(&statement),
+            result: QueryResult {
+                columns: if explain || native_insert {
+                    engine_names
+                } else {
+                    names
+                },
+                rows,
+                affected: if native_insert {
+                    statement.n_change()
+                } else {
+                    0
+                },
             },
         })
     }

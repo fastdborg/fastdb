@@ -8,6 +8,14 @@ fn output(
     report: ExecutionReport,
     offset: Option<usize>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    output_with_metrics(writer, report, offset, None)
+}
+fn output_with_metrics(
+    writer: &mut impl Write,
+    report: ExecutionReport,
+    offset: Option<usize>,
+    metrics: Option<fastdb::QueryMetrics>,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let failed = report.result.is_err();
     let mut output = match report.result {
         Ok(result) => serde_json::to_value(result)?,
@@ -17,6 +25,9 @@ fn output(
     };
     output["transaction"] =
         serde_json::json!({"before": report.transaction_before, "after": report.transaction_after});
+    if let Some(metrics) = metrics {
+        output["profile"] = serde_json::to_value(metrics)?;
+    }
     if let Some(offset) = offset {
         output["offset"] = offset.into();
     }
@@ -182,11 +193,15 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             }
             let line = String::from_utf8(bytes)?;
             if !line.trim().is_empty() {
-                failed |= output(
-                    &mut writer,
-                    conn.execute_report(&line, &Parameters::new()),
-                    None,
-                )?;
+                failed |= if let Some(sql) = line.trim_start().strip_prefix(".profile ") {
+                    run_profile(&conn, sql, &mut writer)?
+                } else {
+                    output(
+                        &mut writer,
+                        conn.execute_report(&line, &Parameters::new()),
+                        None,
+                    )?
+                };
             }
         }
     } else {
@@ -283,7 +298,7 @@ fn run_interactive(
             ".help" => {
                 writeln!(
                     prompt,
-                    "End statements with a semicolon. .clear discards pending input; .quit exits.
+                    "End statements with a semicolon. .clear discards pending input; .quit exits.\n.profile SELECT ... executes one SELECT with primary engine counters.
 Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTerminal editing supports arrows and history. Ctrl-C clears pending input or cancels running engine work.\nHistory stays in memory unless --history PATH is supplied; leading spaces omit entries."
                 )?;
                 continue;
@@ -306,11 +321,35 @@ Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTermina
     }
 }
 
+fn run_profile(
+    conn: &fastdb::Connection,
+    sql: &str,
+    writer: &mut impl Write,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let before = conn.transaction_state();
+    let (result, metrics) = match conn.profile_select(sql, &Parameters::new()) {
+        Ok(profile) => (Ok(profile.result), Some(profile.metrics)),
+        Err(error) => (Err(error), None),
+    };
+    output_with_metrics(
+        writer,
+        ExecutionReport {
+            result,
+            transaction_before: before,
+            transaction_after: conn.transaction_state(),
+        },
+        None,
+        metrics,
+    )
+}
 fn run_script(
     conn: &fastdb::Connection,
     script: &str,
     writer: &mut impl Write,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    if let Some(sql) = script.trim_start().strip_prefix(".profile ") {
+        return run_profile(conn, sql, writer);
+    }
     let mut failed = false;
     let mut output_error = None;
     let execution = conn.visit_batch(script, |report| {
