@@ -23,6 +23,7 @@ fn output(
 }
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut path = None;
+    let mut input_limit = None;
     let mut line_mode = false;
     let mut interactive = false;
     let mut script_mode = false;
@@ -32,6 +33,16 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--max-input-bytes" => {
+                let limit = args
+                    .next()
+                    .ok_or("expected input byte limit")?
+                    .parse::<usize>()?;
+                if limit == 0 || limit.checked_add(1).is_none() {
+                    return Err("input byte limit must be positive and below usize::MAX".into());
+                }
+                input_limit = Some(limit);
+            }
             "--migrate" => {
                 if migrations.is_some() {
                     return Err("choose one migration directory".into());
@@ -52,7 +63,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                println!("Usage: fastdb-cli [--interactive | --script | --line] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\n--line retains one-statement-per-line execution and continues after errors.");
+                println!("Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.");
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}").into()),
@@ -77,6 +88,10 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     if transfer.is_none() && matches!(format, TransferFormat::Ndjson) {
         return Err("--ndjson requires import/export".into());
     }
+    if input_limit.is_some() && (migrations.is_some() || transfer.is_some()) {
+        return Err("--max-input-bytes applies only to SQL input modes".into());
+    }
+    let input_limit = input_limit.unwrap_or(16 * 1024 * 1024);
     let db = Database::open(path.as_deref().unwrap_or(":memory:"))?;
     let conn = db.connect()?;
     if let Some(directory) = migrations {
@@ -105,10 +120,20 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             &mut io::stdin().lock(),
             &mut writer,
             &mut io::stderr().lock(),
+            input_limit,
         )?;
     } else if line_mode {
-        for line in io::stdin().lock().lines() {
-            let line = line?;
+        let mut reader = io::stdin().lock();
+        loop {
+            let bytes = read_input(&mut reader, input_limit, true)?;
+            if bytes.len() > input_limit {
+                report_input_limit(&conn, &mut writer, input_limit)?;
+                return Ok(std::process::ExitCode::FAILURE);
+            }
+            if bytes.is_empty() {
+                break;
+            }
+            let line = String::from_utf8(bytes)?;
             if !line.trim().is_empty() {
                 failed |= output(
                     &mut writer,
@@ -118,10 +143,14 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             }
         }
     } else {
-        let mut script = String::new();
-        io::stdin().read_to_string(&mut script)?;
-        failed = run_script(&conn, &script, &mut writer)?;
+        let bytes = read_input(&mut io::stdin().lock(), input_limit, false)?;
+        if bytes.len() > input_limit {
+            report_input_limit(&conn, &mut writer, input_limit)?;
+            return Ok(std::process::ExitCode::FAILURE);
+        }
+        failed = run_script(&conn, &String::from_utf8(bytes)?, &mut writer)?;
     }
+
     Ok(if failed {
         std::process::ExitCode::FAILURE
     } else {
@@ -129,11 +158,44 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     })
 }
 
+// Read at most one sentinel byte beyond the limit; never execute this prefix
+// when input is oversized, and check size before decoding a split UTF-8 scalar.
+fn read_input(reader: &mut impl BufRead, limit: usize, line: bool) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut bounded = reader.take((limit + 1) as u64);
+    if line {
+        bounded.read_until(b'\n', &mut bytes)?;
+    } else {
+        bounded.read_to_end(&mut bytes)?;
+    }
+    Ok(bytes)
+}
+fn report_input_limit(
+    conn: &fastdb::Connection,
+    writer: &mut impl Write,
+    limit: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let state = conn.transaction_state();
+    output(
+        writer,
+        ExecutionReport {
+            result: Err(fastdb::Error::Limit(format!(
+                "CLI input exceeds {limit} bytes"
+            ))),
+            transaction_before: state,
+            transaction_after: state,
+        },
+        None,
+    )?;
+    Ok(())
+}
+
 fn run_interactive(
     conn: &fastdb::Connection,
     reader: &mut impl BufRead,
     writer: &mut impl Write,
     prompt: &mut impl Write,
+    input_limit: usize,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let mut buffer = String::new();
     let mut failed = false;
@@ -147,13 +209,18 @@ fn run_interactive(
         };
         write!(prompt, "{label}")?;
         prompt.flush()?;
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
+        let bytes = read_input(reader, input_limit, true)?;
+        if bytes.len() > input_limit {
+            report_input_limit(conn, writer, input_limit)?;
+            return Ok(true);
+        }
+        if bytes.is_empty() {
             if !buffer.trim().is_empty() {
                 failed |= run_script(conn, &buffer, writer)?;
             }
             return Ok(failed);
         }
+        let line = String::from_utf8(bytes)?;
         match line.trim() {
             ".quit" | ".exit" => return Ok(failed),
             ".clear" => {
@@ -169,6 +236,10 @@ Transactions use BEGIN, COMMIT and ROLLBACK. Prompts go to stderr; JSON results 
                 continue;
             }
             _ => {}
+        }
+        if line.len() > input_limit - buffer.len() {
+            report_input_limit(conn, writer, input_limit)?;
+            return Ok(true);
         }
         buffer.push_str(&line);
         match fastql_parser::script_complete(&buffer) {

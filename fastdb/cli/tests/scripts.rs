@@ -91,3 +91,70 @@ fn interactive_trigger_bodies_wait_for_end_and_eof_runs_trailing_sql() {
     assert_eq!(rows.len(), 5);
     assert_eq!(rows[4]["rows"][0][0]["value"], 3);
 }
+
+fn limited(mode: &str, limit: usize, input: &str) -> (bool, Vec<serde_json::Value>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+        .arg(mode)
+        .arg("--max-input-bytes")
+        .arg(limit.to_string())
+        .arg(":memory:")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let rows = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    (output.status.success(), rows)
+}
+#[test]
+fn cli_input_limits_count_utf8_bytes_and_never_submit_truncated_scripts() {
+    let script = "SELECT 'é' AS value;";
+    let (ok, rows) = limited("--script", script.len(), script);
+    assert!(ok);
+    assert_eq!(rows[0]["rows"][0][0]["value"], "é");
+    for limit in [script.len() - 1, "SELECT '".len()] {
+        let (ok, rows) = limited("--script", limit, script);
+        assert!(!ok);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["error"]["code"], "FDB_LIMIT");
+    }
+    let (ok, rows) = limited("--script", 32, &format!("SELECT 1; {}", "x".repeat(64)));
+    assert!(!ok);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["error"]["code"], "FDB_LIMIT");
+}
+#[test]
+fn line_and_interactive_limits_stop_without_consuming_tail_as_sql() {
+    let (ok, rows) = limited(
+        "--line",
+        32,
+        &format!("SELECT 1;\n{}\nSELECT 2;\n", "x".repeat(64)),
+    );
+    assert!(!ok);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1]["error"]["code"], "FDB_LIMIT");
+    let (ok, rows) = limited(
+        "--interactive",
+        32,
+        &format!(
+            "BEGIN;\nSELECT '{}\n{}\nCOMMIT;\n",
+            "x".repeat(16),
+            "y".repeat(16)
+        ),
+    );
+    assert!(!ok);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1]["error"]["code"], "FDB_LIMIT");
+    assert_eq!(rows[1]["transaction"]["after"], "active");
+}

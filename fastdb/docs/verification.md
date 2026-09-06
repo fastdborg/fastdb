@@ -315,3 +315,10 @@ The same regression requires FDB_UNSUPPORTED for managed body targets/references
 A real pseudo-terminal smoke verified automatic interactive mode and transaction prompts through BEGIN/SELECT/ROLLBACK/.quit. A persistent-file smoke verified .quit rollback of an active write and successful reopening through --script. Prompts are written to stderr; JSON results retain the batch execution contract.
 
 The CLI adds a direct path dependency on the existing fastql-parser crate; Cargo.lock changes only that dependency edge. No new external dependency versions or upstream implementation files changed. History/editing, explicit signal handling, input/resource bounds and wider terminal/platform qualification remain open, alongside the rest of V1.
+
+
+## Bounded CLI SQL input — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 135 Rust tests, fourteen Node tests and TypeScript declarations. Two new CLI subprocess tests verify exact UTF-8 byte boundaries, overflow inside a multibyte character, rejection of an oversized script before any statement report, fatal line overflow, accumulated interactive overflow and retained transaction observations. A separate persistent-file smoke confirms no execution of an oversized script prefix, rollback of an active interactive write on exit and preservation of a prior autocommit line write.
+
+SQL input defaults to 16 MiB and can be changed with --max-input-bytes. Size checks precede UTF-8 decoding; a sentinel byte detects oversized input without reading the entire input into the SQL buffer. The CLI emits FDB_LIMIT and exits rather than processing the remaining tail. Import/migration limits remain independent. No dependencies or upstream implementation files changed. These are input byte-length bounds, not total allocation, result, deadline or SDK resource limits; broader V1 qualification remains open.
