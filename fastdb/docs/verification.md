@@ -193,3 +193,10 @@ A deterministic encode/decode test reproduced a one-bit error in the former JSON
 `fastdb/scripts/check.sh` passed scoped formatting/Clippy, all 107 Rust tests, eleven native Node tests and strict TypeScript declarations. Three new Rust tests verify direct named/numbered composite, record, vector and boolean projections; source-free DISTINCT and empty results; scalar WHERE/GROUP BY/HAVING alias handling and first-match case-insensitive aliases; retained scalar-query behavior and missing-name errors; and rejection of predicates/grouping on post-fetch aliases. The Node prototype-looking-field regression now uses SELECT $value directly instead of a helper wrapper.
 
 No dependencies or upstream implementation files changed. This covers the current source-free SELECT lowering subset, not complete alias/type propagation through relational sources, subqueries/CTEs, compound queries or composite ordering/grouping. Remaining V1 requirements stay open.
+
+
+## Fatal worker transport cleanup — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 107 Rust tests, twelve Node tests and TypeScript declarations. An isolated child-process fixture replaces the Worker transport to inject message decoding failures, failed shutdown sends, worker error/exit sequences, unexpected exit and a lost close acknowledgement. It verifies that pending requests share the first FDB_WORKER cause, later requests reject, cleanup reaches worker exit and close remains idempotent. A completion marker ensures unresolved fixture promises cannot yield a false passing process exit. Existing real native-worker tests still pass.
+
+Message errors now initiate cleanup, and close after a fatal error waits for exit instead of simply rejecting and abandoning the worker. An error during close rejects after cleanup. No dependencies or upstream implementation files changed. These deterministic transport tests do not qualify native crashes, unknown write outcomes, forced-termination database recovery or interrupted commits; those release gates remain open.

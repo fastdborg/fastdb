@@ -191,3 +191,9 @@ test('async interrupt reaches active native work without terminating its worker'
   } finally { clearInterval(timer); await db.close(); }
   assert.equal(db.interrupt(),false);
 });
+test('worker transport failures settle pending requests and permit cleanup', () => {
+  const { spawnSync } = require('node:child_process');
+  const result = spawnSync(process.execPath, [require.resolve('./worker-faults.cjs')], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr || String(result.error));
+  assert.match(result.stdout, /worker-faults-complete/);
+});

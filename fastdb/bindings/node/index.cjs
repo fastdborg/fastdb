@@ -116,18 +116,19 @@ class AsyncDatabase {
   #interruptKey;
   #worker; #pending = new Map(); #next = 0; #bytes = 0;
   #ready; #readyResolve; #readyReject; #exited;
-  #failure; #closing = false; #closePromise;
+  #failure; #closing = false; #closePromise; #stopped = false; #shutdownRequested = false;
   constructor(path, token) {
     if (token !== asyncConstruction) throw new TypeError('use AsyncDatabase.open()');
     const { Worker } = require('node:worker_threads');
     this.#ready = new Promise((resolve, reject) => { this.#readyResolve = resolve; this.#readyReject = reject; });
     this.#worker = new Worker(require.resolve('./worker.cjs'), { workerData: { path } });
     this.#exited = new Promise(resolve => this.#worker.once('exit', code => {
+      this.#stopped = true;
       if (!this.#closing || this.#pending.size) this.#fail(new Error(`database worker exited (${code})`));
       resolve();
     }));
     this.#worker.on('error', error => this.#fail(error));
-    this.#worker.on('messageerror', error => this.#fail(error));
+    this.#worker.on('messageerror', error => this.#fail(error, true));
     this.#worker.on('message', message => {
       if (message.ready) { this.#interruptKey = message.interruptKey; this.#readyResolve(); return; }
       const pending = this.#pending.get(message.id);
@@ -143,11 +144,21 @@ class AsyncDatabase {
     try { await db.#ready; return db; }
     catch (error) { await db.#exited; throw error; }
   }
-  #fail(error) {
-    this.#failure = error;
-    this.#readyReject(error);
-    for (const pending of this.#pending.values()) pending.reject(error);
+  #fail(error, shutdown = false) {
+    if (!this.#failure) {
+      this.#failure = new Error(`database worker failure: ${error.message}`, { cause: error });
+      this.#failure.code = 'FDB_WORKER';
+    }
+    this.#readyReject(this.#failure);
+    for (const pending of this.#pending.values()) pending.reject(this.#failure);
     this.#pending.clear(); this.#bytes = 0;
+    if (shutdown && !this.#stopped && !this.#shutdownRequested) {
+      this.#shutdownRequested = true;
+      // The response channel is damaged. Ask the worker to close after the
+      // accepted queue; their write outcomes can no longer be inferred here.
+      try { this.#worker.postMessage({ id: 0, method: 'close', args: [] }); }
+      catch { void this.#worker.terminate(); }
+    }
   }
   #request(method, args, closing = false) {
     if (this.#failure) return Promise.reject(this.#failure);
@@ -167,7 +178,13 @@ class AsyncDatabase {
   close() {
     if (!this.#closePromise) {
       this.#closing = true;
-      this.#closePromise = this.#request('close', [], true).then(() => this.#exited);
+      this.#closePromise = this.#failure ? this.#exited : this.#request('close', [], true)
+        .then(() => this.#exited)
+        .catch(async error => {
+          this.#fail(error, true);
+          await this.#exited;
+          throw this.#failure;
+        });
     }
     return this.#closePromise;
   }
