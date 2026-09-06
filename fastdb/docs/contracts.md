@@ -93,7 +93,7 @@ Fresh runtimes trade performance for isolated calls. Benchmarks, full dependency
 
 Collection SELECT and INSERT SELECT support GROUP BY scalar expressions, positive projection ordinals, and HAVING expressions through the pinned engine. Keys and aggregate arguments use SQL scalar lowering; missing fields and explicit null share a SQL NULL group, and numeric/boolean scalar coercions follow that lowering. Result field projections retain their tagged type. SQL aggregate outputs retain native scalar types, and aggregate DISTINCT/FILTER clauses use the existing expression lowering.
 
-Projection alias resolution in GROUP BY/HAVING is not implemented. A conservative guard rejects expression tokens matching explicit renamed aliases, including some qualified references; repeat expressions and avoid conflicting alias names. This guard is temporary and is not a final SQL compatibility boundary. Composite grouping keys still fail scalar conversion; full typed equality, alias precedence and broader query semantics remain V1 work. SELECT DISTINCT, CTEs and window/compound queries remain separately unsupported for collections.
+Projection alias resolution in GROUP BY/HAVING is not implemented. A conservative guard rejects expression tokens matching explicit renamed aliases, including some qualified references; repeat expressions and avoid conflicting alias names. This guard is temporary and is not a final SQL compatibility boundary. Composite grouping keys still fail scalar conversion; full typed equality, alias precedence and broader query semantics remain V1 work. SELECT DISTINCT, CTEs and compound queries remain separately unsupported for collections.
 
 
 ## Mixed query star projections
@@ -101,3 +101,10 @@ Projection alias resolution in GROUP BY/HAVING is not implemented. A conservativ
 In collection-aware SELECT queries, relational `alias.*` expands to the pinned engine's visible columns in their native order. Expansion prepares a standalone source SELECT for metadata without executing it, then generates qualified column expressions. This also supports ordinary views. Collection stars produce one typed `document` column per collection source; unqualified `*` expands sources in FROM/join order. Outer-join null extension and relational scalar/blob types remain native.
 
 Expanded columns participate in GROUP BY ordinals and INSERT SELECT width/validation checks. Existing duplicate-result-name rules still apply: ordinary result queries require unique names, so overlapping stars or multiple collection document stars may require explicit projections with aliases. Positional INSERT SELECT can accept duplicate source names. NATURAL/USING joins and derived/table-function sources remain separate unresolved query features. Full concurrent schema-change and view-dependency authorization qualification is still pending.
+
+
+## Initial collection windows
+
+Collection SELECT and INSERT SELECT lower scalar window arguments, PARTITION BY and ORDER BY expressions, inline OVER clauses and named WINDOW definitions through the pinned engine. Row-number, sum and count windows have differential integration coverage. Collection field output projections retain their tagged values; window arguments and results currently use native SQL scalar types. Composite arguments and full typed window semantics remain unqualified.
+
+Pinned Turso rejects custom frame specifications and `lag` as tested; these engine errors are preserved. Frame expressions are lowered but no support beyond the native baseline is promised. Aggregate-local ORDER BY combined with OVER is rejected by the frontend before reaching an upstream assertion. Windows remain invalid in RETURNING and WHERE, and are not CHECK-eligible. Broader window functions, named-window inheritance, collation, resources and release-level coverage remain pending.

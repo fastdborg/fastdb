@@ -269,6 +269,22 @@ impl Scope {
         ))?;
         Ok(true)
     }
+    fn lower_window(&self, window: &mut Window) -> Result<()> {
+        for expr in &mut window.partition_by {
+            self.lower(expr)?;
+        }
+        for sorted in &mut window.order_by {
+            self.lower(&mut sorted.expr)?;
+        }
+        if let Some(frame) = &mut window.frame_clause {
+            for bound in std::iter::once(&mut frame.start).chain(frame.end.iter_mut()) {
+                if let FrameBound::Preceding(expr) | FrameBound::Following(expr) = bound {
+                    self.lower(expr)?;
+                }
+            }
+        }
+        Ok(())
+    }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
         if let Expr::FunctionCall { name, args, .. } = expr {
             if matches!(
@@ -359,8 +375,13 @@ impl Scope {
                 filter_over,
                 ..
             } => {
-                if filter_over.over_clause.is_some() {
-                    return Err(unsupported("window expressions"));
+                if let Some(Over::Window(window)) = &mut filter_over.over_clause {
+                    self.lower_window(window)?;
+                }
+                if filter_over.over_clause.is_some() && !order_by.is_empty() {
+                    return Err(unsupported(
+                        "aggregate-local ORDER BY with OVER in the pinned engine",
+                    ));
                 }
                 for e in args {
                     self.lower(e)?;
@@ -373,8 +394,8 @@ impl Scope {
                 }
             }
             Expr::FunctionCallStar { filter_over, .. } => {
-                if filter_over.over_clause.is_some() {
-                    return Err(unsupported("window expressions"));
+                if let Some(Over::Window(window)) = &mut filter_over.over_clause {
+                    self.lower_window(window)?;
                 }
                 if let Some(e) = &mut filter_over.filter_clause {
                     self.lower(e)?;
@@ -846,8 +867,8 @@ impl Connection {
         if matches!(distinctness, Some(Distinctness::Distinct)) {
             return Err(unsupported("DISTINCT over typed projections"));
         }
-        if select.with.is_some() || !select.body.compounds.is_empty() || !window_clause.is_empty() {
-            return Err(unsupported("CTEs, compound SELECT or windows"));
+        if select.with.is_some() || !select.body.compounds.is_empty() {
+            return Err(unsupported("CTEs or compound SELECT"));
         }
         let scope = Scope {
             sources,
@@ -1057,6 +1078,9 @@ impl Connection {
                 reject_group_aliases(expr, &original_columns)?;
                 scope.lower(expr)?;
             }
+        }
+        for definition in window_clause {
+            scope.lower_window(&mut definition.window)?;
         }
         for sorted in &mut select.order_by {
             // Aliases refer to the original expression, not the encoded typed
