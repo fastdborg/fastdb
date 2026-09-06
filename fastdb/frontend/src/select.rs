@@ -396,6 +396,8 @@ fn public_expression_name(expr: &Expr) -> String {
         .replace("__fastdb_record_value", "type::record")
         .replace("__fastdb_fetch", "record::fetch");
     for (internal, public) in [
+        ("string_slugify", "string::slugify"),
+        ("string_normalize", "string::normalize"),
         ("record_id", "record::id"),
         ("record_table", "record::table"),
         ("array_new", "array::new"),
@@ -593,6 +595,8 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
             );
             let mapped = match namespace.as_str() {
                 "type::record" => "__fastdb_record_value",
+                "string::slugify" => "__fastdb_h_string_slugify",
+                "string::normalize" => "__fastdb_h_string_normalize",
                 "record::id" => "__fastdb_h_record_id",
                 "record::fetch" => "__fastdb_fetch",
                 "record::table" => "__fastdb_h_record_table",

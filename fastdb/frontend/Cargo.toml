@@ -13,3 +13,5 @@ serde_json.workspace = true
 thiserror.workspace = true
 turso_parser = { path = "../../sqlite/parser" }
 turso_ext = { path = "../../extensions/core" }
+
+rquickjs = { version = "=0.12.2", default-features = false, features = ["std"] }

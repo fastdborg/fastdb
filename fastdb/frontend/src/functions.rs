@@ -253,6 +253,8 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             .ok_or_else(|| Error::Validation("helper name".into()))?;
         let args = args.iter().map(decode_arg).collect::<Result<Vec<_>>>()?;
         let value = match (name, args.as_slice()) {
+            ("string_slugify", _) => crate::bundled::call("slugify", &args)?,
+            ("string_normalize", _) => crate::bundled::call("normalize", &args)?,
             ("array_new", _) => Value::Array(args),
             ("array_append", [Value::Array(array), element]) => {
                 let mut array = array.clone();

@@ -1,4 +1,5 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
+mod bundled;
 mod catalog;
 mod check;
 mod expression;

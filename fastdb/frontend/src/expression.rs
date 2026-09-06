@@ -259,6 +259,8 @@ impl Connection {
             return Ok(value);
         }
         match name.to_ascii_lowercase().as_str() {
+            "string::slugify" => crate::bundled::call("slugify", &args),
+            "string::normalize" => crate::bundled::call("normalize", &args),
             "type::record" => match args.as_slice() {
                 [Value::String(table), key] => {
                     let key = match key {
