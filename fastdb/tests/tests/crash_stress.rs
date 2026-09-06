@@ -23,6 +23,18 @@ fn document(batch: i64, slot: i64) -> Document {
         ("payload".into(), Value::Binary(vec![slot as u8; 2048])),
     ])
 }
+fn archived(batch: i64, slot: i64) -> Document {
+    let mut value = document(batch, slot);
+    value.insert(
+        "name".into(),
+        Value::String(format!("archived_b{batch}s{slot}")),
+    );
+    value.insert(
+        "payload".into(),
+        Value::Binary(vec![255 - slot as u8; 2048]),
+    );
+    value
+}
 fn marker(phase: &str, batch: i64) {
     println!("FASTDB_PHASE {phase} {batch}");
     std::io::stdout().flush().unwrap();
@@ -40,12 +52,42 @@ fn crash_writer_child() {
         &c,
         "CREATE TABLE audit(batch INTEGER,slot INTEGER,PRIMARY KEY(batch,slot))",
     );
+    query(
+        &c,
+        "CREATE TABLE live(name TEXT PRIMARY KEY,batch INTEGER,slot INTEGER)",
+    );
     query(&c, "CREATE TABLE state(version INTEGER)");
     query(&c, "INSERT INTO state VALUES (0)");
     for batch in 1..=1000 {
         query(&c, "BEGIN");
+        if batch > 1 {
+            let previous = batch - 1;
+            for slot in 0..WIDTH {
+                let before = document(previous, slot);
+                let Value::Record(id) = &before["id"] else {
+                    unreachable!();
+                };
+                if slot % 2 == 0 {
+                    let mut patch = archived(previous, slot);
+                    patch.remove("id");
+                    assert!(c.patch(id, patch).unwrap().is_some());
+                    query(&c,&format!("UPDATE live SET name='archived_b{previous}s{slot}' WHERE batch={previous} AND slot={slot}"));
+                } else {
+                    assert!(c.delete(id).unwrap().is_some());
+                    query(
+                        &c,
+                        &format!("DELETE FROM live WHERE batch={previous} AND slot={slot}"),
+                    );
+                }
+            }
+        }
+        marker("rewrite", batch);
         for slot in 0..WIDTH {
             c.insert("items", document(batch, slot)).unwrap();
+            query(
+                &c,
+                &format!("INSERT INTO live VALUES ('b{batch}s{slot}',{batch},{slot})"),
+            );
             query(&c, &format!("INSERT INTO audit VALUES ({batch},{slot})"));
         }
         query(&c, &format!("UPDATE state SET version={batch}"));
@@ -67,7 +109,7 @@ impl Drop for KillOnDrop {
 
 #[test]
 fn killed_commit_and_checkpoint_loops_recover_atomic_batches() {
-    for phase in ["commit", "checkpoint"] {
+    for phase in ["rewrite", "commit", "checkpoint"] {
         for delay_ms in [0, 1, 5] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("kill.db");
@@ -138,20 +180,64 @@ fn killed_commit_and_checkpoint_loops_recover_atomic_batches() {
                 );
                 assert_eq!(
                     query(&c, "SELECT count(*) FROM items").rows,
-                    vec![vec![Value::Integer(version * WIDTH)]]
+                    vec![vec![Value::Integer((version - 1) * (WIDTH / 2) + WIDTH)]]
+                );
+                assert_eq!(
+                    query(&c, "SELECT count(*) FROM live").rows,
+                    vec![vec![Value::Integer((version - 1) * (WIDTH / 2) + WIDTH)]]
                 );
                 for batch in 1..=version {
                     for slot in 0..WIDTH {
-                        let expected = document(batch, slot);
-                        let Value::Record(id) = &expected["id"] else {
+                        let original = document(batch, slot);
+                        let Value::Record(id) = &original["id"] else {
                             unreachable!();
                         };
-                        assert_eq!(c.get(id).unwrap(), Some(expected.clone()));
-                        assert_eq!(
-                            c.lookup_index("items", "item_name", &expected["name"])
-                                .unwrap(),
-                            vec![expected]
-                        );
+                        let expected = if batch == version {
+                            Some(original.clone())
+                        } else if slot % 2 == 0 {
+                            Some(archived(batch, slot))
+                        } else {
+                            None
+                        };
+                        assert_eq!(c.get(id).unwrap(), expected);
+                        if let Some(expected) = expected {
+                            assert_eq!(
+                                c.lookup_index("items", "item_name", &expected["name"])
+                                    .unwrap(),
+                                vec![expected.clone()]
+                            );
+                            assert_eq!(
+                                query(
+                                    &c,
+                                    &format!(
+                                        "SELECT name FROM live WHERE batch={batch} AND slot={slot}"
+                                    )
+                                )
+                                .rows,
+                                vec![vec![expected["name"].clone()]]
+                            );
+                        } else {
+                            assert!(query(
+                                &c,
+                                &format!(
+                                    "SELECT name FROM live WHERE batch={batch} AND slot={slot}"
+                                )
+                            )
+                            .rows
+                            .is_empty());
+                        }
+                        if batch < version {
+                            assert!(c
+                                .lookup_index("items", "item_name", &original["name"])
+                                .unwrap()
+                                .is_empty());
+                        }
+                        if batch == version || slot % 2 != 0 {
+                            assert!(c
+                                .lookup_index("items", "item_name", &archived(batch, slot)["name"])
+                                .unwrap()
+                                .is_empty());
+                        }
                         assert_eq!(query(&c,&format!("SELECT count(*) FROM audit WHERE batch={batch} AND slot={slot}")).rows,vec![vec![Value::Integer(1)]]);
                     }
                 }
