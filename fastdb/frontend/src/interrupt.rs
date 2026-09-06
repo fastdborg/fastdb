@@ -160,4 +160,124 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn interrupted_catalog_mutations_restore_schema_and_prior_transaction_work() {
+        for statement in [
+            "DROP INDEX values_idx",
+            "DROP TABLE docs",
+            "DEFINE FIELD OVERWRITE value ON docs TYPE number REQUIRED",
+        ] {
+            for outer in [false, true] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                q(&c, "CREATE TABLE docs");
+                q(&c, "DEFINE FIELD value ON docs TYPE integer REQUIRED");
+                q(&c, "CREATE UNIQUE INDEX values_idx ON docs(value)");
+                q(&c, "INSERT INTO docs {id:docs:a,value:1}");
+                q(&c, "CREATE TABLE prior(value INTEGER)");
+                let info = q(&c, "INFO FOR TABLE docs").rows;
+                let schema = c
+                    .run("SELECT name,sql FROM sqlite_schema ORDER BY name", &[])
+                    .unwrap();
+                if outer {
+                    q(&c, "BEGIN");
+                    q(&c, "INSERT INTO prior VALUES (1)");
+                }
+                let fired = arm_after_write(&c);
+                let report = c.execute_report(statement, &Parameters::new());
+                c.engine.set_progress_handler(0, None);
+                assert!(fired.load(Ordering::SeqCst), "{statement}");
+                assert_eq!(
+                    report.result.unwrap_err().code(),
+                    "FDB_CANCELLED",
+                    "{statement}"
+                );
+                assert_eq!(
+                    report.transaction_after,
+                    if outer {
+                        crate::TransactionState::Active
+                    } else {
+                        crate::TransactionState::Autocommit
+                    }
+                );
+                assert_eq!(q(&c, "INFO FOR TABLE docs").rows, info, "{statement}");
+                assert_eq!(
+                    c.run("SELECT name,sql FROM sqlite_schema ORDER BY name", &[])
+                        .unwrap(),
+                    schema,
+                    "{statement}"
+                );
+                assert_eq!(
+                    c.lookup_index("docs", "values_idx", &Value::Integer(1))
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(q(&c, "SELECT * FROM prior").rows.len(), usize::from(outer));
+                assert!(c
+                    .execute("INSERT INTO docs {value:1.5}", &Parameters::new())
+                    .is_err());
+                q(&c, statement);
+                if outer {
+                    q(&c, "ROLLBACK");
+                    assert_eq!(q(&c, "INFO FOR TABLE docs").rows, info);
+                    assert_eq!(
+                        c.lookup_index("docs", "values_idx", &Value::Integer(1))
+                            .unwrap()
+                            .len(),
+                        1
+                    );
+                    assert!(q(&c, "SELECT * FROM prior").rows.is_empty());
+                }
+            }
+        }
+    }
+    #[test]
+    fn cancelled_index_replacement_restores_old_index_on_outer_rollback() {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(&c, "INSERT INTO docs {value:1,other:10}");
+        q(&c, "INSERT INTO docs {value:2,other:20}");
+        q(&c, "CREATE UNIQUE INDEX values_idx ON docs(value)");
+        let before = q(&c, "INFO FOR TABLE docs").rows;
+        q(&c, "BEGIN");
+        q(&c, "DROP INDEX values_idx");
+        let fired = arm_after_write(&c);
+        let report = c.execute_report(
+            "CREATE UNIQUE INDEX values_idx ON docs(other)",
+            &Parameters::new(),
+        );
+        c.engine.set_progress_handler(0, None);
+        assert!(fired.load(Ordering::SeqCst));
+        assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED");
+        assert_eq!(report.transaction_after, crate::TransactionState::Active);
+        assert!(c.catalog("docs").unwrap().indexes.is_empty());
+        q(&c, "ROLLBACK");
+        assert_eq!(q(&c, "INFO FOR TABLE docs").rows, before);
+        assert_eq!(
+            c.lookup_index("docs", "values_idx", &Value::Integer(1))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(c
+            .lookup_index("docs", "values_idx", &Value::Integer(10))
+            .unwrap()
+            .is_empty());
+        q(&c, "BEGIN");
+        q(&c, "DROP INDEX values_idx");
+        q(&c, "CREATE UNIQUE INDEX values_idx ON docs(other)");
+        q(&c, "COMMIT");
+        assert_eq!(
+            c.lookup_index("docs", "values_idx", &Value::Integer(10))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(c
+            .lookup_index("docs", "values_idx", &Value::Integer(1))
+            .unwrap()
+            .is_empty());
+    }
 }
