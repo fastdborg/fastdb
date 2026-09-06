@@ -82,6 +82,13 @@ function migrationPlan(migrations) {
     });
   return plan;
 }
+function decodeProfile(raw) {
+  const report = unwrap(raw);
+  const { result, metrics } = report.execution.result;
+  return { result: { columns: result.columns, rows: result.rows.map(row => row.map(decode)),
+    affected: BigInt(result.affected), transaction: report.transaction },
+    metrics: Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, BigInt(value)])) };
+}
 class Database {
   #native;
   constructor(path = ':memory:') { this.#native = new NativeDatabase(path); }
@@ -91,6 +98,10 @@ class Database {
     const report = unwrap(this.#native.execute(sql, JSON.stringify(params)));
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+  }
+  profileSelect(sql, parameters = {}) {
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    return decodeProfile(this.#native.profileSelect(sql, JSON.stringify(params)));
   }
   executeBatch(script) { return decodeBatch(this.#native.executeBatch(script)); }
   exportDocuments(table, format = 'json') {
@@ -201,6 +212,10 @@ class AsyncDatabase {
     const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)]));
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+  }
+  async profileSelect(sql, parameters = {}) {
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)]));
   }
   async executeBatch(script) { return decodeBatch(await this.#request('executeBatch', [script])); }
   async exportDocuments(table, format = 'json') {

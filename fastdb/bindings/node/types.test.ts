@@ -41,3 +41,13 @@ for (const entry of entries) {
   else { const code: string = entry.error.code; void code; }
 }
 db.close();
+
+const profileRows: Value[][] = db.profileSelect('SELECT $x', {$x: 1n}).result.rows;
+const physicalReads: bigint = db.profileSelect('SELECT 1').metrics.rowsRead;
+async function profileAsync(db: AsyncDatabase) {
+  const profile = await db.profileSelect('SELECT $x', {$x: 1n});
+  const instructions: bigint = profile.metrics.vmSteps;
+  const state: 'autocommit' | 'active' = profile.result.transaction.after;
+  void instructions; void state;
+}
+void profileRows; void physicalReads; void profileAsync;

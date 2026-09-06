@@ -4,6 +4,11 @@ export type Value = null | boolean | string | bigint | number | Uint8Array | Rec
 export interface Parameters { [name: string]: Value; }
 export interface Transaction { before: 'autocommit' | 'active'; after: 'autocommit' | 'active'; }
 export interface QueryResult { columns: string[]; rows: Value[][]; affected: bigint; transaction: Transaction; }
+export interface QueryMetrics {
+  rowsRead: bigint; rowsWritten: bigint; fullscanSteps: bigint; indexSteps: bigint;
+  vmSteps: bigint; sortOperations: bigint; btreeSeeks: bigint;
+}
+export interface ProfiledQuery { result: QueryResult; metrics: QueryMetrics; }
 export type BatchExecution = { offset: number; transaction: Transaction } & (
   { result: Omit<QueryResult, 'transaction'>; error?: never } |
   { error: { code: string; message: string }; result?: never }
@@ -19,6 +24,7 @@ export class Database {
   exportDocuments(table: string, format?: TransferFormat): string;
   importDocuments(table: string, input: string, format?: TransferFormat): ImportReport;
   execute(sql: string, parameters?: Parameters): QueryResult;
+  profileSelect(sql: string, parameters?: Parameters): ProfiledQuery;
   executeBatch(script: string): BatchExecution[];
   all(sql: string, parameters?: Parameters): Value[][];
   first(sql: string, parameters?: Parameters): Value[] | undefined;
@@ -34,6 +40,7 @@ export class AsyncDatabase {
   exportDocuments(table: string, format?: TransferFormat): Promise<string>;
   importDocuments(table: string, input: string, format?: TransferFormat): Promise<ImportReport>;
   execute(sql: string, parameters?: Parameters): Promise<QueryResult>;
+  profileSelect(sql: string, parameters?: Parameters): Promise<ProfiledQuery>;
   executeBatch(script: string): Promise<BatchExecution[]>;
   all(sql: string, parameters?: Parameters): Promise<Value[][]>;
   first(sql: string, parameters?: Parameters): Promise<Value[] | undefined>;

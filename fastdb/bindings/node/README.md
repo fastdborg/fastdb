@@ -93,3 +93,17 @@ node fastdb/scripts/check-node-package.cjs
 The smoke packs into a temporary directory, verifies the exact file inventory, installs the tarball into a separate consumer with npm offline and lifecycle scripts disabled, and tests public synchronous/worker queries, typed int64/record values, rollback and reopen. It also compiles a consumer TypeScript import against the installed declarations. Temporary artifacts are removed afterward. The TypeScript compiler is a checkout development tool; the installed package has no runtime registry dependencies.
 
 This is a maintainer packaging check, separate from routine CI because the current debug addon is large. The verified local artifact is Linux x64 with Node 24.19.0, not a universal binary. Keep private=true: platform-specific prebuild selection, Node-version/platform coverage, optimized artifact sizing and complete distribution notices remain release work. No package has been published.
+
+## SELECT profiling
+
+Both clients provide `profileSelect(sql, parameters?)`; the async version returns a Promise and uses the existing worker queue. It returns `{ result, metrics }`, where `result` has the same typed rows, bigint affected count and transaction observations as `execute`. Every metric is a bigint: `rowsRead`, `rowsWritten`, `fullscanSteps`, `indexSteps`, `vmSteps`, `sortOperations` and `btreeSeeks`. Native transport encodes counters as decimal strings before converting them to bigint, without a JavaScript Number conversion.
+
+```js
+const profile = await asyncDb.profileSelect(
+  'SELECT id FROM posts WHERE author=$author',
+  { $author: new Record('users', 'alice') },
+);
+console.log(profile.result.rows, profile.metrics.rowsRead);
+```
+
+Counters cover the primary engine statement only; metadata/lowering queries, Rust/JavaScript decoding and transport are excluded. Physical row reads are not logical document counts. Only one SQL SELECT is accepted; writes, multiple statements, EXPLAIN, direct-record shorthand and record::fetch are rejected. Failures throw/reject through the usual error/transaction envelope without partial counters. Connection-wide async interruption and close behavior follow `execute`; profiling is not a deadline or request-specific cancellation mechanism.

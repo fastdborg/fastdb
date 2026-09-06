@@ -58,13 +58,21 @@ impl NativeDatabase {
     #[napi]
     pub fn execute(&self, sql: String, parameters: String) -> napi::Result<String> {
         self.report(|conn| {
-            let parameters: BTreeMap<String, serde_json::Value> =
-                serde_json::from_str(&parameters)?;
-            let parameters = parameters
-                .into_iter()
-                .map(|(key, value)| fastdb::Value::from_portable_value(value).map(|v| (key, v)))
-                .collect::<fastdb::Result<fastdb::Parameters>>()?;
+            let parameters = decode_parameters(&parameters)?;
             query_value(conn.execute(&sql, &parameters)?)
+        })
+    }
+    #[napi]
+    pub fn profile_select(&self, sql: String, parameters: String) -> napi::Result<String> {
+        self.report(|conn| {
+            let profile = conn.profile_select(&sql, &decode_parameters(&parameters)?)?;
+            let m = profile.metrics;
+            Ok(serde_json::json!({"result":query_value(profile.result)?, "metrics":{
+                "rowsRead":m.rows_read.to_string(), "rowsWritten":m.rows_written.to_string(),
+                "fullscanSteps":m.fullscan_steps.to_string(), "indexSteps":m.index_steps.to_string(),
+                "vmSteps":m.vm_steps.to_string(), "sortOperations":m.sort_operations.to_string(),
+                "btreeSeeks":m.btree_seeks.to_string()
+            }}))
         })
     }
     #[napi]
@@ -157,6 +165,14 @@ impl NativeDatabase {
         };
         Ok(serde_json::json!({"version":1,"execution":result,"transaction":{"before":before,"after":conn.transaction_state()}}).to_string())
     }
+}
+
+fn decode_parameters(input: &str) -> fastdb::Result<fastdb::Parameters> {
+    let values: BTreeMap<String, serde_json::Value> = serde_json::from_str(input)?;
+    values
+        .into_iter()
+        .map(|(key, value)| fastdb::Value::from_portable_value(value).map(|v| (key, v)))
+        .collect()
 }
 
 fn query_value(result: fastdb::QueryResult) -> fastdb::Result<serde_json::Value> {

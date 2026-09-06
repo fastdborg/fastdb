@@ -256,3 +256,48 @@ test('shared-file contention exposes busy codes and preserves committed values',
     assert.deepEqual(b.all('SELECT value FROM docs'),[[4n]]);
   } finally { b?.close(); a?.close(); fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+test('sync and async SELECT profiles preserve typed values and bigint counters', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('BEGIN');
+      for (let n = 0; n < 40; n++) {
+        await db.execute('INSERT INTO docs (id,bucket,data,flag) VALUES ($id,$bucket,$data,$flag)', {
+          $id: new Record('docs', BigInt(n)), $bucket: BigInt(n % 4),
+          $data: new Uint8Array([0, 255]), $flag: true,
+        });
+      }
+      await db.execute('COMMIT');
+      const sql = 'SELECT id,data,flag FROM docs WHERE bucket=$bucket ORDER BY id';
+      const parameters = { $bucket: 2n };
+      const scan = await db.profileSelect(sql, parameters);
+      assert.deepEqual(scan.result, await db.execute(sql, parameters));
+      assert.equal(scan.result.rows.length, 10);
+      for (const value of Object.values(scan.metrics)) assert.equal(typeof value, 'bigint');
+      assert.equal(scan.metrics.rowsWritten, 0n);
+      assert.ok(scan.metrics.fullscanSteps >= 39n);
+      await db.execute('CREATE INDEX docs_bucket ON docs(bucket)');
+      const indexed = await db.profileSelect(sql, parameters);
+      assert.deepEqual(indexed.result, scan.result);
+      assert.ok(indexed.metrics.rowsRead < scan.metrics.rowsRead);
+      assert.ok(indexed.metrics.fullscanSteps < scan.metrics.fullscanSteps);
+      assert.deepEqual((await db.profileSelect(sql, parameters)).metrics, indexed.metrics);
+      const native = await db.profileSelect('SELECT $value AS value', { $value: new Uint8Array([2, 10]) });
+      assert.deepEqual(native.result.rows, [[Buffer.from([2, 10])]]);
+      await db.execute('BEGIN');
+      await assert.rejects(Promise.resolve().then(() => db.profileSelect('DELETE FROM docs')), error => {
+        assert.equal(error.code, 'FDB_UNSUPPORTED');
+        assert.equal(error.transaction.after, 'active');
+        return true;
+      });
+      assert.equal((await db.execute('SELECT count(*) FROM docs')).rows[0][0], 40n);
+      await db.execute('ROLLBACK');
+    } finally {
+      await db.close();
+    }
+    await assert.rejects(Promise.resolve().then(() => db.profileSelect('SELECT 1')), /clos/i);
+  }
+});
