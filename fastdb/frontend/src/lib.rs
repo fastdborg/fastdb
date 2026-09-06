@@ -176,6 +176,7 @@ impl Database {
             engine: self.engine.connect()?,
         };
         functions::register(&connection)?;
+        connection.atomic(|| connection.validate_storage_schema())?;
         Ok(connection)
     }
 }

@@ -6,6 +6,38 @@ use crate::{
 use turso_core::Value as EngineValue;
 use turso_parser::ast::{Cmd, Stmt};
 
+// Compare our fixed generated DDL lexically, avoiding recursive parsing of
+// externally modified schema SQL. Whitespace, keyword case and trailing
+// semicolons are immaterial; constraints and identifier quoting remain exact.
+fn schema_tokens(sql: &str) -> Result<Vec<(fastql_parser::Kind, String)>> {
+    use fastql_parser::Kind;
+    let mut tokens = fastql_parser::tokenize(sql)
+        .map_err(|e| Error::Storage(format!("invalid managed schema SQL: {e}")))?
+        .into_iter()
+        .filter(|t| !(t.kind == Kind::Symbol && t.text == ";"))
+        .map(|t| {
+            let text = if t.kind == Kind::Word {
+                t.text.to_ascii_lowercase()
+            } else {
+                t.text
+            };
+            (t.kind, text)
+        })
+        .collect::<Vec<_>>();
+    // SQLite may omit the creation-time IF NOT EXISTS flag in stored DDL.
+    if tokens.len() >= 5
+        && tokens[0].1 == "create"
+        && tokens[1].1 == "table"
+        && tokens[2..5]
+            .iter()
+            .map(|t| t.1.as_str())
+            .eq(["if", "not", "exists"])
+    {
+        tokens.drain(2..5);
+    }
+    Ok(tokens)
+}
+
 pub(crate) const fn version() -> u32 {
     2
 }
@@ -124,6 +156,77 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
     ])
 }
 impl Connection {
+    pub(crate) fn validate_storage_schema(&self) -> Result<()> {
+        self.schema_object("__fastdb_catalog", "table", "__fastdb_catalog", "CREATE TABLE IF NOT EXISTS __fastdb_catalog (name TEXT PRIMARY KEY, metadata TEXT NOT NULL)")?;
+        self.managed_dependencies("__fastdb_catalog", None)?;
+        for c in self.collections()? {
+            self.schema_object(
+                &c.storage,
+                "table",
+                &c.storage,
+                &format!(
+                    "CREATE TABLE {} (id BLOB PRIMARY KEY, doc BLOB NOT NULL)",
+                    quote(&c.storage)
+                ),
+            )?;
+            self.managed_dependencies(&c.storage, None)?;
+            for index in &c.indexes {
+                self.schema_object(
+                    &index.storage,
+                    "table",
+                    &index.storage,
+                    &format!(
+                        "CREATE TABLE {} (\"key\", id BLOB NOT NULL)",
+                        quote(&index.storage)
+                    ),
+                )?;
+                self.schema_object(
+                    &index.name,
+                    "index",
+                    &index.storage,
+                    &format!(
+                        "CREATE {} INDEX {} ON {} (\"key\")",
+                        if index.unique { "UNIQUE" } else { "" },
+                        quote(&index.name),
+                        quote(&index.storage)
+                    ),
+                )?;
+                self.managed_dependencies(&index.storage, Some(&index.name))?;
+            }
+        }
+        Ok(())
+    }
+    fn schema_object(&self, name: &str, kind: &str, table: &str, sql: &str) -> Result<()> {
+        let rows = self.run(
+            "SELECT type,tbl_name,sql FROM sqlite_schema WHERE name=?1",
+            &[text(name)],
+        )?;
+        let valid = match rows.as_slice() {
+            [row] => match row.as_slice() {
+                [EngineValue::Text(actual_kind), EngineValue::Text(actual_table), EngineValue::Text(actual_sql)] => {
+                    actual_kind.as_str() == kind
+                        && actual_table.as_str() == table
+                        && schema_tokens(actual_sql.as_str())? == schema_tokens(sql)?
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !valid {
+            return Err(Error::Storage(format!(
+                "missing or incompatible managed schema object {name}"
+            )));
+        }
+        Ok(())
+    }
+    fn managed_dependencies(&self, table: &str, expected_index: Option<&str>) -> Result<()> {
+        for row in self.run("SELECT name,type FROM sqlite_schema WHERE tbl_name=?1 AND (type='trigger' OR (type='index' AND sql IS NOT NULL))", &[text(table)])? {
+            if !matches!(row.as_slice(), [EngineValue::Text(name), EngineValue::Text(kind)] if kind.as_str()=="index" && Some(name.as_str())==expected_index) {
+                return Err(Error::Storage(format!("unexpected dependency on managed table {table}")));
+            }
+        }
+        Ok(())
+    }
     fn collections(&self) -> Result<Vec<Collection>> {
         self.run(
             "SELECT name,metadata FROM __fastdb_catalog ORDER BY name",
@@ -509,5 +612,59 @@ mod metadata_tests {
         assert!(
             matches!(&c.catalog("docs").unwrap().fields[1].kind,FieldType::Record(target) if target=="Docs")
         );
+    }
+}
+
+#[cfg(test)]
+mod storage_schema_tests {
+    use super::*;
+    #[test]
+    fn new_connections_reject_missing_or_modified_managed_schema() {
+        for mutation in [
+            "DROP TABLE __fastdb_c_646f6373",
+            "ALTER TABLE __fastdb_c_646f6373 ADD COLUMN extra TEXT",
+            "DROP TABLE __fastdb_i_76616c75655f696478",
+            "DROP INDEX value_idx",
+            "CREATE UNIQUE INDEX extra ON __fastdb_c_646f6373(doc)",
+            "CREATE TRIGGER extra AFTER INSERT ON __fastdb_c_646f6373 BEGIN INSERT INTO sentinel VALUES (100); END",
+            "ALTER TABLE __fastdb_catalog ADD COLUMN extra TEXT",
+            "CREATE TRIGGER extra AFTER UPDATE ON __fastdb_catalog BEGIN INSERT INTO sentinel VALUES (100); END",
+        ] {
+            let db=crate::Database::open(":memory:").unwrap();
+            let c=db.connect().unwrap();
+            for sql in ["CREATE TABLE docs", "CREATE UNIQUE INDEX value_idx ON docs(value)", "INSERT INTO docs {value:1}", "CREATE TABLE sentinel(value INTEGER)", "INSERT INTO sentinel VALUES (99)"] {
+                c.execute(sql,&Parameters::new()).unwrap();
+            }
+            drop(db.connect().expect("valid managed schema"));
+            c.run(mutation,&[]).unwrap();
+            let error=db.connect().err().expect("reject modified schema");
+            assert_eq!(error.code(),"FDB_STORAGE","{mutation}: {error}");
+            assert_eq!(c.execute("SELECT * FROM sentinel",&Parameters::new()).unwrap().rows,vec![vec![Value::Integer(99)]]);
+        }
+    }
+    #[test]
+    fn changed_unique_index_definition_is_rejected() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("CREATE TABLE docs", &Parameters::new()).unwrap();
+        c.execute(
+            "CREATE UNIQUE INDEX value_idx ON docs(value)",
+            &Parameters::new(),
+        )
+        .unwrap();
+        c.run("DROP INDEX value_idx", &[]).unwrap();
+        c.run(
+            "CREATE INDEX value_idx ON __fastdb_i_76616c75655f696478(key)",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(db.connect().err().unwrap().code(), "FDB_STORAGE");
+        c.run("DROP INDEX value_idx", &[]).unwrap();
+        c.run(
+            "CREATE UNIQUE INDEX \"value_idx\" ON \"__fastdb_i_76616c75655f696478\" (key)",
+            &[],
+        )
+        .unwrap();
+        drop(db.connect().expect("restored schema"));
     }
 }

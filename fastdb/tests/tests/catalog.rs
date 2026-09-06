@@ -510,3 +510,31 @@ fn relational_info_reports_views_and_native_index_details_after_reopen() {
     q(&c, "ROLLBACK");
     assert_eq!(info("INFO FOR TABLE ordinary"), table);
 }
+
+#[test]
+fn reopening_rejects_incompatible_physical_collection_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("schema.db");
+    let path = path.to_str().unwrap();
+    {
+        let db = Database::open(path).unwrap();
+        let c = db.connect().unwrap();
+        c.execute("CREATE TABLE docs", &Parameters::new()).unwrap();
+        c.execute("INSERT INTO docs {n:1}", &Parameters::new())
+            .unwrap();
+    }
+    {
+        let engine =
+            turso_core::Database::open_file(turso_core::Database::io_for_path(path).unwrap(), path)
+                .unwrap();
+        let raw = engine.connect().unwrap();
+        raw.execute("ALTER TABLE __fastdb_c_646f6373 ADD COLUMN extra TEXT")
+            .unwrap();
+    }
+    let db = Database::open(path).unwrap();
+    let error = db
+        .connect()
+        .err()
+        .expect("reject changed storage on reopen");
+    assert_eq!(error.code(), "FDB_STORAGE");
+}
