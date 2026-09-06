@@ -975,3 +975,84 @@ fn managed_null_filters_preserve_missing_values_and_outer_join_results() {
     assert!(query(&c, &sql(tails[0])).rows.is_empty());
     assert_eq!(query(&c, &sql(tails[2])).rows.len(), 4);
 }
+
+#[test]
+fn binary_literals_match_typed_fields_and_managed_index_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(
+        &c,
+        "INSERT INTO docs (id,data) VALUES (docs:a,X'0102'),(docs:b,X'03'),(docs:c,NULL)",
+    );
+    let tails = [
+        "data=X'0102'",
+        "(X'0102')=data",
+        "data IS X'0102'",
+        "data!=X'0102'",
+        "data IS NOT X'0102'",
+        "data IN (X'0102',X'03',X'0102',NULL)",
+        "data NOT IN (X'0102',X'03')",
+    ];
+    let sql = |tail: &str| format!("SELECT id FROM docs WHERE {tail} ORDER BY id");
+    let expected = [
+        vec!["a"],
+        vec!["a"],
+        vec!["a"],
+        vec!["b"],
+        vec!["b", "c"],
+        vec!["a", "b"],
+        vec![],
+    ];
+    for indexed in [false, true] {
+        if indexed {
+            query(&c, "CREATE INDEX docs_data ON docs(data)");
+        }
+        for (tail, keys) in tails.iter().zip(&expected) {
+            let rows = keys
+                .iter()
+                .map(|key| {
+                    vec![Value::Record(Record {
+                        table: "docs".into(),
+                        key: Key::String((*key).into()),
+                    })]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(query(&c, &sql(tail)).rows, rows, "{indexed}: {tail}");
+        }
+    }
+    for tail in [tails[0], tails[5]] {
+        let plan = query(&c, &format!("EXPLAIN QUERY PLAN {}", sql(tail)));
+        assert!(format!("{:?}", plan.rows).contains("SEARCH i"));
+    }
+    let p = Parameters::from([("$data".into(), Value::Binary(vec![1, 2]))]);
+    assert_eq!(
+        c.execute("SELECT $data=X'0102' AS same FROM docs LIMIT 1", &p)
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(
+            &c,
+            "DELETE FROM docs WHERE data=X'0102' RETURNING data=X'0102' AS matched"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(vec![1, 2]))
+            .unwrap()
+            .len(),
+        1
+    );
+    // Raw bytes that imitate a record encoding remain a binary value.
+    let bytes =
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"String\":\"a\"}}}";
+    let hex = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert!(query(&c, &format!("SELECT id FROM docs WHERE id=X'{hex}'"))
+        .rows
+        .is_empty());
+}

@@ -364,6 +364,17 @@ impl Scope {
             Expr::Binary(a, op, b) => {
                 if matches!(
                     op,
+                    Operator::Equals | Operator::NotEquals | Operator::Is | Operator::IsNot
+                ) {
+                    if blob_literal(a) && self.preserved(&mut b.clone())? {
+                        **a = index_literal(a)?;
+                    }
+                    if blob_literal(b) && self.preserved(&mut a.clone())? {
+                        **b = index_literal(b)?;
+                    }
+                }
+                if matches!(
+                    op,
                     Operator::Less
                         | Operator::LessEquals
                         | Operator::Greater
@@ -415,6 +426,11 @@ impl Scope {
                 }
             }
             Expr::InList { lhs, rhs, .. } => {
+                if self.preserved(&mut lhs.clone())? {
+                    for value in rhs.iter_mut() {
+                        **value = index_literal(value)?;
+                    }
+                }
                 self.lower(lhs)?;
                 for e in rhs {
                     self.lower(e)?;
@@ -619,6 +635,23 @@ fn source(connection: &Connection, table: &SelectTable) -> Result<Source> {
         collection,
     })
 }
+fn blob_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(Literal::Blob(_)) => true,
+        Expr::Parenthesized(es) if es.len() == 1 => blob_literal(&es[0]),
+        _ => false,
+    }
+}
+// SQL blob literals denote binary values, never pre-encoded record identity.
+// Apply the same scalar-key representation used by typed fields and parameters.
+fn index_literal(expr: &Expr) -> Result<Expr> {
+    if blob_literal(expr) {
+        expression(&format!("__fastdb_unwrap(__fastdb_pack({expr}))"))
+    } else {
+        Ok(expr.clone())
+    }
+}
+
 fn constant(expr: &Expr) -> bool {
     match expr {
         Expr::Literal(_) | Expr::Variable(_) => true,
@@ -727,11 +760,14 @@ fn indexed_filter(
                 let filter = if membership {
                     Expr::InList {
                         lhs: key,
-                        rhs: keys.into_iter().map(|e| Box::new(e.clone())).collect(),
+                        rhs: keys
+                            .into_iter()
+                            .map(|e| index_literal(e).map(Box::new))
+                            .collect::<Result<_>>()?,
                         not: false,
                     }
                 } else {
-                    Expr::Binary(key, Operator::Equals, Box::new(keys[0].clone()))
+                    Expr::Binary(key, Operator::Equals, Box::new(index_literal(keys[0])?))
                 };
                 return Ok(Some((index.clone(), filter)));
             }

@@ -424,3 +424,10 @@ The package remains private and unpublished. Platform/version coverage, prebuild
 The smoke seeded the consumer lockfile from the pinned workspace lockfile, allowed Cargo to add/prune consumer entries, and verified all 240 resolved registry/git package identities/checksums against the baseline before its locked build. Host-filtered metadata avoids fetching irrelevant platform dependencies. General Rust flag overrides were removed and the checkout's .cargo configuration was outside the consumer's search path. Temporary consumer files were cleaned up; the separate build cache remains under target/fastdb-rust-consumer.
 
 The Rust client guide documents the tested local-path workflow and the application's responsibility to retain its own lockfile. This is not registry package publication, arbitrary dependency-unification or cross-platform qualification. No dependency versions, workspace manifests/lockfile or upstream files changed. Full V1 release work remains pending.
+
+
+## Binary literals in equality and membership — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 154 Rust tests, fifteen Node tests and TypeScript declarations. A CLI probe reproduced a stored X'0102' value comparing unequal to the same literal. Blob literals in equality/IS and membership comparisons with preserved typed operands now use the same binary scalar-key representation as fields and parameters. Managed equality/IN candidates apply the same conversion.
+
+The regression covers indexed/unindexed results, actual SEARCH plans, reversed and parenthesized literals, inequality/null behavior, typed parameters, DELETE/RETURNING rollback and binary bytes that imitate record encoding without acquiring record identity. No stored format, dependency or upstream file changed. The probe also identified a separate pending scalar-function issue (length of a stored binary value sees its encoded representation); broader binary function/range propagation and full V1 qualification remain incomplete.

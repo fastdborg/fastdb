@@ -275,3 +275,10 @@ The generated source filters index entries with native equality/IN and joins the
 Single-source collection queries can also filter managed index entries with IS NULL/IS NOT NULL (including native ISNULL/NOTNULL spellings and reversed literal-null IS comparisons). Missing and explicit-null fields share the stored null key, while equality to NULL remains unknown and returns no matches. Residual WHERE conditions stay outside the source. These candidates are disabled for joins because null-accepting pushdown can manufacture null-extended outer-join rows.
 
 The pinned engine currently scans even a native index for null predicates. The generated plan scans compact managed-index entries and looks up candidate documents by ID; this is not a null-key seek or an established latency improvement. Tests compare indexed and scan results, verify candidate-source plans, right-join results, update/index maintenance and delete/rollback. Cost-based selection and performance measurements remain pending.
+
+
+## Binary literals in typed predicates
+
+SQL blob literals compared with preserved FastDB operands through =, !=, IS and IS NOT now use the same binary scalar-key encoding as stored fields and bound values. A typed left operand of IN/NOT IN similarly normalizes blob literals in the list. Parenthesized blob literals retain their meaning. Eligible managed equality/IN candidates apply the same conversion, so adding an index does not change matches. Raw bytes that imitate a serialized record remain binary and cannot equal a typed record ID.
+
+Tests cover indexed and unindexed results, duplicate/list/null behavior, reversed equality, typed parameters and DELETE/RETURNING rollback. Literal projections and ordinary relational comparisons retain native behavior. Broader binary expression propagation, range ordering and scalar-function inputs remain unfinished: a probe confirmed that length of a stored binary field still observes its encoded scalar representation, so this change does not establish complete binary SQL-function semantics. No persisted format changed.
