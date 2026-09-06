@@ -538,3 +538,31 @@ fn reopening_rejects_incompatible_physical_collection_storage() {
         .expect("reject changed storage on reopen");
     assert_eq!(error.code(), "FDB_STORAGE");
 }
+
+#[test]
+fn missing_catalog_cannot_hide_persisted_collection_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("orphan.db");
+    let path = path.to_str().unwrap();
+    {
+        let db = Database::open(path).unwrap();
+        let c = db.connect().unwrap();
+        c.execute("CREATE TABLE docs", &Parameters::new()).unwrap();
+        c.execute("INSERT INTO docs {n:1}", &Parameters::new())
+            .unwrap();
+    }
+    {
+        let engine =
+            turso_core::Database::open_file(turso_core::Database::io_for_path(path).unwrap(), path)
+                .unwrap();
+        let raw = engine.connect().unwrap();
+        raw.execute("DROP TABLE __fastdb_catalog").unwrap();
+    }
+    let db = Database::open(path).unwrap();
+    let error = db
+        .connect()
+        .err()
+        .expect("orphan storage must reject reconnect");
+    assert_eq!(error.code(), "FDB_STORAGE");
+    assert!(error.to_string().contains("orphan managed storage"));
+}

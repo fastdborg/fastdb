@@ -159,7 +159,9 @@ impl Connection {
     pub(crate) fn validate_storage_schema(&self) -> Result<()> {
         self.schema_object("__fastdb_catalog", "table", "__fastdb_catalog", "CREATE TABLE IF NOT EXISTS __fastdb_catalog (name TEXT PRIMARY KEY, metadata TEXT NOT NULL)")?;
         self.managed_dependencies("__fastdb_catalog", None)?;
+        let mut storage = std::collections::BTreeSet::new();
         for c in self.collections()? {
+            storage.insert(c.storage.clone());
             self.schema_object(
                 &c.storage,
                 "table",
@@ -171,6 +173,12 @@ impl Connection {
             )?;
             self.managed_dependencies(&c.storage, None)?;
             for index in &c.indexes {
+                if !storage.insert(index.storage.clone()) {
+                    return Err(Error::Storage(format!(
+                        "managed index storage {} has multiple owners",
+                        index.storage
+                    )));
+                }
                 self.schema_object(
                     &index.storage,
                     "table",
@@ -192,6 +200,20 @@ impl Connection {
                     ),
                 )?;
                 self.managed_dependencies(&index.storage, Some(&index.name))?;
+            }
+        }
+        for row in self.run("SELECT name FROM sqlite_schema", &[])? {
+            let [EngineValue::Text(name)] = row.as_slice() else {
+                return Err(Error::Storage("invalid schema name".into()));
+            };
+            let canonical = name.as_str().to_ascii_lowercase();
+            if (canonical.starts_with("__fastdb_c_") || canonical.starts_with("__fastdb_i_"))
+                && !storage.contains(name.as_str())
+            {
+                return Err(Error::Storage(format!(
+                    "orphan managed storage object {}",
+                    name.as_str()
+                )));
             }
         }
         Ok(())
@@ -666,5 +688,57 @@ mod storage_schema_tests {
         )
         .unwrap();
         drop(db.connect().expect("restored schema"));
+    }
+}
+
+#[cfg(test)]
+mod orphan_schema_tests {
+    use super::*;
+    #[test]
+    fn managed_index_storage_cannot_be_shared_by_collections() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE TABLE other",
+            "CREATE INDEX value_idx ON docs(value)",
+            "INSERT INTO docs {value:1}",
+        ] {
+            c.execute(sql, &Parameters::new()).unwrap();
+        }
+        let mut other = c.catalog("other").unwrap();
+        other.indexes = c.catalog("docs").unwrap().indexes;
+        c.save_catalog(&other).unwrap();
+        let error = db
+            .connect()
+            .err()
+            .expect("shared index storage must reject connection");
+        assert_eq!(error.code(), "FDB_STORAGE");
+        assert!(error.to_string().contains("multiple owners"), "{error}");
+        other.indexes.clear();
+        c.save_catalog(&other).unwrap();
+        drop(db.connect().expect("restored ownership"));
+    }
+
+    #[test]
+    fn removed_metadata_and_orphan_reserved_objects_fail_connection_validation() {
+        for mutation in [
+            "DELETE FROM __fastdb_catalog WHERE name='docs'",
+            "UPDATE __fastdb_catalog SET metadata=json_set(metadata,'$.indexes',json('[]')) WHERE name='docs'",
+            "CREATE TABLE __fastdb_c_orphan(value)",
+            "CREATE VIEW __fastdb_i_orphan AS SELECT 1",
+            "CREATE TABLE __FASTDB_C_ORPHAN(value)",
+        ] {
+            let db=crate::Database::open(":memory:").unwrap();
+            let c=db.connect().unwrap();
+            for sql in ["CREATE TABLE docs", "CREATE INDEX value_idx ON docs(value)", "INSERT INTO docs {value:1}"] {
+                c.execute(sql,&Parameters::new()).unwrap();
+            }
+            c.run(mutation,&[]).unwrap();
+            let error=db.connect().err().expect("orphan must reject connection");
+            assert_eq!(error.code(),"FDB_STORAGE","{error}");
+            assert!(error.to_string().contains("orphan managed storage"),"{mutation}: {error}");
+            assert_eq!(c.run("SELECT count(*) FROM __fastdb_c_646f6373",&[]).unwrap()[0][0], crate::scalar(&Value::Integer(1)).unwrap());
+        }
     }
 }
