@@ -87,11 +87,18 @@ fn field_path(expr: &Expr) -> Option<Vec<String>> {
         _ => None,
     }
 }
+#[derive(Clone, Copy)]
+enum FieldBinding {
+    Key,
+    Typed,
+    Sql,
+}
+
 fn bind_field(
     expr: &mut Expr,
     doc: Option<&Document>,
     bindings: &mut Vec<EngineValue>,
-    typed: bool,
+    binding: FieldBinding,
 ) -> Result<bool> {
     if let Some(path) = field_path(expr) {
         let value = match doc {
@@ -103,10 +110,10 @@ fn bind_field(
             None => None,
         };
         let value = value.unwrap_or(&Value::Null);
-        bindings.push(if typed {
-            EngineValue::Blob(value.encode()?)
-        } else {
-            crate::index_scalar(value)?
+        bindings.push(match binding {
+            FieldBinding::Typed => EngineValue::Blob(value.encode()?),
+            FieldBinding::Key => crate::index_scalar(value)?,
+            FieldBinding::Sql => crate::scalar(value)?,
         });
         let index =
             u32::try_from(bindings.len()).map_err(|_| invalid("too many CHECK references"))?;
@@ -118,7 +125,15 @@ fn bind_field(
     Ok(false)
 }
 fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue>) -> Result<()> {
-    if bind_field(expr, doc, bindings, false)? {
+    lower_mode(expr, doc, bindings, FieldBinding::Key)
+}
+fn lower_mode(
+    expr: &mut Expr,
+    doc: Option<&Document>,
+    bindings: &mut Vec<EngineValue>,
+    binding: FieldBinding,
+) -> Result<()> {
+    if bind_field(expr, doc, bindings, binding)? {
         return Ok(());
     }
     match expr {
@@ -134,8 +149,8 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
             ) && field_path(a).is_some()
                 && field_path(b).is_some()
             {
-                bind_field(a, doc, bindings, true)?;
-                bind_field(b, doc, bindings, true)?;
+                bind_field(a, doc, bindings, FieldBinding::Typed)?;
+                bind_field(b, doc, bindings, FieldBinding::Typed)?;
                 *expr = parse_check(&format!("__fastdb_compare({a},{b}) {op} 0"))?;
                 return Ok(());
             }
@@ -158,7 +173,7 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
                     "CHECK CAST requires an unsized built-in scalar type",
                 ));
             }
-            lower(e, doc, bindings)?;
+            lower_mode(e, doc, bindings, FieldBinding::Sql)?;
         }
         Expr::Collate(e, name) => {
             if !matches!(
@@ -167,7 +182,7 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
             ) {
                 return Err(invalid("CHECK requires a built-in collation"));
             }
-            lower(e, doc, bindings)?;
+            lower_mode(e, doc, bindings, binding)?;
         }
         Expr::Between {
             lhs,
@@ -177,9 +192,9 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
         } => {
             if field_path(lhs).is_some() && field_path(start).is_some() && field_path(end).is_some()
             {
-                bind_field(lhs, doc, bindings, true)?;
-                bind_field(start, doc, bindings, true)?;
-                bind_field(end, doc, bindings, true)?;
+                bind_field(lhs, doc, bindings, FieldBinding::Typed)?;
+                bind_field(start, doc, bindings, FieldBinding::Typed)?;
+                bind_field(end, doc, bindings, FieldBinding::Typed)?;
                 let negate = if *not { "NOT " } else { "" };
                 *expr = parse_check(&format!("{negate}__fastdb_between({lhs},{start},{end})"))?;
                 return Ok(());
@@ -212,7 +227,7 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
         }
         Expr::Parenthesized(es) => {
             for e in es {
-                lower(e, doc, bindings)?;
+                lower_mode(e, doc, bindings, binding)?;
             }
         }
         Expr::Case {
@@ -225,10 +240,10 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
             }
             for (a, b) in when_then_pairs {
                 lower(a, doc, bindings)?;
-                lower(b, doc, bindings)?;
+                lower_mode(b, doc, bindings, binding)?;
             }
             if let Some(e) = else_expr {
-                lower(e, doc, bindings)?;
+                lower_mode(e, doc, bindings, binding)?;
             }
         }
         Expr::FunctionCall {
@@ -270,7 +285,7 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
                 return Err(invalid(format!("function {name} is not eligible in CHECK")));
             }
             for e in args {
-                lower(e, doc, bindings)?;
+                lower_mode(e, doc, bindings, FieldBinding::Sql)?;
             }
         }
         _ => {

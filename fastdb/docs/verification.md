@@ -438,3 +438,10 @@ The regression covers indexed/unindexed results, actual SEARCH plans, reversed a
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 155 Rust tests, fifteen Node tests and TypeScript declarations. Preserved values passed into native function arguments or CAST now expose binary payload bytes through a dedicated scalar conversion; internal frontend helper protocols and predicate/index representations remain separate. The original CLI probe now reports length 2 and equality true for stored X'0102', replacing encoded length 35 and the previously corrected equality failure.
 
 A differential regression covers length/hex/typeof/substr, text/integer casts, nested and null-helper composition, empty/null values and typed parameters against native BLOB columns. Indexed equality, binary UPDATE/RETURNING output and rollback/index maintenance also pass. No dependency, persisted encoding or upstream file changed. CHECK argument handling, broader expression/range/aggregate/window qualification and full V1 release work remain pending.
+
+
+## Binary payloads in candidate CHECK arguments — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 156 Rust tests, fifteen Node tests and TypeScript declarations. A CLI probe reproduced length(payload)=2 rejecting a two-byte binary payload. CHECK lowering now separates key, typed and native-scalar field bindings, using payload bytes for allowed native function/CAST arguments and propagating that argument context through CASE result branches, parentheses and built-in collation.
+
+The persistent regression adds the constraint over existing binary data, checks length/substr/coalesce/CASE/collation/casts, rejects invalid INSERT/UPDATE/UPSERT while preserving the tested transaction and index state, and verifies enforcement after reopening. The deterministic function allowlist and stored format remain unchanged. Affected prototype definitions/data need revalidation; broader binary comparison/arithmetic and full V1 qualification remain pending. No dependencies or upstream files changed.

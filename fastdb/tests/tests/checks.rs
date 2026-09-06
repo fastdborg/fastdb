@@ -392,3 +392,58 @@ fn deep_candidate_paths_preserve_quoted_segments_and_check_atomicity() {
         1
     );
 }
+
+#[test]
+fn binary_check_arguments_use_candidate_payloads_and_persist_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary-check.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,payload) VALUES (docs:saved,1,X'3132')",
+        );
+        q(&c,"DEFINE FIELD valid ON docs TYPE integer CHECK(length(payload)=2 AND length(coalesce(payload,X''))=2 AND length((payload COLLATE BINARY))=2 AND length(CASE WHEN valid=1 THEN payload ELSE X'' END)=2 AND CAST(payload AS INTEGER)=12 AND substr(payload,1,1)=X'31')");
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        for sql in [
+            "INSERT INTO docs (id,valid,payload) VALUES (docs:bad,1,X'31')",
+            "UPDATE docs SET payload=X'313233'",
+            "UPDATE docs:saved {payload: null}",
+            "UPSERT docs:saved {payload: 'wrong'}",
+        ] {
+            assert_eq!(
+                c.execute(sql, &Parameters::new()).unwrap_err().code(),
+                "FDB_VALIDATION",
+                "{sql}"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        }
+        assert_eq!(
+            c.lookup_index("docs", "docs_payload", &Value::Binary(vec![0x31, 0x32]))
+                .unwrap()
+                .len(),
+            1
+        );
+        q(&c, "ROLLBACK");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'33'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    q(&c, "UPDATE docs SET payload=X'3132'");
+    assert_eq!(
+        q(
+            &c,
+            "SELECT length(payload),CAST(payload AS INTEGER) FROM docs"
+        )
+        .rows,
+        vec![vec![Value::Integer(2), Value::Integer(12)]]
+    );
+}
