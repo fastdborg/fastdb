@@ -705,6 +705,27 @@ pub fn parse(input: &str) -> Result<Statement> {
         tokens: tokenize(input)?,
         pos: 0,
     };
+    // Check before either FastQL recursion or delegation to the SQL parser.
+    // Quoted strings/identifiers and comments cannot contribute delimiters.
+    let mut delimiters = 0usize;
+    for token in &p.tokens {
+        if token.kind != Kind::Symbol {
+            continue;
+        }
+        match token.text.as_str() {
+            "(" | "[" | "{" => {
+                delimiters += 1;
+                if delimiters > 64 {
+                    return Err(Error {
+                        offset: token.start,
+                        message: "statement delimiter nesting limit exceeded (64)".into(),
+                    });
+                }
+            }
+            ")" | "]" | "}" => delimiters = delimiters.saturating_sub(1),
+            _ => {}
+        }
+    }
     if p.eat("UPSERT") {
         let target = if p.tokens.get(p.pos + 1).is_some_and(|t| t.text == ":") {
             Some(p.record()?)

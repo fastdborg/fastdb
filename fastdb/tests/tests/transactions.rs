@@ -163,3 +163,47 @@ fn constraint_code_does_not_imply_full_rollback_for_native_fail_policy() {
         vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn excessive_sql_delimiters_fail_before_writes_and_preserve_outer_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE native(value INTEGER)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {value:1}");
+    let deep = format!("{}2{}", "(".repeat(128), ")".repeat(128));
+    for statement in [
+        format!("INSERT INTO native VALUES ({deep})"),
+        format!("INSERT INTO docs (value) VALUES (2) RETURNING {deep}"),
+        format!("UPDATE docs SET value={deep}"),
+        format!("SELECT {deep} FROM docs"),
+    ] {
+        let report = c.execute_report(&statement, &Parameters::new());
+        assert_eq!(report.result.unwrap_err().code(), "FDB_SYNTAX");
+        assert_eq!(report.transaction_after, State::Active);
+        assert_eq!(
+            c.execute("SELECT value FROM docs", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(1)]]
+        );
+        assert!(c
+            .execute("SELECT * FROM native", &Parameters::new())
+            .unwrap()
+            .rows
+            .is_empty());
+    }
+    q(&c, "INSERT INTO native VALUES (3)");
+    q(&c, "ROLLBACK");
+    assert!(c
+        .execute("SELECT * FROM docs", &Parameters::new())
+        .unwrap()
+        .rows
+        .is_empty());
+    assert!(c
+        .execute("SELECT * FROM native", &Parameters::new())
+        .unwrap()
+        .rows
+        .is_empty());
+}

@@ -72,3 +72,20 @@ fn interactive_script_completeness_tracks_lexical_and_trigger_boundaries() {
     }
     assert!(crate::script_complete("SELECT );").is_err());
 }
+
+#[test]
+fn delegated_sql_has_a_delimiter_depth_limit_before_engine_parsing() {
+    let sql = |depth: usize| format!("SELECT {}1{}", "(".repeat(depth), ")".repeat(depth));
+    assert!(parse(&sql(64)).is_ok());
+    let error = parse(&sql(65)).unwrap_err();
+    assert!(error.message.contains("delimiter nesting limit"));
+    assert_eq!(error.offset, "SELECT ".len() + 64);
+    assert!(parse(&sql(10_000)).is_err());
+    for quoted in [
+        format!("'{}'", "(".repeat(100)),
+        format!("\"{}\"", "(".repeat(100)),
+        format!("[{}]", "(".repeat(100)),
+    ] {
+        assert!(parse(&format!("SELECT {quoted} /* {} */", "(".repeat(100))).is_ok());
+    }
+}
