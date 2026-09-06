@@ -170,12 +170,21 @@ impl Scope {
             }
             _ => {}
         }
-        if self.standalone_alias(expr).is_none() {
-            if let Some((i, path)) = self.field(expr)? {
-                // Direct IDs must remain column references for primary-key seeks.
-                *expr = self.accessor(i, &path, false)?;
+        if let Some((mut value, typed)) = self.standalone_alias(expr) {
+            if typed {
+                *expr = expression(&format!("__fastdb_unwrap({value})"))?;
                 return Ok(true);
             }
+            if native_alias_key(&mut value)? {
+                *expr = value;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        if let Some((i, path)) = self.field(expr)? {
+            // Direct IDs must remain column references for primary-key seeks.
+            *expr = self.accessor(i, &path, false)?;
+            return Ok(true);
         }
         if self.preserved(expr)? {
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
@@ -762,6 +771,37 @@ fn source(connection: &Connection, table: &SelectTable) -> Result<Source> {
             .into(),
         collection,
     })
+}
+// Alias values are already lowered. Convert their native result without walking
+// through generated typed protocol calls a second time.
+fn native_alias_key(expr: &mut Expr) -> Result<bool> {
+    match expr {
+        Expr::Collate(value, _) | Expr::Unary(UnaryOperator::Positive, value) => {
+            return native_alias_key(value)
+        }
+        Expr::Parenthesized(values) if values.len() == 1 => {
+            return native_alias_key(&mut values[0])
+        }
+        Expr::Id(_)
+        | Expr::Name(_)
+        | Expr::Qualified(_, _)
+        | Expr::DoublyQualified(_, _, _)
+        | Expr::Column { .. }
+        | Expr::RowId { .. } => return Ok(false),
+        _ => {}
+    }
+    let cast_type = match expr {
+        Expr::Cast { type_name, .. } => Some(type_name.clone()),
+        _ => None,
+    };
+    *expr = expression(&format!("__fastdb_unwrap(__fastdb_pack({expr}))"))?;
+    if let Some(type_name) = cast_type {
+        *expr = Expr::Cast {
+            expr: Box::new(expr.clone()),
+            type_name,
+        };
+    }
+    Ok(true)
 }
 fn blob_literal(expr: &Expr) -> bool {
     match expr {

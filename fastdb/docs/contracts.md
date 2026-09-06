@@ -404,3 +404,10 @@ CHECK's existing GLOB path uses candidate payload bytes on both sides. A persist
 SQL-shaped -> and ->> operators now unwrap preserved binary operands to payload bytes. CHECK's existing JSON arrow expression path likewise binds candidate payloads. JSON parsing, path semantics and native errors remain governed by the pinned engine; document objects are not implicitly converted to JSON text by this change.
 
 Differential tests cover JSON text stored as BLOB, missing/NULL values, chained extraction and UPDATE/RETURNING rollback. Binary path operands produce the same native constraint code as ordinary tables rather than being advertised as supported JSON paths. A persistent CHECK test covers existing binary JSON, rejected updates, retained transaction state and reopened enforcement/index contents. Reapply affected prototype definitions for data revalidation; stored encodings and the CHECK function allowlist are unchanged.
+
+
+## Native expression alias comparison keys
+
+Comparisons and membership through native expression aliases now convert the already-lowered alias result into a comparison key. Generated operand expressions are not lowered again. Explicit collation, unary plus and cast structure are retained; aliases directly referring to ordinary columns retain their existing path so implicit column affinity is not discarded.
+
+Differential tests cover HAVING equality/membership with binary substr aliases, numeric/text casts, collation and equality inside ORDER BY. This does not add WHERE/GROUP BY alias support, resolve mixed native-column/typed-field comparisons, or qualify all volatile/aggregate alias evaluation. General expression/resource work remains open.

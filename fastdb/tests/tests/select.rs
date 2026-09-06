@@ -1425,3 +1425,25 @@ fn binary_pattern_operands_match_native_blob_behavior() {
     );
     query(&c, "ROLLBACK");
 }
+
+#[test]
+fn native_binary_aliases_keep_comparison_keys_in_having_and_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(data BLOB)");
+    for hex in ["31", "32", ""] {
+        query(&c, &format!("INSERT INTO docs (data) VALUES (X'{hex}')"));
+        query(&c, &format!("INSERT INTO baseline VALUES (X'{hex}')"));
+    }
+    for template in [
+        "SELECT substr(data,1,1) AS part FROM SOURCE GROUP BY data HAVING part=data ORDER BY data",
+        "SELECT substr(data,1,1) AS part FROM SOURCE GROUP BY data HAVING part IN (data) ORDER BY data",
+        "SELECT CAST(data AS INTEGER) AS number FROM SOURCE GROUP BY data HAVING number='1' ORDER BY data",
+        "SELECT substr(data,1,1) AS part FROM SOURCE ORDER BY part=X'31',data",
+        "SELECT CAST(data AS TEXT) COLLATE NOCASE AS word FROM SOURCE GROUP BY data HAVING word='1' ORDER BY data",
+    ] {
+        assert_eq!(query(&c, &template.replace("SOURCE", "docs")).rows,
+                   query(&c, &template.replace("SOURCE", "baseline")).rows, "{template}");
+    }
+}
