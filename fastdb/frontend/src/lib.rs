@@ -3,6 +3,7 @@ mod catalog;
 mod check;
 mod expression;
 mod functions;
+mod links;
 mod path;
 mod select;
 mod transaction;

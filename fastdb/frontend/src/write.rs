@@ -112,6 +112,9 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
                 return Err(unsupported("aggregate/window VALUES expressions"));
             }
             let function = name.as_str().to_ascii_lowercase();
+            if function == "__fastdb_fetch" {
+                return Err(unsupported("record::fetch in document write expression"));
+            }
             if matches!(
                 function.as_str(),
                 "avg"
@@ -420,6 +423,9 @@ impl Connection {
         assignments: &[Expr],
         params: &Parameters,
     ) -> Result<Vec<Vec<Value>>> {
+        for expr in assignments {
+            safe_value_expression(expr)?;
+        }
         let mut columns = vec![ResultColumn::Star];
         for (i, expr) in assignments.iter().enumerate() {
             let expr = if parameter(expr, params)?.is_some() {

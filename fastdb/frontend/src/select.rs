@@ -11,6 +11,7 @@ struct Scope {
     sources: Vec<Source>,
     params: Parameters,
     consumed: std::cell::RefCell<std::collections::BTreeSet<String>>,
+    fetched_aliases: std::cell::RefCell<std::collections::BTreeSet<String>>,
 }
 impl Scope {
     fn field(&self, expr: &Expr) -> Result<Option<(usize, Vec<String>)>> {
@@ -30,6 +31,15 @@ impl Scope {
             _ => return Ok(None),
         };
         if parts.len() == 1 {
+            if self
+                .fetched_aliases
+                .borrow()
+                .contains(&parts[0].to_ascii_lowercase())
+            {
+                return Err(unsupported(
+                    "filtering on fetched aliases; qualify the stored source field if intended",
+                ));
+            }
             if matches!(expr, Expr::Id(n) if !n.quoted() && (n.as_str().eq_ignore_ascii_case("true") || n.as_str().eq_ignore_ascii_case("false")))
             {
                 return Ok(None);
@@ -216,6 +226,11 @@ impl Scope {
         Ok(true)
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        if matches!(expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch") {
+            return Err(unsupported(
+                "record::fetch is allowed only as a top-level SELECT projection",
+            ));
+        }
         if self.helper(expr)? {
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
             return Ok(());
@@ -319,7 +334,8 @@ impl Scope {
 fn public_expression_name(expr: &Expr) -> String {
     let mut name = expr
         .to_string()
-        .replace("__fastdb_record_value", "type::record");
+        .replace("__fastdb_record_value", "type::record")
+        .replace("__fastdb_fetch", "record::fetch");
     for (internal, public) in [
         ("record_id", "record::id"),
         ("record_table", "record::table"),
@@ -519,6 +535,7 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
             let mapped = match namespace.as_str() {
                 "type::record" => "__fastdb_record_value",
                 "record::id" => "__fastdb_h_record_id",
+                "record::fetch" => "__fastdb_fetch",
                 "record::table" => "__fastdb_h_record_table",
                 "array::new" => "__fastdb_h_array_new",
                 "array::append" => "__fastdb_h_array_append",
@@ -580,6 +597,7 @@ struct SelectOptions<'a> {
     ignore_unused: bool,
     positional: bool,
     snapshot: Option<Option<&'a crate::Document>>,
+    guarded: bool,
 }
 impl Connection {
     pub(crate) fn collection_select(
@@ -695,13 +713,30 @@ impl Connection {
         params: &Parameters,
         options: SelectOptions<'_>,
     ) -> Result<Option<QueryResult>> {
+        let expanded = expand_records(sql)?;
+        if !options.guarded
+            && fastql_parser::tokenize(&expanded)?
+                .iter()
+                .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch")
+        {
+            return self.atomic(|| {
+                self.collection_select_options(
+                    sql,
+                    params,
+                    SelectOptions {
+                        guarded: true,
+                        ..options
+                    },
+                )
+            });
+        }
         let SelectOptions {
             trusted,
             ignore_unused,
             positional,
             snapshot,
+            guarded: _,
         } = options;
-        let expanded = expand_records(sql)?;
         let Ok(mut cmd) = parsed(&expanded) else {
             return Ok(None);
         };
@@ -757,6 +792,7 @@ impl Connection {
             sources,
             params: params.clone(),
             consumed: Default::default(),
+            fetched_aliases: Default::default(),
         };
         for (i, s) in scope.sources.iter().enumerate() {
             if scope.sources[..i]
@@ -781,6 +817,7 @@ impl Connection {
             }
         }
         let mut typed = Vec::new();
+        let mut fetched = Vec::new();
         let mut names = Vec::new();
         let mut rewritten = Vec::new();
         for column in columns.iter() {
@@ -803,6 +840,7 @@ impl Connection {
                         Some(As::As(Name::exact("document".into()))),
                     ));
                     typed.push(true);
+                    fetched.push(false);
                     names.push("document".to_owned());
                 }
                 ResultColumn::Expr(expr, alias) => {
@@ -818,7 +856,38 @@ impl Connection {
                                 |(_, path)| path.last().expect("nonempty path").clone(),
                             )
                         });
-                    if scope.preserved(&mut expr)? {
+                    let is_fetch = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch");
+                    fetched.push(is_fetch);
+                    if is_fetch {
+                        if snapshot.is_some() {
+                            return Err(unsupported("record::fetch in RETURNING"));
+                        }
+                        let Expr::FunctionCall {
+                            args,
+                            distinctness,
+                            filter_over,
+                            order_by,
+                            within_group,
+                            ..
+                        } = &expr
+                        else {
+                            unreachable!();
+                        };
+                        if args.len() != 1
+                            || distinctness.is_some()
+                            || filter_over.filter_clause.is_some()
+                            || filter_over.over_clause.is_some()
+                            || !order_by.is_empty()
+                            || !within_group.is_empty()
+                        {
+                            return Err(unsupported(
+                                "record::fetch expects one unmodified reference",
+                            ));
+                        }
+                        expr = *args[0].clone();
+                        scope.typed(&mut expr)?;
+                        typed.push(true);
+                    } else if scope.preserved(&mut expr)? {
                         typed.push(true);
                     } else {
                         scope.lower(&mut expr)?;
@@ -839,6 +908,12 @@ impl Connection {
                 ));
             }
         }
+        *scope.fetched_aliases.borrow_mut() = names
+            .iter()
+            .zip(&fetched)
+            .filter(|(_, fetch)| **fetch)
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect();
         *columns = rewritten;
         let candidates = scope
             .sources
@@ -910,6 +985,9 @@ impl Connection {
                 _ => None,
             };
             if let Some(i) = alias_index {
+                if fetched[i] {
+                    return Err(unsupported("ordering on fetched values"));
+                }
                 if typed[i] {
                     let ResultColumn::Expr(e, _) = &columns[i] else {
                         unreachable!("rewritten projections");
@@ -971,6 +1049,25 @@ impl Connection {
                 }
             }
             rows.push(output);
+        }
+        if !explain && fetched.iter().any(|v| *v) {
+            let refs = rows
+                .iter()
+                .flat_map(|row| {
+                    row.iter()
+                        .zip(&fetched)
+                        .filter(|(_, fetch)| **fetch)
+                        .map(|(value, _)| value.clone())
+                })
+                .collect::<Vec<_>>();
+            let mut values = self.fetch_records(&refs)?.into_iter();
+            for row in &mut rows {
+                for (value, fetch) in row.iter_mut().zip(&fetched) {
+                    if *fetch {
+                        *value = values.next().expect("matching fetch count");
+                    }
+                }
+            }
         }
         Ok(Some(QueryResult {
             columns: if explain { engine_names } else { names },
