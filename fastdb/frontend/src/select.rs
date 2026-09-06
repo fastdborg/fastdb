@@ -844,13 +844,10 @@ impl Connection {
         if matches!(distinctness, Some(Distinctness::Distinct)) {
             return Err(unsupported("DISTINCT over typed projections"));
         }
-        if select.with.is_some()
-            || !select.body.compounds.is_empty()
-            || group_by.is_some()
-            || !window_clause.is_empty()
-        {
-            return Err(unsupported("CTEs, compound SELECT, grouping or windows"));
+        if select.with.is_some() || !select.body.compounds.is_empty() || !window_clause.is_empty() {
+            return Err(unsupported("CTEs, compound SELECT or windows"));
         }
+        let original_columns = columns.clone();
         let scope = Scope {
             sources,
             params: params.clone(),
@@ -1033,6 +1030,31 @@ impl Connection {
         if let Some(expr) = where_clause {
             scope.lower(expr)?;
         }
+        if let Some(group) = group_by {
+            // Ordinals refer to the original expression: grouping the encoded
+            // projection would give different numeric/null SQL semantics.
+            for expr in &mut group.exprs {
+                if let Expr::Literal(Literal::Numeric(n)) = expr.as_ref() {
+                    if let Ok(i) = n.parse::<usize>() {
+                        if i == 0 || i > original_columns.len() {
+                            return Err(Error::Validation("GROUP BY position out of range".into()));
+                        }
+                        let ResultColumn::Expr(original, _) = &original_columns[i - 1] else {
+                            return Err(unsupported("GROUP BY document star"));
+                        };
+                        // Prevent a numeric constant projection from becoming a
+                        // second ordinal when the lowered AST is reparsed.
+                        *expr = Box::new(expression(&format!("coalesce({original}, NULL)"))?);
+                    }
+                }
+                reject_group_aliases(expr, &original_columns)?;
+                scope.lower(expr)?;
+            }
+            if let Some(expr) = &mut group.having {
+                reject_group_aliases(expr, &original_columns)?;
+                scope.lower(expr)?;
+            }
+        }
         for sorted in &mut select.order_by {
             // Aliases refer to the original expression, not the encoded typed
             // projection, so sorting keeps SQL scalar semantics.
@@ -1138,4 +1160,32 @@ impl Connection {
             affected: 0,
         }))
     }
+}
+
+fn reject_group_aliases(expr: &Expr, columns: &[ResultColumn]) -> Result<()> {
+    for column in columns {
+        let ResultColumn::Expr(original, Some(alias)) = column else {
+            continue;
+        };
+        if !alias.is_explicit() {
+            continue;
+        }
+        // An alias identical to its simple field needs no substitution.
+        if matches!(original.as_ref(), Expr::Id(n) | Expr::Name(n) if n.as_str().eq_ignore_ascii_case(alias.name().as_str()))
+        {
+            continue;
+        }
+        for token in fastql_parser::tokenize(&expr.to_string())? {
+            if matches!(
+                token.kind,
+                fastql_parser::Kind::Word | fastql_parser::Kind::Identifier
+            ) && token.text.eq_ignore_ascii_case(alias.name().as_str())
+            {
+                return Err(unsupported(
+                    "projection aliases in GROUP BY/HAVING; repeat the expression",
+                ));
+            }
+        }
+    }
+    Ok(())
 }

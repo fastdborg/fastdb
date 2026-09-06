@@ -87,3 +87,10 @@ Only the compiled-in source is evaluated. Inputs pass as function arguments, nev
 Direct object-expression argument errors use validation errors; input/output, execution and recognized allocation/stack failures use `FDB_LIMIT`. Runtime initialization or unexpected bundle failures use storage errors. SQL UDF failures pass through the engine error path and can abort an outer transaction, as documented above; error classification is not yet a frozen cross-language contract.
 
 Fresh runtimes trade performance for isolated calls. Benchmarks, full dependency/license/security review, Unicode upgrade compatibility, cancellation integration, native C packaging and non-Linux platform tests remain release gates. The two-function catalog does not complete V1 runtime qualification.
+
+
+## Initial collection grouping
+
+Collection SELECT and INSERT SELECT support GROUP BY scalar expressions, positive projection ordinals, and HAVING expressions through the pinned engine. Keys and aggregate arguments use SQL scalar lowering; missing fields and explicit null share a SQL NULL group, and numeric/boolean scalar coercions follow that lowering. Result field projections retain their tagged type. SQL aggregate outputs retain native scalar types, and aggregate DISTINCT/FILTER clauses use the existing expression lowering.
+
+Projection alias resolution in GROUP BY/HAVING is not implemented. A conservative guard rejects expression tokens matching explicit renamed aliases, including some qualified references; repeat expressions and avoid conflicting alias names. This guard is temporary and is not a final SQL compatibility boundary. Composite grouping keys still fail scalar conversion; full typed equality, alias precedence and broader query semantics remain V1 work. SELECT DISTINCT, CTEs and window/compound queries remain separately unsupported for collections.
