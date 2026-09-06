@@ -170,6 +170,13 @@ impl Scope {
             }
             _ => {}
         }
+        if self.standalone_alias(expr).is_none() {
+            if let Some((i, path)) = self.field(expr)? {
+                // Direct IDs must remain column references for primary-key seeks.
+                *expr = self.accessor(i, &path, false)?;
+                return Ok(true);
+            }
+        }
         if self.preserved(expr)? {
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
             return Ok(true);
@@ -467,11 +474,11 @@ impl Scope {
                     op,
                     Operator::Equals | Operator::NotEquals | Operator::Is | Operator::IsNot
                 ) {
-                    if blob_literal(a) && !blob_literal(b) && self.preserved(&mut b.clone())? {
-                        **a = index_literal(a)?;
-                    }
-                    if blob_literal(b) && !blob_literal(a) && self.preserved(&mut a.clone())? {
-                        **b = index_literal(b)?;
+                    let (mut left, mut right) = (*a.clone(), *b.clone());
+                    if self.comparison_key(&mut left)? && self.comparison_key(&mut right)? {
+                        **a = left;
+                        **b = right;
+                        return Ok(());
                     }
                 }
                 if matches!(

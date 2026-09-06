@@ -383,3 +383,10 @@ Persistent tests cover reversed equality, substr results, numeric cast equality,
 Typed CHECK range callbacks now accept candidate fields and numeric, string, binary and NULL literals, including parenthesized literals and signed numeric literals. Binary pairs compare payload bytes; record pairs retain typed ordering, and mixed record/scalar ordering fails. BETWEEN uses the existing three-valued callback with a single left operand; NOT remains outside the callback. Explicit collation, casts and other expression forms retain their existing paths.
 
 Persistent tests cover inclusive binary bounds, reversed comparison, NOT BETWEEN, empty/out-of-range/NULL rejection, signed numeric bounds, retained transaction/index state and reopened enforcement. Existing CHECK coverage continues to pass, including long boolean chains. Reapply affected prototype definitions to revalidate stored data. General expression/collation propagation and resource qualification remain unfinished; persisted encodings are unchanged.
+
+
+## SQL-shaped equality expression keys
+
+=, !=, IS and IS NOT now use the shared comparison-key path when both operands support it. This extends earlier literal/field normalization to native function results, casts, scalar expressions and typed CASE results while retaining explicit collation and cast structure. Binary identity remains distinct from record identity; ordinary relational statements retain native delegation.
+
+Differential BLOB-column tests cover function/field comparisons, binary casts, NULL-aware IS operations, numeric cast coercion, NOCASE, arithmetic and CASE. DELETE/RETURNING rollback verifies index restoration. Direct fields retain their existing key accessors, keeping the primary-key SEARCH plan for ID equality. This does not add managed index candidate shapes. Mixed ordinary-column/typed-field and untyped-alias propagation, broader ranges and resource accounting remain release work.

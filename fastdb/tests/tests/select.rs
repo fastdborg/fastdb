@@ -1328,3 +1328,52 @@ fn binary_predicate_contexts_use_native_truth_conversion() {
         1
     );
 }
+
+#[test]
+fn binary_equality_expressions_match_native_blobs_and_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(data BLOB)");
+    for hex in ["31", "32", "", "61"] {
+        query(&c, &format!("INSERT INTO docs (data) VALUES (X'{hex}')"));
+        query(&c, &format!("INSERT INTO baseline VALUES (X'{hex}')"));
+    }
+    query(&c, "INSERT INTO docs (data) VALUES (NULL)");
+    query(&c, "INSERT INTO baseline VALUES (NULL)");
+    for expr in [
+        "substr(data,1,1)=data",
+        "data!=substr(X'3132',1,1)",
+        "CAST('1' AS BLOB)=data",
+        "data IS substr(data,1,1)",
+        "data IS NOT substr(data,1,1)",
+        "CAST(data AS INTEGER)='1'",
+        "CAST(data AS TEXT) COLLATE NOCASE='A'",
+        "(data+0)=1",
+        "CASE WHEN data=X'31' THEN data ELSE X'' END=data",
+    ] {
+        let sql = |table| format!("SELECT {expr} AS matched FROM {table} ORDER BY data");
+        assert_eq!(
+            query(&c, &sql("docs")).rows,
+            query(&c, &sql("baseline")).rows,
+            "{expr}"
+        );
+    }
+    query(&c, "CREATE INDEX docs_data ON docs(data)");
+    query(&c, "BEGIN");
+    assert_eq!(
+        query(
+            &c,
+            "DELETE FROM docs WHERE data=substr(X'3132',1,1) RETURNING data"
+        )
+        .rows,
+        vec![vec![Value::Binary(b"1".to_vec())]]
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(b"1".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}
