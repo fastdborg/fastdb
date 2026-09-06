@@ -201,6 +201,51 @@ impl Connection {
             params,
         )
     }
+    fn relational_insert_select(
+        &self,
+        sql: &str,
+        statement: &Stmt,
+        params: &Parameters,
+    ) -> Result<Option<QueryResult>> {
+        let Stmt::Insert {
+            with: None,
+            body: InsertBody::Select(select, _),
+            ..
+        } = statement
+        else {
+            return Ok(None);
+        };
+        if matches!(select.body.select, OneSelect::Values(_)) {
+            return Ok(None);
+        }
+        // Source names are checked by logical lowering. Guard the target and
+        // remaining native clauses with the existing native SQL boundary.
+        for token in crate::guard::tokens(sql)? {
+            if matches!(
+                token.kind,
+                fastql_parser::Kind::Word
+                    | fastql_parser::Kind::Identifier
+                    | fastql_parser::Kind::String
+            ) && token.text.to_ascii_lowercase().starts_with("__fastdb_")
+            {
+                return Err(unsupported("managed names in INSERT SELECT"));
+            }
+        }
+        let mut guarded = statement.clone();
+        let Stmt::Insert {
+            body: InsertBody::Select(source, _),
+            ..
+        } = &mut guarded
+        else {
+            unreachable!()
+        };
+        let Cmd::Stmt(Stmt::Select(empty)) = parsed("SELECT NULL")? else {
+            unreachable!()
+        };
+        *source = empty;
+        self.guard_native_sql(&guarded.to_string())?;
+        self.native_insert_source(&Stmt::Select(select.clone()).to_string(), params, statement)
+    }
     pub(crate) fn collection_write(
         &self,
         sql: &str,
@@ -228,7 +273,9 @@ impl Connection {
         }
         match self.catalog(table.name.as_str()) {
             Ok(_) => {}
-            Err(Error::NotFound(_)) => return Ok(None),
+            Err(Error::NotFound(_)) => {
+                return self.relational_insert_select(sql, &statement, params)
+            }
             Err(e) => return Err(e),
         };
         if table

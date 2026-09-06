@@ -1256,6 +1256,7 @@ struct SelectOptions<'a> {
     positional: bool,
     snapshot: Option<Option<&'a crate::Document>>,
     guarded: bool,
+    native_insert: Option<&'a Stmt>,
 }
 impl Connection {
     pub(crate) fn collection_select(
@@ -1308,6 +1309,23 @@ impl Connection {
             },
         )?
         .ok_or_else(|| unsupported("this INSERT SELECT source"))
+    }
+    pub(crate) fn native_insert_source(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        insert: &Stmt,
+    ) -> Result<Option<QueryResult>> {
+        self.collection_select_options(
+            sql,
+            params,
+            SelectOptions {
+                trusted: true,
+                positional: true,
+                native_insert: Some(insert),
+                ..Default::default()
+            },
+        )
     }
     pub(crate) fn returning_rows(
         &self,
@@ -1394,6 +1412,7 @@ impl Connection {
             positional,
             snapshot,
             guarded: _,
+            native_insert,
         } = options;
         let Ok(mut cmd) = parsed(&expanded) else {
             return Ok(None);
@@ -1432,6 +1451,9 @@ impl Connection {
                     Err(e) => return Err(e),
                 }
             }
+        }
+        if native_insert.is_some() && sources.iter().all(|source| source.collection.is_none()) {
+            return Ok(None);
         }
         let standalone_typed_parameters = from.is_none()
             && select.with.is_none()
@@ -1789,6 +1811,60 @@ impl Connection {
                 return Err(unsupported("DISTINCT on fetched documents"));
             }
             lower_distinct(select, &typed, &order_outputs)?;
+        }
+        if let Some(insert) = native_insert {
+            if explain || fetched.iter().any(|value| *value) {
+                return Err(unsupported("EXPLAIN or fetched INSERT SELECT source"));
+            }
+            let keys = (0..typed.len())
+                .map(|i| format!("__fastdb_v{i}"))
+                .collect::<Vec<_>>();
+            let values = keys
+                .iter()
+                .zip(&typed)
+                .map(|(key, typed)| {
+                    if *typed {
+                        format!("__fastdb_sql_scalar({key})")
+                    } else {
+                        key.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let source_sql = cmd.to_string();
+            let Cmd::Stmt(Stmt::Select(source)) = parsed(&format!(
+                "WITH __fastdb_native_source({}) AS ({}) SELECT {values} FROM __fastdb_native_source WHERE 1",
+                keys.join(","), source_sql.trim().trim_end_matches(';')
+            ))? else { unreachable!("generated native source") };
+            let mut insert = insert.clone();
+            let Stmt::Insert {
+                body: InsertBody::Select(select, _),
+                ..
+            } = &mut insert
+            else {
+                unreachable!("INSERT SELECT template")
+            };
+            *select = source;
+            let mut statement = self.engine.prepare(insert.to_string())?;
+            for (name, value) in params {
+                if let Some(index) = crate::bind_index(&statement, name) {
+                    statement.bind_at(index, crate::scalar(value)?)?;
+                } else if !scope.consumed.borrow().contains(name) {
+                    return Err(Error::Parameter(name.clone()));
+                }
+            }
+            let columns = (0..statement.num_columns())
+                .map(|i| statement.get_column_name(i).into_owned())
+                .collect();
+            let rows = crate::collect_rows(&mut statement)?
+                .into_iter()
+                .map(|row| row.into_iter().map(crate::from_engine).collect())
+                .collect();
+            return Ok(Some(QueryResult {
+                columns,
+                rows,
+                affected: statement.n_change(),
+            }));
         }
         let lowered = cmd.to_string();
         let mut statement = self.engine.prepare(&lowered)?;

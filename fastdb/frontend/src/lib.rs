@@ -692,16 +692,7 @@ impl Connection {
             Statement::Sql(sql) => self.sql(&sql, params),
         }
     }
-    fn sql(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
-        if let Some(result) = self.catalog_statement(sql)? {
-            return Ok(result);
-        }
-        if let Some(result) = self.collection_write(sql, params)? {
-            return Ok(result);
-        }
-        if let Some(result) = self.collection_select(sql, params)? {
-            return Ok(result);
-        }
+    pub(crate) fn guard_native_sql(&self, sql: &str) -> Result<()> {
         let tokens = guard::tokens(sql)?;
         let collections = self.run("SELECT name FROM __fastdb_catalog", &[])?;
         for token in &tokens {
@@ -726,6 +717,19 @@ impl Connection {
                 }
             }
         }
+        Ok(())
+    }
+    fn sql(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
+        if let Some(result) = self.catalog_statement(sql)? {
+            return Ok(result);
+        }
+        if let Some(result) = self.collection_write(sql, params)? {
+            return Ok(result);
+        }
+        if let Some(result) = self.collection_select(sql, params)? {
+            return Ok(result);
+        }
+        self.guard_native_sql(sql)?;
         let mut stmt = self.engine.prepare(sql)?;
         if !fastql_parser::tokenize(&sql[stmt.tail_offset()..])?.is_empty() {
             return Err(Error::Unsupported("execute accepts one statement".into()));
