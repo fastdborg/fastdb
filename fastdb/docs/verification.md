@@ -385,3 +385,10 @@ The CHECK function allowlist is unchanged: internal comparator calls are introdu
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 149 Rust tests, fifteen Node tests and TypeScript declarations. A CLI probe reproduced a syntax error for a four-segment candidate path in CHECK. The shared path expander now feeds CHECK parsing, and generated markers resolve to candidate bindings while retaining quoted segments and literal text. Explicit internal marker calls and overlong paths are rejected without widening CHECK function eligibility.
 
 A persistent regression verifies definition over existing data, quoted dot-containing segments, unchanged string literals, failed SQL/object updates, transaction/index preservation, and enforcement and index maintenance after reopening. Preliminary boolean CHECK probes showed correct behavior, so no boolean handling changed. No stored format, dependency or upstream file changed. Broader expression/type propagation and V1 release qualification remain pending.
+
+
+## Relational schema and index inspection — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 150 Rust tests, fifteen Node tests and TypeScript declarations. INFO FOR DB now lists views separately; relational table/view INFO adds kind, native table_xinfo columns and index_list entries; relational index INFO adds index_xinfo key metadata. The persistent regression verifies defaults/nullability/hidden flags, native unique and partial indexes, expression keys with descending order/collation, view discovery, managed-name hiding and index drop/rollback visibility after reopening.
+
+These additions preserve native metadata values rather than claiming portable expression-column numbering or enabling experimental features. The README and inspection contract describe the prototype shape and reserved-name behavior for autoindexes. No dependencies or upstream files changed. Wider dependency authorization, inspection protocol stabilization and remaining V1 release work remain pending.

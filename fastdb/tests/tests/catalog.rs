@@ -441,3 +441,72 @@ fn contending_index_builds_leave_no_partial_catalog_or_storage() {
         );
     }
 }
+
+#[test]
+fn relational_info_reports_views_and_native_index_details_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inspection.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c,"CREATE TABLE ordinary(id INTEGER PRIMARY KEY,label TEXT NOT NULL UNIQUE DEFAULT 'new')");
+        q(
+            &c,
+            "CREATE INDEX ordinary_expr ON ordinary(lower(label) DESC) WHERE label IS NOT NULL",
+        );
+        q(&c, "CREATE VIEW visible AS SELECT id,label FROM ordinary");
+        q(&c, "CREATE TABLE docs");
+        q(&c, "CREATE INDEX docs_label ON docs(label)");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    let info = |sql: &str| {
+        let Value::Object(info) = q(&c, sql).rows.remove(0).remove(0) else {
+            panic!("info object")
+        };
+        info
+    };
+    let table = info("INFO FOR TABLE ordinary");
+    assert_eq!(table["kind"], Value::String("table".into()));
+    let Value::Array(columns) = &table["columns"] else {
+        panic!("columns")
+    };
+    let Value::Object(label) = &columns[1] else {
+        panic!("column")
+    };
+    assert_eq!(label["name"], Value::String("label".into()));
+    assert_eq!(label["notnull"], Value::Integer(1));
+    assert_eq!(label["hidden"], Value::Integer(0));
+    assert_eq!(label["dflt_value"], Value::String("'new'".into()));
+    let Value::Array(indexes) = &table["indexes"] else {
+        panic!("indexes")
+    };
+    assert_eq!(indexes.len(), 2);
+    assert!(indexes.iter().any(|index|matches!(index,Value::Object(i) if i["origin"]==Value::String("u".into()) && i["unique"]==Value::Integer(1))));
+    assert!(indexes.iter().any(|index|matches!(index,Value::Object(i) if i["name"]==Value::String("ordinary_expr".into()) && i["partial"]==Value::Integer(1))));
+    let index = info("INFO FOR INDEX ordinary_expr");
+    let Value::Array(columns) = &index["columns"] else {
+        panic!("index columns")
+    };
+    let Value::Object(key) = &columns[0] else {
+        panic!("key")
+    };
+    assert_eq!(key["name"], Value::String("lower (label)".into()));
+    assert_eq!(key["desc"], Value::Integer(1));
+    assert_eq!(key["coll"], Value::String("BINARY".into()));
+    assert_eq!(key["key"], Value::Integer(1));
+    let view = info("INFO FOR TABLE visible");
+    assert_eq!(view["kind"], Value::String("view".into()));
+    assert_eq!(view["indexes"], Value::Array(vec![]));
+    let database = info("INFO FOR DB");
+    assert!(
+        matches!(&database["views"],Value::Array(views) if views.len()==1 && matches!(&views[0],Value::Object(v) if v["name"]==Value::String("visible".into())))
+    );
+    assert!(!format!("{database:?}").contains("__fastdb_"));
+    assert!(!format!("{:?}", info("INFO FOR TABLE docs")).contains("__fastdb_"));
+    q(&c, "BEGIN");
+    q(&c, "DROP INDEX ordinary_expr");
+    assert!(matches!(&info("INFO FOR TABLE ordinary")["indexes"],Value::Array(i) if i.len()==1));
+    q(&c, "ROLLBACK");
+    assert_eq!(info("INFO FOR TABLE ordinary"), table);
+}

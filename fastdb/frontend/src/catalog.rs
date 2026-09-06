@@ -214,7 +214,8 @@ impl Connection {
                     for row in self.run("SELECT name FROM sqlite_schema WHERE type='table' AND substr(lower(name),1,9) != '__fastdb_' AND substr(lower(name),1,7) != 'sqlite_' ORDER BY name",&[])? {
                         if let EngineValue::Text(t)=&row[0] {entries.push(object([("name",Value::String(t.as_str().into())),("model",Value::String("relational".into()))]));}
                     }
-                    object([("catalog_version",Value::Integer(i64::from(version()))),("tables",Value::Array(entries))])
+                    let views = self.run("SELECT name FROM sqlite_schema WHERE type='view' AND substr(lower(name),1,9) != '__fastdb_' AND substr(lower(name),1,7) != 'sqlite_' ORDER BY name", &[])?.into_iter().map(|row| object([("name", crate::from_engine(row[0].clone())), ("model", Value::String("relational".into()))])).collect();
+                    object([("catalog_version",Value::Integer(i64::from(version()))),("tables",Value::Array(entries)),("views",Value::Array(views))])
                 }
                 ("table",Some(name))=>self.table_info(name)?,
                 ("index",Some(name))=>self.logical_index_info(name)?,
@@ -275,28 +276,33 @@ impl Connection {
                 ]))
             }
             Err(Error::NotFound(_)) => {
-                if self.run("SELECT name FROM sqlite_schema WHERE type IN ('table','view') AND name=?1 COLLATE NOCASE",&[text(&name)])?.is_empty() {return Err(Error::NotFound(name));}
-                let columns = self.sql(
-                    &format!("PRAGMA table_info({})", quote(&name)),
-                    &Parameters::new(),
-                )?;
+                let schema = self.run("SELECT type FROM sqlite_schema WHERE type IN ('table','view') AND name=?1 COLLATE NOCASE", &[text(&name)])?;
+                let Some(row) = schema.first() else {
+                    return Err(Error::NotFound(name));
+                };
                 Ok(object([
-                    ("name", Value::String(name)),
+                    ("name", Value::String(name.clone())),
                     ("model", Value::String("relational".into())),
-                    (
-                        "columns",
-                        Value::Array(
-                            columns
-                                .rows
-                                .into_iter()
-                                .map(|row| object_row(&columns.columns, row))
-                                .collect(),
-                        ),
-                    ),
+                    ("kind", crate::from_engine(row[0].clone())),
+                    ("columns", self.pragma_info("table_xinfo", &name)?),
+                    ("indexes", self.pragma_info("index_list", &name)?),
                 ]))
             }
             Err(e) => Err(e),
         }
+    }
+    fn pragma_info(&self, pragma: &str, name: &str) -> Result<Value> {
+        let result = self.sql(
+            &format!("PRAGMA {pragma}({})", quote(name)),
+            &Parameters::new(),
+        )?;
+        Ok(Value::Array(
+            result
+                .rows
+                .into_iter()
+                .map(|row| object_row(&result.columns, row))
+                .collect(),
+        ))
     }
     fn logical_index_info(&self, name: &str) -> Result<Value> {
         let name = canonical(name)?;
@@ -313,10 +319,11 @@ impl Connection {
             return Err(Error::NotFound(name));
         };
         Ok(object([
-            ("name", Value::String(name)),
+            ("name", Value::String(name.clone())),
             ("model", Value::String("relational".into())),
             ("table", crate::from_engine(row[0].clone())),
             ("sql", crate::from_engine(row[1].clone())),
+            ("columns", self.pragma_info("index_xinfo", &name)?),
         ]))
     }
 }

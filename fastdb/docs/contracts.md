@@ -254,3 +254,12 @@ Catalog format remains version 2. This corrects previously unfinished record com
 
 
 CHECK expressions now accept candidate paths beyond three field segments through the shared token-aware path expansion. Unlike SELECT qualification, every segment in a CHECK path belongs to the candidate document; there is no table alias. Quoted segments keep literal dots, and strings remain literal data. Generated markers are resolved to bound candidate values before engine preparation; explicit marker function calls, modified marker calls and paths above 64 segments are rejected. Existing CHECK function eligibility and database-read restrictions remain in force. The stored CHECK text and catalog version are unchanged.
+
+
+## Relational inspection details
+
+INFO FOR DB retains its tables array and adds a separate views array, with logical names and relational model tags. INFO FOR TABLE on a relational table or view adds kind (table/view), uses native table_xinfo rows for columns, and includes native index_list rows as indexes. INFO FOR INDEX on an explicit relational index retains its name/model/table/sql fields and adds index_xinfo rows as columns.
+
+PRAGMA fields retain their pinned-engine names and values: these include column hidden flags, index uniqueness/origin/partial flags, and index-key direction/collation/auxiliary entries. Expression-key names and column IDs are native metadata rather than a portable SQLite interpretation. Native unique-constraint autoindexes may appear in relational table index lists; direct INFO lookup still follows the existing reserved-name policy. No experimental engine feature is enabled by inspection.
+
+Collection INFO remains logical and does not reveal physical storage names. All INFO reads share the existing statement snapshot/savepoint; a persistent test covers reopen and index drop/rollback visibility. These are additive prototype result fields, not a finalized V1 inspection protocol or complete schema-dependency authorization.
