@@ -145,6 +145,25 @@ fn lower_mode(
         Expr::Binary(a, op, b) => {
             if matches!(
                 op,
+                Operator::Add
+                    | Operator::Subtract
+                    | Operator::Multiply
+                    | Operator::Divide
+                    | Operator::Modulus
+                    | Operator::Concat
+                    | Operator::BitwiseAnd
+                    | Operator::BitwiseOr
+                    | Operator::LeftShift
+                    | Operator::RightShift
+                    | Operator::And
+                    | Operator::Or
+            ) {
+                lower_mode(a, doc, bindings, FieldBinding::Sql)?;
+                lower_mode(b, doc, bindings, FieldBinding::Sql)?;
+                return Ok(());
+            }
+            if matches!(
+                op,
                 Operator::Less | Operator::LessEquals | Operator::Greater | Operator::GreaterEquals
             ) && field_path(a).is_some()
                 && field_path(b).is_some()
@@ -157,7 +176,9 @@ fn lower_mode(
             lower(a, doc, bindings)?;
             lower(b, doc, bindings)?;
         }
-        Expr::Unary(_, e) | Expr::IsNull(e) | Expr::NotNull(e) => lower(e, doc, bindings)?,
+        Expr::Unary(UnaryOperator::Positive, e) => lower_mode(e, doc, bindings, binding)?,
+        Expr::Unary(_, e) => lower_mode(e, doc, bindings, FieldBinding::Sql)?,
+        Expr::IsNull(e) | Expr::NotNull(e) => lower(e, doc, bindings)?,
         Expr::Cast { expr: e, type_name } => {
             let Some(t) = type_name else {
                 return Err(invalid("CHECK CAST requires a built-in scalar type"));

@@ -326,4 +326,11 @@ Differential tests cover BLOB, INTEGER, REAL, NUMERIC and TEXT casts; collation 
 
 SQL-shaped expressions now pass preserved binary payloads to arithmetic (+, -, *, /, %), concatenation, bitwise/shift operators, AND/OR, unary minus, bitwise complement and NOT. Native coercion and NULL behavior are delegated to the pinned engine. Unary plus preserves the typed operand while retaining its SQL role of removing affinity. Equality and managed index keys keep their separate collision-resistant representation.
 
-Differential tests cover numeric ASCII, nonnumeric, empty and NULL binary values, nested arithmetic and membership, unary-plus projection/function input, and UPDATE/RETURNING with rollback/index restoration. CHECK uses a separate lowering path and is not covered by this change. Bare binary truth predicates, CASE conditions, LIKE/JSON operators, general equality type propagation and full aggregate/window behavior still need qualification. Persisted encodings are unchanged.
+Differential tests cover numeric ASCII, nonnumeric, empty and NULL binary values, nested arithmetic and membership, unary-plus projection/function input, and UPDATE/RETURNING with rollback/index restoration. CHECK uses a separate lowering path; its matching operator correction is described below. Bare binary truth predicates, CASE conditions, LIKE/JSON operators, general equality type propagation and full aggregate/window behavior still need qualification. Persisted encodings are unchanged.
+
+
+## CHECK scalar operator payloads
+
+CHECK arithmetic, concatenation, bitwise/shift and logical operators now bind binary fields as payload bytes. Unary minus, complement and NOT use the same scalar binding; unary plus carries its enclosing binding mode through to the operand. Field equality/index-key and typed range paths retain their separate representations. The function allowlist and candidate-only restrictions are unchanged.
+
+A persistent regression defines constraints over existing binary data, rejects invalid INSERT/UPDATE/UPSERT while retaining the outer transaction and index, and verifies enforcement after reopen. Corrected prototype definitions need reapplication to validate existing documents; opening alone does not revalidate them. Catalog version and stored encodings are unchanged. CHECK comparison/literal propagation and resource bounds remain unfinished.

@@ -447,3 +447,75 @@ fn binary_check_arguments_use_candidate_payloads_and_persist_validation() {
         vec![vec![Value::Integer(2), Value::Integer(12)]]
     );
 }
+
+#[test]
+fn binary_check_operators_validate_payloads_atomically_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary-operators.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,v2,v3,v4,payload) VALUES (docs:saved,1,1,1,1,X'3132')",
+        );
+        for (field, check) in [
+            (
+                "valid",
+                "payload+1=13 AND payload-1=11 AND payload*2=24 AND payload/2=6 AND payload%5=2",
+            ),
+            (
+                "v2",
+                "(payload&3)=0 AND (payload|1)=13 AND (payload<<1)=24 AND (payload>>1)=6",
+            ),
+            ("v3", "payload||'!'='12!' AND -payload=-12 AND ~payload=-13"),
+            (
+                "v4",
+                "(payload AND 1)=1 AND (payload OR 0)=1 AND (NOT payload)=0 AND length(+payload)=2",
+            ),
+        ] {
+            q(
+                &c,
+                &format!("DEFINE FIELD {field} ON docs TYPE integer CHECK({check})"),
+            );
+        }
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        for sql in [
+            "INSERT INTO docs (id,valid,payload) VALUES (docs:bad,1,X'3133')",
+            "UPDATE docs SET payload=X'30'",
+            "UPDATE docs:saved {payload: null}",
+            "UPSERT docs:saved {payload: 'wrong'}",
+        ] {
+            assert_eq!(
+                c.execute(sql, &Parameters::new()).unwrap_err().code(),
+                "FDB_VALIDATION",
+                "{sql}"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        }
+        assert_eq!(
+            c.lookup_index("docs", "docs_payload", &Value::Binary(b"12".to_vec()))
+                .unwrap()
+                .len(),
+            1
+        );
+        q(&c, "ROLLBACK");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'3133'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    q(&c, "UPDATE docs SET payload=X'3132'");
+    assert_eq!(
+        c.lookup_index("docs", "docs_payload", &Value::Binary(b"12".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}
