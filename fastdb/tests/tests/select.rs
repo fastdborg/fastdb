@@ -530,3 +530,76 @@ fn collated_order_aliases_match_relational_precedence_and_distinct() {
         3
     );
 }
+
+#[test]
+fn nested_order_aliases_match_relational_results_and_reuse_distinct_outputs() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(v,n)");
+    for (v, n) in [(1, 9), (2, 8), (3, 7), (1, 9)] {
+        query(&c, &format!("INSERT INTO docs {{v:{v},n:{n}}}"));
+        query(&c, &format!("INSERT INTO baseline VALUES ({v},{n})"));
+    }
+    for distinct in ["", "DISTINCT "] {
+        for order in ["n+0", "abs(n) DESC", "coalesce(n,0)", "n+docs.n DESC"] {
+            let collection = query(
+                &c,
+                &format!("SELECT {distinct}v AS n FROM docs ORDER BY {order}"),
+            );
+            let ordinary = query(
+                &c,
+                &format!(
+                    "SELECT {distinct}v AS n FROM baseline ORDER BY {}",
+                    order.replace("docs.", "baseline.")
+                ),
+            );
+            assert_eq!(collection.rows, ordinary.rows, "{distinct}{order}");
+        }
+    }
+    for _ in 0..60 {
+        query(&c, "INSERT INTO docs {v:1}");
+    }
+    let result = query(&c, "SELECT DISTINCT random() AS n FROM docs ORDER BY n+0");
+    let values = result
+        .rows
+        .iter()
+        .map(|r| match r[0] {
+            Value::Integer(i) => i,
+            _ => panic!("integer random"),
+        })
+        .collect::<Vec<_>>();
+    assert!(values.windows(2).all(|p| p[0] < p[1]));
+    assert!(c
+        .execute(
+            "SELECT DISTINCT sum(v) AS n FROM docs ORDER BY sum(n)",
+            &Parameters::new()
+        )
+        .is_err());
+}
+
+#[test]
+fn order_alias_helpers_and_mixed_sources_retain_types() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "INSERT INTO docs {id:docs:2,v:1}");
+    query(&c, "INSERT INTO docs {id:docs:10,v:2}");
+    query(&c, "CREATE TABLE rel(v,bias)");
+    query(&c, "INSERT INTO rel VALUES (1,5),(2,1)");
+    for distinct in ["", "DISTINCT "] {
+        let records = query(
+            &c,
+            &format!("SELECT {distinct}id AS ref FROM docs ORDER BY record::id(ref) DESC"),
+        );
+        assert!(matches!(
+            &records.rows[0][0],
+            Value::Record(Record {
+                key: Key::Integer(10),
+                ..
+            })
+        ));
+        assert_eq!(query(&c,&format!("SELECT {distinct}d.v AS score FROM docs d JOIN rel r ON d.v=r.v ORDER BY score+r.bias")).rows,vec![vec![Value::Integer(2)],vec![Value::Integer(1)]]);
+        assert_eq!(query(&c,&format!("SELECT {distinct}v AS bucket,sum(v) AS total FROM docs GROUP BY v ORDER BY abs(total) DESC")).rows,vec![vec![Value::Integer(2),Value::Integer(2)],vec![Value::Integer(1),Value::Integer(1)]]);
+    }
+}

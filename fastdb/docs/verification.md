@@ -269,3 +269,12 @@ A CLI comparison reproduced a wrong ordering for SELECT v AS n ORDER BY n COLLAT
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 123 Rust tests, fourteen Node tests and TypeScript declarations. One new regression compares collated alias/position ordering with the pinned ordinary relational frontend, with and without DISTINCT, including alias/field name collisions. It also checks multi-column DISTINCT with a collection/relational cross join and explicit NOCASE collation. Existing volatile ordering tests remain green.
 
 A separate probe still shows incorrect alias resolution for ORDER BY n+0 when n is also a stored field; arbitrary arithmetic/function alias references remain unfinished and must be addressed before V1. No dependencies or upstream implementation files changed.
+
+
+## Ordering expressions over projected aliases — 2026-09-06
+
+The previously recorded ORDER BY n+0 alias/field collision is fixed. ORDER alias bindings now point to projected values after source filtering/group/window lowering. DISTINCT keeps output-dependent ordering expressions outside grouping and carries independent source inputs through hidden inner projections, preserving reuse of volatile outputs. Aggregate/window operations over output aliases fail explicitly instead of introducing an unintended outer aggregate.
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 125 Rust tests, fourteen Node tests and TypeScript declarations. Two new tests compare arithmetic/function alias ordering against ordinary relational results with and without DISTINCT; verify ordering of a volatile projected random value through n+0; check typed record helpers, mixed collection/relational inputs, grouped aggregate aliases and invalid nested aggregates. Existing collation, pagination and volatile-expression checks remain green.
+
+No dependencies or upstream implementation files changed. This addresses ordering aliases in the supported expression subset; WHERE/GROUP/HAVING alias rules, derived-source propagation, resource/performance and release qualification remain unfinished.

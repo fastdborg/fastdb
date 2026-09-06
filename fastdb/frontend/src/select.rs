@@ -112,9 +112,11 @@ impl Scope {
             .cloned()
     }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
-        if let Some((value, true)) = self.standalone_alias(expr) {
-            *expr = value;
-            return Ok(true);
+        if let Some((value, typed)) = self.standalone_alias(expr) {
+            if typed {
+                *expr = value;
+            }
+            return Ok(typed);
         }
         if let Some((i, path)) = self.field(expr)? {
             *expr = self.accessor(i, &path, true)?;
@@ -701,6 +703,40 @@ fn order_position(expr: &Expr) -> Option<i64> {
     }
 }
 
+fn is_order_output(expr: &Expr, count: usize) -> bool {
+    matches!(expr, Expr::Id(name) | Expr::Name(name) if name.as_str().strip_prefix("__fastdb_out_").and_then(|i| i.parse::<usize>().ok()).is_some_and(|i| i < count))
+}
+fn references_order_output(expr: &Expr, count: usize) -> turso_core::Result<bool> {
+    let mut copy = expr.clone();
+    let mut found = false;
+    turso_core::walk_expr_mut(&mut copy, &mut |expr| {
+        found |= is_order_output(expr, count);
+        Ok(turso_core::WalkControl::Continue)
+    })?;
+    Ok(found)
+}
+// Leave output-dependent arithmetic/functions outside DISTINCT grouping. Lift
+// independent source expressions into the inner query so mixed source/alias
+// expressions can still access their inputs without reevaluating projections.
+fn lift_order_inputs(expr: &mut Expr, columns: &mut Vec<ResultColumn>, count: usize) -> Result<()> {
+    turso_core::walk_expr_mut(expr, &mut |expr| {
+        if is_order_output(expr, count) || matches!(expr, Expr::Literal(_) | Expr::Variable(_)) {
+            return Ok(turso_core::WalkControl::SkipChildren);
+        }
+        if !references_order_output(expr, count)? {
+            let name = format!("__fastdb_order_input_{}", columns.len());
+            columns.push(ResultColumn::Expr(
+                Box::new(expr.clone()),
+                Some(As::As(Name::exact(name.clone()))),
+            ));
+            *expr = Expr::Id(Name::exact(name));
+            return Ok(turso_core::WalkControl::SkipChildren);
+        }
+        Ok(turso_core::WalkControl::Continue)
+    })?;
+    Ok(())
+}
+
 // Group comparison values in an outer query so aggregate/window evaluation
 // happens first and pagination happens after duplicate elimination. Keep each
 // original typed projection as the representative output for its group.
@@ -742,12 +778,9 @@ fn lower_distinct(
             );
             continue;
         }
-        let name = format!("__fastdb_order_{i}");
-        columns.push(ResultColumn::Expr(
-            sorted.expr.clone(),
-            Some(As::As(Name::exact(name.clone()))),
-        ));
-        sorted.expr = Box::new(Expr::Id(Name::exact(name)));
+        lift_order_inputs(&mut sorted.expr, columns, typed.len())?;
+        crate::write::validate_returning(&[ResultColumn::Expr(sorted.expr.clone(), None)])
+            .map_err(|_| unsupported("aggregate/window expressions over ordering aliases"))?;
     }
     // Keep volatile projections inside their own result-producing query.
     select.limit = Some(Limit {
@@ -1346,6 +1379,24 @@ impl Connection {
         }
         for definition in window_clause {
             scope.lower_window(&mut definition.window)?;
+        }
+        // ORDER BY aliases resolve to projected values after WHERE/GROUP/window
+        // lowering, including references nested inside arithmetic or helpers.
+        scope.standalone_aliases.borrow_mut().clear();
+        for (i, name) in names.iter().enumerate() {
+            if fetched[i] {
+                continue;
+            }
+            let reference = if distinct {
+                format!("__fastdb_out_{i}")
+            } else {
+                name.clone()
+            };
+            scope
+                .standalone_aliases
+                .borrow_mut()
+                .entry(name.to_ascii_lowercase())
+                .or_insert_with(|| (Expr::Id(Name::exact(reference)), typed[i]));
         }
         let mut order_outputs = Vec::new();
         for sorted in &mut select.order_by {
