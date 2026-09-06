@@ -49,3 +49,26 @@ fn document_nested_arrays_and_duplicate_keys() {
     assert!(parse("INSERT INTO posts {a: 1, a: 2}").is_err());
     assert!(parse("INSERT INTO posts {id: posts:``}").is_err());
 }
+
+#[test]
+fn interactive_script_completeness_tracks_lexical_and_trigger_boundaries() {
+    for sql in [
+        "",
+        "-- comment\n",
+        "SELECT ';';",
+        "SELECT 1; /* done */",
+        "CREATE TRIGGER t AFTER INSERT ON s BEGIN SELECT CASE WHEN 1 THEN 2 END; END;",
+    ] {
+        assert!(crate::script_complete(sql).unwrap(), "{sql}");
+    }
+    for sql in [
+        "SELECT 1",
+        "SELECT 'unfinished",
+        "SELECT 1; /* open",
+        "INSERT INTO docs {v:1",
+        "CREATE TRIGGER t AFTER INSERT ON s BEGIN SELECT 1;",
+    ] {
+        assert!(!crate::script_complete(sql).unwrap(), "{sql}");
+    }
+    assert!(crate::script_complete("SELECT );").is_err());
+}

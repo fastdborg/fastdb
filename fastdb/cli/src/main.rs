@@ -1,5 +1,5 @@
 use fastdb::{Database, ExecutionReport, Parameters, TransferFormat};
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 fn output(
     writer: &mut impl Write,
     report: ExecutionReport,
@@ -24,6 +24,8 @@ fn output(
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut path = None;
     let mut line_mode = false;
+    let mut interactive = false;
+    let mut script_mode = false;
     let mut transfer = None;
     let mut migrations = None;
     let mut format = TransferFormat::Json;
@@ -37,6 +39,8 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 migrations = Some(args.next().ok_or("expected migration directory")?);
             }
             "--line" => line_mode = true,
+            "--interactive" => interactive = true,
+            "--script" => script_mode = true,
             "--ndjson" => format = TransferFormat::Ndjson,
             "--import" | "--export" => {
                 if transfer.is_some() {
@@ -48,13 +52,19 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                println!("Usage: fastdb-cli [--line] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nReads a semicolon-delimited script from stdin; stops on the first error.\n--line retains one-statement-per-line execution and continues after errors.");
+                println!("Usage: fastdb-cli [--interactive | --script | --line] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\n--line retains one-statement-per-line execution and continues after errors.");
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}").into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("expected one database path".into()),
         }
+    }
+    if usize::from(line_mode) + usize::from(interactive) + usize::from(script_mode) > 1 {
+        return Err("choose one input mode".into());
+    }
+    if (interactive || script_mode) && (migrations.is_some() || transfer.is_some()) {
+        return Err("input modes cannot be combined with migration/import/export".into());
     }
     if migrations.is_some()
         && (line_mode || transfer.is_some() || matches!(format, TransferFormat::Ndjson))
@@ -89,7 +99,14 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     }
     let mut writer = io::stdout().lock();
     let mut failed = false;
-    if line_mode {
+    if interactive || (!line_mode && !script_mode && io::stdin().is_terminal()) {
+        failed = run_interactive(
+            &conn,
+            &mut io::stdin().lock(),
+            &mut writer,
+            &mut io::stderr().lock(),
+        )?;
+    } else if line_mode {
         for line in io::stdin().lock().lines() {
             let line = line?;
             if !line.trim().is_empty() {
@@ -110,6 +127,58 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     } else {
         std::process::ExitCode::SUCCESS
     })
+}
+
+fn run_interactive(
+    conn: &fastdb::Connection,
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    prompt: &mut impl Write,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut buffer = String::new();
+    let mut failed = false;
+    loop {
+        let label = if !buffer.is_empty() {
+            "...> "
+        } else if conn.transaction_state() == fastdb::TransactionState::Active {
+            "fastdb(tx)> "
+        } else {
+            "fastdb> "
+        };
+        write!(prompt, "{label}")?;
+        prompt.flush()?;
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            if !buffer.trim().is_empty() {
+                failed |= run_script(conn, &buffer, writer)?;
+            }
+            return Ok(failed);
+        }
+        match line.trim() {
+            ".quit" | ".exit" => return Ok(failed),
+            ".clear" => {
+                buffer.clear();
+                continue;
+            }
+            ".help" => {
+                writeln!(
+                    prompt,
+                    "End statements with a semicolon. .clear discards pending input; .quit exits.
+Transactions use BEGIN, COMMIT and ROLLBACK. Prompts go to stderr; JSON results go to stdout."
+                )?;
+                continue;
+            }
+            _ => {}
+        }
+        buffer.push_str(&line);
+        match fastql_parser::script_complete(&buffer) {
+            Ok(false) => continue,
+            Ok(true) | Err(_) => {
+                failed |= run_script(conn, &buffer, writer)?;
+                buffer.clear();
+            }
+        }
+    }
 }
 
 fn run_script(

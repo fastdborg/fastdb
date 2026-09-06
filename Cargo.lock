@@ -1984,6 +1984,7 @@ name = "fastdb-cli"
 version = "0.1.0"
 dependencies = [
  "fastdb",
+ "fastql-parser",
  "serde_json",
 ]
 

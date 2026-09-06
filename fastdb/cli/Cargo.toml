@@ -7,4 +7,5 @@ publish = false
 
 [dependencies]
 fastdb = { path = "../frontend" }
+fastql-parser = { path = "../parser" }
 serde_json.workspace = true

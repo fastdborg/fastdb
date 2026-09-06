@@ -6,6 +6,25 @@ pub struct ScriptStatement<'a> {
     pub offset: usize,
 }
 pub fn split_script(input: &str) -> Result<Vec<ScriptStatement<'_>>> {
+    split_state(input).map(|(statements, _)| statements)
+}
+/// Whether input contains only terminated statements (or whitespace/comments).
+/// Open quotes, comments, delimiters and trigger bodies request more input.
+pub fn script_complete(input: &str) -> Result<bool> {
+    match split_state(input) {
+        Ok((_, complete)) => Ok(complete),
+        Err(error)
+            if matches!(
+                error.message.as_str(),
+                "unterminated quote" | "unterminated comment" | "unclosed script delimiter"
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+fn split_state(input: &str) -> Result<(Vec<ScriptStatement<'_>>, bool)> {
     let tokens = tokenize(input)?;
     let mut statements = Vec::new();
     let mut start = 0;
@@ -71,5 +90,5 @@ pub fn split_script(input: &str) -> Result<Vec<ScriptStatement<'_>>> {
             offset,
         });
     }
-    Ok(statements)
+    Ok((statements, start == tokens.len()))
 }

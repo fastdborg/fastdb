@@ -306,3 +306,12 @@ The guard-only AST traversal now visits CREATE/ALTER column value expressions, t
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 130 Rust tests, fourteen Node tests and TypeScript declarations. A new persistent regression creates a native trigger with managed-looking literals in WHEN, INSERT, UPDATE, DELETE and SELECT/CASE expressions. It verifies actual audit values, explicit transaction rollback and trigger execution after close/reopen. A RAISE(ABORT) trigger preserves its original managed-looking error message and leaves no rejected row behind.
 
 The same regression requires FDB_UNSUPPORTED for managed body targets/references across INSERT, UPDATE, DELETE and SELECT, a logical collection body reference, and a managed trigger target. The guard-only traversal changes value expressions while preserving names and reference roles; the original SQL is still prepared, stored and executed. No dependencies or upstream implementation files changed. PRAGMA/table-function argument roles, dependency authorization for pre-existing database objects and broader V1 release qualification remain unfinished.
+
+
+## Initial interactive CLI — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 133 Rust tests, fourteen Node tests and TypeScript declarations. A new parser test covers complete versus open quotes/comments/delimiters, trigger bodies and unmatched delimiters. Two CLI subprocess tests cover multiline documents, duplicate-insert recovery with explicit rollback, transaction/continuation prompts, clearing unfinished input, quit behavior, multiline trigger creation and a trailing statement at EOF.
+
+A real pseudo-terminal smoke verified automatic interactive mode and transaction prompts through BEGIN/SELECT/ROLLBACK/.quit. A persistent-file smoke verified .quit rollback of an active write and successful reopening through --script. Prompts are written to stderr; JSON results retain the batch execution contract.
+
+The CLI adds a direct path dependency on the existing fastql-parser crate; Cargo.lock changes only that dependency edge. No new external dependency versions or upstream implementation files changed. History/editing, explicit signal handling, input/resource bounds and wider terminal/platform qualification remain open, alongside the rest of V1.
