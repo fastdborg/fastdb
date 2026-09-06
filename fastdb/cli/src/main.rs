@@ -9,13 +9,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if line.trim().is_empty() {
             continue;
         }
-        match conn.execute(&line, &Parameters::new()) {
-            Ok(result) => println!("{}", serde_json::to_string(&result)?),
-            Err(error) => println!(
-                "{}",
+        let report = conn.execute_report(&line, &Parameters::new());
+        let mut output = match report.result {
+            Ok(result) => serde_json::to_value(result)?,
+            Err(error) => {
                 serde_json::json!({"error": {"code": error.code(), "message": error.to_string()}})
-            ),
-        }
+            }
+        };
+        output["transaction"] = serde_json::json!({
+            "before": report.transaction_before,
+            "after": report.transaction_after,
+        });
+        println!("{}", serde_json::to_string(&output)?);
     }
     Ok(())
 }

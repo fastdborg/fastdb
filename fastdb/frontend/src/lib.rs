@@ -5,11 +5,13 @@ mod expression;
 mod functions;
 mod path;
 mod select;
+mod transaction;
 mod update;
 mod value;
 mod write;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, sync::Arc};
+pub use transaction::{ExecutionReport, TransactionState};
 use turso_core::{
     Connection as EngineConnection, Database as EngineDatabase, Value as EngineValue,
 };
