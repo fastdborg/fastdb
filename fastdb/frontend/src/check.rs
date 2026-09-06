@@ -343,6 +343,8 @@ fn lower_mode(
                     | Operator::Divide
                     | Operator::Modulus
                     | Operator::Concat
+                    | Operator::ArrowRight
+                    | Operator::ArrowRightShift
                     | Operator::BitwiseAnd
                     | Operator::BitwiseOr
                     | Operator::LeftShift

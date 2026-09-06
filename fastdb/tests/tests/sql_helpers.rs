@@ -266,3 +266,55 @@ fn binary_operator_inputs_match_native_payload_coercion() {
         1
     );
 }
+
+#[test]
+fn json_arrow_operators_read_binary_payloads() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(data BLOB, path BLOB)");
+    for json in [r#"{"x":2,"nested":{"y":"ok"}}"#, r#"{"x":null}"#, "{}"] {
+        let hex = json.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        q(
+            &c,
+            &format!("INSERT INTO docs (data,path) VALUES (X'{hex}',X'242E78')"),
+        );
+        q(
+            &c,
+            &format!("INSERT INTO baseline VALUES (X'{hex}',X'242E78')"),
+        );
+    }
+    q(&c, "INSERT INTO docs (data,path) VALUES (NULL,NULL)");
+    q(&c, "INSERT INTO baseline VALUES (NULL,NULL)");
+    for expr in [
+        "data->'$.x'",
+        "data->>'$.x'",
+        "data->path",
+        "data->>path",
+        "data->'$.nested'->>'$.y'",
+    ] {
+        let sql = |table| format!("SELECT {expr} AS value FROM {table} ORDER BY data");
+        match (
+            c.execute(&sql("docs"), &Parameters::new()),
+            c.execute(&sql("baseline"), &Parameters::new()),
+        ) {
+            (Ok(actual), Ok(expected)) => assert_eq!(actual.rows, expected.rows, "{expr}"),
+            (Err(actual), Err(expected)) => assert_eq!(actual.code(), expected.code(), "{expr}"),
+            results => panic!("{expr}: {results:?}"),
+        }
+    }
+    q(&c, "BEGIN");
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE docs SET extracted=data->>'$.x' WHERE data->>'$.x'=2 RETURNING extracted"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT extracted FROM docs")
+        .rows
+        .iter()
+        .all(|row| row == &vec![Value::Null]));
+}

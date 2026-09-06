@@ -861,3 +861,57 @@ fn binary_glob_checks_validate_payloads_after_reopen() {
         1
     );
 }
+
+#[test]
+fn json_arrow_checks_read_candidate_payloads_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("json-arrow.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs (id,valid,payload) VALUES (docs:saved,1,X'7B2278223A327D')",
+        );
+        q(
+            &c,
+            "DEFINE FIELD valid ON docs TYPE integer CHECK(payload->>'$.x'=2)",
+        );
+        q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+        q(&c, "BEGIN");
+        assert_eq!(
+            c.execute(
+                "UPDATE docs SET payload=X'7B2278223A337D'",
+                &Parameters::new()
+            )
+            .unwrap_err()
+            .code(),
+            "FDB_VALIDATION"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        q(&c, "ROLLBACK");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "UPDATE docs SET payload=X'7B2278223A327D'");
+    assert_eq!(
+        c.execute(
+            "UPDATE docs SET payload=X'7B2278223A337D'",
+            &Parameters::new()
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(
+        c.lookup_index(
+            "docs",
+            "docs_payload",
+            &Value::Binary(br#"{"x":2}"#.to_vec())
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+}
