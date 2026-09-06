@@ -1,0 +1,17 @@
+# Initial migration runner
+
+`Connection::migrate(&[Migration { version, name, sql }])` applies forward migrations to the current database. Pass the complete ordered list, including all previously applied versions. Versions are positive int64 values in strictly increasing order; names contain 1–255 UTF-8 bytes. Empty scripts are valid recorded no-ops.
+
+```sh
+fastdb-cli --migrate ./migrations application.db
+```
+
+The CLI reads `.sql` files named `VERSION_name.sql` from one directory, sorts by numeric version, and passes the complete list to the runner. For example, `001_create.sql` and `002_backfill.sql`. Duplicate versions fail. Other file extensions are ignored. Success prints `{"already_applied":N,"applied":[...]}`; failure exits nonzero with stderr diagnostics. This mode cannot be combined with line or transfer modes.
+
+The internal ledger stores version, name and exact SQL text. Repeated runs skip an identical applied prefix; edits, renames or missing applied entries fail. Whitespace and comment changes count as edits. Source retention provides exact comparison without a checksum dependency. It is not a tamper-proof audit log or a defense against external database editing. Ledger schema upgrade/corruption qualification remains release work.
+
+The runner requires an autocommit connection. All pending scripts and their ledger entries execute in one transaction; any failure rolls back the pending run, including earlier pending migrations. Already committed migrations remain applied. A retry can use corrected pending scripts because failed entries were not recorded. Callers must serialize use of a connection. Concurrent-runner stress, busy/retry policy and process-crash qualification remain pending; an engine conflict is returned without automatic retry.
+
+Scripts are split and screened before mutation. Eligible leading statements are CREATE, ALTER, DROP, INSERT, UPDATE, DELETE, UPSERT, DEFINE, REMOVE, SELECT, WITH, REINDEX and ANALYZE; actual support remains subject to FastQL and the pinned engine. Explicit BEGIN/COMMIT/END/ROLLBACK/SAVEPOINT/RELEASE, PRAGMA, ATTACH/DETACH and VACUUM are rejected. CREATE TEMP/TEMPORARY is rejected. Scripts are trusted application code; this screening is a transaction-control policy, not a complete side-effect or authorization sandbox. Database DDL/data changes are the rollback guarantee; no guarantee is made for external side effects of engine functions. Results from script SELECT statements are discarded.
+
+Execution errors include `FDB_MIGRATION`, the migration version, UTF-8 byte offset and underlying error. Eligibility, parsing and history errors retain their validation/syntax categories. Maximum plan size is 1,000 entries and 16 MiB of SQL, with at most 4 MiB per script. Plans/results are materialized; these are input limits, not total execution-memory or time limits. There is no down/undo command, implicit backup, baseline/reset/repair mode, or dry-run planner yet. Production restore rehearsal and broader V1 tool qualification remain unfinished.

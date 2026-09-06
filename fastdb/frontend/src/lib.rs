@@ -5,6 +5,8 @@ mod check;
 mod expression;
 mod functions;
 mod links;
+mod migration;
+pub use migration::{Migration, MigrationReport};
 mod path;
 mod select;
 mod transaction;
@@ -46,6 +48,12 @@ pub enum Error {
     Limit(String),
     #[error("expected exactly one row, got {0}")]
     Cardinality(usize),
+    #[error("migration {version} at byte {offset}: {source}")]
+    Migration {
+        version: i64,
+        offset: usize,
+        source: Box<Error>,
+    },
     #[error("rollback failed after {cause}: {rollback}")]
     Rollback { cause: String, rollback: String },
 }
@@ -62,6 +70,7 @@ impl Error {
             Self::Parameter(_) => "FDB_PARAMETER",
             Self::Limit(_) => "FDB_LIMIT",
             Self::Cardinality(_) => "FDB_CARDINALITY",
+            Self::Migration { .. } => "FDB_MIGRATION",
             Self::Rollback { .. } => "FDB_ROLLBACK",
         }
     }
