@@ -1674,7 +1674,10 @@ impl Connection {
                 lower_source(&mut join.table, &scope.sources[i + 1], None)?;
                 if let Some(constraint) = &mut join.constraint {
                     match constraint {
-                        JoinConstraint::On(e) => scope.sql_argument(e)?,
+                        JoinConstraint::On(e) => {
+                            expand_projection_aliases(e, &original_columns, false)?;
+                            scope.sql_argument(e)?;
+                        }
                         JoinConstraint::Using(_) => return Err(unsupported("USING joins")),
                     }
                 }

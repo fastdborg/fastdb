@@ -182,7 +182,7 @@ An outer grouping query performs deduplication after source aggregates/windows, 
 
 ## Collated ordering aliases
 
-ORDER BY resolves projected names and positions through COLLATE and single-expression parentheses, preserving those wrappers when lowering typed values or DISTINCT outputs. A projected alias takes precedence over a same-named stored field in these forms, matching the pinned relational frontend. Qualification still addresses a source field. ORDER BY alias references inside supported arithmetic and scalar/helper expressions now resolve to the projected value too. DISTINCT evaluates output-dependent ordering outside grouping and carries independent source inputs through its inner query, avoiding a second evaluation of volatile projections. Aggregate/window operations over output aliases fail explicitly; this does not complete WHERE/GROUP aliases or derived-source type propagation.
+ORDER BY resolves projected names and positions through COLLATE and single-expression parentheses, preserving those wrappers when lowering typed values or DISTINCT outputs. A projected alias takes precedence over a same-named stored field in these forms, matching the pinned relational frontend. Qualification still addresses a source field. ORDER BY alias references inside supported arithmetic and scalar/helper expressions now resolve to the projected value too. DISTINCT evaluates output-dependent ordering outside grouping and carries independent source inputs through its inner query, avoiding a second evaluation of volatile projections. Aggregate/window operations over output aliases fail explicitly; WHERE/GROUP BY/JOIN ON alias substitution is described below; derived-source type propagation remains incomplete.
 
 
 ## Ordinary SQL literals in the fallback guard
@@ -412,18 +412,24 @@ Differential tests cover JSON text stored as BLOB, missing/NULL values, chained 
 
 Comparisons and membership through native expression aliases now convert the already-lowered alias result into a comparison key. Generated operand expressions are not lowered again. Explicit collation, unary plus and cast structure are retained; aliases directly referring to ordinary columns retain their existing path so implicit column affinity is not discarded.
 
-Differential tests cover HAVING equality/membership with binary substr aliases, numeric/text casts, collation and equality inside ORDER BY. This does not add WHERE/GROUP BY alias support, resolve mixed native-column/typed-field comparisons, or qualify all volatile/aggregate alias evaluation. General expression/resource work remains open.
+Differential tests cover HAVING equality/membership with binary substr aliases, numeric/text casts, collation and equality inside ORDER BY. Later WHERE/GROUP BY/JOIN ON alias substitution is described below. Mixed native-column/typed-field comparisons and full volatile/aggregate alias evaluation remain incomplete. General expression/resource work remains open.
 
 
 ## Collection GROUP BY aliases
 
 Explicit projection aliases now resolve in unqualified GROUP BY references, including supported scalar expressions and COLLATE/parenthesis wrappers. Substitution uses the original source expression without recursively resolving its names as other aliases. Projected integer constants are protected from becoming a second ordinal; ordinal GROUP BY retains its existing source-expression path.
 
-For collections, an explicit alias takes precedence over a same-named stored field. Qualified paths retain stored-field meaning. This deterministic rule differs from the pinned ordinary relational GROUP BY column-first rule; it avoids data-dependent resolution as optional document fields appear. Ordinary relational delegation is unchanged. Tests cover expressions, constants, collation, stored-field collisions, binary/record keys and rejection of aggregate grouping aliases. WHERE aliases, composite keys, derived queries and broad volatile/resource qualification remain unfinished.
+For collections, an explicit alias takes precedence over a same-named stored field. Qualified paths retain stored-field meaning. This deterministic rule differs from the pinned ordinary relational GROUP BY column-first rule; it avoids data-dependent resolution as optional document fields appear. Ordinary relational delegation is unchanged. Tests cover expressions, constants, collation, stored-field collisions, binary/record keys and rejection of aggregate grouping aliases. WHERE/JOIN ON aliases are described below; composite keys, derived queries and broad volatile/resource qualification remain unfinished.
 
 
 ## Collection WHERE aliases
 
 Collection WHERE now substitutes explicit projection aliases with their original source expressions before index-candidate selection. As in collection GROUP BY, an alias takes precedence over a same-named stored field; qualification addresses the stored field. Substitution does not recursively resolve source-expression names as other aliases. Ordinary relational statements retain native resolution.
 
-Tests cover direct/computed aliases, constants, membership, qualified collisions, a retained managed-index SEARCH plan, aggregate-alias rejection and collection-target INSERT SELECT rollback. INSERT SELECT from a collection into an ordinary relational target remains unsupported. Aliases are expression substitutions, not materialized variables or a single-evaluation guarantee for volatile expressions. JOIN ON aliases, mixed-column propagation, derived queries and full resource/volatile qualification remain unfinished.
+Tests cover direct/computed aliases, constants, membership, qualified collisions, a retained managed-index SEARCH plan, aggregate-alias rejection and collection-target INSERT SELECT rollback. Ordinary relational INSERT targets also accept the supported collection source subset. Aliases are expression substitutions, not materialized variables or a single-evaluation guarantee for volatile expressions. Mixed-column propagation, derived queries and full resource/volatile qualification remain unfinished.
+
+## Collection JOIN ON aliases
+
+JOIN ON substitutes explicit projection aliases with their original expressions before typed scalar and comparison lowering. This follows the collection WHERE/GROUP BY alias-first rule; qualified paths still address stored fields. Unaliased fields in joins require source qualification. Substitution does not recursively resolve names inside the source expression or promise single evaluation of volatile expressions. Ordinary relational joins retain native name resolution; the pinned engine rejects the tested projection-alias reference in ON. Differential checks use equivalent explicit source expressions.
+
+Coverage includes inner/left joins, computed and constant aliases, case-insensitive alias references, qualified stored-field collisions, binary payload and record identity comparisons, aggregate/fetched-alias rejection, and native-target INSERT SELECT rollback. Alias substitution does not change join ordering or add index pushdown for outer joins. Broader join scopes, derived queries and mixed native-column type propagation remain open.

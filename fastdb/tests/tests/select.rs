@@ -1511,3 +1511,90 @@ fn where_aliases_resolve_source_expressions_and_keep_index_candidates() {
     query(&c, "ROLLBACK");
     assert!(query(&c, "SELECT place FROM results").rows.is_empty());
 }
+
+#[test]
+fn join_predicates_resolve_projection_aliases_before_typed_lowering() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(city TEXT,amount INTEGER)");
+    query(&c, "CREATE TABLE matches(city TEXT,n INTEGER)");
+    query(&c, "INSERT INTO matches VALUES ('a',1),('b',2)");
+    for (city, amount) in [("A", 1), ("B", 2), ("C", 3)] {
+        query(
+            &c,
+            &format!("INSERT INTO docs {{city:'{city}',amount:{amount},place:'stored'}}"),
+        );
+        query(
+            &c,
+            &format!("INSERT INTO baseline VALUES ('{city}',{amount})"),
+        );
+    }
+    for template in [
+        "SELECT lower(d.city) AS place,m.n FROM SOURCE d JOIN matches m ON place=m.city ORDER BY d.city",
+        "SELECT lower(d.city) AS place,m.n FROM SOURCE d LEFT JOIN matches m ON PLACE=m.city ORDER BY d.city",
+        "SELECT d.amount+1 AS next,m.n FROM SOURCE d JOIN matches m ON next=m.n ORDER BY d.city",
+        "SELECT lower(d.city) AS place,m.n FROM SOURCE d LEFT JOIN matches m ON place=m.city AND m.n>1 ORDER BY d.city",
+        "SELECT 1 AS key,m.n FROM SOURCE d JOIN matches m ON key=m.n ORDER BY d.city",
+    ] {
+        assert_eq!(query(&c, &template.replace("SOURCE", "docs")).rows,
+            query(&c, &template.replace("SOURCE", "baseline")
+                .replace("ON place=", "ON lower(d.city)=")
+                .replace("ON PLACE=", "ON lower(d.city)=")
+                .replace("ON next=", "ON d.amount+1=")
+                .replace("ON key=", "ON 1=")).rows, "{template}");
+    }
+    assert_eq!(query(&c, "SELECT d.city AS place,m.n FROM docs d JOIN matches m ON d.place='stored' AND d.amount=m.n ORDER BY d.city").rows.len(), 2);
+    assert!(c
+        .execute(
+            "SELECT lower(d.city) AS place FROM baseline d JOIN matches m ON place=m.city",
+            &Parameters::new()
+        )
+        .is_err());
+    query(&c, "CREATE TABLE links");
+    query(&c, "CREATE TABLE refs");
+    query(
+        &c,
+        "INSERT INTO links (id,data,ref) VALUES (links:a,X'31',refs:a)",
+    );
+    query(&c, "INSERT INTO refs (id,data) VALUES (refs:a,X'31')");
+    assert_eq!(
+        query(
+            &c,
+            "SELECT l.ref AS target,r.data FROM links l JOIN refs r ON target=r.id"
+        )
+        .rows,
+        vec![vec![
+            Value::Record(Record {
+                table: "refs".into(),
+                key: Key::String("a".into())
+            }),
+            Value::Binary(vec![49])
+        ]]
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT l.data AS bytes,r.id FROM links l JOIN refs r ON bytes=r.data"
+        )
+        .rows
+        .len(),
+        1
+    );
+    for sql in [
+        "SELECT sum(d.amount) AS total FROM docs d JOIN matches m ON total=m.n",
+        "SELECT record::fetch(l.ref) AS target FROM links l JOIN refs r ON target=r.id",
+        "SELECT d.city AS place FROM docs d JOIN matches m ON city=m.city",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    query(&c, "CREATE TABLE copied(city TEXT,n INTEGER)");
+    query(&c, "BEGIN");
+    query(&c, "INSERT INTO copied SELECT lower(d.city) AS place,m.n FROM docs d JOIN matches m ON place=m.city");
+    assert_eq!(
+        query(&c, "SELECT count(*) FROM copied").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    query(&c, "ROLLBACK");
+    assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
+}
