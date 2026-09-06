@@ -76,3 +76,6 @@ Batches use the same semicolon-aware parser as Rust and the CLI, including trigg
 
 
 Native lock contention uses FDB_BUSY; a stale read transaction that cannot become a writer uses FDB_BUSY_SNAPSHOT. These replace the former FDB_ENGINE classification for those native variants. Inspect the error's transaction observation before recovery; stale-snapshot work needs a fresh transaction. The client performs no automatic retries. A real shared-file test covers both codes and committed-value preservation through two Database instances. Broader cross-process contention/recovery qualification remains pending.
+
+
+Native constraint, foreign-key and trigger-raise errors use FDB_CONSTRAINT and retain their engine message. Frontend candidate validation remains FDB_VALIDATION. The native category includes some runtime validation failures and does not specify a constraint subtype or rollback scope: ordinary SQL OR FAIL can retain earlier rows. Inspect transaction observations and apply the statement's conflict policy when recovering.

@@ -28,6 +28,7 @@ test('validation, rollback and error transaction reports pass through frontend',
   db.execute('DEFINE FIELD value ON docs TYPE integer');
   db.execute('BEGIN');
   db.execute('INSERT INTO docs {id:docs:p1,value:1}');
+  assert.throws(() => db.execute('INSERT INTO docs {id:docs:p1,value:2}'), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
   assert.throws(() => db.execute("INSERT INTO docs {value:'bad'}"), error => error.code === 'FDB_VALIDATION' && error.transaction.after === 'active');
   db.execute('ROLLBACK');
   assert.deepEqual(db.all('SELECT * FROM docs'), []);

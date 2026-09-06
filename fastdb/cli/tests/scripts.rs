@@ -58,7 +58,7 @@ fn interactive_input_accumulates_multiline_statements_and_recovers_after_errors(
         .map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(rows.len(), 7);
-    assert_eq!(rows[3]["error"]["code"], "FDB_ENGINE");
+    assert_eq!(rows[3]["error"]["code"], "FDB_CONSTRAINT");
     assert_eq!(rows[3]["transaction"]["after"], "active");
     assert_eq!(rows[5]["rows"], serde_json::json!([]));
     assert_eq!(rows[6]["rows"][0][0]["value"], 7);

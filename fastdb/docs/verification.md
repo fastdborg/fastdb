@@ -329,3 +329,10 @@ SQL input defaults to 16 MiB and can be changed with --max-input-bytes. Size che
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 137 Rust tests, fifteen Node tests and TypeScript declarations. Two new persistent Rust tests verify uncommitted document/index invisibility, retained read snapshots across writer commit, stale-snapshot write rejection, successful rollback/retry, contending index builds under both winner commit and rollback, uniqueness preservation and close/reopen consistency. A new Node test opens two Database instances on the same file and verifies lock contention, stale-snapshot failure, transaction observations and committed-value preservation.
 
 Native Busy and BusySnapshot now map to FDB_BUSY and FDB_BUSY_SNAPSHOT rather than FDB_ENGINE. Tests exercise the actual variants through the engine and Node error envelope. No automatic retry is added. No dependencies or upstream implementation files changed. These deterministic overlaps establish targeted in-process evidence, not broad threaded/cross-process stress, interrupted commit/checkpoint or full release qualification.
+
+
+## Native constraint error category — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 139 Rust tests, fifteen Node tests and TypeScript declarations. Two new Rust tests cover primary-key, unique, NOT NULL, CHECK, foreign-key and trigger-raise failures, preservation of earlier outer-transaction work under default abort behavior, and partial row retention under ordinary INSERT OR FAIL. Existing Node and CLI tests now verify FDB_CONSTRAINT through their public error envelopes; frontend validation remains FDB_VALIDATION.
+
+The mapping uses native error variants and preserves engine messages and transaction observations. The native Constraint variant includes some runtime validation errors; the category specifies neither a finer constraint subtype nor rollback scope. No upstream files or dependencies changed. Full V1 error/result, concurrency, recovery and release qualification remain pending.

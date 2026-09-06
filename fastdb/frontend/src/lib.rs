@@ -67,6 +67,11 @@ impl Error {
             Self::Engine(turso_core::LimboError::Interrupt) => "FDB_CANCELLED",
             Self::Engine(turso_core::LimboError::Busy) => "FDB_BUSY",
             Self::Engine(turso_core::LimboError::BusySnapshot) => "FDB_BUSY_SNAPSHOT",
+            Self::Engine(
+                turso_core::LimboError::Constraint(_)
+                | turso_core::LimboError::ForeignKeyConstraint(_)
+                | turso_core::LimboError::Raise(..),
+            ) => "FDB_CONSTRAINT",
             Self::Engine(_) => "FDB_ENGINE",
             Self::Encoding(_) | Self::Storage(_) => "FDB_STORAGE",
             Self::Validation(_) => "FDB_VALIDATION",
