@@ -1,0 +1,71 @@
+'use strict';
+// Maintainer smoke: build with check-node.sh first. No publishing or registry
+// access; all artifacts and the consumer installation live in a temp directory.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const packageDir = path.resolve(__dirname, '../bindings/node');
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+assert(fs.existsSync(path.join(packageDir, 'fastdb.node')), 'Build the addon with fastdb/scripts/check-node.sh first');
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-package-'));
+const run = (command, args, cwd) => execFileSync(command, args, {
+  cwd, encoding: 'utf8', timeout: 120000, maxBuffer: 2 * 1024 * 1024,
+  env: { ...process.env, NODE_PATH: '' },
+});
+try {
+  const [packed] = JSON.parse(run(npm, ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', temporary], packageDir));
+  assert.deepEqual(packed.files.map(file => file.path).sort(), [
+    'LICENSE.md', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs',
+  ].sort());
+  assert(packed.files.find(file => file.path === 'fastdb.node').size > 0);
+  const consumer = path.join(temporary, 'consumer');
+  fs.mkdirSync(consumer);
+  fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'fastdb-package-smoke', version: '0.0.0', private: true }));
+  run(npm, ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', path.join(temporary, packed.filename)], consumer);
+  fs.writeFileSync(path.join(consumer, 'smoke.cjs'), `
+'use strict';
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { Database, AsyncDatabase, Record } = require('@fastdb/node');
+assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
+(async () => {
+  const file = path.join(__dirname, 'database.db');
+  const db = new Database(file);
+  try {
+    db.execute('CREATE TABLE docs');
+    db.execute('CREATE UNIQUE INDEX docs_value ON docs(value)');
+    db.execute('INSERT INTO docs (id,value) VALUES ($id,$value)', { $id: new Record('docs','saved'), $value: 9223372036854775807n });
+  } finally { db.close(); }
+  const worker = await AsyncDatabase.open(file);
+  try {
+    const row = await worker.exactlyOne('SELECT id,value FROM docs');
+    assert(row[0] instanceof Record);
+    assert.equal(row[0].key, 'saved');
+    assert.equal(row[1], 9223372036854775807n);
+    await worker.execute('BEGIN');
+    await worker.execute('UPDATE docs SET value=7');
+    await worker.execute('ROLLBACK');
+    assert.equal((await worker.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
+  } finally { await worker.close(); }
+  const reopened = new Database(file);
+  try { assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n); }
+  finally { reopened.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+`);
+  run(process.execPath, ['smoke.cjs'], consumer);
+  // Check declaration resolution from the installed package, with the local
+  // compiler as a tool only; the package has no runtime registry dependencies.
+  fs.writeFileSync(path.join(consumer, 'smoke.ts'), `import { Database, AsyncDatabase, Record } from '@fastdb/node';
+const db = new Database();
+db.execute('SELECT $id', { $id: new Record('docs', 1n) });
+db.close();
+async function open() { const db = await AsyncDatabase.open(); await db.close(); }
+void open;
+`);
+  run(process.execPath, [path.join(packageDir, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs', 'smoke.ts'], consumer);
+  console.log(`Node package smoke passed: ${process.platform}/${process.arch}, Node ${process.versions.node}, ${packed.entryCount} files, ${packed.size} packed bytes`);
+} finally {
+  fs.rmSync(temporary, { recursive: true, force: true });
+}

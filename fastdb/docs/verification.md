@@ -406,3 +406,12 @@ Two regressions compare scan results with indexed results and assert actual SEAR
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 153 Rust tests, fifteen Node tests and TypeScript declarations. Single-source IS NULL/IS NOT NULL predicates now filter managed-index entries before document ID lookup; postfix and reversed literal-null forms share that path. A regression compares results before and after index creation for missing/null/non-null fields, equality-to-null, residual predicates, update/index maintenance and delete/rollback. It also verifies a right join whose results would change under unsafe null-accepting pushdown; joined sources retain their existing planning.
 
 A native-table probe showed that pinned Turso scans rather than seeks for null predicates even with a native index. Tests therefore verify the compact index-entry scan plus document-ID lookup without claiming a null-key seek or measured speedup. Cost selection and performance qualification remain pending. No persisted format, dependency or upstream file changed; full V1 is incomplete.
+
+
+## Native Node tarball installation — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 153 Rust tests, fifteen Node tests and TypeScript declarations; npm ci also passed offline. The initial npm pack inventory omitted fastdb.node because of the gitignore fallback. An explicit runtime allowlist now includes the addon, worker, entry point, declarations, README and MIT license, excluding Rust sources and development tests. Normal packing checks that the addon loads first; a missing-addon fixture fails without producing an archive.
+
+`node fastdb/scripts/check-node-package.cjs` passed against the final package manifest on Linux x64/Node 24.19.0. It packed seven files (57,929,232 compressed bytes for this debug build), installed offline into a fresh consumer outside the checkout with lifecycle scripts disabled, exercised synchronous and worker operations with int64/record values, rollback and persistence, and compiled imports from installed declarations. The temporary tarball and consumer were removed afterward. This heavier smoke is a maintainer check rather than routine CI.
+
+The package remains private and unpublished. Platform/version coverage, prebuild selection, optimized artifact sizing and complete distribution notices remain release gates. The npm lockfile change records license metadata only; dependency versions and upstream files are unchanged. Full V1 remains incomplete.

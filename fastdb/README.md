@@ -20,3 +20,5 @@ Use `connection.execute_report(sql, &params)` when error handling needs transact
 A tested [offline backup and restore procedure](docs/backup-restore.md) preserves relational data, collection schema/indexes and migration history using an exclusive maintenance window and successful checkpoint. Online backup and interrupted-copy/recovery qualification remain pending.
 
 `INFO FOR DB` lists tables and views. `INFO FOR TABLE name` reports logical collection validation/indexes or native relational column and index metadata. `INFO FOR INDEX name` includes explicit relational index SQL and key details such as expressions, direction and collation. See [inspection contracts](docs/contracts.md#relational-inspection-details) for the prototype result shape.
+
+The [native Node client](bindings/node/README.md#local-package-smoke) includes an offline tarball-install smoke for local packaging qualification. Platform-specific release binaries remain pending.
