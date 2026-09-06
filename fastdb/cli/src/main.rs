@@ -1,4 +1,4 @@
-use fastdb::{Database, ExecutionReport, Parameters};
+use fastdb::{Database, ExecutionReport, Parameters, TransferFormat};
 use std::io::{self, BufRead, Read};
 fn output(
     report: ExecutionReport,
@@ -22,11 +22,24 @@ fn output(
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut path = None;
     let mut line_mode = false;
-    for arg in std::env::args().skip(1) {
+    let mut transfer = None;
+    let mut format = TransferFormat::Json;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--line" => line_mode = true,
+            "--ndjson" => format = TransferFormat::Ndjson,
+            "--import" | "--export" => {
+                if transfer.is_some() {
+                    return Err("choose one import/export operation".into());
+                }
+                transfer = Some((
+                    arg == "--import",
+                    args.next().ok_or("expected collection name")?,
+                ));
+            }
             "--help" | "-h" => {
-                println!("Usage: fastdb-cli [--line] [DATABASE]\nReads a semicolon-delimited script from stdin; stops on the first error.\n--line retains one-statement-per-line execution and continues after errors.");
+                println!("Usage: fastdb-cli [--line] [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nReads a semicolon-delimited script from stdin; stops on the first error.\n--line retains one-statement-per-line execution and continues after errors.");
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}").into()),
@@ -34,8 +47,27 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             _ => return Err("expected one database path".into()),
         }
     }
+    if line_mode && transfer.is_some() {
+        return Err("--line cannot be combined with import/export".into());
+    }
+    if transfer.is_none() && matches!(format, TransferFormat::Ndjson) {
+        return Err("--ndjson requires import/export".into());
+    }
     let db = Database::open(path.as_deref().unwrap_or(":memory:"))?;
     let conn = db.connect()?;
+    if let Some((import, table)) = transfer {
+        if import {
+            let mut input = String::new();
+            io::stdin()
+                .take(64 * 1024 * 1024 + 1)
+                .read_to_string(&mut input)?;
+            let count = conn.import_documents(&table, &input, format)?;
+            println!("{}", serde_json::json!({"imported":count}));
+        } else {
+            print!("{}", conn.export_documents(&table, format)?);
+        }
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
     let mut failed = false;
     if line_mode {
         for line in io::stdin().lock().lines() {

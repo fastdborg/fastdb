@@ -8,6 +8,8 @@ mod links;
 mod path;
 mod select;
 mod transaction;
+mod transfer;
+pub use transfer::TransferFormat;
 mod update;
 mod value;
 mod vectors;
