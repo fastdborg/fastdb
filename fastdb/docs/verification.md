@@ -292,3 +292,10 @@ HAVING receives projected expression bindings after grouping-key lowering, and t
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 128 Rust tests, fourteen Node tests and TypeScript declarations. A new persistent-harness test verifies managed-looking text values in ordinary SELECT/functions, INSERT/UPDATE/DELETE, CTEs/compounds, scalar/derived subqueries, views and CREATE TABLE AS SELECT. It also rejects direct/nested/CTE single-quoted managed table references, protected PRAGMAs, managed DELETE and multiple statements, then confirms collection writes still work.
 
 The fallback guard redacts value literals in a parsed guard-only copy and scans that representation. Native preparation/execution still receives the original SQL. Object names remain present, including identifiers written with single quotes. Unparsed statements and uncovered contexts retain conservative scanning; this is not a complete reference/dependency authorization boundary. No dependency or upstream implementation files changed. Full V1 compatibility, resource and release qualification remain incomplete.
+
+
+## Schema-expression and UPSERT literals — 2026-09-06
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 129 Rust tests, fourteen Node tests and TypeScript declarations. A new regression verifies actual default values and CHECK enforcement, a partial index predicate, an added column default and an ordinary UPSERT whose expressions contain collection/internal/PRAGMA-looking text. It also rejects protected foreign-key targets, index targets, constraint names and rename targets, then confirms normal collection writes still work. A separate CLI smoke confirms FDB_UNSUPPORTED for all four protected schema-reference cases.
+
+The guard-only AST traversal now visits CREATE/ALTER column value expressions, table CHECK/index expressions and chained UPSERT expressions without removing their identifier/reference names. The original SQL remains the sole executed representation. No dependencies or upstream implementation files changed. Trigger bodies, PRAGMA/table-function argument roles, broader dependency authorization and release qualification remain unfinished.

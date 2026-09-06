@@ -18,8 +18,9 @@ pub(crate) fn tokens(sql: &str) -> crate::Result<Vec<fastql_parser::Token>> {
             ..
         } => {
             ctes(with)?;
-            if let InsertBody::Select(s, _) = body {
+            if let InsertBody::Select(s, conflict) = body {
                 select(s)?;
+                upserts(conflict)?;
             }
             projections(returning)?;
         }
@@ -50,7 +51,41 @@ pub(crate) fn tokens(sql: &str) -> crate::Result<Vec<fastql_parser::Token>> {
             body: CreateTableBody::AsSelect(s),
             ..
         } => select(s)?,
-        // PRAGMA, DDL names/constraints, trigger bodies, and other contexts
+        Stmt::CreateTable {
+            body:
+                CreateTableBody::ColumnsAndConstraints {
+                    columns,
+                    constraints,
+                    ..
+                },
+            ..
+        } => {
+            for column in columns {
+                column_definition(column)?;
+            }
+            for constraint in constraints {
+                match &mut constraint.constraint {
+                    TableConstraint::Check(expr) => expression(expr)?,
+                    TableConstraint::PrimaryKey { columns, .. }
+                    | TableConstraint::Unique { columns, .. } => ordering(columns)?,
+                    TableConstraint::ForeignKey { .. } => {}
+                }
+            }
+        }
+        Stmt::CreateIndex {
+            columns,
+            where_clause,
+            ..
+        } => {
+            ordering(columns)?;
+            optional(where_clause)?;
+        }
+        Stmt::AlterTable(AlterTable {
+            body:
+                AlterTableBody::AddColumn(column) | AlterTableBody::AlterColumn { new: column, .. },
+            ..
+        }) => column_definition(column)?,
+        // PRAGMA, DDL names, trigger bodies, and other contexts
         // retain the conservative guard until their reference roles are covered.
         _ => {}
     }
@@ -159,5 +194,34 @@ fn select(select: &mut Select) -> Result<()> {
         core(&mut compound.select)?;
     }
     ordering(&mut select.order_by)?;
+    Ok(())
+}
+
+fn column_definition(column: &mut ColumnDefinition) -> Result<()> {
+    for constraint in &mut column.constraints {
+        match &mut constraint.constraint {
+            ColumnConstraint::Default(expr)
+            | ColumnConstraint::Check(expr)
+            | ColumnConstraint::Generated { expr, .. } => expression(expr)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+fn upserts(conflict: &mut Option<Box<Upsert>>) -> Result<()> {
+    let mut current = conflict.as_deref_mut();
+    while let Some(clause) = current {
+        if let Some(index) = &mut clause.index {
+            ordering(&mut index.targets)?;
+            optional(&mut index.where_clause)?;
+        }
+        if let UpsertDo::Set { sets, where_clause } = &mut clause.do_clause {
+            for set in sets {
+                expression(&mut set.expr)?;
+            }
+            optional(where_clause)?;
+        }
+        current = clause.next.as_deref_mut();
+    }
     Ok(())
 }

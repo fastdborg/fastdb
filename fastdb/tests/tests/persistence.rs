@@ -383,3 +383,48 @@ fn ordinary_sql_literals_are_not_managed_object_references() {
     query(&c, "INSERT INTO users {id:users:p1}");
     assert_eq!(query(&c, "SELECT * FROM users").rows.len(), 1);
 }
+
+#[test]
+fn schema_and_upsert_literals_retain_values_and_protect_reference_names() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE users");
+    query(&c,"CREATE TABLE ordinary(id INTEGER PRIMARY KEY, value TEXT DEFAULT 'users' CHECK(value IN ('users','__fastdb_catalog')), CHECK(value <> 'writable_schema'))");
+    query(&c, "INSERT INTO ordinary (id) VALUES (1)");
+    assert_eq!(
+        query(&c, "SELECT value FROM ordinary").rows,
+        vec![vec![Value::String("users".into())]]
+    );
+    query(
+        &c,
+        "CREATE INDEX ordinary_value ON ordinary(value) WHERE value='users'",
+    );
+    query(
+        &c,
+        "ALTER TABLE ordinary ADD COLUMN label TEXT DEFAULT '__fastdb_catalog'",
+    );
+    query(&c,"INSERT INTO ordinary (id,value) VALUES (1,'users') ON CONFLICT(id) DO UPDATE SET value='__fastdb_catalog' WHERE ordinary.value='users'");
+    assert_eq!(
+        query(&c, "SELECT value,label FROM ordinary").rows,
+        vec![vec![
+            Value::String("__fastdb_catalog".into()),
+            Value::String("__fastdb_catalog".into())
+        ]]
+    );
+    assert!(c
+        .execute(
+            "UPDATE ordinary SET value='writable_schema'",
+            &Parameters::new()
+        )
+        .is_err());
+    for sql in [
+        "CREATE TABLE bad(x REFERENCES '__fastdb_catalog'(name))",
+        "CREATE INDEX bad_index ON '__fastdb_catalog'(name)",
+        "CREATE TABLE bad(x TEXT CONSTRAINT '__fastdb_bad' CHECK(x='users'))",
+        "ALTER TABLE ordinary RENAME TO '__fastdb_bad'",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    query(&c, "INSERT INTO users {id:users:p1}");
+    assert_eq!(query(&c, "SELECT * FROM users").rows.len(), 1);
+}
