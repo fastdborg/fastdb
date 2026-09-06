@@ -37,6 +37,18 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     db.execute('CREATE TABLE docs');
     db.execute('CREATE UNIQUE INDEX docs_value ON docs(value)');
     db.execute('INSERT INTO docs (id,value) VALUES ($id,$value)', { $id: new Record('docs','saved'), $value: 9223372036854775807n });
+    const audit = db.checkCollectionIntegrity('docs', {maxDocuments: 1n});
+    assert.equal(audit.documents, 1n);
+    assert.equal(audit.indexEntries, 1n);
+    assert.ok(audit.encodedBytes > 0n);
+    assert.equal(db.checkCollectionIntegrity('docs', {maxEncodedBytes: audit.encodedBytes}).encodedBytes, audit.encodedBytes);
+    const profile = db.profileSelect('SELECT id,value FROM docs WHERE value=$value', {$value: 9223372036854775807n});
+    assert(profile.result.rows[0][0] instanceof Record);
+    assert.equal(profile.result.rows[0][1], 9223372036854775807n);
+    assert.ok(profile.metrics.vmSteps > 0n);
+    assert.ok(profile.metrics.btreeSeeks > 0n);
+    assert.equal(typeof profile.metrics.indexSteps, 'bigint');
+    assert.equal(profile.metrics.rowsWritten, 0n);
   } finally { db.close(); }
   const worker = await AsyncDatabase.open(file);
   try {
@@ -46,22 +58,47 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal(row[1], 9223372036854775807n);
     await worker.execute('BEGIN');
     await worker.execute('UPDATE docs SET value=7');
+    await assert.rejects(worker.checkCollectionIntegrity('docs', {maxDocuments: 0n}), error => error.code === 'FDB_LIMIT' && error.transaction.after === 'active');
+    const profile = await worker.profileSelect('SELECT value FROM docs WHERE value=$value', {$value: 7n});
+    assert.equal(profile.result.rows[0][0], 7n);
+    assert.equal(profile.result.transaction.after, 'active');
+    assert.ok(profile.metrics.btreeSeeks > 0n);
+    assert.equal(typeof profile.metrics.indexSteps, 'bigint');
+    assert.deepEqual((await worker.profileSelect('SELECT value FROM docs WHERE value=$value', {$value: 7n})).metrics, profile.metrics);
     await worker.execute('ROLLBACK');
     assert.equal((await worker.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
+    assert.equal((await worker.checkCollectionIntegrity('docs')).documents, 1n);
   } finally { await worker.close(); }
   const reopened = new Database(file);
-  try { assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n); }
+  try {
+    assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n);
+    assert.equal(reopened.checkCollectionIntegrity('docs').indexEntries, 1n);
+  }
   finally { reopened.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 `);
   run(process.execPath, ['smoke.cjs'], consumer);
   // Check declaration resolution from the installed package, with the local
   // compiler as a tool only; the package has no runtime registry dependencies.
-  fs.writeFileSync(path.join(consumer, 'smoke.ts'), `import { Database, AsyncDatabase, Record } from '@fastdb/node';
+  fs.writeFileSync(path.join(consumer, 'smoke.ts'), `import { Database, AsyncDatabase, Record, IntegrityLimits, IntegrityReport, ProfiledQuery } from '@fastdb/node';
 const db = new Database();
 db.execute('SELECT $id', { $id: new Record('docs', 1n) });
+const limits: IntegrityLimits = {maxDocuments: 1n};
+const audit: IntegrityReport = db.checkCollectionIntegrity('docs', limits);
+const profile: ProfiledQuery = db.profileSelect('SELECT 1');
+const counts: bigint[] = [audit.documents, audit.encodedBytes, profile.metrics.vmSteps];
+// @ts-expect-error lossless limits require bigint
+db.checkCollectionIntegrity('docs', {maxDocuments: 1});
+void counts;
 db.close();
-async function open() { const db = await AsyncDatabase.open(); await db.close(); }
+async function open() {
+  const db = await AsyncDatabase.open();
+  const audit: IntegrityReport = await db.checkCollectionIntegrity('docs', limits);
+  const profile: ProfiledQuery = await db.profileSelect('SELECT 1');
+  const counts: bigint[] = [audit.indexEntries, profile.metrics.rowsRead];
+  void counts;
+  await db.close();
+}
 void open;
 `);
   run(process.execPath, [path.join(packageDir, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs', 'smoke.ts'], consumer);

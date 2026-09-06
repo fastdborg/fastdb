@@ -90,7 +90,7 @@ fastdb/scripts/check-node.sh
 node fastdb/scripts/check-node-package.cjs
 ```
 
-The smoke packs into a temporary directory, verifies the exact file inventory, installs the tarball into a separate consumer with npm offline and lifecycle scripts disabled, and tests public synchronous/worker queries, typed int64/record values, rollback and reopen. It also compiles a consumer TypeScript import against the installed declarations. Temporary artifacts are removed afterward. The TypeScript compiler is a checkout development tool; the installed package has no runtime registry dependencies.
+The smoke packs into a temporary directory, verifies the exact file inventory, installs the tarball into a separate consumer with npm offline and lifecycle scripts disabled, and tests public synchronous/worker queries, typed int64/record values, rollback and reopen. Profiling and audit calls cover both clients, lossless bigint counters, exact audit limits, retained active work on limit failure, repeat-call profiling counters and reopened index counts. It also compiles a consumer TypeScript import against the installed declarations, including public profiling/audit types, async results and rejection of numeric audit limits. Temporary artifacts are removed afterward. The TypeScript compiler is a checkout development tool; the installed package has no runtime registry dependencies.
 
 This is a maintainer packaging check, separate from routine CI because the current debug addon is large. The verified local artifact is Linux x64 with Node 24.19.0, not a universal binary. Keep private=true: platform-specific prebuild selection, Node-version/platform coverage, optimized artifact sizing and complete distribution notices remain release work. No package has been published.
 

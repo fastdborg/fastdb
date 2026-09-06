@@ -380,3 +380,7 @@ Scope-aware native-column recognition fixes spurious missing-column errors for r
 ## Document BETWEEN native column bounds
 
 The lowerer now converts a preserved logical left operand for native-column BETWEEN/NOT BETWEEN bounds, retaining raw binary payloads and native affinity/collation. A generated scalar subquery isolates physical document collation while retaining the engine's one-evaluation left operand behavior. Record/scalar rejection remains null-aware. Mixed typed/native bounds, arbitrary expressions and volatile native bound evaluation remain qualification work.
+
+## Profiling and audit consumer qualification
+
+The standalone Rust and installed Node package smoke scripts now exercise the public profiling and collection-audit APIs outside the workspace/package source tree. Coverage includes exported result/limit types, typed query results, lossless counters, indexed profiling, repeated metrics, audit limits and retained transaction work, and close/reopen. These remain local path-dependency/offline-tarball checks; registry publishing, prebuilds, platform coverage and release notices remain open.

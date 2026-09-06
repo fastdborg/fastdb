@@ -40,7 +40,7 @@ def main():
         )
         shutil.copyfile(ROOT / "Cargo.lock", consumer / "Cargo.lock")
         (consumer / "src" / "main.rs").write_text(r'''
-use fastdb::{Database, Parameters, Record, Key, Value};
+use fastdb::{Database, Parameters, Record, Key, Value, IntegrityLimits, IntegrityReport, ProfiledQuery};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
     let id = Record { table: "docs".into(), key: Key::String("saved".into()) };
@@ -58,6 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let report=c.execute_report("UPDATE docs SET value=-1", &Parameters::new());
         assert_eq!(report.result.unwrap_err().code(), "FDB_VALIDATION");
         assert_eq!(report.transaction_after,fastdb::TransactionState::Active);
+        let limit = c.check_collection_integrity("docs", IntegrityLimits { max_documents: 0, ..IntegrityLimits::default() }).unwrap_err();
+        assert_eq!(limit.code(), "FDB_LIMIT");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
         c.execute("ROLLBACK", &Parameters::new())?;
         assert_eq!(c.lookup_index("docs","docs_value",&Value::Integer(i64::MAX))?.len(),1);
         assert!(c.lookup_index("docs","docs_value",&Value::Integer(7))?.is_empty());
@@ -69,7 +72,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let c=db.connect()?;
     assert_eq!(c.get(&id)?.expect("persisted document")["value"],Value::Integer(i64::MAX));
     assert_eq!(c.lookup_index("docs","docs_value",&Value::Integer(i64::MAX))?.len(),1);
-    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors and reopen");
+    let audit: IntegrityReport = c.check_collection_integrity("docs", IntegrityLimits::default())?;
+    assert_eq!((audit.documents,audit.indexes,audit.index_entries),(1,1,1));
+    assert!(audit.encoded_bytes>0);
+    assert_eq!(c.check_collection_integrity("docs", IntegrityLimits { max_documents: 1, max_encoded_bytes: audit.encoded_bytes })?.encoded_bytes,audit.encoded_bytes);
+    let params=Parameters::from([("$value".into(),Value::Integer(i64::MAX))]);
+    let profile: ProfiledQuery=c.profile_select("SELECT id,value FROM docs WHERE value=$value", &params)?;
+    assert_eq!(profile.result.exactly_one()?,vec![Value::Record(id),Value::Integer(i64::MAX)]);
+    assert!(profile.metrics.vm_steps>0);
+    // A unique lookup seeks directly and need not iterate an index.
+    assert!(profile.metrics.btree_seeks>0);
+    assert_eq!(profile.metrics.rows_written,0);
+    assert_eq!(c.profile_select("SELECT id,value FROM docs WHERE value=$value", &params)?.metrics, profile.metrics);
+    assert_eq!(c.profile_select("DELETE FROM docs", &Parameters::new()).unwrap_err().code(),"FDB_UNSUPPORTED");
+    assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
+    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits and reopen");
     Ok(())
 }
 ''')
