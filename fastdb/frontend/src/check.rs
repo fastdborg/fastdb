@@ -124,6 +124,47 @@ fn bind_field(
     }
     Ok(false)
 }
+// Reassociate homogeneous boolean chains without changing operand order.
+// Deep left-associated chains exhaust the pinned engine's preparation stack.
+fn balance_boolean(expr: &mut Expr) {
+    let Expr::Binary(_, op @ (Operator::And | Operator::Or), _) = expr else {
+        return;
+    };
+    let op = *op;
+    let mut pending = vec![std::mem::replace(expr, Expr::Literal(Literal::Null))];
+    let mut terms = Vec::new();
+    while let Some(term) = pending.pop() {
+        match term {
+            Expr::Binary(left, current, right) if current == op => {
+                pending.push(*right);
+                pending.push(*left);
+            }
+            Expr::Parenthesized(mut values)
+                if values.len() == 1
+                    && matches!(values[0].as_ref(), Expr::Binary(_, current, _) if *current == op) =>
+            {
+                pending.push(*values.pop().expect("single operand"));
+            }
+            term => terms.push(term),
+        }
+    }
+    while terms.len() > 1 {
+        let mut next = Vec::with_capacity(terms.len().div_ceil(2));
+        let mut iter = terms.into_iter();
+        while let Some(left) = iter.next() {
+            next.push(match iter.next() {
+                Some(right) => Expr::Parenthesized(vec![Box::new(Expr::Binary(
+                    Box::new(left),
+                    op,
+                    Box::new(right),
+                ))]),
+                None => left,
+            });
+        }
+        terms = next;
+    }
+    *expr = terms.pop().expect("boolean chain contains operands");
+}
 fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue>) -> Result<()> {
     lower_mode(expr, doc, bindings, FieldBinding::Key)
 }
@@ -160,6 +201,9 @@ fn lower_mode(
             ) {
                 lower_mode(a, doc, bindings, FieldBinding::Sql)?;
                 lower_mode(b, doc, bindings, FieldBinding::Sql)?;
+                if matches!(op, Operator::And | Operator::Or) {
+                    balance_boolean(expr);
+                }
                 return Ok(());
             }
             if matches!(

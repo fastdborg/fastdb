@@ -334,3 +334,10 @@ Differential tests cover numeric ASCII, nonnumeric, empty and NULL binary values
 CHECK arithmetic, concatenation, bitwise/shift and logical operators now bind binary fields as payload bytes. Unary minus, complement and NOT use the same scalar binding; unary plus carries its enclosing binding mode through to the operand. Field equality/index-key and typed range paths retain their separate representations. The function allowlist and candidate-only restrictions are unchanged.
 
 A persistent regression defines constraints over existing binary data, rejects invalid INSERT/UPDATE/UPSERT while retaining the outer transaction and index, and verifies enforcement after reopen. Corrected prototype definitions need reapplication to validate existing documents; opening alone does not revalidate them. Catalog version and stored encodings are unchanged. CHECK comparison/literal propagation and resource bounds remain unfinished.
+
+
+## CHECK boolean chain preparation
+
+CHECK lowering balances homogeneous AND and OR chains before engine preparation. It preserves operand order and does not reorder unlike operators or cross other expression forms. Explicit parentheses preserve the balanced tree through SQL serialization. This reduces preparation recursion for long left-associated chains; it does not change stored CHECK text or catalog versions.
+
+A regression reproducing a preparation stack overflow now accepts the combined binary-operator CHECK on the default Rust test thread. Coverage includes a long OR chain with NULL, existing-data definition, candidate updates, retained transaction state and index restoration after rejected updates. General expression depth/input limits and stack safety outside these chains remain release work.

@@ -519,3 +519,43 @@ fn binary_check_operators_validate_payloads_atomically_after_reopen() {
         1
     );
 }
+
+#[test]
+fn long_check_boolean_chains_prepare_and_validate() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "INSERT INTO docs (id,valid,any,payload) VALUES (docs:saved,1,1,X'3132')",
+    );
+    q(&c, "DEFINE FIELD valid ON docs TYPE integer CHECK(payload+1=13 AND payload-1=11 AND payload*2=24 AND payload/2=6 AND payload%5=2 AND (payload&3)=0 AND (payload|1)=13 AND (payload<<1)=24 AND (payload>>1)=6 AND payload||'!'='12!' AND -payload=-12 AND ~payload=-13 AND (payload AND 1)=1 AND (payload OR 0)=1 AND (NOT payload)=0 AND length(+payload)=2)");
+    let mut terms = (20..32)
+        .map(|value| format!("payload+0={value}"))
+        .collect::<Vec<_>>();
+    terms.extend(["NULL".into(), "payload+0=12".into()]);
+    q(
+        &c,
+        &format!(
+            "DEFINE FIELD any ON docs TYPE integer CHECK({})",
+            terms.join(" OR ")
+        ),
+    );
+    q(&c, "CREATE INDEX docs_payload ON docs(payload)");
+    q(&c, "BEGIN");
+    assert_eq!(
+        c.execute("UPDATE docs SET payload=X'3133'", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.lookup_index("docs", "docs_payload", &Value::Binary(b"12".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+    q(&c, "ROLLBACK");
+    q(&c, "UPDATE docs SET payload=X'3132'");
+}
