@@ -44,6 +44,9 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut history = None;
     let mut transfer = None;
     let mut migrations = None;
+    let mut audit = None;
+    let mut audit_documents = None;
+    let mut audit_bytes = None;
     let mut format = TransferFormat::Json;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -57,6 +60,26 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                     return Err("input byte limit must be positive and below usize::MAX".into());
                 }
                 input_limit = Some(limit);
+            }
+            "--check-collection" => {
+                if audit.is_some() {
+                    return Err("choose one collection audit".into());
+                }
+                audit = Some(args.next().ok_or("expected collection name")?);
+            }
+            "--max-documents" => {
+                audit_documents = Some(
+                    args.next()
+                        .ok_or("expected document limit")?
+                        .parse::<u64>()?,
+                )
+            }
+            "--max-encoded-bytes" => {
+                audit_bytes = Some(
+                    args.next()
+                        .ok_or("expected encoded-byte limit")?
+                        .parse::<u64>()?,
+                )
             }
             "--migrate" => {
                 if migrations.is_some() {
@@ -86,7 +109,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                println!("Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.");
+                println!("Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.");
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}").into()),
@@ -113,6 +136,32 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     }
     if input_limit.is_some() && (migrations.is_some() || transfer.is_some()) {
         return Err("--max-input-bytes applies only to SQL input modes".into());
+    }
+    if audit.is_none() && (audit_documents.is_some() || audit_bytes.is_some()) {
+        return Err("audit limits require --check-collection".into());
+    }
+    if let Some(table) = audit {
+        if line_mode
+            || interactive
+            || script_mode
+            || migrations.is_some()
+            || transfer.is_some()
+            || history.is_some()
+            || input_limit.is_some()
+        {
+            return Err("collection audit cannot be combined with input, history, migration or transfer options".into());
+        }
+        let path = path
+            .as_deref()
+            .ok_or("collection audit requires a database path")?;
+        let mut limits = fastdb::IntegrityLimits::default();
+        if let Some(value) = audit_documents {
+            limits.max_documents = value;
+        }
+        if let Some(value) = audit_bytes {
+            limits.max_encoded_bytes = value;
+        }
+        return run_audit(path, &table, limits);
     }
     let interactive_mode = interactive || (!line_mode && !script_mode && io::stdin().is_terminal());
     let terminal = interactive_mode
@@ -213,6 +262,42 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
         failed = run_script(&conn, &String::from_utf8(bytes)?, &mut writer)?;
     }
 
+    Ok(if failed {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
+    })
+}
+
+fn run_audit(
+    path: &str,
+    table: &str,
+    limits: fastdb::IntegrityLimits,
+) -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
+    let opened = if std::path::Path::new(path).is_file() {
+        Database::open(path).and_then(|db| db.connect().map(|conn| (db, conn)))
+    } else {
+        Err(fastdb::Error::NotFound(format!(
+            "audit requires an existing database file: {path}"
+        )))
+    };
+    let error_value = |error: fastdb::Error| serde_json::json!({"error":{"code":error.code(),"message":error.to_string()}});
+    let (value, failed) = match opened {
+        Err(error) => (error_value(error), true),
+        Ok((_db, conn)) => {
+            let before = conn.transaction_state();
+            let (mut value, failed) = match conn.check_collection_integrity(table, limits) {
+                Ok(report) => (serde_json::to_value(report)?, false),
+                Err(error) => (error_value(error), true),
+            };
+            value["transaction"] =
+                serde_json::json!({"before":before,"after":conn.transaction_state()});
+            (value, failed)
+        }
+    };
+    let mut writer = io::stdout().lock();
+    writeln!(writer, "{}", serde_json::to_string(&value)?)?;
+    writer.flush()?;
     Ok(if failed {
         std::process::ExitCode::FAILURE
     } else {

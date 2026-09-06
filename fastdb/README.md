@@ -28,3 +28,5 @@ The [native Node client](bindings/node/README.md#local-package-smoke) includes a
 The [Rust client guide](docs/rust-client.md) describes local path dependencies and the standalone offline consumer smoke. Registry distribution remains pending.
 
 The [local benchmark harness](docs/benchmarks.md) measures document filters and exact-vector queries through the CLI, with result checks, query plans and Linux process peak RSS. It is a functional baseline; full release-scale performance qualification remains pending. Use `.profile SELECT ...` in the CLI or `Connection::profile_select` in Rust to obtain primary engine counters alongside query results.
+
+Audit a stored collection with `fastdb-cli --check-collection posts app.db`. Optional `--max-documents N` and `--max-encoded-bytes N` override the defaults of 100,000 documents and 64 MiB. The command prints one JSON report and exits nonzero on failure. See the [audit contract](docs/contracts.md#explicit-collection-content-audit) for coverage and resource limits.
