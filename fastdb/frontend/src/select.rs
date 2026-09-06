@@ -146,6 +146,14 @@ impl Scope {
         }
         Ok(false)
     }
+    fn sql_argument(&self, expr: &mut Expr) -> Result<()> {
+        if self.preserved(expr)? {
+            *expr = expression(&format!("__fastdb_sql_scalar({expr})"))?;
+            Ok(())
+        } else {
+            self.lower(expr)
+        }
+    }
     fn typed(&self, expr: &mut Expr) -> Result<()> {
         if !self.preserved(expr)? {
             self.lower(expr)?;
@@ -389,11 +397,10 @@ impl Scope {
                 self.lower(a)?;
                 self.lower(b)?;
             }
-            Expr::Unary(_, e)
-            | Expr::IsNull(e)
-            | Expr::NotNull(e)
-            | Expr::Cast { expr: e, .. }
-            | Expr::Collate(e, _) => self.lower(e)?,
+            Expr::Unary(_, e) | Expr::IsNull(e) | Expr::NotNull(e) | Expr::Collate(e, _) => {
+                self.lower(e)?
+            }
+            Expr::Cast { expr: e, .. } => self.sql_argument(e)?,
             Expr::Between {
                 lhs,
                 start,
@@ -458,6 +465,7 @@ impl Scope {
                 }
             }
             Expr::FunctionCall {
+                name,
                 args,
                 order_by,
                 within_group,
@@ -473,7 +481,11 @@ impl Scope {
                     ));
                 }
                 for e in args {
-                    self.lower(e)?;
+                    if name.as_str().starts_with("__fastdb_") {
+                        self.lower(e)?;
+                    } else {
+                        self.sql_argument(e)?;
+                    }
                 }
                 for s in order_by.iter_mut().chain(within_group) {
                     self.lower(&mut s.expr)?;

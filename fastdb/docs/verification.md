@@ -431,3 +431,10 @@ The Rust client guide documents the tested local-path workflow and the applicati
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 154 Rust tests, fifteen Node tests and TypeScript declarations. A CLI probe reproduced a stored X'0102' value comparing unequal to the same literal. Blob literals in equality/IS and membership comparisons with preserved typed operands now use the same binary scalar-key representation as fields and parameters. Managed equality/IN candidates apply the same conversion.
 
 The regression covers indexed/unindexed results, actual SEARCH plans, reversed and parenthesized literals, inequality/null behavior, typed parameters, DELETE/RETURNING rollback and binary bytes that imitate record encoding without acquiring record identity. No stored format, dependency or upstream file changed. The probe also identified a separate pending scalar-function issue (length of a stored binary value sees its encoded representation); broader binary function/range propagation and full V1 qualification remain incomplete.
+
+
+## Binary payloads in native functions and casts — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 155 Rust tests, fifteen Node tests and TypeScript declarations. Preserved values passed into native function arguments or CAST now expose binary payload bytes through a dedicated scalar conversion; internal frontend helper protocols and predicate/index representations remain separate. The original CLI probe now reports length 2 and equality true for stored X'0102', replacing encoded length 35 and the previously corrected equality failure.
+
+A differential regression covers length/hex/typeof/substr, text/integer casts, nested and null-helper composition, empty/null values and typed parameters against native BLOB columns. Indexed equality, binary UPDATE/RETURNING output and rollback/index maintenance also pass. No dependency, persisted encoding or upstream file changed. CHECK argument handling, broader expression/range/aggregate/window qualification and full V1 release work remain pending.

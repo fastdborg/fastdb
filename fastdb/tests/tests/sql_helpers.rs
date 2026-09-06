@@ -149,3 +149,60 @@ fn scalar_aliases_and_helper_ordering_use_logical_results() {
         )
         .is_err());
 }
+
+#[test]
+fn native_binary_arguments_and_casts_use_payload_bytes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let q = |sql: &str| c.execute(sql, &Parameters::new()).expect(sql);
+    q("CREATE TABLE docs");
+    q("CREATE TABLE baseline(data BLOB)");
+    for value in ["X'313233'", "X'414243'", "X''", "NULL"] {
+        q(&format!("INSERT INTO docs (data) VALUES ({value})"));
+        q(&format!("INSERT INTO baseline VALUES ({value})"));
+    }
+    for projection in [
+        "length(data)",
+        "hex(data)",
+        "typeof(data)",
+        "substr(data,1,2)",
+        "CAST(data AS TEXT)",
+        "CAST(data AS INTEGER)",
+        "length(coalesce(data,X''))",
+        "hex(substr(data,1,2))",
+    ] {
+        let sql = |table: &str| format!("SELECT {projection} AS value FROM {table} ORDER BY value");
+        assert_eq!(
+            q(&sql("docs")).rows,
+            q(&sql("baseline")).rows,
+            "{projection}"
+        );
+    }
+    let p = Parameters::from([("$data".into(), Value::Binary(vec![1, 2]))]);
+    assert_eq!(
+        c.execute("SELECT length($data) AS n FROM docs LIMIT 1", &p)
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    q("CREATE INDEX docs_data ON docs(data)");
+    assert_eq!(
+        q("SELECT length(data) FROM docs WHERE data=X'313233'").rows,
+        vec![vec![Value::Integer(3)]]
+    );
+    q("BEGIN");
+    assert_eq!(q("UPDATE docs SET data=substr(data,1,2) WHERE data=X'313233' RETURNING hex(data) AS bytes").rows,vec![vec![Value::String("3132".into())]]);
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(vec![0x31, 0x32]))
+            .unwrap()
+            .len(),
+        1
+    );
+    q("ROLLBACK");
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(vec![0x31, 0x32, 0x33]))
+            .unwrap()
+            .len(),
+        1
+    );
+}

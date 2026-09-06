@@ -32,6 +32,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 1,
             ),
             (c"__fastdb_unwrap", unwrap as turso_ext::ScalarFunction, 1),
+            (
+                c"__fastdb_sql_scalar",
+                sql_scalar as turso_ext::ScalarFunction,
+                1,
+            ),
             (c"__fastdb_helper", helper as turso_ext::ScalarFunction, -1),
             (
                 c"__fastdb_scalar",
@@ -294,6 +299,22 @@ fn compare(args: &[ExtValue]) -> ExtValue {
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Greater => 1,
         }))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+// Native SQL functions and casts consume binary payloads, while predicates
+// retain tagged binary keys to prevent collisions with record identities.
+#[scalar(name = "__fastdb_sql_scalar")]
+fn sql_scalar(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("SQL scalar arity".into()));
+        };
+        match decode_arg(value)? {
+            Value::Binary(bytes) => Ok(ExtValue::from_blob(bytes)),
+            value => scalar_result(&value),
+        }
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
