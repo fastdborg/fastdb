@@ -51,6 +51,23 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
             safe_value_expression(a)?;
             safe_value_expression(b)
         }
+        Expr::Case {
+            base,
+            when_then_pairs,
+            else_expr,
+        } => {
+            if let Some(base) = base {
+                safe_value_expression(base)?;
+            }
+            for (condition, value) in when_then_pairs {
+                safe_value_expression(condition)?;
+                safe_value_expression(value)?;
+            }
+            if let Some(value) = else_expr {
+                safe_value_expression(value)?;
+            }
+            Ok(())
+        }
         Expr::Parenthesized(es) => {
             for e in es {
                 safe_value_expression(e)?;

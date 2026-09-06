@@ -10,6 +10,34 @@ impl Connection {
         doc: Option<&Document>,
     ) -> Result<Value> {
         let value = match expr {
+            Expr::Case {
+                base,
+                branches,
+                fallback,
+            } => {
+                let base = base
+                    .map(|expr| self.evaluate(*expr, params, doc))
+                    .transpose()?;
+                let mut chosen = fallback.map(|e| *e);
+                for (condition, value) in branches {
+                    let condition = self.evaluate(condition, params, doc)?;
+                    let condition = if let Some(base) = &base {
+                        self.binary_document(base.clone(), "=", condition)?
+                    } else {
+                        condition
+                    };
+                    if self.scalar_expression("CASE WHEN ?1 THEN 1 ELSE 0 END", &[condition])?
+                        == Value::Integer(1)
+                    {
+                        chosen = Some(value);
+                        break;
+                    }
+                }
+                chosen
+                    .map(|e| self.evaluate(e, params, doc))
+                    .transpose()?
+                    .unwrap_or(Value::Null)
+            }
             Expr::Null => Value::Null,
             Expr::Boolean(v) => Value::Boolean(v),
             Expr::Integer(v) => Value::Integer(v),

@@ -106,6 +106,24 @@ impl Scope {
         Ok(())
     }
     fn helper(&self, expr: &mut Expr) -> Result<bool> {
+        if let Expr::Case {
+            base,
+            when_then_pairs,
+            else_expr,
+        } = expr
+        {
+            if let Some(base) = base {
+                self.lower(base)?;
+            }
+            for (condition, value) in when_then_pairs {
+                self.lower(condition)?;
+                self.typed(value)?;
+            }
+            if let Some(value) = else_expr {
+                self.typed(value)?;
+            }
+            return Ok(true);
+        }
         if let Expr::Parenthesized(es) = expr {
             if let [e] = es.as_mut_slice() {
                 return self.preserved(e);

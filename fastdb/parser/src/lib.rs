@@ -22,6 +22,11 @@ pub struct Record {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
+    Case {
+        base: Option<Box<Expr>>,
+        branches: Vec<(Expr, Expr)>,
+        fallback: Option<Box<Expr>>,
+    },
     Call(String, Vec<Expr>),
     Field(Vec<String>),
     Unary(String, Box<Expr>),
@@ -45,6 +50,17 @@ impl Expr {
             Self::Object(fields) => fields.values().map(Self::height).max().unwrap_or(0),
             Self::Unary(_, arg) => arg.height(),
             Self::Binary(a, _, b) => a.height().max(b.height()),
+            Self::Case {
+                base,
+                branches,
+                fallback,
+            } => base
+                .iter()
+                .chain(fallback)
+                .map(|e| e.height())
+                .chain(branches.iter().map(|(a, b)| a.height().max(b.height())))
+                .max()
+                .unwrap_or(0),
             _ => 0,
         }
     }
@@ -471,6 +487,42 @@ impl Parser<'_> {
     fn atom(&mut self, depth: usize) -> Result<Expr> {
         if depth > 64 {
             return Err(self.error("document nesting limit exceeded"));
+        }
+        if self.eat("CASE") {
+            let base = if self
+                .tokens
+                .get(self.pos)
+                .is_some_and(|t| t.kind == Kind::Word && t.text.eq_ignore_ascii_case("WHEN"))
+            {
+                None
+            } else {
+                Some(Box::new(self.expr(depth + 1)?))
+            };
+            let mut branches = Vec::new();
+            while self.eat("WHEN") {
+                let condition = self.expr(depth + 1)?;
+                if !self.eat("THEN") {
+                    return Err(self.error("expected THEN"));
+                }
+                let value = self.expr(depth + 1)?;
+                branches.push((condition, value));
+            }
+            if branches.is_empty() {
+                return Err(self.error("CASE requires WHEN"));
+            }
+            let fallback = if self.eat("ELSE") {
+                Some(Box::new(self.expr(depth + 1)?))
+            } else {
+                None
+            };
+            if !self.eat("END") {
+                return Err(self.error("expected END"));
+            }
+            return Ok(Expr::Case {
+                base,
+                branches,
+                fallback,
+            });
         }
         if self.eat("{") {
             let mut fields = BTreeMap::new();
