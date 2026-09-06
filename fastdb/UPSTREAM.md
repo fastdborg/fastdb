@@ -24,3 +24,5 @@ The root planning directory is not a Git repository. The ancestry-preserving che
 The separate FastDB native addon reuses pinned napi 3.8.3, napi-derive 3.5.2 and napi-build 2.3.1 from the existing lockfile. It depends on FastDB rather than the upstream Node binding and does not enable that binding's FTS feature. The frontend additionally embeds pinned rquickjs 0.12.2 for its fixed bundled string catalog.
 
 The frontend enables serde_json's float_roundtrip feature to prevent one-bit numeric changes when reading stored tagged values. This changes a feature of the combined build, without upgrading the dependency or changing the stored format.
+
+The FastDB CLI directly depends on Rustyline 15.0.0 already pinned in the upstream lockfile, with default features disabled and file history enabled. The lockfile adds only that dependency edge; upstream CLI source and dependency versions are unchanged.

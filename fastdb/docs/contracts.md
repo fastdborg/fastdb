@@ -194,18 +194,18 @@ Unknown/unparsed statement forms retain the original conservative scan. Value ex
 
 ## Initial interactive CLI
 
-Terminal stdin opens an interactive prompt automatically; piped input retains script mode. --interactive and --script force either mode; --line remains the legacy per-line mode. Explicit input modes cannot be combined with one another or with import/export/migration operations. Prompts go to stderr and JSON reports remain on stdout. The primary prompt shows an active transaction; continuation prompts indicate buffered input.
+Terminal stdin opens an interactive prompt automatically; piped input retains script mode. --interactive and --script force either mode; --line remains the legacy per-line mode. Explicit input modes cannot be combined with one another or with import/export/migration operations. Plain prompts go to stderr; the Unix editor renders on the controlling terminal. JSON reports remain on stdout. The primary prompt shows an active transaction; continuation prompts indicate buffered input.
 
 The shared parser waits for semicolon-terminated statements, including multiline strings/documents and complete trigger bodies. Each completed input buffer runs as a batch, stopping at its first execution error; later input remains available for recovery or ROLLBACK. Any statement error causes a nonzero eventual exit. Byte offsets are relative to the submitted buffer. EOF submits a final unterminated statement through normal script execution and reports lexical errors if incomplete.
 
-A line containing .clear discards pending input without changing transaction state; .quit/.exit discards pending input and exits; .help prints help. These exact command lines are recognized even inside an unfinished buffer. Normal connection close rolls back an active transaction. Output/prompt I/O errors stop the session. This is an initial line-buffered shell: history/editing, explicit signal handling and broader terminal/platform/resource qualification remain unfinished.
+A line containing .clear discards pending input without changing transaction state; .quit/.exit discards pending input and exits; .help prints help. These exact command lines are recognized even inside an unfinished buffer. Normal connection close rolls back an active transaction. Output/prompt I/O errors stop the session. Unix terminal editing and history are described below; running-query signal handling and broader terminal/platform/resource qualification remain unfinished.
 
 
 ## CLI SQL input limits
 
 SQL input defaults to a 16 MiB UTF-8 byte limit; --max-input-bytes N selects a positive limit. Script mode bounds the entire input before execution, line mode bounds each line, and interactive mode bounds each line and the accumulated pending buffer. Newlines/comments count toward the limit. Import/export and migration operations retain their existing independent limits and reject this SQL-input option.
 
-Bounded reads retain at most one extra byte to detect overflow, checking length before UTF-8 decoding. Overflow emits FDB_LIMIT with the observed transaction state and exits nonzero. No oversized script/buffer prefix or remaining tail is submitted as SQL. Earlier committed line/interactive statements remain committed; normal connection close rolls back an active transaction.
+Plain input reads retain at most one extra byte to detect overflow, checking length before UTF-8 decoding. The terminal editor first materializes its editable line; its live buffer is outside this submission limit. Overflow emits FDB_LIMIT with the observed transaction state and exits nonzero. No oversized script/buffer prefix or remaining tail is submitted as SQL. Earlier committed line/interactive statements remain committed; normal connection close rolls back an active transaction.
 
 This bounds input byte lengths, not total allocation or execution/result memory: interactive input can retain a pending buffer and a separate bounded line, parser/JSON copies add overhead, and query results remain materialized. Rust/Node execution limits, deadlines and full resource qualification remain separate work.
 
@@ -509,3 +509,11 @@ For `<`, `<=`, `>` and `>=` between a preserved logical value and an ordinary SQ
 ## Native-column BETWEEN document bounds
 
 A native column may now use preserved document values as either or both BETWEEN/NOT BETWEEN bounds. The native BETWEEN operation retains the column's affinity and collation; typed bounds convert once to raw scalar payloads and reject non-null record/scalar ordering. NULL retains three-valued comparison behavior. Parentheses, unary plus and COLLATE around the native column retain their SQL roles. This does not cover a logical left operand with native bounds, arbitrary expressions in every position, or all wrappers around typed bounds. Conversion also reads the native column to enforce NULL-aware record rejection; volatile expressions behind native views/derived columns are not yet qualified for evaluation counts.
+
+## Terminal editing and history
+
+With Unix terminal stdin/stderr and an available controlling terminal, the CLI uses pinned Rustyline 15 for editing and multiline history recall. Piped input and redirected-stderr sessions retain plain input. Ctrl-C during a prompt discards the current line and pending multiline buffer without changing transaction state. Ctrl-D follows the existing EOF rule, including attempting any pending trailing SQL. This is prompt interruption, not running-query cancellation.
+
+History defaults to memory only. `--history PATH` requires terminal mode and loads/saves that file; missing files are created on a normal session return, including a return after SQL errors. History stores submitted buffers, including failed statements, but excludes cleared input, dot commands, entries starting with whitespace and new entries over 64 KiB. It retains at most 100 entries and rejects loading nonregular files or files over 8 MiB. New files have owner-only permissions on the tested Unix platform; existing permissions are retained. Save/load failures are reported as CLI errors. Database/main-WAL-SHM path collisions, including existing Unix aliases, are rejected before opening the database and rechecked before saving. History files are not a transactional log, and concurrent-session history merging is not qualified.
+
+A real pseudo-terminal regression verifies editing keys, multiline recall, persistence across sessions, private file creation, prompt Ctrl-C with an active transaction, EOF, submission-limit rejection and JSON stdout isolation. It requires Python 3 with Unix pty support. Linux is verified; other terminals/platforms and complete editor-memory bounds remain release work.

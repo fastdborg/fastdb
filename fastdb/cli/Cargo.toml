@@ -9,3 +9,4 @@ publish = false
 fastdb = { path = "../frontend" }
 fastql-parser = { path = "../parser" }
 serde_json.workspace = true
+rustyline = { version = "=15.0.0", default-features = false, features = ["with-file-history"] }

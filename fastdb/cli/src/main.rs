@@ -1,3 +1,4 @@
+mod input;
 use fastdb::{Database, ExecutionReport, Parameters, TransferFormat};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 fn output(
@@ -27,6 +28,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut line_mode = false;
     let mut interactive = false;
     let mut script_mode = false;
+    let mut history = None;
     let mut transfer = None;
     let mut migrations = None;
     let mut format = TransferFormat::Json;
@@ -49,6 +51,14 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 }
                 migrations = Some(args.next().ok_or("expected migration directory")?);
             }
+            "--history" => {
+                if history.is_some() {
+                    return Err("choose one history path".into());
+                }
+                history = Some(std::path::PathBuf::from(
+                    args.next().ok_or("expected history path")?,
+                ));
+            }
             "--line" => line_mode = true,
             "--interactive" => interactive = true,
             "--script" => script_mode = true,
@@ -63,7 +73,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                println!("Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.");
+                println!("Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C at the prompt clears pending input; it does not roll back a transaction.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.");
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}").into()),
@@ -91,6 +101,24 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     if input_limit.is_some() && (migrations.is_some() || transfer.is_some()) {
         return Err("--max-input-bytes applies only to SQL input modes".into());
     }
+    let interactive_mode = interactive || (!line_mode && !script_mode && io::stdin().is_terminal());
+    let terminal = interactive_mode
+        && migrations.is_none()
+        && transfer.is_none()
+        && io::stdin().is_terminal()
+        && io::stderr().is_terminal()
+        && input::terminal_available();
+    if history.is_some() && !terminal {
+        return Err("--history requires interactive terminal input and terminal stderr".into());
+    }
+    let mut editor = if terminal {
+        Some(input::Terminal::new(
+            history.as_deref(),
+            std::path::Path::new(path.as_deref().unwrap_or(":memory:")),
+        )?)
+    } else {
+        None
+    };
     let input_limit = input_limit.unwrap_or(16 * 1024 * 1024);
     let db = Database::open(path.as_deref().unwrap_or(":memory:"))?;
     let conn = db.connect()?;
@@ -114,14 +142,25 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     }
     let mut writer = io::stdout().lock();
     let mut failed = false;
-    if interactive || (!line_mode && !script_mode && io::stdin().is_terminal()) {
-        failed = run_interactive(
-            &conn,
-            &mut io::stdin().lock(),
-            &mut writer,
-            &mut io::stderr().lock(),
-            input_limit,
-        )?;
+    if interactive_mode {
+        if let Some(editor) = &mut editor {
+            failed = run_interactive(
+                &conn,
+                editor,
+                &mut writer,
+                &mut io::stderr().lock(),
+                input_limit,
+            )?;
+            editor.save()?;
+        } else {
+            failed = run_interactive(
+                &conn,
+                &mut input::Plain(&mut io::stdin().lock()),
+                &mut writer,
+                &mut io::stderr().lock(),
+                input_limit,
+            )?;
+        }
     } else if line_mode {
         let mut reader = io::stdin().lock();
         loop {
@@ -192,7 +231,7 @@ fn report_input_limit(
 
 fn run_interactive(
     conn: &fastdb::Connection,
-    reader: &mut impl BufRead,
+    reader: &mut impl input::Input,
     writer: &mut impl Write,
     prompt: &mut impl Write,
     input_limit: usize,
@@ -207,15 +246,21 @@ fn run_interactive(
         } else {
             "fastdb> "
         };
-        write!(prompt, "{label}")?;
-        prompt.flush()?;
-        let bytes = read_input(reader, input_limit, true)?;
+        let bytes = match reader.read(label, prompt, input_limit)? {
+            input::Read::Line(bytes) => bytes,
+            input::Read::Interrupted => {
+                buffer.clear();
+                writeln!(prompt)?;
+                continue;
+            }
+        };
         if bytes.len() > input_limit {
             report_input_limit(conn, writer, input_limit)?;
             return Ok(true);
         }
         if bytes.is_empty() {
             if !buffer.trim().is_empty() {
+                reader.remember(&buffer)?;
                 failed |= run_script(conn, &buffer, writer)?;
             }
             return Ok(failed);
@@ -231,7 +276,7 @@ fn run_interactive(
                 writeln!(
                     prompt,
                     "End statements with a semicolon. .clear discards pending input; .quit exits.
-Transactions use BEGIN, COMMIT and ROLLBACK. Prompts go to stderr; JSON results go to stdout."
+Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTerminal editing supports arrows and history. Ctrl-C clears input, preserving active transactions.\nHistory stays in memory unless --history PATH is supplied; leading spaces omit entries."
                 )?;
                 continue;
             }
@@ -245,6 +290,7 @@ Transactions use BEGIN, COMMIT and ROLLBACK. Prompts go to stderr; JSON results 
         match fastql_parser::script_complete(&buffer) {
             Ok(false) => continue,
             Ok(true) | Err(_) => {
+                reader.remember(&buffer)?;
                 failed |= run_script(conn, &buffer, writer)?;
                 buffer.clear();
             }
