@@ -85,7 +85,17 @@ pub(crate) fn tokens(sql: &str) -> crate::Result<Vec<fastql_parser::Token>> {
                 AlterTableBody::AddColumn(column) | AlterTableBody::AlterColumn { new: column, .. },
             ..
         }) => column_definition(column)?,
-        // PRAGMA, DDL names, trigger bodies, and other contexts
+        Stmt::CreateTrigger {
+            when_clause,
+            commands,
+            ..
+        } => {
+            optional(when_clause)?;
+            for command in commands {
+                trigger_command(command)?;
+            }
+        }
+        // PRAGMA, DDL names, and other uncovered contexts
         // retain the conservative guard until their reference roles are covered.
         _ => {}
     }
@@ -222,6 +232,36 @@ fn upserts(conflict: &mut Option<Box<Upsert>>) -> Result<()> {
             optional(where_clause)?;
         }
         current = clause.next.as_deref_mut();
+    }
+    Ok(())
+}
+
+fn trigger_command(command: &mut TriggerCmd) -> Result<()> {
+    match command {
+        TriggerCmd::Select(s) => select(s)?,
+        TriggerCmd::Insert {
+            select: s,
+            upsert,
+            returning,
+            ..
+        } => {
+            select(s)?;
+            upserts(upsert)?;
+            projections(returning)?;
+        }
+        TriggerCmd::Update {
+            sets,
+            from: source,
+            where_clause,
+            ..
+        } => {
+            for set in sets {
+                expression(&mut set.expr)?;
+            }
+            from(source)?;
+            optional(where_clause)?;
+        }
+        TriggerCmd::Delete { where_clause, .. } => optional(where_clause)?,
     }
     Ok(())
 }

@@ -428,3 +428,64 @@ fn schema_and_upsert_literals_retain_values_and_protect_reference_names() {
     query(&c, "INSERT INTO users {id:users:p1}");
     assert_eq!(query(&c, "SELECT * FROM users").rows.len(), 1);
 }
+
+#[test]
+fn ordinary_trigger_literals_persist_without_permitting_managed_references() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("triggers.db");
+    let path = path.to_str().unwrap();
+    {
+        let db = Database::open(path).unwrap();
+        let c = db.connect().unwrap();
+        query(&c, "CREATE TABLE users");
+        query(&c, "CREATE TABLE ordinary(label TEXT)");
+        query(&c, "CREATE TABLE audit(value TEXT)");
+        query(&c,"CREATE TRIGGER audit_insert AFTER INSERT ON ordinary WHEN new.label='users' BEGIN INSERT INTO audit VALUES ('__fastdb_catalog'); UPDATE audit SET value='users' WHERE value='__fastdb_catalog'; DELETE FROM audit WHERE value='writable_schema'; SELECT CASE WHEN new.label='users' THEN '__fastdb_catalog' ELSE 'writable_schema' END; END");
+        query(&c, "INSERT INTO ordinary VALUES ('users')");
+        assert_eq!(
+            query(&c, "SELECT * FROM audit").rows,
+            vec![vec![Value::String("users".into())]]
+        );
+        query(&c, "BEGIN");
+        query(&c, "INSERT INTO ordinary VALUES ('users')");
+        query(&c, "ROLLBACK");
+        assert_eq!(query(&c, "SELECT * FROM audit").rows.len(), 1);
+        query(&c,"CREATE TRIGGER reject_insert BEFORE INSERT ON ordinary WHEN new.label='writable_schema' BEGIN SELECT RAISE(ABORT,'__fastdb_catalog'); END");
+        let rejected = c
+            .execute(
+                "INSERT INTO ordinary VALUES ('writable_schema')",
+                &Parameters::new(),
+            )
+            .unwrap_err();
+        assert!(rejected.to_string().contains("__fastdb_catalog"));
+        assert_eq!(query(&c, "SELECT * FROM ordinary").rows.len(), 1);
+        for body in [
+            "INSERT INTO '__fastdb_catalog' (name) VALUES ('users')",
+            "UPDATE '__fastdb_catalog' SET name='users'",
+            "DELETE FROM '__fastdb_catalog'",
+            "SELECT * FROM '__fastdb_catalog'",
+            "SELECT * FROM users",
+        ] {
+            let error = c
+                .execute(
+                    &format!("CREATE TRIGGER forbidden AFTER INSERT ON ordinary BEGIN {body}; END"),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert_eq!(error.code(), "FDB_UNSUPPORTED", "{body}");
+        }
+        assert_eq!(c.execute("CREATE TRIGGER forbidden AFTER INSERT ON '__fastdb_catalog' BEGIN SELECT 'users'; END",&Parameters::new()).unwrap_err().code(),"FDB_UNSUPPORTED");
+    }
+    let db = Database::open(path).unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "INSERT INTO ordinary VALUES ('users')");
+    assert_eq!(
+        query(&c, "SELECT * FROM audit").rows,
+        vec![
+            vec![Value::String("users".into())],
+            vec![Value::String("users".into())]
+        ]
+    );
+    query(&c, "INSERT INTO users {id:users:p1}");
+    assert_eq!(query(&c, "SELECT * FROM users").rows.len(), 1);
+}
