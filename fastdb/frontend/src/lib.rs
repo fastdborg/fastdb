@@ -1,7 +1,9 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
 mod catalog;
 mod check;
+mod expression;
 mod functions;
+mod path;
 mod select;
 mod update;
 mod value;
@@ -485,7 +487,7 @@ impl Connection {
     }
     pub fn execute(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
         use fastql_parser::Statement;
-        let object = |expr| match value::evaluate(expr, params)? {
+        let object = |expr| match self.evaluate(expr, params, None)? {
             Value::Object(doc) => Ok(doc),
             _ => Err(Error::Validation("expected a typed document object".into())),
         };
@@ -495,21 +497,80 @@ impl Connection {
                 target,
                 value,
                 returning,
-            } => {
-                let mut doc = object(value)?;
-                if let Some(target) = target {
-                    if doc.contains_key("id") {
+            } => self.atomic(|| {
+                let fastql_parser::Expr::Object(mut fields) = value else {
+                    return Err(Error::Validation("UPSERT requires object".into()));
+                };
+                let record = if let Some(target) = target {
+                    if fields.contains_key("id") {
                         return Err(Error::Validation("target UPSERT body must omit id".into()));
                     }
-                    doc.insert("id".into(), Value::Record(target));
-                }
+                    target
+                } else {
+                    let expr = fields.remove("id").ok_or_else(|| {
+                        Error::Validation("UPSERT requires an explicit id".into())
+                    })?;
+                    let Value::Record(id) = self.evaluate(expr, params, None)? else {
+                        return Err(Error::Validation("UPSERT id must be typed record".into()));
+                    };
+                    id
+                };
+                let record = normalized_id(&record, &canonical(&table)?)?;
+                let before = self.get(&record)?.unwrap_or_default();
+                let Value::Object(mut doc) =
+                    self.evaluate(fastql_parser::Expr::Object(fields), params, Some(&before))?
+                else {
+                    unreachable!("object expression");
+                };
+                doc.insert("id".into(), Value::Record(record));
                 let doc = self.upsert(&table, doc)?;
                 Ok(if returning {
                     QueryResult::documents(vec![doc], 1)
                 } else {
                     QueryResult::command(1)
                 })
-            }
+            }),
+            Statement::PatchWhere {
+                table,
+                value,
+                predicate,
+                returning,
+            } => self.atomic(|| {
+                let suffix = predicate.map_or(String::new(), |p| format!(" WHERE {p}"));
+                let query = format!("SELECT * FROM {}{suffix}", quote(&table));
+                let rows = self
+                    .collection_select_subset(&query, params)?
+                    .ok_or_else(|| Error::NotFound(table.clone()))?
+                    .rows;
+                let mut candidates = Vec::new();
+                for row in rows {
+                    let Some(Value::Object(before)) = row.into_iter().next() else {
+                        return Err(Error::Storage("expected candidate document".into()));
+                    };
+                    let Value::Object(patch) =
+                        self.evaluate(value.clone(), params, Some(&before))?
+                    else {
+                        return Err(Error::Validation("expected object patch".into()));
+                    };
+                    let Some(Value::Record(id)) = before.get("id") else {
+                        return Err(Error::Storage("expected typed id".into()));
+                    };
+                    candidates.push((id.clone(), patch));
+                }
+                let mut docs = Vec::new();
+                for (id, patch) in candidates {
+                    docs.push(
+                        self.patch(&id, patch)?
+                            .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
+                    );
+                }
+                let count = docs.len() as i64;
+                Ok(if returning {
+                    QueryResult::documents(docs, count)
+                } else {
+                    QueryResult::command(count)
+                })
+            }),
             Statement::RemoveField { table, path } => {
                 self.remove_field(&table, &path)?;
                 Ok(QueryResult::command(0))
@@ -591,15 +652,25 @@ impl Connection {
                 target,
                 value,
                 returning,
-            } => {
-                let doc = self.patch(&target, object(value)?)?;
+            } => self.atomic(|| {
+                let Some(before) = self.get(&target)? else {
+                    return Ok(if returning {
+                        QueryResult::documents(Vec::new(), 0)
+                    } else {
+                        QueryResult::command(0)
+                    });
+                };
+                let Value::Object(patch) = self.evaluate(value, params, Some(&before))? else {
+                    return Err(Error::Validation("expected object patch".into()));
+                };
+                let doc = self.patch(&target, patch)?;
                 let count = i64::from(doc.is_some());
                 Ok(if returning {
                     QueryResult::documents(doc.into_iter().collect(), count)
                 } else {
                     QueryResult::command(count)
                 })
-            }
+            }),
             Statement::Delete { target, returning } => {
                 let doc = self.delete(&target)?;
                 let count = i64::from(doc.is_some());

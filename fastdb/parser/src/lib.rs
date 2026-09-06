@@ -22,6 +22,10 @@ pub struct Record {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
+    Call(String, Vec<Expr>),
+    Field(Vec<String>),
+    Unary(String, Box<Expr>),
+    Binary(Box<Expr>, String, Box<Expr>),
     Null,
     Boolean(bool),
     Integer(i64),
@@ -32,8 +36,27 @@ pub enum Expr {
     Object(BTreeMap<String, Expr>),
     Array(Vec<Expr>),
 }
+impl Expr {
+    fn height(&self) -> usize {
+        1 + match self {
+            Self::Call(_, args) | Self::Array(args) => {
+                args.iter().map(Self::height).max().unwrap_or(0)
+            }
+            Self::Object(fields) => fields.values().map(Self::height).max().unwrap_or(0),
+            Self::Unary(_, arg) => arg.height(),
+            Self::Binary(a, _, b) => a.height().max(b.height()),
+            _ => 0,
+        }
+    }
+}
 #[derive(Debug, PartialEq)]
 pub enum Statement {
+    PatchWhere {
+        table: String,
+        value: Expr,
+        predicate: Option<String>,
+        returning: bool,
+    },
     Upsert {
         table: String,
         target: Option<Record>,
@@ -359,6 +382,93 @@ impl Parser<'_> {
         })
     }
     fn expr(&mut self, depth: usize) -> Result<Expr> {
+        self.binary(depth, 0)
+    }
+    fn binary(&mut self, depth: usize, min: u8) -> Result<Expr> {
+        if depth > 64 {
+            return Err(self.error("expression nesting limit exceeded"));
+        }
+        let mut lhs = if self.eat("NOT") {
+            Expr::Unary("NOT".into(), Box::new(self.binary(depth + 1, 3)?))
+        } else if self.eat("+") {
+            Expr::Unary("+".into(), Box::new(self.binary(depth + 1, 10)?))
+        } else if self.tokens.get(self.pos).is_some_and(|t| t.text == "-")
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_none_or(|t| t.kind != Kind::Number)
+        {
+            self.pos += 1;
+            Expr::Unary("-".into(), Box::new(self.binary(depth + 1, 10)?))
+        } else {
+            self.atom(depth)?
+        };
+        loop {
+            if lhs.height() > 64 {
+                return Err(self.error("expression nesting limit exceeded"));
+            }
+            let Some((op, precedence, count)) = self.operator() else {
+                break;
+            };
+            if precedence < min {
+                break;
+            }
+            self.pos += count;
+            let rhs = self.binary(depth + 1, precedence + 1)?;
+            lhs = Expr::Binary(Box::new(lhs), op, Box::new(rhs));
+        }
+        Ok(lhs)
+    }
+    fn operator(&self) -> Option<(String, u8, usize)> {
+        let token = self.tokens.get(self.pos)?;
+        if token.kind == Kind::Word {
+            let op = token.text.to_ascii_uppercase();
+            return match op.as_str() {
+                "OR" => Some((op, 1, 1)),
+                "AND" => Some((op, 2, 1)),
+                "IS" => {
+                    if self
+                        .tokens
+                        .get(self.pos + 1)
+                        .is_some_and(|t| t.kind == Kind::Word && t.text.eq_ignore_ascii_case("NOT"))
+                    {
+                        Some(("IS NOT".into(), 4, 2))
+                    } else {
+                        Some((op, 4, 1))
+                    }
+                }
+                _ => None,
+            };
+        }
+        if token.kind != Kind::Symbol {
+            return None;
+        }
+        if let Some(next) = self.tokens.get(self.pos + 1) {
+            if next.kind == Kind::Symbol && next.start == token.end {
+                let op = format!("{}{}", token.text, next.text);
+                let prec = match op.as_str() {
+                    "||" => 9,
+                    "<<" | ">>" => 6,
+                    "<=" | ">=" => 5,
+                    "<>" | "!=" | "==" => 4,
+                    _ => 0,
+                };
+                if prec > 0 {
+                    return Some((op, prec, 2));
+                }
+            }
+        }
+        let prec = match token.text.as_str() {
+            "=" => 4,
+            "<" | ">" => 5,
+            "&" | "|" => 6,
+            "+" | "-" => 7,
+            "*" | "/" | "%" => 8,
+            _ => return None,
+        };
+        Some((token.text.clone(), prec, 1))
+    }
+    fn atom(&mut self, depth: usize) -> Result<Expr> {
         if depth > 64 {
             return Err(self.error("document nesting limit exceeded"));
         }
@@ -414,6 +524,44 @@ impl Parser<'_> {
             }
             return Ok(Expr::Array(values));
         }
+        if self.eat("(") {
+            let expr = self.expr(depth + 1)?;
+            if !self.eat(")") {
+                return Err(self.error("expected )"));
+            }
+            return Ok(expr);
+        }
+        if self
+            .tokens
+            .get(self.pos)
+            .is_some_and(|t| matches!(t.kind, Kind::Word | Kind::Identifier))
+        {
+            let saved = self.pos;
+            let mut name = self.name()?;
+            if self.tokens.get(self.pos).is_some_and(|t| t.text == ":")
+                && self.tokens.get(self.pos + 1).is_some_and(|t| t.text == ":")
+            {
+                self.pos += 2;
+                name.push_str("::");
+                name.push_str(&self.name()?);
+            }
+            if self.eat("(") {
+                let mut args = Vec::new();
+                if !self.eat(")") {
+                    loop {
+                        args.push(self.expr(depth + 1)?);
+                        if self.eat(")") {
+                            break;
+                        }
+                        if !self.eat(",") {
+                            return Err(self.error("expected function argument comma"));
+                        }
+                    }
+                }
+                return Ok(Expr::Call(name, args));
+            }
+            self.pos = saved;
+        }
         let t = self
             .tokens
             .get(self.pos)
@@ -446,6 +594,13 @@ impl Parser<'_> {
         match t.kind {
             Kind::String if !negative => Ok(Expr::String(t.text)),
             Kind::Parameter if !negative => Ok(Expr::Parameter(t.text)),
+            Kind::Word | Kind::Identifier if !negative => {
+                let mut path = vec![t.text];
+                while self.eat(".") {
+                    path.push(self.name()?);
+                }
+                Ok(Expr::Field(path))
+            }
             Kind::Number => {
                 let text = if negative {
                     format!("-{}", t.text)
@@ -645,6 +800,47 @@ pub fn parse(input: &str) -> Result<Statement> {
                 value,
                 returning,
             });
+        }
+    }
+    p.pos = 0;
+    if p.eat("UPDATE") {
+        if let Ok(table) = p.name() {
+            if p.tokens.get(p.pos).is_some_and(|t| t.text == "{") {
+                let value = p.expr(0)?;
+                let predicate = if p.eat("WHERE") {
+                    let start = p
+                        .tokens
+                        .get(p.pos)
+                        .ok_or_else(|| p.error("expected WHERE predicate"))?
+                        .start;
+                    let mut end = p.tokens.len();
+                    if end > p.pos && p.tokens[end - 1].text == ";" {
+                        end -= 1;
+                    }
+                    if end >= p.pos + 2
+                        && p.tokens[end - 2].kind == Kind::Word
+                        && p.tokens[end - 2].text.eq_ignore_ascii_case("RETURNING")
+                        && p.tokens[end - 1].text == "*"
+                    {
+                        end -= 2;
+                    }
+                    if end <= p.pos {
+                        return Err(p.error("expected WHERE predicate"));
+                    }
+                    let text = input[start..p.tokens[end - 1].end].to_owned();
+                    p.pos = end;
+                    Some(text)
+                } else {
+                    None
+                };
+                let returning = p.returning()?;
+                return Ok(Statement::PatchWhere {
+                    table,
+                    value,
+                    predicate,
+                    returning,
+                });
+            }
         }
     }
     for verb in ["SELECT", "UPDATE", "DELETE"] {

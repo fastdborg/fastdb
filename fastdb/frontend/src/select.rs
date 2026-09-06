@@ -406,6 +406,22 @@ impl Connection {
         params: &Parameters,
         trusted: bool,
     ) -> Result<Option<QueryResult>> {
+        self.collection_select_options(sql, params, trusted, trusted)
+    }
+    pub(crate) fn collection_select_subset(
+        &self,
+        sql: &str,
+        params: &Parameters,
+    ) -> Result<Option<QueryResult>> {
+        self.collection_select_options(sql, params, false, true)
+    }
+    fn collection_select_options(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        trusted: bool,
+        ignore_unused: bool,
+    ) -> Result<Option<QueryResult>> {
         let expanded = expand_records(sql)?;
         let Ok(mut cmd) = parsed(&expanded) else {
             return Ok(None);
@@ -619,7 +635,7 @@ impl Connection {
         let mut statement = self.engine.prepare(&lowered)?;
         for (name, value) in params {
             let Some(index) = crate::bind_index(&statement, name) else {
-                if trusted {
+                if ignore_unused {
                     continue;
                 }
                 return Err(Error::Parameter(name.clone()));

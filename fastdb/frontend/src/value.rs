@@ -70,29 +70,3 @@ pub(crate) fn validate_record(r: &Record) -> Result<()> {
     }
     Ok(())
 }
-pub(crate) fn evaluate(expr: fastql_parser::Expr, params: &Parameters) -> Result<Value> {
-    use fastql_parser::Expr;
-    let value = match expr {
-        Expr::Null => Value::Null,
-        Expr::Boolean(v) => Value::Boolean(v),
-        Expr::Integer(v) => Value::Integer(v),
-        Expr::Number(v) => Value::Number(v),
-        Expr::String(v) => Value::String(v),
-        Expr::Record(v) => Value::Record(v),
-        Expr::Parameter(name) => params.get(&name).cloned().ok_or(Error::Parameter(name))?,
-        Expr::Object(fields) => Value::Object(
-            fields
-                .into_iter()
-                .map(|(k, v)| Ok((k, evaluate(v, params)?)))
-                .collect::<Result<_>>()?,
-        ),
-        Expr::Array(values) => Value::Array(
-            values
-                .into_iter()
-                .map(|v| evaluate(v, params))
-                .collect::<Result<_>>()?,
-        ),
-    };
-    value.validate()?;
-    Ok(value)
-}
