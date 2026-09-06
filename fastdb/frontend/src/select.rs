@@ -7,6 +7,21 @@ struct Source {
     table: SelectTable,
     alias: String,
     collection: Option<Collection>,
+    derived: Option<Vec<(String, bool)>>,
+    consumed: std::collections::BTreeSet<String>,
+}
+impl Source {
+    fn logical(&self) -> bool {
+        self.collection.is_some() || self.derived.is_some()
+    }
+    fn typed_field(&self, path: &[String]) -> bool {
+        self.collection.is_some()
+            || self.derived.as_ref().is_some_and(|columns| {
+                columns
+                    .iter()
+                    .any(|(name, typed)| *typed && name.eq_ignore_ascii_case(&path[0]))
+            })
+    }
 }
 struct Scope {
     sources: Vec<Source>,
@@ -64,7 +79,7 @@ impl Scope {
                     "qualify fields in collection joins".into(),
                 ));
             }
-            return Ok(self.sources[0].collection.as_ref().map(|_| (0, parts)));
+            return Ok(self.sources[0].typed_field(&parts).then_some((0, parts)));
         }
         let Some(i) = self
             .sources
@@ -74,11 +89,32 @@ impl Scope {
             return Ok(None);
         };
         Ok(self.sources[i]
-            .collection
-            .as_ref()
-            .map(|_| (i, parts[1..].to_vec())))
+            .typed_field(&parts[1..])
+            .then(|| (i, parts[1..].to_vec())))
     }
     fn accessor(&self, i: usize, path: &[String], typed: bool) -> Result<Expr> {
+        if self.sources[i].derived.is_some() {
+            let Some((column, nested)) = path.split_first() else {
+                return Err(unsupported("doc::row on derived sources"));
+            };
+            let value = format!("{}.{}", quote(&self.sources[i].alias), quote(column));
+            if nested.is_empty() {
+                return expression(&if typed {
+                    value
+                } else {
+                    format!("__fastdb_unwrap({value})")
+                });
+            }
+            let path = serde_json::to_string(nested)?.replace('\'', "''");
+            return expression(&format!(
+                "{}({value},'{path}')",
+                if typed {
+                    "__fastdb_value"
+                } else {
+                    "__fastdb_scalar"
+                }
+            ));
+        }
         if !typed && path == ["id"] {
             return expression(&format!("{}.id", quote(&self.sources[i].alias)));
         }
@@ -779,7 +815,67 @@ fn expression(sql: &str) -> Result<Expr> {
     };
     Ok(*e)
 }
-fn source(connection: &Connection, table: &SelectTable) -> Result<Source> {
+fn source(connection: &Connection, table: &SelectTable, params: &Parameters) -> Result<Source> {
+    if let SelectTable::Select(select, alias) = table {
+        let Some(alias) = alias else {
+            return Err(unsupported("derived collection source without alias"));
+        };
+        let sql = Cmd::Stmt(Stmt::Select(select.clone())).to_string();
+        let plan = connection.lower_collection_select(
+            &sql,
+            &sql,
+            params,
+            SelectOptions {
+                trusted: true,
+                nested: true,
+                ..Default::default()
+            },
+        )?;
+        if let Some(plan) = plan {
+            if plan.fetched.iter().any(|f| *f) {
+                return Err(unsupported("fetched derived projections"));
+            }
+            let mut names = std::collections::BTreeSet::new();
+            if plan
+                .names
+                .iter()
+                .any(|name| !names.insert(name.to_ascii_lowercase()))
+            {
+                return Err(unsupported("duplicate derived projection names"));
+            }
+            // Lowering may use private output aliases (for example DISTINCT).
+            // Give the derived relation its public names by position without
+            // changing references inside the lowered query.
+            let lowered = plan.command.to_string();
+            let columns = plan
+                .names
+                .iter()
+                .map(|name| quote(name))
+                .collect::<Vec<_>>()
+                .join(",");
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&format!(
+                "WITH __fastdb_derived({columns}) AS ({}) SELECT * FROM __fastdb_derived",
+                lowered.trim().trim_end_matches(';')
+            ))?
+            else {
+                unreachable!("derived SELECT wrapper");
+            };
+            return Ok(Source {
+                table: SelectTable::Select(select, Some(alias.clone())),
+                alias: alias.name().as_str().into(),
+                collection: None,
+                derived: Some(plan.names.into_iter().zip(plan.typed).collect()),
+                consumed: plan.consumed,
+            });
+        }
+        return Ok(Source {
+            table: table.clone(),
+            alias: alias.name().as_str().into(),
+            collection: None,
+            derived: None,
+            consumed: Default::default(),
+        });
+    }
     let SelectTable::Table(name, alias, indexed) = table else {
         return Err(unsupported("subqueries and table functions"));
     };
@@ -823,6 +919,8 @@ fn source(connection: &Connection, table: &SelectTable) -> Result<Source> {
             .map_or(name.name.as_str(), |a| a.name().as_str())
             .into(),
         collection,
+        derived: None,
+        consumed: Default::default(),
     })
 }
 fn native_column_collation(expr: &Expr) -> bool {
@@ -1029,6 +1127,10 @@ fn lower_source(
     source: &Source,
     candidate: Option<(crate::Index, Expr)>,
 ) -> Result<()> {
+    if source.derived.is_some() {
+        *table = source.table.clone();
+        return Ok(());
+    }
     let Some(c) = &source.collection else {
         return Ok(());
     };
@@ -1329,6 +1431,7 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
 }
 #[derive(Default)]
 struct SelectOptions<'a> {
+    nested: bool,
     trusted: bool,
     ignore_unused: bool,
     positional: bool,
@@ -1509,6 +1612,7 @@ impl Connection {
         options: SelectOptions<'_>,
     ) -> Result<Option<LoweredSelect>> {
         let SelectOptions {
+            nested,
             trusted,
             ignore_unused,
             positional,
@@ -1516,6 +1620,11 @@ impl Connection {
             guarded: _,
             native_insert,
         } = options;
+        // Validate user expressions before introducing any internal function or
+        // storage name. The existing write guard continues covering other SQL.
+        if !trusted {
+            crate::guard::internal_names(sql)?;
+        }
         let Ok(mut cmd) = parsed(expanded) else {
             return Ok(None);
         };
@@ -1540,21 +1649,21 @@ impl Connection {
         };
         let mut sources = Vec::new();
         if let Some(from) = from {
-            let first = match source(self, &from.select) {
+            let first = match source(self, &from.select, params) {
                 Ok(s) => s,
                 Err(Error::Unsupported(_)) => return Ok(None),
                 Err(e) => return Err(e),
             };
             sources.push(first);
             for join in &from.joins {
-                match source(self, &join.table) {
+                match source(self, &join.table, params) {
                     Ok(s) => sources.push(s),
                     Err(Error::Unsupported(_)) => return Ok(None),
                     Err(e) => return Err(e),
                 }
             }
         }
-        if native_insert.is_some() && sources.iter().all(|source| source.collection.is_none()) {
+        if (native_insert.is_some() || nested) && sources.iter().all(|source| !source.logical()) {
             return Ok(None);
         }
         let standalone_typed_parameters = from.is_none()
@@ -1571,7 +1680,7 @@ impl Connection {
                 )
             });
         if !trusted
-            && sources.iter().all(|s| s.collection.is_none())
+            && sources.iter().all(|s| !s.logical())
             && expanded == sql
             && !standalone_typed_parameters
         {
@@ -1584,10 +1693,14 @@ impl Connection {
         if select.with.is_some() || !select.body.compounds.is_empty() {
             return Err(unsupported("CTEs or compound SELECT"));
         }
+        let consumed = sources
+            .iter()
+            .flat_map(|s| s.consumed.iter().cloned())
+            .collect();
         let scope = Scope {
             sources,
             params: params.clone(),
-            consumed: Default::default(),
+            consumed: std::cell::RefCell::new(consumed),
             fetched_aliases: Default::default(),
             standalone_aliases: Default::default(),
         };
@@ -1598,11 +1711,6 @@ impl Connection {
             {
                 return Err(Error::Validation("duplicate table alias".into()));
             }
-        }
-        // Validate user expressions before introducing any internal function or
-        // storage name. The existing write guard continues covering other SQL.
-        if !trusted {
-            crate::guard::internal_names(sql)?;
         }
         *columns = expand_stars(self, &scope, columns)?;
         let original_columns = columns.clone();
@@ -2143,6 +2251,19 @@ fn expand_stars(
             return Err(Error::Validation("star requires a source".into()));
         }
         for source in sources {
+            if let Some(columns) = &source.derived {
+                for (name, _) in columns {
+                    expanded.push(ResultColumn::Expr(
+                        Box::new(expression(&format!(
+                            "{}.{}",
+                            quote(&source.alias),
+                            quote(name)
+                        ))?),
+                        Some(As::As(Name::from_string(quote(name)))),
+                    ));
+                }
+                continue;
+            }
             if source.collection.is_some() {
                 expanded.push(ResultColumn::TableStar(Name::from_string(quote(
                     &source.alias,
