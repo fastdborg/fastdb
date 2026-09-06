@@ -8,6 +8,16 @@ fn invalid(message: impl Into<String>) -> Error {
     Error::Validation(message.into())
 }
 fn parse_check(sql: &str) -> Result<Expr> {
+    // Only the path expander may introduce this marker. It is not a callable
+    // CHECK helper and must not bypass the function eligibility checks.
+    let tokens = fastql_parser::tokenize(sql)?;
+    if tokens
+        .windows(2)
+        .any(|pair| pair[0].text.eq_ignore_ascii_case("__fastdb_path") && pair[1].text == "(")
+    {
+        return Err(invalid("internal path markers are not CHECK functions"));
+    }
+    let sql = crate::select::expand_paths(sql)?;
     let Cmd::Stmt(Stmt::Select(select)) = crate::select::parsed(&format!("SELECT ({sql})"))? else {
         return Err(invalid("CHECK must be an expression"));
     };
@@ -39,6 +49,28 @@ fn parse_check(sql: &str) -> Result<Expr> {
 }
 fn field_path(expr: &Expr) -> Option<Vec<String>> {
     match expr {
+        Expr::FunctionCall {
+            name,
+            args,
+            distinctness,
+            filter_over,
+            order_by,
+            within_group,
+        } if name.as_str() == "__fastdb_path"
+            && (4..=64).contains(&args.len())
+            && distinctness.is_none()
+            && filter_over.filter_clause.is_none()
+            && filter_over.over_clause.is_none()
+            && order_by.is_empty()
+            && within_group.is_empty() =>
+        {
+            args.iter()
+                .map(|arg| match arg.as_ref() {
+                    Expr::Id(n) | Expr::Name(n) => Some(n.as_str().to_owned()),
+                    _ => None,
+                })
+                .collect()
+        }
         Expr::Parenthesized(es) if es.len() == 1 => field_path(&es[0]),
         Expr::Id(n) | Expr::Name(n) => Some(vec![n.as_str().into()]),
         Expr::Qualified(a, b) => Some(vec![a.as_str().into(), b.as_str().into()]),

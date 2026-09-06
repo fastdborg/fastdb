@@ -378,3 +378,10 @@ The callback decodes each operand once and combines comparisons with SQL three-v
 `fastdb/scripts/check.sh` passed formatting/Clippy, all 148 Rust tests, fifteen Node tests and TypeScript declarations. CHECK range operators between two candidate fields and BETWEEN/NOT BETWEEN with three candidate fields now bind typed values and use the shared comparator. A persistent test defines the constraint over existing numeric record keys, rejects object/SQL inserts and updates plus UPSERT, verifies active transaction retention for false CHECKs, rollback/index consistency, and continued enforcement and index maintenance after reopen.
 
 The CHECK function allowlist is unchanged: internal comparator calls are introduced only after identifying direct field operands. Candidate bindings read no stored rows. Catalog format stays version 2, and the contract explains that affected prototype data must be revalidated before relying on corrected record-range semantics. Non-field expressions, explicit collation, broader type propagation and full V1 release qualification remain pending. No dependencies or upstream files changed.
+
+
+## Deep candidate CHECK paths — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting/Clippy, all 149 Rust tests, fifteen Node tests and TypeScript declarations. A CLI probe reproduced a syntax error for a four-segment candidate path in CHECK. The shared path expander now feeds CHECK parsing, and generated markers resolve to candidate bindings while retaining quoted segments and literal text. Explicit internal marker calls and overlong paths are rejected without widening CHECK function eligibility.
+
+A persistent regression verifies definition over existing data, quoted dot-containing segments, unchanged string literals, failed SQL/object updates, transaction/index preservation, and enforcement and index maintenance after reopening. Preliminary boolean CHECK probes showed correct behavior, so no boolean handling changed. No stored format, dependency or upstream file changed. Broader expression/type propagation and V1 release qualification remain pending.

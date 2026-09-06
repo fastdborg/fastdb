@@ -323,3 +323,72 @@ fn candidate_record_range_checks_validate_and_reopen_atomically() {
     assert!(c.lookup_index("docs", "docs_ref", &old).unwrap().is_empty());
     assert_eq!(c.lookup_index("docs", "docs_ref", &new).unwrap().len(), 1);
 }
+
+#[test]
+fn deep_candidate_paths_preserve_quoted_segments_and_check_atomicity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("deep-check.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(&c,"INSERT INTO docs {id:docs:saved,profile:{address:{details:{city:'Paris'},\"details.city\":{label:'quoted'}}}}");
+        q(&c,"DEFINE FIELD profile.address.details.city ON docs TYPE string CHECK(length(profile.address.details.city)>0 AND profile.address.\"details.city\".label='quoted' AND length('a.b.c.d')=7)");
+        q(
+            &c,
+            "CREATE INDEX cities ON docs(profile.address.details.city)",
+        );
+        q(&c, "BEGIN");
+        assert_eq!(
+            c.execute(
+                "UPDATE docs SET profile.address.details.city=''",
+                &Parameters::new()
+            )
+            .unwrap_err()
+            .code(),
+            "FDB_VALIDATION"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            c.lookup_index("docs", "cities", &Value::String("Paris".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        q(&c, "ROLLBACK");
+        for marker in [
+            "__fastdb_path(a,b,c,d)",
+            "\"__fastdb_path\"(a,b,c,d)",
+            "'__fastdb_path'(a,b,c,d)",
+        ] {
+            assert!(c
+                .execute(
+                    &format!("DEFINE FIELD forbidden ON docs TYPE string CHECK({marker})"),
+                    &Parameters::new()
+                )
+                .is_err());
+        }
+        // An overlong candidate path cannot be interpreted as a helper call.
+        let long = vec!["a"; 65].join(".");
+        assert!(c
+            .execute(
+                &format!("DEFINE FIELD forbidden ON docs TYPE string CHECK({long})"),
+                &Parameters::new()
+            )
+            .is_err());
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(c.execute("UPDATE docs:saved {profile:{address:{details:{city:''},\"details.city\":{label:'quoted'}}}}",&Parameters::new()).unwrap_err().code(),"FDB_VALIDATION");
+    q(&c, "UPDATE docs SET profile.address.details.city='Osaka'");
+    assert!(c
+        .lookup_index("docs", "cities", &Value::String("Paris".into()))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        c.lookup_index("docs", "cities", &Value::String("Osaka".into()))
+            .unwrap()
+            .len(),
+        1
+    );
+}
