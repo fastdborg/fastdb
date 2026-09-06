@@ -260,3 +260,66 @@ fn adding_checks_upgrades_legacy_metadata_atomically() {
         .to_string()
         .contains("requires catalog version 2"));
 }
+
+#[test]
+fn candidate_record_range_checks_validate_and_reopen_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("record-check.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(
+            &c,
+            "INSERT INTO docs {id:docs:saved,ref:docs:2,low:docs:1,high:docs:10}",
+        );
+        // Adding a CHECK scans existing records using numeric key ordering.
+        q(&c,"DEFINE FIELD ref ON docs TYPE record<docs> CHECK ((ref) >= low AND ref < high AND ref BETWEEN low AND high)");
+        q(&c, "CREATE UNIQUE INDEX docs_ref ON docs(ref)");
+        q(&c, "BEGIN");
+        for sql in [
+            "UPDATE docs:saved {ref:docs:20}",
+            "UPDATE docs SET ref=docs:20",
+            "UPSERT docs:saved {ref:docs:20}",
+            "INSERT INTO docs (id,ref,low,high) VALUES (docs:bad,docs:20,docs:1,docs:10)",
+            "INSERT INTO docs {id:docs:bad,ref:docs:20,low:docs:1,high:docs:10}",
+        ] {
+            assert_eq!(
+                c.execute(sql, &Parameters::new()).unwrap_err().code(),
+                "FDB_VALIDATION",
+                "{sql}"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        }
+        assert_eq!(
+            q(&c, "SELECT record::id(ref) AS key FROM docs").rows,
+            vec![vec![Value::Integer(2)]]
+        );
+        q(&c, "UPDATE docs:saved {ref:docs:3}");
+        q(&c, "ROLLBACK");
+        let key = Value::Record(Record {
+            table: "docs".into(),
+            key: Key::Integer(2),
+        });
+        assert_eq!(c.lookup_index("docs", "docs_ref", &key).unwrap().len(), 1);
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("UPDATE docs:saved {ref:docs:20}", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    q(&c, "UPDATE docs:saved {ref:docs:3}");
+    let old = Value::Record(Record {
+        table: "docs".into(),
+        key: Key::Integer(2),
+    });
+    let new = Value::Record(Record {
+        table: "docs".into(),
+        key: Key::Integer(3),
+    });
+    assert!(c.lookup_index("docs", "docs_ref", &old).unwrap().is_empty());
+    assert_eq!(c.lookup_index("docs", "docs_ref", &new).unwrap().len(), 1);
+}

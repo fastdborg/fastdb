@@ -39,6 +39,7 @@ fn parse_check(sql: &str) -> Result<Expr> {
 }
 fn field_path(expr: &Expr) -> Option<Vec<String>> {
     match expr {
+        Expr::Parenthesized(es) if es.len() == 1 => field_path(&es[0]),
         Expr::Id(n) | Expr::Name(n) => Some(vec![n.as_str().into()]),
         Expr::Qualified(a, b) => Some(vec![a.as_str().into(), b.as_str().into()]),
         Expr::DoublyQualified(a, b, c) => Some(vec![
@@ -54,7 +55,12 @@ fn field_path(expr: &Expr) -> Option<Vec<String>> {
         _ => None,
     }
 }
-fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue>) -> Result<()> {
+fn bind_field(
+    expr: &mut Expr,
+    doc: Option<&Document>,
+    bindings: &mut Vec<EngineValue>,
+    typed: bool,
+) -> Result<bool> {
     if let Some(path) = field_path(expr) {
         let value = match doc {
             Some(doc) => match crate::path_value(doc, &path) {
@@ -64,12 +70,23 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
             },
             None => None,
         };
-        bindings.push(crate::index_scalar(value.unwrap_or(&Value::Null))?);
+        let value = value.unwrap_or(&Value::Null);
+        bindings.push(if typed {
+            EngineValue::Blob(value.encode()?)
+        } else {
+            crate::index_scalar(value)?
+        });
         let index =
             u32::try_from(bindings.len()).map_err(|_| invalid("too many CHECK references"))?;
         *expr = Expr::Variable(Variable::indexed(
             NonZeroU32::new(index).expect("one-based binding"),
         ));
+        return Ok(true);
+    }
+    Ok(false)
+}
+fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue>) -> Result<()> {
+    if bind_field(expr, doc, bindings, false)? {
         return Ok(());
     }
     match expr {
@@ -78,7 +95,18 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
         }
         Expr::Literal(_) => {}
         Expr::Variable(_) => return Err(invalid("CHECK cannot contain bound parameters")),
-        Expr::Binary(a, _, b) => {
+        Expr::Binary(a, op, b) => {
+            if matches!(
+                op,
+                Operator::Less | Operator::LessEquals | Operator::Greater | Operator::GreaterEquals
+            ) && field_path(a).is_some()
+                && field_path(b).is_some()
+            {
+                bind_field(a, doc, bindings, true)?;
+                bind_field(b, doc, bindings, true)?;
+                *expr = parse_check(&format!("__fastdb_compare({a},{b}) {op} 0"))?;
+                return Ok(());
+            }
             lower(a, doc, bindings)?;
             lower(b, doc, bindings)?;
         }
@@ -110,8 +138,20 @@ fn lower(expr: &mut Expr, doc: Option<&Document>, bindings: &mut Vec<EngineValue
             lower(e, doc, bindings)?;
         }
         Expr::Between {
-            lhs, start, end, ..
+            lhs,
+            start,
+            end,
+            not,
         } => {
+            if field_path(lhs).is_some() && field_path(start).is_some() && field_path(end).is_some()
+            {
+                bind_field(lhs, doc, bindings, true)?;
+                bind_field(start, doc, bindings, true)?;
+                bind_field(end, doc, bindings, true)?;
+                let negate = if *not { "NOT " } else { "" };
+                *expr = parse_check(&format!("{negate}__fastdb_between({lhs},{start},{end})"))?;
+                return Ok(());
+            }
             lower(lhs, doc, bindings)?;
             lower(start, doc, bindings)?;
             lower(end, doc, bindings)?;

@@ -238,7 +238,16 @@ For SQL <, <=, > and >= whose two operands both retain FastDB values, collection
 
 The comparator uses the pinned engine's scalar ordering for non-record values after existing index-scalar conversion. Tests compare numeric, null and text results with affinity-free relational columns. Existing equality/index lookup paths and ordinary relational delegation are unchanged. The callback performs no database work. Runtime comparison errors follow existing engine error/transaction behavior and can end an outer transaction.
 
-This is not complete comparison propagation: expressions without two preserved operands, explicit COLLATE expressions, mixed relational-column affinity, and field CHECK lowering still use their existing paths. Their broader record-range/type semantics remain release work. This change adds no persisted format or index-key change; SQL range predicates on records are not yet planned as managed index ranges.
+This is not complete comparison propagation: expressions without two preserved operands, explicit COLLATE expressions, mixed relational-column affinity, and non-field CHECK expressions still use their existing paths. Their broader record-range/type semantics remain release work. This change adds no persisted format or index-key change; SQL range predicates on records are not yet planned as managed index ranges.
 
 
 Typed BETWEEN and NOT BETWEEN now use the same comparator when all three operands retain FastDB values. A single scalar callback receives the evaluated left operand and both bounds, preserving one evaluation of the left expression. It combines the two inclusive comparisons with SQL three-valued AND (false dominates null); NOT remains native SQL negation. Tests cover record ranges, typed scalar/null truth tables, DELETE/RETURNING rollback and a test-only volatile function that counts actual evaluations. Mixed or unpreserved operand forms and explicit collation retain their existing lowering and still need broader qualification.
+
+
+## Candidate-field record range CHECKs
+
+CHECK comparisons <, <=, > and >= between two direct candidate fields now retain typed values and use the same comparator as typed SQL ranges. BETWEEN/NOT BETWEEN with three direct candidate fields use the same inclusive comparison and null logic. Parentheses and supported nested field paths retain their field identity. Candidate values are bound from the evaluated document; the check reads no stored rows and does not add function names to the user CHECK allowlist. Other expressions and explicit collation retain existing CHECK lowering and need further typed propagation.
+
+A persistent test adds a record range CHECK over existing data, rejects invalid object/SQL INSERT, UPDATE and UPSERT operations without partial index changes, verifies rollback and reopens the database to verify continued enforcement. False CHECK results leave the explicit transaction active in these cases; runtime helper errors retain their existing engine-abort caveat.
+
+Catalog format remains version 2. This corrects previously unfinished record comparison semantics without rewriting stored data. Prototype databases can contain records accepted under the earlier bytewise comparison: reapply affected field definitions with overwrite through the validated definition API to scan existing documents before relying on the corrected constraint. Opening a database alone does not revalidate every document. This is not a previous-release compatibility guarantee.
