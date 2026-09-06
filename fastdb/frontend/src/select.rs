@@ -158,15 +158,15 @@ impl Scope {
             self.lower(expr)
         }
     }
-    fn membership_key(&self, expr: &mut Expr) -> Result<bool> {
+    fn comparison_key(&self, expr: &mut Expr) -> Result<bool> {
         // Keep explicit collation and unary plus outside the conversion.
         // Plus preserves the scalar value while removing SQL affinity.
         match expr {
             Expr::Collate(value, _) | Expr::Unary(UnaryOperator::Positive, value) => {
-                return self.membership_key(value);
+                return self.comparison_key(value);
             }
             Expr::Parenthesized(values) if values.len() == 1 => {
-                return self.membership_key(&mut values[0]);
+                return self.comparison_key(&mut values[0]);
             }
             _ => {}
         }
@@ -223,12 +223,24 @@ impl Scope {
             else_expr,
         } = expr
         {
-            if let Some(base) = base {
-                self.lower(base)?;
-            }
+            let keyed = if let Some(base) = base {
+                if self.comparison_key(base)? {
+                    true
+                } else {
+                    self.lower(base)?;
+                    false
+                }
+            } else {
+                false
+            };
             for (condition, value) in when_then_pairs {
                 if base.is_none() {
                     self.sql_argument(condition)?;
+                } else if keyed {
+                    if !self.comparison_key(condition)? {
+                        self.typed(condition)?;
+                        **condition = expression(&format!("__fastdb_unwrap({condition})"))?;
+                    }
                 } else {
                     self.lower(condition)?;
                 }
@@ -517,12 +529,12 @@ impl Scope {
             }
             Expr::InList { lhs, rhs, .. } => {
                 let mut value = *lhs.clone();
-                if self.membership_key(&mut value)? {
+                if self.comparison_key(&mut value)? {
                     // Use one collision-resistant scalar representation for the
                     // whole list, including native functions returning blobs.
                     **lhs = value;
                     for value in rhs.iter_mut() {
-                        if !self.membership_key(value)? {
+                        if !self.comparison_key(value)? {
                             self.typed(value)?;
                             **value = expression(&format!("__fastdb_unwrap({value})"))?;
                         }

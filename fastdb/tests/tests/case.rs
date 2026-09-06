@@ -108,3 +108,45 @@ fn object_case_supports_typed_keys_nested_results_and_lazy_evaluation() {
             .is_err());
     }
 }
+
+#[test]
+fn simple_case_binary_keys_match_native_blobs_and_cast_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(data BLOB)");
+    for hex in ["31", "32", "", "61"] {
+        q(&c, &format!("INSERT INTO docs (data) VALUES (X'{hex}')"));
+        q(&c, &format!("INSERT INTO baseline VALUES (X'{hex}')"));
+    }
+    q(&c, "INSERT INTO docs (data) VALUES (NULL)");
+    q(&c, "INSERT INTO baseline VALUES (NULL)");
+    for expr in [
+        "CASE data WHEN X'31' THEN 1 WHEN X'32' THEN 2 ELSE 0 END",
+        "CASE X'31' WHEN data THEN 1 ELSE 0 END",
+        "CASE substr(data,1,1) WHEN X'31' THEN 1 ELSE 0 END",
+        "CASE data WHEN substr(X'3132',1,1) THEN 1 ELSE 0 END",
+        "CASE CAST(data AS INTEGER) WHEN '1' THEN 1 ELSE 0 END",
+        "CASE CAST(data AS TEXT) COLLATE NOCASE WHEN 'A' THEN 1 ELSE 0 END",
+        "CASE data WHEN NULL THEN 1 ELSE 0 END",
+        "CASE data WHEN X'31' THEN data ELSE X'32' END",
+    ] {
+        let sql = |table| format!("SELECT {expr} AS value FROM {table} ORDER BY data");
+        assert_eq!(
+            q(&c, &sql("docs")).rows,
+            q(&c, &sql("baseline")).rows,
+            "{expr}"
+        );
+    }
+    q(&c, "CREATE INDEX docs_data ON docs(data)");
+    q(&c, "BEGIN");
+    assert_eq!(q(&c, "UPDATE docs SET data=CASE data WHEN X'31' THEN X'33' ELSE data END WHERE data=X'31' RETURNING data").rows,
+               vec![vec![Value::Binary(b"3".to_vec())]]);
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        c.lookup_index("docs", "docs_data", &Value::Binary(b"1".to_vec()))
+            .unwrap()
+            .len(),
+        1
+    );
+}
