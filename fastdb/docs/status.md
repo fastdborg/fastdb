@@ -340,3 +340,7 @@ Unix terminal sessions now use pinned Rustyline 15, with multiline history recal
 ## Interactive CLI query cancellation
 
 Edited Unix terminal sessions now route SIGINT through a regular signal-listener thread to the weak engine interrupt handle. Ctrl-C during engine work reports FDB_CANCELLED, stops the submitted batch and returns to the prompt; command failure still makes eventual process exit nonzero. The listener closes and joins on exit. The PTY harness now checks read cancellation with retained prior outer-transaction work, native write rollback, skipped batch tails and connection reuse. Nonterminal signals, complete deadlines, broader delivery timing and other platforms remain unqualified.
+
+## Local benchmark harness
+
+`fastdb/scripts/benchmark.py` loads a temporary persistent database and measures warm CLI round trips for unindexed/indexed document equality and exact cosine top-10. Reports retain samples, query plans, index-build/load time, Linux process peak RSS, binary identity and source state. Result and plan assertions guard the run. Engine scan counters remain unmeasured; the synthetic low-dimensional fixture, debug builds and a single local run do not satisfy the complete benchmark gate. See benchmarks.md for commands and limitations.

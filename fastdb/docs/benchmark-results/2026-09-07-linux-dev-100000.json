@@ -1,0 +1,183 @@
+{
+  "format": "fastdb-benchmark-v1",
+  "created_utc": "2026-09-06T21:36:16Z",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "machine": "x86_64",
+  "binary": "/home/tan/Sites/fastdb/turso/target/debug/fastdb-cli",
+  "binary_sha256": "6693e07c2f1b80c6b4f321ba83fedabc760dfce0e7e63752b45d31797b6e9705",
+  "commit": "d732de4bd0e72ad4281e7a4f82440cb2246fc3df",
+  "worktree_status": [
+    " M fastdb/README.md",
+    " M fastdb/docs/status.md",
+    "?? fastdb/docs/benchmarks.md",
+    "?? fastdb/scripts/benchmark.py"
+  ],
+  "rows": 100000,
+  "dimensions": 16,
+  "samples": 2,
+  "load_seconds": 310.55249651400663,
+  "index_build_seconds": 98.01563645299757,
+  "database_bytes_after_checkpoint": 76652544,
+  "workloads": [
+    {
+      "name": "unindexed_filter",
+      "sql": "SELECT count(*) FROM docs WHERE group_no=7",
+      "milliseconds": [
+        5844.436402,
+        5844.304109
+      ],
+      "median_ms": 5844.3702555,
+      "p95_ms": 5844.436402,
+      "process_peak_rss_bytes": 176685056,
+      "plan": [
+        [
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SCAN __fastdb_c_646f6373 AS docs"
+          }
+        ]
+      ],
+      "engine_rows_read": null,
+      "engine_fullscan_steps": null
+    },
+    {
+      "name": "indexed_filter",
+      "sql": "SELECT count(*) FROM docs WHERE group_no=7",
+      "milliseconds": [
+        343.809118,
+        298.657772
+      ],
+      "median_ms": 321.233445,
+      "p95_ms": 343.809118,
+      "process_peak_rss_bytes": 176828416,
+      "plan": [
+        [
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SCAN docs"
+          }
+        ],
+        [
+          {
+            "type": "Integer",
+            "value": 3
+          },
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SEARCH i USING INDEX docs_group (key=?)"
+          }
+        ],
+        [
+          {
+            "type": "Integer",
+            "value": 4
+          },
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SEARCH c USING INDEX sqlite_autoindex___fastdb_c_646f6373_1 (id=?)"
+          }
+        ]
+      ],
+      "engine_rows_read": null,
+      "engine_fullscan_steps": null
+    },
+    {
+      "name": "exact_vector_top10",
+      "sql": "SELECT record::id(id) AS key,vector_distance_cos(embedding,vector32('[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]')) AS distance FROM docs ORDER BY distance,id LIMIT 10",
+      "milliseconds": [
+        29427.860995,
+        29405.880908
+      ],
+      "median_ms": 29416.8709515,
+      "p95_ms": 29427.860995,
+      "process_peak_rss_bytes": 177102848,
+      "plan": [
+        [
+          {
+            "type": "Integer",
+            "value": 1
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "SCAN __fastdb_c_646f6373 AS docs"
+          }
+        ],
+        [
+          {
+            "type": "Integer",
+            "value": 19
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "Integer",
+            "value": 0
+          },
+          {
+            "type": "String",
+            "value": "USE SORTER FOR ORDER BY"
+          }
+        ]
+      ],
+      "engine_rows_read": null,
+      "engine_fullscan_steps": null
+    }
+  ],
+  "measurement": "warm CLI round trip, including frontend execution and JSON transport; one warmup per workload",
+  "limitations": [
+    "Binary build flags/profile must be recorded separately; the default binary is unoptimized.",
+    "Linux process high-water RSS includes loading and earlier workloads, not isolated query memory.",
+    "Engine scan counters are not exposed by the public frontend; null counters are unmeasured, not zero.",
+    "Synthetic deterministic vectors and one process do not qualify production workloads, cold caches or concurrency."
+  ]
+}

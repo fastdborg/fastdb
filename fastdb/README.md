@@ -26,3 +26,5 @@ A tested [offline backup and restore procedure](docs/backup-restore.md) preserve
 The [native Node client](bindings/node/README.md#local-package-smoke) includes an offline tarball-install smoke for local packaging qualification. Platform-specific release binaries remain pending.
 
 The [Rust client guide](docs/rust-client.md) describes local path dependencies and the standalone offline consumer smoke. Registry distribution remains pending.
+
+The [local benchmark harness](docs/benchmarks.md) measures document filters and exact-vector queries through the CLI, with result checks, query plans and Linux process peak RSS. It is a functional baseline; measured scan counters and full release-scale performance qualification remain pending.
