@@ -1740,3 +1740,84 @@ fn mixed_native_columns_preserve_binary_equality_affinity_and_collation() {
     query(&c, "ROLLBACK");
     assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
 }
+
+#[test]
+fn mixed_native_column_aliases_keep_projection_identity_in_having() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "INSERT INTO docs (value) VALUES (X'31'),(X'32')");
+    query(
+        &c,
+        "CREATE TABLE native(value BLOB,picked BLOB,n INTEGER,t TEXT COLLATE NOCASE)",
+    );
+    query(
+        &c,
+        "INSERT INTO native VALUES (X'31',X'99',1,'HELLO'),(X'32',X'99',2,'other')",
+    );
+    for predicate in [
+        "picked=X'31'",
+        "X'31'=picked",
+        "(picked COLLATE BINARY) IS X'31'",
+    ] {
+        let sql=format!("SELECT n.value AS picked,count(*) FROM docs d JOIN native n ON d.value=n.value GROUP BY n.value HAVING {predicate}");
+        assert_eq!(
+            query(&c, &sql).rows,
+            vec![vec![Value::Binary(vec![49]), Value::Integer(1)]],
+            "{sql}"
+        );
+    }
+    assert!(query(&c,"SELECT n.value AS picked,count(*) FROM docs d JOIN native n ON d.value=n.value GROUP BY n.value HAVING n.picked=X'31'").rows.is_empty());
+    assert_eq!(query(&c,"SELECT n.n AS picked,count(*) FROM docs d JOIN native n ON d.value=n.value GROUP BY n.n HAVING picked='1'").rows,vec![vec![Value::Integer(1),Value::Integer(1)]]);
+    assert_eq!(query(&c,"SELECT n.t AS picked,count(*) FROM docs d JOIN native n ON d.value=n.value GROUP BY n.t HAVING picked='hello'").rows,vec![vec![Value::String("HELLO".into()),Value::Integer(1)]]);
+}
+
+#[test]
+fn mixed_native_membership_preserves_binary_keys_and_lhs_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE docs");
+    query(&c, "CREATE TABLE baseline(value BLOB,n TEXT,t TEXT)");
+    query(
+        &c,
+        "CREATE TABLE native(value BLOB,n INTEGER,t TEXT COLLATE NOCASE)",
+    );
+    for value in ["X'31'", "X'32'", "NULL"] {
+        query(
+            &c,
+            &format!("INSERT INTO docs (value,n,t) VALUES ({value},'1','hello')"),
+        );
+        query(
+            &c,
+            &format!("INSERT INTO baseline VALUES ({value},'1','hello')"),
+        );
+    }
+    query(
+        &c,
+        "INSERT INTO native VALUES (X'31',1,'HELLO'),(X'32',2,'other'),(NULL,3,NULL)",
+    );
+    for predicate in [
+        "n.value IN (d.value)",
+        "n.value NOT IN (d.value)",
+        "n.value IN (d.value,X'99',NULL)",
+        "n.value NOT IN (d.value,NULL)",
+        "d.value IN (n.value)",
+        "d.value NOT IN (n.value,X'99')",
+        "n.n IN (d.n)",
+        "n.n NOT IN (d.n,'2')",
+        "n.t IN (d.t)",
+        "(n.t COLLATE BINARY) IN (d.t)",
+        "n.value IN ()",
+        "n.value NOT IN ()",
+    ] {
+        let template =
+            format!("SELECT n.n,{predicate} FROM SOURCE d JOIN native n ON 1 ORDER BY n.n,d.value");
+        assert_eq!(
+            query(&c, &template.replace("SOURCE", "docs")).rows,
+            query(&c, &template.replace("SOURCE", "baseline")).rows,
+            "{predicate}"
+        );
+    }
+    assert_eq!(query(&c,"SELECT n.value AS picked,count(*) FROM docs d JOIN native n ON n.value IN (d.value) GROUP BY n.value HAVING picked IN (X'31')").rows,
+        vec![vec![Value::Binary(vec![49]),Value::Integer(1)]]);
+}

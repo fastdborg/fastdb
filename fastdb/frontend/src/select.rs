@@ -578,7 +578,7 @@ impl Scope {
                     self.sql_argument(e)?;
                 }
             }
-            Expr::InList { lhs, rhs, .. } => {
+            Expr::InList { lhs, rhs, not } => {
                 let mut value = *lhs.clone();
                 if self.comparison_key(&mut value)? {
                     // Use one collision-resistant scalar representation for the
@@ -590,6 +590,26 @@ impl Scope {
                             **value = expression(&format!("__fastdb_unwrap({value})"))?;
                         }
                     }
+                    return Ok(());
+                }
+                if native_column_reference(&value) {
+                    for value in rhs.iter_mut() {
+                        if !self.comparison_key(value)? {
+                            self.typed(value)?;
+                            **value = expression(&format!("__fastdb_unwrap({value})"))?;
+                        }
+                    }
+                    let list = rhs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let negate = if *not { "NOT " } else { "" };
+                    // IN ignores RHS affinity. Preserve the native LHS column's
+                    // affinity for scalar values and encode only its BLOB values.
+                    *expr = expression(&format!(
+                        "CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN ({list}) ELSE {value} {negate}IN ({list}) END"
+                    ))?;
                     return Ok(());
                 }
                 self.lower(lhs)?;
