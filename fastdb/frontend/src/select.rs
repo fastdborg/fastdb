@@ -8,11 +8,12 @@ struct Source {
     alias: String,
     collection: Option<Collection>,
     derived: Option<Vec<(String, bool)>>,
+    derived_logical: bool,
     consumed: std::collections::BTreeSet<String>,
 }
 impl Source {
     fn logical(&self) -> bool {
-        self.collection.is_some() || self.derived.is_some()
+        self.collection.is_some() || self.derived_logical
     }
     fn typed_field(&self, path: &[String]) -> bool {
         self.collection.is_some()
@@ -23,6 +24,7 @@ impl Source {
             })
     }
 }
+type CteSources = std::collections::BTreeMap<String, Option<Source>>;
 struct Scope {
     sources: Vec<Source>,
     params: Parameters,
@@ -815,7 +817,12 @@ fn expression(sql: &str) -> Result<Expr> {
     };
     Ok(*e)
 }
-fn source(connection: &Connection, table: &SelectTable, params: &Parameters) -> Result<Source> {
+fn source(
+    connection: &Connection,
+    table: &SelectTable,
+    params: &Parameters,
+    ctes: &CteSources,
+) -> Result<Source> {
     if let SelectTable::Select(select, alias) = table {
         let Some(alias) = alias else {
             return Err(unsupported("derived collection source without alias"));
@@ -828,6 +835,7 @@ fn source(connection: &Connection, table: &SelectTable, params: &Parameters) -> 
             SelectOptions {
                 trusted: true,
                 nested: true,
+                ctes: Some(ctes),
                 ..Default::default()
             },
         )?;
@@ -865,6 +873,7 @@ fn source(connection: &Connection, table: &SelectTable, params: &Parameters) -> 
                 alias: alias.name().as_str().into(),
                 collection: None,
                 derived: Some(plan.names.into_iter().zip(plan.typed).collect()),
+                derived_logical: true,
                 consumed: plan.consumed,
             });
         }
@@ -873,12 +882,29 @@ fn source(connection: &Connection, table: &SelectTable, params: &Parameters) -> 
             alias: alias.name().as_str().into(),
             collection: None,
             derived: None,
+            derived_logical: false,
             consumed: Default::default(),
         });
     }
     let SelectTable::Table(name, alias, indexed) = table else {
         return Err(unsupported("subqueries and table functions"));
     };
+    if name.db_name.is_none() {
+        if let Some(entry) = ctes.get(&name.name.as_str().to_ascii_lowercase()) {
+            let Some(mut source) = entry.clone() else {
+                return Err(unsupported("forward or recursive collection CTE reference"));
+            };
+            if indexed.is_some() {
+                return Err(unsupported("INDEXED on a CTE source"));
+            }
+            source.table = table.clone();
+            source.alias = alias
+                .as_ref()
+                .map_or(name.name.as_str(), |a| a.name().as_str())
+                .into();
+            return Ok(source);
+        }
+    }
     if name
         .name
         .as_str()
@@ -920,6 +946,7 @@ fn source(connection: &Connection, table: &SelectTable, params: &Parameters) -> 
             .into(),
         collection,
         derived: None,
+        derived_logical: false,
         consumed: Default::default(),
     })
 }
@@ -1431,6 +1458,7 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
 }
 #[derive(Default)]
 struct SelectOptions<'a> {
+    ctes: Option<&'a CteSources>,
     nested: bool,
     trusted: bool,
     ignore_unused: bool,
@@ -1612,6 +1640,7 @@ impl Connection {
         options: SelectOptions<'_>,
     ) -> Result<Option<LoweredSelect>> {
         let SelectOptions {
+            ctes: inherited_ctes,
             nested,
             trusted,
             ignore_unused,
@@ -1635,6 +1664,165 @@ impl Connection {
             | Cmd::ExplainQueryPlan(Stmt::Select(s)) => s,
             _ => return Ok(None),
         };
+        let mut ctes = inherited_ctes.cloned().unwrap_or_default();
+        let mut cte_consumed = std::collections::BTreeSet::new();
+        let mut cte_logical = false;
+        if let Some(mut with) = select.with.take() {
+            if with.recursive {
+                return Ok(None);
+            }
+            let mut local_names = std::collections::BTreeSet::new();
+            for cte in &with.ctes {
+                let name = cte.tbl_name.as_str().to_ascii_lowercase();
+                if !local_names.insert(name.clone()) {
+                    return Ok(None);
+                }
+                ctes.insert(name, None);
+            }
+            for index in 0..with.ctes.len() {
+                let mut cte = with.ctes[index].clone();
+                let sql = Cmd::Stmt(Stmt::Select(cte.select.clone())).to_string();
+                let plan = match self.lower_collection_select(
+                    &sql,
+                    &sql,
+                    params,
+                    SelectOptions {
+                        trusted: true,
+                        nested: true,
+                        ctes: Some(&ctes),
+                        ..Default::default()
+                    },
+                ) {
+                    Ok(plan) => plan,
+                    Err(Error::Unsupported(_)) => return Ok(None),
+                    Err(e) => return Err(e),
+                };
+                let (columns, logical, consumed) = if let Some(plan) = plan {
+                    if plan.fetched.iter().any(|f| *f) {
+                        return Err(unsupported("fetched CTE projections"));
+                    }
+                    let names = if cte.columns.is_empty() {
+                        plan.names
+                    } else {
+                        if cte.columns.len() != plan.typed.len() {
+                            return Err(Error::Validation("CTE column count mismatch".into()));
+                        }
+                        cte.columns
+                            .iter()
+                            .map(|c| c.col_name.as_str().to_owned())
+                            .collect()
+                    };
+                    let mut unique = std::collections::BTreeSet::new();
+                    if names.iter().any(|n| !unique.insert(n.to_ascii_lowercase())) {
+                        return Err(unsupported("duplicate CTE output names"));
+                    }
+                    cte.columns = names
+                        .iter()
+                        .map(|n| IndexedColumn {
+                            col_name: Name::from_string(quote(n)),
+                            collation_name: None,
+                            order: None,
+                        })
+                        .collect();
+                    let Cmd::Stmt(Stmt::Select(body)) = plan.command else {
+                        unreachable!("CTE SELECT plan");
+                    };
+                    cte.select = body;
+                    (
+                        names.into_iter().zip(plan.typed).collect(),
+                        true,
+                        plan.consumed,
+                    )
+                } else {
+                    // Inspect native output metadata with its preceding CTEs in
+                    // scope; do not execute the native definition.
+                    let Cmd::Stmt(Stmt::Select(mut probe)) =
+                        parsed(&format!("SELECT * FROM {}", quote(cte.tbl_name.as_str())))?
+                    else {
+                        unreachable!();
+                    };
+                    probe.with = Some(With {
+                        recursive: false,
+                        ctes: with.ctes[..=index].to_vec(),
+                    });
+                    let statement = match self
+                        .engine
+                        .prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())
+                    {
+                        Ok(s) => s,
+                        Err(turso_core::LimboError::ParseError(_)) => return Ok(None),
+                        Err(error) => return Err(error.into()),
+                    };
+                    let columns: Vec<_> = (0..statement.num_columns())
+                        .map(|i| (statement.get_column_name(i).into_owned(), false))
+                        .collect();
+                    // Remaining collection index binds use binary comparison
+                    // keys. Native CTE inputs need raw bytes, even when the same
+                    // parameter is also used by a collection index predicate.
+                    let mut rewritten = String::new();
+                    let mut copied = 0;
+                    let mut consumed = std::collections::BTreeSet::new();
+                    for token in fastql_parser::tokenize(&sql)? {
+                        if token.kind != fastql_parser::Kind::Parameter {
+                            continue;
+                        }
+                        if let Some(Value::Binary(bytes)) = params.get(&token.text) {
+                            rewritten.push_str(&sql[copied..token.start]);
+                            rewritten.push_str("X'");
+                            for byte in bytes {
+                                rewritten.push_str(&format!("{byte:02x}"));
+                            }
+                            rewritten.push('\'');
+                            copied = token.end;
+                            consumed.insert(token.text);
+                        }
+                    }
+                    if copied != 0 {
+                        rewritten.push_str(&sql[copied..]);
+                        let Cmd::Stmt(Stmt::Select(body)) = parsed(&rewritten)? else {
+                            unreachable!();
+                        };
+                        cte.select = body;
+                        cte.columns = columns
+                            .iter()
+                            .map(|(name, _)| IndexedColumn {
+                                col_name: Name::from_string(quote(name)),
+                                collation_name: None,
+                                order: None,
+                            })
+                            .collect();
+                    }
+                    (columns, false, consumed)
+                };
+                cte_logical |= logical;
+                cte_consumed.extend(consumed.iter().cloned());
+                let name = cte.tbl_name.as_str().to_owned();
+                let Cmd::Stmt(Stmt::Select(table_probe)) =
+                    parsed(&format!("SELECT * FROM {}", quote(&name)))?
+                else {
+                    unreachable!();
+                };
+                let OneSelect::Select {
+                    from: Some(from), ..
+                } = table_probe.body.select
+                else {
+                    unreachable!();
+                };
+                ctes.insert(
+                    name.to_ascii_lowercase(),
+                    Some(Source {
+                        table: *from.select,
+                        alias: name,
+                        collection: None,
+                        derived: Some(columns),
+                        derived_logical: logical,
+                        consumed,
+                    }),
+                );
+                with.ctes[index] = cte;
+            }
+            select.with = Some(with);
+        }
         let OneSelect::Select {
             columns,
             from,
@@ -1649,21 +1837,24 @@ impl Connection {
         };
         let mut sources = Vec::new();
         if let Some(from) = from {
-            let first = match source(self, &from.select, params) {
+            let first = match source(self, &from.select, params, &ctes) {
                 Ok(s) => s,
                 Err(Error::Unsupported(_)) => return Ok(None),
                 Err(e) => return Err(e),
             };
             sources.push(first);
             for join in &from.joins {
-                match source(self, &join.table, params) {
+                match source(self, &join.table, params, &ctes) {
                     Ok(s) => sources.push(s),
                     Err(Error::Unsupported(_)) => return Ok(None),
                     Err(e) => return Err(e),
                 }
             }
         }
-        if (native_insert.is_some() || nested) && sources.iter().all(|source| !source.logical()) {
+        if (native_insert.is_some() || nested)
+            && !cte_logical
+            && sources.iter().all(|source| !source.logical())
+        {
             return Ok(None);
         }
         let standalone_typed_parameters = from.is_none()
@@ -1680,6 +1871,7 @@ impl Connection {
                 )
             });
         if !trusted
+            && !cte_logical
             && sources.iter().all(|s| !s.logical())
             && expanded == sql
             && !standalone_typed_parameters
@@ -1690,12 +1882,13 @@ impl Connection {
         if distinct {
             *distinctness = None;
         }
-        if select.with.is_some() || !select.body.compounds.is_empty() {
-            return Err(unsupported("CTEs or compound SELECT"));
+        if !select.body.compounds.is_empty() {
+            return Err(unsupported("compound SELECT"));
         }
         let consumed = sources
             .iter()
             .flat_map(|s| s.consumed.iter().cloned())
+            .chain(cte_consumed)
             .collect();
         let scope = Scope {
             sources,
