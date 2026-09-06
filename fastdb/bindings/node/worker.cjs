@@ -2,7 +2,7 @@
 const { parentPort, workerData } = require('node:worker_threads');
 const { NativeDatabase } = require('./fastdb.node');
 const db = new NativeDatabase(workerData.path);
-const methods = new Set(['execute', 'profileSelect', 'executeBatch', 'migrate', 'exportDocuments', 'importDocuments', 'close']);
+const methods = new Set(['execute', 'profileSelect', 'checkCollectionIntegrity', 'executeBatch', 'migrate', 'exportDocuments', 'importDocuments', 'close']);
 parentPort.on('message', ({ id, method, args }) => {
   try {
     if (!methods.has(method)) throw new Error('unknown database worker operation');

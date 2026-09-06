@@ -301,3 +301,36 @@ test('sync and async SELECT profiles preserve typed values and bigint counters',
     await assert.rejects(Promise.resolve().then(() => db.profileSelect('SELECT 1')), /clos/i);
   }
 });
+
+test('sync and async collection audits preserve work and enforce bigint limits', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE INDEX docs_n ON docs(n)');
+      assert.equal((await db.checkCollectionIntegrity('docs', {maxDocuments: 0n, maxEncodedBytes: 0n})).documents, 0n);
+      await db.execute('INSERT INTO docs {id:docs:a,n:1}');
+      const audit = await db.checkCollectionIntegrity('docs');
+      assert.equal(audit.documents, 1n);
+      assert.equal(audit.indexes, 1n);
+      assert.equal(audit.indexEntries, 1n);
+      assert.ok(audit.encodedBytes > 0n);
+      assert.equal(audit.transaction.after, 'autocommit');
+      assert.equal((await db.checkCollectionIntegrity('docs', {maxEncodedBytes: audit.encodedBytes})).encodedBytes, audit.encodedBytes);
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:b,n:null}');
+      await assert.rejects(Promise.resolve().then(() => db.checkCollectionIntegrity('docs', {maxDocuments: 1n})), error => {
+        assert.equal(error.code, 'FDB_LIMIT'); assert.equal(error.transaction.after, 'active'); return true;
+      });
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents, 2n);
+      for (const limits of [{maxDocuments: 1}, {maxDocuments: -1n}, {maxEncodedBytes: 1n << 64n}, {unknown: 1n}, null]) {
+        await assert.rejects(Promise.resolve().then(() => db.checkCollectionIntegrity('docs', limits)), /integrity limit/);
+      }
+      await db.execute('ROLLBACK');
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents, 1n);
+      await assert.rejects(Promise.resolve().then(() => db.checkCollectionIntegrity('missing')), error => error.code === 'FDB_NOT_FOUND');
+    } finally { await db.close(); }
+    await assert.rejects(Promise.resolve().then(() => db.checkCollectionIntegrity('docs')), /clos/i);
+  }
+});

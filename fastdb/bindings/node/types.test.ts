@@ -51,3 +51,12 @@ async function profileAsync(db: AsyncDatabase) {
   void instructions; void state;
 }
 void profileRows; void physicalReads; void profileAsync;
+
+const auditCount: bigint = db.checkCollectionIntegrity('docs', {maxDocuments: 100n}).documents;
+// @ts-expect-error integrity limits are explicit bigint values
+db.checkCollectionIntegrity('docs', {maxDocuments: 100});
+async function auditAsync(db: AsyncDatabase) {
+  const bytes: bigint = (await db.checkCollectionIntegrity('docs')).encodedBytes;
+  void bytes;
+}
+void auditCount; void auditAsync;

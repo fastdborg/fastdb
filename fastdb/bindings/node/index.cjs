@@ -82,6 +82,22 @@ function migrationPlan(migrations) {
     });
   return plan;
 }
+function integrityLimits(limits) {
+  if (limits === null || typeof limits !== 'object' || Array.isArray(limits)) throw new TypeError('integrity limits must be an object');
+  const fields = { maxDocuments: '', maxEncodedBytes: '' };
+  for (const [key, value] of Object.entries(limits)) {
+    if (key !== 'maxDocuments' && key !== 'maxEncodedBytes') throw new TypeError(`unknown integrity limit ${key}`);
+    if (value === undefined) continue;
+    if (typeof value !== 'bigint') throw new TypeError('integrity limits require bigint');
+    if (value < 0n || value > 18446744073709551615n) throw new RangeError('integrity limits must fit uint64');
+    fields[key] = value.toString();
+  }
+  return [fields.maxDocuments, fields.maxEncodedBytes];
+}
+function decodeIntegrity(raw) {
+  const report = unwrap(raw);
+  return { ...Object.fromEntries(Object.entries(report.execution.result).map(([key, value]) => [key, BigInt(value)])), transaction: report.transaction };
+}
 function decodeProfile(raw) {
   const report = unwrap(raw);
   const { result, metrics } = report.execution.result;
@@ -102,6 +118,9 @@ class Database {
   profileSelect(sql, parameters = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     return decodeProfile(this.#native.profileSelect(sql, JSON.stringify(params)));
+  }
+  checkCollectionIntegrity(table, limits = {}) {
+    return decodeIntegrity(this.#native.checkCollectionIntegrity(table, ...integrityLimits(limits)));
   }
   executeBatch(script) { return decodeBatch(this.#native.executeBatch(script)); }
   exportDocuments(table, format = 'json') {
@@ -216,6 +235,9 @@ class AsyncDatabase {
   async profileSelect(sql, parameters = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)]));
+  }
+  async checkCollectionIntegrity(table, limits = {}) {
+    return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)]));
   }
   async executeBatch(script) { return decodeBatch(await this.#request('executeBatch', [script])); }
   async exportDocuments(table, format = 'json') {

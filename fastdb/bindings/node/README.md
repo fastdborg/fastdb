@@ -107,3 +107,17 @@ console.log(profile.result.rows, profile.metrics.rowsRead);
 ```
 
 Counters cover the primary engine statement only; metadata/lowering queries, Rust/JavaScript decoding and transport are excluded. Physical row reads are not logical document counts. Only one SQL SELECT is accepted; writes, multiple statements, EXPLAIN, direct-record shorthand and record::fetch are rejected. Failures throw/reject through the usual error/transaction envelope without partial counters. Connection-wide async interruption and close behavior follow `execute`; profiling is not a deadline or request-specific cancellation mechanism.
+
+## Collection integrity audit
+
+`checkCollectionIntegrity(table, limits?)` is available on both clients; AsyncDatabase returns a Promise and runs the audit on its worker. It returns bigint `documents`, `indexes`, `indexEntries`, `encodedBytes`, plus transaction observations. Optional `maxDocuments` and `maxEncodedBytes` limits require nonnegative bigint values fitting uint64. Omitted limits use Rust defaults: 100,000 documents and 64 MiB of encoded ID/document bytes. Zero is valid for checking an empty collection.
+
+```js
+const audit = await asyncDb.checkCollectionIntegrity('posts', {
+  maxDocuments: 100_000n,
+  maxEncodedBytes: 64n * 1024n * 1024n,
+});
+console.log(audit.documents, audit.indexEntries);
+```
+
+The audit checks typed IDs, validation and index entry consistency in one snapshot, without repairing data. FDB_LIMIT returns no partial report; native errors include transaction observations. Limits do not bound engine allocations or time. It is not physical page/B-tree verification or a complete corruption-recovery tool. Async queue, close and connection-wide interruption behavior are unchanged.

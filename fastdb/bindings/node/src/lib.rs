@@ -76,6 +76,25 @@ impl NativeDatabase {
         })
     }
     #[napi]
+    pub fn check_collection_integrity(
+        &self,
+        table: String,
+        max_documents: String,
+        max_encoded_bytes: String,
+    ) -> napi::Result<String> {
+        self.report(|conn| {
+            let mut limits=fastdb::IntegrityLimits::default();
+            if !max_documents.is_empty() {
+                limits.max_documents=max_documents.parse().map_err(|_|fastdb::Error::Validation("invalid integrity document limit".into()))?;
+            }
+            if !max_encoded_bytes.is_empty() {
+                limits.max_encoded_bytes=max_encoded_bytes.parse().map_err(|_|fastdb::Error::Validation("invalid integrity byte limit".into()))?;
+            }
+            let report=conn.check_collection_integrity(&table,limits)?;
+            Ok(serde_json::json!({"documents":report.documents.to_string(),"indexes":report.indexes.to_string(),"indexEntries":report.index_entries.to_string(),"encodedBytes":report.encoded_bytes.to_string()}))
+        })
+    }
+    #[napi]
     pub fn execute_batch(&self, script: String) -> napi::Result<String> {
         self.report(|conn| {
             let mut entries=Vec::new();
