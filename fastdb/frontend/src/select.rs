@@ -1336,6 +1336,18 @@ struct SelectOptions<'a> {
     guarded: bool,
     native_insert: Option<&'a Stmt>,
 }
+// A single-execution lowering result. Typed parameters may already be embedded
+// in command; this is not a reusable prepared statement with replaceable binds.
+struct LoweredSelect {
+    command: Cmd,
+    typed: Vec<bool>,
+    fetched: Vec<bool>,
+    names: Vec<String>,
+    consumed: std::collections::BTreeSet<String>,
+    ignore_unused: bool,
+    explain: bool,
+    native_insert: bool,
+}
 impl Connection {
     pub(crate) fn collection_select(
         &self,
@@ -1484,6 +1496,18 @@ impl Connection {
                 )
             });
         }
+        let Some(plan) = self.lower_collection_select(sql, &expanded, params, options)? else {
+            return Ok(None);
+        };
+        self.execute_lowered_select(plan, params).map(Some)
+    }
+    fn lower_collection_select(
+        &self,
+        sql: &str,
+        expanded: &str,
+        params: &Parameters,
+        options: SelectOptions<'_>,
+    ) -> Result<Option<LoweredSelect>> {
         let SelectOptions {
             trusted,
             ignore_unused,
@@ -1492,7 +1516,7 @@ impl Connection {
             guarded: _,
             native_insert,
         } = options;
-        let Ok(mut cmd) = parsed(&expanded) else {
+        let Ok(mut cmd) = parsed(expanded) else {
             return Ok(None);
         };
         let explain = matches!(cmd, Cmd::ExplainQueryPlan(_) | Cmd::Explain(_));
@@ -1917,37 +1941,60 @@ impl Connection {
                 unreachable!("INSERT SELECT template")
             };
             *select = source;
-            let mut statement = self.engine.prepare(insert.to_string())?;
-            for (name, value) in params {
-                if let Some(index) = crate::bind_index(&statement, name) {
-                    statement.bind_at(index, crate::scalar(value)?)?;
-                } else if !scope.consumed.borrow().contains(name) {
-                    return Err(Error::Parameter(name.clone()));
-                }
-            }
-            let columns = (0..statement.num_columns())
-                .map(|i| statement.get_column_name(i).into_owned())
-                .collect();
-            let rows = crate::collect_rows(&mut statement)?
-                .into_iter()
-                .map(|row| row.into_iter().map(crate::from_engine).collect())
-                .collect();
-            return Ok(Some(QueryResult {
-                columns,
-                rows,
-                affected: statement.n_change(),
+            return Ok(Some(LoweredSelect {
+                command: Cmd::Stmt(insert),
+                typed: Vec::new(),
+                fetched: Vec::new(),
+                names: Vec::new(),
+                consumed: scope.consumed.into_inner(),
+                ignore_unused: false,
+                explain: false,
+                native_insert: true,
             }));
         }
+        Ok(Some(LoweredSelect {
+            command: cmd,
+            typed,
+            fetched,
+            names,
+            consumed: scope.consumed.into_inner(),
+            ignore_unused,
+            explain,
+            native_insert: false,
+        }))
+    }
+    fn execute_lowered_select(
+        &self,
+        plan: LoweredSelect,
+        params: &Parameters,
+    ) -> Result<QueryResult> {
+        let LoweredSelect {
+            command: cmd,
+            typed,
+            fetched,
+            names,
+            consumed,
+            ignore_unused,
+            explain,
+            native_insert,
+        } = plan;
         let lowered = cmd.to_string();
         let mut statement = self.engine.prepare(&lowered)?;
         for (name, value) in params {
             let Some(index) = crate::bind_index(&statement, name) else {
-                if ignore_unused || scope.consumed.borrow().contains(name) {
+                if ignore_unused || consumed.contains(name) {
                     continue;
                 }
                 return Err(Error::Parameter(name.clone()));
             };
-            statement.bind_at(index, crate::index_scalar(value)?)?;
+            statement.bind_at(
+                index,
+                if native_insert {
+                    crate::scalar(value)?
+                } else {
+                    crate::index_scalar(value)?
+                },
+            )?;
         }
         let engine_names = (0..statement.num_columns())
             .map(|i| statement.get_column_name(i).into_owned())
@@ -1956,7 +2003,7 @@ impl Connection {
         for row in crate::collect_rows(&mut statement)? {
             let mut output = Vec::new();
             for (i, value) in row.into_iter().enumerate() {
-                if !explain && typed[i] {
+                if !native_insert && !explain && typed[i] {
                     output.push(match value {
                         turso_core::Value::Blob(b) => Value::decode(&b)?,
                         turso_core::Value::Null => Value::Null,
@@ -1968,7 +2015,7 @@ impl Connection {
             }
             rows.push(output);
         }
-        if !explain && fetched.iter().any(|v| *v) {
+        if !native_insert && !explain && fetched.iter().any(|v| *v) {
             let refs = rows
                 .iter()
                 .flat_map(|row| {
@@ -1987,11 +2034,19 @@ impl Connection {
                 }
             }
         }
-        Ok(Some(QueryResult {
-            columns: if explain { engine_names } else { names },
+        Ok(QueryResult {
+            columns: if explain || native_insert {
+                engine_names
+            } else {
+                names
+            },
             rows,
-            affected: 0,
-        }))
+            affected: if native_insert {
+                statement.n_change()
+            } else {
+                0
+            },
+        })
     }
 }
 
@@ -2121,4 +2176,77 @@ fn expand_stars(
         }
     }
     Ok(expanded)
+}
+
+#[cfg(test)]
+mod lowering_tests {
+    use super::*;
+    #[test]
+    fn lowering_preserves_typed_outputs_and_defers_native_insert_execution() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let empty = Parameters::new();
+        c.execute("CREATE TABLE docs", &empty).unwrap();
+        c.execute("CREATE TABLE copied(data BLOB)", &empty).unwrap();
+        let params = Parameters::from([("$flag".into(), Value::Boolean(true))]);
+        c.execute(
+            "INSERT INTO docs (id,flag,data) VALUES (docs:a,$flag,X'31')",
+            &params,
+        )
+        .unwrap();
+        let sql = "SELECT flag,data,id FROM docs WHERE flag=$flag";
+        let expanded = expand_paths(&expand_records(sql).unwrap()).unwrap();
+        let plan = c
+            .lower_collection_select(sql, &expanded, &params, SelectOptions::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan.names, vec!["flag", "data", "id"]);
+        assert_eq!(plan.typed, vec![true, true, true]);
+        let result = c.execute_lowered_select(plan, &params).unwrap();
+        assert_eq!(
+            result.rows,
+            vec![vec![
+                Value::Boolean(true),
+                Value::Binary(vec![49]),
+                Value::Record(crate::Record {
+                    table: "docs".into(),
+                    key: crate::Key::String("a".into())
+                })
+            ]]
+        );
+        let source = "SELECT data FROM docs WHERE flag=$flag";
+        let expanded = expand_paths(&expand_records(source).unwrap()).unwrap();
+        let Cmd::Stmt(insert) =
+            parsed("INSERT INTO copied SELECT data FROM docs WHERE flag=$flag RETURNING hex(data)")
+                .unwrap()
+        else {
+            unreachable!();
+        };
+        let plan = c
+            .lower_collection_select(
+                source,
+                &expanded,
+                &params,
+                SelectOptions {
+                    trusted: true,
+                    positional: true,
+                    native_insert: Some(&insert),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(c
+            .execute("SELECT * FROM copied", &empty)
+            .unwrap()
+            .rows
+            .is_empty());
+        let result = c.execute_lowered_select(plan, &params).unwrap();
+        assert_eq!(result.affected, 1);
+        assert_eq!(result.rows, vec![vec![Value::String("31".into())]]);
+        assert_eq!(
+            c.execute("SELECT data FROM copied", &empty).unwrap().rows,
+            vec![vec![Value::Binary(vec![49])]]
+        );
+    }
 }
