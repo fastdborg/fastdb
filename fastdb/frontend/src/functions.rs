@@ -565,6 +565,40 @@ mod between_tests {
         assert_eq!(rows, vec![vec![Value::Integer(3)]]);
         assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls);
         assert_eq!(logical_calls, 1);
+        for inner in [
+            "between_tick() FROM scalar_inputs",
+            "n FROM scalar_inputs WHERE between_tick()=7",
+        ] {
+            CALLS.store(0, Ordering::SeqCst);
+            let rows = c
+                .execute(
+                    &format!("SELECT EXISTS (SELECT {inner}) AS v"),
+                    &crate::Parameters::new(),
+                )
+                .unwrap()
+                .rows;
+            assert_eq!(rows, vec![vec![Value::Integer(1)]]);
+            let logical_calls = CALLS.load(Ordering::SeqCst);
+            CALLS.store(0, Ordering::SeqCst);
+            let native_inner = if inner.starts_with("between_tick") {
+                "between_tick()"
+            } else {
+                "1 WHERE between_tick()=7"
+            };
+            let native = c
+                .execute(
+                    &format!("SELECT EXISTS (SELECT {native_inner}) AS v"),
+                    &crate::Parameters::new(),
+                )
+                .unwrap()
+                .rows;
+            assert_eq!(rows, native);
+            assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls);
+            assert_eq!(
+                logical_calls,
+                usize::from(!inner.starts_with("between_tick"))
+            );
+        }
         for (operator, count) in [("UNION", 1), ("INTERSECT", 1), ("EXCEPT", 0)] {
             CALLS.store(0, Ordering::SeqCst);
             let rows = c.execute(&format!("SELECT type::record('docs',between_tick()) AS id {operator} SELECT type::record('docs',between_tick())"), &crate::Parameters::new()).unwrap().rows;

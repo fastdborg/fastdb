@@ -511,6 +511,7 @@ test('collection scalar subqueries preserve typed values in both clients', async
       const row = await db.exactlyOne('SELECT (SELECT link FROM docs) AS link,(SELECT items FROM docs) AS items,(SELECT n FROM docs WHERE n=99) AS missing');
       assert.deepEqual(row, [new Record('docs','b'), [1n,true], null]);
       assert.deepEqual(await db.exactlyOne('SELECT n FROM docs WHERE n=(SELECT max(n) FROM docs)'), [1n]);
+      assert.deepEqual(await db.exactlyOne('SELECT EXISTS (SELECT link,items FROM docs) AS present,NOT EXISTS (SELECT n FROM docs WHERE n=99) AS absent'), [1n,1n]);
     } finally { await db.close(); }
   }
 });

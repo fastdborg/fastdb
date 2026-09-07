@@ -25,10 +25,10 @@ impl Source {
     }
 }
 type CteSources = std::collections::BTreeMap<String, Option<Source>>;
-type ScalarSubqueries =
+type ExpressionSubqueries =
     std::collections::BTreeMap<String, (Expr, std::collections::BTreeSet<String>)>;
 struct Scope {
-    scalar_subqueries: ScalarSubqueries,
+    expression_subqueries: ExpressionSubqueries,
     sources: Vec<Source>,
     params: Parameters,
     consumed: std::cell::RefCell<std::collections::BTreeSet<String>>,
@@ -154,7 +154,7 @@ impl Scope {
     }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
         if matches!(expr, Expr::Subquery(_)) {
-            if let Some((lowered, consumed)) = self.scalar_subqueries.get(&expr.to_string()) {
+            if let Some((lowered, consumed)) = self.expression_subqueries.get(&expr.to_string()) {
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
                 *expr = lowered.clone();
                 return Ok(true);
@@ -476,6 +476,13 @@ impl Scope {
         Ok(())
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        if matches!(expr, Expr::Exists(_)) {
+            if let Some((lowered, consumed)) = self.expression_subqueries.get(&expr.to_string()) {
+                self.consumed.borrow_mut().extend(consumed.iter().cloned());
+                *expr = lowered.clone();
+                return Ok(());
+            }
+        }
         if blob_literal(expr) {
             return Ok(());
         }
@@ -2039,7 +2046,7 @@ impl Connection {
         // Prepare nested scalar plans without executing them. Cache by the
         // original AST spelling so aliases and repeated lowering probes retain
         // type/parameter metadata; each occurrence still belongs to the engine.
-        let mut scalar_subqueries = ScalarSubqueries::new();
+        let mut expression_subqueries = ExpressionSubqueries::new();
         let mut subquery_error = None;
         let mut inputs = Vec::new();
         match &select.body.select {
@@ -2077,11 +2084,13 @@ impl Connection {
         inputs.extend(select.order_by.iter().map(|e| *e.expr.clone()));
         for mut input in inputs {
             turso_core::walk_expr_mut(&mut input, &mut |expr| {
-                if let Expr::Subquery(inner) = &*expr {
-                    if subquery_error.is_some() || scalar_subqueries.contains_key(&expr.to_string())
+                if let Expr::Subquery(inner) | Expr::Exists(inner) = &*expr {
+                    if subquery_error.is_some()
+                        || expression_subqueries.contains_key(&expr.to_string())
                     {
                         return Ok(turso_core::WalkControl::SkipChildren);
                     }
+                    let exists = matches!(expr, Expr::Exists(_));
                     let result = (|| -> Result<()> {
                         let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                         if let Some(plan) = self.lower_collection_select(
@@ -2091,26 +2100,36 @@ impl Connection {
                             SelectOptions {
                                 trusted: true,
                                 nested: true,
+                                positional: exists,
                                 ctes: Some(&ctes),
                                 ..Default::default()
                             },
                         )? {
-                            if plan.typed.len() != 1 || plan.fetched.iter().any(|f| *f) {
+                            if (!exists && plan.typed.len() != 1) || plan.fetched.iter().any(|f| *f)
+                            {
                                 return Err(unsupported(
-                                    "scalar subquery requires one non-fetched column",
+                                    "scalar subqueries require one column; expression subqueries cannot FETCH",
                                 ));
                             }
-                            let output = if plan.typed[0] {
+                            let output = if plan.typed.first() == Some(&true) {
                                 "v"
                             } else {
                                 "__fastdb_pack(v)"
                             };
                             let sql = plan.command.to_string();
-                            let lowered = expression(&format!(
+                            let lowered = if exists {
+                                expression(&format!(
+                                    "EXISTS ({})",
+                                    sql.trim().trim_end_matches(';')
+                                ))?
+                            } else {
+                                expression(&format!(
                             "(WITH __fastdb_scalar_result(v) AS ({}) SELECT {output} FROM __fastdb_scalar_result)",
                             sql.trim().trim_end_matches(';')
-                        ))?;
-                            scalar_subqueries.insert(expr.to_string(), (lowered, plan.consumed));
+                        ))?
+                            };
+                            expression_subqueries
+                                .insert(expr.to_string(), (lowered, plan.consumed));
                         }
                         Ok(())
                     })();
@@ -2126,7 +2145,7 @@ impl Connection {
             return Err(error);
         }
         if let OneSelect::Values(rows) = &mut select.body.select {
-            let mut logical = !scalar_subqueries.is_empty()
+            let mut logical = !expression_subqueries.is_empty()
                 || cte_logical
                 || (trusted && positional && native_insert.is_none());
             for row in rows.iter_mut() {
@@ -2171,7 +2190,7 @@ impl Connection {
             }
             let width = rows.first().map_or(0, Vec::len);
             let scope = Scope {
-                scalar_subqueries,
+                expression_subqueries,
                 sources: Vec::new(),
                 params: params.clone(),
                 consumed: std::cell::RefCell::new(cte_consumed),
@@ -2227,7 +2246,7 @@ impl Connection {
         }
         if (native_insert.is_some() || nested)
             && !cte_logical
-            && scalar_subqueries.is_empty()
+            && expression_subqueries.is_empty()
             && sources.iter().all(|source| !source.logical())
         {
             return Ok(None);
@@ -2247,7 +2266,7 @@ impl Connection {
             });
         if !trusted
             && !cte_logical
-            && scalar_subqueries.is_empty()
+            && expression_subqueries.is_empty()
             && sources.iter().all(|s| !s.logical())
             && expanded == sql
             && !standalone_typed_parameters
@@ -2267,7 +2286,7 @@ impl Connection {
             .chain(cte_consumed)
             .collect();
         let scope = Scope {
-            scalar_subqueries,
+            expression_subqueries,
             sources,
             params: params.clone(),
             consumed: std::cell::RefCell::new(consumed),
