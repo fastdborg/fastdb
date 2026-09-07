@@ -505,7 +505,7 @@ impl Scope {
             for (i, arg) in args.iter_mut().enumerate() {
                 if i < vector_args {
                     self.typed(arg)?;
-                    *arg = Box::new(expression(&format!("__fastdb_vector_input({arg})"))?);
+                    *arg = Box::new(vector_input_expression(arg)?);
                 } else {
                     self.lower(arg)?;
                 }
@@ -740,7 +740,7 @@ impl Scope {
             ) {
                 for arg in args {
                     self.typed(arg)?;
-                    *arg = Box::new(expression(&format!("__fastdb_vector_input({arg})"))?);
+                    *arg = Box::new(vector_input_expression(arg)?);
                 }
                 return Ok(());
             }
@@ -3882,6 +3882,36 @@ fn expand_stars(
         }
     }
     Ok(expanded)
+}
+
+// Fuse only the plain physical-document accessor produced by typed lowering.
+// Other expression shapes retain the generic typed-value conversion.
+fn vector_input_expression(arg: &Expr) -> Result<Expr> {
+    if let Expr::FunctionCall {
+        name,
+        args,
+        distinctness,
+        filter_over,
+        order_by,
+        within_group,
+    } = arg
+    {
+        if name.as_str() == "__fastdb_value"
+            && args.len() == 2
+            && distinctness.is_none()
+            && filter_over.over_clause.is_none()
+            && filter_over.filter_clause.is_none()
+            && order_by.is_empty()
+            && within_group.is_empty()
+        {
+            let mut fused = arg.clone();
+            if let Expr::FunctionCall { name, .. } = &mut fused {
+                *name = Name::exact("__fastdb_vector_field".into());
+            }
+            return Ok(fused);
+        }
+    }
+    expression(&format!("__fastdb_vector_input({arg})"))
 }
 
 #[cfg(test)]

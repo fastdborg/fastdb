@@ -1,0 +1,353 @@
+{
+  "format": "fastdb-accessor-comparison-v1",
+  "base_commit": "285c7d2bfff626abac9d2351f45e0984147745df",
+  "implementation_diff_sha256": "65c63044223d0d7b7203e5eaf408646dbff3ff338542c24a9b76d97364d97ad0",
+  "harness_sha256": "621221b25ef36c042e04b349e56c91a9c1d938fd081a25f59ea45ef96776f796",
+  "before_binary_sha256": "80d383d176fb1729041b5da09fd63601a5eebd132d27b746f2e1d0d676e54193",
+  "after_binary_sha256": "cb9e8b99209bf3cef1c589a78113414740407181e7faa1c5b5cec0fcf71dc081",
+  "before": [
+    {
+      "workload": "count",
+      "table": "native",
+      "milliseconds": [
+        0.9481510060140863,
+        0.7936080073704943,
+        0.7527230045525357
+      ],
+      "median_ms": 0.7936080073704943,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 1000
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "count",
+      "table": "docs",
+      "milliseconds": [
+        0.8261960028903559,
+        0.7694170053582639,
+        0.7488239934900776
+      ],
+      "median_ms": 0.7694170053582639,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 1000
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "filter",
+      "table": "native",
+      "milliseconds": [
+        1.2629349948838353,
+        1.1184879986103624,
+        1.2373440113151446
+      ],
+      "median_ms": 1.2373440113151446,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 10
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "filter",
+      "table": "docs",
+      "milliseconds": [
+        87.38569800334517,
+        90.889988001436,
+        89.98600598715711
+      ],
+      "median_ms": 89.98600598715711,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 10
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "vector",
+      "table": "native",
+      "milliseconds": [
+        4.023977991892025,
+        2.257301995996386,
+        2.0531749905785546
+      ],
+      "median_ms": 2.257301995996386,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Number",
+              "value": 1.7879937441733773e-07
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "vector",
+      "table": "docs",
+      "milliseconds": [
+        266.1944499996025,
+        255.3133450128371,
+        301.0958600061713
+      ],
+      "median_ms": 266.1944499996025,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Number",
+              "value": 1.7879937441733773e-07
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    }
+  ],
+  "after": [
+    {
+      "workload": "count",
+      "table": "native",
+      "milliseconds": [
+        0.7458780019078404,
+        0.9774880018085241,
+        0.8008280128706247
+      ],
+      "median_ms": 0.8008280128706247,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 1000
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "count",
+      "table": "docs",
+      "milliseconds": [
+        1.250736997462809,
+        1.1985890014329925,
+        1.3697450049221516
+      ],
+      "median_ms": 1.250736997462809,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 1000
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "filter",
+      "table": "native",
+      "milliseconds": [
+        2.0895999914500862,
+        2.299690997460857,
+        2.116424002451822
+      ],
+      "median_ms": 2.116424002451822,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 10
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "filter",
+      "table": "docs",
+      "milliseconds": [
+        119.4902189890854,
+        91.9259499933105,
+        106.5135789976921
+      ],
+      "median_ms": 106.5135789976921,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 10
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "vector",
+      "table": "native",
+      "milliseconds": [
+        3.5238409909652546,
+        3.5977100051240996,
+        1.7459060036344454
+      ],
+      "median_ms": 3.5238409909652546,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Number",
+              "value": 1.7879937441733773e-07
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "vector",
+      "table": "docs",
+      "milliseconds": [
+        120.84356100240257,
+        137.49757999903522,
+        133.70819500414655
+      ],
+      "median_ms": 133.70819500414655,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Number",
+              "value": 1.7879937441733773e-07
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "1000 seeded 768-dimensional vectors in memory; baseline process runs first.",
+    "Three timed samples after one warmup; timing variance in unchanged workloads.",
+    "Minimum cosine distance, not sorted top-10; no global latency claim."
+  ]
+}

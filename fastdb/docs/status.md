@@ -1018,3 +1018,8 @@ The seeded-vector benchmark at clean commit `bc88ad618b` exited successfully, ch
 ## Optimized vector diagnostic (2026-09-07)
 
 The existing release-profile CLI built successfully with Rust 1.88.0 and completed the same seeded 100,000 × 768 diagnostic at clean commit `83583ecdd`. All warmup/sample count and cosine-reference checks passed. Medians were 9.48 s unindexed filter, 138.64 ms indexed filter and 47.12 s exact top-10. Reference data, engine counters and database size match the debug run; binary identity and medians were verified. See [benchmarks.md](benchmarks.md) for commands, comparison and recurring nonmonotonic VmHWM observations. This adds optimized-build evidence but leaves real workloads, broader platform/scale/resource qualification and full V1 incomplete.
+
+
+## Combined vector-field conversion (2026-09-07)
+
+Plain physical collection fields now bypass the intermediate tagged-value serialization/decode when passed to vector functions. Complete document validation and existing conversion errors remain enforced; other expressions retain generic conversion. Direct equivalence coverage includes five vector encodings, binary/text input, NULL/missing/scalar-parent paths and malformed stored data. Full scoped checks passed: 311 Rust tests, 35 Node tests, formatting, Clippy and strict TypeScript; one existing trigger gate remains ignored. Initial optimized diagnostic results and limitations are in [accessor-performance.md](accessor-performance.md). Full V1 and broader performance qualification remain open.

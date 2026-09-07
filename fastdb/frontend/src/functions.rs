@@ -9,6 +9,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
         let api = connection.engine._build_turso_ext();
         let result = [
             (
+                c"__fastdb_vector_field",
+                vector_field as turso_ext::ScalarFunction,
+                2,
+            ),
+            (
                 c"__fastdb_vector_concat",
                 vector_concat as turso_ext::ScalarFunction,
                 2,
@@ -104,7 +109,11 @@ fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
     }
     // Outer joins produce a NULL document for the unmatched side.
     if args[0].value_type() == ValueType::Null {
-        return Ok(ExtValue::null());
+        return if mode == 4 {
+            vector_input_value(Value::Null)
+        } else {
+            Ok(ExtValue::null())
+        };
     }
     let bytes = args[0]
         .to_blob()
@@ -127,6 +136,9 @@ fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
         _ if mode == 3 => Value::Null,
         _ => return Err(Error::Storage("expected object".into())),
     };
+    if mode == 4 {
+        return vector_input_value(value);
+    }
     if mode == 1 || mode == 3 {
         return Ok(ExtValue::from_blob(value.encode()?));
     }
@@ -441,22 +453,31 @@ fn nullable(args: &[ExtValue]) -> ExtValue {
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
 
+#[scalar(name = "__fastdb_vector_field")]
+fn vector_field(args: &[ExtValue]) -> ExtValue {
+    get(args, 4).unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+fn vector_input_value(value: Value) -> Result<ExtValue> {
+    match value {
+        Value::Vector(bytes) | Value::Binary(bytes) => {
+            crate::vectors::dimensions(&bytes)?;
+            Ok(ExtValue::from_blob(bytes))
+        }
+        Value::String(text) => Ok(ExtValue::from_text(text)),
+        _ => Err(Error::Validation(
+            "vector input requires vector, blob or engine vector text".into(),
+        )),
+    }
+}
+
 #[scalar(name = "__fastdb_vector_input")]
 fn vector_input(args: &[ExtValue]) -> ExtValue {
     let result = (|| -> Result<ExtValue> {
         let [arg] = args else {
             return Err(Error::Validation("vector input arity".into()));
         };
-        match decode_arg(arg)? {
-            Value::Vector(bytes) | Value::Binary(bytes) => {
-                crate::vectors::dimensions(&bytes)?;
-                Ok(ExtValue::from_blob(bytes))
-            }
-            Value::String(text) => Ok(ExtValue::from_text(text)),
-            _ => Err(Error::Validation(
-                "vector input requires vector, blob or engine vector text".into(),
-            )),
-        }
+        vector_input_value(decode_arg(arg)?)
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
@@ -843,6 +864,66 @@ mod nested_accessor_tests {
                 } else {
                     assert!(result.is_err(), "{function}, {bytes:?}");
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod vector_field_tests {
+    use super::*;
+    #[test]
+    fn fused_vector_fields_match_generic_conversion_and_errors() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let mut values = vec![
+            Value::Null,
+            Value::Integer(7),
+            Value::String("[1,2,3]".into()),
+            Value::Binary(vec![255]),
+        ];
+        for v in [
+            Value::vector32(&[1., 2., 3.]),
+            Value::vector64(&[1., 2., 3.]),
+            Value::vector32_sparse(&[1., 0., 3.]),
+            Value::vector8(&[1., 2., 3.]),
+            Value::vector1bit(&[1., -2., 3.]),
+        ] {
+            let v = v.unwrap();
+            if let Value::Vector(bytes) = &v {
+                values.push(Value::Binary(bytes.clone()));
+            }
+            values.push(v);
+        }
+        let mut inputs = vec![
+            turso_core::Value::Null,
+            turso_core::Value::Blob(vec![255]),
+            turso_core::Value::Blob(Value::Integer(1).encode().unwrap()),
+        ];
+        for value in values {
+            inputs.push(turso_core::Value::Blob(
+                Value::Object(crate::Document::from([("v".into(), value)]))
+                    .encode()
+                    .unwrap(),
+            ));
+        }
+        inputs.push(turso_core::Value::Blob(b"FDB\x01{\"type\":\"Object\",\"value\":{\"v\":{\"type\":\"String\",\"value\":\"[1,2,3]\"},\"bad\":{\"type\":\"Vector\",\"value\":[255]}}}".to_vec()));
+        for input in inputs {
+            for path in ["[\"v\"]", "[\"missing\"]", "[\"v\",\"nested\"]", "[]"] {
+                let run = |expr: &str| {
+                    let mut statement = c.prepare(format!("SELECT {expr}")).unwrap();
+                    statement
+                        .bind_at(std::num::NonZeroUsize::new(1).unwrap(), input.clone())
+                        .unwrap();
+                    crate::collect_rows(&mut statement).map_err(|e| e.to_string())
+                };
+                assert_eq!(
+                    run(&format!("__fastdb_vector_field(?1,'{path}')")),
+                    run(&format!(
+                        "__fastdb_vector_input(__fastdb_value(?1,'{path}'))"
+                    )),
+                    "{input:?}, {path}"
+                );
             }
         }
     }
