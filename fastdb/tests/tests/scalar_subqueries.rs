@@ -2092,9 +2092,9 @@ fn mixed_distinct_correlated_typed_ordering_matches_native() {
         "CREATE TABLE docs",
         "CREATE TABLE native(n)",
         "CREATE TABLE lookup(n)",
-        "INSERT INTO docs(n) VALUES(1),(2)",
-        "INSERT INTO native VALUES(1),(2)",
-        "INSERT INTO lookup VALUES(1),(2),(10),(2)",
+        "INSERT INTO docs(n) VALUES(1),(2),(NULL)",
+        "INSERT INTO native VALUES(1),(2),(NULL)",
+        "INSERT INTO lookup VALUES(1),(2),(10),(2),(NULL),(NULL)",
     ] {
         q(&c, sql);
     }
@@ -2104,18 +2104,27 @@ fn mixed_distinct_correlated_typed_ordering_matches_native() {
     ] {
         for order in ["x,n", "x DESC,n DESC", "n DESC,x", "x,abs(x) DESC"] {
             for limit in ["0", "1", "1 OFFSET 1", "1 OFFSET 2"] {
-                let expr=format!("(SELECT DISTINCT {projection} AS x FROM lookup ORDER BY {order} LIMIT {limit})");
-                let expected = q(&c, &format!("SELECT {expr} FROM native d ORDER BY d.n")).rows;
-                let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
-                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
-                assert_eq!(
-                    c.profile_select(&sql, &Parameters::new())
-                        .unwrap()
-                        .result
-                        .rows,
-                    expected,
-                    "profile {sql}"
+                let source = format!(
+                    "SELECT DISTINCT {projection} AS x FROM lookup ORDER BY {order} LIMIT {limit}"
                 );
+                for expr in [
+                    format!("({source})"),
+                    format!("d.n IN ({source})"),
+                    format!("d.n NOT IN ({source})"),
+                    format!("EXISTS({source})"),
+                ] {
+                    let expected = q(&c, &format!("SELECT {expr} FROM native d ORDER BY d.n")).rows;
+                    let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+                    assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                    assert_eq!(
+                        c.profile_select(&sql, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected,
+                        "profile {sql}"
+                    );
+                }
             }
         }
     }
@@ -2184,6 +2193,20 @@ fn correlated_sorted_projection_preserves_record_and_boolean_values() {
             let sql = format!("SELECT ({projection}),d.{field} IN ({projection}) FROM docs d");
             let value = q(&c, &format!("SELECT {field} FROM docs")).rows[0][0].clone();
             let expected = vec![vec![value, Value::Integer(1)]];
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "profile {sql}"
+            );
+            let projection = format!(
+                "SELECT DISTINCT d.{field} AS x FROM lookup ORDER BY {order} LIMIT 1 OFFSET 1"
+            );
+            let sql = format!("SELECT ({projection}),d.{field} IN ({projection}) FROM docs d");
+            let expected = vec![vec![Value::Null, Value::Integer(0)]];
             assert_eq!(q(&c, &sql).rows, expected, "{sql}");
             assert_eq!(
                 c.profile_select(&sql, &Parameters::new())

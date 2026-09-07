@@ -1367,3 +1367,8 @@ The previous rejection for mixed DISTINCT ordering of a single correlated typed 
 Native differential execute/profile tests cover constant and varying typed CASE results, repeated inputs, alias/source-key order permutations, alias function expressions, LIMIT 0 and offsets past the distinct result set. Volatile projection and secondary-sort probes check native evaluation counts, including zero-limit short-circuiting. This supersedes the earlier mixed-ordering rejection; broader DISTINCT equality/collation/type semantics and correlated scope/resource qualification remain open. Full V1 is incomplete.
 
 Verification: the complete scoped check passed formatting, Clippy, 322 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
+
+
+## DISTINCT correlated consumer qualification (2026-09-07)
+
+The mixed DISTINCT correlated-ordering matrix now compares scalar, IN, NOT IN and EXISTS consumers against native tables, including repeated NULL inputs, constant/varying CASE projections and empty pages after LIMIT/OFFSET. Execute and profile_select agree with the native oracle. Record and boolean assertions additionally verify that an offset past the single distinct value returns scalar NULL and false membership even when multiple native source rows exist. All 17 correlated scalar-subquery integration tests pass. This extends regression coverage of the existing implementation; broader DISTINCT type/collation semantics and full V1 remain open.
