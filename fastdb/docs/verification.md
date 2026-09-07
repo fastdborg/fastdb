@@ -2026,3 +2026,6 @@ The expanded focused unit test, formatting and frontend lib/test Clippy pass. Ep
 ## Combined join qualification check (2026-09-08)
 
 At implementation commit 5413b210d, the complete scoped check passed formatting, Clippy, 410 Rust tests, 45 Node/application tests and strict TypeScript. This combines the recent table/view metadata refresh, cross-connection changes, schema rollback, computed view-column and callback planning tests with sync/worker unnamed-join coverage. One known trigger-cancellation gate remains ignored. Mixed-join ephemeral-index planning, simultaneous DDL timing, broader query/resource/platform and full V1 release qualification remain open. No new production behavior is claimed by this verification run.
+
+
+Relational rowid join qualification (2026-09-08): a new regression verifies that an unqualified rowid in the covered mixed derived join retains the pinned native ROWID-is-ambiguous error. Qualified relational rowid access preserves explicit stored rowids through execute/profile; an explicitly projected derived column named rowid retains its named-column meaning. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 410 Rust/45 Node tests; broader hidden-column/scope/resource and full V1 gates remain open.

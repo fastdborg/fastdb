@@ -640,3 +640,57 @@ fn relational_join_metadata_includes_computed_view_columns() {
         ]]
     );
 }
+
+#[test]
+fn relational_join_metadata_preserves_rowid_resolution() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE labels(m INTEGER,label TEXT)");
+    q(
+        &c,
+        "INSERT INTO labels(rowid,m,label) VALUES(10,1,'A'),(20,2,'B')",
+    );
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    let ambiguous = "SELECT n,rowid,label FROM (SELECT n FROM docs) JOIN labels ON n=m ORDER BY n";
+    let native_error = c
+        .execute(
+            &ambiguous.replace("FROM docs", "FROM baseline"),
+            &Parameters::new(),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(native_error.contains("ROWID is ambiguous"));
+    assert_eq!(
+        c.execute(ambiguous, &Parameters::new())
+            .unwrap_err()
+            .to_string(),
+        native_error
+    );
+    let sql = "SELECT n,labels.rowid,label FROM (SELECT n FROM docs) JOIN labels ON n=m ORDER BY n";
+    let expected = vec![
+        vec![
+            Value::Integer(1),
+            Value::Integer(10),
+            Value::String("A".into()),
+        ],
+        vec![
+            Value::Integer(2),
+            Value::Integer(20),
+            Value::String("B".into()),
+        ],
+    ];
+    assert_eq!(q(&c, sql).rows, expected);
+    assert_eq!(
+        c.profile_select(sql, &Parameters::new())
+            .unwrap()
+            .result
+            .rows,
+        expected
+    );
+    let explicit =
+        "SELECT rowid FROM (SELECT n AS rowid FROM docs) JOIN labels ON rowid=m ORDER BY rowid";
+    assert_eq!(
+        q(&c, explicit).rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+}
