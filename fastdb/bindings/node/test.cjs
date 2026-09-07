@@ -1139,3 +1139,33 @@ test('JOIN membership preserves binary bindings and NULL rows in both clients', 
     } finally { await db.close(); }
   }
 });
+
+
+test('native loader enforces the declared Node minimum before loading', () => {
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, 'native.cjs'), 'utf8');
+  const declared = require('./package.json').engines.node;
+  assert.equal(declared, '>=22');
+  for (const version of ['18.20.0', '20.19.0', '21.7.0', '22.0.0', '24.19.0']) {
+    let loads = 0;
+    const addon = {};
+    const context = {
+      process: { versions: { node: version }, platform: 'linux', arch: 'x64' },
+      module: { exports: {} },
+      require(name) { assert.equal(name, './fastdb.node'); loads++; return addon; },
+    };
+    if (Number.parseInt(version, 10) < 22) {
+      assert.throws(() => vm.runInNewContext(source, context), error => {
+        assert.equal(error.code, 'FDB_RUNTIME_VERSION');
+        assert(error.message.includes(version));
+        assert(error.message.includes('22 or newer'));
+        return true;
+      });
+      assert.equal(loads, 0);
+    } else {
+      vm.runInNewContext(source, context);
+      assert.equal(loads, 1);
+      assert.equal(context.module.exports, addon);
+    }
+  }
+});

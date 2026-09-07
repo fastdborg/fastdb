@@ -2193,3 +2193,10 @@ This adds Node 22.23.2 evidence to Node 24.19.0 for the same native artifact. It
 Node 22 minimum-version artifact qualification (2026-09-08): verified the official Node 22.0.0 linux-x64 archive against its version-specific SHASUMS256.txt (SHA-256 9122e50f2642afd5f6078cafd1f52ede60fc464284384f05c18a04d13d07ae5a) and used it from a temporary directory without changing the default runtime. The existing stripped addon passed all 46 client/application tests, checkout strict TypeScript, offline installed-package sync/worker tests, exact notices and consumer TypeScript. The checked archive had ten files and 7,735,051 packed bytes at verification.
 
 This supplies Linux x64 evidence at the declared >=22 lower bound, alongside Node 22.23.2 and 24.19.0, using the same addon without rebuilding. Other Node/platform/libc combinations and full V1 release qualification remain open. Source: https://nodejs.org/dist/v22.0.0/SHASUMS256.txt. No publication occurred; latest complete scoped Rust evidence remains 420 tests.
+
+
+## Node minimum-version loader guard (2026-09-08)
+
+The Node loader now rejects runtimes below the declared Node 22 minimum with FDB_RUNTIME_VERSION before attempting to load native code. Supported runtimes retain the existing FDB_NATIVE_LOAD diagnostic for missing or invalid addons. A VM-based regression checks simulated Node 18/20/21 rejection without addon access and Node 22/24 loading; these simulations do not qualify actual older runtimes.
+
+All 47 client/application tests pass on actual Node 22.0.0 and 24.19.0 using the existing stripped Linux x64 addon. Offline installed-package checks pass on Node 22.0.0, including sync/worker consumers, native-load diagnostics, exact notices and strict consumer TypeScript (ten files, 7,735,229 packed bytes). No Rust code or native artifact changed; latest complete scoped Rust evidence remains 420 passing tests and one ignored test. Full V1 release qualification remains open.

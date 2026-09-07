@@ -1,4 +1,11 @@
 'use strict';
+const minimumNodeMajor = 22;
+const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10);
+if (nodeMajor < minimumNodeMajor) {
+  const error = new Error(`FastDB requires Node.js ${minimumNodeMajor} or newer; this process is running Node ${process.versions.node}.`);
+  error.code = 'FDB_RUNTIME_VERSION';
+  throw error;
+}
 try {
   module.exports = require('./fastdb.node');
 } catch (cause) {

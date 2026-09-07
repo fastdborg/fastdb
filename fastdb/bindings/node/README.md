@@ -200,6 +200,8 @@ Async `migrate(plan, {signal}?)` supports cooperative cancellation. Interrupted 
 `close()` drains accepted requests before dropping the worker connection; it does not implicitly abort them. Signals can still cancel accepted operations while close is pending. Later submissions reject with `FDB_CLOSED` and no transaction observations. An existing worker failure retains `FDB_WORKER` precedence. Aborted queued requests retain their queue slots until a response or worker failure. The real-worker close regression verifies that dropping an active outer transaction leaves only committed data after reopening; callers should still explicitly commit or roll back during normal operation.
 
 
+Importing on Node versions below the declared minimum of 22 throws `FDB_RUNTIME_VERSION` before loading native code.
+
 If the native addon is absent or cannot be loaded, importing the package throws `FDB_NATIVE_LOAD`. The message identifies the current platform, architecture and Node version and points to the source build instructions. The original loader error remains in `error.cause` for diagnosing missing libraries, invalid binaries or other loader failures. This diagnostic does not select, download or rebuild an addon automatically.
 
 
