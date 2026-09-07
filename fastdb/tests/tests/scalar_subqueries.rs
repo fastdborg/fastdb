@@ -4014,3 +4014,44 @@ fn collection_scalar_membership_nulls_match_native() {
         }
     }
 }
+
+#[test]
+fn inherited_scalar_binding_preserves_outer_value_types() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    let record = q(&c, "SELECT type::record('docs','key')").rows[0][0].clone();
+    for value in [
+        Value::Null,
+        Value::Integer(42),
+        Value::Number(1.5),
+        Value::String("hello".into()),
+        Value::Boolean(true),
+        record,
+        Value::Array(vec![Value::Null, Value::Integer(1)]),
+        Value::Object(Default::default()),
+        Value::Binary(b"FDB\x01payload".to_vec()),
+        Value::vector32(&[1.0, 0.0]).unwrap(),
+    ] {
+        q(&c, "DELETE FROM docs");
+        c.execute(
+            "INSERT INTO docs {v:$v}",
+            &Parameters::from([("$v".into(), value.clone())]),
+        )
+        .unwrap();
+        for source in ["docs d", "(SELECT v FROM docs) d"] {
+            let sql =
+                format!("SELECT (SELECT array::append(array::new(), (SELECT d.v WHERE true))) FROM {source}");
+            let expected = vec![vec![Value::Array(vec![value.clone()])]];
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "{sql}"
+            );
+        }
+    }
+}
