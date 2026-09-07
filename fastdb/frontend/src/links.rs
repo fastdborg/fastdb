@@ -8,6 +8,21 @@ const CHUNK: usize = 128;
 pub(crate) const MAX_FETCH_REFERENCES: usize = 16_384;
 const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
 
+#[derive(Default)]
+pub(crate) struct FetchMetrics {
+    pub batches: u64,
+    pub rows_read: u64,
+    pub vm_steps: u64,
+}
+impl FetchMetrics {
+    fn add(&mut self, statement: &turso_core::Statement) {
+        let metrics = statement.metrics();
+        self.batches = self.batches.saturating_add(1);
+        self.rows_read = self.rows_read.saturating_add(metrics.rows_read);
+        self.vm_steps = self.vm_steps.saturating_add(metrics.insn_executed);
+    }
+}
+
 // Count the logical tagged JSON representation without allocating encoded copies.
 struct FetchBudget {
     used: usize,
@@ -39,12 +54,31 @@ impl Connection {
     /// At most 16,384 positions and 64 MiB each of fetched/output tagged JSON
     /// values are accepted. Duplicates count toward output; this is not a heap cap.
     pub fn fetch_records(&self, references: &[Value]) -> Result<Vec<Value>> {
+        self.fetch_records_profiled(references)
+            .map(|(values, _)| values)
+    }
+    pub(crate) fn fetch_records_profiled(
+        &self,
+        references: &[Value],
+    ) -> Result<(Vec<Value>, FetchMetrics)> {
         if references.len() > MAX_FETCH_REFERENCES {
             return Err(Error::Limit("fetch reference count exceeds 16384".into()));
         }
-        self.atomic(|| self.fetch_records_inner(references, MAX_FETCH_BYTES))
+        let mut metrics = FetchMetrics::default();
+        let values =
+            self.atomic(|| self.fetch_records_measured(references, MAX_FETCH_BYTES, &mut metrics))?;
+        Ok((values, metrics))
     }
+    #[cfg(test)]
     fn fetch_records_inner(&self, references: &[Value], max_bytes: usize) -> Result<Vec<Value>> {
+        self.fetch_records_measured(references, max_bytes, &mut FetchMetrics::default())
+    }
+    fn fetch_records_measured(
+        &self,
+        references: &[Value],
+        max_bytes: usize,
+        metrics: &mut FetchMetrics,
+    ) -> Result<Vec<Value>> {
         let mut budget = FetchBudget {
             used: 0,
             limit: max_bytes,
@@ -107,6 +141,7 @@ impl Connection {
                             found.insert(id.clone(), (value, bytes));
                             Ok(())
                         })?;
+                        metrics.add(&statement);
                     }
                 }
                 Err(Error::NotFound(_)) => {
@@ -202,6 +237,7 @@ impl Connection {
                             found.insert(id, (value, bytes));
                             Ok(())
                         })?;
+                        metrics.add(&statement);
                     }
                 }
                 Err(e) => return Err(e),

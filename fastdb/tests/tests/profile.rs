@@ -69,7 +69,12 @@ fn native_profiles_bind_values_and_reject_writes_before_execution() {
     );
     q(&c, "CREATE TABLE docs");
     q(&c, "INSERT INTO docs {id:docs:a,ref:docs:a}");
-    assert!(c
+    let profile = c
         .profile_select("SELECT record::fetch(ref) FROM docs", &Parameters::new())
-        .is_err());
+        .unwrap();
+    assert_eq!(
+        profile.result.rows,
+        q(&c, "SELECT record::fetch(ref) FROM docs").rows
+    );
+    assert_eq!(profile.metrics.fetch_batches, 1);
 }

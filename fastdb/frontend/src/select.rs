@@ -1877,8 +1877,8 @@ struct LoweredSelect {
 }
 impl Connection {
     /// Execute one SQL SELECT and return its primary engine statement counters.
-    /// Catalog/lowering queries and Rust decoding are excluded. FETCH and
-    /// non-SELECT statements are rejected; errors do not return partial metrics.
+    /// Catalog/lowering queries and Rust decoding are excluded. Forward-fetch
+    /// target counters are separate; errors do not return partial metrics.
     pub fn profile_select(&self, sql: &str, params: &Parameters) -> Result<crate::ProfiledQuery> {
         crate::parser_stack(|| self.profile_select_inner(sql, params))
     }
@@ -1894,19 +1894,25 @@ impl Connection {
                 "profiling requires one SQL SELECT".into(),
             ));
         }
-        if fastql_parser::tokenize(&expanded)?
+        let has_fetch = fastql_parser::tokenize(&expanded)?
             .iter()
-            .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch")
-        {
-            return Err(Error::Unsupported(
-                "profiling FETCH is not supported".into(),
-            ));
-        }
-        match self.lower_collection_select(&sql, &expanded, params, SelectOptions::default())? {
+            .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch");
+        let execute = || match self.lower_collection_select(
+            &sql,
+            &expanded,
+            params,
+            SelectOptions::default(),
+        )? {
             Some(plan) => self.execute_lowered_profiled(plan, params),
             None => self.native_profiled(&sql, params),
+        };
+        if has_fetch {
+            self.atomic(execute)
+        } else {
+            execute()
         }
     }
+
     pub(crate) fn collection_select(
         &self,
         sql: &str,
@@ -3526,6 +3532,7 @@ impl Connection {
             return Err(error);
         }
         execution?;
+        let mut metrics = crate::QueryMetrics::from_statement(&statement);
         if !native_insert && !explain && fetched.iter().any(|v| *v) {
             let refs = rows
                 .iter()
@@ -3536,7 +3543,11 @@ impl Connection {
                         .map(|(value, _)| value.clone())
                 })
                 .collect::<Vec<_>>();
-            let mut values = self.fetch_records(&refs)?.into_iter();
+            let (values, fetch_metrics) = self.fetch_records_profiled(&refs)?;
+            metrics.fetch_batches = fetch_metrics.batches;
+            metrics.fetch_rows_read = fetch_metrics.rows_read;
+            metrics.fetch_vm_steps = fetch_metrics.vm_steps;
+            let mut values = values.into_iter();
             for row in &mut rows {
                 for (value, fetch) in row.iter_mut().zip(&fetched) {
                     if *fetch {
@@ -3546,7 +3557,7 @@ impl Connection {
             }
         }
         Ok(crate::ProfiledQuery {
-            metrics: crate::QueryMetrics::from_statement(&statement),
+            metrics,
             result: QueryResult {
                 columns: if explain || native_insert {
                     engine_names

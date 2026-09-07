@@ -22,6 +22,7 @@ export interface IntegrityReport {
 export interface QueryMetrics {
   rowsRead: bigint; rowsWritten: bigint; fullscanSteps: bigint; indexSteps: bigint;
   vmSteps: bigint; sortOperations: bigint; btreeSeeks: bigint;
+  fetchBatches: bigint; fetchRowsRead: bigint; fetchVmSteps: bigint;
 }
 export interface ProfiledQuery { result: QueryResult; metrics: QueryMetrics; }
 export type BatchExecution = { offset: number; transaction: Transaction } & (

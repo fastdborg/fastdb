@@ -96,7 +96,7 @@ This is a maintainer packaging check, separate from routine CI because the curre
 
 ## SELECT profiling
 
-Both clients provide `profileSelect(sql, parameters?)`; the async version returns a Promise and uses the existing worker queue. It returns `{ result, metrics }`, where `result` has the same typed rows, bigint affected count and transaction observations as `execute`. Every metric is a bigint: `rowsRead`, `rowsWritten`, `fullscanSteps`, `indexSteps`, `vmSteps`, `sortOperations` and `btreeSeeks`. Native transport encodes counters as decimal strings before converting them to bigint, without a JavaScript Number conversion.
+Both clients provide `profileSelect(sql, parameters?)`; the async version returns a Promise and uses the existing worker queue. It returns `{ result, metrics }`, where `result` has the same typed rows, bigint affected count and transaction observations as `execute`. Every metric is a bigint: `rowsRead`, `rowsWritten`, `fullscanSteps`, `indexSteps`, `vmSteps`, `sortOperations`, `btreeSeeks`, `fetchBatches`, `fetchRowsRead` and `fetchVmSteps`. Native transport encodes counters as decimal strings before converting them to bigint, without a JavaScript Number conversion.
 
 ```js
 const profile = await asyncDb.profileSelect(
@@ -106,7 +106,7 @@ const profile = await asyncDb.profileSelect(
 console.log(profile.result.rows, profile.metrics.rowsRead);
 ```
 
-Counters cover the primary engine statement only; metadata/lowering queries, Rust/JavaScript decoding and transport are excluded. Physical row reads are not logical document counts. Only one SQL SELECT is accepted; writes, multiple statements, EXPLAIN, direct-record shorthand and record::fetch are rejected. Failures throw/reject through the usual error/transaction envelope without partial counters. Connection-wide async interruption and close behavior follow `execute`. Async profiling also accepts an optional third argument `{ signal }` for cooperative request-scoped cancellation; this is not a deadline guarantee.
+The fetch-prefixed counters separately report target SELECT batches, physical row reads and VM instructions (zero without target reads); the other counters cover the primary statement. Deduplicated references share target reads. Fetch profiling uses the ordinary fetch budgets and one atomic snapshot scope; metadata/lowering queries, Rust/JavaScript decoding and transport are excluded. Physical row reads are not logical document counts. Only one SQL SELECT is accepted; writes, multiple statements, EXPLAIN and direct-record shorthand are rejected. Failures throw/reject through the usual error/transaction envelope without partial counters. Connection-wide async interruption and close behavior follow `execute`. Async profiling also accepts an optional third argument `{ signal }` for cooperative request-scoped cancellation; this is not a deadline guarantee.
 
 ## Collection integrity audit
 

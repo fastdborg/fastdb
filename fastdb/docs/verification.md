@@ -1104,3 +1104,14 @@ Ran `node fastdb/scripts/bench-transfer.cjs` three times against clean implement
 ## Lowered SELECT row decoding — 2026-09-07
 
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-select-row-decode-check.log`): formatting, scoped Clippy, 286 Rust tests, 32 Node tests and strict TypeScript; one known trigger-interruption gate ignored. Lowered results now decode in engine callbacks, and fetched-reference counting stops before retaining the first excess decoded row. The scalar evaluation regression uses 24,576 rows, proves exactly 16,385 evaluations at the 16,384-position limit, and verifies active transaction state, two-row retry and rollback. Existing typed/compound/write/profile/client tests passed through the new path. Public results remain materialized; engine-side sorts/materialization and ordinary result bytes are not bounded by this change.
+
+
+## Forward-fetch profiling — 2026-09-07
+
+Forward SELECT profiles now use one atomic snapshot scope and expose separate target-batch, target-row and target-VM counters alongside unchanged primary counters. Rust tests cover collection/native batching and deduplication, stable repeat calls, missing targets, existing snapshots, budget failure and unchanged ordinary counters. Both Node clients verify bigint target counters and repeated results. A temporary-file CLI smoke asserted nonzero target work in the profile JSON.
+
+- Final `fastdb/scripts/check.sh` run passed formatting, Clippy and 287 Rust tests with one known ignored gate (`/tmp/fastdb-fetch-profile-final-check.log`). Its added Node fixture initially used the forbidden AsyncDatabase constructor; corrected to await AsyncDatabase.open().
+- `fastdb/scripts/check-node.sh` then passed all 33 Node tests and strict TypeScript (`/tmp/fastdb-fetch-profile-node-final.log`). Production code did not change after the Rust checks.
+- The initial development run hit the prior explicit profiling-FETCH rejection; it was removed with the snapshot scope before final Rust verification.
+
+Counters exclude catalog/schema/savepoint helpers, decoding and transport. They count physical engine work, not unique logical documents. Detailed target plans, complete helper accounting and broader profiling/cancellation/platform qualification remain open.

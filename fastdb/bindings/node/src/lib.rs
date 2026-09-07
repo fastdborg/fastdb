@@ -211,7 +211,9 @@ impl NativeDatabase {
                 "rowsRead":m.rows_read.to_string(), "rowsWritten":m.rows_written.to_string(),
                 "fullscanSteps":m.fullscan_steps.to_string(), "indexSteps":m.index_steps.to_string(),
                 "vmSteps":m.vm_steps.to_string(), "sortOperations":m.sort_operations.to_string(),
-                "btreeSeeks":m.btree_seeks.to_string()
+                "btreeSeeks":m.btree_seeks.to_string(),
+                "fetchBatches":m.fetch_batches.to_string(), "fetchRowsRead":m.fetch_rows_read.to_string(),
+                "fetchVmSteps":m.fetch_vm_steps.to_string()
             }}))
         })
     }

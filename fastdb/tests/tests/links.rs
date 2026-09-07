@@ -123,6 +123,13 @@ fn link_reads_observe_the_existing_transaction_snapshot() {
     assert!(
         matches!(&q(&a,"SELECT record::fetch(users:u1) AS u").rows[0][0],Value::Object(d) if d["name"]==Value::String("Old".into()))
     );
+    let profile = a
+        .profile_select("SELECT record::fetch(users:u1) AS u", &Parameters::new())
+        .unwrap();
+    assert!(
+        matches!(&profile.result.rows[0][0], Value::Object(d) if d["name"] == Value::String("Old".into()))
+    );
+    assert_eq!(profile.metrics.fetch_batches, 1);
     q(&a, "COMMIT");
     assert!(
         matches!(&q(&a,"SELECT record::fetch(users:u1) AS u").rows[0][0],Value::Object(d) if d["name"]==Value::String("New".into()))
@@ -152,6 +159,16 @@ fn fetch_projections_share_one_statement_byte_budget() {
         )
         .unwrap_err();
     assert_eq!(error.code(), "FDB_LIMIT", "{error}");
+    assert_eq!(
+        c.profile_select(
+            "SELECT record::fetch(targets:a) AS a,record::fetch(targets:a) AS b FROM positions",
+            &Parameters::new()
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_LIMIT"
+    );
+
     assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
     let rows = q(&c, "SELECT record::fetch(targets:a) FROM positions").rows;
     assert_eq!(rows.len(), 4096);
@@ -161,4 +178,46 @@ fn fetch_projections_share_one_statement_byte_budget() {
     drop(rows);
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT * FROM targets").rows.is_empty());
+}
+
+#[test]
+fn profiles_attribute_deduplicated_target_batches_separately() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE native(n INTEGER PRIMARY KEY)");
+    q(&c, "BEGIN");
+    for n in 0..130 {
+        q(
+            &c,
+            &format!("INSERT INTO docs {{id:type::record('docs',{n}),n:{n}}}"),
+        );
+        q(&c, &format!("INSERT INTO native VALUES({n})"));
+    }
+    let sql = "SELECT record::fetch(type::record('docs',n)) AS a,record::fetch(type::record('docs',n)) AS b,record::fetch(type::record('native',n)) AS c FROM native ORDER BY n";
+    let profile = c.profile_select(sql, &Parameters::new()).unwrap();
+    assert_eq!(profile.result.rows.len(), 130);
+    assert!(profile.result.rows.iter().all(|row| row[0] == row[1]));
+    assert_eq!(profile.metrics.fetch_batches, 4); // Two 128-key batches per target.
+    assert!(profile.metrics.fetch_rows_read >= 260);
+    assert!(profile.metrics.fetch_vm_steps > 0);
+    assert_eq!(
+        c.profile_select(sql, &Parameters::new()).unwrap().metrics,
+        profile.metrics
+    );
+    let primary = c.profile_select("SELECT type::record('docs',n) AS a,type::record('docs',n) AS b,type::record('native',n) AS c FROM native ORDER BY n", &Parameters::new()).unwrap();
+    assert_eq!(primary.metrics.rows_read, profile.metrics.rows_read);
+    assert_eq!(primary.metrics.fetch_batches, 0);
+    assert_eq!(primary.metrics.fetch_rows_read, 0);
+    assert_eq!(primary.metrics.fetch_vm_steps, 0);
+    let missing = c
+        .profile_select(
+            "SELECT record::fetch(type::record('missing',n)) FROM native",
+            &Parameters::new(),
+        )
+        .unwrap();
+    assert_eq!(missing.metrics.fetch_batches, 0);
+    assert_eq!(missing.metrics.fetch_rows_read, 0);
+    assert_eq!(missing.metrics.fetch_vm_steps, 0);
+    q(&c, "ROLLBACK");
 }

@@ -96,3 +96,7 @@ async function cancellationTypes(db: import('./index').AsyncDatabase) {
   await db.execute('SELECT 1', {}, {signal: true});
 }
 void cancellationTypes;
+
+const fetchMetrics = db.profileSelect('SELECT 1').metrics;
+const fetchCounters: bigint[] = [fetchMetrics.fetchBatches, fetchMetrics.fetchRowsRead, fetchMetrics.fetchVmSteps];
+void fetchCounters;

@@ -850,3 +850,24 @@ test('native membership compound queries prepare in sync and worker clients', as
     } finally { await db.close(); }
   }
 });
+
+test('profiles expose separate forward target counters in both clients', async () => {
+  const {AsyncDatabase}=require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {id:docs:a,n:1}');
+      const sql='SELECT record::fetch(docs:a) AS a,record::fetch(docs:a) AS b';
+      const profile=await db.profileSelect(sql);
+      assert.equal(profile.metrics.fetchBatches,1n);
+      assert(profile.metrics.fetchRowsRead>=1n);
+      assert(profile.metrics.fetchVmSteps>0n);
+      assert.deepEqual(profile.result.rows[0][0],profile.result.rows[0][1]);
+      assert.deepEqual((await db.profileSelect(sql)).metrics,profile.metrics);
+      const plain=await db.profileSelect('SELECT 1');
+      assert.equal(plain.metrics.fetchBatches,0n);
+      assert.equal(plain.metrics.fetchRowsRead,0n);
+      assert.equal(plain.metrics.fetchVmSteps,0n);
+    } finally {await db.close();}
+  }
+});

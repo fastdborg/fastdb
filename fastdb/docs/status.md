@@ -834,3 +834,10 @@ Inspection of execute_lowered_profiled confirms all fetched cells are flattened 
 Lowered SELECT execution now decodes directly from engine row callbacks, removing the full intermediate engine-value rowset. It checks the combined fetch-reference count before retaining each decoded row. The evaluation-count regression now scans 24,576 native positions with a fetched projection, expects FDB_LIMIT after 16,385 scalar evaluations and verifies active state, a two-row retry and rollback. Complete decoded results are still retained; ordinary result-byte budgets, engine materialization and whole-query memory remain open.
 
 Scoped checks passed formatting, Clippy, 286 Rust tests, thirty-two Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Forward-fetch profiling counters (2026-09-07)
+
+profile_select now accepts supported forward-fetch SELECT projections. Lowering, the outer statement and target reads share an atomic snapshot scope. Existing primary-statement counters retain their scope; new fetch_batches, fetch_rows_read and fetch_vm_steps separately attribute target SELECT batches and engine rows/instructions, excluding metadata/savepoint helpers and decoding. Node exposes the additions as bigint fetchBatches/fetchRowsRead/fetchVmSteps; CLI serialization includes the Rust names. No partial counters are returned after failures. Tests cover 130 distinct keys in each of collection/native targets, duplicate projections sharing four target batches, repeat-call stability, zero target counters for ordinary/missing-target queries, prior snapshots, budget failure and both Node clients. Detailed target plans and complete helper/time/memory accounting remain open.
+
+Verification passed formatting, scoped Clippy, 287 Rust tests, thirty-three Node tests and strict TypeScript. A CLI fetch profile smoke passed. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
