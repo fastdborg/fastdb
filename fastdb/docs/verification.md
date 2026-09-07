@@ -1304,3 +1304,8 @@ The release-profile 100,000 × 768 seeded run at clean `3cac94cae` passed all wa
 The offline installed Node consumer now stores all five vector encodings, compares profiled field extraction with bound-parameter extraction, verifies typed round trips and collection integrity, and rolls the writes back through sync and dedicated-worker clients. A separate missing-vector rejection check retains the original document. The initial fixture attempted rollback after a rejected vector SELECT had left the pinned engine in autocommit; the corrected fixture checks successful-write rollback before exercising rejection. No production behavior changed for this fixture correction.
 
 The complete offline package smoke passed on Linux x64 / Node 24.19.0: eight runtime files, 59,657,949 packed bytes. This is local installed-addon evidence; broader release/platform qualification and full V1 remain open.
+
+
+## Vector conversion error transaction disposition
+
+A differential regression now checks raw engine NULL, malformed stored bytes and a stored NULL field through both generic and combined vector-input accessors, from autocommit and an active outer transaction. Both paths return identical error text, leave autocommit, preserve committed rows, discard the pending outer write, and allow a subsequent write. Both vector-field unit tests passed. This pins the observed engine-abort behavior for these conversion failures; it does not promise statement-only rollback for every SELECT error. No production behavior changed. The prior full suite has 311 passing Rust tests; this adds one targeted passing regression.

@@ -873,6 +873,53 @@ mod nested_accessor_tests {
 mod vector_field_tests {
     use super::*;
     #[test]
+    fn fused_vector_errors_preserve_native_transaction_disposition() {
+        for input in [
+            turso_core::Value::Null,
+            turso_core::Value::Blob(vec![255]),
+            turso_core::Value::Blob(
+                Value::Object(crate::Document::from([("v".into(), Value::Null)]))
+                    .encode()
+                    .unwrap(),
+            ),
+        ] {
+            for outer in [false, true] {
+                let run = |expression: &str| {
+                    let db = crate::Database::open(":memory:").unwrap();
+                    let c = db.connect().unwrap();
+                    let sql = |sql: &str| c.execute(sql, &crate::Parameters::new()).unwrap();
+                    sql("CREATE TABLE prior(n INTEGER)");
+                    sql("INSERT INTO prior VALUES(1)");
+                    if outer {
+                        sql("BEGIN");
+                        sql("INSERT INTO prior VALUES(2)");
+                    }
+                    let mut statement = c.prepare(format!("SELECT {expression}")).unwrap();
+                    statement
+                        .bind_at(std::num::NonZeroUsize::new(1).unwrap(), input.clone())
+                        .unwrap();
+                    let error = crate::collect_rows(&mut statement).unwrap_err().to_string();
+                    drop(statement);
+                    let state = c.transaction_state();
+                    let rows = sql("SELECT n FROM prior ORDER BY n").rows;
+                    assert_eq!(state, crate::TransactionState::Autocommit);
+                    assert_eq!(rows, vec![vec![Value::Integer(1)]]);
+                    sql("INSERT INTO prior VALUES(3)");
+                    assert_eq!(
+                        sql("SELECT count(*) FROM prior").rows,
+                        vec![vec![Value::Integer(2)]]
+                    );
+                    (error, state, rows)
+                };
+                assert_eq!(
+                    run("__fastdb_vector_field(?1,'[\"v\"]')"),
+                    run("__fastdb_vector_input(__fastdb_value(?1,'[\"v\"]'))")
+                );
+            }
+        }
+    }
+
+    #[test]
     fn fused_vector_fields_match_generic_conversion_and_errors() {
         let db = crate::Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();

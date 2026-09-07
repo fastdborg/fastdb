@@ -25,3 +25,8 @@ The full scoped suite passed formatting, Clippy, 311 Rust tests, 35 Node tests a
 
 
 The completed 100,000 × 768 follow-up also passed reference checks: exact top-10 median fell from 47.12 to 32.71 seconds and primary VM steps fell by 100,000. See [benchmarks.md](benchmarks.md) for raw evidence and limits. Whole-document decoding remains a major candidate for further investigation; the combined accessor does not change storage format or remove that work.
+
+
+## Vector conversion error transaction disposition
+
+A differential regression now checks raw engine NULL, malformed stored bytes and a stored NULL field through both generic and combined vector-input accessors, from autocommit and an active outer transaction. Both paths return identical error text, leave autocommit, preserve committed rows, discard the pending outer write, and allow a subsequent write. Both vector-field unit tests passed. This pins the observed engine-abort behavior for these conversion failures; it does not promise statement-only rollback for every SELECT error. No production behavior changed. The prior full suite has 311 passing Rust tests; this adds one targeted passing regression.
