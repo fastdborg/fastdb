@@ -3983,6 +3983,23 @@ impl Connection {
                 standalone_aliases: Default::default(),
             };
             for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
+                if expression_subquery && scope.sources.is_empty() {
+                    turso_core::walk_expr_mut(value, &mut |expr| {
+                        if let Expr::Variable(var) = expr {
+                            let name = var
+                                .name
+                                .as_ref()
+                                .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
+                            if let Some(Value::Integer(integer)) = params.get(&name) {
+                                *expr = expression(&integer.to_string()).map_err(|error| {
+                                    turso_core::LimboError::InternalError(error.to_string())
+                                })?;
+                                scope.consumed.borrow_mut().insert(name);
+                            }
+                        }
+                        Ok(turso_core::WalkControl::Continue)
+                    })?;
+                }
                 let mut probe = *value.clone();
                 let mut logical = false;
                 turso_core::walk_expr_mut(&mut probe, &mut |expr| {

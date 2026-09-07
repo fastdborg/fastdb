@@ -4098,4 +4098,33 @@ fn source_free_scalar_ordering_binds_outer_fields() {
             "{sql}"
         );
     }
+    for (limit, offset) in [(0, 0), (1, 0), (1, 1), (-1, 0), (-1, 2)] {
+        let params = Parameters::from([
+            ("$limit".into(), Value::Integer(limit)),
+            ("$offset".into(), Value::Integer(offset)),
+        ]);
+        let native = q(&c, &format!("SELECT n,(SELECT d.n ORDER BY d.n DESC LIMIT {limit} OFFSET {offset}) FROM baseline d ORDER BY n")).rows;
+        let expected = native
+            .into_iter()
+            .map(|mut row| {
+                if row[1] != Value::Null {
+                    row[1] = Value::Array(vec![row[1].clone()]);
+                }
+                row
+            })
+            .collect::<Vec<_>>();
+        for source in ["docs d", "(SELECT n FROM docs) d"] {
+            let sql = format!("SELECT n,(SELECT array::new(d.n) ORDER BY d.n DESC LIMIT $limit OFFSET $offset) FROM {source} ORDER BY n");
+            assert_eq!(
+                c.execute(&sql, &params).unwrap().rows,
+                expected,
+                "{sql}: {params:?}"
+            );
+            assert_eq!(
+                c.profile_select(&sql, &params).unwrap().result.rows,
+                expected,
+                "{sql}: {params:?}"
+            );
+        }
+    }
 }

@@ -1513,3 +1513,10 @@ Inherited scalar value qualification (2026-09-08): a new regression passes store
 Extended source-free scalar correlation to ORDER BY expressions, fixing an unresolved outer numeric field in a logical array projection. A pinned native comparison establishes support for the scalar ordering form; direct/derived collection regressions pass execute/profile.
 
 The complete scoped check passed formatting, Clippy, 386 Rust tests, 44 Node/application tests and strict TypeScript, including the preceding inherited-value regression. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/resource and full V1 release qualification remain open.
+
+
+## Bound source-free scalar pagination (2026-09-08)
+
+Fixed integer-bound OFFSET state leaking across correlated source-free logical scalar invocations. Pagination integer variables now become integer expressions with consumed bindings tracked. Expanded execute/profile regressions compare bound LIMIT 0/1/-1 and OFFSET 0/1/2 against literal native queries for direct/derived outer sources. The native-shaped bound query rejects `$limit`, so that separate native routing gap remains open; additional wrapping alone did not fix the logical OFFSET discrepancy and is not part of the change.
+
+The complete scoped check passed formatting, Clippy, 386 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; noninteger/general pagination, scope/resource and full V1 release qualification remain open.

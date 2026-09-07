@@ -1000,3 +1000,8 @@ Source-free scalar children of an already logical source-free expression inherit
 ## Source-free scalar ordering correlation (2026-09-08)
 
 Source-free scalar correlation now visits ORDER BY expressions as well as projections and filters. This fixes an unresolved outer numeric field in `SELECT array::new(d.n) ORDER BY d.n DESC`; the corresponding pinned native scalar ordering form succeeds. Direct/derived collection regressions verify execution and profiling results. This extends binding coverage; it does not establish general grouped/windowed scope or resource qualification.
+
+
+## Bound source-free scalar pagination (2026-09-08)
+
+Integer parameter references in logical source-free expression-subquery pagination are lowered to integer expressions while recording consumed bindings. This avoids a pinned execution discrepancy in which OFFSET 1 suppressed only the first outer row, instead of every one-row correlated scalar result. Execute/profile comparisons use literal native pagination as the oracle for LIMIT 0/1/-1 and offsets 0/1/2, with direct/derived outer sources. The native-shaped parameterized oracle itself rejects `$limit`; that separate native routing gap and noninteger/general pagination qualification remain open.
