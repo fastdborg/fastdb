@@ -57,6 +57,8 @@ mod tests {
             "INSERT INTO docs (value) SELECT value+100 FROM docs",
             "WITH a AS (SELECT value+100 AS value FROM docs) INSERT INTO docs (value) SELECT value FROM a",
             "INSERT INTO docs (value) SELECT a.value FROM (SELECT value+100 AS value FROM docs) a",
+            "INSERT INTO docs (value) SELECT value+100 FROM docs UNION ALL SELECT value+200 FROM docs",
+            "WITH a AS MATERIALIZED (SELECT value FROM docs) INSERT INTO docs (value) SELECT value+100 FROM a UNION ALL SELECT value+200 FROM a",
         ]
         .into_iter()
         .flat_map(|statement| [false, true].map(|outer| (statement, outer)))
@@ -117,6 +119,7 @@ mod tests {
                     .unwrap()
                     .is_empty());
             }
+            assert_eq!(c.check_collection_integrity("docs", Default::default()).unwrap().documents, 3);
             q(&c, "UPDATE docs SET value=value+10");
             assert_eq!(
                 c.lookup_index("docs", "values_idx", &Value::Integer(11))
@@ -344,6 +347,133 @@ mod tests {
                 q(&c, "ROLLBACK");
                 assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
                 assert!(q(&c, "SELECT * FROM prior").rows.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn interrupted_union_sources_discard_rows_and_allow_exact_retry() {
+        use std::sync::atomic::AtomicUsize;
+        use turso_ext::{scalar, ResultCode, Value as ExtValue};
+        static ROWS: AtomicUsize = AtomicUsize::new(0);
+        #[scalar(name = "union_source_tick")]
+        fn union_source_tick(args: &[ExtValue]) -> ExtValue {
+            ROWS.fetch_add(1, Ordering::SeqCst);
+            ExtValue::from_integer(args[0].to_integer().expect("integer source"))
+        }
+        for insert in [false, true] {
+            for after in [2, 4] {
+                for outer in [false, true] {
+                    let db = Database::open(":memory:").unwrap();
+                    let c = db.connect().unwrap();
+                    unsafe {
+                        let api = c.engine._build_turso_ext();
+                        let code = (api.register_scalar_function)(
+                            api.ctx,
+                            c"union_source_tick".as_ptr(),
+                            1,
+                            false,
+                            0,
+                            union_source_tick,
+                            None,
+                            None,
+                        );
+                        c.engine._free_extension_ctx(api);
+                        assert_eq!(code, ResultCode::OK);
+                    }
+                    q(&c, "CREATE TABLE docs");
+                    q(&c, "CREATE TABLE copied");
+                    q(&c, "CREATE UNIQUE INDEX copied_value ON copied(value)");
+                    q(&c, "CREATE TABLE prior(value INTEGER)");
+                    for value in 1..=3 {
+                        q(&c, &format!("INSERT INTO docs {{value:{value}}}"));
+                    }
+                    if outer {
+                        q(&c, "BEGIN");
+                        q(&c, "INSERT INTO prior VALUES (99)");
+                    }
+                    let prefix = if insert {
+                        "INSERT INTO copied(value) "
+                    } else {
+                        ""
+                    };
+                    let statement = format!("{prefix}SELECT union_source_tick(value) AS value FROM docs UNION ALL SELECT union_source_tick(value+10) FROM docs");
+                    ROWS.store(0, Ordering::SeqCst);
+                    let fired = Arc::new(AtomicBool::new(false));
+                    let flag = fired.clone();
+                    c.engine.set_progress_handler(
+                        1,
+                        Some(Box::new(move || {
+                            ROWS.load(Ordering::SeqCst) >= after
+                                && !flag.swap(true, Ordering::SeqCst)
+                        })),
+                    );
+                    let report = c.execute_report(&statement, &Parameters::new());
+                    c.engine.set_progress_handler(0, None);
+                    assert!(
+                        fired.load(Ordering::SeqCst),
+                        "source point {after}, insert={insert}"
+                    );
+                    assert_eq!(ROWS.load(Ordering::SeqCst), after);
+                    assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED");
+                    assert_eq!(
+                        report.transaction_after,
+                        if outer {
+                            crate::TransactionState::Active
+                        } else {
+                            crate::TransactionState::Autocommit
+                        }
+                    );
+                    assert_eq!(q(&c, "SELECT * FROM prior").rows.len(), usize::from(outer));
+                    assert_eq!(
+                        c.check_collection_integrity("copied", Default::default())
+                            .unwrap()
+                            .documents,
+                        0
+                    );
+                    assert_eq!(
+                        c.check_collection_integrity("docs", Default::default())
+                            .unwrap()
+                            .documents,
+                        3
+                    );
+                    let retry = q(&c, &statement);
+                    if insert {
+                        assert_eq!(retry.affected, 6);
+                        assert_eq!(
+                            c.check_collection_integrity("copied", Default::default())
+                                .unwrap()
+                                .documents,
+                            6
+                        );
+                    } else {
+                        assert_eq!(retry.rows.len(), 6);
+                    }
+                    let rows = if insert {
+                        q(&c, "SELECT value FROM copied").rows
+                    } else {
+                        retry.rows
+                    };
+                    let mut values = rows
+                        .into_iter()
+                        .map(|row| match row.as_slice() {
+                            [Value::Integer(value)] => *value,
+                            _ => panic!("unexpected retry row: {row:?}"),
+                        })
+                        .collect::<Vec<_>>();
+                    values.sort_unstable();
+                    assert_eq!(values, vec![1, 2, 3, 11, 12, 13]);
+                    if outer {
+                        q(&c, "ROLLBACK");
+                        assert_eq!(
+                            c.check_collection_integrity("copied", Default::default())
+                                .unwrap()
+                                .documents,
+                            0
+                        );
+                        assert!(q(&c, "SELECT * FROM prior").rows.is_empty());
+                    }
+                }
             }
         }
     }
