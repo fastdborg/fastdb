@@ -1277,3 +1277,8 @@ Frontend all-target Clippy with warnings denied, formatting and diff checks also
 ## Installed nested import cancellation — 2026-09-07
 
 `node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (/tmp/fastdb-package-savepoint-cancel.log). The temporary installed worker consumer cancels a 1,000-document JSON import with a 20 ms timer, checks FDB_CANCELLED/active state, prior rows, integrity and listener cleanup, then imports all 1,000 documents with a fresh operation and rolls back to the caller savepoint. Existing sync/worker, declaration, loader, vector, reopen and nested-path checks also pass. Result: Linux x64, Node 24.19.0, eight runtime files, 59,653,802 packed bytes. The timer does not prove a specific engine interruption phase. No production changes; prior Rust/Node evidence remains applicable.
+
+
+## Completed 100,000 × 768 vector diagnostic (2026-09-07)
+
+The seeded-vector benchmark at clean commit `bc88ad618b` exited successfully, checking filter counts/index use and all warmup/measured exact top-10 results against an independent float32-coordinate cosine reference. Debug CLI medians: 82.45 s unindexed filter, 1.12 s indexed filter, 388.11 s exact top-10; three measured samples per workload. Report identities, medians and repeated primary counters were verified. See [benchmarks.md](benchmarks.md) for the raw report, command and the nonmonotonic VmHWM accounting caveat. Optimized/real-distribution/platform/resource qualification remains open; this diagnostic does not close the vector release gate or full V1.

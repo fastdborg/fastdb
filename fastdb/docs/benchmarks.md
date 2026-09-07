@@ -119,3 +119,20 @@ Run `node fastdb/scripts/bench-fetch.cjs [positions]` after building the local a
 | Relational | 1,000 | 200.04 ms | 250.75 ms | 8 | 1,000 | 13,104 |
 
 Target counters were identical for one and two projections, confirming deduplicated target reads in these fixtures. Physical row reads include engine index/table operations and need not equal logical target counts. Elapsed time includes outer evaluation, frontend decoding/result construction and Node transport; duplicate output still costs time. These are synthetic debug-addon measurements in one process with warm caches, not isolated CPU attribution, memory evidence or release latency guarantees. Three samples cannot establish a stable p95.
+
+
+## 100,000 seeded vectors at 768 dimensions (2026-09-07)
+
+The [completed report](benchmark-results/2026-09-07-linux-dev-seeded-768-100000.json) measures clean commit `bc88ad618b39fb054a32c5ddec39fed0f917aded` on Linux x64/WSL2, using the unoptimized CLI built with Rust 1.88.0 (`cargo build --locked -p fastdb-cli`). Command: `python3 fastdb/scripts/benchmark.py --rows 100000 --dimensions 768 --samples 3 --fixture seeded --output fastdb/docs/benchmark-results/2026-09-07-linux-dev-seeded-768-100000.json`. The process exited successfully. Binary SHA-256 matches the report; harness SHA-256 is `5c2c24e8a5c4df2977834e8c204702e8e40132c6ef943b9f0c6f3ec670d2f682`.
+
+| Workload | Median | Sample range | Primary rows read | Primary VM steps |
+|---|---:|---:|---:|---:|
+| Unindexed filter | 82.45 s | 82.42–82.65 s | 100,000 | 401,015 |
+| Indexed filter | 1.12 s | 1.08–1.14 s | 2,000 | 18,025 |
+| Exact cosine top-10 | 388.11 s | 387.93–389.52 s | 100,000 | 1,200,080 |
+
+Loading took 966.79 seconds and index construction 179.27 seconds. The checkpointed database occupied 1,247,805,440 bytes. Every workload has one warmup and three measured CLI round trips. Filter counts matched 1,000 before and after indexing; the indexed plan names `docs_group` and records zero full-scan steps. Vector queries scan all documents and use a sorter. Warmup and measured top-10 results passed ordering, uniqueness, cutoff membership and per-distance checks against an independent float64 reference over rounded float32 coordinates, with absolute tolerance 2e-6. Repeated primary engine counters and reported medians were checked for consistency.
+
+The recorded `/proc` VmHWM values range from 2,637,705,216 to 2,641,252,352 bytes (about 2.46 GiB), but the last value decreases despite the same child process. Preserve these raw observations; the platform/accounting inconsistency means they should not be treated as a reliable monotonic peak or evidence of a memory reduction. They also include earlier workloads and loading, not isolated query memory.
+
+This establishes a completed synthetic 100,000 × 768 correctness/performance diagnostic. It does not qualify release latency: the build is unoptimized, the data are seeded synthetic vectors, there is one process with warm caches, and three samples cannot establish a stable p95. Real embedding distributions, optimized builds, platform coverage, larger scales, cold/concurrent workloads and complete resource limits remain open. These measured latencies warrant profiling before making performance claims.
