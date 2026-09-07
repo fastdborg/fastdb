@@ -3543,3 +3543,59 @@ fn correlated_cte_definitions_preserve_local_aliases_and_write_rollback() {
         vec![vec![Value::Integer(3)], vec![Value::Integer(20)]]
     );
 }
+
+#[test]
+fn correlated_cte_exists_pages_and_empty_aggregates_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "CREATE TABLE baseline(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:4}",
+        "INSERT INTO links {n:2}",
+        "INSERT INTO links {n:3}",
+        "INSERT INTO baseline VALUES(1),(4)",
+        "INSERT INTO lookup VALUES(2),(3)",
+    ] {
+        q(&c, sql);
+    }
+    for projection in ["n", "count(*)"] {
+        for page in [
+            "",
+            " LIMIT 0",
+            " LIMIT 1",
+            " LIMIT 1 OFFSET 1",
+            " LIMIT -1 OFFSET 2",
+        ] {
+            for negate in ["", "NOT "] {
+                // Keep the native reference as a scalar SELECT too: this avoids
+                // the pinned direct-EXISTS correlated-CTE preparation defect.
+                let sql = |outer, inner| {
+                    let predicate = format!("{negate}EXISTS(WITH x AS (SELECT n FROM {inner} l WHERE l.n>d.n) SELECT {projection} FROM x{page})");
+                    let predicate = if outer == "baseline" {
+                        format!("(SELECT {predicate})")
+                    } else {
+                        predicate
+                    };
+                    format!("SELECT n,{predicate} FROM {outer} d ORDER BY n")
+                };
+                let expected = q(&c, &sql("baseline", "lookup")).rows;
+                assert_eq!(
+                    q(&c, &sql("docs", "links")).rows,
+                    expected,
+                    "{projection}: {page}: {negate}"
+                );
+                assert_eq!(
+                    c.profile_select(&sql("docs", "links"), &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected
+                );
+            }
+        }
+    }
+}
