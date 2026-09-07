@@ -17,14 +17,16 @@ const run = (command, args, cwd) => execFileSync(command, args, {
 try {
   const [packed] = JSON.parse(run(npm, ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', temporary], packageDir));
   assert.deepEqual(packed.files.map(file => file.path).sort(), [
-    'LICENSE.md', 'THIRD_PARTY_NOTICES.md', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs', 'native.cjs',
+    'LICENSE.md', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs', 'native.cjs',
   ].sort());
   assert(packed.files.find(file => file.path === 'fastdb.node').size > 0);
   const consumer = path.join(temporary, 'consumer');
   fs.mkdirSync(consumer);
   fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'fastdb-package-smoke', version: '0.0.0', private: true }));
   run(npm, ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', path.join(temporary, packed.filename)], consumer);
-  assert.equal(fs.readFileSync(path.join(consumer, 'node_modules/@fastdb/node/THIRD_PARTY_NOTICES.md'), 'utf8'), fs.readFileSync(path.join(packageDir, 'THIRD_PARTY_NOTICES.md'), 'utf8'));
+  for (const notice of ['THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md']) {
+    assert.equal(fs.readFileSync(path.join(consumer, 'node_modules/@fastdb/node', notice), 'utf8'), fs.readFileSync(path.join(packageDir, notice), 'utf8'));
+  }
   fs.writeFileSync(path.join(consumer, 'smoke.cjs'), `
 'use strict';
 const assert = require('node:assert/strict');

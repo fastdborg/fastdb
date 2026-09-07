@@ -224,3 +224,12 @@ python3 fastdb/scripts/audit-crate-notices.py fastdb/docs/node-dependencies-linu
 The audit checks archive checksums against Cargo.lock and records declared license-file paths plus hashes of license/notice filename candidates, including nested bundled sources. It reads archives without extracting them. Missing/ambiguous archives, checksum mismatches and stale reports fail explicitly. The current report verifies 185 archives with 316 candidate files; 13 archives have no matching candidates and seven workspace packages require separate inspection. Filename discovery can miss inline notices or unconventional names, and identifying a file does not establish that all required notices are included in the package. The report is kept outside the npm runtime package.
 
 For archives with no notice filename candidates, the report also searches selected code/text files up to 200,000 bytes for copyright, SPDX and licensing phrases. It records source hashes, line numbers and bounded excerpts. The current report finds four files across crc32c, rapidhash and rquickjs-core, including crc32c's reference to zlib and a futures-author attribution in rquickjs-core. These references need review; ten of the thirteen archives have no hits within this bounded search. Absence of a match is not proof that attribution is absent or unnecessary.
+
+Generate and verify the collected crate notice texts with:
+
+```sh
+python3 fastdb/scripts/bundle-crate-notices.py fastdb/docs/node-dependencies-linux-x64.json fastdb/docs/node-crate-notices-linux-x64.json fastdb/bindings/node/THIRD_PARTY_CRATE_NOTICES.md
+python3 fastdb/scripts/bundle-crate-notices.py fastdb/docs/node-dependencies-linux-x64.json fastdb/docs/node-crate-notices-linux-x64.json fastdb/bindings/node/THIRD_PARTY_CRATE_NOTICES.md --check
+```
+
+The generator rechecks lockfile, inventory, archive and notice-file hashes before writing. Identical texts are deduplicated with per-package source links. The private npm package includes this partial collection (125 distinct texts for 316 candidate files), and the offline package smoke verifies both installed notice files exactly. The twenty packages without collected filename candidates and any other inline/bundled attribution remain review items; this is not a complete distribution-notice claim.

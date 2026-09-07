@@ -24,6 +24,7 @@
     "fastdb.node",
     "LICENSE.md",
     "README.md",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_CRATE_NOTICES.md"
   ]
 }

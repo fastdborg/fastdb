@@ -1857,3 +1857,10 @@ Exact regeneration/check mode, a valid cfg_block archive, corrupted-archive reje
 Inspected all 13 registry archives without notice filename candidates; none contained missed license-like filenames. Extended the audit to bounded code/text marker searches for those archives, recording source hashes, line references and excerpts. Four files across crc32c, rapidhash and rquickjs-core contain relevant references, including crc32c's zlib copyright reference and rquickjs-core's futures attribution. Ten archives have no hits in the bounded search. All remain subject to complete source/notice review.
 
 Exact regeneration/check mode passes, and all four source hashes and marker line references were independently checked against the cached archives. The report states its size/suffix/marker bounds; no absence-of-license or legal-completeness conclusion is inferred. Runtime/package contents are unchanged. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests; distribution and full V1 release gates remain open.
+
+
+## Verified crate notice text bundle (2026-09-08)
+
+Added a reproducible bundle generator and included THIRD_PARTY_CRATE_NOTICES.md in the private Node package. It verifies lockfile/inventory identity, archive checksums and individual source-file hashes before writing. The bundle deduplicates 316 discovered files into 125 text sections with per-package provenance links; twenty packages without filename candidates remain explicitly listed for separate review. The collection includes build dependencies and does not claim complete notices or linked-code coverage.
+
+Regeneration/check mode and altered-notice-hash rejection pass; rejection preserves existing output. Offline package installation verifies both notice files exactly and passes sync/worker consumer and strict TypeScript checks on Linux x64, Node 24.19.0: ten files, 59,954,335 packed bytes with the existing debug addon. No publication or runtime implementation change occurred. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests. Full distribution and V1 release gates remain open.
