@@ -2096,3 +2096,10 @@ Mixed binary compound write qualification (2026-09-08): expanded the shared-bind
 
 
 Native subquery binary binding qualification (2026-09-08): a new native-reference regression covers raw binary parameters in uncorrelated and correlated scalar subqueries and correlated EXISTS expressions. Execute/profile preserve the binary result and unmatched scalar NULL; EXISTS is explicitly cast to INTEGER for native result comparison. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 420 Rust/46 Node tests; recent additions have focused evidence only. Broader correlation/binding/resource and full V1 release gates remain open.
+
+
+## Bundled QuickJS package notices (2026-09-08)
+
+The private Node package now includes THIRD_PARTY_NOTICES.md with the license texts from pinned rquickjs 0.12.2 and rquickjs-sys 0.12.2's bundled QuickJS source. Source paths and original-file SHA-256 hashes record provenance. The npm allowlist includes the notice, and the offline package smoke verifies its installed contents exactly match the checkout.
+
+The actual tarball installed and passed synchronous/worker consumer checks and strict consumer TypeScript on Linux x64, Node 24.19.0: nine files, 59,910,932 packed bytes using the existing local debug addon. This change does not claim a complete dependency-notice inventory, optimized release artifact, additional platform support or publication readiness. The package remains private; no publishing occurred. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests. Full V1 release gates remain open.

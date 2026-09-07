@@ -23,6 +23,7 @@
     "index.d.ts",
     "fastdb.node",
     "LICENSE.md",
-    "README.md"
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
   ]
 }

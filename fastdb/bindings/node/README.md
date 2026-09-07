@@ -100,7 +100,7 @@ Native constraint, foreign-key and trigger-raise errors use FDB_CONSTRAINT and r
 
 ## Local package smoke
 
-Normal npm packing first checks that the native addon loads; a missing or incompatible build fails before creating the archive. The npm file allowlist includes the native addon, synchronous/worker JavaScript entry points, declarations, README and MIT license. Build the current platform's addon, then verify the actual tarball from the repository root:
+Normal npm packing first checks that the native addon loads; a missing or incompatible build fails before creating the archive. The npm file allowlist includes the native addon, synchronous/worker JavaScript entry points, declarations, README, MIT license and bundled QuickJS notices. Build the current platform's addon, then verify the actual tarball from the repository root:
 
 ```sh
 fastdb/scripts/check-node.sh
