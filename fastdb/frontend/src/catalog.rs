@@ -218,7 +218,13 @@ impl Connection {
         }
         Ok(())
     }
-    fn schema_object(&self, name: &str, kind: &str, table: &str, sql: &str) -> Result<()> {
+    pub(super) fn schema_object(
+        &self,
+        name: &str,
+        kind: &str,
+        table: &str,
+        sql: &str,
+    ) -> Result<()> {
         let rows = self.run(
             "SELECT type,tbl_name,sql FROM sqlite_schema WHERE name=?1",
             &[text(name)],
@@ -241,7 +247,11 @@ impl Connection {
         }
         Ok(())
     }
-    fn managed_dependencies(&self, table: &str, expected_index: Option<&str>) -> Result<()> {
+    pub(super) fn managed_dependencies(
+        &self,
+        table: &str,
+        expected_index: Option<&str>,
+    ) -> Result<()> {
         for row in self.run("SELECT name,type FROM sqlite_schema WHERE tbl_name=?1 AND (type='trigger' OR (type='index' AND sql IS NOT NULL))", &[text(table)])? {
             if !matches!(row.as_slice(), [EngineValue::Text(name), EngineValue::Text(kind)] if kind.as_str()=="index" && Some(name.as_str())==expected_index) {
                 return Err(Error::Storage(format!("unexpected dependency on managed table {table}")));

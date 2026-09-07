@@ -1526,3 +1526,6 @@ CLI migration source diagnostics (2026-09-07): metadata/open/read, filename/vers
 
 
 Migration history diagnostics (2026-09-07): applied-prefix mismatch errors now distinguish version-sequence, name and exact SQL-source changes while retaining FDB_VALIDATION. Messages identify the supplied version and mention whitespace/comment sensitivity without printing stored SQL. Expanded regression assertions cover each mismatch and successful reuse of the original plan. All five migration integration tests, formatting and focused Clippy pass. History corruption/upgrade and broader V1 qualification remain open.
+
+
+Migration ledger schema validation (2026-09-07): the runner now reuses managed-schema token comparison and dependency checks after creating or finding its ledger, inside the atomic scope and before history reads/pending scripts. Incompatible definitions and unexpected explicit indexes/triggers reject with FDB_STORAGE. Private corruption fixtures cover a missing primary key, an added index and an added trigger; pending schema/history remain untouched, autocommit is restored, and fixture-only external repair permits a valid apply-once retry. The new unit regression, all five migration integration tests, formatting and frontend all-target Clippy pass. No public repair API was added; broader corruption/upgrade/recovery and full V1 qualification remain open.

@@ -81,6 +81,8 @@ impl Connection {
         }
         self.atomic(|| {
             self.run("CREATE TABLE IF NOT EXISTS __fastdb_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, script TEXT NOT NULL)",&[])?;
+            self.schema_object("__fastdb_migrations", "table", "__fastdb_migrations", "CREATE TABLE IF NOT EXISTS __fastdb_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, script TEXT NOT NULL)")?;
+            self.managed_dependencies("__fastdb_migrations", None)?;
             let history=self.run("SELECT version,name,script FROM __fastdb_migrations ORDER BY version",&[])?;
             if history.len()>migrations.len() {return Err(Error::Validation("migration plan omits applied history".into()));}
             for (row,migration) in history.iter().zip(migrations) {
@@ -112,5 +114,49 @@ impl Connection {
             }
             Ok(MigrationReport {already_applied:history.len(),applied})
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn incompatible_history_schema_rejects_before_pending_migrations() {
+        for extra in 0..3 {
+            let db = crate::Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            c.run(if extra != 0 {
+                "CREATE TABLE __fastdb_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, script TEXT NOT NULL)"
+            } else {
+                "CREATE TABLE __fastdb_migrations (version INTEGER, name TEXT NOT NULL, script TEXT NOT NULL)"
+            }, &[]).unwrap();
+            if extra == 1 {
+                c.run(
+                    "CREATE INDEX unexpected_history_index ON __fastdb_migrations(name)",
+                    &[],
+                )
+                .unwrap();
+            }
+            if extra == 2 {
+                c.run("CREATE TRIGGER unexpected_history_trigger AFTER INSERT ON __fastdb_migrations BEGIN SELECT 1; END", &[]).unwrap();
+            }
+            let plan = [Migration {
+                version: 1,
+                name: "first.sql".into(),
+                sql: "CREATE TABLE docs;".into(),
+            }];
+            let error = c.migrate(&plan).unwrap_err();
+            assert_eq!(error.code(), "FDB_STORAGE", "{error:?}");
+            assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+            assert!(c.execute("SELECT * FROM docs", &Parameters::new()).is_err());
+            assert!(c
+                .run("SELECT * FROM __fastdb_migrations", &[])
+                .unwrap()
+                .is_empty());
+            // Simulate external repair solely in this private test fixture.
+            c.run("DROP TABLE __fastdb_migrations", &[]).unwrap();
+            assert_eq!(c.migrate(&plan).unwrap().applied, vec![1]);
+            assert_eq!(c.migrate(&plan).unwrap().already_applied, 1);
+        }
     }
 }
