@@ -1238,3 +1238,8 @@ Persistent migration contention qualification (2026-09-07): a file-backed two-co
 
 
 Migration input-boundary qualification (2026-09-07): a new regression rejects 1,001 entries, a plan above 16 MiB, a script above 4 MiB, invalid positive-version requirements and empty/oversized/NUL-containing names before schema mutation. UTF-8 names are checked by bytes. An exactly 4 MiB script with a 255-byte multibyte name succeeds after those failures and skips on exact rerun, proving rejected plans did not record an applied prefix. All five migration integration tests, formatting and focused Clippy pass. Total runtime-memory, concurrent/crash and full V1 qualification remain open.
+
+
+## Combined query, worker and migration verification (2026-09-07)
+
+At clean implementation commit afbe25599, fastdb/scripts/check.sh passed formatting, Clippy with warnings denied, 335 Rust tests, 42 Node/application tests and strict TypeScript declarations. One known pinned trigger-interruption gate remains ignored. This combines the correlated DISTINCT ordering/collation/bound-write cases, worker UTF-8 queue-byte cleanup fixture, persistent migration contention/reopen and migration input-boundary regressions. The Node addon was rebuilt by the scoped script before client tests. This is local Linux evidence; platform distribution, interrupted I/O/recovery, remaining SQL/type/resource work and external application validation still prevent full V1 completion.
