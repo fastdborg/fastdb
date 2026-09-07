@@ -757,3 +757,11 @@ The scoped check exited zero: formatting, Clippy with warnings denied, 245 Rust 
 The offline packed-package smoke exited zero on Linux/x64, Node 24.19.0: seven expected files, 58,846,096 compressed bytes. The installed consumer calls all five factories through both clients and type-checks VectorComponents, readonly arrays and rejection of bigint components. Temporary package/consumer artifacts are cleaned by the script; nothing was published.
 
 Factories send bounded binary64 component buffers to a native adapter that calls the Rust Value constructors and validates results. No database connection is opened. No dependencies, upstream implementation files or persisted encodings changed. The Node guide and current contracts/status document synchronous construction, float32 conversion, lossy quantized/bit formats and argument errors. Broader numerical/platform/resource and full V1 qualification remain open.
+
+## Vector-factory rounding and quantization overflow — 2026-09-07
+
+The final scoped check exited zero: formatting, Clippy with warnings denied, 245 Rust tests, twenty-one Node tests and strict TypeScript declarations. A new Node test checks exact known IEEE-754 patterns for float32 halfway ties, subnormal rounding/underflow and signed zero, plus binary64 positive/negative minimum subnormals, the value adjacent to one and maximum finite value. Bit output is checked independently; sparse/quantized/bit bytes also match native conversion of the checked dense bytes.
+
+Rust and Node regressions reject quantizer scale overflow from finite negative/positive float32 maxima and accept an equal-maximum constant vector. The Node case runs while unrelated database work is active, verifies that construction failure leaves that transaction/data intact, and then rolls it back successfully. The focused Node precision probe passed before the full run.
+
+No production implementation, dependencies, upstream files or persisted encodings changed. The client guide and contracts/status document the precision boundaries and finite-input quantization limitation. Broader numerical/platform/resource and full V1 qualification remain open.

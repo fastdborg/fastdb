@@ -426,3 +426,31 @@ test('vector factories match native encodings and work in both clients', async (
   const invalid = Buffer.alloc(8); invalid.writeDoubleLE(NaN);
   for (const [factory] of factories) assert.throws(() => vectorFromComponents(factory, invalid));
 });
+
+test('vector factories preserve precision boundaries and reject conversion overflow locally', () => {
+  const values = [1 + 2 ** -24, 1 + 3 * 2 ** -24, 2 ** -150, 3 * 2 ** -150, -(2 ** -150), -0];
+  const expectedBits = [0x3f800000, 0x3f800002, 0, 2, 0x80000000, 0x80000000];
+  const dense = Vector.float32(values);
+  assert.deepEqual(values.map((_, i) => dense.bytes.readUInt32LE(i * 4)), expectedBits);
+  const precise = Vector.float64([Number.MIN_VALUE, -Number.MIN_VALUE, 1 + Number.EPSILON, Number.MAX_VALUE]);
+  assert.deepEqual([0,1,2,3].map(i => precise.bytes.readBigUInt64LE(i * 8)), [1n,0x8000000000000001n,0x3ff0000000000001n,0x7fefffffffffffffn]);
+  assert.equal(Vector.bit1(values).bytes[0], 0b1011);
+  const db = new Database();
+  try {
+    for (const [factory, sql] of [['sparse32','vector32_sparse'],['quantized8','vector8'],['bit1','vector1bit']]) {
+      const native = db.exactlyOne(`SELECT ${sql}($bytes)`, {$bytes:dense.bytes})[0];
+      assert.deepEqual(Vector[factory](values).bytes, native);
+    }
+    db.execute('CREATE TABLE docs');
+    db.execute('BEGIN');
+    db.execute('INSERT INTO docs(n) VALUES (7)');
+    const max32 = (2 - 2 ** -23) * 2 ** 127;
+    assert.throws(() => Vector.quantized8([-max32,max32]));
+    assert(Vector.quantized8([max32,max32]) instanceof Vector);
+    const result = db.execute('SELECT n FROM docs');
+    assert.equal(result.transaction.after, 'active');
+    assert.deepEqual(result.rows, [[7n]]);
+    db.execute('ROLLBACK');
+    assert.equal(db.checkCollectionIntegrity('docs').documents, 0n);
+  } finally { db.close(); }
+});

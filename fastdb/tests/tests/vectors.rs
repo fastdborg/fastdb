@@ -297,4 +297,13 @@ fn rust_vector_constructors_enforce_dimensions_and_finite_values() {
         "FDB_LIMIT"
     );
     assert!(Value::vector64(&[]).is_err());
+    // Finite inputs can overflow the pinned quantizer's scale calculation.
+    assert!(Value::vector8(&[-f32::MAX, f32::MAX]).is_err());
+    assert_eq!(
+        Value::vector8(&[f32::MAX, f32::MAX])
+            .unwrap()
+            .vector_dimensions()
+            .unwrap(),
+        2
+    );
 }
