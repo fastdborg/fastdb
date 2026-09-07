@@ -465,3 +465,50 @@ fn aggregate_filters_preserve_record_arguments_and_skip_excluded_errors() {
         vec![vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn count_accepts_composites_and_preserves_null_and_filter_semantics() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    for sql in [
+        "INSERT INTO docs {n:1,v:[]}",
+        "INSERT INTO docs {n:2,v:{a:1}}",
+        "INSERT INTO docs {n:3,v:null}",
+        "INSERT INTO docs {n:4}",
+        "INSERT INTO docs {n:5,v:false}",
+    ] {
+        q(&c, sql);
+    }
+    assert_eq!(
+        q(&c, "SELECT count(v),count(*),count(missing) FROM docs").rows,
+        vec![vec![
+            Value::Integer(3),
+            Value::Integer(5),
+            Value::Integer(0)
+        ]]
+    );
+    for sql in [
+        "SELECT count(array::append(v,1)) FILTER (WHERE n=1) FROM docs",
+        "SELECT count(coalesce(v,array::new())) FILTER (WHERE n=3) FROM docs",
+    ] {
+        assert_eq!(q(&c, sql).rows, vec![vec![Value::Integer(1)]], "{sql}");
+        assert_eq!(
+            c.profile_select(sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            vec![vec![Value::Integer(1)]]
+        );
+    }
+    assert!(c
+        .execute(
+            "SELECT count(array::append(v,1)) FILTER (WHERE n=2) FROM docs",
+            &Parameters::new()
+        )
+        .is_err());
+    assert_eq!(
+        q(&c, "SELECT count(v) FROM docs").rows,
+        vec![vec![Value::Integer(3)]]
+    );
+}

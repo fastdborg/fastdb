@@ -1358,7 +1358,7 @@ impl Scope {
                 order_by,
                 within_group,
                 filter_over,
-                ..
+                distinctness,
             } => {
                 if let Some(Over::Window(window)) = &mut filter_over.over_clause {
                     self.lower_window(window)?;
@@ -1369,7 +1369,12 @@ impl Scope {
                     ));
                 }
                 for e in args {
-                    if name.as_str().starts_with("__fastdb_") {
+                    if name.as_str().eq_ignore_ascii_case("count")
+                        && !matches!(distinctness, Some(Distinctness::Distinct))
+                    {
+                        self.typed(e)?;
+                        **e = expression(&format!("__fastdb_nullable({e})"))?;
+                    } else if name.as_str().starts_with("__fastdb_") {
                         self.lower(e)?;
                     } else {
                         self.sql_argument(e)?;

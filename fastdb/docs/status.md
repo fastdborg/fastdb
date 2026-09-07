@@ -1292,3 +1292,10 @@ Filtered DISTINCT aggregate qualification (2026-09-07): native differential coll
 
 
 Typed aggregate FILTER qualification (2026-09-07): record-literal and record-parameter predicates select the expected aggregate values through execute/profile_select. COUNT and COUNT DISTINCT of record::id skip invalid argument values on excluded rows; including an invalid value rejects, and a valid query can run afterward. All nine grouping integration tests, formatting and focused Clippy pass. A separate local probe found COUNT(array::append(tags,1)) rejects even for an included valid array because aggregate lowering still requires scalar/record index values. Composite aggregate arguments remain an explicit SQL/type gap; this qualification does not close it or full V1.
+
+
+## COUNT of composite document values (2026-09-07)
+
+Non-DISTINCT COUNT arguments now use the existing nullable typed-value conversion rather than scalar unwrapping. Arrays, objects and composite helper results count as non-null values; null and missing values remain excluded. FILTER still skips argument evaluation on excluded rows, while included invalid helper inputs reject. COUNT DISTINCT retains its existing scalar comparison path; composite DISTINCT equality remains open.
+
+The new regression covers arrays/objects/booleans, null/missing values, helper/coalesce results, profiling, excluded invalid arguments and successful reuse after errors. The complete scoped check passed formatting, Clippy, 347 Rust tests, 43 Node/application tests and strict TypeScript; one known trigger-interruption gate remains ignored. No upstream core files changed. Broader aggregate/type/resource and full V1 qualification remain open.
