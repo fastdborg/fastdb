@@ -1576,3 +1576,6 @@ The new regression covers arrays/objects/booleans, null/missing values, helper/c
 
 
 Composite COUNT window/write qualification (2026-09-07): arrays, objects, records and nulls produce matching cumulative, partitioned and whole-window counts against native non-null/blob fixtures through execute/profile_select. Grouped INSERT SELECT validation rejects atomically with prior work and index integrity preserved; a HAVING-filtered retry succeeds and explicit rollback removes pending results. All eleven grouping integration tests, formatting and focused Clippy pass. The native oracle compares null presence only, not composite ordering/equality. COUNT DISTINCT composites and broader V1 gates remain open.
+
+
+Node composite COUNT qualification (2026-09-07): both clients count stored array/object/record/binary/boolean values while excluding null/missing fields, preserve bigint result counts through exactlyOne/profileSelect, and count typed parameters including empty binary values correctly. Cumulative window counts retain the same null-presence semantics. The focused synchronous/worker regression passes with the previously rebuilt addon. Composite DISTINCT equality and broader V1 qualification remain open.

@@ -1071,3 +1071,24 @@ test('migration diagnostics preserve UTF-8 locations and history reasons in both
     } finally { await db.close(); }
   }
 });
+
+test('composite count preserves null presence through both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      for (const [n,v] of [[1n,[]],[2n,{a:1n}],[3n,new Record('users','one')],[4n,Buffer.from([0,1])],[5n,null],[6n,false]]) {
+        await db.execute('INSERT INTO docs(n,v) VALUES($n,$v)',{$n:n,$v:v});
+      }
+      await db.execute('INSERT INTO docs {n:7}');
+      const sql='SELECT count(v),count(missing),count(*) FROM docs';
+      assert.deepEqual(await db.exactlyOne(sql),[5n,0n,7n]);
+      assert.deepEqual((await db.profileSelect(sql)).result.rows,[[5n,0n,7n]]);
+      for (const value of [[],{},new Record('users','two'),Buffer.alloc(0),false,null]) {
+        assert.deepEqual(await db.exactlyOne('SELECT count($value) FROM docs',{$value:value}),[value===null?0n:7n]);
+      }
+      assert.deepEqual(await db.all('SELECT count(v) OVER (ORDER BY n) FROM docs ORDER BY n'),[[1n],[2n],[3n],[4n],[4n],[5n],[5n]]);
+    } finally { await db.close(); }
+  }
+});
