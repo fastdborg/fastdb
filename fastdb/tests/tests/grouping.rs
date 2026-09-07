@@ -512,3 +512,55 @@ fn count_accepts_composites_and_preserves_null_and_filter_semantics() {
         vec![vec![Value::Integer(3)]]
     );
 }
+
+#[test]
+fn composite_count_windows_and_grouped_writes_preserve_counts() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(n,v)");
+    for (n, value, native) in [
+        (1, "[]", "x'01'"),
+        (2, "null", "NULL"),
+        (3, "{a:1}", "x'02'"),
+        (4, "users:one", "x'03'"),
+    ] {
+        q(&c, &format!("INSERT INTO docs {{n:{n},v:{value}}}"));
+        q(&c, &format!("INSERT INTO baseline VALUES({n},{native})"));
+    }
+    for window in ["ORDER BY n", "PARTITION BY n%2 ORDER BY n", ""] {
+        let sql =
+            |table| format!("SELECT n,count(v) OVER ({window}) AS present FROM {table} ORDER BY n");
+        let expected = q(&c, &sql("baseline")).rows;
+        assert_eq!(q(&c, &sql("docs")).rows, expected, "{window}");
+        assert_eq!(
+            c.profile_select(&sql("docs"), &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "profile {window}"
+        );
+    }
+    q(&c, "CREATE TABLE totals");
+    q(&c, "DEFINE FIELD n ON totals TYPE integer CHECK (n<2)");
+    q(&c, "CREATE UNIQUE INDEX totals_bucket ON totals(bucket)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO totals {bucket:9,n:0}");
+    let before = q(&c, "SELECT id,bucket,n FROM totals").rows;
+    let insert = "INSERT INTO totals(bucket,n) SELECT n%2,count(v) FROM docs GROUP BY n%2";
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(q(&c, "SELECT id,bucket,n FROM totals").rows, before);
+    c.check_collection_integrity("totals", Default::default())
+        .unwrap();
+    assert_eq!(q(&c, &format!("{insert} HAVING count(v)<2")).affected, 1);
+    assert_eq!(
+        q(&c, "SELECT n FROM totals WHERE bucket=0").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    c.check_collection_integrity("totals", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM totals").rows.is_empty());
+}
