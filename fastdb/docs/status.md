@@ -1405,3 +1405,6 @@ The complete scoped check passed formatting, Clippy, 367 Rust tests, 44 Node/app
 
 
 Inner-derived correlated write qualification (2026-09-07): a multirow UPDATE uses an inner derived source for scalar assignments and another for correlated EXISTS filtering. A CHECK failure preserves prior transaction work and managed-index integrity; correcting the source permits retry, and rollback restores both source and target collections. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains the recorded 367-Rust/44-Node run; broader correlation/write and full V1 gates remain open.
+
+
+Pinned outer GROUP BY reference qualification (2026-09-07): native SQL and collection probes both reject inner grouping keys referencing an outer row, including direct/derived outer sources. The focused regression verifies FDB_ENGINE through execute/profile/UPDATE, preservation of prior transaction work, successful predicate-correlated reads afterward, index integrity and rollback. Formatting and focused Clippy pass. contracts.md records this pinned native limitation; it does not establish a new collection-only implementation requirement. Latest combined evidence remains 367 Rust/44 Node tests; full V1 remains incomplete.

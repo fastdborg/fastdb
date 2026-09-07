@@ -952,3 +952,7 @@ Projected aggregate matching now compares the aggregate name case-insensitively,
 ## Inner derived collection correlation (2026-09-07)
 
 Expression-subquery correlation now resolves aliased derived inner sources as well as direct tables. Qualified outer typed fields are translated before recursive lowering, fixing false record-identity non-matches through an inner derived collection query. Coverage includes direct/derived outer sources, inner filters and limits, COUNT, EXISTS, IN, array projections and execute/profile. This extends the earlier direct-inner-source restriction; local inner WITH, compounds and deeper scope qualification remain open.
+
+## Pinned outer GROUP BY reference limitation (2026-09-07)
+
+The pinned engine rejects an inner grouping key that references an outer row, for example `SELECT n,(SELECT count(*) FROM lookup l GROUP BY d.n) FROM baseline d`, with FDB_ENGINE. The same limitation occurs with derived outer sources and collection queries. This is a verified native-engine boundary, not evidence of a collection-only binding mismatch or a promise of complete SQLite compatibility. Predicate correlation remains available. Regression coverage confirms failed execute/profile/UPDATE attempts preserve prior work, valid predicate-correlated reads succeed afterward, index integrity holds and rollback restores the original rows.

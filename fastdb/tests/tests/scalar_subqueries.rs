@@ -3296,3 +3296,62 @@ fn inner_derived_correlated_updates_preserve_validation_and_rollback() {
     c.check_collection_integrity("docs", Default::default())
         .unwrap();
 }
+
+#[test]
+fn pinned_outer_group_key_rejection_preserves_transaction_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "CREATE TABLE baseline(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:2}",
+        "INSERT INTO links {n:3}",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(3)",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {n:4}");
+    q(&c, "INSERT INTO baseline VALUES(4)");
+    for (outer, inner) in [("docs", "links"), ("baseline", "lookup")] {
+        let before = q(&c, &format!("SELECT n FROM {outer} ORDER BY n")).rows;
+        for source in [format!("{outer} d"), format!("(SELECT n FROM {outer}) d")] {
+            let sql =
+                format!("SELECT n,(SELECT count(*) FROM {inner} l GROUP BY d.n) FROM {source}");
+            let error = c.execute(&sql, &Parameters::new()).unwrap_err();
+            assert_eq!(error.code(), "FDB_ENGINE", "{sql}: {error}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap_err()
+                    .code(),
+                "FDB_ENGINE"
+            );
+        }
+        let sql =
+            format!("UPDATE {outer} AS d SET n=(SELECT count(*) FROM {inner} l GROUP BY d.n)");
+        assert_eq!(
+            c.execute(&sql, &Parameters::new()).unwrap_err().code(),
+            "FDB_ENGINE"
+        );
+        assert_eq!(
+            q(&c, &format!("SELECT n FROM {outer} ORDER BY n")).rows,
+            before
+        );
+        assert_eq!(q(&c,&format!("SELECT n,(SELECT count(*) FROM {inner} l WHERE l.n>d.n) FROM {outer} d ORDER BY n")).rows,
+            vec![vec![Value::Integer(1),Value::Integer(1)],vec![Value::Integer(2),Value::Integer(1)],vec![Value::Integer(4),Value::Integer(0)]]);
+    }
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    for table in ["docs", "baseline"] {
+        assert_eq!(
+            q(&c, &format!("SELECT n FROM {table} ORDER BY n")).rows,
+            vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+        );
+    }
+}
