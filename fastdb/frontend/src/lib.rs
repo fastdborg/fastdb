@@ -177,6 +177,7 @@ impl Database {
     pub fn connect(&self) -> Result<Connection> {
         let connection = Connection {
             engine: self.engine.connect()?,
+            next_atomic_id: std::sync::atomic::AtomicU64::new(0),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -186,6 +187,7 @@ impl Database {
 /// Connections expose only checked frontend operations, never raw engine handles.
 pub struct Connection {
     engine: Arc<EngineConnection>,
+    next_atomic_id: std::sync::atomic::AtomicU64,
 }
 fn text(value: &str) -> EngineValue {
     EngineValue::Text(value.to_owned().into())
@@ -219,9 +221,20 @@ impl Connection {
         collect_rows(&mut statement)
     }
     fn atomic<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        self.run("SAVEPOINT __fastdb_statement", &[])?;
+        // A failed inner SAVEPOINT may already exist when interruption is
+        // reported. Unique names let outer cleanup roll back its own frame.
+        let id = self
+            .next_atomic_id
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |value| value.checked_add(1),
+            )
+            .map_err(|_| Error::Limit("atomic operation identifiers exhausted".into()))?;
+        let name = format!("__fastdb_statement_{id}");
+        self.run(&format!("SAVEPOINT {name}"), &[])?;
         let result = f().and_then(|v| {
-            self.run("RELEASE __fastdb_statement", &[])?;
+            self.run(&format!("RELEASE {name}"), &[])?;
             Ok(v)
         });
         match result {
@@ -231,8 +244,8 @@ impl Connection {
                     return Err(cause);
                 }
                 let rollback = self
-                    .run("ROLLBACK TO __fastdb_statement", &[])
-                    .and_then(|_| self.run("RELEASE __fastdb_statement", &[]));
+                    .run(&format!("ROLLBACK TO {name}"), &[])
+                    .and_then(|_| self.run(&format!("RELEASE {name}"), &[]));
                 match rollback {
                     Ok(_) => Err(cause),
                     Err(rollback) => Err(Error::Rollback {

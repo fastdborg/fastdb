@@ -381,6 +381,60 @@ mod tests {
         }
     }
 
+    #[test]
+    fn nested_atomic_cancellation_never_reports_partial_success_as_cancelled() {
+        use std::sync::atomic::AtomicUsize;
+        for stop in 1..=48 {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            q(&c, "CREATE TABLE native(n INTEGER)");
+            q(&c, "BEGIN");
+            q(&c, "INSERT INTO native VALUES(0)");
+            let baseline = c.engine.total_changes();
+            let engine = Arc::downgrade(&c.engine);
+            let ticks = Arc::new(AtomicUsize::new(0));
+            let seen = ticks.clone();
+            c.engine.set_progress_handler(
+                1,
+                Some(Box::new(move || {
+                    engine
+                        .upgrade()
+                        .is_some_and(|engine| engine.total_changes() > baseline)
+                        && seen.fetch_add(1, Ordering::SeqCst) + 1 == stop
+                })),
+            );
+            let result = c.atomic(|| {
+                c.run("INSERT INTO native VALUES(1)", &[])?;
+                c.atomic(|| c.run("INSERT INTO native VALUES(2)", &[]))?;
+                Ok(())
+            });
+            c.engine.set_progress_handler(0, None);
+            if stop == 4 {
+                assert!(matches!(&result, Err(error) if error.code() == "FDB_CANCELLED"));
+            }
+            let rows = q(&c, "SELECT n FROM native ORDER BY n").rows;
+            let before = vec![vec![Value::Integer(0)]];
+            let complete = vec![
+                vec![Value::Integer(0)],
+                vec![Value::Integer(1)],
+                vec![Value::Integer(2)],
+            ];
+            match result {
+                Ok(()) => assert_eq!(rows, complete, "stop={stop}"),
+                Err(error) if error.code() == "FDB_CANCELLED" => {
+                    assert_eq!(rows, before, "stop={stop}")
+                }
+                Err(crate::Error::Rollback { .. }) => assert!(
+                    rows == before || rows == complete,
+                    "partial rows at stop={stop}: {rows:?}"
+                ),
+                Err(error) => panic!("stop={stop}: {error}"),
+            }
+            assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+            q(&c, "ROLLBACK");
+        }
+    }
+
     fn arm_after_write(connection: &Connection) -> Arc<AtomicBool> {
         let baseline = connection.engine.total_changes();
         let engine = Arc::downgrade(&connection.engine);
