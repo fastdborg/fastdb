@@ -3958,3 +3958,54 @@ fn collection_scalar_membership_binds_outer_left_operand() {
         );
     }
 }
+
+#[test]
+fn collection_scalar_membership_nulls_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "CREATE TABLE marker",
+        "CREATE TABLE baseline(n INTEGER,k INTEGER)",
+        "CREATE TABLE lookup(n INTEGER)",
+        "CREATE TABLE native_marker(n INTEGER)",
+        "INSERT INTO docs {n:1,k:1}",
+        "INSERT INTO docs {n:2,k:2}",
+        "INSERT INTO docs {n:3,k:null}",
+        "INSERT INTO baseline VALUES(1,1),(2,2),(3,NULL)",
+        "INSERT INTO marker {n:7}",
+        "INSERT INTO native_marker VALUES(7)",
+    ] {
+        q(&c, sql);
+    }
+    for setup in [
+        vec!["INSERT INTO links {n:1}", "INSERT INTO lookup VALUES(1)"],
+        vec![
+            "INSERT INTO links {n:null}",
+            "INSERT INTO lookup VALUES(NULL)",
+        ],
+        vec!["DELETE FROM links", "DELETE FROM lookup"],
+    ] {
+        for sql in setup {
+            q(&c, sql);
+        }
+        for negated in [false, true] {
+            let op = if negated { "NOT IN" } else { "IN" };
+            let native = format!("SELECT n,(SELECT m.n FROM native_marker m WHERE d.k {op} (SELECT n FROM lookup)) FROM baseline d ORDER BY n");
+            let expected = q(&c, &native).rows;
+            for source in ["docs d", "(SELECT n,k FROM docs) d"] {
+                let sql = format!("SELECT n,(SELECT m.n FROM marker m WHERE d.k {op} (SELECT n FROM links)) FROM {source} ORDER BY n");
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected,
+                    "{sql}"
+                );
+            }
+        }
+    }
+}
