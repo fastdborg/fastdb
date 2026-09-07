@@ -1289,3 +1289,6 @@ Node migration diagnostic qualification (2026-09-07): a both-client regression v
 
 
 Filtered DISTINCT aggregate qualification (2026-09-07): native differential collection tests cover count/sum/avg DISTINCT with FILTER, numeric equivalents, NULLs, empty filtered groups and HAVING aliases through execute/profile_select. A grouped INSERT SELECT validation failure preserves prior outer work and index integrity; a corrected filter succeeds and explicit rollback restores empty committed contents. All eight grouping integration tests, formatting and focused Clippy pass. This qualifies existing scalar aggregate behavior; broader SQL/type/resource and full V1 gates remain open.
+
+
+Typed aggregate FILTER qualification (2026-09-07): record-literal and record-parameter predicates select the expected aggregate values through execute/profile_select. COUNT and COUNT DISTINCT of record::id skip invalid argument values on excluded rows; including an invalid value rejects, and a valid query can run afterward. All nine grouping integration tests, formatting and focused Clippy pass. A separate local probe found COUNT(array::append(tags,1)) rejects even for an included valid array because aggregate lowering still requires scalar/record index values. Composite aggregate arguments remain an explicit SQL/type gap; this qualification does not close it or full V1.

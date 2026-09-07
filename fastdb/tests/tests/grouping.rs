@@ -414,3 +414,54 @@ fn filtered_distinct_aggregates_match_native_and_validate_grouped_writes() {
     c.check_collection_integrity("totals", Default::default())
         .unwrap();
 }
+
+#[test]
+fn aggregate_filters_preserve_record_arguments_and_skip_excluded_errors() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1,owner:users:one}");
+    q(&c, "INSERT INTO docs {n:2,owner:users:two}");
+    q(&c, "INSERT INTO docs {n:3,owner:7}");
+    for sql in [
+        "SELECT sum(n) FILTER (WHERE owner=users:one) FROM docs",
+        "SELECT count(record::id(owner)) FILTER (WHERE n=1) FROM docs",
+        "SELECT count(DISTINCT record::id(owner)) FILTER (WHERE n=1) FROM docs",
+    ] {
+        assert_eq!(q(&c, sql).rows, vec![vec![Value::Integer(1)]], "{sql}");
+        assert_eq!(
+            c.profile_select(sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            vec![vec![Value::Integer(1)]],
+            "profile {sql}"
+        );
+    }
+    let sql = "SELECT sum(n) FILTER (WHERE owner=$owner) FROM docs";
+    let params = Parameters::from([(
+        "$owner".into(),
+        Value::Record(fastdb::Record {
+            table: "users".into(),
+            key: fastdb::Key::String("two".into()),
+        }),
+    )]);
+    assert_eq!(
+        c.execute(sql, &params).unwrap().rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        c.profile_select(sql, &params).unwrap().result.rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    let invalid = "SELECT count(record::id(owner)) FILTER (WHERE n=3) FROM docs";
+    assert!(c.execute(invalid, &Parameters::new()).is_err());
+    assert_eq!(
+        q(
+            &c,
+            "SELECT count(record::id(owner)) FILTER (WHERE n<3) FROM docs"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}
