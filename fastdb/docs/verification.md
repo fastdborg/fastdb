@@ -1742,3 +1742,6 @@ The complete scoped check passed formatting, Clippy, 379 Rust tests, 44 Node/app
 
 
 Derived-source logical scalar qualification (2026-09-08): expanded the filtered array projection regression to an outer derived SELECT carrying id, n and v. Execute/profile preserve the encoded array, skip excluded invalid values, reject admitted invalid values, and permit execution retry after correcting the filter. The expanded regression, package formatting and focused Clippy pass. Latest combined evidence remains 379 Rust/44 Node tests; broader expression/scope/resource and V1 release gates remain open.
+
+
+Typed-parameter scalar correlation qualification (2026-09-08): a new regression covers source-free scalar queries routed by boolean and record parameters, with direct and derived outer document sources. Boolean filters include/exclude typed record projections; changing a record parameter selects each corresponding outer record. Execute and profile agree, including NULL for excluded scalar rows. The focused regression, package formatting and focused Clippy pass. Latest complete scoped evidence remains 379 Rust/44 Node tests; this additional test has not received a new combined run. Broader scope/resource and full V1 release gates remain open.

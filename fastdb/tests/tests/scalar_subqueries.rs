@@ -3755,3 +3755,42 @@ fn source_free_correlated_filters_skip_invalid_projections() {
         assert_eq!(q(&c, &sql).rows, expected, "{sql}");
     }
 }
+
+#[test]
+fn source_free_typed_parameters_preserve_correlated_records() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {id:docs:a,n:1}");
+    q(&c, "INSERT INTO docs {id:docs:b,n:2}");
+    let records = q(&c, "SELECT id FROM docs ORDER BY n").rows;
+    for source in ["docs d", "(SELECT id,n FROM docs) d"] {
+        for admitted in [false, true] {
+            let params = Parameters::from([("$admit".into(), Value::Boolean(admitted))]);
+            let sql = format!("SELECT (SELECT d.id WHERE $admit) FROM {source} ORDER BY n");
+            let expected = if admitted {
+                records.clone()
+            } else {
+                vec![vec![Value::Null], vec![Value::Null]]
+            };
+            assert_eq!(c.execute(&sql, &params).unwrap().rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &params).unwrap().result.rows,
+                expected,
+                "{sql}"
+            );
+        }
+        for selected in 0..2 {
+            let params = Parameters::from([("$id".into(), records[selected][0].clone())]);
+            let sql = format!("SELECT (SELECT d.id WHERE d.id=$id) FROM {source} ORDER BY n");
+            let mut expected = vec![vec![Value::Null], vec![Value::Null]];
+            expected[selected] = records[selected].clone();
+            assert_eq!(c.execute(&sql, &params).unwrap().rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &params).unwrap().result.rows,
+                expected,
+                "{sql}"
+            );
+        }
+    }
+}
