@@ -833,3 +833,6 @@ The guard also recognizes expression qualifiers and table stars belonging to pro
 
 
 Explicit and implicit FROM aliases of proven CTE sources now receive the same guard-only qualifier treatment. Alias declarations are redacted only with their proven CTE source; reserved/internal aliases remain visible and rejected. Physical-table aliases and nested expression scopes do not inherit this exemption. Original SQL and its engine name resolution are unchanged.
+
+
+Named-window PARTITION BY and ORDER BY expressions now use the current proven CTE-source qualifier set during guard inspection. Nested expression subqueries and schema-qualified references remain guarded. Frame expressions and window/base names are not covered by this redaction; native window/frame support remains governed by the pinned engine.

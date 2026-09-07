@@ -153,6 +153,7 @@ fn native_cte_names_can_shadow_collections_without_hiding_table_access() {
     q(&c, "INSERT INTO docs {id:docs:a,n:9}");
     for sql in [
         "WITH docs AS (SELECT 2 AS n) SELECT n FROM docs",
+        "WITH docs AS (SELECT 2 AS n) SELECT sum(docs.n) OVER w FROM docs WINDOW w AS (PARTITION BY docs.n ORDER BY docs.n)",
         "WITH safe AS (SELECT 2 AS n) SELECT docs.n FROM safe AS docs WHERE docs.n>1 ORDER BY docs.n",
         "WITH safe AS (SELECT 2 AS n) SELECT docs.* FROM safe docs",
         "WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d",
@@ -174,5 +175,22 @@ fn native_cte_names_can_shadow_collections_without_hiding_table_access() {
     assert_eq!(
         q(&c, "SELECT n FROM docs").rows,
         vec![vec![Value::Integer(9)]]
+    );
+}
+
+#[test]
+fn cte_named_window_qualifiers_match_native_window_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    let sql = "WITH docs(n) AS (VALUES(1),(2),(2)) SELECT docs.n,sum(docs.n) OVER w AS total FROM docs WINDOW w AS (PARTITION BY docs.n ORDER BY docs.n) ORDER BY docs.n";
+    let expected = q(&c, &sql.replace("docs", "safe"));
+    assert_eq!(q(&c, sql).rows, expected.rows);
+    assert_eq!(
+        c.profile_select(sql, &Parameters::new())
+            .unwrap()
+            .result
+            .rows,
+        expected.rows
     );
 }

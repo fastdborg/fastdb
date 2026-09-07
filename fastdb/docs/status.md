@@ -894,3 +894,10 @@ Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests 
 ## Installed Node WITH-write smoke (2026-09-07)
 
 The offline installed-package smoke now exercises CTE-driven UPDATE/DELETE in synchronous and worker clients, typed RETURNING, fetched values after update, empty index/data state after delete and rollback to the original int64 value. A collection-named CTE alias also executes through the installed client. The complete smoke passed on Linux x64 / Node 24.19.0 with eight runtime files and a 59,569,700-byte development tarball. Release/platform qualification remains open.
+
+
+## Named-window CTE qualifiers (2026-09-07)
+
+Named-window partition/order expressions now recognize proven CTE qualifiers in guard inspection. A multi-row sum window over a collection-named native CTE agrees with an equivalent ordinary CTE in execute and profile_select. Direct guard tests retain nested physical and schema-qualified window references. This removes a false rejection without changing executed SQL or extending pinned frame/window support. Frame expressions, deeper scopes and same-name writes remain open.
+
+Scoped checks passed formatting, Clippy, 293 Rust tests, thirty-four Node tests and strict TypeScript. Final direct guard checks passed separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

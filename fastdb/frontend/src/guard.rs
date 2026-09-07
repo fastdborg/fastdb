@@ -319,6 +319,7 @@ fn redact_cte_sources(
             columns,
             where_clause,
             group_by,
+            window_clause,
             ..
         } = body
         {
@@ -332,6 +333,14 @@ fn redact_cte_sources(
                         *name = Name::exact(String::new())
                     }
                     _ => {}
+                }
+            }
+            for definition in window_clause {
+                for expr in &mut definition.window.partition_by {
+                    qualifier(expr, &bound)?;
+                }
+                for ordering in &mut definition.window.order_by {
+                    qualifier(&mut ordering.expr, &bound)?;
                 }
             }
             if let Some(expr) = where_clause {
@@ -447,6 +456,8 @@ mod cte_guard_tests {
         .unwrap();
         for sql in [
             "WITH docs AS (SELECT 2 AS n) SELECT * FROM main.docs",
+            "WITH docs AS (SELECT 2 AS n) SELECT sum(docs.n) OVER w FROM docs WINDOW w AS (ORDER BY (SELECT n FROM main.docs))",
+            "WITH docs AS (SELECT 2 AS n) SELECT sum(docs.n) OVER w FROM docs WINDOW w AS (ORDER BY main.docs.n)",
             "WITH safe AS (SELECT 2 AS n) SELECT docs.n FROM main.docs AS docs",
             "WITH safe AS (SELECT 2 AS n) SELECT __fastdb_catalog.n FROM safe AS __fastdb_catalog",
             "WITH safe AS (SELECT 2 AS n) SELECT writable_schema.n FROM safe AS writable_schema",

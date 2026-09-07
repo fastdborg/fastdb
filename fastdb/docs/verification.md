@@ -1174,3 +1174,8 @@ An initial integration assertion incorrectly expected valid EXPLAIN collection l
 ## Installed Node WITH-write qualification — 2026-09-07
 
 `node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-with-writes.log`). The temporary offline consumer tests both clients' WITH UPDATE/DELETE, RETURNING/affected counts, fetch profiles of updated values, empty collection/index integrity after delete, rollback to int64 max and a collection-named CTE alias. Existing installed declarations, cancellation, vector, reopen and addon-load checks also passed. Result: Linux x64, Node 24.19.0, eight runtime files, 59,569,700 packed bytes. No production change; prior 292 Rust / 34 Node scoped evidence remains applicable.
+
+
+## Named-window CTE guard qualification — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-window-check.log`): formatting, Clippy, 293 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. The new multi-row CTE window regression compares execute/profile results to the equivalent native CTE name. Final direct guard checks passed (`/tmp/fastdb-cte-window-guard-final.log`), including nested physical and schema-qualified references in named windows. Only PARTITION BY/ORDER BY qualifier roles are newly recognized; original SQL and pinned frame/window capabilities remain unchanged.
