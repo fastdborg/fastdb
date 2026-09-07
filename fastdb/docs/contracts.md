@@ -669,3 +669,7 @@ Collection INSERT SELECT sources filtered by IN, NOT IN, EXISTS or a scalar-subq
 ## Subquery source cancellation coverage (2026-09-07)
 
 The deterministic source-cancellation matrix now includes IN, NOT IN, EXISTS and scalar aggregate subqueries. Progress-handler interruption after two/four source callback evaluations is tested for reads and collection INSERT SELECT in autocommit and explicit transactions. Checks require FDB_CANCELLED, the expected observed transaction state, preserved prior work, empty audited insert targets, unchanged audited sources and exact retry results. These tests exercise cooperative cancellation during source evaluation; they do not establish per-operation Node cancellation, hard deadlines or all engine-error transaction dispositions.
+
+## Native-target subquery source cancellation (2026-09-07)
+
+Native-table INSERT SELECT cancellation during IN, NOT IN, EXISTS and scalar aggregate source evaluation now has direct differential coverage against the pinned native SQL route. At two callback boundaries, in autocommit and explicit transactions, both routes must report FDB_CANCELLED, leave an empty native target, expose matching transaction/prior-work state and permit exact retry. Tests compare the observed native disposition rather than assuming every interrupted engine write retains its outer transaction. This covers source evaluation before target rows are produced; interruption after partial native writes remains a separate qualification area.

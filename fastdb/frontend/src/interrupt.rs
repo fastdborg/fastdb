@@ -356,6 +356,68 @@ mod tests {
     }
 
     #[test]
+    fn native_target_subquery_cancellation_matches_native_transaction_disposition() {
+        use std::sync::atomic::AtomicUsize;
+        use turso_ext::{scalar, ResultCode, Value as ExtValue};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        #[scalar(name = "native_subquery_tick")]
+        fn native_subquery_tick(args: &[ExtValue]) -> ExtValue {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            ExtValue::from_integer(args[0].to_integer().expect("integer source"))
+        }
+        for predicate in [
+            "value IN (SELECT native_subquery_tick(value)+native_subquery_tick(0) FROM docs)",
+            "value NOT IN (SELECT native_subquery_tick(value)+native_subquery_tick(10) FROM docs)",
+            "EXISTS (SELECT value FROM docs WHERE native_subquery_tick(value)+native_subquery_tick(0)=3)",
+            "value <= (SELECT max(native_subquery_tick(value)+native_subquery_tick(0)) FROM docs)",
+        ] {
+            for after in [2, 4] {
+                for outer in [false, true] {
+                    let mut observed = Vec::new();
+                    for logical in [false, true] {
+                        let db = Database::open(":memory:").unwrap();
+                        let c = db.connect().unwrap();
+                        unsafe {
+                            let api = c.engine._build_turso_ext();
+                            let code = (api.register_scalar_function)(api.ctx, c"native_subquery_tick".as_ptr(), 1, false, 0, native_subquery_tick, None, None);
+                            c.engine._free_extension_ctx(api);
+                            assert_eq!(code, ResultCode::OK);
+                        }
+                        q(&c, "CREATE TABLE docs");
+                        q(&c, "INSERT INTO docs(value) VALUES (1),(2),(3)");
+                        q(&c, "CREATE TABLE source_native(value INTEGER)");
+                        q(&c, "INSERT INTO source_native VALUES (1),(2),(3)");
+                        q(&c, "CREATE TABLE target(value INTEGER UNIQUE)");
+                        q(&c, "CREATE TABLE prior(value INTEGER)");
+                        if outer { q(&c, "BEGIN"); q(&c, "INSERT INTO prior VALUES (99)"); }
+                        let sql = format!("INSERT INTO target SELECT value FROM docs WHERE {predicate}");
+                        let sql = if logical { sql } else { sql.replace("FROM docs", "FROM source_native") };
+                        CALLS.store(0, Ordering::SeqCst);
+                        let fired = Arc::new(AtomicBool::new(false));
+                        let flag = fired.clone();
+                        c.engine.set_progress_handler(1, Some(Box::new(move || CALLS.load(Ordering::SeqCst) >= after && !flag.swap(true, Ordering::SeqCst))));
+                        let report = c.execute_report(&sql, &Parameters::new());
+                        c.engine.set_progress_handler(0, None);
+                        assert!(fired.load(Ordering::SeqCst), "{sql}");
+                        assert_eq!(CALLS.load(Ordering::SeqCst), after);
+                        assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED", "{sql}");
+                        assert!(q(&c, "SELECT * FROM target").rows.is_empty());
+                        observed.push((report.transaction_after, q(&c, "SELECT * FROM prior").rows));
+                        assert_eq!(c.check_collection_integrity("docs", Default::default()).unwrap().documents, 3);
+                        assert_eq!(q(&c, &sql).affected, 3);
+                        assert_eq!(q(&c, "SELECT value FROM target ORDER BY value").rows, vec![vec![Value::Integer(1)], vec![Value::Integer(2)], vec![Value::Integer(3)]]);
+                        if c.transaction_state() == crate::TransactionState::Active {
+                            q(&c, "ROLLBACK");
+                            assert!(q(&c, "SELECT * FROM target").rows.is_empty());
+                        }
+                    }
+                    assert_eq!(observed[0], observed[1], "{predicate}, after={after}, outer={outer}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn interrupted_compound_and_subquery_sources_discard_rows_and_allow_exact_retry() {
         use std::sync::atomic::AtomicUsize;
         use turso_ext::{scalar, ResultCode, Value as ExtValue};
