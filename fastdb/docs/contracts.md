@@ -922,3 +922,7 @@ Both-client regressions cover empty reads, autocommit INSERT RETURNING with two 
 The Node package now exports FastDBError (Error with a string code and optional transaction observations) and isFastDBError(unknown), a runtime predicate and TypeScript type guard. It recognizes Error instances with FDB-prefixed identifier codes and validates any before/after observations as active/autocommit. Plain objects, uncoded errors and malformed transaction observations are rejected. The guard supports errors without observations, including FDB_CLOSED.
 
 Both-client runtime tests cover execution, cardinality and closed-handle errors; strict TypeScript checks narrowing from unknown and optional transaction access. All 40 Node/application tests and strict TypeScript pass. This improves public error handling without making every constructor/argument error a database error; broader release qualification and full V1 remain open.
+
+## Initial inner-collection correlation (2026-09-07)
+
+Simple expression subqueries reading a collection now resolve qualified outer collection fields before inner typed-expression lowering. Record IDs retain their logical identity instead of comparing an inner record against the outer storage string. The generated outer accessor is already encoded and must not be packed again. Local aliases shadow outer aliases. This pass covers direct table sources without a local WITH or compound query; deeper scopes, derived outer sources and broader correlation qualification remain open.

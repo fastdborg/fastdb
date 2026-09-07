@@ -1615,3 +1615,10 @@ CLI transfer reporting-failure regression (2026-09-07): Linux /dev/full coverage
 
 
 CLI help output handling (2026-09-07): --help and -h now use fallible stdout writes and explicit flush, removing the last print macro from CLI source. A rebuilt CLI passes normal-output and Linux /dev/full probes for both aliases, returning an error rather than panicking when output fails. Formatting and CLI all-target Clippy pass. Broader platform and V1 qualification remain open.
+
+
+## Initial inner-collection correlation (2026-09-07)
+
+Qualified outer collection fields now lower before a simple inner collection expression subquery, retaining encoded values across the recursive lowering boundary. This fixes silent record-identity non-matches in EXISTS and scalar COUNT, and missing outer-field bindings in IN predicates. Source lookup is lazy; local aliases shadow outer aliases. Regression coverage includes execute/profile, scalar outer record/array/object/nested projections, numeric predicates, multirow UPDATE, managed-index integrity and rollback. A former unsupported-query assertion now verifies matching correlated scalar results.
+
+The complete scoped check passed formatting, Clippy, 355 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. The rebuilt synchronous and worker Node clients also pass the original EXISTS/COUNT/IN probes. The pass is limited to direct table sources without local WITH or compounds; derived outer sources, deeper scopes and broader correlation/type/resource qualification remain open. Full V1 is not complete. No upstream files changed.

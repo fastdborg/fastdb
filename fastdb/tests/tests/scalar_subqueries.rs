@@ -59,12 +59,17 @@ fn collection_scalar_subqueries_preserve_values_and_empty_nulls() {
         )
         .unwrap();
     assert_eq!(projected.rows, vec![vec![binary]]);
-    assert!(c
-        .execute(
-            "SELECT d.n,(SELECT x.n FROM docs x WHERE x.n=d.n) AS v FROM docs d",
-            &Parameters::new()
+    assert_eq!(
+        q(
+            &c,
+            "SELECT d.n,(SELECT x.n FROM docs x WHERE x.n=d.n) AS v FROM docs d ORDER BY d.n"
         )
-        .is_err());
+        .rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1)],
+            vec![Value::Integer(2), Value::Integer(2)]
+        ]
+    );
     assert!(c
         .execute("SELECT (SELECT n,link FROM docs) AS v", &Parameters::new())
         .is_err());
@@ -2949,4 +2954,106 @@ fn correlated_composite_counts_match_native_presence_and_empty_sources() {
     assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
     c.check_collection_integrity("docs", Default::default())
         .unwrap();
+}
+
+#[test]
+fn inner_collection_correlation_preserves_outer_record_identity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE users",
+        "CREATE TABLE posts",
+        "INSERT INTO users {id:users:a,n:1}",
+        "INSERT INTO users {id:users:b,n:2}",
+        "INSERT INTO posts {owner:users:a,n:3}",
+    ] {
+        q(&c, sql);
+    }
+    for sql in [
+        "SELECT n FROM users u WHERE EXISTS(SELECT 1 FROM posts p WHERE p.owner=u.id)",
+        "SELECT n FROM users u WHERE u.id IN(SELECT p.owner FROM posts p WHERE p.n>u.n)",
+    ] {
+        let expected = vec![vec![Value::Integer(1)]];
+        assert_eq!(q(&c, sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "profile {sql}"
+        );
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n,(SELECT count(*) FROM posts p WHERE p.owner=u.id) FROM users u ORDER BY n"
+        )
+        .rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1)],
+            vec![Value::Integer(2), Value::Integer(0)]
+        ]
+    );
+}
+
+#[test]
+fn inner_collection_correlation_preserves_types_shadowing_and_write_rollback() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1,v:[1],meta:{key:3}}",
+        "INSERT INTO docs {id:docs:b,n:2,v:null,meta:{key:0}}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    for field in ["id", "v", "meta", "meta.key"] {
+        let sql = format!("SELECT (SELECT d.{field} FROM links l WHERE l.owner=d.id) FROM docs d WHERE d.id=docs:a");
+        let expected = q(&c, &format!("SELECT d.{field} FROM docs d WHERE id=docs:a")).rows;
+        assert_eq!(q(&c, &sql).rows, expected, "{field}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected
+        );
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs d WHERE EXISTS(SELECT 1 FROM links l WHERE l.n=d.meta.key)"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n,(SELECT count(*) FROM links d WHERE d.n=3) FROM docs d ORDER BY n"
+        )
+        .rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1)],
+            vec![Value::Integer(2), Value::Integer(1)]
+        ]
+    );
+    let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+    q(&c, "BEGIN");
+    q(
+        &c,
+        "UPDATE docs AS d SET n=n*10+(SELECT count(*) FROM links l WHERE l.owner=d.id)",
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(11)], vec![Value::Integer(20)]]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
 }
