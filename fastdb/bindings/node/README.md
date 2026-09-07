@@ -42,6 +42,20 @@ The current frontend query subset remains in force. Standalone SELECT projection
 
 `migrate(migrations)` accepts the complete ordered history with `{ version: bigint, name: string, sql: string }` entries. It returns `{ alreadyApplied: number, applied: bigint[], transaction }`. The Rust runner's autocommit requirement, exact-source checks, limits and atomic pending-run behavior apply unchanged. The Node client does not read migration directories; application code supplies the scripts.
 
+Migration errors retain `code`, `message` and the runner's transaction observations in both clients. Version and UTF-8 byte-offset context appears in the message; there are currently no separate JavaScript `version` or `offset` error properties.
+
+| Migration failure | Error and interpretation |
+|---|---|
+| Script splitting/tokenization | `FDB_SYNTAX`, with migration version and byte offset within that script; the plan has not begun executing. |
+| Edited or incomplete applied history | `FDB_VALIDATION`; a mismatch message distinguishes the version sequence, name or exact SQL source. Restore the original applied prefix before retrying. |
+| Input or stored-history size limit | `FDB_LIMIT`; inspect the message to identify the rejected limit. |
+| Incompatible ledger schema or invalid stored types | `FDB_STORAGE`; the runner does not repair the ledger. |
+| Pending statement failure | Usually `FDB_MIGRATION`, with version, statement byte offset and underlying error text. The runner attempts to roll back all pending scripts and history together. |
+| Cooperative cancellation | `FDB_CANCELLED`; a pending statement's version and offset remain in its message. Completion can win the abort race. |
+| Rollback failure | `FDB_ROLLBACK`; cleanup did not establish the normal rollback outcome. |
+
+Inspect `error.transaction` and the actual result before retrying. A worker transport failure (`FDB_WORKER`) has no transaction observation and does not establish whether accepted migration work committed. JavaScript argument validation may fail before reaching the runner. Keep applied scripts unchanged, including comments and whitespace; correcting an unrecorded pending script is supported after a confirmed failed run.
+
 `exportDocuments(table, format = 'json')` returns the versioned typed transfer string. `importDocuments(table, input, format = 'json')` returns `{ imported: number, transaction }`. Format is explicitly `json` or `ndjson`; imports target an existing collection and preserve validation, indexes and rollback behavior. These methods materialize strings and use the frontend transfer limits. They do not provide schema backups, streaming or implicit file I/O. Migration/import/export failures use the same code and transaction envelope as execute; parameter validation retains the limitations above; closed-handle operations use `FDB_CLOSED` without transaction observations.
 
 
