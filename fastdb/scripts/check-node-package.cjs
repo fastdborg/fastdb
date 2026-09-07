@@ -49,6 +49,14 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.ok(profile.metrics.btreeSeeks > 0n);
     assert.equal(typeof profile.metrics.indexSteps, 'bigint');
     assert.equal(profile.metrics.rowsWritten, 0n);
+    const fetched = db.profileSelect('SELECT record::fetch($id) AS a,record::fetch($id) AS b', {$id:new Record('docs','saved')});
+    assert.equal(fetched.metrics.fetchBatches,1n);
+    assert(fetched.metrics.fetchRowsRead>0n);
+    assert(fetched.metrics.fetchVmSteps>0n);
+    assert.equal(fetched.result.rows[0][0].value,9223372036854775807n);
+    assert.deepEqual(fetched.result.rows[0][0],fetched.result.rows[0][1]);
+    assert.equal(profile.metrics.fetchBatches,0n);
+
     for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1, () => Vector.sparse32Entries(3, [[0,1],[2,-1]])]) {
       const vector = make([1,0,-1]);
       assert.deepEqual(db.exactlyOne('SELECT $v AS v', {$v: vector})[0], vector);
@@ -96,6 +104,14 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.ok(profile.metrics.btreeSeeks > 0n);
     assert.equal(typeof profile.metrics.indexSteps, 'bigint');
     assert.deepEqual((await worker.profileSelect('SELECT value FROM docs WHERE value=$value', {$value: 7n})).metrics, profile.metrics);
+
+    const fetched = await worker.profileSelect('SELECT record::fetch($id)', {$id:new Record('docs','saved')});
+    assert.equal(fetched.result.rows[0][0].value,7n);
+    assert.equal(fetched.result.transaction.after,'active');
+    assert.equal(fetched.metrics.fetchBatches,1n);
+    assert(fetched.metrics.fetchRowsRead>0n);
+    assert(fetched.metrics.fetchVmSteps>0n);
+    assert.equal(profile.metrics.fetchBatches,0n);
     await worker.execute('ROLLBACK');
     assert.equal((await worker.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
     assert.equal((await worker.checkCollectionIntegrity('docs')).documents, 1n);
@@ -147,7 +163,7 @@ Vector.bit1([1n]);
 const limits: IntegrityLimits = {maxDocuments: 1n};
 const audit: IntegrityReport = db.checkCollectionIntegrity('docs', limits);
 const profile: ProfiledQuery = db.profileSelect('SELECT 1');
-const counts: bigint[] = [audit.documents, audit.encodedBytes, profile.metrics.vmSteps];
+const counts: bigint[] = [audit.documents, audit.encodedBytes, profile.metrics.vmSteps, profile.metrics.fetchBatches, profile.metrics.fetchRowsRead, profile.metrics.fetchVmSteps];
 // @ts-expect-error lossless limits require bigint
 db.checkCollectionIntegrity('docs', {maxDocuments: 1});
 void counts;
@@ -170,7 +186,7 @@ async function open() {
 
   const audit: IntegrityReport = await db.checkCollectionIntegrity('docs', limits);
   const profile: ProfiledQuery = await db.profileSelect('SELECT 1');
-  const counts: bigint[] = [audit.indexEntries, profile.metrics.rowsRead];
+  const counts: bigint[] = [audit.indexEntries, profile.metrics.rowsRead, profile.metrics.fetchBatches, profile.metrics.fetchRowsRead, profile.metrics.fetchVmSteps];
   void counts;
   await db.close();
 }

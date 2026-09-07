@@ -841,3 +841,8 @@ Scoped checks passed formatting, Clippy, 286 Rust tests, thirty-two Node tests a
 profile_select now accepts supported forward-fetch SELECT projections. Lowering, the outer statement and target reads share an atomic snapshot scope. Existing primary-statement counters retain their scope; new fetch_batches, fetch_rows_read and fetch_vm_steps separately attribute target SELECT batches and engine rows/instructions, excluding metadata/savepoint helpers and decoding. Node exposes the additions as bigint fetchBatches/fetchRowsRead/fetchVmSteps; CLI serialization includes the Rust names. No partial counters are returned after failures. Tests cover 130 distinct keys in each of collection/native targets, duplicate projections sharing four target batches, repeat-call stability, zero target counters for ordinary/missing-target queries, prior snapshots, budget failure and both Node clients. Detailed target plans and complete helper/time/memory accounting remain open.
 
 Verification passed formatting, scoped Clippy, 287 Rust tests, thirty-three Node tests and strict TypeScript. A CLI fetch profile smoke passed. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Installed Node fetch profiling smoke (2026-09-07)
+
+The offline Node package consumer now checks installed sync/worker fetch profiles: deduplicated target counters, bigint transport, lossless fetched int64 values and active transaction observations. Installed TypeScript declarations expose all three target counters as bigint. The complete package smoke passed on Linux x64 / Node 24.19.0 with eight runtime files and a 59,564,850-byte development tarball. This does not establish release prebuild or additional-platform support.

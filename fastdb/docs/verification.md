@@ -1115,3 +1115,8 @@ Forward SELECT profiles now use one atomic snapshot scope and expose separate ta
 - The initial development run hit the prior explicit profiling-FETCH rejection; it was removed with the snapshot scope before final Rust verification.
 
 Counters exclude catalog/schema/savepoint helpers, decoding and transport. They count physical engine work, not unique logical documents. Detailed target plans, complete helper accounting and broader profiling/cancellation/platform qualification remain open.
+
+
+## Installed Node target-counter qualification — 2026-09-07
+
+`node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-fetch-profile.log`). The tarball was installed offline into a temporary consumer; sync and worker fetch profiles verified bigint target counters and fetched values, and strict TypeScript checked the installed declarations. Existing reopen, vector, cancellation and addon-load failure probes also passed. Report: Linux x64, Node 24.19.0, eight runtime files, 59,564,850 packed bytes. Temporary files were removed by the harness. No production changes; prior 287 Rust / 33 Node scoped evidence remains applicable.
