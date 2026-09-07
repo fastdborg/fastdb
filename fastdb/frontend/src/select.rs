@@ -507,19 +507,43 @@ impl Scope {
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
                 if let SubqueryAffinity::NativeMembership(collation) = column {
                     let mut value = *lhs.clone();
-                    let is_column = membership_column(&value);
+                    let is_column = membership_column(&value)
+                        || matches!(order_base(&value), Expr::Cast { .. });
                     if !self.comparison_key(&mut value)? {
                         self.lower(&mut value)?;
                         **lhs = value;
                         return Ok(());
                     }
-                    let key = if is_column { "k" } else { "+k" };
+                    let key = match order_base(lhs) {
+                        Expr::Cast { type_name, .. } => Expr::Cast {
+                            expr: Box::new(expression("k")?),
+                            type_name: type_name.clone(),
+                        }
+                        .to_string(),
+                        _ => if is_column { "k" } else { "+k" }.to_owned(),
+                    };
+                    let mut native_value = "v".to_owned();
+                    if let Expr::Subquery(inner) = query {
+                        if let OneSelect::Select { columns, .. } = &inner.body.select {
+                            if let [ResultColumn::Expr(value, _)] = columns.as_slice() {
+                                native_value = match order_base(value) {
+                                    Expr::Cast { type_name, .. } => Expr::Cast {
+                                        expr: Box::new(expression("v")?),
+                                        type_name: type_name.clone(),
+                                    }
+                                    .to_string(),
+                                    _ if membership_column(value) => "v".to_owned(),
+                                    _ => "+v".to_owned(),
+                                };
+                            }
+                        }
+                    }
                     let collation = outer_collation(lhs).unwrap_or(collation);
                     let key = format!("({key} COLLATE {})", quote(collation));
                     let negate = if *not { "NOT " } else { "" };
                     // Preserve native RHS column affinity. Encode only its BLOB
                     // branch to distinguish native bytes from logical record keys.
-                    *expr = expression(&format!("(WITH __fastdb_native_members(v) AS MATERIALIZED {query}, __fastdb_member_lhs(k) AS MATERIALIZED (SELECT {value}), __fastdb_member_matches(m) AS MATERIALIZED (SELECT CASE WHEN typeof(v)='blob' THEN {key}=__fastdb_unwrap(__fastdb_pack(v)) ELSE {key}=v END FROM __fastdb_native_members CROSS JOIN __fastdb_member_lhs) SELECT {negate}(CASE WHEN count(*)=0 THEN 0 WHEN max(m)=1 THEN 1 WHEN count(m)<count(*) THEN NULL ELSE 0 END) FROM __fastdb_member_matches)"))?;
+                    *expr = expression(&format!("(WITH __fastdb_native_members(v) AS MATERIALIZED {query}, __fastdb_member_lhs(k) AS MATERIALIZED (SELECT {value}), __fastdb_member_matches(m) AS MATERIALIZED (SELECT CASE WHEN typeof(v)='blob' THEN {key}=__fastdb_unwrap(__fastdb_pack(v)) ELSE {key}={native_value} END FROM __fastdb_native_members CROSS JOIN __fastdb_member_lhs) SELECT {negate}(CASE WHEN count(*)=0 THEN 0 WHEN max(m)=1 THEN 1 WHEN count(m)<count(*) THEN NULL ELSE 0 END) FROM __fastdb_member_matches)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();

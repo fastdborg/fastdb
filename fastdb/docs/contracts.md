@@ -797,3 +797,6 @@ Rust migrate_cancellable and async Node migrate's optional signal preserve the r
 ## Initial native membership lowering
 
 Logical queries can use native IN/NOT IN sources in the covered scalar subset. Native source affinity/collation are retained, empty membership is false (true for NOT IN), a match takes precedence over NULL entries, and an unmatched NULL-bearing set produces NULL. Native BLOBs compare as binary values and do not impersonate typed records. Missing parameters fail before collection writes. Sources/comparisons currently materialize; volatile evaluation and broader planner/resource qualification remain open.
+
+
+Native membership's tested operand wrappers now include parentheses, unary plus, explicit BINARY/NOCASE/RTRIM collation and CAST TEXT. Lowering preserves cast affinity and keeps computed RHS expressions without column affinity after materialization. This is essential when a TEXT cast on the left compares against a numeric expression on the right. Broader expression metadata remains unqualified.

@@ -700,3 +700,10 @@ Initial native IN/NOT IN subqueries now lower inside collection/logical queries.
 Differential coverage includes INTEGER, TEXT, NOCASE/RTRIM TEXT and BLOB declarations, direct/unary-plus/CAST RHS projections, NULL-containing/non-NULL/empty sources and both membership operators. Additional checks cover native bytes shaped like an encoded record, missing parameters and unique-failure rollback/retry for collection INSERT SELECT. Broader LHS wrappers, correlation/CTE metadata, volatile evaluation counts, cancellation and planner/performance qualification remain open. This initial materializing implementation is not a performance certification. No upstream source changes.
 
 Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checking. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Native membership operand affinity (2026-09-07)
+
+The native membership lowering now restores CAST affinity on both operands and removes the artificial column affinity introduced when materializing a computed RHS. The expanded differential matrix covers seven LHS forms (field, unary plus, parentheses, three explicit collations and CAST TEXT), eight scalar/NULL/trailing-space values, five RHS declarations, three RHS projections, three source predicates and IN/NOT IN. This closes a reproduced CAST TEXT versus unary-plus RHS coercion mismatch. Broader computed/CTE/correlated metadata, volatile evaluation and planner/resource qualification remain open.
+
+Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checks. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

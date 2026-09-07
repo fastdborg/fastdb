@@ -1099,18 +1099,31 @@ fn native_membership_sources_match_scalar_affinity_and_null_semantics() {
         q(&c, "CREATE TABLE lhs(n BLOB)");
         q(
             &c,
-            "INSERT INTO docs(n) VALUES (1),(2),('1'),('a'),('A'),(NULL)",
+            "INSERT INTO docs(n) VALUES (1),(2),('1'),('a'),('A'),('a '),('a  '),(NULL)",
         );
         q(
             &c,
-            "INSERT INTO lhs VALUES (1),(2),('1'),('a'),('A'),(NULL)",
+            "INSERT INTO lhs VALUES (1),(2),('1'),('a'),('A'),('a '),('a  '),(NULL)",
         );
         q(&c, &format!("CREATE TABLE rhs(n {declaration})"));
         q(&c, "INSERT INTO rhs VALUES (1),('a'),(NULL)");
         for projection in ["n", "+n", "CAST(n AS TEXT)"] {
             for predicate in ["1", "n IS NOT NULL", "0"] {
-                for op in ["IN", "NOT IN"] {
-                    let suffix = format!("n {op} (SELECT {projection} FROM rhs WHERE {predicate})");
+                for (op, left) in ["IN", "NOT IN"].into_iter().flat_map(|op| {
+                    [
+                        "n",
+                        "+n",
+                        "(n)",
+                        "n COLLATE BINARY",
+                        "n COLLATE NOCASE",
+                        "n COLLATE RTRIM",
+                        "CAST(n AS TEXT)",
+                    ]
+                    .into_iter()
+                    .map(move |left| (op, left))
+                }) {
+                    let suffix =
+                        format!("{left} {op} (SELECT {projection} FROM rhs WHERE {predicate})");
                     let expected =
                         q(&c, &format!("SELECT n,{suffix} FROM lhs ORDER BY rowid")).rows;
                     let actual = q(&c, &format!("SELECT n,{suffix} FROM docs ORDER BY rowid")).rows;
