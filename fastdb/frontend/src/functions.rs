@@ -1264,6 +1264,18 @@ mod cte_evaluation_tests {
             // Track the pinned LIMIT 0 evaluation difference explicitly: native
             // membership builds its RHS first; the logical wrapper skips it.
             let logical_calls = if limit.is_empty() { expected_calls } else { 0 };
+            for predicate in [
+                "(SELECT d.n IN (SELECT cte_tick() FROM baseline))",
+                "(WITH lhs(k) AS NOT MATERIALIZED (SELECT d.n), members(v) AS MATERIALIZED (SELECT cte_tick() FROM baseline) SELECT CASE WHEN typeof(k)='blob' THEN k IN (SELECT v FROM members) ELSE k IN (SELECT +v FROM members) END FROM lhs)",
+            ] {
+                let native = format!("SELECT d.n FROM (SELECT n FROM baseline) d JOIN (SELECT 1 AS marker) ON {predicate} ORDER BY d.n{limit}");
+                CALLS.store(0, Ordering::SeqCst);
+                c.execute(&format!("EXPLAIN QUERY PLAN {native}"), &params).unwrap();
+                assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+                assert_eq!(c.execute(&native, &params).unwrap().rows, expected);
+                assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls, "{predicate}, {limit}");
+            }
+
             CALLS.store(0, Ordering::SeqCst);
             assert_eq!(c.execute(&query("docs"), &params).unwrap().rows, expected);
             assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls, "{limit}");
