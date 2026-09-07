@@ -791,3 +791,10 @@ Final scoped checks passed formatting, Clippy, 280 Rust tests, thirty-two Node t
 ## Isolated transfer measurements (2026-09-07)
 
 The maintainer bench-transfer.cjs harness now measures JSON/NDJSON import/export in separate Linux processes, records source/addon/harness identities, and validates content aggregates, index integrity and exact round trips. The stored 1,000-document/4,096-byte-text report passed correctness with about 4.3 MB payloads. Single-sample debug timings and similar RSS values do not establish comparative performance or memory guarantees; see benchmarks.md for limits.
+
+
+## Incremental JSON import preflight and replay (2026-09-07)
+
+JSON import now decodes one document at a time during validation and replays the immutable input inside the atomic insert scope. It no longer retains the full portable/document vectors. Envelope field order remains unrestricted; duplicate/unknown/missing fields, invalid versions, trailing input and late invalid entries are rejected before writes. The document-count limit is enforced during sequence decoding. Replay preserves database error codes and rolls back imported rows/indexes while retaining prior outer transaction work. Parsing twice trades CPU for lower retained document memory; this does not establish a total-memory or parsing-latency bound.
+
+Scoped checks passed 282 Rust tests, thirty-two Node tests and strict TypeScript; the added JSON constraint/retry integration regression then passed in the four-test transfer suite, bringing distinct Rust coverage to 283. One trigger-interruption gate remains ignored. Full V1 remains incomplete.

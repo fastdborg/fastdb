@@ -31,6 +31,7 @@ impl Header {
         Ok(())
     }
 }
+#[cfg(test)]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Bundle {
@@ -270,26 +271,104 @@ impl Connection {
                 Ok(count)
             });
         }
-        let bundle: Bundle = serde_json::from_str(input)
-            .map_err(|error| Error::Validation(format!("document transfer: {error}")))?;
-        bundle.header.check()?;
-        if bundle.documents.len() > MAX_DOCUMENTS {
-            return Err(Error::Limit("transfer exceeds 100000 documents".into()));
-        }
-        let documents = bundle
-            .documents
-            .into_iter()
-            .map(transfer_document)
-            .collect::<Result<Vec<Document>>>()?;
+        let count = json_documents(input, |_| Ok(()))?;
         self.atomic(|| {
             self.catalog(table)?;
-            let count = documents.len();
-            for document in documents {
-                self.insert(table, document)?;
-            }
+            json_documents(input, |document| self.insert(table, document).map(|_| ()))?;
             Ok(count)
         })
     }
+}
+
+// Deserialize the envelope and document sequence without retaining the sequence.
+// The first pass has a no-op callback; only a fully validated input is replayed
+// with a write callback. Envelope field order remains unrestricted.
+fn json_documents(input: &str, mut visit: impl FnMut(Document) -> Result<()>) -> Result<usize> {
+    use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
+    struct Documents<'a, F>(&'a mut F);
+    impl<'de, F: FnMut(Portable) -> std::result::Result<(), String>> DeserializeSeed<'de>
+        for Documents<'_, F>
+    {
+        type Value = ();
+        fn deserialize<D: serde::Deserializer<'de>>(
+            self,
+            de: D,
+        ) -> std::result::Result<(), D::Error> {
+            de.deserialize_seq(self)
+        }
+    }
+    impl<'de, F: FnMut(Portable) -> std::result::Result<(), String>> Visitor<'de> for Documents<'_, F> {
+        type Value = ();
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a document array")
+        }
+        fn visit_seq<S: SeqAccess<'de>>(self, mut seq: S) -> std::result::Result<(), S::Error> {
+            while let Some(document) = seq.next_element::<Portable>()? {
+                (self.0)(document).map_err(S::Error::custom)?;
+            }
+            Ok(())
+        }
+    }
+    struct Envelope<'a, F>(&'a mut F);
+    impl<'de, F: FnMut(Portable) -> std::result::Result<(), String>> Visitor<'de> for Envelope<'_, F> {
+        type Value = Header;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a document transfer envelope")
+        }
+        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> std::result::Result<Header, M::Error> {
+            let mut header = None;
+            let mut documents = false;
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "header" => {
+                        if header.is_some() {
+                            return Err(M::Error::duplicate_field("header"));
+                        }
+                        header = Some(map.next_value::<Header>()?);
+                    }
+                    "documents" => {
+                        if documents {
+                            return Err(M::Error::duplicate_field("documents"));
+                        }
+                        documents = true;
+                        map.next_value_seed(Documents(&mut *self.0))?;
+                    }
+                    _ => return Err(M::Error::unknown_field(&key, &["header", "documents"])),
+                }
+            }
+            if !documents {
+                return Err(M::Error::missing_field("documents"));
+            }
+            header.ok_or_else(|| M::Error::missing_field("header"))
+        }
+    }
+    let mut count = 0;
+    let mut failure = None;
+    let mut consume = |portable| {
+        let result = (|| {
+            if count >= MAX_DOCUMENTS {
+                return Err(Error::Limit("transfer exceeds 100000 documents".into()));
+            }
+            visit(transfer_document(portable)?)?;
+            count += 1;
+            Ok(())
+        })();
+        result.map_err(|error| {
+            let message = error.to_string();
+            failure = Some(error);
+            message
+        })
+    };
+    let mut deserializer = serde_json::Deserializer::from_str(input);
+    let parsed = serde::Deserializer::deserialize_map(&mut deserializer, Envelope(&mut consume))
+        .and_then(|header| deserializer.end().map(|()| header));
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    parsed
+        .map_err(|error| Error::Validation(format!("document transfer: {error}")))?
+        .check()?;
+    Ok(count)
 }
 
 fn transfer_document(portable: Portable) -> Result<Document> {
@@ -379,6 +458,77 @@ impl Value {
 #[cfg(test)]
 mod export_tests {
     use super::*;
+    #[test]
+    fn json_preflight_checks_late_envelope_errors_without_writes() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let params = crate::Parameters::new();
+        c.execute("CREATE TABLE docs", &params).unwrap();
+        c.execute("BEGIN", &params).unwrap();
+        c.execute("INSERT INTO docs {id:docs:prior,n:9}", &params)
+            .unwrap();
+        let header = serde_json::to_string(&Header::new()).unwrap();
+        let document = r#"{"type":"Object","value":{"id":{"type":"Record","value":{"table":"docs","key":{"type":"String","value":"new"}}}}}"#;
+        let prefix = format!("{{\"documents\":[{document}]");
+        let valid = format!("{prefix},\"header\":{header}}}");
+        let before = c.engine.total_changes();
+        for input in [
+            format!("{prefix}}}"),
+            format!("{prefix},\"header\":{{\"format\":\"fastdb.documents\",\"version\":2}}}}"),
+            format!("{prefix},\"header\":{header},\"header\":{header}}}"),
+            format!("{prefix},\"header\":{header},\"documents\":[]}}"),
+            format!("{prefix},\"header\":{header},\"unknown\":0}}"),
+            format!("{valid} trailing"),
+            format!("{{\"header\":{header},\"documents\":[{document},{{\"type\":\"Integer\",\"value\":\"1\"}}]}}"),
+            format!("{{\"header\":{header},\"documents\":[{document},invalid]}}"),
+        ] {
+            assert_eq!(c.import_documents("docs", &input, TransferFormat::Json).unwrap_err().code(), "FDB_VALIDATION", "{input}");
+            assert_eq!(c.engine.total_changes(), before);
+            assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+        }
+        assert_eq!(
+            c.import_documents("docs", &valid, TransferFormat::Json)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            2
+        );
+        c.execute("ROLLBACK", &params).unwrap();
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            0
+        );
+    }
+
+    #[test]
+    fn json_document_count_is_bounded_during_deserialization() {
+        let header = serde_json::to_string(&Header::new()).unwrap();
+        let document = r#"{"type":"Object","value":{}}"#;
+        let documents = std::iter::repeat_n(document, MAX_DOCUMENTS)
+            .collect::<Vec<_>>()
+            .join(",");
+        let exact = format!("{{\"header\":{header},\"documents\":[{documents}]}}");
+        assert_eq!(json_documents(&exact, |_| Ok(())).unwrap(), MAX_DOCUMENTS);
+        let excess = format!("{{\"header\":{header},\"documents\":[{documents},{document}]}}");
+        let mut visited = 0;
+        assert_eq!(
+            json_documents(&excess, |_| {
+                visited += 1;
+                Ok(())
+            })
+            .unwrap_err()
+            .code(),
+            "FDB_LIMIT"
+        );
+        assert_eq!(visited, MAX_DOCUMENTS);
+    }
+
     #[test]
     fn ndjson_preflight_rejects_late_invalid_entries_before_writes() {
         let db = crate::Database::open(":memory:").unwrap();

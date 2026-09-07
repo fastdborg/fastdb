@@ -1065,3 +1065,12 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 280 Rust tests, thirty
 The new bench-transfer.cjs passed Node syntax checking and a complete default run on Linux x64/Node 24.19.0. Separate JSON/NDJSON child processes imported/exported 1,000 indexed documents with 4,096 ASCII text bytes each. Counts, numeric sums, text lengths, audit counts and export/import/export identity passed. Measurements precede correctness work, and source/addon/harness hashes are stored in benchmark-results/2026-09-07-linux-dev-transfer-1000.json. See benchmarks.md for cumulative peak-RSS and single-run limitations.
 
 No production code changed; the scoped baseline remains 280 Rust tests and thirty-two Node tests with one known ignored trigger gate. No before-change binary comparison, release sizing, other platforms or full V1 completion is claimed.
+
+
+## JSON import preflight/replay — 2026-09-07
+
+The JSON envelope and document array now use serde visitors to validate and replay without retaining all documents. New unit tests cover late envelope/document failures with engine total_changes unchanged, reversed field order, exact 100,000-document acceptance and excess rejection. A real-engine integration regression checks that replay preserves FDB_CONSTRAINT, earlier outer work and index integrity, permits corrected retry and respects outer rollback.
+
+- `fastdb/scripts/check.sh`: passed; log `/tmp/fastdb-json-replay-check.log`; 282 Rust passed, one ignored; 32 Node passed; strict TypeScript, formatting and scoped Clippy passed.
+- The subsequently added integration test passed with `cargo test --locked -p fastdb-tests --test transfer`: four passed (`/tmp/fastdb-json-replay-integration.log`). Distinct current Rust coverage is 283. Final formatting and test-package Clippy were rerun for that addition.
+- Prior transfer benchmark report predates this change and does not measure its performance. The complete input, current document and engine allocations remain outside a total-memory guarantee.

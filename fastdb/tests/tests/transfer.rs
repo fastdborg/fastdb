@@ -76,3 +76,48 @@ fn ambiguous_fields_and_noncanonical_integers_are_rejected() {
     }
     assert!(q(&c, "SELECT * FROM docs").rows.is_empty());
 }
+
+#[test]
+fn json_replay_preserves_constraint_errors_and_outer_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {id:docs:a,name:'same'}");
+    q(&c, "INSERT INTO docs {id:docs:b,name:'same'}");
+    let payload = c.export_documents("docs", TransferFormat::Json).unwrap();
+    q(&c, "DELETE FROM docs");
+    q(&c, "CREATE UNIQUE INDEX names ON docs(name)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {id:docs:prior,name:'prior'}");
+    assert_eq!(
+        c.import_documents("docs", &payload, TransferFormat::Json)
+            .unwrap_err()
+            .code(),
+        "FDB_CONSTRAINT"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        1
+    );
+    assert!(c
+        .lookup_index("docs", "names", &Value::String("same".into()))
+        .unwrap()
+        .is_empty());
+    let retry = payload.replacen("same", "different", 1);
+    assert_eq!(
+        c.import_documents("docs", &retry, TransferFormat::Json)
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        3
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM docs").rows.is_empty());
+}
