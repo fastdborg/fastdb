@@ -528,8 +528,7 @@ impl Connection {
         lower_mode(&mut expr, None, &mut bindings, FieldBinding::Sql)?;
         // Preparation validates supported function signatures even on an empty
         // collection. It never executes an expression or reads a table.
-        self.engine
-            .prepare(format!("SELECT CASE WHEN ({expr}) THEN 1 ELSE 0 END"))
+        self.prepare(format!("SELECT CASE WHEN ({expr}) THEN 1 ELSE 0 END"))
             .map_err(|e| invalid(format!("invalid CHECK: {e}")))?;
         Ok(())
     }
@@ -561,9 +560,8 @@ impl Connection {
                 let mut expr = parse_check(sql)?;
                 let mut bindings = Vec::new();
                 lower_mode(&mut expr, Some(doc), &mut bindings, FieldBinding::Sql)?;
-                let mut statement = self
-                    .engine
-                    .prepare(format!("SELECT CASE WHEN ({expr}) THEN 1 ELSE 0 END"))?;
+                let mut statement =
+                    self.prepare(format!("SELECT CASE WHEN ({expr}) THEN 1 ELSE 0 END"))?;
                 for (i, value) in bindings.into_iter().enumerate() {
                     statement
                         .bind_at(NonZeroUsize::new(i + 1).expect("one-based binding"), value)?;

@@ -861,6 +861,9 @@ fn unsupported(feature: &str) -> Error {
     Error::Unsupported(format!("{feature} is not implemented for collections"))
 }
 pub(crate) fn parsed(sql: &str) -> Result<Cmd> {
+    crate::parser_stack(|| parsed_inner(sql))
+}
+fn parsed_inner(sql: &str) -> Result<Cmd> {
     let mut parser = Parser::new(sql.as_bytes());
     let cmd = parser
         .next_cmd()
@@ -1555,6 +1558,9 @@ impl Connection {
     /// Catalog/lowering queries and Rust decoding are excluded. FETCH and
     /// non-SELECT statements are rejected; errors do not return partial metrics.
     pub fn profile_select(&self, sql: &str, params: &Parameters) -> Result<crate::ProfiledQuery> {
+        crate::parser_stack(|| self.profile_select_inner(sql, params))
+    }
+    fn profile_select_inner(&self, sql: &str, params: &Parameters) -> Result<crate::ProfiledQuery> {
         let fastql_parser::Statement::Sql(sql) = fastql_parser::parse(sql)? else {
             return Err(Error::Unsupported(
                 "profiling requires one SQL SELECT".into(),
@@ -1847,10 +1853,7 @@ impl Connection {
                         recursive: false,
                         ctes: with.ctes[..=index].to_vec(),
                     });
-                    let statement = match self
-                        .engine
-                        .prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())
-                    {
+                    let statement = match self.prepare(Cmd::Stmt(Stmt::Select(probe)).to_string()) {
                         Ok(s) => s,
                         Err(turso_core::LimboError::ParseError(_)) => return Ok(None),
                         Err(error) => return Err(error.into()),
@@ -2395,7 +2398,7 @@ impl Connection {
             native_insert,
         } = plan;
         let lowered = cmd.to_string();
-        let mut statement = self.engine.prepare(&lowered)?;
+        let mut statement = self.prepare(&lowered)?;
         for (name, value) in params {
             let Some(index) = crate::bind_index(&statement, name) else {
                 if ignore_unused || consumed.contains(name) {
@@ -2591,9 +2594,7 @@ fn expand_stars(
                 unreachable!()
             };
             from.select = Box::new(source.table.clone());
-            let statement = connection
-                .engine
-                .prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())?;
+            let statement = connection.prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())?;
             for i in 0..statement.num_columns() {
                 let name = statement.get_column_name(i).into_owned();
                 expanded.push(ResultColumn::Expr(

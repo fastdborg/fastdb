@@ -141,7 +141,7 @@ impl Connection {
                 "this scalar operation requires SQL scalar values".into(),
             ));
         }
-        let mut statement = self.engine.prepare(format!("SELECT {sql}"))?;
+        let mut statement = self.prepare(format!("SELECT {sql}"))?;
         for (i, value) in values.iter().enumerate() {
             statement.bind_at(
                 NonZeroUsize::new(i + 1).expect("one-based binding"),

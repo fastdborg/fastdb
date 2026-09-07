@@ -36,3 +36,9 @@ Raw reports: [1,000 documents](benchmark-results/2026-09-07-linux-dev-1000.json)
 The [instrumented report](benchmark-results/2026-09-07-linux-dev-profile-1000.json) records three samples per workload using the profiling implementation. All three samples had identical engine counters. The unindexed filter read 1,000 physical rows with 999 fullscan steps; the indexed filter read 20 physical rows with zero fullscan steps and 31 B-tree seeks. Exact-vector top-10 read 1,000 rows with 999 fullscan steps and one sort. Physical rows include index/table operations and must not be equated with returned documents.
 
 The original 100,000-document artifact has not been rerun with counters. Its null counters remain unmeasured. The instrumented smoke validates reporting and scan reduction, not the outstanding large-scale release qualification.
+
+## Parser stack protection smoke
+
+The [parser-stack report](benchmark-results/2026-09-07-linux-dev-parser-stack-1000.json) measures the final same-thread stack guards with three samples per workload and 1,000 documents. Median CLI round trips were 57.4 ms unindexed, 4.27 ms indexed and 304.0 ms exact-vector top-10. The result and plan assertions passed, and scan counters retained the expected 1,000 versus 20 physical rows for unindexed/indexed filters.
+
+Public execution/profiling/audit guards allow internal parsing and execution to reuse an auxiliary stack. An intermediate version with guards only on internal calls measured 84.0/6.16/316.8 ms in a separate small run; these few samples do not isolate overhead or establish a performance trend. The retained report is the final version, run after other validation processes completed. Full representative, optimized, large-scale and platform benchmarking remains open.

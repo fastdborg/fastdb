@@ -245,3 +245,51 @@ fn oversized_lexer_inputs_fail_before_mutation_and_preserve_active_work() {
         .rows
         .is_empty());
 }
+
+#[test]
+fn recursive_sql_returns_depth_errors_on_a_small_caller_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            q(&c, "CREATE TABLE docs");
+            q(&c, "BEGIN");
+            q(&c, "INSERT INTO docs {v:1}");
+            for expr in [
+                format!("{}1", "NOT ".repeat(2000)),
+                format!(
+                    "{}1{}",
+                    "CASE WHEN 1 THEN ".repeat(200),
+                    " ELSE 0 END".repeat(200)
+                ),
+            ] {
+                for suffix in ["", " FROM docs"] {
+                    let report =
+                        c.execute_report(&format!("SELECT {expr}{suffix}"), &Parameters::new());
+                    let error = report.result.unwrap_err();
+                    if suffix.is_empty() {
+                        assert!(error.to_string().contains("maximum depth 100"));
+                    } else {
+                        assert_eq!(error.code(), "FDB_UNSUPPORTED");
+                    }
+                    assert!(c
+                        .profile_select(&format!("SELECT {expr}{suffix}"), &Parameters::new())
+                        .unwrap_err()
+                        .to_string()
+                        .contains("maximum depth 100"));
+                    assert_eq!(report.transaction_after, State::Active);
+                }
+            }
+            assert_eq!(
+                c.execute("SELECT v FROM docs", &Parameters::new())
+                    .unwrap()
+                    .rows,
+                vec![vec![Value::Integer(1)]]
+            );
+            q(&c, "ROLLBACK");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

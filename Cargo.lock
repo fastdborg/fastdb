@@ -1973,6 +1973,7 @@ dependencies = [
  "rquickjs",
  "serde",
  "serde_json",
+ "stacker",
  "thiserror 2.0.16",
  "turso_core",
  "turso_ext",

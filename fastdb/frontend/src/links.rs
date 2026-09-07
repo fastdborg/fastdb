@@ -130,7 +130,7 @@ impl Connection {
                             quote(&key_name),
                             if integer { "integer" } else { "text" }
                         );
-                        let mut statement = self.engine.prepare(sql)?;
+                        let mut statement = self.prepare(sql)?;
                         for (i, (_, record)) in chunk.iter().enumerate() {
                             let value = match &record.key {
                                 Key::Integer(i) => crate::scalar(&Value::Integer(*i))?,

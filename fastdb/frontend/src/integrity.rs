@@ -37,6 +37,13 @@ impl Connection {
         table: &str,
         limits: IntegrityLimits,
     ) -> Result<IntegrityReport> {
+        crate::parser_stack(|| self.check_collection_integrity_inner(table, limits))
+    }
+    fn check_collection_integrity_inner(
+        &self,
+        table: &str,
+        limits: IntegrityLimits,
+    ) -> Result<IntegrityReport> {
         self.atomic(|| {
             self.validate_storage_schema()?;
             let c = self.catalog(table)?;
@@ -44,79 +51,80 @@ impl Connection {
                 indexes: c.indexes.len() as u64,
                 ..Default::default()
             };
-            let mut statement = self
-                .engine
-                .prepare(format!("SELECT id,doc FROM {}", quote(&c.storage)))?;
+            let mut statement =
+                self.prepare(format!("SELECT id,doc FROM {}", quote(&c.storage)))?;
             let mut failure = None;
-            let execution = statement.run_with_row_callback(|row| {
-                let check = (|| -> Result<()> {
-                    let mut values = row.get_values();
-                    let (Some(EngineValue::Blob(id)), Some(EngineValue::Blob(body))) =
-                        (values.next(), values.next())
-                    else {
-                        return Err(Error::Storage("invalid physical document row".into()));
-                    };
-                    if report.documents >= limits.max_documents {
-                        return Err(Error::Limit("integrity document limit exceeded".into()));
-                    }
-                    let bytes = (id.len() as u64)
-                        .checked_add(body.len() as u64)
-                        .ok_or_else(|| Error::Limit("integrity byte limit exceeded".into()))?;
-                    if bytes
-                        > limits
-                            .max_encoded_bytes
-                            .saturating_sub(report.encoded_bytes)
-                    {
-                        return Err(Error::Limit("integrity byte limit exceeded".into()));
-                    }
-                    report.documents += 1;
-                    report.encoded_bytes += bytes;
-                    let doc =
-                        crate::decode_document(&EngineValue::Blob(body.clone())).map_err(stored)?;
-                    let Some(Value::Record(record)) = doc.get("id") else {
-                        return Err(Error::Storage("stored document has no typed id".into()));
-                    };
-                    let canonical =
-                        Value::Record(crate::normalized_id(record, &c.name).map_err(stored)?);
-                    if doc.get("id") != Some(&canonical)
-                        || canonical.encode().map_err(stored)? != *id
-                    {
-                        return Err(Error::Storage("physical/document id mismatch".into()));
-                    }
-                    self.validate_integrity_candidate(&c, &doc)
-                        .map_err(stored)?;
-                    for index in &c.indexes {
-                        let key = crate::index_scalar(
-                            crate::path_value(&doc, &index.path)
-                                .map_err(stored)?
-                                .unwrap_or(&Value::Null),
-                        )
-                        .map_err(stored)?;
-                        let rows = self.run(
-                            &format!(
-                                "SELECT count(*) FROM {} WHERE \"key\" IS ?1 AND id=?2",
-                                quote(&index.storage)
-                            ),
-                            &[key, EngineValue::Blob(id.clone())],
-                        )?;
-                        if count(&rows)? != 1 {
-                            return Err(Error::Storage(format!(
-                                "missing or duplicate entry in index {}",
-                                index.name
-                            )));
+            let execution = crate::parser_stack(|| {
+                statement.run_with_row_callback(|row| {
+                    let check = (|| -> Result<()> {
+                        let mut values = row.get_values();
+                        let (Some(EngineValue::Blob(id)), Some(EngineValue::Blob(body))) =
+                            (values.next(), values.next())
+                        else {
+                            return Err(Error::Storage("invalid physical document row".into()));
+                        };
+                        if report.documents >= limits.max_documents {
+                            return Err(Error::Limit("integrity document limit exceeded".into()));
+                        }
+                        let bytes = (id.len() as u64)
+                            .checked_add(body.len() as u64)
+                            .ok_or_else(|| Error::Limit("integrity byte limit exceeded".into()))?;
+                        if bytes
+                            > limits
+                                .max_encoded_bytes
+                                .saturating_sub(report.encoded_bytes)
+                        {
+                            return Err(Error::Limit("integrity byte limit exceeded".into()));
+                        }
+                        report.documents += 1;
+                        report.encoded_bytes += bytes;
+                        let doc = crate::decode_document(&EngineValue::Blob(body.clone()))
+                            .map_err(stored)?;
+                        let Some(Value::Record(record)) = doc.get("id") else {
+                            return Err(Error::Storage("stored document has no typed id".into()));
+                        };
+                        let canonical =
+                            Value::Record(crate::normalized_id(record, &c.name).map_err(stored)?);
+                        if doc.get("id") != Some(&canonical)
+                            || canonical.encode().map_err(stored)? != *id
+                        {
+                            return Err(Error::Storage("physical/document id mismatch".into()));
+                        }
+                        self.validate_integrity_candidate(&c, &doc)
+                            .map_err(stored)?;
+                        for index in &c.indexes {
+                            let key = crate::index_scalar(
+                                crate::path_value(&doc, &index.path)
+                                    .map_err(stored)?
+                                    .unwrap_or(&Value::Null),
+                            )
+                            .map_err(stored)?;
+                            let rows = self.run(
+                                &format!(
+                                    "SELECT count(*) FROM {} WHERE \"key\" IS ?1 AND id=?2",
+                                    quote(&index.storage)
+                                ),
+                                &[key, EngineValue::Blob(id.clone())],
+                            )?;
+                            if count(&rows)? != 1 {
+                                return Err(Error::Storage(format!(
+                                    "missing or duplicate entry in index {}",
+                                    index.name
+                                )));
+                            }
+                        }
+                        Ok(())
+                    })();
+                    match check {
+                        Ok(()) => Ok(()),
+                        Err(error) => {
+                            failure = Some(error);
+                            // Stop this callback scan; no engine interrupt flag is
+                            // set. Preserve the actual frontend error below.
+                            Err(turso_core::LimboError::Interrupt)
                         }
                     }
-                    Ok(())
-                })();
-                match check {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        failure = Some(error);
-                        // Stop this callback scan; no engine interrupt flag is
-                        // set. Preserve the actual frontend error below.
-                        Err(turso_core::LimboError::Interrupt)
-                    }
-                }
+                })
             });
             drop(statement);
             if let Some(error) = failure {

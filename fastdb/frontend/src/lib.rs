@@ -203,8 +203,12 @@ fn canonical(name: &str) -> Result<String> {
     Ok(name.to_ascii_lowercase())
 }
 impl Connection {
+    fn prepare(&self, sql: impl AsRef<str>) -> turso_core::Result<turso_core::Statement> {
+        parser_stack(|| self.engine.prepare(sql))
+    }
+
     fn run(&self, sql: &str, params: &[EngineValue]) -> Result<Vec<Vec<EngineValue>>> {
-        let mut statement = self.engine.prepare(sql)?;
+        let mut statement = self.prepare(sql)?;
         for (i, value) in params.iter().enumerate() {
             statement.bind_at(
                 NonZeroUsize::new(i + 1).expect("one-based parameter"),
@@ -521,6 +525,9 @@ impl Connection {
         })
     }
     pub fn execute(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
+        parser_stack(|| self.execute_inner(sql, params))
+    }
+    fn execute_inner(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
         use fastql_parser::Statement;
         let object = |expr| match self.evaluate(expr, params, None)? {
             Value::Object(doc) => Ok(doc),
@@ -738,7 +745,7 @@ impl Connection {
     }
     fn native_profiled(&self, sql: &str, params: &Parameters) -> Result<ProfiledQuery> {
         self.guard_native_sql(sql)?;
-        let mut stmt = self.engine.prepare(sql)?;
+        let mut stmt = self.prepare(sql)?;
         if !fastql_parser::tokenize(&sql[stmt.tail_offset()..])?.is_empty() {
             return Err(Error::Unsupported("execute accepts one statement".into()));
         }
@@ -907,9 +914,58 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
 // counterpart preserves those errors, so all frontend reads use this adapter.
 fn collect_rows(statement: &mut turso_core::Statement) -> Result<Vec<Vec<EngineValue>>> {
     let mut rows = Vec::new();
-    statement.run_with_row_callback(|row| {
-        rows.push(row.get_values().cloned().collect());
-        Ok(())
+    // Execution can reprepare after a concurrent schema change.
+    parser_stack(|| {
+        statement.run_with_row_callback(|row| {
+            rows.push(row.get_values().cloned().collect());
+            Ok(())
+        })
     })?;
     Ok(rows)
+}
+
+// The pinned parser's recursion guard can require more than a caller's native
+// stack in debug builds. Keep parsing/preparation on this thread while giving
+// that guard room to return an error. Nested calls reuse the auxiliary stack.
+fn parser_stack<T>(work: impl FnOnce() -> T) -> T {
+    stacker::maybe_grow(16 * 1024 * 1024, 32 * 1024 * 1024, work)
+}
+
+#[cfg(test)]
+mod stack_tests {
+    use super::*;
+    #[test]
+    fn deep_native_statements_reprepare_on_a_small_caller_stack() {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                c.run("CREATE TABLE native(v INTEGER)", &[]).unwrap();
+                c.run("INSERT INTO native VALUES (1)", &[]).unwrap();
+                for (i, expr) in [
+                    format!("{}1", "NOT ".repeat(80)),
+                    format!(
+                        "{}1{}",
+                        "CASE WHEN 1 THEN ".repeat(80),
+                        " ELSE 0 END".repeat(80)
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let mut statement = c.prepare(format!("SELECT {expr} FROM native")).unwrap();
+                    c.run(&format!("CREATE TABLE change_{i}(v INTEGER)"), &[])
+                        .unwrap();
+                    assert_eq!(
+                        collect_rows(&mut statement).unwrap(),
+                        vec![vec![EngineValue::Numeric(turso_core::Numeric::Integer(1))]]
+                    );
+                    assert!(statement.metrics().reprepares > 0);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

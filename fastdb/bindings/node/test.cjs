@@ -334,3 +334,28 @@ test('sync and async collection audits preserve work and enforce bigint limits',
     await assert.rejects(Promise.resolve().then(() => db.checkCollectionIntegrity('docs')), /clos/i);
   }
 });
+
+test('recursive SQL reports parser depth errors through sync and worker clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {v:1}');
+      for (const expression of ['NOT '.repeat(2000) + '1', 'CASE WHEN 1 THEN '.repeat(200) + '1' + ' ELSE 0 END'.repeat(200)]) {
+        for (const suffix of ['', ' FROM docs']) {
+          await assert.rejects(Promise.resolve().then(() => db.execute('SELECT ' + expression + suffix)), error => {
+            if (suffix) assert.equal(error.code, 'FDB_UNSUPPORTED');
+            else assert.match(error.message, /maximum depth 100/);
+            assert.equal(error.transaction.after, 'active');
+            return true;
+          });
+          await assert.rejects(Promise.resolve().then(() => db.profileSelect('SELECT ' + expression + suffix)), /maximum depth 100/);
+        }
+      }
+      assert.equal((await db.exactlyOne('SELECT v FROM docs'))[0], 1n);
+      await db.execute('ROLLBACK');
+    } finally { await db.close(); }
+  }
+});

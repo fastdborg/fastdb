@@ -28,3 +28,5 @@ The frontend enables serde_json's float_roundtrip feature to prevent one-bit num
 The FastDB CLI directly depends on Rustyline 15.0.0 already pinned in the upstream lockfile, with default features disabled and file history enabled. The lockfile adds only that dependency edge; upstream CLI source and dependency versions are unchanged.
 
 The CLI's Unix SIGINT listener also uses signal-hook 0.3.18 already pinned in the upstream lockfile. Its dependency edge is FastDB-only; no upstream dependency versions or implementation files change.
+
+The frontend directly uses stacker 0.1.22, already pinned in the upstream lockfile, to give SQL execution, profiling, audits, parser/preparation and row-execution calls an auxiliary stack when the caller has less than 16 MiB available. Growth requests 32 MiB on the same thread. Only the FastDB dependency edge is added; engine features, upstream implementation files and dependency versions are unchanged. This addresses observed debug-build parser stack exhaustion before the upstream depth guard, not general execution memory qualification.

@@ -15,3 +15,5 @@ turso_parser = { path = "../../sqlite/parser" }
 turso_ext = { path = "../../extensions/core" }
 
 rquickjs = { version = "=0.12.2", default-features = false, features = ["std"] }
+
+stacker = "=0.1.22"
