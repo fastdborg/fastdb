@@ -1335,3 +1335,6 @@ COUNT marker validation qualification (2026-09-07): a private-helper regression 
 
 
 CLI migration/transfer output errors (2026-09-07): these modes now use fallible writes and explicit stdout flushing instead of panic-on-error print macros. A Linux /dev/full regression confirms migration reporting failure returns an error without panic and reopening retains the committed applied history. Timeout-bounded export/import probes confirm clean export rejection and committed import data despite report failure. All CLI tests, formatting and CLI all-target Clippy pass. Output errors do not imply write rollback; broader platform/recovery and full V1 gates remain open.
+
+
+CLI transfer reporting-failure regression (2026-09-07): Linux /dev/full coverage now runs in the CLI integration suite for both JSON and NDJSON. Export/import output failures return nonzero without panic; re-export after reopening proves imports committed despite report failure, duplicate retries reject and source contents remain unchanged. Both transfer integration tests, formatting and focused Clippy pass. Broader platform/output/recovery qualification and full V1 remain open.
