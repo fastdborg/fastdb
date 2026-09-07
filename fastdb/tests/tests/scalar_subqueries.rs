@@ -1852,3 +1852,151 @@ fn correlated_predicates_resolve_nested_document_paths() {
         q(&c, "SELECT n FROM native ORDER BY n").rows
     );
 }
+
+#[test]
+fn correlated_native_projections_preserve_outer_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(NULL)");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(NULL)");
+    for expr in [
+        "(SELECT d.n)",
+        "(SELECT d.n+1)",
+        "(SELECT n+d.n FROM native WHERE n=1)",
+        "(SELECT max(n)+d.n FROM native)",
+        "EXISTS(SELECT d.n FROM native WHERE n=1)",
+        "d.n IN (SELECT d.n FROM native WHERE n=1)",
+    ] {
+        let expected = q(
+            &c,
+            &format!("SELECT d.n,{expr} AS v FROM native d ORDER BY d.n"),
+        );
+        let sql = format!("SELECT d.n,{expr} AS v FROM docs d ORDER BY d.n");
+        assert_eq!(q(&c, &sql).rows, expected.rows, "{expr}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected.rows
+        );
+    }
+    q(&c, "CREATE TABLE typed");
+    q(
+        &c,
+        "INSERT INTO typed {flag:true,link:typed:a,meta:{ok:true},items:[1,false]}",
+    );
+    for field in ["flag", "link", "meta", "items"] {
+        assert_eq!(
+            q(&c, &format!("SELECT (SELECT d.{field}) AS v FROM typed d")).rows,
+            q(&c, &format!("SELECT {field} AS v FROM typed")).rows
+        );
+    }
+}
+
+#[test]
+fn correlated_projection_membership_empty_results_and_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {id:docs:a,n:1,flag:true,link:docs:a}");
+    q(
+        &c,
+        "INSERT INTO docs {id:docs:b,n:2,flag:false,link:docs:b}",
+    );
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2)");
+    for field in ["flag", "link", "n"] {
+        assert_eq!(q(&c, &format!("SELECT d.{field} IN (SELECT d.{field}), d.{field} NOT IN (SELECT d.{field} WHERE 0), (SELECT d.{field} WHERE 0) FROM docs d ORDER BY d.n")).rows,
+            vec![vec![Value::Integer(1), Value::Integer(1), Value::Null]; 2]);
+    }
+    let params = Parameters::from([("$add".into(), Value::Integer(3))]);
+    assert_eq!(
+        c.execute("SELECT (SELECT d.n+$add) FROM docs d ORDER BY d.n", &params)
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(4)], vec![Value::Integer(5)]]
+    );
+    assert!(c
+        .execute(
+            "SELECT (SELECT d.n+$missing) FROM docs d",
+            &Parameters::new()
+        )
+        .is_err());
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO native VALUES(9)");
+    assert!(c
+        .execute(
+            "UPDATE docs SET n=(SELECT docs.n-docs.n+7)",
+            &Parameters::new()
+        )
+        .is_err());
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        q(&c, "SELECT count(*) FROM native").rows,
+        vec![vec![Value::Integer(3)]]
+    );
+    assert_eq!(
+        q(&c, "UPDATE docs SET n=(SELECT docs.n+10) RETURNING n").affected,
+        2
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+}
+
+#[test]
+fn correlated_projection_comparisons_and_shadowing_match_typeless_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE native(n)");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),('1'),('A'),(NULL)");
+    q(&c, "INSERT INTO native VALUES(1),(2),('1'),('A'),(NULL)");
+    for projected in [
+        "d.n",
+        "+d.n",
+        "CAST(d.n AS TEXT)",
+        "d.n COLLATE NOCASE",
+        "(CAST(d.n AS TEXT))",
+        "CAST(d.n AS TEXT) COLLATE NOCASE",
+        "((CAST(d.n AS INTEGER)) COLLATE BINARY)",
+    ] {
+        for op in ["=", "!=", "<", ">", "IS"] {
+            for rhs in ["1", "'1'", "'a'", "NULL"] {
+                let expression = format!("(SELECT {projected}) {op} {rhs}");
+                let expected = q(
+                    &c,
+                    &format!("SELECT {expression} AS v FROM native d ORDER BY d.n"),
+                )
+                .rows;
+                let sql = format!("SELECT {expression} AS v FROM docs d ORDER BY d.n");
+                assert_eq!(q(&c, &sql).rows, expected, "{expression}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected,
+                    "profile {expression}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT (SELECT d.n FROM native d WHERE d.n=2) FROM docs d"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]; 5]
+    );
+}

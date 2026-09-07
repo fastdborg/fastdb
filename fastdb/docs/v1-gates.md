@@ -90,3 +90,6 @@ The existing release-profile CLI built successfully with Rust 1.88.0 and complet
 ## Combined accessor large-vector verification (2026-09-07)
 
 The release-profile 100,000 × 768 seeded run at clean `3cac94cae` passed all warmup/sample reference checks. Exact top-10 median was 32.71 seconds versus 47.12 seconds before; primary VM steps fell from 1,200,080 to 1,100,080 while all 100,000 vectors are still scanned. Binary identity, reference values, sample medians and repeated counters were checked. See [benchmarks.md](benchmarks.md) for report, command and measurement limitations. Substantial latency, whole-document decoding, real-workload/platform/resource qualification and full V1 remain open.
+
+
+Qualified outer fields now work in simple native inner SELECT projections, with typed logical results and preserved explicit CAST affinity. Scalar/EXISTS/IN, type/empty/parameter/alias cases and atomic writes have initial regression coverage; the complete scoped run passed 315 Rust and 35 Node tests. See status.md. This closes the recorded initial projection probes, not general correlation: inner collections, deeper/local-WITH/compound scopes and other expression positions remain open.

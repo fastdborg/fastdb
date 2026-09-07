@@ -41,25 +41,26 @@ fn native_correlated_predicate(
     sources: &[Source],
     metadata: bool,
     params: &Parameters,
-) -> Result<Select> {
+) -> Result<(Select, bool)> {
     let mut inner = inner.clone();
     if inner.with.is_some() || !inner.body.compounds.is_empty() {
-        return Ok(inner);
+        return Ok((inner, false));
     }
     let OneSelect::Select {
+        columns,
         from,
         where_clause,
         group_by,
         ..
     } = &mut inner.body.select
     else {
-        return Ok(inner);
+        return Ok((inner, false));
     };
     let mut local = std::collections::BTreeSet::new();
     if let Some(from) = from {
         for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
             let SelectTable::Table(name, alias, _) = table.as_ref() else {
-                return Ok(inner);
+                return Ok((inner, false));
             };
             local.insert(
                 alias
@@ -95,7 +96,7 @@ fn native_correlated_predicate(
             _ => None,
         }
     }
-    let rewrite = |value: &mut Expr| -> Result<()> {
+    let rewrite = |value: &mut Expr, typed: bool| -> Result<bool> {
         let mut correlated = false;
         turso_core::walk_expr_mut(value, &mut |expr| {
             if matches!(
@@ -117,24 +118,46 @@ fn native_correlated_predicate(
             Ok(turso_core::WalkControl::Continue)
         })?;
         if correlated && !metadata {
-            scope.lower(value)?;
+            if typed {
+                scope.typed(value)?;
+            } else {
+                scope.lower(value)?;
+            }
         }
-        Ok(())
+        Ok(correlated)
     };
     if let Some(value) = where_clause {
-        rewrite(value)?;
+        rewrite(value, false)?;
     }
     if let Some(value) = group_by.as_mut().and_then(|group| group.having.as_mut()) {
-        rewrite(value)?;
+        rewrite(value, false)?;
     }
     if let Some(from) = from {
         for join in &mut from.joins {
             if let Some(JoinConstraint::On(value)) = &mut join.constraint {
-                rewrite(value)?;
+                rewrite(value, false)?;
             }
         }
     }
-    Ok(inner)
+    fn has_cast_affinity(value: &Expr) -> bool {
+        match value {
+            Expr::Cast { .. } => true,
+            Expr::Collate(value, _) => has_cast_affinity(value),
+            Expr::Parenthesized(values) if values.len() == 1 => has_cast_affinity(&values[0]),
+            _ => false,
+        }
+    }
+    let mut typed_projection = false;
+    for column in columns {
+        if let ResultColumn::Expr(value, _) = column {
+            // Explicit casts produce native scalars whose affinity must remain
+            // attached to the subquery result in outer comparisons.
+            let typed = !has_cast_affinity(value);
+            let correlated = rewrite(value, typed)?;
+            typed_projection |= correlated && typed;
+        }
+    }
+    Ok((inner, typed_projection))
 }
 // Each entry stores lowered SQL, consumed binds, and affinity provenance.
 type ExpressionSubqueries = std::collections::BTreeMap<
@@ -2816,9 +2839,8 @@ impl Connection {
         // logical lowering; preserve their values only once that route is chosen.
         for (sql, (lowered, _, affinity)) in &mut native_expression_subqueries {
             if let Expr::Exists(inner) = expression(sql)? {
-                *lowered = Expr::Exists(native_correlated_predicate(
-                    &inner, &sources, false, params,
-                )?);
+                *lowered =
+                    Expr::Exists(native_correlated_predicate(&inner, &sources, false, params)?.0);
                 continue;
             }
             if !matches!(
@@ -2833,7 +2855,7 @@ impl Connection {
             };
             let mut collation = "BINARY".to_owned();
             let correlated = {
-                let mut probe = native_correlated_predicate(&inner, &sources, true, params)?;
+                let (mut probe, _) = native_correlated_predicate(&inner, &sources, true, params)?;
                 let correlated = Cmd::Stmt(Stmt::Select(probe.clone())).to_string()
                     != Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                 if probe.with.is_none() {
@@ -2883,10 +2905,37 @@ impl Connection {
                 }
                 correlated
             };
+            let (runtime, typed_projection) =
+                native_correlated_predicate(&inner, &sources, false, params)?;
+            if typed_projection {
+                let runtime_sql = Cmd::Stmt(Stmt::Select(runtime)).to_string();
+                let runtime_sql = runtime_sql.trim().trim_end_matches(';');
+                if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
+                    let column = matches!(&inner.body.select, OneSelect::Select { columns, .. }
+                        if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
+                    let values = "SELECT __fastdb_unwrap(v) AS v FROM __fastdb_members";
+                    let values = if column {
+                        format!("SELECT v FROM ({values}) AS __fastdb_member_values")
+                    } else {
+                        values.into()
+                    };
+                    *lowered = expression(&format!(
+                        "(WITH __fastdb_members(v) AS ({runtime_sql}) {values})"
+                    ))?;
+                    *affinity = if column {
+                        SubqueryAffinity::MembershipColumn
+                    } else {
+                        SubqueryAffinity::None
+                    };
+                } else {
+                    *lowered = expression(&format!("({runtime_sql})"))?;
+                    *affinity = SubqueryAffinity::None;
+                }
+                continue;
+            }
             if correlated && matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
-                *lowered = Expr::Subquery(native_correlated_predicate(
-                    &inner, &sources, false, params,
-                )?);
+                *lowered =
+                    Expr::Subquery(native_correlated_predicate(&inner, &sources, false, params)?.0);
                 *affinity = SubqueryAffinity::NativeMembership(collation, String::new());
                 continue;
             }
@@ -2916,7 +2965,7 @@ impl Connection {
                 }
                 SubqueryAffinity::NativeMembership(collation, name)
             } else {
-                let runtime = native_correlated_predicate(&inner, &sources, false, params)?;
+                let (runtime, _) = native_correlated_predicate(&inner, &sources, false, params)?;
                 *lowered = expression(&format!(
                     "__fastdb_pack(({}))",
                     Cmd::Stmt(Stmt::Select(runtime))

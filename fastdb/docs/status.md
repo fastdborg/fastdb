@@ -1035,3 +1035,12 @@ The release-profile 100,000 × 768 seeded run at clean `3cac94cae` passed all wa
 The offline installed Node consumer now stores all five vector encodings, compares profiled field extraction with bound-parameter extraction, verifies typed round trips and collection integrity, and rolls the writes back through sync and dedicated-worker clients. A separate missing-vector rejection check retains the original document. The initial fixture attempted rollback after a rejected vector SELECT had left the pinned engine in autocommit; the corrected fixture checks successful-write rollback before exercising rejection. No production behavior changed for this fixture correction.
 
 The complete offline package smoke passed on Linux x64 / Node 24.19.0: eight runtime files, 59,657,949 packed bytes. This is local installed-addon evidence; broader release/platform qualification and full V1 remain open.
+
+
+## Qualified outer fields in native subquery projections (2026-09-07)
+
+Simple native inner SELECT projections now lower qualified outer collection fields in addition to the existing predicate positions. Correlated logical projections retain typed results instead of being packed as native scalars; membership sources use the existing logical comparison conversion inside their correlated expression. Explicit CAST results, including parentheses/COLLATE wrappers, retain the native scalar route so outer comparisons preserve cast affinity. Local aliases continue to shadow outer aliases. Execution stays inside the engine and varies with the outer row.
+
+Regression coverage includes scalar arithmetic and aggregates, EXISTS/IN, direct boolean/record/object/array values, NULL/empty sources, bound and missing parameters, typed membership, alias shadowing, profiled comparisons and atomic UPDATE uniqueness failure/retry/rollback with prior outer work. A seven-projection/five-operator/four-RHS comparison matrix uses native typeless columns as the collection-field oracle; declared native INTEGER columns have different affinity and are not that oracle. The matrix exposed and verified the CAST-affinity fix.
+
+The complete scoped suite passed formatting, Clippy, 315 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored. Inner collection correlation, deeper/local-WITH/compound correlated scopes, correlation in grouping/window/order/limit expressions and broader volatile/type/resource qualification remain open. Full V1 is incomplete.
