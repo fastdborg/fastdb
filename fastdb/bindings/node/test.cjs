@@ -538,3 +538,48 @@ test('typed scalar subqueries preserve values in both clients', async () => {
     } finally { await db.close(); }
   }
 });
+
+test('AbortSignal cancels only its queued or active query and cleans up listeners', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { getEventListeners } = require('node:events');
+  const db = await AsyncDatabase.open();
+  let timer;
+  try {
+    await db.execute('CREATE TABLE numbers(n INTEGER)');
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100},(_,i)=>`(${i})`).join(','));
+    await db.execute('CREATE TABLE docs');
+    await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {id:docs:prior,n:9}');
+    const active = new AbortController(), queued = new AbortController();
+    // A user listener must not suppress the driver's cancellation listener.
+    active.signal.addEventListener('abort', event => event.stopImmediatePropagation(), {once:true});
+    const first = db.execute('INSERT INTO docs(n) SELECT a.n FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c', {}, {signal:active.signal});
+    const second = db.execute('INSERT INTO docs {n:77}', {}, {signal:queued.signal});
+    const third = db.execute('INSERT INTO docs {n:88}');
+    const outcomes = Promise.allSettled([first, second, third]);
+    queued.abort();
+    timer = setTimeout(() => active.abort(), 10);
+    const [a,b,c] = await outcomes;
+    for (const result of [a,b]) {
+      assert.equal(result.status, 'rejected');
+      assert.equal(result.reason.code, 'FDB_CANCELLED');
+      assert.equal(result.reason.transaction.after, 'active');
+    }
+    assert.equal(c.status,'fulfilled');
+    assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[9n],[88n]]);
+    assert.equal((await db.checkCollectionIntegrity('docs')).documents,2n);
+    assert.equal(getEventListeners(active.signal,'abort').length,0);
+    assert.equal(getEventListeners(queued.signal,'abort').length,0);
+    const finished = new AbortController();
+    assert.deepEqual(await db.exactlyOne('SELECT 1', {}, {signal:finished.signal}),[1n]);
+    assert.equal(getEventListeners(finished.signal,'abort').length,0);
+    finished.abort();
+    assert.deepEqual(await db.first('SELECT 2'),[2n]);
+    const before = new AbortController(); before.abort();
+    await assert.rejects(db.execute('INSERT INTO docs {n:66}',{}, {signal:before.signal}), e => e.code === 'FDB_CANCELLED');
+    await assert.rejects(db.execute('SELECT 1',{}, {signal:{}}), TypeError);
+    await db.execute('ROLLBACK');
+    assert.deepEqual(await db.all('SELECT * FROM docs'),[]);
+  } finally { clearTimeout(timer); await db.close(); }
+});

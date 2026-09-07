@@ -21,6 +21,49 @@ pub fn interrupt_connection(key: String) -> bool {
         .cloned();
     handle.is_some_and(|h| h.interrupt())
 }
+static NEXT_CANCELLATION: AtomicU64 = AtomicU64::new(1);
+static CANCELLATIONS: OnceLock<Mutex<BTreeMap<u64, fastdb::CancellationToken>>> = OnceLock::new();
+fn cancellations() -> &'static Mutex<BTreeMap<u64, fastdb::CancellationToken>> {
+    CANCELLATIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+#[napi]
+pub fn create_cancellation_token() -> napi::Result<String> {
+    let mut tokens = cancellations().lock().unwrap_or_else(|e| e.into_inner());
+    if tokens.len() >= 16384 {
+        return Err(error("cancellation token limit exceeded"));
+    }
+    let id = NEXT_CANCELLATION
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .map_err(|_| error("cancellation identifiers exhausted"))?;
+    tokens.insert(id, fastdb::CancellationToken::new());
+    Ok(id.to_string())
+}
+#[napi]
+pub fn cancel_operation(key: String) -> bool {
+    let Ok(key) = key.parse::<u64>() else {
+        return false;
+    };
+    let token = cancellations()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .cloned();
+    if let Some(token) = token {
+        token.cancel();
+        true
+    } else {
+        false
+    }
+}
+#[napi]
+pub fn release_cancellation_token(key: String) {
+    if let Ok(key) = key.parse::<u64>() {
+        cancellations()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&key);
+    }
+}
 fn error(error: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(error.to_string())
 }
@@ -121,6 +164,25 @@ impl NativeDatabase {
         self.report(|conn| {
             let parameters = decode_parameters(&parameters)?;
             query_value(conn.execute(&sql, &parameters)?)
+        })
+    }
+    #[napi]
+    pub fn execute_cancellable(
+        &self,
+        sql: String,
+        parameters: String,
+        key: String,
+    ) -> napi::Result<String> {
+        let key = key.parse::<u64>().map_err(error)?;
+        let token = cancellations()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| error("unknown cancellation token"))?;
+        self.report(|conn| {
+            let parameters = decode_parameters(&parameters)?;
+            query_value(conn.execute_cancellable(&sql, &parameters, &token)?)
         })
     }
     #[napi]

@@ -1,5 +1,5 @@
 'use strict';
-const { NativeDatabase, interruptConnection, vectorFromComponents, vectorFromSparseEntries } = require('./fastdb.node');
+const { NativeDatabase, interruptConnection, createCancellationToken, cancelOperation, releaseCancellationToken, vectorFromComponents, vectorFromSparseEntries } = require('./fastdb.node');
 class Record {
   constructor(table, key) {
     if (typeof table !== 'string' || !['string','bigint'].includes(typeof key)) throw new TypeError('Record requires a table and string or bigint key');
@@ -209,7 +209,7 @@ class AsyncDatabase {
       if (message.ready) { this.#interruptKey = message.interruptKey; this.#readyResolve(); return; }
       const pending = this.#pending.get(message.id);
       if (!pending) return;
-      this.#pending.delete(message.id); this.#bytes -= pending.bytes;
+      this.#pending.delete(message.id); this.#bytes -= pending.bytes; pending.cleanup();
       if (message.error) pending.reject(new Error(message.error.message));
       else pending.resolve(message.result);
     });
@@ -226,7 +226,7 @@ class AsyncDatabase {
       this.#failure.code = 'FDB_WORKER';
     }
     this.#readyReject(this.#failure);
-    for (const pending of this.#pending.values()) pending.reject(this.#failure);
+    for (const pending of this.#pending.values()) { pending.cleanup(); pending.reject(this.#failure); }
     this.#pending.clear(); this.#bytes = 0;
     if (shutdown && !this.#stopped && !this.#shutdownRequested) {
       this.#shutdownRequested = true;
@@ -236,7 +236,7 @@ class AsyncDatabase {
       catch { void this.#worker.terminate(); }
     }
   }
-  #request(method, args, closing = false) {
+  #request(method, args, closing = false, signal) {
     if (this.#failure) return Promise.reject(this.#failure);
     if (this.#closing && !closing) return Promise.reject(new Error('database is closing or closed'));
     const bytes = args.reduce((size, arg) => size + Buffer.byteLength(arg), 0);
@@ -246,9 +246,21 @@ class AsyncDatabase {
     }
     const id = ++this.#next;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject, bytes }); this.#bytes += bytes;
-      try { this.#worker.postMessage({ id, method, args }); }
-      catch (error) { this.#pending.delete(id); this.#bytes -= bytes; reject(error); }
+      let cancellationKey, listener;
+      const cleanup = () => {
+        listener?.[Symbol.dispose]();
+        if (cancellationKey !== undefined) releaseCancellationToken(cancellationKey);
+      };
+      try {
+        if (signal !== undefined) {
+          cancellationKey = createCancellationToken();
+          listener = require('node:events').addAbortListener(signal, () => cancelOperation(cancellationKey));
+          if (signal.aborted) cancelOperation(cancellationKey);
+        }
+      } catch (error) { cleanup(); reject(error); return; }
+      this.#pending.set(id, { resolve, reject, bytes, cleanup }); this.#bytes += bytes;
+      try { this.#worker.postMessage({ id, method, args, cancellationKey }); }
+      catch (error) { this.#pending.delete(id); this.#bytes -= bytes; cleanup(); reject(error); }
     });
   }
   close() {
@@ -264,9 +276,9 @@ class AsyncDatabase {
     }
     return this.#closePromise;
   }
-  async execute(sql, parameters = {}) {
+  async execute(sql, parameters = {}, options = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
-    const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)]));
+    const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)], false, options.signal));
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
   }
@@ -290,10 +302,10 @@ class AsyncDatabase {
     return { alreadyApplied: report.execution.result.alreadyApplied,
       applied: report.execution.result.applied.map(BigInt), transaction: report.transaction };
   }
-  async all(sql, parameters) { return (await this.execute(sql, parameters)).rows; }
-  async first(sql, parameters) { return (await this.all(sql, parameters))[0]; }
-  async exactlyOne(sql, parameters) {
-    const rows = await this.all(sql, parameters);
+  async all(sql, parameters, options) { return (await this.execute(sql, parameters, options)).rows; }
+  async first(sql, parameters, options) { return (await this.all(sql, parameters, options))[0]; }
+  async exactlyOne(sql, parameters, options) {
+    const rows = await this.all(sql, parameters, options);
     if (rows.length !== 1) throw new RangeError(`expected exactly one row, got ${rows.length}`);
     return rows[0];
   }

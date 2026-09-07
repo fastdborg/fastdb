@@ -47,6 +47,7 @@ export class Database {
   exactlyOne(sql: string, parameters?: Parameters): Value[];
 }
 
+export interface ExecuteOptions { signal?: AbortSignal; }
 export class AsyncDatabase {
   private constructor();
   static open(path?: string): Promise<AsyncDatabase>;
@@ -55,11 +56,11 @@ export class AsyncDatabase {
   migrate(migrations: Migration[]): Promise<MigrationReport>;
   exportDocuments(table: string, format?: TransferFormat): Promise<string>;
   importDocuments(table: string, input: string, format?: TransferFormat): Promise<ImportReport>;
-  execute(sql: string, parameters?: Parameters): Promise<QueryResult>;
+  execute(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   profileSelect(sql: string, parameters?: Parameters): Promise<ProfiledQuery>;
   checkCollectionIntegrity(table: string, limits?: IntegrityLimits): Promise<IntegrityReport>;
   executeBatch(script: string): Promise<BatchExecution[]>;
-  all(sql: string, parameters?: Parameters): Promise<Value[][]>;
-  first(sql: string, parameters?: Parameters): Promise<Value[] | undefined>;
-  exactlyOne(sql: string, parameters?: Parameters): Promise<Value[]>;
+  all(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[][]>;
+  first(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[] | undefined>;
+  exactlyOne(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[]>;
 }

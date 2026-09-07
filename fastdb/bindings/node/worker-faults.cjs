@@ -6,13 +6,14 @@ const { EventEmitter } = require('node:events');
 const threads = require('node:worker_threads');
 let latest;
 class FaultWorker extends EventEmitter {
-  messages = []; stopped = false; rejectClose = false;
+  messages = []; stopped = false; rejectClose = false; rejectRequest = false;
   constructor() {
     super(); latest = this;
     queueMicrotask(() => this.emit('message', { ready: true, interruptKey: '0' }));
   }
   postMessage(message) {
     this.messages.push(message);
+    if (this.rejectRequest && message.method !== 'close') throw new Error('injected send failure');
     if (message.method === 'close') {
       if (this.rejectClose) throw new Error('transport closed');
       queueMicrotask(() => {
@@ -25,11 +26,15 @@ class FaultWorker extends EventEmitter {
 }
 threads.Worker = FaultWorker;
 const { AsyncDatabase } = require('./index.cjs');
+const { cancelOperation } = require('./fastdb.node');
+const { getEventListeners } = require('node:events');
 (async () => {
   for (const brokenSend of [false, true]) {
     const db = await AsyncDatabase.open();
     const worker = latest; worker.rejectClose = brokenSend;
-    const first = db.execute('INSERT INTO example VALUES (1)');
+    const controller = new AbortController();
+    const first = db.execute('INSERT INTO example VALUES (1)', {}, {signal:controller.signal});
+    const token = worker.messages[0].cancellationKey;
     const second = db.execute('SELECT 1');
     const settled = Promise.allSettled([first, second]);
     const cause = new Error('injected message decoding failure');
@@ -38,6 +43,8 @@ const { AsyncDatabase } = require('./index.cjs');
     assert(outcomes.every(r => r.status === 'rejected' && r.reason.code === 'FDB_WORKER'));
     assert.equal(outcomes[0].reason, outcomes[1].reason);
     assert.equal(outcomes[0].reason.cause, cause);
+    assert.equal(cancelOperation(token),false);
+    assert.equal(getEventListeners(controller.signal,'abort').length,0);
     const close = db.close(); assert.equal(db.close(), close); await close;
     assert.equal(worker.stopped, true);
     assert.equal(worker.messages.filter(m => m.method === 'close').length, 1);
@@ -65,6 +72,15 @@ const { AsyncDatabase } = require('./index.cjs');
     worker.emit('messageerror', new Error('lost close acknowledgement'));
     await rejected;
     assert.equal(worker.stopped, true);
+  }
+  {
+    const db = await AsyncDatabase.open(); const worker = latest;
+    worker.rejectRequest = true;
+    const controller = new AbortController();
+    await assert.rejects(db.execute('SELECT 1', {}, {signal:controller.signal}), /injected send failure/);
+    assert.equal(cancelOperation(worker.messages[0].cancellationKey), false);
+    assert.equal(getEventListeners(controller.signal,'abort').length,0);
+    await db.close();
   }
   process.stdout.write('worker-faults-complete\n');
 })().catch(error => { console.error(error); process.exitCode = 1; });
