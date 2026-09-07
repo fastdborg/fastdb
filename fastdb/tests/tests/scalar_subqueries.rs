@@ -3401,3 +3401,49 @@ fn local_collection_cte_consumers_correlate_outer_records() {
         }
     }
 }
+
+#[test]
+fn local_cte_correlated_updates_bind_values_and_preserve_atomicity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "DEFINE FIELD n ON docs TYPE integer CHECK(n<10)",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+        "INSERT INTO links {owner:docs:b,n:4}",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {id:docs:prior,n:5}");
+    let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+    let sql = "UPDATE docs AS d SET n=(WITH x AS (SELECT owner,n FROM links) SELECT x.n+$extra FROM x WHERE x.owner=d.id) WHERE EXISTS(WITH x AS (SELECT owner FROM links) SELECT 1 FROM x WHERE x.owner=d.id)";
+    let invalid = Parameters::from([("$extra".into(), Value::Integer(7))]);
+    assert!(c.execute(sql, &invalid).is_err());
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    let valid = Parameters::from([("$extra".into(), Value::Integer(0))]);
+    assert_eq!(c.execute(sql, &valid).unwrap().affected, 2);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(3)],
+            vec![Value::Integer(4)],
+            vec![Value::Integer(5)]
+        ]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+}
