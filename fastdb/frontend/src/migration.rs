@@ -85,8 +85,26 @@ impl Connection {
             self.managed_dependencies("__fastdb_migrations", None)?;
             // One extra row proves that the supplied plan omits history; no
             // later ledger rows are needed for validation or execution.
+            let sizes=self.run(&format!("SELECT typeof(name),length(CAST(name AS BLOB)),typeof(script),length(CAST(script AS BLOB)) FROM __fastdb_migrations ORDER BY version LIMIT {}", migrations.len() + 1),&[])?;
+            if sizes.len()>migrations.len() {return Err(Error::Validation("migration plan omits applied history".into()));}
+            let mut history_bytes = 0i64;
+            for row in sizes {
+                let values = row.into_iter().map(crate::from_engine).collect::<Vec<_>>();
+                let [crate::Value::String(name_type), crate::Value::Integer(name_bytes), crate::Value::String(script_type), crate::Value::Integer(script_bytes)] = values.as_slice() else {
+                    return Err(Error::Storage("invalid migration history value metadata".into()));
+                };
+                if name_type != "text" || script_type != "text" || *name_bytes < 1 || *script_bytes < 0 {
+                    return Err(Error::Storage("invalid migration history value types or lengths".into()));
+                }
+                if *name_bytes > 255 || *script_bytes > 4 * 1024 * 1024 {
+                    return Err(Error::Limit("migration history value exceeds runner limits".into()));
+                }
+                history_bytes += script_bytes;
+                if history_bytes > 16 * 1024 * 1024 {
+                    return Err(Error::Limit("migration history SQL exceeds 16 MiB".into()));
+                }
+            }
             let history=self.run(&format!("SELECT version,name,script FROM __fastdb_migrations ORDER BY version LIMIT {}", migrations.len() + 1),&[])?;
-            if history.len()>migrations.len() {return Err(Error::Validation("migration plan omits applied history".into()));}
             for (row,migration) in history.iter().zip(migrations) {
                 let difference = if row.len() != 3 {
                     Some("invalid history row")
@@ -249,5 +267,70 @@ mod tests {
                 .unwrap()[0][0],
             crate::EngineValue::from_i64(1100)
         );
+    }
+    #[test]
+    fn oversized_history_values_reject_before_text_materialization() {
+        for (name, script, code) in [
+            ("é".repeat(128), "".to_owned(), "FDB_LIMIT"),
+            (
+                "valid".to_owned(),
+                "x".repeat(4 * 1024 * 1024 + 1),
+                "FDB_LIMIT",
+            ),
+            ("".to_owned(), "".to_owned(), "FDB_STORAGE"),
+        ] {
+            let db = crate::Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            c.migrate(&[]).unwrap();
+            c.run(
+                "INSERT INTO __fastdb_migrations VALUES(1,?1,?2)",
+                &[crate::text(&name), crate::text(&script)],
+            )
+            .unwrap();
+            let plan = [Migration {
+                version: 1,
+                name: "valid".into(),
+                sql: "CREATE TABLE docs;".into(),
+            }];
+            assert_eq!(c.migrate(&plan).unwrap_err().code(), code);
+            assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+            assert!(c.execute("SELECT * FROM docs", &Parameters::new()).is_err());
+            c.run("DELETE FROM __fastdb_migrations", &[]).unwrap();
+            assert_eq!(c.migrate(&plan).unwrap().applied, vec![1]);
+        }
+    }
+    #[test]
+    fn aggregate_history_size_and_blob_values_are_rejected() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.migrate(&[]).unwrap();
+        let script = crate::text(&"x".repeat(4 * 1024 * 1024));
+        let plan = (1..=5)
+            .map(|version| Migration {
+                version,
+                name: "valid".into(),
+                sql: "".into(),
+            })
+            .collect::<Vec<_>>();
+        for migration in &plan {
+            c.run(
+                "INSERT INTO __fastdb_migrations VALUES(?1,'valid',?2)",
+                &[
+                    crate::EngineValue::from_i64(migration.version),
+                    script.clone(),
+                ],
+            )
+            .unwrap();
+        }
+        let error = c.migrate(&plan).unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT");
+        assert!(error.to_string().contains("history SQL exceeds 16 MiB"));
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+        c.run("DELETE FROM __fastdb_migrations WHERE version>1", &[])
+            .unwrap();
+        c.run("UPDATE __fastdb_migrations SET script=x'00'", &[])
+            .unwrap();
+        assert_eq!(c.migrate(&plan[..1]).unwrap_err().code(), "FDB_STORAGE");
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
     }
 }
