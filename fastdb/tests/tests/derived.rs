@@ -889,3 +889,49 @@ fn membership_aliases_work_in_join_and_group_clauses() {
         assert_eq!(c.profile_select(sql, &Parameters::new()).unwrap().result.rows, expected, "{sql}");
     }
 }
+
+#[test]
+fn join_membership_preserves_native_values_and_nulls() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE labels(v TEXT COLLATE NOCASE)");
+    q(
+        &c,
+        "INSERT INTO labels VALUES('A'),('1'),(NULL),(X'46444201')",
+    );
+    q(&c, "CREATE TABLE marker(m INTEGER)");
+    q(&c, "INSERT INTO marker VALUES(7)");
+    for rhs in [
+        "SELECT v FROM labels",
+        "SELECT v FROM labels WHERE v IS NOT NULL",
+        "SELECT v FROM labels WHERE 0",
+    ] {
+        for operator in ["IN", "NOT IN"] {
+            for value in [
+                Value::Null,
+                Value::String("a".into()),
+                Value::Integer(1),
+                Value::String("absent".into()),
+                Value::Binary(vec![0x46, 0x44, 0x42, 1]),
+            ] {
+                let params = Parameters::from([("$value".into(), value)]);
+                let sql = format!("SELECT d.n,marker.m FROM (SELECT n FROM docs) d LEFT JOIN marker ON $value {operator} ({rhs}) ORDER BY d.n");
+                let expected = c
+                    .execute(&sql.replace("FROM docs", "FROM baseline"), &params)
+                    .unwrap()
+                    .rows;
+                assert_eq!(
+                    c.execute(&sql, &params).unwrap().rows,
+                    expected,
+                    "{sql}, {params:?}"
+                );
+                assert_eq!(
+                    c.profile_select(&sql, &params).unwrap().result.rows,
+                    expected,
+                    "{sql}, {params:?}"
+                );
+            }
+        }
+    }
+}
