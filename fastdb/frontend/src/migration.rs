@@ -83,7 +83,9 @@ impl Connection {
             self.run("CREATE TABLE IF NOT EXISTS __fastdb_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, script TEXT NOT NULL)",&[])?;
             self.schema_object("__fastdb_migrations", "table", "__fastdb_migrations", "CREATE TABLE IF NOT EXISTS __fastdb_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, script TEXT NOT NULL)")?;
             self.managed_dependencies("__fastdb_migrations", None)?;
-            let history=self.run("SELECT version,name,script FROM __fastdb_migrations ORDER BY version",&[])?;
+            // One extra row proves that the supplied plan omits history; no
+            // later ledger rows are needed for validation or execution.
+            let history=self.run(&format!("SELECT version,name,script FROM __fastdb_migrations ORDER BY version LIMIT {}", migrations.len() + 1),&[])?;
             if history.len()>migrations.len() {return Err(Error::Validation("migration plan omits applied history".into()));}
             for (row,migration) in history.iter().zip(migrations) {
                 let difference = if row.len() != 3 {
@@ -217,5 +219,35 @@ mod tests {
         c.check_collection_integrity("docs", Default::default())
             .unwrap();
         assert_eq!(c.migrate(&plan).unwrap().already_applied, 2);
+    }
+    #[test]
+    fn excess_history_rejects_short_plan_before_pending_work() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.migrate(&[]).unwrap();
+        let rows = (1..=1100)
+            .map(|n| format!("({n},'external','')"))
+            .collect::<Vec<_>>()
+            .join(",");
+        c.run(
+            &format!("INSERT INTO __fastdb_migrations VALUES {rows}"),
+            &[],
+        )
+        .unwrap();
+        let plan = [Migration {
+            version: 1,
+            name: "external".into(),
+            sql: "CREATE TABLE docs;".into(),
+        }];
+        let error = c.migrate(&plan).unwrap_err();
+        assert_eq!(error.code(), "FDB_VALIDATION");
+        assert!(error.to_string().contains("omits applied history"));
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+        assert!(c.execute("SELECT * FROM docs", &Parameters::new()).is_err());
+        assert_eq!(
+            c.run("SELECT count(*) FROM __fastdb_migrations", &[])
+                .unwrap()[0][0],
+            crate::EngineValue::from_i64(1100)
+        );
     }
 }

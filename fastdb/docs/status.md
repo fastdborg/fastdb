@@ -1263,3 +1263,6 @@ Applied migration ledger protection (2026-09-07): an additional private fixture 
 ## Combined ledger and distribution verification (2026-09-07)
 
 At clean implementation commit 7c4858f7e, fastdb/scripts/check.sh passed formatting, Clippy, 338 Rust tests, 42 Node/application tests and strict TypeScript. One known trigger-interruption gate remains ignored. This includes migration source validation/diagnostics and ledger schema/dependency checks with applied-prefix preservation. The rebuilt addon also passed the offline installed-package runtime and declaration smoke on Linux x64 / Node 24.19.0: eight files, 59,806,951 packed bytes. No publishing occurred. Broader platform, recovery, SQL/type/resource and application release gates remain open; full V1 is incomplete.
+
+
+Bounded migration history rows (2026-09-07): the ledger query now limits returned rows to the supplied plan length plus one, preserving omitted-history rejection without materializing every row from an oversized external ledger. A 1,100-row private fixture verifies validation rejection, unchanged ledger contents, no pending schema and restored autocommit. All three migration unit regressions, formatting and frontend all-target Clippy pass. Individual corrupted ledger-value sizes and total memory remain open, along with broader V1 gates.
