@@ -1,6 +1,6 @@
 # Third-party notices
 
-These notices cover rquickjs 0.12.2, the QuickJS source bundled in rquickjs-sys 0.12.2, cfg_block 0.1.1, and the pinned napi-rs crates listed below. They supplement LICENSE.md. This file is not a complete dependency inventory; distribution notice qualification remains in progress.
+These notices supplement LICENSE.md and cover the components identified below. This file is not a complete dependency inventory; distribution notice qualification remains in progress.
 
 ## rquickjs 0.12.2
 
@@ -319,6 +319,34 @@ SOFTWARE.
 MIT License
 
 Copyright (c) 2018 GitHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## aristo and aristo-macros 0.4.0
+
+Both pinned crate archives record source commit f0b29f319ef593ae81919a4a77540be85ce16d43.
+
+Source: [https://raw.githubusercontent.com/aretta-ai/aristo/f0b29f319ef593ae81919a4a77540be85ce16d43/LICENSE](https://raw.githubusercontent.com/aretta-ai/aristo/f0b29f319ef593ae81919a4a77540be85ce16d43/LICENSE). Source SHA-256: `e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55`.
+
+MIT License
+
+Copyright (c) 2026 Aretta
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

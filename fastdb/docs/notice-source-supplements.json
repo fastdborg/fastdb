@@ -41,6 +41,37 @@
       "cratePathInSource": "crates/napi",
       "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/0b80be8d9e64ba6c1733fcf31533e4f58bfc46b4/LICENSE",
       "sourceSha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "package": "aristo",
+      "version": "0.4.0",
+      "sourceRevision": "f0b29f319ef593ae81919a4a77540be85ce16d43",
+      "cratePathInSource": "crates/aristo",
+      "sourceUrl": "https://raw.githubusercontent.com/aretta-ai/aristo/f0b29f319ef593ae81919a4a77540be85ce16d43/LICENSE",
+      "sourceSha256": "e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55"
+    },
+    {
+      "package": "aristo-macros",
+      "version": "0.4.0",
+      "sourceRevision": "f0b29f319ef593ae81919a4a77540be85ce16d43",
+      "cratePathInSource": "crates/aristo-macros",
+      "sourceUrl": "https://raw.githubusercontent.com/aretta-ai/aristo/f0b29f319ef593ae81919a4a77540be85ce16d43/LICENSE",
+      "sourceSha256": "e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55"
+    }
+  ],
+  "unresolvedSources": [
+    {
+      "package": "softaes",
+      "version": "0.1.3",
+      "sourceRevision": "8266b9c7ebee874c8f952caed94e8a7b9103a00d",
+      "inspection": "Complete recursive repository tree contains no separate license or notice file; declared MIT expression alone is not treated as a recovered source notice",
+      "treeUrl": "https://api.github.com/repos/jedisct1/rust-softaes/git/trees/8266b9c7ebee874c8f952caed94e8a7b9103a00d?recursive=1",
+      "filePaths": [
+        ".gitignore",
+        "Cargo.toml",
+        "src/lib.rs",
+        "src/unprotected.rs"
+      ]
     }
   ]
 }
