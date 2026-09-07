@@ -4228,3 +4228,42 @@ fn scalar_pagination_retains_statement_parameter_positions() {
         }
     }
 }
+
+#[test]
+fn scalar_pagination_rejects_nonintegral_numbers_and_retries() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1}");
+    q(&c, "INSERT INTO docs {n:2}");
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        let sql = format!(
+            "SELECT (SELECT array::new(d.n) LIMIT $limit OFFSET $offset) FROM {source} ORDER BY n"
+        );
+        let valid = Parameters::from([
+            ("$limit".into(), Value::Number(1.0)),
+            ("$offset".into(), Value::Number(0.0)),
+        ]);
+        let expected = vec![
+            vec![Value::Array(vec![Value::Integer(1)])],
+            vec![Value::Array(vec![Value::Integer(2)])],
+        ];
+        for name in ["$limit", "$offset"] {
+            for value in [1.5, -1.5, i64::MIN as f64, i64::MAX as f64] {
+                let mut params = valid.clone();
+                params.insert(name.into(), Value::Number(value));
+                assert!(c.execute(&sql, &params).is_err(), "{sql}: {params:?}");
+                assert!(
+                    c.profile_select(&sql, &params).is_err(),
+                    "{sql}: {params:?}"
+                );
+                assert_eq!(c.execute(&sql, &valid).unwrap().rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &valid).unwrap().result.rows,
+                    expected,
+                    "{sql}"
+                );
+            }
+        }
+    }
+}
