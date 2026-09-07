@@ -901,3 +901,8 @@ The offline installed-package smoke now exercises CTE-driven UPDATE/DELETE in sy
 Named-window partition/order expressions now recognize proven CTE qualifiers in guard inspection. A multi-row sum window over a collection-named native CTE agrees with an equivalent ordinary CTE in execute and profile_select. Direct guard tests retain nested physical and schema-qualified window references. This removes a false rejection without changing executed SQL or extending pinned frame/window support. Frame expressions, deeper scopes and same-name writes remain open.
 
 Scoped checks passed formatting, Clippy, 293 Rust tests, thirty-four Node tests and strict TypeScript. Final direct guard checks passed separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Aliased collection-named CTE writes (2026-09-07)
+
+After the guard corrections, a collection-named CTE with a distinct write-target alias passes for UPDATE and DELETE. A new regression compares parameterized, qualified candidates and RETURNING to equivalent native queries, checks affected counts/index integrity and rolls back both routes. All five with_writes tests passed. The unaliased target-identifier collision still fails preparation; automatic alias insertion would change pinned semantics and is not the fix.

@@ -194,3 +194,46 @@ fn cte_named_window_qualifiers_match_native_window_results() {
         expected.rows
     );
 }
+
+#[test]
+fn aliased_with_writes_can_use_a_cte_named_after_the_collection() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    for delete in [false, true] {
+        q(&c, "BEGIN");
+        let query = |table| {
+            let prefix =
+                format!("WITH {table} AS (SELECT $n AS n), chosen AS (SELECT n FROM {table})");
+            if delete {
+                format!("{prefix} DELETE FROM {table} AS target WHERE target.n IN (SELECT n FROM chosen) RETURNING n")
+            } else {
+                format!("{prefix} UPDATE {table} AS target SET n=target.n+10 WHERE target.n IN (SELECT n FROM chosen) RETURNING n")
+            }
+        };
+        let params = Parameters::from([("$n".into(), Value::Integer(2))]);
+        let expected = c.execute(&query("native"), &params).unwrap();
+        let actual = c.execute(&query("docs"), &params).unwrap();
+        assert_eq!(actual.rows, expected.rows);
+        assert_eq!(actual.affected, 1);
+        assert_eq!(
+            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+            q(&c, "SELECT n FROM native ORDER BY n").rows
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        q(&c, "ROLLBACK");
+        assert_eq!(
+            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(1)],
+                vec![Value::Integer(2)],
+                vec![Value::Integer(3)]
+            ]
+        );
+    }
+}

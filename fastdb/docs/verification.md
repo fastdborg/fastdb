@@ -1179,3 +1179,8 @@ An initial integration assertion incorrectly expected valid EXPLAIN collection l
 ## Named-window CTE guard qualification — 2026-09-07
 
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-window-check.log`): formatting, Clippy, 293 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. The new multi-row CTE window regression compares execute/profile results to the equivalent native CTE name. Final direct guard checks passed (`/tmp/fastdb-cte-window-guard-final.log`), including nested physical and schema-qualified references in named windows. Only PARTITION BY/ORDER BY qualifier roles are newly recognized; original SQL and pinned frame/window capabilities remain unchanged.
+
+
+## Aliased collection CTE writes — 2026-09-07
+
+`cargo test --locked -p fastdb-tests --test with_writes` passed five tests (`/tmp/fastdb-aliased-with-writes.log`). The new test compares UPDATE/DELETE using a physical-name CTE and distinct target alias against native equivalents, with parameters, qualified expressions, RETURNING, affected counts, integrity and rollback. Test-package Clippy and formatting passed. Production code is unchanged; prior 293 Rust / 34 Node full scoped evidence plus this regression yields 294 distinct Rust tests. Unaliased target-identifier collision remains open and was reconfirmed by a live probe.

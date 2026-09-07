@@ -836,3 +836,6 @@ Explicit and implicit FROM aliases of proven CTE sources now receive the same gu
 
 
 Named-window PARTITION BY and ORDER BY expressions now use the current proven CTE-source qualifier set during guard inspection. Nested expression subqueries and schema-qualified references remain guarded. Frame expressions and window/base names are not covered by this redaction; native window/frame support remains governed by the pinned engine.
+
+
+In the tested WITH UPDATE/DELETE forms, a CTE may share the collection's physical name when the write target uses a different alias, e.g. `WITH docs AS (SELECT $n AS n), chosen AS (SELECT n FROM docs) UPDATE docs AS target SET n=target.n+10 WHERE target.n IN (SELECT n FROM chosen) RETURNING n`. These forms agree with equivalent native writes. The unresolved case is a CTE colliding with the exposed write-target identifier; changing the alias changes native binding semantics and is not a semantics-preserving automatic rewrite.
