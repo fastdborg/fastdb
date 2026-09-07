@@ -678,3 +678,71 @@ fn native_source_expression_subqueries_preserve_explicit_logical_values() {
         vec![vec![params["$v"].clone()]]
     );
 }
+
+#[test]
+fn scalar_subquery_pagination_matches_native_and_retains_scope() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2),(3),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES (1),(2),(3),(3)");
+    for distinct in ["", "DISTINCT "] {
+        for pagination in [
+            "LIMIT (SELECT min(n) FROM SOURCE)",
+            "LIMIT (SELECT max(n) FROM SOURCE) OFFSET (SELECT min(n) FROM SOURCE)",
+            "LIMIT (SELECT n-n FROM SOURCE LIMIT 1)",
+            "LIMIT (SELECT -n FROM SOURCE LIMIT 1)",
+        ] {
+            let logical = format!(
+                "SELECT {distinct}n FROM docs ORDER BY n {}",
+                pagination.replace("SOURCE", "docs")
+            );
+            let native = logical.replace("FROM docs", "FROM native");
+            assert_eq!(q(&c, &logical).rows, q(&c, &native).rows, "{logical}");
+        }
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs ORDER BY n LIMIT (SELECT count(*) FROM native)"
+        )
+        .rows
+        .len(),
+        4
+    );
+    for distinct in ["", "DISTINCT "] {
+        let sql = format!("WITH chosen AS (SELECT n FROM docs) SELECT {distinct}n FROM docs ORDER BY n LIMIT (SELECT min(n) FROM chosen)");
+        // The pinned engine cannot resolve an outer CTE from LIMIT.
+        assert!(c
+            .execute(&sql.replace("FROM docs", "FROM native"), &Parameters::new())
+            .is_err());
+        assert!(c.execute(&sql, &Parameters::new()).is_err());
+    }
+    let params = Parameters::from([
+        ("$limit".into(), Value::Integer(2)),
+        ("$offset".into(), Value::Integer(1)),
+    ]);
+    assert_eq!(c.execute("SELECT n FROM docs ORDER BY n LIMIT (SELECT $limit FROM docs LIMIT 1) OFFSET (SELECT $offset FROM docs LIMIT 1)", &params).unwrap().rows, vec![vec![Value::Integer(2)],vec![Value::Integer(3)]]);
+    q(&c, "CREATE TABLE target");
+    assert!(c
+        .execute(
+            "INSERT INTO target(n) SELECT n FROM docs LIMIT (SELECT n FROM docs WHERE n=99)",
+            &Parameters::new()
+        )
+        .is_err());
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+    q(
+        &c,
+        "INSERT INTO target(n) SELECT n FROM docs ORDER BY n LIMIT (SELECT min(n) FROM docs)",
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM target").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+}

@@ -689,3 +689,9 @@ Anonymous `?` placeholders retain statement-wide numbering across outer projecti
 ## Explicit typed projections over native nested sources (2026-09-07)
 
 Nested SELECTs reading ordinary SQL tables now enter logical lowering when their projections contain supplied typed parameters or expanded FastQL helpers. Records, booleans, objects, arrays, vectors and binary values retain their identities through expression subqueries; logical types also survive CTE and derived-table boundaries. Empty scalar results remain NULL, EXISTS tests row existence, and record constructors can supply IN sources. Binary-only CTE/derived projections keep their existing native route. A binary parameter used only in a native WHERE clause does not enable logical lowering: its native column affinity must remain intact. Broader native projection metadata, helper-only predicates, correlation and resource/platform qualification remain open.
+
+## Initial scalar-subquery pagination (2026-09-07)
+
+Single-core collection SELECTs now lower supported uncorrelated logical scalar subqueries in LIMIT and OFFSET, including DISTINCT and collection INSERT SELECT. Pagination uses a separate scope without outer fields or projection aliases. Regression coverage compares positive, zero and negative limits and offsets with native SQL, preserves native-only limit queries, checks bound inner parameters, and verifies an empty scalar limit rejects an insert without target changes. Both Node clients exercise bound pagination with DISTINCT.
+
+An outer CTE referenced inside LIMIT fails in both the pinned native engine and the logical route; this remains a limitation. Compound-query pagination subqueries, correlated queries and broader type/resource qualification remain unfinished. No upstream implementation, dependency or persisted-format changes.

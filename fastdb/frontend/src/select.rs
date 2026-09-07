@@ -2122,6 +2122,10 @@ impl Connection {
             }
         }
         inputs.extend(select.order_by.iter().map(|e| *e.expr.clone()));
+        if let Some(limit) = &select.limit {
+            inputs.push(*limit.expr.clone());
+            inputs.extend(limit.offset.iter().map(|e| *e.clone()));
+        }
         for mut input in inputs {
             turso_core::walk_expr_mut(&mut input, &mut |expr| {
                 if let Expr::Subquery(inner)
@@ -2701,6 +2705,39 @@ impl Connection {
             } else {
                 scope.lower(&mut sorted.expr)?;
             }
+        }
+        if let Some(limit) = &mut select.limit {
+            // Pagination has no access to outer fields or projection aliases.
+            let pagination = Scope {
+                expression_subqueries: scope.expression_subqueries.clone(),
+                sources: Vec::new(),
+                params: params.clone(),
+                consumed: Default::default(),
+                fetched_aliases: Default::default(),
+                standalone_aliases: Default::default(),
+            };
+            for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
+                let mut probe = *value.clone();
+                let mut logical = false;
+                turso_core::walk_expr_mut(&mut probe, &mut |expr| {
+                    if matches!(
+                        expr,
+                        Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+                    ) {
+                        logical |= pagination
+                            .expression_subqueries
+                            .contains_key(&expr.to_string());
+                    }
+                    Ok(turso_core::WalkControl::Continue)
+                })?;
+                if logical {
+                    pagination.sql_argument(value)?;
+                }
+            }
+            scope
+                .consumed
+                .borrow_mut()
+                .extend(pagination.consumed.into_inner());
         }
         if distinct {
             if fetched.iter().any(|v| *v) {

@@ -511,6 +511,7 @@ test('typed scalar subqueries preserve values in both clients', async () => {
       const row = await db.exactlyOne('SELECT (SELECT link FROM docs) AS link,(SELECT items FROM docs) AS items,(SELECT n FROM docs WHERE n=99) AS missing');
       assert.deepEqual(row, [new Record('docs','b'), [1n,true], null]);
       assert.deepEqual(await db.exactlyOne('SELECT n FROM docs WHERE n=(SELECT max(n) FROM docs)'), [1n]);
+      assert.deepEqual(await db.exactlyOne('SELECT DISTINCT n FROM docs LIMIT (SELECT $limit FROM docs) OFFSET (SELECT $offset FROM docs)', {$limit:1n,$offset:0n}), [1n]);
       assert.deepEqual(await db.exactlyOne('SELECT EXISTS (SELECT link,items FROM docs) AS present,NOT EXISTS (SELECT n FROM docs WHERE n=99) AS absent'), [1n,1n]);
       assert.deepEqual(await db.exactlyOne('SELECT docs:b IN (SELECT link FROM docs) AS present,2 NOT IN (SELECT n FROM docs) AS absent,NULL IN (SELECT n FROM docs) AS unknown'), [1n,1n,null]);
       for (const value of [new Record('docs','key'), [1n,true], {ok:true}, Buffer.from([0,255]), Vector.float32([1,0])]) {
