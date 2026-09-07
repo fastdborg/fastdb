@@ -146,6 +146,27 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
         _ => Err(unsupported("this collection VALUES expression")),
     }
 }
+// Candidate SELECT lowering owns subquery validation and typed result handling.
+// Validate only the surrounding scalar assignment here; VALUES/RETURNING keep
+// their stricter validator. Never execute this validation-only expression.
+fn safe_candidate_assignment(expr: &Expr) -> Result<()> {
+    let mut outer = expr.clone();
+    turso_core::walk_expr_mut(&mut outer, &mut |expr| {
+        match expr {
+            Expr::Subquery(_) | Expr::Exists(_) => {
+                *expr = Expr::Literal(Literal::Null);
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            Expr::InSelect { lhs, .. } => {
+                *expr = *lhs.clone();
+            }
+            _ => {}
+        }
+        Ok(turso_core::WalkControl::Continue)
+    })?;
+    safe_value_expression(&outer)
+}
+
 fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
     let Stmt::Insert {
         body: InsertBody::Select(_, upsert),
@@ -541,7 +562,7 @@ impl Connection {
         params: &Parameters,
     ) -> Result<Vec<Vec<Value>>> {
         for expr in assignments {
-            safe_value_expression(expr)?;
+            safe_candidate_assignment(expr)?;
         }
         let mut columns = vec![ResultColumn::Star];
         for (i, expr) in assignments.iter().enumerate() {

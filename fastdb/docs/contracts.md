@@ -839,3 +839,6 @@ Named-window PARTITION BY and ORDER BY expressions now use the current proven CT
 
 
 In the tested WITH UPDATE/DELETE forms, a CTE may share the collection's physical name when the write target uses a different alias, e.g. `WITH docs AS (SELECT $n AS n), chosen AS (SELECT n FROM docs) UPDATE docs AS target SET n=target.n+10 WHERE target.n IN (SELECT n FROM chosen) RETURNING n`. These forms agree with equivalent native writes. The unresolved case is a CTE colliding with the exposed write-target identifier; changing the alias changes native binding semantics and is not a semantics-preserving automatic rewrite.
+
+
+UPDATE candidate assignments now admit subquery expressions handled by the existing SELECT lowerer, including covered scalar, EXISTS and IN forms. The surrounding scalar expression still passes assignment validation; VALUES and RETURNING keep their existing restrictions. Candidate results, including typed collection values, are evaluated before mutation and validated during atomic writes. This does not add correlated-subquery support, outer aggregate assignments or broader RETURNING subqueries.

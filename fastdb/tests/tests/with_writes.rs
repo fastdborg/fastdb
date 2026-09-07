@@ -237,3 +237,94 @@ fn aliased_with_writes_can_use_a_cte_named_after_the_collection() {
         );
     }
 }
+
+#[test]
+fn update_assignments_use_typed_subquery_candidates_before_mutation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    for expression in [
+        "(SELECT max(n) FROM native)+10",
+        "(SELECT max(n) FROM docs)+10",
+        "(SELECT n FROM chosen)+10",
+        "n IN (SELECT n FROM chosen)",
+        "EXISTS(SELECT n FROM chosen)",
+    ] {
+        q(&c, "BEGIN");
+        let params = if expression.contains("chosen") {
+            Parameters::from([("$value".into(), Value::Integer(2))])
+        } else {
+            Parameters::new()
+        };
+        let make = |table: &str, expression: &str| {
+            let prefix = if expression.contains("chosen") {
+                "WITH chosen AS (SELECT $value AS n) "
+            } else {
+                ""
+            };
+            format!("{prefix}UPDATE {table} SET n={expression} WHERE n=2 RETURNING n")
+        };
+        // Membership/EXISTS yield 1, which conflicts with the retained unique row.
+        let actual = c.execute(&make("docs", expression), &params);
+        let expected = c.execute(
+            &make("native", &expression.replace("docs", "native")),
+            &params,
+        );
+        match (expected, actual) {
+            (Ok(a), Ok(b)) => {
+                assert_eq!(a.rows, b.rows);
+                assert_eq!(a.affected, b.affected);
+            }
+            (Err(a), Err(b)) => assert_eq!(a.code(), b.code()),
+            (a, b) => panic!("{expression}: {a:?} / {b:?}"),
+        }
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        q(&c, "ROLLBACK");
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(n) VALUES(9)");
+    let sql="WITH chosen AS (SELECT n FROM docs WHERE n<$max) UPDATE docs SET n=(SELECT max(n) FROM chosen)+n WHERE n<3 RETURNING n";
+    assert!(c.execute(sql, &Parameters::new()).is_err());
+    assert!(c
+        .execute(sql, &Parameters::from([("$max".into(), Value::Integer(3))]))
+        .is_err());
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        4
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    let retry = sql.replace(")+n", ")+n+10");
+    assert_eq!(
+        c.execute(
+            &retry,
+            &Parameters::from([("$max".into(), Value::Integer(3))])
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::Integer(13)], vec![Value::Integer(14)]]
+    );
+    q(&c, "ROLLBACK");
+    q(&c, "CREATE TABLE flags");
+    q(&c, "INSERT INTO flags {id:flags:a,flag:true}");
+    q(&c, "DEFINE FIELD flag ON docs TYPE boolean");
+    q(&c, "BEGIN");
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE docs SET flag=(SELECT flag FROM flags) WHERE n=1 RETURNING flag"
+        )
+        .rows,
+        vec![vec![Value::Boolean(true)]]
+    );
+    assert!(c
+        .execute("UPDATE docs SET n=sum(n)", &Parameters::new())
+        .is_err());
+    q(&c, "ROLLBACK");
+}

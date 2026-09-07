@@ -906,3 +906,10 @@ Scoped checks passed formatting, Clippy, 293 Rust tests, thirty-four Node tests 
 ## Aliased collection-named CTE writes (2026-09-07)
 
 After the guard corrections, a collection-named CTE with a distinct write-target alias passes for UPDATE and DELETE. A new regression compares parameterized, qualified candidates and RETURNING to equivalent native queries, checks affected counts/index integrity and rolls back both routes. All five with_writes tests passed. The unaliased target-identifier collision still fails preparation; automatic alias insertion would change pinned semantics and is not the fix.
+
+
+## UPDATE subquery assignment candidates (2026-09-07)
+
+The assignment validator now delegates subquery nodes to candidate SELECT lowering while retaining surrounding scalar checks. Tests compare native/collection scalar sources, CTE scalar values and EXISTS/IN assignments; verify typed boolean propagation into field validation; and exercise missing parameters, uniqueness failure, prior outer work, corrected retry and rollback. The mutation-cancellation matrix includes scalar and WITH-scalar assignment forms. VALUES/RETURNING restrictions and unsupported correlation remain unchanged.
+
+Scoped checks passed formatting, Clippy, 295 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

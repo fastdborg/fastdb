@@ -1184,3 +1184,10 @@ An initial integration assertion incorrectly expected valid EXPLAIN collection l
 ## Aliased collection CTE writes — 2026-09-07
 
 `cargo test --locked -p fastdb-tests --test with_writes` passed five tests (`/tmp/fastdb-aliased-with-writes.log`). The new test compares UPDATE/DELETE using a physical-name CTE and distinct target alias against native equivalents, with parameters, qualified expressions, RETURNING, affected counts, integrity and rollback. Test-package Clippy and formatting passed. Production code is unchanged; prior 293 Rust / 34 Node full scoped evidence plus this regression yields 294 distinct Rust tests. Unaliased target-identifier collision remains open and was reconfirmed by a live probe.
+
+
+## UPDATE subquery assignments — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-update-subqueries-check.log`): formatting, Clippy, 295 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Candidate-assignment validation now defers subquery nodes to SELECT lowering while checking surrounding scalar expressions. Regression coverage includes native/collection scalar sources, WITH scalar sources, EXISTS/IN uniqueness conflicts, missing parameters, prior work, atomic retry, typed boolean validation and outer aggregate rejection. Cancellation coverage includes scalar and WITH-scalar assignment writes. Both Node clients exercise CTE scalar assignments.
+
+A development oracle initially updated its source before the collection query read it, producing unequal starting data; the final comparison executes the collection route before the equivalent native mutation. VALUES/RETURNING restrictions and correlated assignment support remain unchanged.

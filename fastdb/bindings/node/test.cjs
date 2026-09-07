@@ -883,7 +883,7 @@ test('leading WITH updates and deletes work in both clients', async () => {
       await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
       await db.execute('INSERT INTO docs(n) VALUES(1),(2),(3)');
       await db.execute('BEGIN');
-      const updated=await db.execute('WITH chosen AS (SELECT $n AS n) UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n',{$n:2n});
+      const updated=await db.execute('WITH chosen AS (SELECT $n AS n) UPDATE docs SET n=(SELECT n FROM chosen)+10 WHERE n IN (SELECT n FROM chosen) RETURNING n',{$n:2n});
       assert.deepEqual(updated.rows,[[12n]]);
       assert.equal(updated.affected,1n);
       const deleted=await db.execute('WITH chosen AS (SELECT n FROM docs WHERE n>$min) DELETE FROM docs WHERE n IN (SELECT n FROM chosen) RETURNING n',{$min:10n});
