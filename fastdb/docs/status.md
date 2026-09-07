@@ -1836,3 +1836,10 @@ The actual tarball installed and passed synchronous/worker consumer checks and s
 Added an offline, locked, package-scoped Cargo inventory generator and a checked-in x86_64-unknown-linux-gnu inventory of 192 package/version entries, including normal/build dependencies, declared license expressions and the Cargo.lock SHA-256. Regeneration matches exactly; check mode rejects a deliberately stale inventory. cfg_block 0.1.1 has no license expression in the Cargo tree output and remains a source-inspection item.
 
 This is an audit input, not a linked-binary inventory or complete notice bundle. Build tools are included, dev dependencies excluded, and bundled native sources still need separate review. A workspace-wide offline metadata attempt required an uncached unrelated crate; the final package-scoped query succeeds offline. No registry access, publishing or upstream implementation edits occurred. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests. Distribution and full V1 release gates remain open.
+
+
+## cfg_block source notice inspection (2026-09-08)
+
+Inspected pinned cfg_block 0.1.1: Cargo.toml and Cargo.toml.orig declare license-file = "LICENSE", explaining the absent license expression in cargo tree. That file contains Trevor Gross's 2022 copyright and Apache 2.0 notice. The dependency path is fastdb-node → fastdb → turso_core → cfg_block. The Node notice file now includes the source notice and Apache 2.0 text from the pinned checkout, with source paths and SHA-256 hashes. The machine inventory preserves Cargo's absent expression rather than substituting inferred metadata.
+
+Offline packing/installation passed exact notice verification, sync/worker consumer checks and strict consumer TypeScript: Linux x64, Node 24.19.0, nine files, 59,915,316 packed bytes with the existing debug addon. The specific missing-expression investigation is resolved; complete dependency and bundled-source notice qualification remains open. No publication or upstream implementation changes occurred. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests; full V1 remains incomplete.

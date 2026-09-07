@@ -100,7 +100,7 @@ Native constraint, foreign-key and trigger-raise errors use FDB_CONSTRAINT and r
 
 ## Local package smoke
 
-Normal npm packing first checks that the native addon loads; a missing or incompatible build fails before creating the archive. The npm file allowlist includes the native addon, synchronous/worker JavaScript entry points, declarations, README, MIT license and bundled QuickJS notices. Build the current platform's addon, then verify the actual tarball from the repository root:
+Normal npm packing first checks that the native addon loads; a missing or incompatible build fails before creating the archive. The npm file allowlist includes the native addon, synchronous/worker JavaScript entry points, declarations, README, MIT license and third-party notices. Build the current platform's addon, then verify the actual tarball from the repository root:
 
 ```sh
 fastdb/scripts/check-node.sh
@@ -212,4 +212,4 @@ node fastdb/scripts/inventory-node-dependencies.cjs x86_64-unknown-linux-gnu fas
 node fastdb/scripts/inventory-node-dependencies.cjs x86_64-unknown-linux-gnu fastdb/docs/node-dependencies-linux-x64.json --check
 ```
 
-This offline, locked, package-scoped Cargo query records normal and build dependencies, declared license expressions, the target and the lockfile hash. The checked-in Linux inventory contains 192 package/version entries. `cfg_block` 0.1.1 has no license expression in the query output and needs source inspection. Build tools are included; development dependencies are excluded. The inventory is an audit input, not evidence that every listed crate is linked into the addon, a complete component inventory, or a replacement for license texts. Bundled C/C++ sources and other vendored components require separate inspection. Regenerate for dependency changes and qualify other advertised targets separately.
+This offline, locked, package-scoped Cargo query records normal and build dependencies, declared license expressions, the target and the lockfile hash. The checked-in Linux inventory contains 192 package/version entries. `cfg_block` 0.1.1 has no license expression in the query output: its pinned manifest instead declares `license-file = "LICENSE"`. That source file contains an Apache 2.0 notice; the package notice file includes it and the Apache 2.0 text. The inventory retains the absent expression rather than replacing Cargo metadata with an inferred value. Build tools are included; development dependencies are excluded. The inventory is an audit input, not evidence that every listed crate is linked into the addon, a complete component inventory, or a replacement for license texts. Bundled C/C++ sources and other vendored components require separate inspection. Regenerate for dependency changes and qualify other advertised targets separately.
