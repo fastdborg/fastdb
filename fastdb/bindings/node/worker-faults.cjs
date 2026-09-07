@@ -124,6 +124,54 @@ const { getEventListeners } = require('node:events');
     await db.close();
     assert.equal(worker.stopped,true);
   }
+  {
+    const db = await AsyncDatabase.open(); const worker = latest;
+    // Reuse one string: the mock does not clone payloads. Count UTF-8 bytes,
+    // not JS code units, while avoiding 128 MiB of distinct test allocations.
+    const script = 'é'.repeat(4 * 1024 * 1024);
+    assert.equal(Buffer.byteLength(script), 8 * 1024 * 1024);
+    const controllers = Array.from({length:16}, () => new AbortController());
+    const accepted = controllers.map(controller => db.executeBatch(script, {signal:controller.signal}));
+    const settled = Promise.allSettled(accepted);
+    assert.equal(worker.messages.length,16);
+    const excess = new AbortController();
+    await assert.rejects(db.executeBatch('x', {signal:excess.signal}), error => isFastDBError(error) && error.code === 'FDB_LIMIT' && error.transaction === undefined);
+    assert.equal(getEventListeners(excess.signal,'abort').length,0);
+    controllers[0].abort();
+    await assert.rejects(db.executeBatch('x'), error => error.code === 'FDB_LIMIT');
+    assert.equal(worker.messages.length,16);
+    const first = worker.messages[0];
+    worker.emit('message', {id:first.id, error:{message:'completed request failure'}});
+    assert.equal(cancelOperation(first.cancellationKey),false);
+    assert.equal(getEventListeners(controllers[0].signal,'abort').length,0);
+    // A failed send must also return its reserved bytes and token.
+    worker.rejectRequest = true;
+    const sendController = new AbortController();
+    await assert.rejects(db.executeBatch(script, {signal:sendController.signal}), /injected send failure/);
+    const failedSend = worker.messages.pop();
+    assert.equal(cancelOperation(failedSend.cancellationKey),false);
+    assert.equal(getEventListeners(sendController.signal,'abort').length,0);
+    worker.rejectRequest = false;
+    // A completed error frees exactly its accepted bytes for subsequent work.
+    const replacementController = new AbortController();
+    const replacement = db.executeBatch(script, {signal:replacementController.signal});
+    const replacementSettled = Promise.allSettled([replacement]);
+    assert.equal(worker.messages.length,17);
+    await assert.rejects(db.executeBatch('x'), error => error.code === 'FDB_LIMIT');
+    worker.emit('messageerror',new Error('byte-limited queue response failure'));
+    const outcomes = await settled;
+    assert.equal(outcomes[0].reason.message,'completed request failure');
+    assert(outcomes.slice(1).every(outcome => outcome.status === 'rejected' && outcome.reason.code === 'FDB_WORKER'));
+    assert.equal((await replacementSettled)[0].reason.code,'FDB_WORKER');
+    for (let i=0;i<controllers.length;i++) {
+      assert.equal(getEventListeners(controllers[i].signal,'abort').length,0);
+      assert.equal(cancelOperation(worker.messages[i].cancellationKey),false);
+    }
+    assert.equal(getEventListeners(replacementController.signal,'abort').length,0);
+    assert.equal(cancelOperation(worker.messages[16].cancellationKey),false);
+    await db.close();
+    assert.equal(worker.stopped,true);
+  }
   for (const failure of ['send','exit']) {
     const db = await AsyncDatabase.open(); const worker = latest;
     const controller = new AbortController();
