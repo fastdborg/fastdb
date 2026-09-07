@@ -2165,3 +2165,12 @@ Final offline package installation passed exact notice contents, synchronous/wor
 check-node.sh now accepts --release, uses the existing pinned workspace release profile and copies the corresponding addon before running the same client/application and TypeScript checks. Default invocation retains the debug build. Shell syntax and invalid/extra-option rejection pass. The optimized build completed in 2m11s and passed all 46 Node/application tests plus strict TypeScript on Linux x64, Node 24.19.0.
 
 The actual optimized tarball then passed offline installation, exact notice contents, synchronous/worker consumers and strict consumer TypeScript: ten files, 22,949,529 packed bytes. The addon is 83,694,824 bytes, SHA-256 f9fb05b8609ed696d173c78294535985f1a26b9076f5962e3b9637bee94225e5. The release profile retains debug information; stripping/final artifact sizing, other platforms/Node versions, complete attribution and publication readiness remain open. The local package currently contains the optimized addon; a default check-node run replaces it with debug. No publication or upstream profile edits occurred. Latest complete scoped Rust evidence remains 420 tests; no release-mode Rust-suite claim is made. Full V1 remains incomplete.
+
+
+## Stripped Linux Node artifact qualification (2026-09-08)
+
+Added --release-stripped to check-node.sh. On Linux it builds the existing release profile, copies the addon, removes debug sections from only the package copy, then runs the same tests. Unsupported platforms and invalid arguments reject before building; shell syntax and those rejection checks pass. The stripped addon passed 46 Node/application tests and strict TypeScript.
+
+An independently stripped copy exactly matches the package artifact, and the full Cargo artifact remains intact. Full addon: 83,694,824 bytes, SHA-256 e76a6c74394a914e9e53f8e611f0e939760a483ca0dc764cda92cfec1da25a90. Stripped addon: 19,869,688 bytes, SHA-256 adc4dd5c4efff8982c5d65d2e4bc87f2ae0c50ea61d9bb57268a1e33bd1b9a37. Offline tarball installation passed exact notices, sync/worker consumers and strict consumer TypeScript on Linux x64, Node 24.19.0: ten files, 7,734,779 packed bytes.
+
+The local package now contains the stripped release addon; other build modes replace that copy. No publishing or upstream profile changes occurred. Other platforms, symbol-artifact distribution, complete attribution and full V1 release qualification remain open. Latest complete scoped Rust evidence remains 420 tests; this run qualifies the Node artifact, not release-mode Rust tests.
