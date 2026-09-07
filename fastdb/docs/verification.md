@@ -1579,3 +1579,6 @@ Composite COUNT window/write qualification (2026-09-07): arrays, objects, record
 
 
 Node composite COUNT qualification (2026-09-07): both clients count stored array/object/record/binary/boolean values while excluding null/missing fields, preserve bigint result counts through exactlyOne/profileSelect, and count typed parameters including empty binary values correctly. Cumulative window counts retain the same null-presence semantics. The focused synchronous/worker regression passes with the previously rebuilt addon. Composite DISTINCT equality and broader V1 qualification remain open.
+
+
+Installed composite COUNT qualification (2026-09-07): the offline package consumer now checks plain composite/null/missing counts, typed object parameters, FILTER helper evaluation, cumulative windows and profile results through synchronous and worker clients inside rollback-scoped fixtures. Runtime and declaration checks passed on Linux x64 / Node 24.19.0: eight files, 59,805,933 packed bytes. The addon is the build from the preceding combined COUNT implementation check. No publishing occurred; broader platform, composite DISTINCT and full V1 gates remain open.

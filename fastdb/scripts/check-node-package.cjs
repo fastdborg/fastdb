@@ -52,6 +52,21 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await assert.rejects(async () => client.all('SELECT vector_extract(embedding) FROM docs'));
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
   }
+  async function withCompositeCounts(client) {
+    await client.execute('BEGIN');
+    try {
+      await client.execute('CREATE TABLE count_values');
+      for (const [n,value] of [[1n,[]],[2n,{a:1n}],[3n,null],[4n,Buffer.alloc(0)]]) {
+        await client.execute('INSERT INTO count_values(n,value) VALUES($n,$value)',{$n:n,$value:value});
+      }
+      const sql='SELECT count(value),count(missing),count(*) FROM count_values';
+      assert.deepEqual(await client.exactlyOne(sql),[3n,0n,4n]);
+      assert.deepEqual((await client.profileSelect(sql)).result.rows,[[3n,0n,4n]]);
+      assert.deepEqual(await client.all('SELECT count(value) OVER (ORDER BY n) FROM count_values ORDER BY n'),[[1n],[2n],[2n],[3n]]);
+      assert.deepEqual(await client.exactlyOne('SELECT count($value) FROM count_values',{$value:{nested:[]}}),[4n]);
+      assert.deepEqual(await client.exactlyOne('SELECT count(array::append(value,1)) FILTER (WHERE n=1) FROM count_values'),[1n]);
+    } finally { await client.execute('ROLLBACK'); }
+  }
   async function withWrites(client) {
     await client.execute('BEGIN');
     await assert.rejects(async()=>client.exactlyOne('SELECT value FROM docs WHERE 0'), error=>isFastDBError(error) && error instanceof RangeError && error.code==='FDB_CARDINALITY' && error.transaction.before==='active' && error.transaction.after==='active');
@@ -171,6 +186,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual(db.exactlyOne('SELECT $v AS v', {$v: vector})[0], vector);
     }
     await withVectorFields(db);
+    await withCompositeCounts(db);
     await withWrites(db);
   } finally { db.close(); }
   assert.throws(()=>db.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
@@ -250,6 +266,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await worker.execute('ROLLBACK');
     assert.equal((await worker.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
     assert.equal((await worker.checkCollectionIntegrity('docs')).documents, 1n);
+    await withCompositeCounts(worker);
     await withWrites(worker);
   } finally { await worker.close(); }
   await assert.rejects(worker.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
