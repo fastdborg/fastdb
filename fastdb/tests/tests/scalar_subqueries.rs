@@ -1316,3 +1316,20 @@ fn cte_membership_compound_inserts_preserve_prior_work_and_retry() {
         }
     }
 }
+
+#[test]
+fn nested_native_membership_resolves_preceding_ctes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2),(NULL)");
+    q(&c, "CREATE TABLE rhs(n INTEGER)");
+    q(&c, "INSERT INTO rhs VALUES (1),(NULL)");
+    for sql in [
+        "WITH r AS (SELECT n FROM rhs) SELECT v FROM (SELECT n IN (SELECT n FROM r) AS v FROM docs) d",
+        "WITH r AS (SELECT n FROM rhs), d AS (SELECT n IN (SELECT n FROM r) AS v FROM docs) SELECT v FROM d",
+        "WITH r AS (SELECT n FROM rhs), d AS (SELECT n IN (SELECT n FROM r) AS v FROM docs), e AS (SELECT v FROM d) SELECT v FROM e",
+    ] {
+        assert_eq!(q(&c,sql).rows,vec![vec![Value::Integer(1)],vec![Value::Null],vec![Value::Null]]);
+    }
+}

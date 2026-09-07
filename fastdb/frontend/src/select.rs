@@ -1127,6 +1127,7 @@ fn source(
     table: &SelectTable,
     params: &Parameters,
     ctes: &CteSources,
+    native_with: Option<&With>,
 ) -> Result<Source> {
     if let SelectTable::Select(select, alias) = table {
         let Some(alias) = alias else {
@@ -1138,6 +1139,7 @@ fn source(
             &sql,
             params,
             SelectOptions {
+                native_with,
                 trusted: true,
                 nested: true,
                 ctes: Some(ctes),
@@ -2110,9 +2112,14 @@ impl Connection {
                 }
                 ctes.insert(name, None);
             }
+            let mut resolved_ctes = Vec::new();
             for index in 0..with.ctes.len() {
                 let mut cte = with.ctes[index].clone();
                 let sql = Cmd::Stmt(Stmt::Select(cte.select.clone())).to_string();
+                let preceding = With {
+                    recursive: false,
+                    ctes: resolved_ctes.clone(),
+                };
                 let plan = match self.lower_collection_select(
                     &sql,
                     &sql,
@@ -2121,6 +2128,8 @@ impl Connection {
                         trusted: true,
                         nested: true,
                         ctes: Some(&ctes),
+                        native_with: Some(&preceding),
+                        membership_namespace: index + 1,
                         ..Default::default()
                     },
                 ) {
@@ -2155,9 +2164,14 @@ impl Connection {
                             order: None,
                         })
                         .collect();
-                    let Cmd::Stmt(Stmt::Select(body)) = plan.command else {
+                    let Cmd::Stmt(Stmt::Select(mut body)) = plan.command else {
                         unreachable!("CTE SELECT plan");
                     };
+                    if cte.select.with.is_none() {
+                        if let Some(generated) = body.with.take() {
+                            resolved_ctes.extend(generated.ctes);
+                        }
+                    }
                     cte.select = body;
                     (
                         names.into_iter().zip(plan.typed).collect(),
@@ -2174,7 +2188,11 @@ impl Connection {
                     };
                     probe.with = Some(With {
                         recursive: false,
-                        ctes: with.ctes[..=index].to_vec(),
+                        ctes: resolved_ctes
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(cte.clone()))
+                            .collect(),
                     });
                     let statement = match self.prepare(Cmd::Stmt(Stmt::Select(probe)).to_string()) {
                         Ok(s) => s,
@@ -2247,8 +2265,9 @@ impl Connection {
                         consumed,
                     }),
                 );
-                with.ctes[index] = cte;
+                resolved_ctes.push(cte);
             }
+            with.ctes = resolved_ctes;
             select.with = Some(with);
         }
         if !select.body.compounds.is_empty() {
@@ -2541,14 +2560,26 @@ impl Connection {
         };
         let mut sources = Vec::new();
         if let Some(from) = from {
-            let first = match source(self, &from.select, params, &ctes) {
+            let first = match source(
+                self,
+                &from.select,
+                params,
+                &ctes,
+                select.with.as_ref().or(native_with),
+            ) {
                 Ok(s) => s,
                 Err(Error::Unsupported(_)) => return Ok(None),
                 Err(e) => return Err(e),
             };
             sources.push(first);
             for join in &from.joins {
-                match source(self, &join.table, params, &ctes) {
+                match source(
+                    self,
+                    &join.table,
+                    params,
+                    &ctes,
+                    select.with.as_ref().or(native_with),
+                ) {
                     Ok(s) => sources.push(s),
                     Err(Error::Unsupported(_)) => return Ok(None),
                     Err(e) => return Err(e),

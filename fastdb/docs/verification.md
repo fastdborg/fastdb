@@ -1018,3 +1018,10 @@ Final `fastdb/scripts/check.sh` passed formatting, Clippy, 275 Rust tests, thirt
 The focused INSERT SELECT regression passed both autocommit and explicit transactions (`/tmp/fastdb-cte-membership-insert.log`). It combines an outer parameterized native CTE, native membership and UNION ALL; checks FDB_PARAMETER for missing input, uniqueness-failure rollback with prior data/indexes retained, exact three-row retry and explicit rollback.
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 276 Rust tests, thirty-one Node tests and strict TypeScript (`/tmp/fastdb-cte-membership-insert-check.log`). One known trigger-interruption gate remains ignored. No production/upstream changes; broader query/write combinations and full V1 remain incomplete.
+
+
+## Nested membership CTE scope — 2026-09-07
+
+Live probes found missing outer-CTE resolution inside derived membership queries and later CTE definitions. Passing native scope corrected the derived query; assembling generated definitions in resolved CTE order also corrected the later-CTE case. The regression covers both and a third CTE consuming the result (`/tmp/fastdb-nested-membership-retest.log`, expanded in the full run).
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 277 Rust tests, thirty-one Node tests and strict TypeScript (`/tmp/fastdb-nested-membership-check.log`). Existing CTE/compound, affinity, evaluation-count and cancellation suites passed. One known trigger-interruption gate remains ignored. No upstream or dependency changes. Broader deep/local-shadowing/correlated scope and full V1 remain incomplete.
