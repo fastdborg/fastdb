@@ -50,6 +50,18 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await client.execute('ROLLBACK');
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
 
+    await client.execute('BEGIN');
+    const correlated=await client.execute('UPDATE docs AS d SET value=(SELECT $next WHERE d.value>$next) RETURNING value',{$next:8n});
+    assert.deepEqual(correlated.rows,[[8n]]);
+    assert.equal(correlated.affected,1n);
+    assert.deepEqual((await client.profileSelect('SELECT (SELECT $n WHERE d.value=$n) FROM docs AS d',{$n:8n})).result.rows,[[8n]]);
+    assert.deepEqual(await client.all('SELECT (SELECT 1 WHERE d.value<0) FROM docs AS d'),[[null]]);
+    const correlatedDelete=await client.execute('DELETE FROM docs AS d WHERE EXISTS(SELECT 1 WHERE d.value=$n) RETURNING value',{$n:8n});
+    assert.deepEqual(correlatedDelete.rows,[[8n]]);
+    assert.equal((await client.checkCollectionIntegrity('docs')).indexEntries,0n);
+    await client.execute('ROLLBACK');
+    assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
+
     const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
     assert.deepEqual(await client.all(cte),[[2n]]);
   }

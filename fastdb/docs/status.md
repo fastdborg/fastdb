@@ -939,3 +939,8 @@ Native scalar and EXISTS subqueries now support qualified outer collection field
 Covered consumers include projections, filters, profile_select and pre-mutation UPDATE candidates. Tests cover empty results, parameters, alias shadowing, native JOIN predicates, binary keys, a scalar affinity/collation matrix, validation rollback and both Node clients. This is initial predicate correlation support: inner collection sources, unqualified outer references, correlated IN, nested/compound/CTE-local scopes, and correlation in projection/group/window/order/limit expressions remain open. General correlation and volatile-expression/resource qualification are not complete.
 
 Scoped checks passed formatting, Clippy, 301 Rust tests, thirty-five Node tests and strict TypeScript. Final explicit-collation wrapper cases passed separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Installed predicate-correlation smoke (2026-09-07)
+
+The offline installed Node consumer now exercises bound correlated UPDATE, profiled scalar reads, empty-result NULL and EXISTS DELETE through sync and worker clients. It checks affected rows, index cleanup and rollback to int64 max. The complete smoke passed on Linux x64 / Node 24.19.0, with eight runtime files and a 59,601,946-byte development tarball. Release/platform qualification remains open.
