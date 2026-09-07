@@ -1560,3 +1560,6 @@ At clean implementation commit fe4856c19, fastdb/scripts/check.sh passed formatt
 
 
 Node migration diagnostic qualification (2026-09-07): a both-client regression verifies preflight FDB_SYNTAX includes the exact migration version above JavaScript's safe-integer range and the UTF-8 byte offset after multibyte comments, with autocommit observations and no earlier schema mutation. Corrected plans apply, name/source/version mismatches retain FDB_VALIDATION reasons and transaction state, and the unchanged plan remains reusable. The focused synchronous/worker test passes using the addon rebuilt by the preceding full scoped check. Broader V1 release qualification remains open.
+
+
+Filtered DISTINCT aggregate qualification (2026-09-07): native differential collection tests cover count/sum/avg DISTINCT with FILTER, numeric equivalents, NULLs, empty filtered groups and HAVING aliases through execute/profile_select. A grouped INSERT SELECT validation failure preserves prior outer work and index integrity; a corrected filter succeeds and explicit rollback restores empty committed contents. All eight grouping integration tests, formatting and focused Clippy pass. This qualifies existing scalar aggregate behavior; broader SQL/type/resource and full V1 gates remain open.

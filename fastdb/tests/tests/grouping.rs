@@ -353,3 +353,64 @@ fn group_aliases_resolve_expressions_constants_and_explicit_field_collisions() {
         .rows
     );
 }
+
+#[test]
+fn filtered_distinct_aggregates_match_native_and_validate_grouped_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(region,v)");
+    for values in [
+        "('a',1)",
+        "('a',1.0)",
+        "('a',2)",
+        "('a',NULL)",
+        "('b',NULL)",
+    ] {
+        q(&c, &format!("INSERT INTO docs(region,v) VALUES{values}"));
+        q(&c, &format!("INSERT INTO baseline VALUES{values}"));
+    }
+    for filter in ["v>1", "v IS NULL", "v<0", "v IS NOT NULL"] {
+        for having in ["", "HAVING n>0"] {
+            let sql = |table| {
+                format!("SELECT region,count(DISTINCT v) FILTER (WHERE {filter}) AS n,sum(DISTINCT v) FILTER (WHERE {filter}) AS total,avg(DISTINCT v) FILTER (WHERE {filter}) AS mean FROM {table} GROUP BY region {having} ORDER BY region")
+            };
+            let expected = q(&c, &sql("baseline")).rows;
+            assert_eq!(q(&c, &sql("docs")).rows, expected, "{filter} {having}");
+            assert_eq!(
+                c.profile_select(&sql("docs"), &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "profile {filter} {having}"
+            );
+        }
+    }
+    q(&c, "CREATE TABLE totals");
+    q(
+        &c,
+        "DEFINE FIELD total ON totals TYPE integer CHECK (total<2)",
+    );
+    q(&c, "CREATE UNIQUE INDEX totals_region ON totals(region)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO totals {region:'prior',total:0}");
+    let before = q(&c, "SELECT id,region,total FROM totals").rows;
+    let insert="INSERT INTO totals(region,total) SELECT region,sum(DISTINCT v) FILTER (WHERE v IS NOT NULL) AS total FROM docs GROUP BY region HAVING total IS NOT NULL";
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(q(&c, "SELECT id,region,total FROM totals").rows, before);
+    c.check_collection_integrity("totals", Default::default())
+        .unwrap();
+    assert_eq!(q(&c, &insert.replace("v IS NOT NULL", "v<=1")).affected, 1);
+    assert_eq!(
+        q(&c, "SELECT total FROM totals WHERE region='a'").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    c.check_collection_integrity("totals", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM totals").rows.is_empty());
+    c.check_collection_integrity("totals", Default::default())
+        .unwrap();
+}
