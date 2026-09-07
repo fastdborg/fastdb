@@ -159,4 +159,63 @@ mod tests {
             assert_eq!(c.migrate(&plan).unwrap().already_applied, 1);
         }
     }
+    #[test]
+    fn unexpected_history_trigger_preserves_applied_prefix_and_retry() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let plan = [
+            Migration { version: 1, name: "base.sql".into(), sql: "CREATE TABLE docs; CREATE UNIQUE INDEX docs_n ON docs(n); INSERT INTO docs {id:docs:first,n:1}; CREATE TABLE audit(n INTEGER); INSERT INTO audit VALUES(1);".into() },
+            Migration { version: 2, name: "pending.sql".into(), sql: "INSERT INTO docs {id:docs:second,n:2};".into() },
+        ];
+        c.migrate(&plan[..1]).unwrap();
+        let history = c
+            .run("SELECT version,name,script FROM __fastdb_migrations", &[])
+            .unwrap();
+        // An externally added trigger must never run through the managed runner.
+        c.run("CREATE TRIGGER unexpected_history_trigger AFTER INSERT ON __fastdb_migrations BEGIN DELETE FROM audit; END", &[]).unwrap();
+        assert_eq!(c.migrate(&plan).unwrap_err().code(), "FDB_STORAGE");
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+        assert_eq!(
+            c.run("SELECT version,name,script FROM __fastdb_migrations", &[])
+                .unwrap(),
+            history
+        );
+        assert_eq!(
+            c.execute("SELECT n FROM docs", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![crate::Value::Integer(1)]]
+        );
+        assert_eq!(
+            c.execute("SELECT n FROM audit", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![crate::Value::Integer(1)]]
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        c.run("DROP TRIGGER unexpected_history_trigger", &[])
+            .unwrap();
+        let report = c.migrate(&plan).unwrap();
+        assert_eq!(report.already_applied, 1);
+        assert_eq!(report.applied, vec![2]);
+        assert_eq!(
+            c.execute("SELECT n FROM docs ORDER BY n", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![
+                vec![crate::Value::Integer(1)],
+                vec![crate::Value::Integer(2)]
+            ]
+        );
+        assert_eq!(
+            c.execute("SELECT n FROM audit", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![crate::Value::Integer(1)]]
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        assert_eq!(c.migrate(&plan).unwrap().already_applied, 2);
+    }
 }
