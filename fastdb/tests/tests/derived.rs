@@ -1068,3 +1068,32 @@ fn native_subqueries_preserve_binary_parameters() {
         );
     }
 }
+
+#[test]
+fn native_duplicate_derived_names_keep_first_column_collation() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE labels(a TEXT COLLATE NOCASE,b TEXT)");
+    q(&c, "INSERT INTO labels VALUES('A','B')");
+    for projection in ["a AS x,b AS X", "b AS x,a AS X"] {
+        for predicate in ["q.x IN('a')", "q.X IN('a','b')", "q.x NOT IN('a')"] {
+            let query = |source: &str| {
+                format!(
+                "SELECT d.n,{predicate} AS matched FROM {source} d JOIN (SELECT {projection} FROM labels) q ON 1 ORDER BY d.n"
+            )
+            };
+            let expected = q(&c, &query("baseline"));
+            let sql = query("docs");
+            assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows,
+                "{sql}"
+            );
+        }
+    }
+}

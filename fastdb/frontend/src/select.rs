@@ -1698,10 +1698,10 @@ fn source(
                 }
                 Ok(turso_core::WalkControl::Continue)
             })?;
-            native_collations.insert(
-                statement.get_column_name(i).to_ascii_lowercase(),
-                explicit.or(implicit).unwrap_or_else(|| "BINARY".into()),
-            );
+            // Native duplicate-name lookup resolves the first projected column.
+            native_collations
+                .entry(statement.get_column_name(i).to_ascii_lowercase())
+                .or_insert_with(|| explicit.or(implicit).unwrap_or_else(|| "BINARY".into()));
         }
         let mut native_expression_collations = std::collections::BTreeMap::new();
         for (i, column) in program.result_columns.iter().enumerate() {
@@ -1738,10 +1738,10 @@ fn source(
                     Ok(turso_core::WalkControl::Continue)
                 })?;
             }
-            native_expression_collations.insert(
-                statement.get_column_name(i).to_ascii_lowercase(),
-                explicit.or(implicit).unwrap_or_else(|| "BINARY".into()),
-            );
+            // Native duplicate-name lookup resolves the first projected column.
+            native_expression_collations
+                .entry(statement.get_column_name(i).to_ascii_lowercase())
+                .or_insert_with(|| explicit.or(implicit).unwrap_or_else(|| "BINARY".into()));
         }
         return Ok(Source {
             table: SelectTable::Select(select.clone(), Some(alias.clone())),

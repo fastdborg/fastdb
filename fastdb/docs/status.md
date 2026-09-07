@@ -1926,3 +1926,10 @@ This supplies Linux x64 evidence at the declared >=22 lower bound, alongside Nod
 The Node loader now rejects runtimes below the declared Node 22 minimum with FDB_RUNTIME_VERSION before attempting to load native code. Supported runtimes retain the existing FDB_NATIVE_LOAD diagnostic for missing or invalid addons. A VM-based regression checks simulated Node 18/20/21 rejection without addon access and Node 22/24 loading; these simulations do not qualify actual older runtimes.
 
 All 47 client/application tests pass on actual Node 22.0.0 and 24.19.0 using the existing stripped Linux x64 addon. Offline installed-package checks pass on Node 22.0.0, including sync/worker consumers, native-load diagnostics, exact notices and strict consumer TypeScript (ten files, 7,735,229 packed bytes). No Rust code or native artifact changed; latest complete scoped Rust evidence remains 420 passing tests and one ignored test. Full V1 release qualification remains open.
+
+
+## Duplicate native derived-column collation (2026-09-08)
+
+Fixed metadata lookup for duplicate native derived projection names, including names differing only in case. The pinned engine resolves the first projected column; FastDB now retains that column's collation instead of overwriting it with a later duplicate. Before the fix, q.x IN('a') over (SELECT a AS x,b AS X FROM labels), with a TEXT COLLATE NOCASE containing 'A', returned false in a collection join and true in the native baseline. Differential tests cover both projection orders, IN/NOT IN and normal/profiled execution. Duplicate-name star expansion and logical derived projection support remain separate open work.
+
+The complete scoped fastdb/scripts/check.sh run passed formatting, Clippy, 423 Rust tests (one existing trigger-cancellation test ignored), 47 Node/application tests and strict TypeScript. Log: /tmp/fastdb-duplicate-collation-check.log. The check rebuilt the local debug Node addon; the earlier stripped-release ELF report remains evidence for its recorded artifact, not this new local binary. Full V1 release qualification remains incomplete.
