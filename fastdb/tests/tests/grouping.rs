@@ -675,3 +675,37 @@ fn having_unprojected_document_keys_match_native_columns() {
         );
     }
 }
+
+#[test]
+fn aggregate_order_expressions_use_lowered_collection_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(k,n)");
+    for (key, n) in [("a", 1), ("a", 2), ("b", 8), ("c", 4)] {
+        q(&c, &format!("INSERT INTO docs {{k:'{key}',n:{n}}}"));
+        q(&c, &format!("INSERT INTO baseline VALUES('{key}',{n})"));
+    }
+    for aggregate in ["sum(n)", "avg(n)", "min(n)", "max(n)", "count(n)"] {
+        for order in [
+            aggregate.to_owned(),
+            format!("{aggregate} DESC"),
+            format!("({aggregate}) DESC"),
+            "total DESC".into(),
+            "2 DESC".into(),
+        ] {
+            let sql = |table| {
+                format!("SELECT k,{aggregate} AS total FROM {table} GROUP BY k HAVING sum(n)>0 ORDER BY {order},k")
+            };
+            let expected = q(&c, &sql("baseline")).rows;
+            assert_eq!(q(&c, &sql("docs")).rows, expected, "{aggregate}: {order}");
+            assert_eq!(
+                c.profile_select(&sql("docs"), &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+        }
+    }
+}

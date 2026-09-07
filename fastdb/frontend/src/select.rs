@@ -3673,15 +3673,19 @@ impl Connection {
                     .filter(|i| *i > 0 && *i <= columns.len())
                     .map(|i| i - 1),
             };
-            let alias_index = alias_index.or_else(|| original_columns.iter().position(|column| {
+            let expression_index = original_columns.iter().position(|column| {
                 matches!(column, ResultColumn::Expr(expr, _) if expr.as_ref() == order_base(&sorted.expr))
-            }));
+            });
+            let alias_index = alias_index.or(expression_index);
             order_outputs.push(alias_index);
             if let Some(i) = alias_index {
                 if fetched[i] {
                     return Err(unsupported("ordering on fetched values"));
                 }
-                if distinct && !typed[i] {
+                // An expression match still contains logical source fields.
+                // Reuse its lowered projection even when its result is native
+                // (for example SUM), rather than leaving those fields unbound.
+                if !typed[i] && (distinct || expression_index == Some(i)) {
                     let ResultColumn::Expr(expr, _) = &columns[i] else {
                         unreachable!("rewritten projection")
                     };

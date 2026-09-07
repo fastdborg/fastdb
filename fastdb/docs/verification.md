@@ -1636,3 +1636,10 @@ The complete scoped check passed formatting, Clippy, 357 Rust tests, 44 Node/app
 Fixed silently lost groups when a collection HAVING predicate references a document group key omitted from the projection. HAVING uses the equivalent typed-accessor/unwrap form, avoiding the pinned engine's unavailable expression-key result. Native SQL and upstream files remain unchanged. Regressions cover record keys, NULL/numeric/text/NOCASE keys against projected native-key references, execute/profile, direct and derived outer correlation, EXISTS, indexed UPDATE and rollback.
 
 The complete scoped check passed formatting, Clippy, 360 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. The workaround specifically addresses document scalar accessors; broader grouping and volatile-expression qualification remain open. An additional aggregate ORDER BY expression probe fails with a missing-column error while its output ordinal works; see contracts.md for the reproducer. Full V1 remains incomplete.
+
+
+## Aggregate ORDER BY projection matching (2026-09-07)
+
+Fixed the documented missing-column failure for ORDER BY sum(n) over a collection. Native-valued expression matches now reuse their translated projection even without DISTINCT; logical field arguments no longer remain in the engine AST. Differential execute/profile tests cover SUM/AVG/MIN/MAX/COUNT, expressions, parentheses, aliases, ordinals and descending order. The original unaliased count/sum/HAVING reproducer also passes through the rebuilt Node addon.
+
+The complete scoped check passed formatting, Clippy, 361 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed. Broader grouping, correlation, type/resource and full V1 release qualification remain open.
