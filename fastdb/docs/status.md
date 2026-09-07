@@ -1258,3 +1258,8 @@ Migration ledger schema validation (2026-09-07): the runner now reuses managed-s
 
 
 Applied migration ledger protection (2026-09-07): an additional private fixture adds a ledger trigger after an initial migration has committed. The runner rejects it before pending writes or trigger side effects; exact history rows, collection values, native audit data and managed-index integrity remain intact. Fixture-only trigger removal permits the pending version once and preserves the applied prefix on rerun. Both migration unit regressions, formatting and frontend all-target Clippy pass. This qualifies existing schema validation; broader external-corruption/recovery and full V1 work remain open.
+
+
+## Combined ledger and distribution verification (2026-09-07)
+
+At clean implementation commit 7c4858f7e, fastdb/scripts/check.sh passed formatting, Clippy, 338 Rust tests, 42 Node/application tests and strict TypeScript. One known trigger-interruption gate remains ignored. This includes migration source validation/diagnostics and ledger schema/dependency checks with applied-prefix preservation. The rebuilt addon also passed the offline installed-package runtime and declaration smoke on Linux x64 / Node 24.19.0: eight files, 59,806,951 packed bytes. No publishing occurred. Broader platform, recovery, SQL/type/resource and application release gates remain open; full V1 is incomplete.
