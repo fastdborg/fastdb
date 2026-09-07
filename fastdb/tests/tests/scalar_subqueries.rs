@@ -374,3 +374,61 @@ fn membership_subquery_affinity_and_collation_match_native_sql() {
         }
     }
 }
+
+#[test]
+fn subquery_insert_failures_restore_documents_indexes_and_prior_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE source");
+    q(&c, "INSERT INTO source(n) VALUES (1),(2),(9)");
+    q(&c, "CREATE TABLE target");
+    q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO target(n) VALUES (9)");
+    let prior = q(&c, "SELECT id,n FROM target").rows;
+    for predicate in [
+        "n IN (SELECT n FROM source)",
+        "n NOT IN (SELECT n FROM source WHERE n=99)",
+        "EXISTS (SELECT n FROM source WHERE n=2)",
+        "n <= (SELECT max(n) FROM source)",
+    ] {
+        let sql =
+            format!("INSERT INTO target(n) SELECT n FROM source WHERE {predicate} ORDER BY n");
+        assert!(c.execute(&sql, &Parameters::new()).is_err(), "{sql}");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT id,n FROM target").rows, prior);
+        assert_eq!(
+            c.check_collection_integrity("target", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+        assert!(q(&c, "SELECT n FROM target WHERE n=1").rows.is_empty());
+        q(&c, "INSERT INTO target(n) SELECT n FROM source WHERE n IN (SELECT n FROM source WHERE n<9)");
+        assert_eq!(
+            q(&c, "SELECT n FROM target ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(1)],
+                vec![Value::Integer(2)],
+                vec![Value::Integer(9)]
+            ]
+        );
+        q(&c, "DELETE FROM target WHERE n<9");
+    }
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT n FROM target").rows.is_empty());
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM source ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(9)]
+        ]
+    );
+}
