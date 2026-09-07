@@ -178,6 +178,15 @@ fn native_correlated_predicate(
             _ => value,
         }
     }
+    let typed_sort_arguments = typed_sort_values
+        .iter()
+        .map(|(_, alias, value)| {
+            Ok((
+                alias.clone(),
+                expression(&format!("__fastdb_unwrap({value})"))?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let single_projection = columns.len() == 1;
     let mut selected_sorts = 0;
     let mut sort_selections = Vec::new();
@@ -201,6 +210,28 @@ fn native_correlated_predicate(
         }
         sort_selections.push(false);
         rewrite(&mut sorted.expr, false)?;
+        // The pinned engine resolves projection aliases inside ORDER BY
+        // expressions before same-named input columns. Preserve that binding
+        // while exposing logical scalar values to arithmetic/functions.
+        turso_core::walk_expr_mut(&mut sorted.expr, &mut |expr| {
+            if matches!(
+                expr,
+                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+            ) {
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            if let Expr::Id(name) | Expr::Name(name) = expr {
+                if let Some((_, value)) = typed_sort_arguments.iter().find(|(alias, _)| {
+                    alias.as_ref().is_some_and(|alias| {
+                        alias.name().as_str().eq_ignore_ascii_case(name.as_str())
+                    })
+                }) {
+                    *expr = value.clone();
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
     }
     if single_projection && selected_sorts > 0 {
         if selected_sorts != inner.order_by.len()

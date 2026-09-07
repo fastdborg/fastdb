@@ -2061,6 +2061,8 @@ fn correlated_projection_sort_aliases_use_logical_values() {
         "x COLLATE BINARY DESC",
         "(1) DESC",
         "x DESC,n",
+        "x+0 DESC",
+        "abs(x) DESC",
         "n,x DESC",
     ] {
         for projection in [
@@ -2164,6 +2166,44 @@ fn correlated_sorted_projection_preserves_record_and_boolean_values() {
             let sql = format!("SELECT ({projection}),d.{field} IN ({projection}) FROM docs d");
             let value = q(&c, &format!("SELECT {field} FROM docs")).rows[0][0].clone();
             let expected = vec![vec![value, Value::Integer(1)]];
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "profile {sql}"
+            );
+        }
+    }
+}
+
+#[test]
+fn correlated_sort_expression_aliases_match_native_name_precedence() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n,x)",
+        "INSERT INTO docs(n) VALUES(0)",
+        "INSERT INTO native VALUES(0)",
+        "INSERT INTO lookup VALUES(2,10),(10,2)",
+        "CREATE VIEW lookup_view AS SELECT * FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_view", "lookup_cte"] {
+        for order in ["x+0 DESC", "abs(x) DESC", "x,x+0 DESC"] {
+            let expr=format!("(SELECT CASE WHEN d.n=0 THEN n ELSE d.n END AS x FROM {source} ORDER BY {order} LIMIT 1)");
+            let expected = q(
+                &c,
+                &format!("WITH lookup_cte AS (SELECT * FROM lookup) SELECT {expr} FROM native d"),
+            )
+            .rows;
+            let sql =
+                format!("WITH lookup_cte AS (SELECT * FROM lookup) SELECT {expr} FROM docs d");
             assert_eq!(q(&c, &sql).rows, expected, "{sql}");
             assert_eq!(
                 c.profile_select(&sql, &Parameters::new())

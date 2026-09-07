@@ -99,3 +99,6 @@ Initial correlated ORDER BY expressions now match native scalar/IN/EXISTS probes
 
 
 Correlated typed projection aliases/ordinals now have logical ordering with projection reuse and initial LIMIT/OFFSET qualification. Volatile-function execute/profile probes preserve native call counts, including LIMIT 0. Mixed DISTINCT ordering with an additional ordinary key remains explicitly unsupported to preserve duplicate semantics. Broader correlated ordering/alias/type qualification remains open; see status.md.
+
+
+Covered correlated ORDER BY alias arithmetic/function expressions now use logical values and match pinned native alias precedence across tables, views and inherited CTEs. The complete scoped check passed 321 Rust and 35 Node tests; broader correlated scope/type/resource qualification remains open. See status.md.

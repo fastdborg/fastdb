@@ -1344,3 +1344,12 @@ Verification: the complete scoped check passed formatting, Clippy, 318 Rust test
 ## Sorted correlated subquery consumers (2026-09-07)
 
 Additional native differential coverage verifies sorted typed CASE/coalesce subqueries consumed by IN, NOT IN and EXISTS, including mixed numeric/text/NULL inputs, explicit NOCASE collation, alias/ordinal/mixed ordering, zero limits and offsets. Both execute and profile_select match the native table oracle. Separate assertions verify that sorted correlated record and boolean projections retain their logical values and membership identities. All 15 correlated scalar-subquery integration tests pass. This extends qualification of the existing lowering; broader correlated alias/DISTINCT/resource semantics remain open and V1 remains incomplete.
+
+
+## Correlated sort alias expressions (2026-09-07)
+
+Correlated typed projection aliases now expose logical scalar values inside covered ORDER BY arithmetic and function expressions, including `x+0` and `abs(x)`. Previously these expressions operated on the encoded projection and could choose 2 ahead of 10 in descending order. Root alias/ordinal sorting retains the existing projection-reuse boundary; expression aliases follow native evaluation behavior. Nested subquery scopes are excluded from this substitution.
+
+Native differential tests cover alias expressions with LIMIT/OFFSET and name collisions across tables, views and inherited CTEs. The pinned engine gives projected aliases precedence over same-named input columns in these ORDER BY expressions. A volatile CASE projection confirms the native eight-call count through execute and profile_select. Mixed DISTINCT sorting and broader correlated scope/type/resource qualification remain open; full V1 is incomplete.
+
+Verification: the complete scoped suite passed formatting, Clippy, 321 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
