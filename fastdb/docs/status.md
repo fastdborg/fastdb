@@ -1690,3 +1690,6 @@ The complete scoped check passed formatting, Clippy, 403 Rust tests, 44 Node/app
 
 
 Mixed compound comparison write qualification (2026-09-08): a new INSERT SELECT regression checks the corrected IS and IN write sets against a CHECK-constrained collection. A later invalid candidate leaves no statement prefix and preserves earlier outer-transaction work; IN inserts no rows for the covered mixed-collation source; a filtered IS retry succeeds and outer rollback removes pending writes. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; this adds one distinct regression after that run. Broader write/collation/resource and full V1 gates remain open.
+
+
+Explicit document-left collation qualification (2026-09-08): expanded the comparison matrix with BINARY/NOCASE COLLATE on the document-left IS operand and BINARY on IS NOT. Simple, nested, materialized, limited and compound native sources, including both mixed-collation arm orders, match native literal references through execute/profile. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; broader collation/scope/resource and full V1 gates remain open.
