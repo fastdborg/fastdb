@@ -534,6 +534,37 @@ mod between_tests {
         let rows = c.execute("WITH v(id) AS MATERIALIZED (VALUES (type::record('docs',between_tick())),(type::record('docs',between_tick()))) SELECT record::id(id) FROM v UNION ALL SELECT record::id(id) FROM v", &crate::Parameters::new()).unwrap().rows;
         assert_eq!(rows, vec![vec![Value::Integer(7)]; 4]);
         assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+        c.execute("CREATE TABLE scalar_inputs", &crate::Parameters::new())
+            .unwrap();
+        c.execute("INSERT INTO scalar_inputs {n:1}", &crate::Parameters::new())
+            .unwrap();
+        c.execute("INSERT INTO scalar_inputs {n:2}", &crate::Parameters::new())
+            .unwrap();
+        CALLS.store(0, Ordering::SeqCst);
+        let rows = c
+            .execute(
+                "SELECT (SELECT between_tick() FROM scalar_inputs) AS v FROM scalar_inputs",
+                &crate::Parameters::new(),
+            )
+            .unwrap()
+            .rows;
+        assert_eq!(rows, vec![vec![Value::Integer(7)]; 2]);
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        CALLS.store(0, Ordering::SeqCst);
+        let rows = c.execute("SELECT CASE WHEN 0 THEN (SELECT between_tick() FROM scalar_inputs) ELSE 3 END AS v", &crate::Parameters::new()).unwrap().rows;
+        assert_eq!(rows, vec![vec![Value::Integer(3)]]);
+        let logical_calls = CALLS.load(Ordering::SeqCst);
+        CALLS.store(0, Ordering::SeqCst);
+        let rows = c
+            .execute(
+                "SELECT CASE WHEN 0 THEN (SELECT between_tick()) ELSE 3 END AS v",
+                &crate::Parameters::new(),
+            )
+            .unwrap()
+            .rows;
+        assert_eq!(rows, vec![vec![Value::Integer(3)]]);
+        assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls);
+        assert_eq!(logical_calls, 1);
         for (operator, count) in [("UNION", 1), ("INTERSECT", 1), ("EXCEPT", 0)] {
             CALLS.store(0, Ordering::SeqCst);
             let rows = c.execute(&format!("SELECT type::record('docs',between_tick()) AS id {operator} SELECT type::record('docs',between_tick())"), &crate::Parameters::new()).unwrap().rows;

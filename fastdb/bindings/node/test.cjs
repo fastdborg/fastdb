@@ -499,3 +499,18 @@ test('sparse entry vectors validate indices and roundtrip through both clients',
     } finally { await db.close(); }
   }
 });
+
+
+test('collection scalar subqueries preserve typed values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {id:docs:a,n:1,link:docs:b,items:[1,true]}');
+      const row = await db.exactlyOne('SELECT (SELECT link FROM docs) AS link,(SELECT items FROM docs) AS items,(SELECT n FROM docs WHERE n=99) AS missing');
+      assert.deepEqual(row, [new Record('docs','b'), [1n,true], null]);
+      assert.deepEqual(await db.exactlyOne('SELECT n FROM docs WHERE n=(SELECT max(n) FROM docs)'), [1n]);
+    } finally { await db.close(); }
+  }
+});

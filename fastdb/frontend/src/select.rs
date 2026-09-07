@@ -25,7 +25,10 @@ impl Source {
     }
 }
 type CteSources = std::collections::BTreeMap<String, Option<Source>>;
+type ScalarSubqueries =
+    std::collections::BTreeMap<String, (Expr, std::collections::BTreeSet<String>)>;
 struct Scope {
+    scalar_subqueries: ScalarSubqueries,
     sources: Vec<Source>,
     params: Parameters,
     consumed: std::cell::RefCell<std::collections::BTreeSet<String>>,
@@ -150,6 +153,13 @@ impl Scope {
             .cloned()
     }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
+        if matches!(expr, Expr::Subquery(_)) {
+            if let Some((lowered, consumed)) = self.scalar_subqueries.get(&expr.to_string()) {
+                self.consumed.borrow_mut().extend(consumed.iter().cloned());
+                *expr = lowered.clone();
+                return Ok(true);
+            }
+        }
         if let Some((value, typed)) = self.standalone_alias(expr) {
             if typed {
                 *expr = value;
@@ -497,6 +507,10 @@ impl Scope {
             return Err(unsupported(
                 "record::fetch is allowed only as a top-level SELECT projection",
             ));
+        }
+        if matches!(expr, Expr::Subquery(_)) && self.preserved(expr)? {
+            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            return Ok(());
         }
         if self.helper(expr)? {
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
@@ -2022,8 +2036,99 @@ impl Connection {
                 })
                 .transpose();
         }
+        // Prepare nested scalar plans without executing them. Cache by the
+        // original AST spelling so aliases and repeated lowering probes retain
+        // type/parameter metadata; each occurrence still belongs to the engine.
+        let mut scalar_subqueries = ScalarSubqueries::new();
+        let mut subquery_error = None;
+        let mut inputs = Vec::new();
+        match &select.body.select {
+            OneSelect::Values(rows) => inputs.extend(rows.iter().flatten().map(|e| *e.clone())),
+            OneSelect::Select {
+                columns,
+                where_clause,
+                group_by,
+                from,
+                window_clause,
+                ..
+            } => {
+                inputs.extend(columns.iter().filter_map(|column| match column {
+                    ResultColumn::Expr(expr, _) => Some(*expr.clone()),
+                    _ => None,
+                }));
+                inputs.extend(where_clause.iter().map(|e| *e.clone()));
+                for definition in window_clause {
+                    inputs.extend(definition.window.partition_by.iter().map(|e| *e.clone()));
+                    inputs.extend(definition.window.order_by.iter().map(|e| *e.expr.clone()));
+                }
+                if let Some(group) = group_by {
+                    inputs.extend(group.exprs.iter().map(|e| *e.clone()));
+                    inputs.extend(group.having.iter().map(|e| *e.clone()));
+                }
+                if let Some(from) = from {
+                    for join in &from.joins {
+                        if let Some(JoinConstraint::On(expr)) = &join.constraint {
+                            inputs.push(*expr.clone());
+                        }
+                    }
+                }
+            }
+        }
+        inputs.extend(select.order_by.iter().map(|e| *e.expr.clone()));
+        for mut input in inputs {
+            turso_core::walk_expr_mut(&mut input, &mut |expr| {
+                if let Expr::Subquery(inner) = &*expr {
+                    if subquery_error.is_some() || scalar_subqueries.contains_key(&expr.to_string())
+                    {
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
+                    let result = (|| -> Result<()> {
+                        let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
+                        if let Some(plan) = self.lower_collection_select(
+                            &sql,
+                            &sql,
+                            params,
+                            SelectOptions {
+                                trusted: true,
+                                nested: true,
+                                ctes: Some(&ctes),
+                                ..Default::default()
+                            },
+                        )? {
+                            if plan.typed.len() != 1 || plan.fetched.iter().any(|f| *f) {
+                                return Err(unsupported(
+                                    "scalar subquery requires one non-fetched column",
+                                ));
+                            }
+                            let output = if plan.typed[0] {
+                                "v"
+                            } else {
+                                "__fastdb_pack(v)"
+                            };
+                            let sql = plan.command.to_string();
+                            let lowered = expression(&format!(
+                            "(WITH __fastdb_scalar_result(v) AS ({}) SELECT {output} FROM __fastdb_scalar_result)",
+                            sql.trim().trim_end_matches(';')
+                        ))?;
+                            scalar_subqueries.insert(expr.to_string(), (lowered, plan.consumed));
+                        }
+                        Ok(())
+                    })();
+                    if let Err(error) = result {
+                        subquery_error = Some(error);
+                    }
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+                Ok(turso_core::WalkControl::Continue)
+            })?;
+        }
+        if let Some(error) = subquery_error {
+            return Err(error);
+        }
         if let OneSelect::Values(rows) = &mut select.body.select {
-            let mut logical = cte_logical || (trusted && positional && native_insert.is_none());
+            let mut logical = !scalar_subqueries.is_empty()
+                || cte_logical
+                || (trusted && positional && native_insert.is_none());
             for row in rows.iter_mut() {
                 for value in row {
                     turso_core::walk_expr_mut(value, &mut |expr| {
@@ -2066,6 +2171,7 @@ impl Connection {
             }
             let width = rows.first().map_or(0, Vec::len);
             let scope = Scope {
+                scalar_subqueries,
                 sources: Vec::new(),
                 params: params.clone(),
                 consumed: std::cell::RefCell::new(cte_consumed),
@@ -2121,6 +2227,7 @@ impl Connection {
         }
         if (native_insert.is_some() || nested)
             && !cte_logical
+            && scalar_subqueries.is_empty()
             && sources.iter().all(|source| !source.logical())
         {
             return Ok(None);
@@ -2140,6 +2247,7 @@ impl Connection {
             });
         if !trusted
             && !cte_logical
+            && scalar_subqueries.is_empty()
             && sources.iter().all(|s| !s.logical())
             && expanded == sql
             && !standalone_typed_parameters
@@ -2159,6 +2267,7 @@ impl Connection {
             .chain(cte_consumed)
             .collect();
         let scope = Scope {
+            scalar_subqueries,
             sources,
             params: params.clone(),
             consumed: std::cell::RefCell::new(consumed),
