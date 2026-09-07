@@ -1278,3 +1278,8 @@ Migration source-location qualification (2026-09-07): a regression verifies FDB_
 
 
 Migration preflight syntax context (2026-09-07): script splitting/tokenization errors now include the migration version while retaining FDB_SYNTAX and script-relative UTF-8 byte offsets. A regression checks an unterminated quote after multibyte comments, no earlier migration mutation and a successful valid retry. All eight migration integration tests, formatting and frontend/tests all-target Clippy pass. Full V1 remains incomplete.
+
+
+## Combined migration resource and diagnostic verification (2026-09-07)
+
+At clean implementation commit fe4856c19, fastdb/scripts/check.sh passed formatting, Clippy, 344 Rust tests, 42 Node/application tests and strict TypeScript. One known trigger-interruption gate remains ignored. This combines bounded ledger rows/text, maximum-size persistent history, execution/preflight UTF-8 diagnostic tests and the rebuilt Node addon/client paths. Installed-package evidence remains the separately recorded earlier run. Broader platform, recovery, SQL/type/resource and application release gates remain open; full V1 is incomplete.
