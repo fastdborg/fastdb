@@ -268,36 +268,48 @@ fn mixed_derived_comparisons_preserve_native_affinity_and_collation() {
     ] {
         q(&c, sql);
     }
-    for predicate in [
-        "v=label",
-        "label=v",
-        "v IS label",
-        "v<label",
-        "label IN (v)",
-        "label NOT IN (v)",
-        "label COLLATE BINARY IN (v)",
-        "label COLLATE NOCASE IN (v,NULL)",
-        "label NOT IN (v,NULL)",
-        "label IN (v,NULL)",
-        "label IN (v,'z')",
-        "v=+label",
+    for native_source in [
+        "(SELECT m,label FROM labels)",
+        "(SELECT m,label FROM (SELECT m,label FROM labels))",
+        "(SELECT m,label COLLATE BINARY AS label FROM labels)",
     ] {
-        let sql = format!("SELECT n,m FROM (SELECT n,v FROM docs) CROSS JOIN (SELECT m,label FROM labels) WHERE {predicate} ORDER BY n,m");
-        // Document values have no declared SQL column affinity/collation.
-        // Literal operands isolate the native right-hand column semantics.
-        let mut expected = Vec::new();
-        for (n, value) in [(1, "'a'"), (2, "'01'"), (3, "NULL")] {
-            let condition = predicate.replace('v', value);
-            expected.extend(q(&c, &format!("SELECT {n},m FROM (SELECT m,label FROM labels) WHERE {condition} ORDER BY m")).rows);
+        for predicate in [
+            "v=label",
+            "label=v",
+            "v IS label",
+            "v<label",
+            "label IN (v)",
+            "label NOT IN (v)",
+            "label COLLATE BINARY IN (v)",
+            "label COLLATE NOCASE IN (v,NULL)",
+            "label NOT IN (v,NULL)",
+            "label IN (v,NULL)",
+            "label IN (v,'z')",
+            "v=+label",
+        ] {
+            let sql = format!("SELECT n,m FROM (SELECT n,v FROM docs) CROSS JOIN {native_source} WHERE {predicate} ORDER BY n,m");
+            // Document values have no declared SQL column affinity/collation.
+            // Literal operands isolate the native right-hand column semantics.
+            let mut expected = Vec::new();
+            for (n, value) in [(1, "'a'"), (2, "'01'"), (3, "NULL")] {
+                let condition = predicate.replace('v', value);
+                expected.extend(
+                    q(
+                        &c,
+                        &format!("SELECT {n},m FROM {native_source} WHERE {condition} ORDER BY m"),
+                    )
+                    .rows,
+                );
+            }
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "{sql}"
+            );
         }
-        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
-        assert_eq!(
-            c.profile_select(&sql, &Parameters::new())
-                .unwrap()
-                .result
-                .rows,
-            expected,
-            "{sql}"
-        );
     }
 }
