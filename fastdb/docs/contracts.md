@@ -845,3 +845,17 @@ UPDATE candidate assignments now admit subquery expressions handled by the exist
 
 
 Covered UPDATE membership assignments may themselves have scalar-subquery or nested-membership left operands. Validation visits those nested roots while retaining the existing SELECT lowering and outer-aggregate restrictions; native NULL and empty-set results are preserved in the tested forms.
+
+
+## Qualified native subquery predicates (2026-09-07)
+
+Native scalar and EXISTS subqueries now support qualified outer collection fields in a simple SELECT's WHERE and JOIN ON predicates. The native inner query may use ordinary table sources or no FROM source. Local source aliases shadow outer aliases; unqualified inner names retain native resolution. Metadata preparation substitutes outer references only in a disposable probe. Executable predicates use the existing typed comparison lowering and remain inside the engine statement, so different outer rows receive different results. Scalar projections retain native affinity; the pinned engine's correlated scalar result does not propagate its projected collation into an outer comparison, while explicit outer COLLATE remains effective.
+
+Covered consumers include projections, filters, profile_select and pre-mutation UPDATE candidates. Tests cover empty results, parameters, alias shadowing, native JOIN predicates, binary keys, a scalar affinity/collation matrix, validation rollback and both Node clients. This is initial predicate correlation support: inner collection sources, unqualified outer references, correlated IN, nested/compound/CTE-local scopes, and correlation in projection/group/window/order/limit expressions remain open. General correlation and volatile-expression/resource qualification are not complete.
+
+```sql
+SELECT d.n, (SELECT max(n) FROM lookup WHERE n < d.n) AS prior
+FROM docs AS d ORDER BY d.n;
+```
+
+Here `docs` is a collection and `lookup(n INTEGER)` is an ordinary table. With both containing 1, 2, 3, the result is `(1,NULL), (2,1), (3,2)`.

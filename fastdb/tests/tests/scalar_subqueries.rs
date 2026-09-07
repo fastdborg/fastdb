@@ -1385,3 +1385,180 @@ fn native_membership_local_cte_names_match_pinned_scope_resolution() {
         assert_eq!(q(&c, &query("docs")).rows, expected);
     }
 }
+
+#[test]
+fn native_subquery_predicates_correlate_with_outer_collection_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    for projection in [
+        "(SELECT max(n) FROM native WHERE n<d.n)",
+        "(SELECT n FROM native WHERE n=d.n+10)",
+        "EXISTS(SELECT n FROM native WHERE n<d.n)",
+        "(SELECT max(d.n) FROM native AS d WHERE d.n<3)",
+        "((SELECT 'A' WHERE d.n>0) COLLATE NOCASE)='a'",
+        "((SELECT 'A' WHERE d.n>0) COLLATE NOCASE)=(SELECT 'a' WHERE d.n>0)",
+        "(SELECT max(x.n) FROM native AS x JOIN native AS y ON x.n=y.n AND y.n<d.n)",
+    ] {
+        let expected = q(
+            &c,
+            &format!("SELECT d.n,{projection} AS prior FROM native AS d ORDER BY d.n"),
+        );
+        let sql = format!("SELECT d.n,{projection} AS prior FROM docs AS d ORDER BY d.n");
+        let actual = q(&c, &sql);
+        assert_eq!(actual.rows, expected.rows, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected.rows
+        );
+    }
+}
+
+#[test]
+fn correlated_native_scalars_keep_comparisons_parameters_and_atomic_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "DEFINE FIELD n ON docs TYPE integer");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE lookup(n INTEGER)");
+    q(&c, "INSERT INTO lookup VALUES(1),(2),(3)");
+    let params = Parameters::from([("$delta".into(), Value::Integer(1))]);
+    for predicate in [
+        "(SELECT max(n) FROM lookup WHERE n<d.n+$delta)=d.n",
+        "d.n=(SELECT max(n) FROM lookup WHERE n<d.n+$delta)",
+        "(SELECT max(n) FROM lookup WHERE n<d.n+$delta)=2",
+        "(SELECT max(n) FROM lookup WHERE n<d.n+$delta)=(SELECT min(n) FROM lookup WHERE n>=d.n)",
+    ] {
+        let sql = format!("SELECT d.n FROM docs AS d WHERE {predicate} ORDER BY d.n");
+        let oracle = sql.replace("FROM docs AS d", "FROM native AS d");
+        assert_eq!(
+            c.execute(&sql, &params).unwrap().rows,
+            c.execute(&oracle, &params).unwrap().rows,
+            "{sql}"
+        );
+        assert!(c.execute(&sql, &Parameters::new()).is_err());
+    }
+    q(&c, "BEGIN");
+    let sql = "UPDATE docs AS d SET n=(SELECT max(n) FROM lookup WHERE n<=d.n)+10 RETURNING n";
+    assert_eq!(
+        q(&c, sql).rows,
+        q(&c, &sql.replace("UPDATE docs", "UPDATE native")).rows
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(n) VALUES(9)");
+    let error = c
+        .execute(
+            "UPDATE docs AS d SET n=(SELECT n FROM lookup WHERE n=d.n+100)",
+            &Parameters::new(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_VALIDATION");
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        4
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    q(&c, "ROLLBACK");
+}
+
+#[test]
+fn correlated_native_predicates_preserve_binary_keys_and_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE native(n INTEGER,v BLOB,t TEXT)");
+    q(&c, "CREATE TABLE lookup(v BLOB,t TEXT COLLATE NOCASE)");
+    q(
+        &c,
+        "INSERT INTO lookup VALUES(x'0102','Alpha'),(x'03','Beta')",
+    );
+    for (n, bytes, text) in [
+        (1, vec![1, 2], "alpha"),
+        (2, vec![3], "BETA"),
+        (3, vec![4], "absent"),
+    ] {
+        let params = Parameters::from([
+            ("$n".into(), Value::Integer(n)),
+            ("$v".into(), Value::Binary(bytes)),
+            ("$t".into(), Value::String(text.into())),
+        ]);
+        c.execute("INSERT INTO docs(n,v,t) VALUES($n,$v,$t)", &params)
+            .unwrap();
+        c.execute("INSERT INTO native VALUES($n,$v,$t)", &params)
+            .unwrap();
+    }
+    for projection in [
+        "(SELECT count(*) FROM lookup WHERE v=d.v)",
+        "EXISTS(SELECT 1 FROM lookup WHERE v=d.v)",
+        "(SELECT count(*) FROM lookup WHERE t=d.t)",
+        "(SELECT t FROM lookup WHERE v=d.v)=d.t",
+    ] {
+        let sql = format!("SELECT d.n,{projection} FROM docs AS d ORDER BY d.n");
+        let oracle = sql.replace("FROM docs AS d", "FROM native AS d");
+        assert_eq!(q(&c, &sql).rows, q(&c, &oracle).rows, "{sql}");
+    }
+}
+
+#[test]
+fn correlated_scalar_affinity_and_collation_match_native_matrix() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "INSERT INTO docs(n,v) VALUES(1,'2'),(2,2),(3,'A'),(4,'a '),(5,NULL)",
+    );
+    q(&c, "CREATE TABLE lhs(n INTEGER,v BLOB)");
+    q(
+        &c,
+        "INSERT INTO lhs VALUES(1,'2'),(2,2),(3,'A'),(4,'a '),(5,NULL)",
+    );
+    for (name, declaration, value) in [
+        ("numbers", "INTEGER", "2"),
+        ("letters", "TEXT COLLATE NOCASE", "'a'"),
+        ("trimmed", "TEXT COLLATE RTRIM", "'a'"),
+    ] {
+        q(&c, &format!("CREATE TABLE {name}(v {declaration})"));
+        q(&c, &format!("INSERT INTO {name} VALUES({value})"));
+        for projection in [
+            "v",
+            "v COLLATE NOCASE",
+            "v COLLATE RTRIM",
+            "+v",
+            "CAST(v AS TEXT)",
+            "CAST(v AS NUMERIC)",
+        ] {
+            for op in ["=", "!=", "IS", "IS NOT", "<", "<=", ">", ">="] {
+                let rhs = format!("(SELECT {projection} FROM {name} WHERE d.n<5)");
+                for expr in [
+                    format!("d.v {op} {rhs}"),
+                    format!("{rhs} {op} d.v"),
+                    format!("({rhs} COLLATE NOCASE) {op} d.v"),
+                    format!("d.v {op} ({rhs} COLLATE RTRIM)"),
+                ] {
+                    let sql = format!("SELECT {expr} FROM docs AS d ORDER BY d.n");
+                    assert_eq!(
+                        q(&c, &sql).rows,
+                        q(&c, &sql.replace("FROM docs AS d", "FROM lhs AS d")).rows,
+                        "{sql}"
+                    );
+                }
+            }
+        }
+    }
+}

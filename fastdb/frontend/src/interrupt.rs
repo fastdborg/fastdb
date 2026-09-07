@@ -405,6 +405,8 @@ mod tests {
         for (statement, outer) in [
             "UPDATE docs SET value=value+100",
             "UPDATE docs SET value=value+(SELECT 100)",
+            "UPDATE docs AS d SET value=value+(SELECT 100 WHERE d.value>0)",
+            "DELETE FROM docs AS d WHERE EXISTS(SELECT 1 WHERE d.value>0)",
             "WITH chosen AS (SELECT 100 AS delta) UPDATE docs SET value=value+(SELECT delta FROM chosen)",
             "WITH chosen AS (SELECT value FROM docs) UPDATE docs SET value=value+100 WHERE value IN (SELECT value FROM chosen)",
             "DELETE FROM docs WHERE value>0",

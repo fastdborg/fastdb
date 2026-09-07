@@ -894,3 +894,27 @@ test('leading WITH updates and deletes work in both clients', async () => {
     } finally {await db.close();}
   }
 });
+
+
+test('native scalar predicates correlate in sync and worker clients', async () => {
+  const {AsyncDatabase}=require('./index.cjs');
+  for (const db of [new Database(),await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await db.execute('INSERT INTO docs(n) VALUES(1),(2),(3)');
+      await db.execute('CREATE TABLE lookup(n INTEGER)');
+      await db.execute('INSERT INTO lookup VALUES(1),(2),(3)');
+      const sql='SELECT d.n,(SELECT max(n) FROM lookup WHERE n<d.n) AS prior FROM docs AS d ORDER BY d.n';
+      assert.deepEqual(await db.all(sql),[[1n,null],[2n,1n],[3n,2n]]);
+      assert.deepEqual((await db.profileSelect(sql)).result.rows,[[1n,null],[2n,1n],[3n,2n]]);
+      await db.execute('BEGIN');
+      const result=await db.execute('UPDATE docs AS d SET n=(SELECT max(n) FROM lookup WHERE n<=d.n)+$delta RETURNING n',{$delta:10n});
+      assert.equal(result.affected,3n);
+      assert.deepEqual(result.rows,[[11n],[12n],[13n]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents,3n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'),[[1n],[2n],[3n]]);
+    } finally {await db.close();}
+  }
+});

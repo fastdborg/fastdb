@@ -930,3 +930,12 @@ The installed Node consumer now uses a parameterized scalar UPDATE assignment an
 ## Self-read assignment atomicity (2026-09-07)
 
 A new regression compares a multi-row self-read scalar UPDATE with native results, then forces a typed validation failure after an earlier candidate has written. The engine total_changes counter confirms a write occurred; data and managed indexes return to their pre-statement state while prior outer-transaction work survives. A corrected retry succeeds and outer rollback restores the original rows. All eight with_writes tests passed. Full V1 remains incomplete.
+
+
+## Qualified native subquery predicates (2026-09-07)
+
+Native scalar and EXISTS subqueries now support qualified outer collection fields in a simple SELECT's WHERE and JOIN ON predicates. The native inner query may use ordinary table sources or no FROM source. Local source aliases shadow outer aliases; unqualified inner names retain native resolution. Metadata preparation substitutes outer references only in a disposable probe. Executable predicates use the existing typed comparison lowering and remain inside the engine statement, so different outer rows receive different results. Scalar projections retain native affinity; the pinned engine's correlated scalar result does not propagate its projected collation into an outer comparison, while explicit outer COLLATE remains effective.
+
+Covered consumers include projections, filters, profile_select and pre-mutation UPDATE candidates. Tests cover empty results, parameters, alias shadowing, native JOIN predicates, binary keys, a scalar affinity/collation matrix, validation rollback and both Node clients. This is initial predicate correlation support: inner collection sources, unqualified outer references, correlated IN, nested/compound/CTE-local scopes, and correlation in projection/group/window/order/limit expressions remain open. General correlation and volatile-expression/resource qualification are not complete.
+
+Scoped checks passed formatting, Clippy, 301 Rust tests, thirty-five Node tests and strict TypeScript. Final explicit-collation wrapper cases passed separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

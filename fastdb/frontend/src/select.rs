@@ -32,12 +32,99 @@ enum SubqueryAffinity {
     NativeMembership(String, String),
     NativeScalar(String),
 }
+// Predicate-only correlation leaves the native projection intact.
+// The probe substitutes NULL solely for metadata preparation; the executable
+// query retains its outer references and is evaluated by the engine per row.
+fn native_correlated_predicate(
+    inner: &Select,
+    sources: &[Source],
+    metadata: bool,
+    params: &Parameters,
+) -> Result<Select> {
+    let mut inner = inner.clone();
+    if inner.with.is_some() || !inner.body.compounds.is_empty() {
+        return Ok(inner);
+    }
+    let OneSelect::Select {
+        from, where_clause, ..
+    } = &mut inner.body.select
+    else {
+        return Ok(inner);
+    };
+    let mut local = std::collections::BTreeSet::new();
+    if let Some(from) = from {
+        for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
+            let SelectTable::Table(name, alias, _) = table.as_ref() else {
+                return Ok(inner);
+            };
+            local.insert(
+                alias
+                    .as_ref()
+                    .map_or(name.name.as_str(), |a| a.name().as_str())
+                    .to_ascii_lowercase(),
+            );
+        }
+    }
+    let scope = Scope {
+        qualified_only: true,
+        expression_subqueries: Default::default(),
+        sources: sources
+            .iter()
+            .filter(|source| !local.contains(&source.alias.to_ascii_lowercase()))
+            .cloned()
+            .collect(),
+        params: params.clone(),
+        consumed: Default::default(),
+        fetched_aliases: Default::default(),
+        standalone_aliases: Default::default(),
+    };
+    let rewrite = |value: &mut Expr| -> Result<()> {
+        let mut correlated = false;
+        turso_core::walk_expr_mut(value, &mut |expr| {
+            if matches!(
+                expr,
+                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+            ) {
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            if let Expr::Qualified(alias, _) = expr {
+                if !local.contains(&alias.as_str().to_ascii_lowercase())
+                    && sources
+                        .iter()
+                        .any(|s| s.alias.eq_ignore_ascii_case(alias.as_str()))
+                {
+                    correlated = true;
+                    if metadata {
+                        *expr = Expr::Literal(Literal::Null);
+                    }
+                }
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+        if correlated && !metadata {
+            scope.lower(value)?;
+        }
+        Ok(())
+    };
+    if let Some(value) = where_clause {
+        rewrite(value)?;
+    }
+    if let Some(from) = from {
+        for join in &mut from.joins {
+            if let Some(JoinConstraint::On(value)) = &mut join.constraint {
+                rewrite(value)?;
+            }
+        }
+    }
+    Ok(inner)
+}
 // Each entry stores lowered SQL, consumed binds, and affinity provenance.
 type ExpressionSubqueries = std::collections::BTreeMap<
     String,
     (Expr, std::collections::BTreeSet<String>, SubqueryAffinity),
 >;
 struct Scope {
+    qualified_only: bool,
     expression_subqueries: ExpressionSubqueries,
     sources: Vec<Source>,
     params: Parameters,
@@ -73,6 +160,9 @@ impl Scope {
             _ => return Ok(None),
         };
         if parts.len() == 1 {
+            if self.qualified_only {
+                return Ok(None);
+            }
             if self
                 .fetched_aliases
                 .borrow()
@@ -161,6 +251,15 @@ impl Scope {
             .borrow()
             .get(&name.to_ascii_lowercase())
             .cloned()
+    }
+    fn native_scalar_query(&self, expr: &Expr) -> Expr {
+        let (lowered, _, _) = &self.expression_subqueries[&order_base(expr).to_string()];
+        let Expr::FunctionCall { args, .. } = lowered else {
+            unreachable!("packed native scalar")
+        };
+        let mut runtime = expr.clone();
+        replace_order_base(&mut runtime, *args[0].clone());
+        runtime
     }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
         if matches!(expr, Expr::Subquery(_)) {
@@ -666,20 +765,25 @@ impl Scope {
                         let mut logical = order_base(value).clone();
                         if native(value) {
                             self.preserved(&mut logical)?;
+                            **a = self.native_scalar_query(a);
+                            **b = self.native_scalar_query(b);
                             return Ok(());
                         }
                         if !self.preserved(&mut logical)? {
                             let mut lowered = value.clone();
                             self.lower(&mut lowered)?;
                             if on_left {
+                                **a = self.native_scalar_query(query);
                                 **b = lowered;
                             } else {
+                                **b = self.native_scalar_query(query);
                                 **a = lowered;
                             }
                             return Ok(());
                         }
 
-                        let Expr::Subquery(inner) = order_base(query) else {
+                        let runtime = self.native_scalar_query(query);
+                        let Expr::Subquery(inner) = order_base(&runtime) else {
                             unreachable!()
                         };
                         let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
@@ -2543,6 +2647,7 @@ impl Connection {
             }
             let width = rows.first().map_or(0, Vec::len);
             let scope = Scope {
+                qualified_only: false,
                 expression_subqueries,
                 sources: Vec::new(),
                 params: params.clone(),
@@ -2674,7 +2779,13 @@ impl Connection {
         }
         // Native expression queries do not opt an ordinary SQL statement into
         // logical lowering; preserve their values only once that route is chosen.
-        for (sql, (_, _, affinity)) in &mut native_expression_subqueries {
+        for (sql, (lowered, _, affinity)) in &mut native_expression_subqueries {
+            if let Expr::Exists(inner) = expression(sql)? {
+                *lowered = Expr::Exists(native_correlated_predicate(
+                    &inner, &sources, false, params,
+                )?);
+                continue;
+            }
             if !matches!(
                 affinity,
                 SubqueryAffinity::NativeScalar(_) | SubqueryAffinity::NativeMembership(_, _)
@@ -2687,7 +2798,13 @@ impl Connection {
             };
             let mut collation = "BINARY".to_owned();
             {
-                let mut probe = inner.clone();
+                let mut probe = if matches!(affinity, SubqueryAffinity::NativeScalar(_)) {
+                    native_correlated_predicate(&inner, &sources, true, params)?
+                } else {
+                    inner.clone()
+                };
+                let correlated = Cmd::Stmt(Stmt::Select(probe.clone())).to_string()
+                    != Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                 if probe.with.is_none() {
                     probe.with = select.with.clone();
                     if let Some(inherited) = native_with.filter(|with| !with.ctes.is_empty()) {
@@ -2727,7 +2844,11 @@ impl Connection {
                         }
                         Ok(turso_core::WalkControl::Continue)
                     })?;
-                    collation = explicit.or(implicit).unwrap_or(collation);
+                    // Correlated scalar results are registers in the pinned engine:
+                    // their projected collation does not propagate to the outer comparison.
+                    if !correlated {
+                        collation = explicit.or(implicit).unwrap_or(collation);
+                    }
                 }
             }
             *affinity = if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
@@ -2756,6 +2877,14 @@ impl Connection {
                 }
                 SubqueryAffinity::NativeMembership(collation, name)
             } else {
+                let runtime = native_correlated_predicate(&inner, &sources, false, params)?;
+                *lowered = expression(&format!(
+                    "__fastdb_pack(({}))",
+                    Cmd::Stmt(Stmt::Select(runtime))
+                        .to_string()
+                        .trim()
+                        .trim_end_matches(';')
+                ))?;
                 SubqueryAffinity::NativeScalar(collation)
             };
         }
@@ -2773,6 +2902,7 @@ impl Connection {
             .chain(cte_consumed)
             .collect();
         let scope = Scope {
+            qualified_only: false,
             expression_subqueries,
             sources,
             params: params.clone(),
@@ -3089,6 +3219,7 @@ impl Connection {
         if let Some(limit) = &mut select.limit {
             // Pagination has no access to outer fields or projection aliases.
             let pagination = Scope {
+                qualified_only: false,
                 expression_subqueries: scope.expression_subqueries.clone(),
                 sources: Vec::new(),
                 params: params.clone(),
