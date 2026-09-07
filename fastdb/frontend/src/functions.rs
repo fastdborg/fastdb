@@ -1008,3 +1008,47 @@ mod vector_field_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod count_value_tests {
+    use super::*;
+    use crate::EngineValue;
+    #[test]
+    fn count_marker_validates_encoded_values_and_returns_only_presence() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for (value, expected) in [
+            (Value::Null, EngineValue::Null),
+            (Value::Boolean(false), EngineValue::from_i64(1)),
+            (
+                Value::Array(vec![Value::String("x".repeat(65536))]),
+                EngineValue::from_i64(1),
+            ),
+        ] {
+            let result = c
+                .run(
+                    "SELECT __fastdb_count_value(?1)",
+                    &[EngineValue::Blob(value.encode().unwrap())],
+                )
+                .unwrap();
+            assert_eq!(result, vec![vec![expected]]);
+        }
+        let mut invalid_vector = b"FDB\x01".to_vec();
+        invalid_vector.extend(serde_json::to_vec(&Value::Vector(vec![])).unwrap());
+        for bytes in [vec![], b"FDB\x01{".to_vec(), invalid_vector] {
+            assert!(c
+                .run(
+                    "SELECT __fastdb_count_value(?1)",
+                    &[EngineValue::Blob(bytes)]
+                )
+                .is_err());
+        }
+        assert!(c
+            .run("SELECT __fastdb_count_value('not encoded')", &[])
+            .is_err());
+        assert_eq!(
+            c.run("SELECT __fastdb_count_value(NULL)", &[]).unwrap(),
+            vec![vec![EngineValue::Null]]
+        );
+    }
+}

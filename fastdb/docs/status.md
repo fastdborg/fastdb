@@ -1329,3 +1329,6 @@ Correlated composite COUNT qualification (2026-09-07): native null-presence comp
 Non-DISTINCT COUNT lowering now uses a private count-value helper that fully decodes/validates its typed argument and returns SQL NULL or integer 1. This removes the prior nullable helper's re-encoding of non-null composites into result blobs. Input decoding and document reads remain; no end-to-end latency or total-memory improvement is claimed without measurement. DISTINCT comparisons retain their existing path.
 
 The complete scoped check passed formatting, Clippy, 350 Rust tests, 44 Node/application tests and strict TypeScript, including scalar/composite/filter/window/correlated COUNT and write qualification. One known trigger-interruption gate remains ignored. No upstream files changed; broader V1 work remains open.
+
+
+COUNT marker validation qualification (2026-09-07): a private-helper regression verifies valid null returns SQL NULL and false/large composite values return only integer 1. Malformed/truncated encodings, an invalid typed-vector payload and unencoded text reject; a subsequent valid null call succeeds. The focused unit test, formatting and frontend all-target Clippy pass. This confirms full decoding/validation remains in the optimized helper; total resource/performance and broader V1 gates remain open.
