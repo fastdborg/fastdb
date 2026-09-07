@@ -123,3 +123,6 @@ Async startup failure coverage now includes pre-ready transport error/exit/messa
 
 
 Public Node closed/closing operations now expose FDB_CLOSED without transaction observations, with FDB_WORKER precedence for established worker failures. All 37 Node/application tests, strict TypeScript and the offline installed-package smoke pass. Broader cross-client error and release qualification remain open.
+
+
+Node exactlyOne now exposes FDB_CARDINALITY with completed-statement transaction observations while retaining RangeError. Write-effect and rollback regressions, all 38 Node/application tests, strict TypeScript and installed-package assertions pass. The helper does not undo completed writes; broader error/release qualification remains open.

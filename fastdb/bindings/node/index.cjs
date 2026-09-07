@@ -143,6 +143,12 @@ function decodeProfile(raw) {
     affected: BigInt(result.affected), transaction: report.transaction },
     metrics: Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, BigInt(value)])) };
 }
+function cardinalityError(count, transaction) {
+  const error = new RangeError(`expected exactly one row, got ${count}`);
+  error.code = 'FDB_CARDINALITY';
+  error.transaction = transaction;
+  return error;
+}
 function closedError(message = 'database is closed') {
   const error = new Error(message);
   error.code = 'FDB_CLOSED';
@@ -186,8 +192,8 @@ class Database {
   all(sql, parameters) { return this.execute(sql, parameters).rows; }
   first(sql, parameters) { return this.all(sql, parameters)[0]; }
   exactlyOne(sql, parameters) {
-    const rows = this.all(sql, parameters);
-    if (rows.length !== 1) throw new RangeError(`expected exactly one row, got ${rows.length}`);
+    const { rows, transaction } = this.execute(sql, parameters);
+    if (rows.length !== 1) throw cardinalityError(rows.length, transaction);
     return rows[0];
   }
 }
@@ -314,8 +320,8 @@ class AsyncDatabase {
   async all(sql, parameters, options) { return (await this.execute(sql, parameters, options)).rows; }
   async first(sql, parameters, options) { return (await this.all(sql, parameters, options))[0]; }
   async exactlyOne(sql, parameters, options) {
-    const rows = await this.all(sql, parameters, options);
-    if (rows.length !== 1) throw new RangeError(`expected exactly one row, got ${rows.length}`);
+    const { rows, transaction } = await this.execute(sql, parameters, options);
+    if (rows.length !== 1) throw cardinalityError(rows.length, transaction);
     return rows[0];
   }
 }

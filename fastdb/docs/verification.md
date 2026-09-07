@@ -1451,3 +1451,12 @@ The offline installed Node package smoke also passed FDB_CLOSED assertions for b
 
 
 Closed-worker cancellation qualification (2026-09-07): the transport fixture verifies that an operation submitted during close with an AbortSignal returns FDB_CLOSED without another worker message or retained abort listener. An already-aborted signal submitted after close behaves the same way. The timeout/completion-marker test wrapper passes. Full V1 remains incomplete.
+
+
+## Node cardinality error observations (2026-09-07)
+
+Synchronous and worker exactlyOne helpers now retain RangeError while attaching FDB_CARDINALITY and the completed execute result's transaction observations. The code matches Rust's cardinality error. The helper checks rows after successful statement execution; it does not undo writes or roll back a transaction. Closed-handle and engine failures still propagate through execute.
+
+Both-client regressions cover empty reads, autocommit INSERT RETURNING with two rows, an UPDATE RETURNING mismatch inside an explicit transaction, managed index integrity, explicit rollback and a successful single-row retry. All 38 Node/application tests and strict TypeScript pass. Broader error and release qualification remains open; full V1 is incomplete.
+
+The offline installed-package cardinality assertions passed through both clients on Linux x64 / Node 24.19.0: eight runtime files and 59,805,622 packed bytes. No publishing occurred.

@@ -54,6 +54,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
   }
   async function withWrites(client) {
     await client.execute('BEGIN');
+    await assert.rejects(async()=>client.exactlyOne('SELECT value FROM docs WHERE 0'), error=>error instanceof RangeError && error.code==='FDB_CARDINALITY' && error.transaction.before==='active' && error.transaction.after==='active');
     const changed = await client.execute('WITH chosen AS (SELECT value FROM docs) UPDATE docs SET value=(SELECT $next) WHERE value IN (SELECT value FROM chosen) RETURNING value', {$next:8n});
     assert.deepEqual(changed.rows, [[8n]]);
     assert.equal(changed.affected,1n);

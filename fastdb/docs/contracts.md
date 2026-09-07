@@ -899,3 +899,10 @@ The covered RELEASE interruption boundary can report FDB_ROLLBACK while the comp
 Public Database and AsyncDatabase operations now report FDB_CLOSED after close; worker submissions during closing use the same code. The error has no transaction field because no statement was submitted. Synchronous access checks the wrapper's closed state before invoking the native handle. Close remains idempotent, and an established worker failure retains FDB_WORKER precedence. JavaScript argument validation and constructor failures retain their existing contract.
 
 Regression coverage exercises execute, row helpers, profiling, batches, integrity inspection, transfers and migrations across both closed clients, plus submissions while closing. All 37 Node binding/application tests and strict TypeScript pass. Native interrupted-close durability and broader release qualification remain open; full V1 is incomplete.
+
+
+## Node cardinality error observations (2026-09-07)
+
+Synchronous and worker exactlyOne helpers now retain RangeError while attaching FDB_CARDINALITY and the completed execute result's transaction observations. The code matches Rust's cardinality error. The helper checks rows after successful statement execution; it does not undo writes or roll back a transaction. Closed-handle and engine failures still propagate through execute.
+
+Both-client regressions cover empty reads, autocommit INSERT RETURNING with two rows, an UPDATE RETURNING mismatch inside an explicit transaction, managed index integrity, explicit rollback and a successful single-row retry. All 38 Node/application tests and strict TypeScript pass. Broader error and release qualification remains open; full V1 is incomplete.

@@ -967,3 +967,27 @@ test('closed sync and worker handles expose FDB_CLOSED across operations', async
   await closing;
   for (const operation of operations) await assert.rejects(operation(worker),closed);
 });
+
+
+test('exactlyOne cardinality errors retain completed statement transaction observations', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    const reject = (sql, state) => assert.rejects(async()=>db.exactlyOne(sql), error=>
+      error instanceof RangeError && error.code==='FDB_CARDINALITY' &&
+      error.transaction.before===state && error.transaction.after===state);
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await reject('SELECT n FROM docs','autocommit');
+      await reject('INSERT INTO docs(n) VALUES(1),(2) RETURNING n','autocommit');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'),[[1n],[2n]]);
+      await db.execute('BEGIN');
+      await reject('UPDATE docs SET n=n+10 RETURNING n','active');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'),[[11n],[12n]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,2n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'),[[1n],[2n]]);
+      assert.deepEqual(await db.exactlyOne('SELECT n FROM docs WHERE n=1'),[1n]);
+    } finally { await db.close(); }
+  }
+});
