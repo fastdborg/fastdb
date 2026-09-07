@@ -3817,6 +3817,7 @@ fn source_free_membership_binds_outer_left_operand() {
                 "d.id",
                 "coalesce(d.id,docs:a)",
                 "(SELECT d.id WHERE record::id(d.id) IS NOT NULL)",
+                "(SELECT d.id WHERE true)",
             ] {
                 for negated in [false, true] {
                     let op = if negated { "NOT IN" } else { "IN" };

@@ -990,3 +990,8 @@ Source-free logical scalar correlation now visits the left operand of IN/NOT IN 
 ## Collection-reading scalar membership correlation (2026-09-08)
 
 The correlation pass for collection-reading scalar SELECTs now binds qualified outer references in the left operand of IN/NOT IN while retaining the right-hand SELECT as a separate scope. This fixes false NULL results for a matching outer record. The existing local-alias filter remains in force. Regressions cover direct/derived outer sources, direct/coalesce record operands, positive/negative membership and local alias shadowing through execute/profile. General deeper-query and resource qualification remains open.
+
+
+## Inherited logical scalar correlation (2026-09-08)
+
+Source-free scalar children of an already logical source-free expression inherit its logical binding context. Qualified outer fields therefore remain typed even when the child itself has no helper or typed parameter. This fixes the recorded `(SELECT d.id WHERE true)` membership operand failure inside an array-helper scalar query. The regression covers direct/derived outer sources, IN/NOT IN and RHS NULL members through execute/profile. Native entry routing and table-bearing scope rules are unchanged; broader scope/affinity/resource qualification remains open.

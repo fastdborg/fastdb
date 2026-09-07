@@ -2497,6 +2497,7 @@ impl Connection {
                     params,
                     ctes,
                     exists,
+                    outer_scope.is_some(),
                 ) {
                     failure = Some(error);
                 }
@@ -2583,6 +2584,7 @@ impl Connection {
         params: &Parameters,
         ctes: &CteSources,
         exists: bool,
+        logical_parent: bool,
     ) -> Result<()> {
         if !correlation_sources.iter().any(Source::logical) {
             return Ok(());
@@ -2596,6 +2598,7 @@ impl Connection {
                         params,
                         ctes,
                         false,
+                        false,
                     )?;
                 }
             }
@@ -2607,23 +2610,24 @@ impl Connection {
             && matches!(&inner.body.select, OneSelect::Select { from: None, .. })
         {
             let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
-            let logical = fastql_parser::tokenize(&sql)?.iter().any(|token| {
-                (token.kind == fastql_parser::Kind::Word
-                    && token.text.starts_with("__fastdb_")
-                    && token.text != "__fastdb_path")
-                    || (token.kind == fastql_parser::Kind::Parameter
-                        && params.get(&token.text).is_some_and(|value| {
-                            matches!(
-                                value,
-                                Value::Boolean(_)
-                                    | Value::Record(_)
-                                    | Value::Object(_)
-                                    | Value::Array(_)
-                                    | Value::Vector(_)
-                                    | Value::Binary(_)
-                            )
-                        }))
-            });
+            let logical = logical_parent
+                || fastql_parser::tokenize(&sql)?.iter().any(|token| {
+                    (token.kind == fastql_parser::Kind::Word
+                        && token.text.starts_with("__fastdb_")
+                        && token.text != "__fastdb_path")
+                        || (token.kind == fastql_parser::Kind::Parameter
+                            && params.get(&token.text).is_some_and(|value| {
+                                matches!(
+                                    value,
+                                    Value::Boolean(_)
+                                        | Value::Record(_)
+                                        | Value::Object(_)
+                                        | Value::Array(_)
+                                        | Value::Vector(_)
+                                        | Value::Binary(_)
+                                )
+                            }))
+                });
             let outer_scope = Scope {
                 qualified_only: true,
                 expression_subqueries: Default::default(),
@@ -3117,6 +3121,7 @@ impl Connection {
                             params,
                             &ctes,
                             exists,
+                            false,
                         )?;
                         let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                         if let Some(plan) = self.lower_collection_select(

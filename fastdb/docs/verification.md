@@ -1770,3 +1770,10 @@ Collection scalar membership NULL qualification (2026-09-08): a native different
 Nested membership operand qualification and remaining gap (2026-09-08): the source-free membership regression now includes `(SELECT d.id WHERE record::id(d.id) IS NOT NULL)` as its left operand. Direct/derived outer sources, IN/NOT IN and RHS NULL members pass execute/profile, formatting and focused Clippy. Latest combined evidence remains 383 Rust/44 Node tests.
 
 A separate probe exposed an unresolved native-routing gap: with docs rows `{id:docs:a,n:1,v:[]}` / `{id:docs:b,n:2,v:[]}` and links `{owner:docs:a}`, `SELECT n,(SELECT array::append(d.v,2) WHERE (SELECT d.id WHERE true) IN (SELECT owner FROM links)) FROM docs d ORDER BY n` fails with `FDB_ENGINE: no such table: d`. The nested SELECT lacks an explicit logical helper/typed parameter, unlike the passing regression. This remains required implementation work; the passing typed form does not close native scalar routing or general scope qualification. Full V1 release gates remain open.
+
+
+## Inherited logical scalar correlation (2026-09-08)
+
+Fixed the preceding nested membership reproducer: source-free child SELECTs now inherit logical binding context from an already logical source-free parent. `(SELECT d.id WHERE true)` binds its qualified outer record without requiring a helper in the child. The expanded membership regression covers direct/derived sources, positive/negative membership and RHS NULL members through execute/profile. Native entry routing and table-bearing scope rules remain unchanged.
+
+The complete scoped check passed formatting, Clippy, 384 Rust tests, 44 Node/application tests and strict TypeScript, including native scalar affinity, callback and write regressions. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/resource and full V1 release qualification remain open.
