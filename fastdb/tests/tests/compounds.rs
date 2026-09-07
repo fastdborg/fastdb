@@ -255,3 +255,63 @@ fn union_all_scalar_ordering_matches_native_sql_and_errors_preserve_work() {
     }
     q(&c, "ROLLBACK");
 }
+
+#[test]
+fn union_all_order_names_search_every_arm_left_to_right() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(a,b)");
+    for values in ["(2,10)", "(1,20)"] {
+        q(&c, &format!("INSERT INTO docs(a,b) VALUES {values}"));
+        q(&c, &format!("INSERT INTO baseline VALUES {values}"));
+    }
+    for sql in [
+        "SELECT a AS left_value,b AS left_other FROM docs UNION ALL SELECT a AS right_value,b AS right_other FROM docs ORDER BY right_other,right_value",
+        "SELECT a AS chosen,b AS other FROM docs UNION ALL SELECT a AS other,b AS chosen FROM docs ORDER BY chosen,other",
+        "SELECT a,b FROM docs UNION ALL SELECT a AS \"Later Name\",b AS later_b FROM docs ORDER BY \"later name\" DESC,later_b",
+        "SELECT a AS first,b FROM docs UNION ALL SELECT a AS second,b FROM docs UNION ALL SELECT a AS third,b FROM docs ORDER BY third,b",
+        "WITH v AS (SELECT a AS first,b FROM docs UNION ALL SELECT a AS later,b FROM docs ORDER BY later LIMIT 2) SELECT first,b FROM v ORDER BY first,b",
+    ] {
+        let actual = q(&c, sql);
+        let baseline = q(&c, &sql.replace("docs", "baseline"));
+        assert_eq!((actual.columns, actual.rows), (baseline.columns, baseline.rows), "{sql}");
+    }
+}
+
+#[test]
+fn union_all_parameters_keep_statement_positions_and_binary_identity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let record = Value::Record(fastdb::Record {
+        table: "docs".into(),
+        key: fastdb::Key::Integer(7),
+    });
+    let params = Parameters::from([
+        ("?1".into(), record.clone()),
+        ("?2".into(), Value::Boolean(true)),
+        ("?3".into(), Value::Integer(2)),
+    ]);
+    assert_eq!(
+        c.execute("SELECT ? AS x UNION ALL SELECT ? LIMIT ?", &params)
+            .unwrap()
+            .rows,
+        vec![vec![record], vec![Value::Boolean(true)]]
+    );
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE INDEX docs_data ON docs(data)");
+    q(&c, "CREATE TABLE native(data BLOB)");
+    let bytes = Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec());
+    let params = Parameters::from([("$data".into(), bytes.clone())]);
+    c.execute("INSERT INTO docs(data) VALUES ($data)", &params)
+        .unwrap();
+    c.execute("INSERT INTO native VALUES ($data)", &params)
+        .unwrap();
+    for sql in [
+        "SELECT data FROM docs WHERE data=$data UNION ALL SELECT data FROM native WHERE data=$data",
+        "SELECT data FROM native WHERE data=$data UNION ALL SELECT data FROM docs WHERE data=$data",
+        "WITH v(x) AS (VALUES ($data)) SELECT x FROM v UNION ALL SELECT data FROM docs WHERE data=$data",
+    ] {
+        assert_eq!(c.execute(sql,&params).unwrap().rows,vec![vec![bytes.clone()],vec![bytes.clone()]],"{sql}");
+    }
+}

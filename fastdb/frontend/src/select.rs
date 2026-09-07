@@ -2491,6 +2491,7 @@ impl Connection {
         let mut lowered = Vec::new();
         let mut definitions = Vec::new();
         let mut names = Vec::new();
+        let mut order_names = Vec::new();
         for (index, (sql, detected)) in plans.into_iter().enumerate() {
             let plan = match detected {
                 Some(plan) => plan,
@@ -2517,6 +2518,7 @@ impl Connection {
             if plan.names.len() != names.len() {
                 return Err(Error::Validation("UNION ALL column count mismatch".into()));
             }
+            order_names.push(plan.names.clone());
             consumed.extend(plan.consumed);
             let keys = (0..names.len())
                 .map(|i| format!("__fastdb_v{i}"))
@@ -2574,9 +2576,13 @@ impl Connection {
         for sorted in &mut result.order_by {
             let position = projection_position(&sorted.expr);
             let index = match order_base(&sorted.expr) {
-                Expr::Id(name) | Expr::Name(name) => names
-                    .iter()
-                    .position(|n| n.eq_ignore_ascii_case(name.as_str())),
+                // The pinned compound resolver searches each arm in source order.
+                // Result labels still come exclusively from the first arm.
+                Expr::Id(name) | Expr::Name(name) => order_names.iter().find_map(|names| {
+                    names
+                        .iter()
+                        .position(|n| n.eq_ignore_ascii_case(name.as_str()))
+                }),
                 _ => position.filter(|p| *p > 0 && *p <= width).map(|p| p - 1),
             }
             .ok_or_else(|| unsupported("UNION ALL ORDER BY requires an output name or position"))?;
