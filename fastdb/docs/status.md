@@ -1564,3 +1564,6 @@ Scalar pagination nonnumeric rejection qualification (2026-09-08): a new regress
 
 
 Subquery-computed scalar pagination qualification (2026-09-08): the pagination matrix now includes LIMIT (SELECT $limit) and OFFSET (SELECT $offset), with integer/exact numeric bindings and direct/derived outer sources. Execute/profile match the existing literal pagination oracle across included/excluded scalar rows. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 391 Rust/44 Node tests; broader pagination/resource and full V1 release gates remain open.
+
+
+Scalar pagination evaluation-count qualification (2026-09-08): the test-only callback regression now measures non-deterministic LIMIT and OFFSET expressions in a correlated logical source-free scalar. Each expression runs once per outer row (six total calls over three rows); an outer LIMIT 0 produces zero calls. Execute/profile agree on values and counts, providing evidence against planning-time or duplicate evaluation in this form. The expanded focused unit test, package formatting and frontend lib/test Clippy pass. Latest combined evidence remains 391 Rust/44 Node tests; broader evaluation/resource and full V1 gates remain open.
