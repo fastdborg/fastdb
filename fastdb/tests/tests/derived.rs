@@ -231,3 +231,25 @@ fn unnamed_derived_sources_preserve_parameters_and_correlation() {
         }
     }
 }
+
+#[test]
+fn mixed_unnamed_derived_sources_preserve_native_columns() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE labels(m INTEGER,label TEXT)");
+    q(&c, "INSERT INTO labels VALUES(1,'A'),(3,'C')");
+    for sql in [
+        "SELECT n,flag,label FROM (SELECT n,flag FROM docs) LEFT JOIN (SELECT m,label FROM labels) ON n=m ORDER BY n",
+        "SELECT n,flag,label FROM (SELECT m,label FROM labels) RIGHT JOIN (SELECT n,flag FROM docs) ON n=m ORDER BY n",
+    ] {
+        let expected = vec![vec![Value::Integer(1),Value::Boolean(true),Value::String("A".into())],vec![Value::Integer(2),Value::Boolean(false),Value::Null]];
+        assert_eq!(q(&c,sql).rows, expected, "{sql}");
+        assert_eq!(c.profile_select(sql,&Parameters::new()).unwrap().result.rows,expected,"{sql}");
+    }
+    let sql = "SELECT * FROM (SELECT flag FROM docs WHERE n=1) CROSS JOIN (SELECT label FROM labels WHERE m=1)";
+    let result = q(&c, sql);
+    assert_eq!(result.columns, vec!["flag", "label"]);
+    assert_eq!(
+        result.rows,
+        vec![vec![Value::Boolean(true), Value::String("A".into())]]
+    );
+}

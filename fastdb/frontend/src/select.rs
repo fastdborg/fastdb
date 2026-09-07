@@ -1596,11 +1596,24 @@ fn source(
                 consumed: plan.consumed,
             });
         }
+        // Ask the engine for native projection names without stepping the query.
+        // Retain native types/affinity while exposing the closed column set to
+        // mixed derived-source name resolution and star expansion.
+        let query = sql.trim().trim_end_matches(';');
+        let probe = if let Some(with) = native_with {
+            format!("{with} SELECT * FROM ({query})")
+        } else {
+            format!("SELECT * FROM ({query})")
+        };
+        let statement = connection.prepare(probe)?;
+        let columns = (0..statement.num_columns())
+            .map(|i| (statement.get_column_name(i).into_owned(), false))
+            .collect();
         return Ok(Source {
             table: SelectTable::Select(select.clone(), Some(alias.clone())),
             alias: alias.name().as_str().into(),
             collection: None,
-            derived: None,
+            derived: Some(columns),
             derived_logical: false,
             consumed: Default::default(),
         });

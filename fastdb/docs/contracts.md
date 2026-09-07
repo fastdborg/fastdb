@@ -1046,3 +1046,6 @@ The source-free correlation walker now visits named-window partition and orderin
 
 
 Unnamed derived collection sources (2026-09-08): supported derived SELECTs no longer require a user alias. Lowering assigns private per-source aliases while preserving public projection names and typed values. Joins whose sources all expose known derived projection lists resolve an unqualified column only when its name is unambiguous; open collection/native join scopes still require qualification. Duplicate derived output names and fetched derived projections retain their existing restrictions.
+
+
+Mixed native/collection derived joins (2026-09-08): native derived projections now expose engine-prepared column names to the same closed-column resolver. Metadata preparation does not step the source. Native projection columns remain untyped SQL values; their affinity and collation stay with the engine. Unnamed native derived sources receive their internal aliases when included in a logical plan, including mixed star expansion. Direct native tables combined with open collection sources still use the existing qualification rules.
