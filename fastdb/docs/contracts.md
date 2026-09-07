@@ -821,3 +821,6 @@ Forward-fetch target batches retain their 128-key query grouping but consume eng
 
 
 Lowered SELECT results are decoded as engine rows arrive, without first retaining a complete engine-value rowset. Public results still retain all decoded rows. For fetch queries, the combined reference-position limit is checked at each row before retaining its decoded output; the first excess row may already have evaluated native expressions. A limit failure returns no partial result and follows existing atomic cleanup. This does not bound non-fetch result bytes, engine sorting/materialization or all query memory.
+
+
+Leading-WITH collection UPDATE and DELETE now carry their CTE definitions into the candidate SELECT. Supported nonrecursive native/collection CTEs can supply membership predicates; candidates and UPDATE assignment values are materialized before mutation. Existing assignment/RETURNING expression restrictions remain, and validation/index updates use the same atomic write path. Candidate targets are explicitly qualified to main when necessary. A CTE sharing the write target's name remains unqualified: the tested chained same-name case fails during preparation with no such column: n. This change does not add UPDATE FROM, ORDER BY/LIMIT writes or CTE subqueries in unsupported assignment/RETURNING forms.

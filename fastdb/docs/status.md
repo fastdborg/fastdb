@@ -856,3 +856,10 @@ A real-engine regression measures total VM progress for a 130-target/two-batch f
 ## Forward-fetch benchmark evidence (2026-09-07)
 
 The maintainer bench-fetch.cjs harness passed twelve 1,000-position workloads with warmup and three samples each. Collection/relational targets, one/130/1,000 distinct keys and one/two projections all passed result and counter assertions. Duplicate projections share target counters while increasing observed elapsed time; timings and qualifications are in benchmarks.md. This supplies initial target-work evidence, not release performance or memory guarantees.
+
+
+## Initial leading-WITH collection UPDATE/DELETE (2026-09-07)
+
+Collection writes now retain the leading CTE scope in pre-mutation candidate selection. Tests cover parameterized native/collection CTE membership, self-read candidates, RETURNING/affected counts, uniqueness failure, prior outer work, retry/rollback and both Node clients. The interrupted-mutation matrix includes WITH UPDATE/DELETE. Main qualification prevents an unqualified candidate target reference, but deeper same-name CTE resolution remains open: `WITH docs AS (SELECT $n AS n), chosen AS (SELECT n FROM docs) UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n` currently fails preparation with no such column: n. Assignment/RETURNING subqueries and other previously unsupported write clauses remain unqualified.
+
+Scoped checks passed formatting, Clippy, 289 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

@@ -1135,3 +1135,10 @@ Counters exclude catalog/schema/savepoint helpers, decoding and transport. They 
 ## Current SQL gate probes — 2026-09-07
 
 Reviewed clean 41a2daf95 and ran isolated BEGIN/ROLLBACK probes through the local addon over matching collection/native integer rows 1,2,3. Correlated scalar comparison succeeds natively but collection lowering reports no such table: d. Leading-WITH UPDATE succeeds natively with RETURNING 12 but is explicitly rejected for collections. The scalar grouping alias/HAVING probe agrees at (1,2). Updated v1-gates.md with exact queries and candidate-lowering requirements; the prior native-membership gap description was stale. No production changes or redundant scoped tests in this audit. These probes direct the next implementation work and do not establish release completion.
+
+
+## Initial WITH UPDATE/DELETE — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-with-writes-check.log`): formatting, Clippy, 289 Rust tests, 34 Node tests and strict TypeScript; one known trigger-interruption gate ignored. New Rust cases use native/collection CTE candidates and compare mutations to an equivalent native chosen-value CTE oracle. They verify RETURNING/affected counts, self-read candidate materialization, missing parameters, uniqueness failure with prior work, integrity, retry and rollback. Existing mutation interruption coverage now includes both WITH write forms. Sync/worker clients verify updates, deletes, index integrity and rollback.
+
+The same-name chained CTE development probe still fails preparation with no such column: n; it is documented as an open qualification gap rather than included in supported-case assertions. A native oracle reading a collection CTE crosses a separate unsupported native-write path; the final oracle uses an equivalent ordinary-table CTE. No upstream implementation files changed.

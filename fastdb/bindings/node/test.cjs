@@ -871,3 +871,23 @@ test('profiles expose separate forward target counters in both clients', async (
     } finally {await db.close();}
   }
 });
+
+test('leading WITH updates and deletes work in both clients', async () => {
+  const {AsyncDatabase}=require('./index.cjs');
+  for (const db of [new Database(),await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await db.execute('INSERT INTO docs(n) VALUES(1),(2),(3)');
+      await db.execute('BEGIN');
+      const updated=await db.execute('WITH chosen AS (SELECT $n AS n) UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n',{$n:2n});
+      assert.deepEqual(updated.rows,[[12n]]);
+      assert.equal(updated.affected,1n);
+      const deleted=await db.execute('WITH chosen AS (SELECT n FROM docs WHERE n>$min) DELETE FROM docs WHERE n IN (SELECT n FROM chosen) RETURNING n',{$min:10n});
+      assert.deepEqual(deleted.rows,[[12n]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents,2n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'),[[1n],[2n],[3n]]);
+    } finally {await db.close();}
+  }
+});

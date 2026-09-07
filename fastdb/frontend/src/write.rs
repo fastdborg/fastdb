@@ -429,8 +429,7 @@ impl Connection {
                 )?))
             }
             Stmt::Update(update) => {
-                if update.with.is_some()
-                    || update.or_conflict.is_some()
+                if update.or_conflict.is_some()
                     || update.from.is_some()
                     || update.indexed.is_some()
                     || !update.order_by.is_empty()
@@ -455,8 +454,13 @@ impl Connection {
                 );
                 crate::update::validate_targets(&paths)?;
                 let unset = normalized.as_ref().is_some_and(|n| n.unset);
-                let rows =
-                    self.write_candidates(&update.tbl_name, update.where_clause, &exprs, params)?;
+                let rows = self.write_candidates(
+                    &update.tbl_name,
+                    update.with,
+                    update.where_clause,
+                    &exprs,
+                    params,
+                )?;
                 let mut documents = Vec::new();
                 for row in rows {
                     let Value::Object(original) = &row[0] else {
@@ -490,11 +494,11 @@ impl Connection {
                 order_by,
                 limit,
             } => {
-                if with.is_some() || indexed.is_some() || !order_by.is_empty() || limit.is_some() {
+                if indexed.is_some() || !order_by.is_empty() || limit.is_some() {
                     return Err(unsupported("this collection DELETE clause"));
                 }
                 validate_returning(&returning)?;
-                let rows = self.write_candidates(&tbl_name, where_clause, &[], params)?;
+                let rows = self.write_candidates(&tbl_name, with, where_clause, &[], params)?;
                 let mut documents = Vec::new();
                 for row in rows {
                     let Value::Object(doc) = &row[0] else {
@@ -531,6 +535,7 @@ impl Connection {
     fn write_candidates(
         &self,
         table: &QualifiedName,
+        with: Option<With>,
         predicate: Option<Box<Expr>>,
         assignments: &[Expr],
         params: &Parameters,
@@ -551,9 +556,14 @@ impl Connection {
             ));
         }
         let mut target = table.clone();
+        // UPDATE/DELETE target names refer to actual tables, even if a CTE
+        // has the same name. Preserve that rule in the candidate SELECT.
+        if with.is_some() && target.db_name.is_none() {
+            target.db_name = Some(Name::exact("main".into()));
+        }
         let alias = target.alias.take().map(As::As);
         let select = Select {
-            with: None,
+            with,
             body: SelectBody {
                 select: OneSelect::Select {
                     distinctness: None,
