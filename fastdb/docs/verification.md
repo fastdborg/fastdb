@@ -1835,3 +1835,6 @@ The complete scoped check passed formatting, Clippy, 391 Rust tests, 44 Node/app
 
 
 Scalar pagination nonnumeric rejection qualification (2026-09-08): a new regression verifies NULL, invalid text and binary bindings reject in LIMIT/OFFSET for direct/derived outer sources after counter isolation. Corrected bindings retry successfully through execute/profile. The focused regression, package formatting and focused Clippy pass. The test command used an alternate Cargo cache directory and rebuilt dependencies; Clippy used the standard cache, and no dependency or lockfile changes occurred. Latest complete scoped evidence remains 391 Rust/44 Node tests; this additional test has not received a new combined run. Broader pagination/resource and full V1 release gates remain open.
+
+
+Subquery-computed scalar pagination qualification (2026-09-08): the pagination matrix now includes LIMIT (SELECT $limit) and OFFSET (SELECT $offset), with integer/exact numeric bindings and direct/derived outer sources. Execute/profile match the existing literal pagination oracle across included/excluded scalar rows. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 391 Rust/44 Node tests; broader pagination/resource and full V1 release gates remain open.

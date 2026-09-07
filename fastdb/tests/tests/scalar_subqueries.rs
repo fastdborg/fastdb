@@ -4126,6 +4126,7 @@ fn source_free_scalar_ordering_binds_outer_fields() {
                     ("$limit", "$offset"),
                     ("$limit+0", "$offset+0"),
                     ("coalesce($limit,0)", "coalesce($offset,0)"),
+                    ("(SELECT $limit)", "(SELECT $offset)"),
                 ] {
                     let sql = format!("SELECT n,(SELECT array::new(d.n) ORDER BY d.n DESC LIMIT {limit_expr} OFFSET {offset_expr}) FROM {source} ORDER BY n");
                     assert_eq!(
