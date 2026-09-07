@@ -436,3 +436,7 @@ Four new integration tests cover scalar/native differential results, mixed chain
 ## Set-collation boundary coverage
 
 A new differential regression checks 48 two-arm collation/operator combinations and 64 three-arm shared-collation chains against the pinned native engine. Fixtures cover NULL, ASCII case differences, trailing spaces and duplicate multiplicity. Result comparison normalizes equivalent text representations while retaining duplicate counts, consistent with the unspecified representative contract. Mixed-collation chains beyond two arms, broader character/collation coverage and full V1 qualification remain open.
+
+## Distinct-set interruption coverage
+
+The existing source-interruption test now covers all four compound operators across reads/inserts, two exact evaluation counts and both transaction modes: 32 combinations. Each case checks FDB_CANCELLED, discarded result rows, intact source/target documents and indexes, prior outer work and exact-statement retry with operator-specific results. The partial-write matrix adds UNION/INTERSECT/EXCEPT and VALUES-first UNION inserts in both transaction modes. Broader cancellation points, native-target interruption, deadlines and full V1 qualification remain open.

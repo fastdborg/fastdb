@@ -59,6 +59,10 @@ mod tests {
             "INSERT INTO docs (value) SELECT a.value FROM (SELECT value+100 AS value FROM docs) a",
             "INSERT INTO docs (value) SELECT value+100 FROM docs UNION ALL SELECT value+200 FROM docs",
             "WITH a AS MATERIALIZED (SELECT value FROM docs) INSERT INTO docs (value) SELECT value+100 FROM a UNION ALL SELECT value+200 FROM a",
+            "INSERT INTO docs (value) SELECT value+100 FROM docs UNION SELECT value+100 FROM docs",
+            "INSERT INTO docs (value) SELECT value+100 FROM docs INTERSECT SELECT value+100 FROM docs",
+            "INSERT INTO docs (value) SELECT value+100 FROM docs EXCEPT SELECT value+200 FROM docs",
+            "INSERT INTO docs (value) VALUES (101),(102) UNION VALUES (102),(103)",
         ]
         .into_iter()
         .flat_map(|statement| [false, true].map(|outer| (statement, outer)))
@@ -352,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_union_sources_discard_rows_and_allow_exact_retry() {
+    fn interrupted_compound_sources_discard_rows_and_allow_exact_retry() {
         use std::sync::atomic::AtomicUsize;
         use turso_ext::{scalar, ResultCode, Value as ExtValue};
         static ROWS: AtomicUsize = AtomicUsize::new(0);
@@ -361,7 +365,15 @@ mod tests {
             ROWS.fetch_add(1, Ordering::SeqCst);
             ExtValue::from_integer(args[0].to_integer().expect("integer source"))
         }
-        for insert in [false, true] {
+        for (operator, insert) in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"]
+            .into_iter()
+            .flat_map(|operator| [false, true].map(|insert| (operator, insert)))
+        {
+            let expected = match operator {
+                "INTERSECT" => vec![],
+                "EXCEPT" => vec![1, 2, 3],
+                _ => vec![1, 2, 3, 11, 12, 13],
+            };
             for after in [2, 4] {
                 for outer in [false, true] {
                     let db = Database::open(":memory:").unwrap();
@@ -397,7 +409,7 @@ mod tests {
                     } else {
                         ""
                     };
-                    let statement = format!("{prefix}SELECT union_source_tick(value) AS value FROM docs UNION ALL SELECT union_source_tick(value+10) FROM docs");
+                    let statement = format!("{prefix}SELECT union_source_tick(value) AS value FROM docs {operator} SELECT union_source_tick(value+10) FROM docs");
                     ROWS.store(0, Ordering::SeqCst);
                     let fired = Arc::new(AtomicBool::new(false));
                     let flag = fired.clone();
@@ -412,10 +424,14 @@ mod tests {
                     c.engine.set_progress_handler(0, None);
                     assert!(
                         fired.load(Ordering::SeqCst),
-                        "source point {after}, insert={insert}"
+                        "{operator}, source point {after}, insert={insert}, outer={outer}"
                     );
                     assert_eq!(ROWS.load(Ordering::SeqCst), after);
-                    assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED");
+                    assert_eq!(
+                        report.result.unwrap_err().code(),
+                        "FDB_CANCELLED",
+                        "{statement}"
+                    );
                     assert_eq!(
                         report.transaction_after,
                         if outer {
@@ -439,15 +455,15 @@ mod tests {
                     );
                     let retry = q(&c, &statement);
                     if insert {
-                        assert_eq!(retry.affected, 6);
+                        assert_eq!(retry.affected, expected.len() as i64);
                         assert_eq!(
                             c.check_collection_integrity("copied", Default::default())
                                 .unwrap()
                                 .documents,
-                            6
+                            expected.len() as u64
                         );
                     } else {
-                        assert_eq!(retry.rows.len(), 6);
+                        assert_eq!(retry.rows.len(), expected.len());
                     }
                     let rows = if insert {
                         q(&c, "SELECT value FROM copied").rows
@@ -462,7 +478,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>();
                     values.sort_unstable();
-                    assert_eq!(values, vec![1, 2, 3, 11, 12, 13]);
+                    assert_eq!(values, expected, "{statement}");
                     if outer {
                         q(&c, "ROLLBACK");
                         assert_eq!(
