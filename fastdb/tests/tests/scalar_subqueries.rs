@@ -2707,3 +2707,55 @@ fn correlated_float_pagination_matches_integer_values() {
         }
     }
 }
+
+#[test]
+fn correlated_float_pagination_preserves_reused_parameter_type() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(1),(2),(3)",
+    ] {
+        q(&c, sql);
+    }
+    for parameter in ["$count", "?1"] {
+        for count in [0.0, 1.0, 2.0] {
+            let params = Parameters::from([(parameter.into(), Value::Number(count))]);
+            let source = format!(
+                "SELECT n FROM lookup WHERE n>=d.n AND n>={parameter} ORDER BY n LIMIT {parameter}"
+            );
+            let sql = format!(
+                "SELECT {parameter},typeof({parameter}),d.n IN ({source}) FROM docs d ORDER BY d.n"
+            );
+            let expected_members = if count == 0.0 {
+                [0, 0]
+            } else if count == 1.0 {
+                [1, 1]
+            } else {
+                [0, 1]
+            };
+            let expected = expected_members
+                .into_iter()
+                .map(|member| {
+                    vec![
+                        Value::Number(count),
+                        Value::String("real".into()),
+                        Value::Integer(member),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                c.execute(&sql, &params).unwrap().rows,
+                expected,
+                "{sql}, count={count}"
+            );
+            assert_eq!(
+                c.profile_select(&sql, &params).unwrap().result.rows,
+                expected,
+                "profile {sql}, count={count}"
+            );
+        }
+    }
+}

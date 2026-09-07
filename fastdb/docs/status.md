@@ -1149,3 +1149,8 @@ Supported correlated pagination now normalizes integral real binds to integer li
 Differential execute/profile coverage compares real and integer pagination through scalar, IN and EXISTS consumers, including zero/negative limits, offsets and large accepted values near both endpoints. Explicit endpoint probes retain rejection for scalar and membership sources. Other coercions and complex pagination expressions remain open; full V1 is incomplete.
 
 Verification: the complete scoped check passed formatting, Clippy, 329 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
+
+
+## Reused real pagination parameter identity (2026-09-07)
+
+A regression verifies that normalizing integral real pagination binds does not change the same parameter's type elsewhere. Named `$count` and numbered `?1` binds are simultaneously projected, inspected with typeof, used in a correlated predicate and supplied to LIMIT. Values 0.0, 1.0 and 2.0 retain real projections/type names while producing the expected per-outer-row membership results through execute and profile_select. The focused real-engine test passes. Full V1 remains incomplete.
