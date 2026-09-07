@@ -2465,6 +2465,170 @@ impl Connection {
         };
         self.execute_lowered_select(plan, params).map(Some)
     }
+    fn correlate_collection_inner(
+        &self,
+        inner: &mut Select,
+        correlation_sources: &[Source],
+        params: &Parameters,
+        ctes: &CteSources,
+        exists: bool,
+    ) -> Result<()> {
+        if !correlation_sources.iter().any(Source::logical) {
+            return Ok(());
+        }
+        if let Some(with) = &mut inner.with {
+            if !with.recursive {
+                for cte in &mut with.ctes {
+                    self.correlate_collection_inner(
+                        &mut cte.select,
+                        correlation_sources,
+                        params,
+                        ctes,
+                        false,
+                    )?;
+                }
+            }
+        }
+        if let OneSelect::Select {
+            from: Some(from), ..
+        } = &inner.body.select
+        {
+            let tables = std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table));
+            let mut local = Vec::new();
+            for table in tables {
+                if matches!(
+                    table.as_ref(),
+                    SelectTable::Table(..) | SelectTable::Select(_, Some(_))
+                ) {
+                    local.push(source(self, table, params, ctes, None)?);
+                }
+            }
+            // A local WITH may hide the logical source behind a
+            // CTE name. Probe lowering only (never execution) to
+            // distinguish it from a wholly native inner query.
+            let local_cte_logical = if inner.with.as_ref().is_some_and(|with| !with.recursive)
+                && inner.body.compounds.is_empty()
+            {
+                let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
+                self.lower_collection_select(
+                    &sql,
+                    &sql,
+                    params,
+                    SelectOptions {
+                        trusted: true,
+                        nested: true,
+                        positional: exists,
+                        expression_subquery: true,
+                        ctes: Some(ctes),
+                        ..Default::default()
+                    },
+                )?
+                .is_some()
+            } else {
+                false
+            };
+            if inner.with.as_ref().is_none_or(|with| !with.recursive)
+                && inner.body.compounds.is_empty()
+                && local.len() == 1 + from.joins.len()
+                && if inner.with.is_some() {
+                    local_cte_logical
+                } else {
+                    local.iter().any(Source::logical)
+                }
+            {
+                let scope = Scope {
+                    qualified_only: true,
+                    expression_subqueries: Default::default(),
+                    sources: correlation_sources
+                        .iter()
+                        .filter(|outer| {
+                            outer.logical()
+                                && !local
+                                    .iter()
+                                    .any(|s| s.alias.eq_ignore_ascii_case(&outer.alias))
+                        })
+                        .cloned()
+                        .collect(),
+                    params: params.clone(),
+                    consumed: Default::default(),
+                    fetched_aliases: Default::default(),
+                    standalone_aliases: Default::default(),
+                };
+                let mut rewrite_error = None;
+                let OneSelect::Select {
+                    columns,
+                    where_clause,
+                    group_by,
+                    from,
+                    window_clause,
+                    ..
+                } = &mut inner.body.select
+                else {
+                    unreachable!()
+                };
+                let mut values = Vec::new();
+                for column in columns {
+                    if let ResultColumn::Expr(value, _) = column {
+                        values.push(value);
+                    }
+                }
+                values.extend(where_clause.iter_mut());
+                if let Some(group) = group_by {
+                    values.extend(group.exprs.iter_mut());
+                    values.extend(group.having.iter_mut());
+                }
+                if let Some(from) = from {
+                    for join in &mut from.joins {
+                        if let Some(JoinConstraint::On(value)) = &mut join.constraint {
+                            values.push(value);
+                        }
+                    }
+                }
+                for window in window_clause {
+                    values.extend(window.window.partition_by.iter_mut());
+                    values.extend(window.window.order_by.iter_mut().map(|sort| &mut sort.expr));
+                }
+                values.extend(inner.order_by.iter_mut().map(|sort| &mut sort.expr));
+                for value in values {
+                    turso_core::walk_expr_mut(value, &mut |value| {
+                        if matches!(
+                            value,
+                            Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+                        ) {
+                            return Ok(turso_core::WalkControl::SkipChildren);
+                        }
+                        match scope.field(value).and_then(|field| {
+                            field
+                                .map(|(i, path)| {
+                                    let value = scope.accessor(i, &path, true)?;
+                                    if scope.sources[i].derived.is_some() {
+                                        expression(&format!("__fastdb_correlated_value({value})"))
+                                    } else {
+                                        Ok(value)
+                                    }
+                                })
+                                .transpose()
+                        }) {
+                            Ok(Some(rewritten)) => {
+                                *value = rewritten;
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                            Err(error) => {
+                                rewrite_error = Some(error);
+                            }
+                            Ok(None) => {}
+                        }
+                        Ok(turso_core::WalkControl::Continue)
+                    })?;
+                }
+                if let Some(error) = rewrite_error {
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn lower_collection_select(
         &self,
         sql: &str,
@@ -2811,157 +2975,13 @@ impl Connection {
                         }
                         let correlation_sources = correlation_sources.as_ref().unwrap();
                         let mut inner = inner.clone();
-                        if let OneSelect::Select {
-                            from: Some(from), ..
-                        } = &inner.body.select
-                        {
-                            let tables = std::iter::once(&from.select)
-                                .chain(from.joins.iter().map(|j| &j.table));
-                            let mut local = Vec::new();
-                            for table in tables {
-                                if matches!(
-                                    table.as_ref(),
-                                    SelectTable::Table(..) | SelectTable::Select(_, Some(_))
-                                ) {
-                                    local.push(source(self, table, params, &ctes, None)?);
-                                }
-                            }
-                            // A local WITH may hide the logical source behind a
-                            // CTE name. Probe lowering only (never execution) to
-                            // distinguish it from a wholly native inner query.
-                            let local_cte_logical =
-                                if inner.with.as_ref().is_some_and(|with| !with.recursive)
-                                    && inner.body.compounds.is_empty()
-                                {
-                                    let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
-                                    self.lower_collection_select(
-                                        &sql,
-                                        &sql,
-                                        params,
-                                        SelectOptions {
-                                            trusted: true,
-                                            nested: true,
-                                            positional: exists,
-                                            expression_subquery: true,
-                                            ctes: Some(&ctes),
-                                            ..Default::default()
-                                        },
-                                    )?
-                                    .is_some()
-                                } else {
-                                    false
-                                };
-                            if inner.with.as_ref().is_none_or(|with| !with.recursive)
-                                && inner.body.compounds.is_empty()
-                                && local.len() == 1 + from.joins.len()
-                                && if inner.with.is_some() {
-                                    local_cte_logical
-                                } else {
-                                    local.iter().any(Source::logical)
-                                }
-                            {
-                                let scope = Scope {
-                                    qualified_only: true,
-                                    expression_subqueries: Default::default(),
-                                    sources: correlation_sources
-                                        .iter()
-                                        .filter(|outer| {
-                                            outer.logical()
-                                                && !local.iter().any(|s| {
-                                                    s.alias.eq_ignore_ascii_case(&outer.alias)
-                                                })
-                                        })
-                                        .cloned()
-                                        .collect(),
-                                    params: params.clone(),
-                                    consumed: Default::default(),
-                                    fetched_aliases: Default::default(),
-                                    standalone_aliases: Default::default(),
-                                };
-                                let mut rewrite_error = None;
-                                let OneSelect::Select {
-                                    columns,
-                                    where_clause,
-                                    group_by,
-                                    from,
-                                    window_clause,
-                                    ..
-                                } = &mut inner.body.select
-                                else {
-                                    unreachable!()
-                                };
-                                let mut values = Vec::new();
-                                for column in columns {
-                                    if let ResultColumn::Expr(value, _) = column {
-                                        values.push(value);
-                                    }
-                                }
-                                values.extend(where_clause.iter_mut());
-                                if let Some(group) = group_by {
-                                    values.extend(group.exprs.iter_mut());
-                                    values.extend(group.having.iter_mut());
-                                }
-                                if let Some(from) = from {
-                                    for join in &mut from.joins {
-                                        if let Some(JoinConstraint::On(value)) =
-                                            &mut join.constraint
-                                        {
-                                            values.push(value);
-                                        }
-                                    }
-                                }
-                                for window in window_clause {
-                                    values.extend(window.window.partition_by.iter_mut());
-                                    values.extend(
-                                        window
-                                            .window
-                                            .order_by
-                                            .iter_mut()
-                                            .map(|sort| &mut sort.expr),
-                                    );
-                                }
-                                values.extend(inner.order_by.iter_mut().map(|sort| &mut sort.expr));
-                                for value in values {
-                                    turso_core::walk_expr_mut(value, &mut |value| {
-                                        if matches!(
-                                            value,
-                                            Expr::Subquery(_)
-                                                | Expr::Exists(_)
-                                                | Expr::InSelect { .. }
-                                        ) {
-                                            return Ok(turso_core::WalkControl::SkipChildren);
-                                        }
-                                        match scope.field(value).and_then(|field| {
-                                            field
-                                                .map(|(i, path)| {
-                                                    let value = scope.accessor(i, &path, true)?;
-                                                    if scope.sources[i].derived.is_some() {
-                                                        expression(&format!(
-                                                            "__fastdb_correlated_value({value})"
-                                                        ))
-                                                    } else {
-                                                        Ok(value)
-                                                    }
-                                                })
-                                                .transpose()
-                                        }) {
-                                            Ok(Some(rewritten)) => {
-                                                *value = rewritten;
-                                                return Ok(turso_core::WalkControl::SkipChildren);
-                                            }
-                                            Err(error) => {
-                                                rewrite_error = Some(error);
-                                            }
-                                            Ok(None) => {}
-                                        }
-                                        Ok(turso_core::WalkControl::Continue)
-                                    })?;
-                                }
-                                if let Some(error) = rewrite_error {
-                                    return Err(error);
-                                }
-                            }
-                        }
+                        self.correlate_collection_inner(
+                            &mut inner,
+                            correlation_sources,
+                            params,
+                            &ctes,
+                            exists,
+                        )?;
                         let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                         if let Some(plan) = self.lower_collection_select(
                             &sql,

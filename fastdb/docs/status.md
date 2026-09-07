@@ -1424,3 +1424,10 @@ Local CTE correlation evaluation qualification (2026-09-08): a test-only nondete
 
 
 Local CTE materialization-mode evaluation qualification (2026-09-08): the correlated callback regression now covers MATERIALIZED, NOT MATERIALIZED and default CTE planning. Each mode matches native results and actual evaluation counts through execute/profile, including zero calls with LIMIT 0. The expanded focused test, formatting and frontend lib/test Clippy pass. This does not freeze optimizer behavior across engine upgrades or establish general volatile-expression qualification. Latest combined evidence remains the recorded 370-Rust/44-Node run; full V1 gates remain open.
+
+
+## Collection-backed CTE definition correlation (2026-09-08)
+
+Factored collection correlation into a helper that visits nonrecursive CTE definitions before their consuming SELECT. Collection-backed definitions now bind qualified outer record and numeric fields; single/chained definitions and direct/derived outer sources pass execute/profile regressions. The helper skips work when no outer source is logical. This extends consumer-only CTE support; recursive CTEs, native-only definitions, compounds, deeper shadowing and total planning/resource qualification remain open.
+
+The complete scoped check passed formatting, Clippy, 373 Rust tests, 44 Node/application tests and strict TypeScript, including existing callback-count and CTE write regressions. One known trigger-cancellation gate remains ignored. No upstream files changed; full V1 remains incomplete.

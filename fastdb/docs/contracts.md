@@ -960,3 +960,7 @@ The pinned engine rejects an inner grouping key that references an outer row, fo
 ## Local collection CTE consumers and correlation (2026-09-07)
 
 A nonrecursive local WITH can now expose a collection source to a correlated consuming SELECT. A lowering-only probe identifies logical CTE output when the source name alone is insufficient, then qualified outer typed fields are translated in the consuming query. Tests cover single/chained CTE definitions with direct/derived outer sources, COUNT, EXISTS, IN and execute/profile. This adds planning work, not a frontend execution of the inner query. Correlation inside CTE definitions, recursive CTEs, compounds and broader scope/resource qualification remain open.
+
+## Collection CTE definition correlation (2026-09-08)
+
+The collection correlation pass now visits nonrecursive CTE definitions before lowering the consuming query. Collection-backed definitions can reference qualified outer typed fields, including record IDs and numeric predicates, through direct or derived outer sources. Single/chained definition regressions cover execute/profile. The pass skips work when no outer source is logical. Recursive CTEs, native-only definition correlation, compounds, deeper shadowing combinations and resource qualification remain open; this extends the preceding consumer-only support.

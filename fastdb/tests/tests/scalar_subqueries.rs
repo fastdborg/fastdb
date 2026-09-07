@@ -3447,3 +3447,44 @@ fn local_cte_correlated_updates_bind_values_and_preserve_atomicity() {
     c.check_collection_integrity("docs", Default::default())
         .unwrap();
 }
+
+#[test]
+fn collection_cte_definitions_correlate_outer_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+    ] {
+        q(&c, sql);
+    }
+    for outer in ["docs d", "(SELECT id,n FROM docs) d"] {
+        for predicate in ["l.owner=d.id", "l.n>d.n+1"] {
+            for definitions in [
+                format!("x AS (SELECT n FROM links l WHERE {predicate})"),
+                format!(
+                    "seed AS (SELECT n FROM links l WHERE {predicate}),x AS (SELECT n FROM seed)"
+                ),
+            ] {
+                let sql = format!(
+                    "SELECT n,(WITH {definitions} SELECT count(*) FROM x) FROM {outer} ORDER BY n"
+                );
+                let expected = vec![
+                    vec![Value::Integer(1), Value::Integer(1)],
+                    vec![Value::Integer(2), Value::Integer(0)],
+                ];
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected
+                );
+            }
+        }
+    }
+}
