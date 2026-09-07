@@ -1338,3 +1338,6 @@ CLI migration/transfer output errors (2026-09-07): these modes now use fallible 
 
 
 CLI transfer reporting-failure regression (2026-09-07): Linux /dev/full coverage now runs in the CLI integration suite for both JSON and NDJSON. Export/import output failures return nonzero without panic; re-export after reopening proves imports committed despite report failure, duplicate retries reject and source contents remain unchanged. Both transfer integration tests, formatting and focused Clippy pass. Broader platform/output/recovery qualification and full V1 remain open.
+
+
+CLI help output handling (2026-09-07): --help and -h now use fallible stdout writes and explicit flush, removing the last print macro from CLI source. A rebuilt CLI passes normal-output and Linux /dev/full probes for both aliases, returning an error rather than panicking when output fails. Formatting and CLI all-target Clippy pass. Broader platform and V1 qualification remain open.
