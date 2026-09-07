@@ -890,3 +890,5 @@ Atomic operations now use distinct reserved savepoint identities, so cleanup of 
 ## Cleanup after cancelled atomic opening (2026-09-07)
 
 Cancellation after a SAVEPOINT opened could leave an unintended active transaction even though the operation callback never ran. Atomic opening errors now clean up their unique frame, accepting only the pinned engine's exact missing-frame error when it never opened. Other cleanup failures remain FDB_ROLLBACK. A boundary sweep checks autocommit and active outer transactions, absence of orphan savepoints, prior rows and successful retry. See atomic-savepoints.md for remaining I/O and RELEASE/commit qualification.
+
+The covered RELEASE interruption boundary can report FDB_ROLLBACK while the complete operation write set remains pending in an active outer transaction. This code is not confirmation of rollback and must not trigger blind retry. The caller can explicitly roll back the outer transaction; see atomic-savepoints.md for exact evidence and remaining qualification limits.

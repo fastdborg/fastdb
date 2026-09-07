@@ -504,6 +504,76 @@ mod tests {
         }
     }
 
+    #[test]
+    fn atomic_release_cancellation_preserves_complete_or_restored_write_sets() {
+        use std::sync::atomic::AtomicUsize;
+        let mut interrupted = 0;
+        for outer in [false, true] {
+            for stop in 1..=16 {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                q(&c, "CREATE TABLE native(n INTEGER)");
+                if outer {
+                    q(&c, "BEGIN");
+                }
+                q(&c, "INSERT INTO native VALUES(0)");
+                let state = c.transaction_state();
+                let baseline = c.engine.total_changes();
+                let engine = Arc::downgrade(&c.engine);
+                let ticks = Arc::new(AtomicUsize::new(0));
+                let seen = ticks.clone();
+                c.engine.set_progress_handler(
+                    1,
+                    Some(Box::new(move || {
+                        engine
+                            .upgrade()
+                            .is_some_and(|c| c.total_changes() >= baseline + 2)
+                            && seen.fetch_add(1, Ordering::SeqCst) + 1 == stop
+                    })),
+                );
+                let result = c.atomic(|| c.run("INSERT INTO native VALUES(1),(2)", &[]));
+                c.engine.set_progress_handler(0, None);
+                let delivered = ticks.load(Ordering::SeqCst) >= stop;
+                let rows = q(&c, "SELECT n FROM native ORDER BY n").rows;
+                let before = vec![vec![Value::Integer(0)]];
+                let complete = vec![
+                    vec![Value::Integer(0)],
+                    vec![Value::Integer(1)],
+                    vec![Value::Integer(2)],
+                ];
+                assert!(
+                    rows == before || rows == complete,
+                    "outer={outer}, stop={stop}: {rows:?}"
+                );
+                assert_eq!(c.transaction_state(), state, "outer={outer}, stop={stop}");
+                match (outer, stop) {
+                    (_, 1..=3) => {
+                        assert!(delivered);
+                        interrupted += 1;
+                        assert_eq!(result.unwrap_err().code(), "FDB_CANCELLED");
+                        assert_eq!(rows, before);
+                    }
+                    (true, 4) => {
+                        assert!(delivered);
+                        interrupted += 1;
+                        assert_eq!(result.unwrap_err().code(), "FDB_ROLLBACK");
+                        assert_eq!(rows, complete);
+                    }
+                    _ => {
+                        assert!(!delivered, "outer={outer}, stop={stop}");
+                        result.unwrap();
+                        assert_eq!(rows, complete);
+                    }
+                }
+                if outer {
+                    q(&c, "ROLLBACK");
+                    assert!(q(&c, "SELECT n FROM native").rows.is_empty());
+                }
+            }
+        }
+        assert_eq!(interrupted, 7);
+    }
+
     fn arm_after_write(connection: &Connection) -> Arc<AtomicBool> {
         let baseline = connection.engine.total_changes();
         let engine = Arc::downgrade(&connection.engine);

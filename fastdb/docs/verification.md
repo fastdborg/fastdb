@@ -1265,3 +1265,10 @@ During scoped verification, a cancelled import retained two imported rows. A tim
 `fastdb/scripts/check.sh` passed (/tmp/fastdb-atomic-open-check.log): formatting, Clippy, 309 Rust tests, 35 Node tests and strict TypeScript; one known trigger-interruption gate remains ignored. The new opening sweep reproduced boundary 4 leaving an autocommit connection active without running its callback (/tmp/fastdb-atomic-open-expanded.log). Failed opens now roll back/release their unique frame, accepting only the pinned TxError for an absent generated frame. The regression verifies cancellation before callback execution in both initial transaction states, checks no named frame remains, preserves prior rows and retries a write successfully. Targeted opening/nested/import regressions also passed (/tmp/fastdb-atomic-open-qualified.log).
 
 The persistent-interrupt export fixture intentionally prevents cleanup as well as work; it now expects FDB_ROLLBACK with an active outer transaction, while one-shot cancellation remains FDB_CANCELLED after successful cleanup. Other cleanup errors are not suppressed. Opening I/O failures, RELEASE/commit ambiguity and the separate trigger defect remain release qualification work. No upstream implementation or persisted format changes.
+
+
+## RELEASE progress-boundary qualification — 2026-09-07
+
+`cargo test --locked -p fastdb atomic_release_cancellation` passed (/tmp/fastdb-release-delivery.log). A new test sweeps 16 post-write thresholds in each transaction mode, verifies callback delivery, and asserts exact pinned outcomes: three restored FDB_CANCELLED cases per mode, one complete pending FDB_ROLLBACK case in the outer transaction, and success before delivery at later thresholds. It checks initial transaction mode, complete-versus-restored rows and explicit outer rollback. Initial diagnostic output is /tmp/fastdb-release-boundaries.log. No production changes; prior full scoped 309 Rust / 35 Node evidence plus this regression yields 310 distinct Rust tests. The known trigger gate and broader I/O/commit qualification remain open.
+
+Frontend all-target Clippy with warnings denied, formatting and diff checks also passed.

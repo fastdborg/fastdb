@@ -20,3 +20,10 @@ Opening errors now attempt rollback/release of the uniquely named frame before r
 A deterministic opening sweep reproduced an autocommit connection becoming active at boundary 4 without executing the callback. The regression now checks both initial transaction states, requires cancellation coverage through that boundary, verifies no generated savepoint remains, preserves prior rows, and executes a successful retry. The existing deliberately persistent-interrupt export test reports FDB_ROLLBACK for an active transaction when its handler also prevents cleanup; public CancellationToken delivery remains one-shot. RELEASE/commit ambiguity and interrupted I/O qualification remain open.
 
 Opening cleanup verification passed the full scoped suite: 309 Rust tests, 35 Node tests, formatting, Clippy and strict TypeScript (/tmp/fastdb-atomic-open-check.log).
+
+
+## RELEASE progress boundaries
+
+A 32-case sweep requests interruption at 16 thresholds after both writes, in autocommit and an active outer transaction. It separately observes whether the interrupt callback actually fired. At the first three thresholds in each mode, FDB_CANCELLED restores the original rowset. At the fourth threshold with an outer transaction, FDB_ROLLBACK leaves the complete two-write set pending; explicitly rolling back the outer transaction removes that set and its prior work. Later thresholds complete before interrupt delivery. Every case preserves the initial transaction mode and has either the complete or restored write set, never a partial set.
+
+This qualifies those pinned in-memory VM boundaries, not power-loss, interrupted I/O, all RELEASE implementations or a general commit-outcome oracle. FDB_ROLLBACK must not be interpreted as confirmed rollback or automatically retried. The transaction observation alone does not establish whether an operation's writes remain pending; inspect/reconcile the result or roll back the outer transaction as appropriate.

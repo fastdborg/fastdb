@@ -72,3 +72,6 @@ Unique atomic savepoint identities fix a reproduced partial-import cancellation 
 
 
 Cancelled atomic opening now removes an opened empty frame and restores the initial transaction state in the deterministic progress-boundary sweep. Exact absent-frame handling is confined to opening failure before callback execution; unverifiable cleanup remains FDB_ROLLBACK.
+
+
+A targeted RELEASE sweep adds a 310th distinct Rust regression after the latest full scoped run. It verifies exact complete/restored write sets at pinned in-memory progress boundaries, including FDB_ROLLBACK with completed pending writes. Interrupted I/O and broader commit-outcome qualification remain open.

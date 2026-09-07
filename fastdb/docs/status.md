@@ -998,3 +998,8 @@ The complete scoped suite passed formatting, Clippy, 308 Rust tests, thirty-five
 Cancellation after a SAVEPOINT opened could leave an unintended active transaction even though the operation callback never ran. Atomic opening errors now clean up their unique frame, accepting only the pinned engine's exact missing-frame error when it never opened. Other cleanup failures remain FDB_ROLLBACK. A boundary sweep checks autocommit and active outer transactions, absence of orphan savepoints, prior rows and successful retry. See atomic-savepoints.md for remaining I/O and RELEASE/commit qualification.
 
 Scoped checks passed formatting, Clippy, 309 Rust tests, thirty-five Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## RELEASE cancellation disposition (2026-09-07)
+
+A new 32-case boundary sweep distinguishes actual interrupt delivery from completion before delivery. Six delivered interrupts restore rows with FDB_CANCELLED; one outer-transaction RELEASE boundary returns FDB_ROLLBACK with the complete write set pending, which explicit outer rollback removes. Other thresholds finish before delivery. Transaction modes remain consistent and no partial set is accepted. See atomic-savepoints.md. This is test qualification without a production-code change; interrupted I/O and broader commit outcomes remain open.
