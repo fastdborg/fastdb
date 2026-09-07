@@ -1218,7 +1218,7 @@ impl Scope {
                         // explicit COLLATE precedence in the original order.
                         let expression_collation = (!on_left
                             && (matches!(op, Operator::Is | Operator::IsNot)
-                                || matches!(column, Expr::Unary(UnaryOperator::Positive, _)))
+                                || !membership_column(column))
                             && !native_column_collation(&left))
                         .then(|| self.derived_native_collation(column, true))
                         .flatten();

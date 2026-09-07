@@ -1976,3 +1976,10 @@ Mixed derived numeric affinity qualification (2026-09-08): expanded the comparis
 
 
 Mixed derived positional binding qualification (2026-09-08): a new regression combines outer, collection-derived and native-derived positional parameters using both anonymous and numbered forms. Execute/profile preserve statement-wide bindings and exact output. An omitted native-side binding retains the native unbound-NULL behavior, verified against a relational reference; rebinding succeeds on retry. This differs from missing variables consumed by logical expression lowering, which can report Parameter errors; the test does not freeze a uniform missing-binding release contract. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; this adds one distinct test after that run. Broader parameter/scope/resource and full V1 gates remain open.
+
+
+## Parenthesized unary-plus comparison correction (2026-09-08)
+
+Fixed a reproduced mismatch where v=(+label) lost the compound expression collation that v=+label retained. Lowering now reuses recursive column-affinity recognition, so single and nested parentheses follow the same path. The expanded native-reference matrix passes through execute/profile across simple, nested, materialized, limited and compound sources, including both mixed-collation arm orders.
+
+The complete scoped check passed formatting, Clippy, 405 Rust tests, 44 Node/application tests and strict TypeScript, including recent write-atomicity, binary/numeric comparison and positional-binding coverage. One known trigger-cancellation gate remains ignored. Broader expression/scope/resource and full V1 release qualification remain open. No upstream implementation files changed.

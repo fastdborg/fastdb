@@ -301,6 +301,8 @@ fn mixed_derived_comparisons_preserve_native_affinity_and_collation() {
             "label IN (v,NULL)",
             "label IN (v,'z')",
             "v=+label",
+            "v=(+label)",
+            "v=((+label))",
         ] {
             let sql = format!("SELECT n,m FROM (SELECT n,v FROM docs) CROSS JOIN {native_source} WHERE {predicate} ORDER BY n,m");
             // Document values have no declared SQL column affinity/collation.

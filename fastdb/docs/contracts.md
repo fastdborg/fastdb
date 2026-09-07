@@ -1055,3 +1055,6 @@ Native derived-column membership collation (2026-09-08): metadata records native
 
 
 Mixed compound collation provenance (2026-09-08): native derived metadata now retains both the exposed output-column collation and the projected expression collation. Membership uses the exposed column metadata; the covered document-left IS/IS NOT and unary-plus comparisons use the expression context without changing explicit logical COLLATE precedence. This corrects the BINARY/NOCASE UNION ALL reproducer in both arm orders. These are pinned-engine behaviors; broader compound/expression qualification remains open.
+
+
+Parenthesized unary-plus collation (2026-09-08): mixed comparison lowering now uses the existing recursive column-affinity check to recognize unary plus through parentheses. The covered (+column) and ((+column)) forms preserve the same derived expression collation as bare +column, including mixed-collation compound sources.
