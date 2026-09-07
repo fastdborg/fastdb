@@ -79,6 +79,8 @@ The scoped test suite includes parser collision probes; persistent CRUD/reopen; 
 
 ## Next implementation work
 
+See [V1 gate review](v1-gates.md) for the current evidence map and a reproduced native-membership query gap.
+
 1. Complete the SQL-shaped write contract (broader INSERT SELECT sources and further supported statement forms) and replace the remaining conservative managed-name guard. Complete collection read cases: subqueries/CTEs, grouping alias/type coverage and broader DISTINCT/window qualification, compound/derived typed expressions, and broader index planning. Preserve baseline parameter/alias forms and ordinary SQL errors. The fallback guard now distinguishes value literals in covered SELECT/write contexts; uncovered contexts still reject some harmless strings, and dependency/name authorization remains unfinished.
 2. Finish expression type propagation through comparisons and remaining SQL expressions; broader CHECK eligibility, expanded inspection and index planning, stable errors/results, cancellation and resource limits. Namespace collisions, metadata format validation, multi-connection schema races, and managed object dependency access need full coverage.
 3. Complete forward-link resource/planner coverage and upstream vector representation/operation coverage; qualify the initial bundled QuickJS catalog, limits, performance and platform packaging. All five pinned vector encodings now have initial validation; broader numerical/resource/platform and benchmark evidence remains pending.
