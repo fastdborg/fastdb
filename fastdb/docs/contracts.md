@@ -1028,3 +1028,8 @@ Logical source-free expression-subquery LIMIT/OFFSET values now pass through a p
 ## Collection-reading pagination counter isolation (2026-09-08)
 
 Logical expression-subquery pagination now uses counter isolation with table sources as well as source-free queries. A correlated scalar over items n=1,2,3 with outer n=1,2 and OFFSET 1+0 previously returned 2 for both outer rows; it now returns 2 and 3. Direct/derived outer-source regressions cover literal, arithmetic and coalesce offsets through execute/profile. Ordinary native entry routing remains unchanged; broader pagination/evaluation/resource qualification remains open.
+
+
+## Pagination expression type preservation (2026-09-08)
+
+Logical source-free pagination retains original parameter values when evaluating expressions. The earlier integer-expression substitution changed typeof(Number(1.0)) to integer, making a CASE-based LIMIT choose the wrong branch. Counter isolation now handles register reuse, so that substitution has been removed from the logical pagination path while missing-binding validation remains. Direct/derived execute/profile regressions distinguish integer and real bindings. The separate native correlation conversion remains unchanged; broader type/scope/resource qualification remains open.

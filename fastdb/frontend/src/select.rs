@@ -3993,12 +3993,6 @@ impl Connection {
                             if !params.contains_key(&name) {
                                 missing = Some(name.clone());
                             }
-                            if let Some(integer) = params.get(&name).and_then(pagination_integer) {
-                                *expr = expression(&integer.to_string()).map_err(|error| {
-                                    turso_core::LimboError::InternalError(error.to_string())
-                                })?;
-                                scope.consumed.borrow_mut().insert(name);
-                            }
                         }
                         Ok(turso_core::WalkControl::Continue)
                     })?;

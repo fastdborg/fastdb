@@ -4452,3 +4452,44 @@ fn correlated_predicate_pagination_matches_literal_native() {
         }
     }
 }
+
+#[test]
+fn scalar_pagination_preserves_numeric_expression_types() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1}");
+    q(&c, "INSERT INTO docs {n:2}");
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        for numeric in [false, true] {
+            let params = Parameters::from([(
+                "$limit".into(),
+                if numeric {
+                    Value::Number(1.0)
+                } else {
+                    Value::Integer(1)
+                },
+            )]);
+            let sql = format!("SELECT (SELECT array::new(d.n) LIMIT CASE WHEN typeof($limit)='real' THEN 1 ELSE 0 END) FROM {source} ORDER BY n");
+            let expected = (1..=2)
+                .map(|n| {
+                    vec![if numeric {
+                        Value::Array(vec![Value::Integer(n)])
+                    } else {
+                        Value::Null
+                    }]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                c.execute(&sql, &params).unwrap().rows,
+                expected,
+                "{sql}: {params:?}"
+            );
+            assert_eq!(
+                c.profile_select(&sql, &params).unwrap().result.rows,
+                expected,
+                "{sql}: {params:?}"
+            );
+        }
+    }
+}
