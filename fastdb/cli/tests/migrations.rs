@@ -39,3 +39,43 @@ fn cli_migrations_persist_and_detect_edited_files() {
     assert!(!run().status.success());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn cli_rejects_non_file_migration_sources_and_allows_retry() {
+    let root = std::env::temp_dir().join(format!(
+        "fastdb-migration-source-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let dir = root.join("migrations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let invalid = dir.join("002_directory.sql");
+    std::fs::create_dir(&invalid).unwrap();
+    std::fs::write(dir.join("001_create.sql"), "CREATE TABLE docs;").unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+            .arg("--migrate")
+            .arg(&dir)
+            .arg(root.join("test.db"))
+            .output()
+            .unwrap()
+    };
+    let output = run();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("migration source must be a regular file"),
+        "{error}"
+    );
+    assert!(error.contains("002_directory.sql"), "{error}");
+    std::fs::remove_dir(invalid).unwrap();
+    let output = run();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["already_applied"], 0);
+    assert_eq!(report["applied"], serde_json::json!([1]));
+    std::fs::remove_dir_all(root).unwrap();
+}

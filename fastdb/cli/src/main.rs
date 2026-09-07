@@ -471,6 +471,13 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
         if path.extension().is_none_or(|e| e != "sql") {
             continue;
         }
+        if !std::fs::metadata(&path)?.is_file() {
+            return Err(format!(
+                "migration source must be a regular file: {}",
+                path.display()
+            )
+            .into());
+        }
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
