@@ -1997,3 +1997,12 @@ Duplicate native CTE collation qualification (2026-09-08): a 28-case differentia
 
 
 Duplicate materialized CTE evaluation qualification (2026-09-08): extended the existing serialized callback-count regression with a duplicate-column MATERIALIZED native CTE referenced once or twice in collection joins, with and without LIMIT 0. EXPLAIN QUERY PLAN invokes zero source callbacks. Normal/profiled rows and callback counts match the pinned native baseline in all four shapes. The full existing callback regression passes; no new parallel counter test or production code change was introduced. Formatting passes. Latest full scoped evidence remains 432 Rust tests with one ignored gate and 48 Node/application tests; broader callback/planner and V1 release qualification remain open.
+
+
+## Shared duplicate native CTE evaluation (2026-09-08)
+
+A NOT MATERIALIZED callback probe exposed repeated evaluation introduced by per-reference wrappers: two references invoked cte_tick 24 times versus 6 in the pinned native baseline. Replaced those wrappers with one companion CTE per duplicate native definition, preserving public definitions and sharing the positional column mapping across references. Generated names avoid existing and inherited runtime CTE names. This supersedes the earlier per-source implementation.
+
+The callback regression now covers MATERIALIZED and NOT MATERIALIZED definitions, one/two references and LIMIT 0. Normal/profiled rows and callback counts match the native baseline, with no callbacks during EXPLAIN. Existing positional, type, collation, binary/NULL, chained-source and write checks remain green.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 434 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-shared-cte-check.log. Full V1 release qualification remains incomplete.

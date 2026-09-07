@@ -1810,37 +1810,16 @@ fn source(
             if indexed.is_some() {
                 return Err(unsupported("INDEXED on a CTE source"));
             }
-            source.table = table.clone();
             source.alias = alias
                 .as_ref()
                 .map_or(name.name.as_str(), |a| a.name().as_str())
                 .into();
-            if !source.derived_logical {
-                if let Some(columns) = &source.derived {
-                    let names = columns
-                        .iter()
-                        .map(|(name, _)| name.clone())
-                        .collect::<Vec<_>>();
-                    let physical = derived_physical_names(&names);
-                    if physical != names {
-                        // Keep the native CTE definition and downstream native
-                        // metadata intact. Rename only this mixed-query source.
-                        let names = physical
-                            .iter()
-                            .map(|name| quote(name))
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        let Cmd::Stmt(Stmt::Select(wrapped)) = parsed(&format!(
-                            "WITH __fastdb_cte_projection({names}) AS (SELECT * FROM {}) SELECT * FROM __fastdb_cte_projection",
-                            quote(name.name.as_str())
-                        ))? else { unreachable!("native CTE source wrapper") };
-                        source.table = SelectTable::Select(
-                            wrapped,
-                            Some(As::As(Name::exact(source.alias.clone()))),
-                        );
-                        source.derived_physical = Some(physical);
-                    }
+            if !source.derived_logical && source.derived_physical.is_some() {
+                if let SelectTable::Table(_, runtime_alias, _) = &mut source.table {
+                    *runtime_alias = Some(As::As(Name::exact(source.alias.clone())));
                 }
+            } else {
+                source.table = table.clone();
             }
             return Ok(source);
         }
@@ -3158,7 +3137,7 @@ impl Connection {
                     Err(Error::Unsupported(_)) => return Ok(None),
                     Err(e) => return Err(e),
                 };
-                let (columns, physical, logical, consumed) = if let Some(plan) = plan {
+                let (columns, mut physical, logical, consumed) = if let Some(plan) = plan {
                     if plan.fetched.iter().any(|f| *f) {
                         return Err(unsupported("fetched CTE projections"));
                     }
@@ -3262,8 +3241,46 @@ impl Connection {
                 cte_logical |= logical;
                 cte_consumed.extend(consumed.iter().cloned());
                 let name = cte.tbl_name.as_str().to_owned();
-                let Cmd::Stmt(Stmt::Select(table_probe)) =
-                    parsed(&format!("SELECT * FROM {}", quote(&name)))?
+                let mut companion = None;
+                let mut runtime_name = name.clone();
+                if !logical {
+                    let names = columns
+                        .iter()
+                        .map(|(name, _)| name.clone())
+                        .collect::<Vec<_>>();
+                    let runtime_columns = derived_physical_names(&names);
+                    if runtime_columns != names {
+                        // One companion per definition retains native CTE sharing
+                        // across multiple mixed-query references.
+                        runtime_name = format!("__fastdb_cte_columns_{index}");
+                        while resolved_ctes.iter().any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(&runtime_name))
+                            || native_with.is_some_and(|with| with.ctes.iter().any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(&runtime_name)))
+                            || ctes.values().flatten().any(|source| matches!(&source.table, SelectTable::Table(name, _, _) if name.name.as_str().eq_ignore_ascii_case(&runtime_name)))
+                        {
+                            runtime_name.push('_');
+                        }
+                        let names = runtime_columns
+                            .iter()
+                            .map(|name| quote(name))
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let Cmd::Stmt(Stmt::Select(mut wrapper)) = parsed(&format!(
+                            "WITH {}({names}) AS (SELECT * FROM {}) SELECT 1",
+                            quote(&runtime_name),
+                            quote(&name)
+                        ))?
+                        else {
+                            unreachable!("native CTE companion")
+                        };
+                        companion = wrapper.with.take().map(|mut with| with.ctes.remove(0));
+                        physical = Some(runtime_columns);
+                    }
+                }
+                let Cmd::Stmt(Stmt::Select(table_probe)) = parsed(&format!(
+                    "SELECT * FROM {} AS {}",
+                    quote(&runtime_name),
+                    quote(&name)
+                ))?
                 else {
                     unreachable!();
                 };
@@ -3288,6 +3305,9 @@ impl Connection {
                     }),
                 );
                 resolved_ctes.push(cte);
+                if let Some(companion) = companion {
+                    resolved_ctes.push(companion);
+                }
             }
             with.ctes = resolved_ctes;
             select.with = Some(with);

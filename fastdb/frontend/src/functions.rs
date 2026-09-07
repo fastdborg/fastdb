@@ -1245,34 +1245,36 @@ mod cte_evaluation_tests {
         ] {
             c.execute(sql, &params).unwrap();
         }
-        for joins in ["JOIN q v ON 1", "JOIN q v ON 1 JOIN q w ON 1"] {
-            for limit in ["", " LIMIT 0"] {
-                let projection = if joins.contains("q w") {
-                    "v.*,w.*"
-                } else {
-                    "v.*"
-                };
-                let query = |source| {
-                    format!(
-                    "WITH q(x,x) AS MATERIALIZED (SELECT cte_tick(),cte_tick() FROM baseline) SELECT {projection} FROM {source} d {joins}{limit}"
-                )
-                };
-                CALLS.store(0, Ordering::SeqCst);
-                c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
-                    .unwrap();
-                assert_eq!(CALLS.load(Ordering::SeqCst), 0, "duplicate CTE planning");
-                let expected = c.execute(&query("baseline"), &params).unwrap().rows;
-                let calls = CALLS.load(Ordering::SeqCst);
-                for profile in [false, true] {
-                    CALLS.store(0, Ordering::SeqCst);
-                    let sql = query("docs");
-                    let actual = if profile {
-                        c.profile_select(&sql, &params).unwrap().result.rows
+        for materialization in ["MATERIALIZED", "NOT MATERIALIZED"] {
+            for joins in ["JOIN q v ON 1", "JOIN q v ON 1 JOIN q w ON 1"] {
+                for limit in ["", " LIMIT 0"] {
+                    let projection = if joins.contains("q w") {
+                        "v.*,w.*"
                     } else {
-                        c.execute(&sql, &params).unwrap().rows
+                        "v.*"
                     };
-                    assert_eq!(actual, expected, "{sql}");
-                    assert_eq!(CALLS.load(Ordering::SeqCst), calls, "{sql}");
+                    let query = |source| {
+                        format!(
+                    "WITH q(x,x) AS {materialization} (SELECT cte_tick(),cte_tick() FROM baseline) SELECT {projection} FROM {source} d {joins}{limit}"
+                )
+                    };
+                    CALLS.store(0, Ordering::SeqCst);
+                    c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
+                        .unwrap();
+                    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "duplicate CTE planning");
+                    let expected = c.execute(&query("baseline"), &params).unwrap().rows;
+                    let calls = CALLS.load(Ordering::SeqCst);
+                    for profile in [false, true] {
+                        CALLS.store(0, Ordering::SeqCst);
+                        let sql = query("docs");
+                        let actual = if profile {
+                            c.profile_select(&sql, &params).unwrap().result.rows
+                        } else {
+                            c.execute(&sql, &params).unwrap().rows
+                        };
+                        assert_eq!(actual, expected, "{sql}");
+                        assert_eq!(CALLS.load(Ordering::SeqCst), calls, "{sql}");
+                    }
                 }
             }
         }
