@@ -1,0 +1,661 @@
+{
+  "platform": "linux",
+  "arch": "x64",
+  "node": "24.19.0",
+  "count": 1000,
+  "sourceCommit": "23f7030c99c94f391fe75462dc307c4a8821ee2e",
+  "implementationChanges": "",
+  "addonSha256": "f60f2a135accfd853cb0fc8d97fe0496ee2e1b42d4c469e94d8130f078c6ce50",
+  "harnessSha256": "d63f87bf64ee88b5d7554354faaca95e9cfbbaaf6d087d210708c74aa3a9c388",
+  "notes": "In-memory debug addon. One warmup and three measured samples per workload, one process for all workloads. Timing includes decoding and Node transport; assertions follow timing. Counters are strings encoding uint64. Not release latency, memory or cold-cache evidence.",
+  "workloads": [
+    {
+      "target": "docs",
+      "distinct": 1,
+      "projections": 1,
+      "sql": "SELECT record::fetch(type::record('docs',n%1)) AS fetched0 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 139.30611899999985,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "2",
+            "fetchVmSteps": "28",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 107.46956500000033,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "2",
+            "fetchVmSteps": "28",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 99.63875800000005,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "2",
+            "fetchVmSteps": "28",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "docs",
+      "distinct": 1,
+      "projections": 2,
+      "sql": "SELECT record::fetch(type::record('docs',n%1)) AS fetched0,record::fetch(type::record('docs',n%1)) AS fetched1 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 188.63583199999994,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "2",
+            "fetchVmSteps": "28",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 183.38172699999996,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "2",
+            "fetchVmSteps": "28",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 185.3901039999996,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "2",
+            "fetchVmSteps": "28",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "docs",
+      "distinct": 130,
+      "projections": 1,
+      "sql": "SELECT record::fetch(type::record('docs',n%130)) AS fetched0 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 130.22465299999976,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "259",
+            "fetchVmSteps": "1975",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 163.693354,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "259",
+            "fetchVmSteps": "1975",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 153.20575400000007,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "259",
+            "fetchVmSteps": "1975",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "docs",
+      "distinct": 130,
+      "projections": 2,
+      "sql": "SELECT record::fetch(type::record('docs',n%130)) AS fetched0,record::fetch(type::record('docs',n%130)) AS fetched1 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 279.877876,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "259",
+            "fetchVmSteps": "1975",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 213.20669399999952,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "259",
+            "fetchVmSteps": "1975",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 225.35399700000016,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "259",
+            "fetchVmSteps": "1975",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "docs",
+      "distinct": 1000,
+      "projections": 1,
+      "sql": "SELECT record::fetch(type::record('docs',n%1000)) AS fetched0 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 311.0673479999996,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1999",
+            "fetchVmSteps": "15103",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 310.65337999999974,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1999",
+            "fetchVmSteps": "15103",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 308.85551699999996,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1999",
+            "fetchVmSteps": "15103",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "docs",
+      "distinct": 1000,
+      "projections": 2,
+      "sql": "SELECT record::fetch(type::record('docs',n%1000)) AS fetched0,record::fetch(type::record('docs',n%1000)) AS fetched1 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 448.1039559999999,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1999",
+            "fetchVmSteps": "15103",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 398.34568000000036,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1999",
+            "fetchVmSteps": "15103",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 407.30211000000054,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1999",
+            "fetchVmSteps": "15103",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "positions",
+      "distinct": 1,
+      "projections": 1,
+      "sql": "SELECT record::fetch(type::record('positions',n%1)) AS fetched0 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 66.23423099999945,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "1",
+            "fetchVmSteps": "26",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 65.1771689999996,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "1",
+            "fetchVmSteps": "26",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 64.46605199999976,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "1",
+            "fetchVmSteps": "26",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "positions",
+      "distinct": 1,
+      "projections": 2,
+      "sql": "SELECT record::fetch(type::record('positions',n%1)) AS fetched0,record::fetch(type::record('positions',n%1)) AS fetched1 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 114.64864699999998,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "1",
+            "fetchVmSteps": "26",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 116.2971379999999,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "1",
+            "fetchVmSteps": "26",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 119.50718600000073,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "1",
+            "fetchRowsRead": "1",
+            "fetchVmSteps": "26",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "positions",
+      "distinct": 130,
+      "projections": 1,
+      "sql": "SELECT record::fetch(type::record('positions',n%130)) AS fetched0 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 101.99103399999876,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "130",
+            "fetchVmSteps": "1716",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 88.294038,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "130",
+            "fetchVmSteps": "1716",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 86.4728699999996,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "130",
+            "fetchVmSteps": "1716",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "positions",
+      "distinct": 130,
+      "projections": 2,
+      "sql": "SELECT record::fetch(type::record('positions',n%130)) AS fetched0,record::fetch(type::record('positions',n%130)) AS fetched1 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 137.17247700000007,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "130",
+            "fetchVmSteps": "1716",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 171.4196690000008,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "130",
+            "fetchVmSteps": "1716",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 137.84971799999948,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "2",
+            "fetchRowsRead": "130",
+            "fetchVmSteps": "1716",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "positions",
+      "distinct": 1000,
+      "projections": 1,
+      "sql": "SELECT record::fetch(type::record('positions',n%1000)) AS fetched0 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 197.51052700000037,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1000",
+            "fetchVmSteps": "13104",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 200.0428580000007,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1000",
+            "fetchVmSteps": "13104",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        },
+        {
+          "elapsedMs": 215.2094990000005,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1000",
+            "fetchVmSteps": "13104",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "5008"
+          }
+        }
+      ],
+      "correctness": "passed"
+    },
+    {
+      "target": "positions",
+      "distinct": 1000,
+      "projections": 2,
+      "sql": "SELECT record::fetch(type::record('positions',n%1000)) AS fetched0,record::fetch(type::record('positions',n%1000)) AS fetched1 FROM positions ORDER BY n",
+      "samples": [
+        {
+          "elapsedMs": 250.74980499999947,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1000",
+            "fetchVmSteps": "13104",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 250.78339799999958,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1000",
+            "fetchVmSteps": "13104",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        },
+        {
+          "elapsedMs": 248.89396699999998,
+          "metrics": {
+            "btreeSeeks": "0",
+            "fetchBatches": "8",
+            "fetchRowsRead": "1000",
+            "fetchVmSteps": "13104",
+            "fullscanSteps": "999",
+            "indexSteps": "0",
+            "rowsRead": "1000",
+            "rowsWritten": "0",
+            "sortOperations": "0",
+            "vmSteps": "8010"
+          }
+        }
+      ],
+      "correctness": "passed"
+    }
+  ]
+}

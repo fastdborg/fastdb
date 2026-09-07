@@ -1125,3 +1125,8 @@ Counters exclude catalog/schema/savepoint helpers, decoding and transport. They 
 ## Fetch-profile interruption qualification — 2026-09-07
 
 `cargo test --locked -p fastdb --lib links::tests` passed all three tests (`/tmp/fastdb-fetch-profile-interrupt.log`). The new test counts VM progress for a 130-target/two-batch profile and injects one-shot interrupts at step 1, quarter/half/three-quarter progress and one step before measured completion, under autocommit and active transaction modes. Every case fired, returned FDB_CANCELLED, preserved state/data and allowed equal rows/counters on retry; outer rollback removed prior uncommitted work. Scoped frontend Clippy and formatting passed. Production code is unchanged; no full-suite or Node rebuild repeated. Current distinct Rust coverage is 288, with the existing known ignored gate. These progress thresholds do not prove fixed latency or every engine phase.
+
+
+## Forward-fetch diagnostic — 2026-09-07
+
+`node --check fastdb/scripts/bench-fetch.cjs` and `node fastdb/scripts/bench-fetch.cjs` passed. Report: benchmark-results/2026-09-07-linux-dev-fetch-1000.json, clean implementation 23f7030c9. Twelve workloads each passed one warmup and three measured samples, checking all returned values, duplicates, expected batch counts and repeatable counters. Target metrics also match between one/two projections. No production changes or scoped-suite rebuild; prior test evidence remains applicable. The single-process debug fixture does not qualify memory, cold caches, optimized builds or platform performance.

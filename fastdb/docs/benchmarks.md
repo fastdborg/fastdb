@@ -103,3 +103,19 @@ The [three-run report](benchmark-results/2026-09-07-linux-dev-transfer-json-repl
 | NDJSON | 3,681 ms (3,563–3,842) | 325 ms (320–330) | 131,842,048–132,767,744 bytes |
 
 The earlier JSON materializing implementation had one sample at 3,708 ms import and 133,619,712 bytes RSS after import. Its timing falls inside the new range; the small RSS difference does not establish a repeatable reduction. Export implementation was unchanged, yet its timing also varied. This is not a controlled causal comparison or optimized-build result. The new import implementation removes the retained decoded document array and parses twice; this workload does not show that tradeoff dominates whole-process costs. Larger/diverse fixtures, controlled repeated baseline samples and release builds remain open.
+
+
+## Forward-fetch batching diagnostic
+
+Run `node fastdb/scripts/bench-fetch.cjs [positions]` after building the local addon; the default is 1,000 positions, bounded to 130–8,000. The in-memory fixture compares collection and relational targets, one/130/all distinct keys, and one/two fetched projections. Each workload has one warmup and three timed samples. Assertions check every fetched integer, duplicate results, expected 128-key batch count and stable engine counters. The [1,000-position report](benchmark-results/2026-09-07-linux-dev-fetch-1000.json) records implementation 23f7030c9, clean implementation paths, addon/harness hashes and all samples.
+
+| Target | Distinct keys | One projection median | Two projections median | Target batches | Target rows read | Target VM steps |
+|---|---:|---:|---:|---:|---:|---:|
+| Collection | 1 | 107.47 ms | 185.39 ms | 1 | 2 | 28 |
+| Collection | 130 | 153.21 ms | 225.35 ms | 2 | 259 | 1,975 |
+| Collection | 1,000 | 310.65 ms | 407.30 ms | 8 | 1,999 | 15,103 |
+| Relational | 1 | 65.18 ms | 116.30 ms | 1 | 1 | 26 |
+| Relational | 130 | 88.29 ms | 137.85 ms | 2 | 130 | 1,716 |
+| Relational | 1,000 | 200.04 ms | 250.75 ms | 8 | 1,000 | 13,104 |
+
+Target counters were identical for one and two projections, confirming deduplicated target reads in these fixtures. Physical row reads include engine index/table operations and need not equal logical target counts. Elapsed time includes outer evaluation, frontend decoding/result construction and Node transport; duplicate output still costs time. These are synthetic debug-addon measurements in one process with warm caches, not isolated CPU attribution, memory evidence or release latency guarantees. Three samples cannot establish a stable p95.

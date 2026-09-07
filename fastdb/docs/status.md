@@ -851,3 +851,8 @@ The offline Node package consumer now checks installed sync/worker fetch profile
 ## Fetch-profile interruption sweep (2026-09-07)
 
 A real-engine regression measures total VM progress for a 130-target/two-batch fetch profile, then interrupts at five progress thresholds in both autocommit and an existing transaction. All ten cases return FDB_CANCELLED, retain transaction state and prior collection data, and permit exact result/counter retry; outer rollback remains effective. Thresholds span the measured workflow and are not labels for specific target/compiler/cleanup phases or a cancellation-latency guarantee. All three link unit tests passed; prior 287 Rust / 33 Node scoped evidence remains, plus one new distinct Rust regression.
+
+
+## Forward-fetch benchmark evidence (2026-09-07)
+
+The maintainer bench-fetch.cjs harness passed twelve 1,000-position workloads with warmup and three samples each. Collection/relational targets, one/130/1,000 distinct keys and one/two projections all passed result and counter assertions. Duplicate projections share target counters while increasing observed elapsed time; timings and qualifications are in benchmarks.md. This supplies initial target-work evidence, not release performance or memory guarantees.
