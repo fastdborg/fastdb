@@ -99,3 +99,70 @@ fn migration_transaction_escape_and_invalid_order_fail_before_writes() {
     assert_eq!(c.transaction_state(), TransactionState::Active);
     q(&c, "ROLLBACK");
 }
+
+#[test]
+fn persistent_migrations_retry_after_writer_conflict_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("migrations.db");
+    let initial = m(
+        1,
+        "CREATE TABLE docs; CREATE TABLE locks(n INTEGER); CREATE UNIQUE INDEX docs_n ON docs(n);",
+    );
+    let pending = m(2, "INSERT INTO docs {id:docs:first,n:1}; CREATE TABLE applied(n INTEGER); INSERT INTO applied VALUES(2);");
+    let plan = [initial, pending];
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        c.migrate(&plan[..1]).unwrap();
+        let writer = db.connect().unwrap();
+        q(&writer, "BEGIN");
+        q(&writer, "INSERT INTO locks VALUES(9)");
+        let error = c.migrate(&plan).unwrap_err();
+        let cause = match &error {
+            fastdb::Error::Migration { source, .. } => source.as_ref(),
+            other => other,
+        };
+        assert!(
+            matches!(cause.code(), "FDB_BUSY" | "FDB_BUSY_SNAPSHOT"),
+            "{error:?}"
+        );
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+        assert_eq!(writer.transaction_state(), TransactionState::Active);
+        assert!(q(&c, "SELECT * FROM docs").rows.is_empty());
+        assert!(c
+            .execute("SELECT * FROM applied", &Parameters::new())
+            .is_err());
+        q(&writer, "COMMIT");
+        let report = c.migrate(&plan).unwrap();
+        assert_eq!(report.already_applied, 1);
+        assert_eq!(report.applied, vec![2]);
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+    }
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        let report = c.migrate(&plan).unwrap();
+        assert_eq!(report.already_applied, 2);
+        assert!(report.applied.is_empty());
+        assert_eq!(
+            q(&c, "SELECT n FROM docs").rows,
+            vec![vec![fastdb::Value::Integer(1)]]
+        );
+        assert_eq!(
+            q(&c, "SELECT n FROM applied").rows,
+            vec![vec![fastdb::Value::Integer(2)]]
+        );
+        assert_eq!(
+            q(&c, "SELECT n FROM locks").rows,
+            vec![vec![fastdb::Value::Integer(9)]]
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        let mut changed = plan.clone();
+        changed[1].name.push_str("_renamed");
+        assert_eq!(c.migrate(&changed).unwrap_err().code(), "FDB_VALIDATION");
+        assert_eq!(c.migrate(&plan).unwrap().already_applied, 2);
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+    }
+}
