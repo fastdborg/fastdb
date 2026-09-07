@@ -167,10 +167,8 @@ fn union_all_insert_sources_are_atomic_and_native_conflicts_remain_native() {
         vec![vec![Value::Integer(1)]]
     );
     for sql in [
-        "SELECT n FROM source UNION SELECT n FROM source",
-        "SELECT n FROM source EXCEPT SELECT n FROM source",
-        "SELECT n FROM source INTERSECT SELECT n FROM source",
         "INSERT INTO target(n) SELECT n FROM source UNION ALL SELECT 1,2",
+        "INSERT INTO target(n) SELECT n FROM source UNION SELECT 1,2",
     ] {
         assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
     }
@@ -313,5 +311,220 @@ fn union_all_parameters_keep_statement_positions_and_binary_identity() {
         "WITH v(x) AS (VALUES ($data)) SELECT x FROM v UNION ALL SELECT data FROM docs WHERE data=$data",
     ] {
         assert_eq!(c.execute(sql,&params).unwrap().rows,vec![vec![bytes.clone()],vec![bytes.clone()]],"{sql}");
+    }
+}
+
+#[test]
+fn set_operators_use_logical_scalar_equality_and_left_association() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for table in ["a", "b"] {
+        q(&c, &format!("CREATE TABLE {table}"));
+    }
+    q(&c, "CREATE TABLE na(v)");
+    q(&c, "CREATE TABLE nb(v)");
+    for (table, native, values) in [
+        ("a", "na", vec!["1", "1", "2", "NULL", "'A'", "X'00FF'"]),
+        ("b", "nb", vec!["1", "3", "NULL", "'a'", "X'00FF'"]),
+    ] {
+        for value in values {
+            q(&c, &format!("INSERT INTO {table}(v) VALUES ({value})"));
+            q(&c, &format!("INSERT INTO {native} VALUES ({value})"));
+        }
+    }
+    for op in ["UNION", "INTERSECT", "EXCEPT"] {
+        let sql = format!("SELECT v FROM a {op} SELECT v FROM b ORDER BY 1");
+        let native = format!("SELECT v FROM na {op} SELECT v FROM nb ORDER BY 1");
+        assert_eq!(q(&c, &sql).rows, q(&c, &native).rows, "{sql}");
+        let sql =
+            format!("SELECT v FROM a {op} SELECT v FROM b UNION ALL SELECT v FROM a ORDER BY 1");
+        let native =
+            format!("SELECT v FROM na {op} SELECT v FROM nb UNION ALL SELECT v FROM na ORDER BY 1");
+        assert_eq!(q(&c, &sql).rows, q(&c, &native).rows, "{sql}");
+    }
+    for (op, count) in [("UNION", 1), ("INTERSECT", 1), ("EXCEPT", 0)] {
+        let params = Parameters::from([
+            ("$left".into(), Value::Integer(1)),
+            ("$right".into(), Value::Number(1.0)),
+        ]);
+        assert_eq!(
+            c.execute(
+                &format!("SELECT $left AS v FROM a WHERE a.v=2 {op} SELECT $right"),
+                &params
+            )
+            .unwrap()
+            .rows
+            .len(),
+            count
+        );
+    }
+    for tail in [
+        "UNION SELECT v FROM b",
+        "INTERSECT SELECT v FROM b",
+        "EXCEPT SELECT v FROM b",
+        "UNION SELECT v FROM b INTERSECT SELECT v FROM a",
+    ] {
+        let sql = format!("SELECT v FROM a UNION ALL SELECT v FROM a {tail} ORDER BY 1");
+        let native = sql
+            .replace("FROM a", "FROM na")
+            .replace("FROM b", "FROM nb");
+        assert_eq!(q(&c, &sql).rows, q(&c, &native).rows, "{sql}");
+    }
+    q(&c, "CREATE TABLE copied");
+    assert_eq!(q(&c,"WITH v AS (SELECT v FROM a UNION SELECT v FROM b) INSERT INTO copied(v) SELECT v FROM v").affected,7);
+}
+
+#[test]
+fn set_operators_preserve_record_binary_identity_and_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let record = Value::Record(fastdb::Record {
+        table: "Docs".into(),
+        key: fastdb::Key::Integer(7),
+    });
+    let same = Value::Record(fastdb::Record {
+        table: "docs".into(),
+        key: fastdb::Key::Integer(7),
+    });
+    let bytes = Value::Binary(
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"Integer\":7}}}"
+            .to_vec(),
+    );
+    for (right, union, intersection, difference) in [(same, 1, 1, 0), (bytes, 2, 0, 1)] {
+        let params = Parameters::from([("$left".into(), record.clone()), ("$right".into(), right)]);
+        for (op, count) in [
+            ("UNION", union),
+            ("INTERSECT", intersection),
+            ("EXCEPT", difference),
+        ] {
+            let rows = c
+                .execute(&format!("SELECT $left AS v {op} SELECT $right"), &params)
+                .unwrap()
+                .rows;
+            assert_eq!(rows.len(), count, "{op}");
+            assert!(rows
+                .iter()
+                .all(|row| matches!(row[0], Value::Record(_) | Value::Binary(_))));
+        }
+    }
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(v) VALUES ('A'),('a')");
+    q(&c, "CREATE TABLE native(v TEXT COLLATE NOCASE)");
+    q(&c, "INSERT INTO native VALUES ('A'),('a')");
+    for (op, count) in [("UNION", 1), ("INTERSECT", 1), ("EXCEPT", 0)] {
+        for (left, right) in [
+            ("v COLLATE NOCASE FROM docs", "v FROM docs"),
+            ("v FROM native", "v FROM docs"),
+            ("v FROM docs", "v FROM native"),
+        ] {
+            let sql = format!("SELECT {left} {op} SELECT {right}");
+            assert_eq!(q(&c, &sql).rows.len(), count, "{sql}");
+        }
+    }
+}
+
+#[test]
+fn set_insert_sources_validate_and_restore_indexes_atomically() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(n) VALUES (9)");
+    for op in ["UNION", "INTERSECT", "EXCEPT"] {
+        let source = match op {
+            "UNION" => "VALUES (1),(2) UNION VALUES (2),(9)",
+            "INTERSECT" => "VALUES (1),(9) INTERSECT VALUES (1),(9)",
+            _ => "VALUES (1),(9),(10) EXCEPT VALUES (10)",
+        };
+        assert!(c
+            .execute(&format!("INSERT INTO docs(n) {source}"), &Parameters::new())
+            .is_err());
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            q(&c, "SELECT n FROM docs").rows,
+            vec![vec![Value::Integer(9)]]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+    }
+    assert_eq!(
+        q(
+            &c,
+            "INSERT INTO docs(n) VALUES (1),(2) UNION VALUES (2),(3) RETURNING n"
+        )
+        .affected,
+        3
+    );
+    q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
+    assert_eq!(
+        q(
+            &c,
+            "INSERT INTO native SELECT n FROM docs UNION SELECT n FROM docs"
+        )
+        .affected,
+        4
+    );
+    assert_eq!(
+        q(
+            &c,
+            "INSERT OR IGNORE INTO native SELECT n FROM docs INTERSECT SELECT n FROM docs"
+        )
+        .affected,
+        0
+    );
+    let arrays = Parameters::from([("$array".into(), Value::Array(vec![Value::Integer(1)]))]);
+    let report = c.execute_report(
+        "INSERT INTO docs(n) SELECT $array UNION SELECT $array",
+        &arrays,
+    );
+    assert!(report.result.is_err());
+    assert_eq!(report.transaction_before, fastdb::TransactionState::Active);
+    // The pinned engine aborts the outer transaction on this scalar-function error.
+    assert_eq!(
+        report.transaction_after,
+        fastdb::TransactionState::Autocommit
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}
+
+#[test]
+fn set_operators_compare_whole_rows_and_keep_empty_derived_metadata() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for (table, native, rows) in [
+        ("a", "na", vec!["(1,NULL)", "(1,2)", "(1,2)", "(NULL,2)"]),
+        ("b", "nb", vec!["(1,NULL)", "(NULL,2)", "(3,3)"]),
+    ] {
+        q(&c, &format!("CREATE TABLE {table}"));
+        q(&c, &format!("CREATE TABLE {native}(v,k)"));
+        for row in rows {
+            q(&c, &format!("INSERT INTO {table}(v,k) VALUES {row}"));
+            q(&c, &format!("INSERT INTO {native} VALUES {row}"));
+        }
+    }
+    for op in ["UNION", "INTERSECT", "EXCEPT"] {
+        let sql = format!("SELECT v,k FROM a {op} SELECT v,k FROM b ORDER BY 1,2 LIMIT 3");
+        let native = sql
+            .replace("FROM a", "FROM na")
+            .replace("FROM b", "FROM nb");
+        assert_eq!(q(&c, &sql).rows, q(&c, &native).rows, "{sql}");
+        let empty = q(
+            &c,
+            &format!(
+                "SELECT d.* FROM (SELECT v,k FROM a WHERE 0 {op} SELECT v,k FROM b WHERE 0) d"
+            ),
+        );
+        assert_eq!(empty.columns, vec!["v", "k"]);
+        assert!(empty.rows.is_empty());
     }
 }

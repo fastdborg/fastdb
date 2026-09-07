@@ -1332,6 +1332,74 @@ fn lift_order_inputs(expr: &mut Expr, columns: &mut Vec<ResultColumn>, count: us
 // Group comparison values in an outer query so aggregate/window evaluation
 // happens first and pagination happens after duplicate elimination. Keep each
 // original typed projection as the representative output for its group.
+// Set membership uses SQL scalar keys; result representatives retain their
+// original FastDB encoding. Materialization keeps volatile projections shared
+// between the key query and representative recovery.
+fn lower_set_operations(
+    definitions: &mut Vec<String>,
+    arms: &[String],
+    columns: &[String],
+    compounds: &[CompoundSelect],
+) -> String {
+    let names = columns.join(",");
+    for (index, arm) in arms.iter().enumerate() {
+        definitions.push(format!(
+            "__fastdb_set_arm{index}({names}) AS MATERIALIZED ({arm})"
+        ));
+    }
+    let mut left = "__fastdb_set_arm0".to_owned();
+    let keys = |table: &str| {
+        format!(
+            "SELECT {} FROM {table}",
+            columns
+                .iter()
+                .map(|column| format!("__fastdb_unwrap({column})"))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    for (index, compound) in compounds.iter().enumerate() {
+        let right = format!("__fastdb_set_arm{}", index + 1);
+        let result = format!("__fastdb_set_result{index}");
+        if compound.operator == CompoundOperator::UnionAll {
+            definitions.push(format!("{result}({names}) AS MATERIALIZED (SELECT * FROM {left} UNION ALL SELECT * FROM {right})"));
+        } else {
+            let key_table = format!("__fastdb_set_keys{index}");
+            definitions.push(format!(
+                "{key_table}({names}) AS MATERIALIZED ({} {} {})",
+                keys(&left),
+                compound.operator,
+                keys(&right)
+            ));
+            let candidates = format!("__fastdb_set_candidates{index}");
+            let source = if compound.operator == CompoundOperator::Union {
+                format!("SELECT * FROM {left} UNION ALL SELECT * FROM {right}")
+            } else {
+                format!("SELECT * FROM {left}")
+            };
+            definitions.push(format!("{candidates}({names}) AS MATERIALIZED ({source})"));
+            let outputs = columns
+                .iter()
+                .map(|column| format!("l.{column}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let grouping = columns
+                .iter()
+                .map(|column| format!("__fastdb_unwrap(l.{column})"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let matching = columns
+                .iter()
+                .map(|column| format!("__fastdb_unwrap(l.{column}) IS k.{column}"))
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            definitions.push(format!("{result}({names}) AS MATERIALIZED (SELECT {outputs} FROM {candidates} l JOIN {key_table} k ON {matching} GROUP BY {grouping})"));
+        }
+        left = result;
+    }
+    format!("SELECT * FROM {left}")
+}
+
 fn lower_distinct(
     select: &mut Select,
     typed: &[bool],
@@ -1930,7 +1998,7 @@ impl Connection {
         }
         if !select.body.compounds.is_empty() {
             return self
-                .lower_union_all(
+                .lower_compound(
                     select,
                     params,
                     cte_consumed,
@@ -2425,7 +2493,7 @@ impl Connection {
         )
         .map(Some)
     }
-    fn lower_union_all(
+    fn lower_compound(
         &self,
         select: &Select,
         params: &Parameters,
@@ -2480,14 +2548,11 @@ impl Connection {
         if !logical {
             return Ok(None);
         }
-        if select
+        let distinct = select
             .body
             .compounds
             .iter()
-            .any(|arm| arm.operator != CompoundOperator::UnionAll)
-        {
-            return Err(unsupported("typed UNION, INTERSECT and EXCEPT"));
-        }
+            .any(|arm| arm.operator != CompoundOperator::UnionAll);
         let mut lowered = Vec::new();
         let mut definitions = Vec::new();
         let mut names = Vec::new();
@@ -2507,16 +2572,16 @@ impl Connection {
                             ..Default::default()
                         },
                     )?
-                    .ok_or_else(|| unsupported("this typed UNION ALL arm"))?,
+                    .ok_or_else(|| unsupported("this typed compound arm"))?,
             };
             if plan.fetched.iter().any(|fetch| *fetch) {
-                return Err(unsupported("fetched UNION ALL projections"));
+                return Err(unsupported("fetched compound projections"));
             }
             if index == 0 {
                 names = plan.names.clone();
             }
             if plan.names.len() != names.len() {
-                return Err(Error::Validation("UNION ALL column count mismatch".into()));
+                return Err(Error::Validation("compound column count mismatch".into()));
             }
             order_names.push(plan.names.clone());
             consumed.extend(plan.consumed);
@@ -2538,8 +2603,9 @@ impl Connection {
             let sql = plan.command.to_string();
             let arm_name = format!("__fastdb_union_arm{index}");
             definitions.push(format!(
-                "{arm_name}({}) AS ({})",
+                "{arm_name}({}) AS {}({})",
                 keys.join(","),
+                if distinct { "MATERIALIZED " } else { "" },
                 sql.trim().trim_end_matches(';')
             ));
             lowered.push(format!("SELECT {values} FROM {arm_name}"));
@@ -2554,11 +2620,16 @@ impl Connection {
             .map(|(key, name)| format!("{key} AS {}", quote(name)))
             .collect::<Vec<_>>()
             .join(",");
+        let compound = if distinct {
+            lower_set_operations(&mut definitions, &lowered, &keys, &select.body.compounds)
+        } else {
+            lowered.join(" UNION ALL ")
+        };
         let Cmd::Stmt(Stmt::Select(mut result)) = parsed(&format!(
             "WITH {}, __fastdb_union({}) AS ({}) SELECT {columns} FROM __fastdb_union",
             definitions.join(","),
             keys.join(","),
-            lowered.join(" UNION ALL ")
+            compound
         ))?
         else {
             unreachable!()
@@ -2585,7 +2656,7 @@ impl Connection {
                 }),
                 _ => position.filter(|p| *p > 0 && *p <= width).map(|p| p - 1),
             }
-            .ok_or_else(|| unsupported("UNION ALL ORDER BY requires an output name or position"))?;
+            .ok_or_else(|| unsupported("compound ORDER BY requires an output name or position"))?;
             replace_order_base(
                 &mut sorted.expr,
                 expression(&format!("__fastdb_sort_encoded({})", keys[index]))?,

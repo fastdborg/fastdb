@@ -91,13 +91,13 @@ fn relational_sources_parameters_and_empty_width_validation() {
 }
 
 #[test]
-fn unsupported_source_clauses_never_silently_insert_a_prefix() {
+fn mismatched_compound_source_never_silently_inserts_a_prefix() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     q(&c, "CREATE TABLE dst");
     assert!(c
         .execute(
-            "INSERT INTO dst (n) VALUES (1) UNION SELECT 2",
+            "INSERT INTO dst (n) VALUES (1) UNION SELECT 2,3",
             &Parameters::new()
         )
         .is_err());
