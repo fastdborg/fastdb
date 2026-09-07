@@ -1121,3 +1121,8 @@ The installed-package smoke exposed bound LIMIT 0 returning a row in a sorted co
 A parameter matrix compares bound limits 0, 1, 2 and -1 and offsets 0, 1 and 4 with literal native pagination through scalar, IN and EXISTS execute/profile consumers. The installed Node smoke additionally exercises alias-expression UPDATE/RETURNING, integer/real DISTINCT pagination, an empty record DISTINCT page, integrity and rollback through synchronous and worker clients. Other native/correlated pagination forms and full V1 remain open.
 
 Verification: the complete scoped check passed formatting, Clippy, 325 Rust tests, 35 Node tests and strict TypeScript, with one known trigger-interruption gate ignored. The rebuilt offline installed-package smoke passed on Linux x64 / Node 24.19.0: eight runtime files and 59,695,955 packed bytes. Broader platform/release qualification remains open.
+
+
+## Correlated pagination rejection and retry (2026-09-07)
+
+A real-engine UPDATE regression now verifies that bound NULL, fractional, invalid-text and array LIMIT/OFFSET values reject the covered correlated DISTINCT source without changing documents, managed indexes, prior native-table work or observed transaction state. Missing parameters report FDB_PARAMETER. Both autocommit and explicit transactions permit a valid retry returning the expected updated values; outer rollback restores the original document IDs/values and removes prior pending work. Integrity audits cover rejection, retry and rollback states. The focused regression passes; this test-only qualification does not close broader pagination or recovery gates. Full V1 remains incomplete.

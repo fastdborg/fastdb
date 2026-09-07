@@ -2459,3 +2459,82 @@ fn correlated_distinct_bound_pagination_matches_literal_native() {
         }
     }
 }
+
+#[test]
+fn correlated_bound_pagination_errors_preserve_writes_and_retry() {
+    for outer in [false, true] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "INSERT INTO docs(n) VALUES(1),(2)",
+            "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            "CREATE TABLE lookup(n)",
+            "INSERT INTO lookup VALUES(10),(10.0),(20)",
+            "CREATE TABLE prior(n)",
+        ] {
+            q(&c, sql);
+        }
+        if outer {
+            q(&c, "BEGIN");
+        }
+        q(&c, "INSERT INTO prior VALUES(9)");
+        let state = c.transaction_state();
+        let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+        let sql="UPDATE docs AS d SET n=(SELECT DISTINCT CASE WHEN d.n>0 THEN n+d.n ELSE d.n END AS x FROM lookup ORDER BY x,n LIMIT $limit OFFSET $offset) RETURNING n";
+        let invalid = [
+            Value::Null,
+            Value::Number(1.5),
+            Value::String("invalid".into()),
+            Value::Array(vec![]),
+        ];
+        for name in ["$limit", "$offset"] {
+            for value in &invalid {
+                let mut params = Parameters::from([
+                    ("$limit".into(), Value::Integer(1)),
+                    ("$offset".into(), Value::Integer(0)),
+                ]);
+                params.insert(name.into(), value.clone());
+                let report = c.execute_report(sql, &params);
+                assert!(report.result.is_err(), "{name}: {value:?}");
+                assert_eq!(report.transaction_before, state);
+                assert_eq!(report.transaction_after, state);
+                assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+                assert_eq!(
+                    q(&c, "SELECT n FROM prior").rows,
+                    vec![vec![Value::Integer(9)]]
+                );
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap();
+            }
+        }
+        assert_eq!(
+            c.execute(sql, &Parameters::new()).unwrap_err().code(),
+            "FDB_PARAMETER"
+        );
+        assert_eq!(c.transaction_state(), state);
+        let result = c
+            .execute(
+                sql,
+                &Parameters::from([
+                    ("$limit".into(), Value::Integer(1)),
+                    ("$offset".into(), Value::Integer(0)),
+                ]),
+            )
+            .unwrap();
+        assert_eq!(result.affected, 2);
+        assert_eq!(
+            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+            vec![vec![Value::Integer(11)], vec![Value::Integer(12)]]
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        if outer {
+            q(&c, "ROLLBACK");
+            assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+            assert!(q(&c, "SELECT n FROM prior").rows.is_empty());
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap();
+        }
+    }
+}
