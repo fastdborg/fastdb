@@ -57,6 +57,38 @@
       "cratePathInSource": "crates/aristo-macros",
       "sourceUrl": "https://raw.githubusercontent.com/aretta-ai/aristo/f0b29f319ef593ae81919a4a77540be85ce16d43/LICENSE",
       "sourceSha256": "e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55"
+    },
+    {
+      "package": "rapidhash",
+      "version": "4.1.1",
+      "sourceRevision": "381076de3584137061e99ebad377f4e1102baa76",
+      "cratePathInSource": "rapidhash",
+      "sourceUrl": "https://raw.githubusercontent.com/hoxxep/rapidhash/381076de3584137061e99ebad377f4e1102baa76/LICENSE-APACHE",
+      "sourceSha256": "d902d7d4433c080907f2a6d9ddffdf9845c1d20e246fe007129dd6e30f5a0aed"
+    },
+    {
+      "package": "rapidhash",
+      "version": "4.1.1",
+      "sourceRevision": "381076de3584137061e99ebad377f4e1102baa76",
+      "cratePathInSource": "rapidhash",
+      "sourceUrl": "https://raw.githubusercontent.com/hoxxep/rapidhash/381076de3584137061e99ebad377f4e1102baa76/LICENSE-MIT",
+      "sourceSha256": "d7bb236e93b1117d195ecb28fd823cf5a19d25ddc9417bf1f346ac26b7e13d79"
+    },
+    {
+      "package": "rquickjs-core",
+      "version": "0.12.2",
+      "sourceRevision": "635f9322ccc875e3f9851e7f75ec538cf3274fd5",
+      "cratePathInSource": "core",
+      "sourceUrl": "https://raw.githubusercontent.com/DelSkayn/rquickjs/635f9322ccc875e3f9851e7f75ec538cf3274fd5/LICENSE",
+      "sourceSha256": "976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70"
+    },
+    {
+      "package": "simsimd",
+      "version": "6.5.3",
+      "sourceRevision": "013e1997664a0443564f7f26b8d29b830b0302c2",
+      "cratePathInSource": "",
+      "sourceUrl": "https://raw.githubusercontent.com/ashvardanian/SimSIMD/013e1997664a0443564f7f26b8d29b830b0302c2/LICENSE",
+      "sourceSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
     }
   ],
   "unresolvedSources": [
@@ -72,6 +104,20 @@
         "src/lib.rs",
         "src/unprotected.rs"
       ]
+    },
+    {
+      "package": "crc32c",
+      "version": "0.6.8",
+      "sourceRevision": "254a861f7cc71bfe455e86f0e1d86e3c83c33390",
+      "inspection": "Complete recursive repository tree has no license/notice filename candidates; repository and inline attribution review remains open",
+      "treeUrl": "https://api.github.com/repos/zowens/crc32c/git/trees/254a861f7cc71bfe455e86f0e1d86e3c83c33390?recursive=1"
+    },
+    {
+      "package": "pack1",
+      "version": "1.0.0",
+      "sourceRevision": "db63ffa9c8354b1bfc51f4fad24642368a849fbd",
+      "inspection": "Complete recursive repository tree has no license/notice filename candidates; repository and inline attribution review remains open",
+      "treeUrl": "https://api.github.com/repos/Lokathor/pack1/git/trees/db63ffa9c8354b1bfc51f4fad24642368a849fbd?recursive=1"
     }
   ]
 }
