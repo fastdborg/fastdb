@@ -1191,3 +1191,8 @@ An initial integration assertion incorrectly expected valid EXPLAIN collection l
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-update-subqueries-check.log`): formatting, Clippy, 295 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Candidate-assignment validation now defers subquery nodes to SELECT lowering while checking surrounding scalar expressions. Regression coverage includes native/collection scalar sources, WITH scalar sources, EXISTS/IN uniqueness conflicts, missing parameters, prior work, atomic retry, typed boolean validation and outer aggregate rejection. Cancellation coverage includes scalar and WITH-scalar assignment writes. Both Node clients exercise CTE scalar assignments.
 
 A development oracle initially updated its source before the collection query read it, producing unequal starting data; the final comparison executes the collection route before the equivalent native mutation. VALUES/RETURNING restrictions and correlated assignment support remain unchanged.
+
+
+## Nested membership assignment operands — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-nested-assignment-check.log`): formatting, Clippy, 296 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. A live probe showed scalar-subquery left operands of IN/NOT IN were rejected by assignment validation. Preserving a parenthesized validation wrapper lets the walker visit the nested root. New native UPDATE comparisons cover scalar and nested membership operands, NULL/empty sets, affected counts and rollback; outer aggregate assignments remain rejected with stored data unchanged. Original executable expressions are not altered by validation.

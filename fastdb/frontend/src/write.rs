@@ -158,7 +158,7 @@ fn safe_candidate_assignment(expr: &Expr) -> Result<()> {
                 return Ok(turso_core::WalkControl::SkipChildren);
             }
             Expr::InSelect { lhs, .. } => {
-                *expr = *lhs.clone();
+                *expr = Expr::Parenthesized(vec![lhs.clone()]);
             }
             _ => {}
         }

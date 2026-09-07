@@ -913,3 +913,10 @@ After the guard corrections, a collection-named CTE with a distinct write-target
 The assignment validator now delegates subquery nodes to candidate SELECT lowering while retaining surrounding scalar checks. Tests compare native/collection scalar sources, CTE scalar values and EXISTS/IN assignments; verify typed boolean propagation into field validation; and exercise missing parameters, uniqueness failure, prior outer work, corrected retry and rollback. The mutation-cancellation matrix includes scalar and WITH-scalar assignment forms. VALUES/RETURNING restrictions and unsupported correlation remain unchanged.
 
 Scoped checks passed formatting, Clippy, 295 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Nested membership assignment validation (2026-09-07)
+
+The candidate validator now preserves a parenthesized wrapper when inspecting the left operand of IN/NOT IN subqueries. This lets the AST walker visit a nested scalar-subquery root instead of leaving it rejected by the surrounding scalar validator. Differential assignment tests cover scalar-subquery operands, nested membership, NULL/empty sets and retained rejection of outer aggregate assignments. The executable expression remains unchanged.
+
+Scoped checks passed formatting, Clippy, 296 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

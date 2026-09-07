@@ -328,3 +328,34 @@ fn update_assignments_use_typed_subquery_candidates_before_mutation() {
         .is_err());
     q(&c, "ROLLBACK");
 }
+
+#[test]
+fn nested_membership_assignment_operands_reach_select_lowering() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(2)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(2)");
+    for expr in [
+        "(SELECT 1) IN (SELECT 1)",
+        "(SELECT 1) NOT IN (SELECT 2)",
+        "((SELECT 1) IN (SELECT 1)) IN (SELECT 1)",
+        "(SELECT NULL) IN (SELECT 1)",
+        "(SELECT NULL) NOT IN (SELECT 1 WHERE 0)",
+    ] {
+        q(&c, "BEGIN");
+        let expected = q(&c, &format!("UPDATE native SET n={expr} RETURNING n"));
+        let actual = q(&c, &format!("UPDATE docs SET n={expr} RETURNING n"));
+        assert_eq!(actual.rows, expected.rows, "{expr}");
+        assert_eq!(actual.affected, 1);
+        q(&c, "ROLLBACK");
+    }
+    assert!(c
+        .execute("UPDATE docs SET n=sum(n) IN (SELECT 1)", &Parameters::new())
+        .is_err());
+    assert_eq!(
+        q(&c, "SELECT n FROM docs").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}

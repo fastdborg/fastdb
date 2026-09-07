@@ -842,3 +842,6 @@ In the tested WITH UPDATE/DELETE forms, a CTE may share the collection's physica
 
 
 UPDATE candidate assignments now admit subquery expressions handled by the existing SELECT lowerer, including covered scalar, EXISTS and IN forms. The surrounding scalar expression still passes assignment validation; VALUES and RETURNING keep their existing restrictions. Candidate results, including typed collection values, are evaluated before mutation and validated during atomic writes. This does not add correlated-subquery support, outer aggregate assignments or broader RETURNING subqueries.
+
+
+Covered UPDATE membership assignments may themselves have scalar-subquery or nested-membership left operands. Validation visits those nested roots while retaining the existing SELECT lowering and outer-aggregate restrictions; native NULL and empty-set results are preserved in the tested forms.
