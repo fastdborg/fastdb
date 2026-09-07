@@ -2592,3 +2592,56 @@ fn correlated_native_bound_pagination_matches_literal_native() {
         }
     }
 }
+
+#[test]
+fn correlated_pagination_reused_bindings_preserve_predicates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "INSERT INTO native VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(1),(2),(3),(10)",
+    ] {
+        q(&c, sql);
+    }
+    for parameter in ["$count", "?1"] {
+        for count in [0, 1, 2, 3] {
+            let params = Parameters::from([(parameter.into(), Value::Integer(count))]);
+            for pagination in [
+                format!("LIMIT {parameter}"),
+                format!("LIMIT 1 OFFSET {parameter}"),
+            ] {
+                let source = format!(
+                    "SELECT n FROM lookup WHERE n>=d.n AND n>={parameter} ORDER BY n {pagination}"
+                );
+                for expr in [
+                    format!("({source})"),
+                    format!("d.n IN ({source})"),
+                    format!("EXISTS({source})"),
+                ] {
+                    let literal = expr.replace(parameter, &count.to_string());
+                    let expected =
+                        q(&c, &format!("SELECT {literal} FROM native d ORDER BY d.n")).rows;
+                    let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+                    assert_eq!(
+                        c.execute(&sql, &params).unwrap().rows,
+                        expected,
+                        "{sql}, count={count}"
+                    );
+                    assert_eq!(
+                        c.profile_select(&sql, &params).unwrap().result.rows,
+                        expected,
+                        "profile {sql}, count={count}"
+                    );
+                    assert_eq!(
+                        c.execute(&sql, &Parameters::new()).unwrap_err().code(),
+                        "FDB_PARAMETER"
+                    );
+                }
+            }
+        }
+    }
+}

@@ -1409,3 +1409,8 @@ The pagination boundary now also covers supported predicate-only/native scalar, 
 Integer LIMIT/OFFSET parameters in supported correlated sources are lowered to parsed SQL integer literals, avoiding a bound-counter reuse issue that made the second outer row miss an expected native membership match. Native ordinary SQL delegation is unchanged. Differential execute/profile tests compare scalar, IN and EXISTS with literal-native pagination across four projection forms, limits 0/1/2/-1 and offsets 0/1/2/4. These probes pass; other parameter types, complex pagination expressions and broader correlation/resource qualification remain open. Full V1 remains incomplete.
 
 Verification: the complete scoped check passed formatting, Clippy, 327 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
+
+
+## Reused correlated pagination bindings (2026-09-07)
+
+A native differential regression verifies that lowering an integer pagination bind does not consume its use in a correlated WHERE predicate. Named `$count` and numbered `?1` parameters are reused across the predicate and LIMIT or OFFSET with values 0 through 3. Scalar, IN and EXISTS execute/profile consumers match literal-native results for both outer rows; omitted parameters still report FDB_PARAMETER. The focused real-engine regression passes. Other parameter types/expressions and full V1 remain open.
