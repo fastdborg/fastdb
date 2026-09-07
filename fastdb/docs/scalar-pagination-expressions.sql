@@ -10,6 +10,7 @@ FROM baseline d ORDER BY n;
 -- Logical computed zero LIMIT suppresses both scalar rows.
 SELECT n,(SELECT array::new(d.n) ORDER BY d.n DESC LIMIT 0+0 OFFSET 0+0)
 FROM docs d ORDER BY n;
--- Logical computed OFFSET currently suppresses only the first scalar row.
+-- Logical computed OFFSET now suppresses both scalar rows.
+-- Before counter isolation, it suppressed only the first scalar row.
 SELECT n,(SELECT array::new(d.n) ORDER BY d.n DESC LIMIT 1+0 OFFSET 1+0)
 FROM docs d ORDER BY n;

@@ -4022,6 +4022,9 @@ impl Connection {
                 if logical {
                     pagination.sql_argument(value)?;
                 }
+                if expression_subquery && scope.sources.is_empty() {
+                    **value = expression(&format!("__fastdb_pagination_value({value})"))?;
+                }
             }
             scope
                 .consumed

@@ -4122,17 +4122,23 @@ fn source_free_scalar_ordering_binds_outer_fields() {
                 })
                 .collect::<Vec<_>>();
             for source in ["docs d", "(SELECT n FROM docs) d"] {
-                let sql = format!("SELECT n,(SELECT array::new(d.n) ORDER BY d.n DESC LIMIT $limit OFFSET $offset) FROM {source} ORDER BY n");
-                assert_eq!(
-                    c.execute(&sql, &params).unwrap().rows,
-                    expected,
-                    "{sql}: {params:?}"
-                );
-                assert_eq!(
-                    c.profile_select(&sql, &params).unwrap().result.rows,
-                    expected,
-                    "{sql}: {params:?}"
-                );
+                for (limit_expr, offset_expr) in [
+                    ("$limit", "$offset"),
+                    ("$limit+0", "$offset+0"),
+                    ("coalesce($limit,0)", "coalesce($offset,0)"),
+                ] {
+                    let sql = format!("SELECT n,(SELECT array::new(d.n) ORDER BY d.n DESC LIMIT {limit_expr} OFFSET {offset_expr}) FROM {source} ORDER BY n");
+                    assert_eq!(
+                        c.execute(&sql, &params).unwrap().rows,
+                        expected,
+                        "{sql}: {params:?}"
+                    );
+                    assert_eq!(
+                        c.profile_select(&sql, &params).unwrap().result.rows,
+                        expected,
+                        "{sql}: {params:?}"
+                    );
+                }
             }
         }
     }

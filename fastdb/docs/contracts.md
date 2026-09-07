@@ -1018,3 +1018,8 @@ Source-free logical scalar pagination now shares the native correlation path's e
 
 
 Native scalar LIMIT preparation diagnosis (2026-09-08): direct turso_core preparation of `SELECT n,(SELECT d.n ORDER BY d.n DESC LIMIT $limit OFFSET $offset) FROM baseline d ORDER BY n` omits the `$limit` parameter slot while retaining `$offset`. A new raw-engine regression confirms this and FastDB execute/profile FDB_PARAMETER for the supplied limit, plus matching literal-query results. This refines the earlier "native routing gap" description: the missing slot originates in pinned engine preparation, rather than lost frontend consumed-binding metadata. The ordinary native path remains unchanged; this does not establish general pagination completion. The focused regression, package formatting and focused Clippy pass. Latest combined evidence remains 388 Rust/44 Node tests; full V1 gates remain open.
+
+
+## Source-free pagination counter isolation (2026-09-08)
+
+Logical source-free expression-subquery LIMIT/OFFSET values now pass through a private SQL identity callback registered as non-deterministic. The callback preserves raw SQL types; the engine still performs MustBeInt conversion. This keeps mutable pagination counters separate from hoisted constant-expression registers, fixing the recorded arithmetic OFFSET discrepancy without pre-executing expressions. Direct, addition and coalesce pagination expressions with integer/exact numeric bindings now have execute/profile coverage against literal pagination semantics. The ordinary native scalar compiler's computed-LIMIT behavior remains unchanged. Callback cost, broader pagination scopes and full resource qualification remain open.

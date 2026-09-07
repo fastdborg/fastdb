@@ -29,6 +29,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 1,
             ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
+            (
+                c"__fastdb_pagination_value",
+                pagination_value as turso_ext::ScalarFunction,
+                1,
+            ),
             (c"__fastdb_compare", compare as turso_ext::ScalarFunction, 2),
             (
                 c"__fastdb_range_scalar",
@@ -102,7 +107,7 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 api.ctx,
                 name.as_ptr(),
                 argc,
-                true,
+                name != c"__fastdb_pagination_value",
                 0,
                 callback,
                 None,
@@ -361,6 +366,23 @@ fn compare(args: &[ExtValue]) -> ExtValue {
 
 // Native SQL functions and casts consume binary payloads, while predicates
 // retain tagged binary keys to prevent collisions with record identities.
+// Keep the mutable pagination counter out of the engine's constant registers.
+// Preserve raw SQL values so MustBeInt retains responsibility for conversion.
+#[scalar(name = "__fastdb_pagination_value")]
+fn pagination_value(args: &[ExtValue]) -> ExtValue {
+    let [value] = args else {
+        return ExtValue::error_with_message("pagination arity".into());
+    };
+    match value.value_type() {
+        ValueType::Null => ExtValue::null(),
+        ValueType::Integer => ExtValue::from_integer(value.to_integer().unwrap()),
+        ValueType::Float => ExtValue::from_float(value.to_float().unwrap()),
+        ValueType::Text => ExtValue::from_text(value.to_text().unwrap().to_owned()),
+        ValueType::Blob => ExtValue::from_blob(value.to_blob().unwrap()),
+        ValueType::Error => ExtValue::error_with_message("pagination argument error".into()),
+    }
+}
+
 #[scalar(name = "__fastdb_sql_scalar")]
 fn sql_scalar(args: &[ExtValue]) -> ExtValue {
     let result = (|| -> Result<ExtValue> {
