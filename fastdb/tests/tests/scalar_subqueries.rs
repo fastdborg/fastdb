@@ -3898,3 +3898,63 @@ fn scalar_membership_assignments_preserve_atomicity() {
         vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn collection_scalar_membership_binds_outer_left_operand() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "CREATE TABLE marker",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a}",
+        "INSERT INTO marker {n:7}",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["docs d", "(SELECT id,n FROM docs) d"] {
+        for negated in [false, true] {
+            let op = if negated { "NOT IN" } else { "IN" };
+            for lhs in ["d.id", "coalesce(d.id,docs:a)"] {
+                let sql = format!("SELECT n,(SELECT m.n FROM marker m WHERE {lhs} {op} (SELECT owner FROM links)) FROM {source} ORDER BY n");
+                let expected = (0..2)
+                    .map(|row| {
+                        vec![
+                            Value::Integer(row + 1),
+                            if (row == 0) != negated {
+                                Value::Integer(7)
+                            } else {
+                                Value::Null
+                            },
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected,
+                    "{sql}"
+                );
+            }
+        }
+        let shadowed = format!("SELECT n,(SELECT d.n FROM marker d WHERE d.n IN (SELECT n FROM docs)) FROM {source} ORDER BY n");
+        let expected = vec![
+            vec![Value::Integer(1), Value::Null],
+            vec![Value::Integer(2), Value::Null],
+        ];
+        assert_eq!(q(&c, &shadowed).rows, expected, "{shadowed}");
+        assert_eq!(
+            c.profile_select(&shadowed, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{shadowed}"
+        );
+    }
+}

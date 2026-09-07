@@ -985,3 +985,8 @@ Source-free scalar queries already selected for logical lowering now bind qualif
 ## Source-free membership operand correlation (2026-09-08)
 
 Source-free logical scalar correlation now visits the left operand of IN/NOT IN before descending into its SELECT source. Previously the right-hand query was handled but an outer record on the left remained unbound, producing false NULL scalar results for matching rows. The expression walker preserves the enclosing scope for the left operand and delegates the right-hand SELECT to its own correlation handling. Regressions cover direct/derived outer sources, record and coalesce operands, and right-hand NULL membership through execute/profile. Broader table-bearing scopes and resource qualification remain open.
+
+
+## Collection-reading scalar membership correlation (2026-09-08)
+
+The correlation pass for collection-reading scalar SELECTs now binds qualified outer references in the left operand of IN/NOT IN while retaining the right-hand SELECT as a separate scope. This fixes false NULL results for a matching outer record. The existing local-alias filter remains in force. Regressions cover direct/derived outer sources, direct/coalesce record operands, positive/negative membership and local alias shadowing through execute/profile. General deeper-query and resource qualification remains open.

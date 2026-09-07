@@ -1481,3 +1481,10 @@ The complete scoped check passed formatting, Clippy, 381 Rust tests, 44 Node/app
 
 
 Scalar membership write qualification (2026-09-08): a parameterized multirow UPDATE now has a regression for a source-free assignment with an outer record IN a collection SELECT and a typed boolean filter. A failing CHECK preserves prior transaction work and managed-index integrity; corrected bindings update both intended rows, and rollback restores the originals. The focused regression, package formatting and focused Clippy pass. Latest complete scoped evidence remains 381 Rust/44 Node tests; this additional test has not received a new combined run. Broader write/scope/resource and full V1 release gates remain open.
+
+
+## Collection-reading scalar membership correlation (2026-09-08)
+
+Fixed false NULL results for matching outer records on the left of IN/NOT IN in collection-reading scalar queries. The correlation walker binds the left operand in its enclosing scope while preserving the right-hand SELECT boundary and local alias shadowing. Execute/profile regressions cover direct/derived outer sources, direct/coalesce operands, positive/negative membership and a locally shadowed alias.
+
+The complete scoped check passed formatting, Clippy, 383 Rust tests, 44 Node/application tests and strict TypeScript, including the preceding membership write-atomicity regression. One known trigger-cancellation gate remains ignored. No upstream files changed; broader query scopes, resource qualification and full V1 release gates remain open.

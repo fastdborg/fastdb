@@ -2532,6 +2532,50 @@ impl Connection {
         Ok(())
     }
 
+    fn bind_correlated_operand(value: &mut Expr, scope: &Scope) -> Result<()> {
+        let mut rewrite_error = None;
+        turso_core::walk_expr_mut(value, &mut |value| {
+            if let Expr::InSelect { lhs, .. } = value {
+                if let Err(error) = Self::bind_correlated_operand(lhs, scope) {
+                    rewrite_error = Some(error);
+                }
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            if matches!(
+                value,
+                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+            ) {
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            match scope.field(value).and_then(|field| {
+                field
+                    .map(|(i, path)| {
+                        let value = scope.accessor(i, &path, true)?;
+                        if scope.sources[i].derived.is_some() {
+                            expression(&format!("__fastdb_correlated_value({value})"))
+                        } else {
+                            Ok(value)
+                        }
+                    })
+                    .transpose()
+            }) {
+                Ok(Some(rewritten)) => {
+                    *value = rewritten;
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+                Err(error) => {
+                    rewrite_error = Some(error);
+                }
+                Ok(None) => {}
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+        if let Some(error) = rewrite_error {
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn correlate_collection_inner(
         &self,
         inner: &mut Select,
@@ -2679,7 +2723,6 @@ impl Connection {
                     fetched_aliases: Default::default(),
                     standalone_aliases: Default::default(),
                 };
-                let mut rewrite_error = None;
                 let OneSelect::Select {
                     columns,
                     where_clause,
@@ -2715,39 +2758,7 @@ impl Connection {
                 }
                 values.extend(inner.order_by.iter_mut().map(|sort| &mut sort.expr));
                 for value in values {
-                    turso_core::walk_expr_mut(value, &mut |value| {
-                        if matches!(
-                            value,
-                            Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
-                        ) {
-                            return Ok(turso_core::WalkControl::SkipChildren);
-                        }
-                        match scope.field(value).and_then(|field| {
-                            field
-                                .map(|(i, path)| {
-                                    let value = scope.accessor(i, &path, true)?;
-                                    if scope.sources[i].derived.is_some() {
-                                        expression(&format!("__fastdb_correlated_value({value})"))
-                                    } else {
-                                        Ok(value)
-                                    }
-                                })
-                                .transpose()
-                        }) {
-                            Ok(Some(rewritten)) => {
-                                *value = rewritten;
-                                return Ok(turso_core::WalkControl::SkipChildren);
-                            }
-                            Err(error) => {
-                                rewrite_error = Some(error);
-                            }
-                            Ok(None) => {}
-                        }
-                        Ok(turso_core::WalkControl::Continue)
-                    })?;
-                }
-                if let Some(error) = rewrite_error {
-                    return Err(error);
+                    Self::bind_correlated_operand(value, &scope)?;
                 }
             }
         }
