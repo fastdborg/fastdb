@@ -2216,3 +2216,78 @@ fn correlated_sort_expression_aliases_match_native_name_precedence() {
         }
     }
 }
+
+#[test]
+fn correlated_sort_alias_writes_preserve_atomic_indexes_and_retry() {
+    for outer in [false, true] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "INSERT INTO docs(n) VALUES(1),(2)",
+            "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            "CREATE TABLE lookup(n)",
+            "INSERT INTO lookup VALUES(2),(10),(-1)",
+            "CREATE TABLE prior(n)",
+        ] {
+            q(&c, sql);
+        }
+        if outer {
+            q(&c, "BEGIN");
+        }
+        q(&c, "INSERT INTO prior VALUES(9)");
+        let sql = "UPDATE docs AS d SET n=(SELECT CASE WHEN d.n>0 THEN n+d.n*$factor ELSE d.n END AS x FROM lookup ORDER BY abs(x) DESC LIMIT 1) RETURNING n";
+        let params = Parameters::from([("$factor".into(), Value::Integer(0))]);
+        let state = if outer {
+            fastdb::TransactionState::Active
+        } else {
+            fastdb::TransactionState::Autocommit
+        };
+        let report = c.execute_report(sql, &params);
+        assert!(report.result.is_err());
+        assert_eq!(report.transaction_before, state);
+        assert_eq!(report.transaction_after, state);
+        assert_eq!(
+            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+            vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+        );
+        assert_eq!(
+            q(&c, "SELECT n FROM prior").rows,
+            vec![vec![Value::Integer(9)]]
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        let params = Parameters::from([("$factor".into(), Value::Integer(1))]);
+        let report = c.execute_report(sql, &params);
+        assert_eq!(report.transaction_before, state);
+        assert_eq!(report.transaction_after, state);
+        let result = report.result.unwrap();
+        assert_eq!(result.affected, 2);
+        let mut values = result
+            .rows
+            .into_iter()
+            .map(|row| match row[0] {
+                Value::Integer(n) => n,
+                _ => panic!("integer RETURNING value"),
+            })
+            .collect::<Vec<_>>();
+        values.sort();
+        assert_eq!(values, vec![11, 12]);
+        assert_eq!(
+            q(&c, "SELECT n FROM docs WHERE n=12").rows,
+            vec![vec![Value::Integer(12)]]
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        if outer {
+            q(&c, "ROLLBACK");
+            assert!(q(&c, "SELECT n FROM prior").rows.is_empty());
+            assert_eq!(
+                q(&c, "SELECT n FROM docs ORDER BY n").rows,
+                vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+            );
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap();
+        }
+    }
+}

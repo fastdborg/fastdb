@@ -1353,3 +1353,8 @@ Correlated typed projection aliases now expose logical scalar values inside cove
 Native differential tests cover alias expressions with LIMIT/OFFSET and name collisions across tables, views and inherited CTEs. The pinned engine gives projected aliases precedence over same-named input columns in these ORDER BY expressions. A volatile CASE projection confirms the native eight-call count through execute and profile_select. Mixed DISTINCT sorting and broader correlated scope/type/resource qualification remain open; full V1 is incomplete.
 
 Verification: the complete scoped suite passed formatting, Clippy, 321 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
+
+
+## Correlated sort alias write atomicity (2026-09-07)
+
+A parameterized correlated CASE projection ordered through `abs(x)` now has write-path regression coverage. A multirow UPDATE that collides on a managed unique index restores both original values and index contents, preserves prior work, and reports unchanged transaction state in autocommit and explicit transactions. Retrying with a non-colliding parameter returns 11 and 12 and supports indexed lookup; outer rollback restores the original documents and removes the prior native-table insert. Integrity audits verify the failure, retry and rollback states. The focused real-engine regression passes; this test-only change does not establish broader correlated write or recovery qualification. Full V1 remains incomplete.
