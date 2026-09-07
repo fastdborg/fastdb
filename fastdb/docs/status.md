@@ -1314,3 +1314,8 @@ COUNT contract clarification (2026-09-07): contracts.md now records non-DISTINCT
 
 
 COUNT scalar compatibility qualification (2026-09-07): a native differential matrix checks COUNT, COUNT ALL and COUNT DISTINCT over mixed null/numeric/boolean/text/binary inputs, explicit text/blob casts, CASE, NULLIF, NOCASE and literals. Empty and internal-prefix-looking blobs remain ordinary binary inputs. Execute/profile_select match native counts across the matrix. All twelve grouping tests, formatting and focused Clippy pass. This supplements the composite COUNT change without defining composite DISTINCT equality; broader V1 gates remain open.
+
+
+## Combined COUNT qualification (2026-09-07)
+
+At clean commit ae564d1ff, fastdb/scripts/check.sh passed formatting, Clippy, 349 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-interruption gate remains ignored. This combines plain composite COUNT with scalar/native compatibility, FILTER, window/grouped-write and both-client coverage. The addon was rebuilt before client tests. Installed-package evidence remains the separately recorded COUNT smoke. Generic composite DISTINCT remains unsupported under the existing contract; remaining SQL/type/resource, recovery, distribution and application gates still prevent full V1 completion.
