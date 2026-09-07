@@ -143,3 +143,38 @@ fn native_source_free_scalar_limit_parameter_matches_pinned_preparation() {
         expected
     );
 }
+
+#[test]
+fn experimental_table_features_retain_pinned_default_rejection() {
+    let baseline =
+        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let raw = baseline.connect().unwrap();
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for (sql, flag) in [
+        (
+            "CREATE TABLE gated(n INTEGER PRIMARY KEY) WITHOUT ROWID",
+            "--experimental-without-rowid",
+        ),
+        (
+            "CREATE TABLE gated(n INTEGER,label TEXT GENERATED ALWAYS AS ('item-' || n) VIRTUAL)",
+            "--experimental-generated-columns",
+        ),
+    ] {
+        let native_error = match raw.prepare(sql) {
+            Err(error) => error,
+            Ok(_) => panic!("expected gated feature: {sql}"),
+        };
+        assert!(native_error.to_string().contains(flag));
+        match c.execute(sql, &Parameters::new()) {
+            Err(fastdb::Error::Engine(error)) => {
+                assert_eq!(error.to_string(), native_error.to_string())
+            }
+            other => panic!("expected native feature rejection for {sql}: {other:?}"),
+        }
+        for retry in ["CREATE TABLE gated(n INTEGER)", "DROP TABLE gated"] {
+            raw.prepare(retry).unwrap().run_collect_rows().unwrap();
+            c.execute(retry, &Parameters::new()).unwrap();
+        }
+    }
+}

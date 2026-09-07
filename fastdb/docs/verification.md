@@ -2029,3 +2029,6 @@ At implementation commit 5413b210d, the complete scoped check passed formatting,
 
 
 Relational rowid join qualification (2026-09-08): a new regression verifies that an unqualified rowid in the covered mixed derived join retains the pinned native ROWID-is-ambiguous error. Qualified relational rowid access preserves explicit stored rowids through execute/profile; an explicitly projected derived column named rowid retains its named-column meaning. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 410 Rust/45 Node tests; broader hidden-column/scope/resource and full V1 gates remain open.
+
+
+Pinned experimental table-feature boundary (2026-09-08): a new native-reference regression verifies that generated columns and WITHOUT ROWID retain the pinned engine's default feature-flag rejection, including the exact native error. Creating and dropping a normal table with the same name after each rejection succeeds in both engines, checking that failed DDL leaves no conflicting table behind. The focused regression, formatting and focused Clippy pass. These experimental features remain disabled. Latest complete scoped evidence remains 410 Rust/45 Node tests; this and the later rowid regression have focused evidence only. Broader SQL compatibility and full V1 release gates remain open.
