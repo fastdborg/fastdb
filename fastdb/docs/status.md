@@ -786,3 +786,8 @@ Final scoped checks passed formatting, Clippy, 279 Rust tests, thirty-two Node t
 NDJSON import no longer retains the full portable/document vectors. It validates header, each typed document and document count one line at a time, then replays the immutable input inside the existing atomic insert scope. JSON import retains its existing materializing path. Parsing twice is an explicit CPU tradeoff; input/current-document/engine memory and parsing latency are not hard bounded beyond existing limits. Late-invalid-entry tests inspect engine total_changes to prove preflight executes no writes, then verify valid retry and outer rollback.
 
 Final scoped checks passed formatting, Clippy, 280 Rust tests, thirty-two Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Isolated transfer measurements (2026-09-07)
+
+The maintainer bench-transfer.cjs harness now measures JSON/NDJSON import/export in separate Linux processes, records source/addon/harness identities, and validates content aggregates, index integrity and exact round trips. The stored 1,000-document/4,096-byte-text report passed correctness with about 4.3 MB payloads. Single-sample debug timings and similar RSS values do not establish comparative performance or memory guarantees; see benchmarks.md for limits.

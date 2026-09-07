@@ -78,3 +78,16 @@ After building the local Node addon, run `node fastdb/scripts/bench-audit.cjs` f
 On this Linux development machine, before the index-audit change the 100/300/1,000-row audit times were about 89/431/3,397 ms; after the change they were about 82/253/792 ms. Insertion at 1,000 rows remained about 2.5 seconds. A subsequent 10,000-row run completed insertion in 27.7 seconds and auditing in 8.65 seconds. These are single-run debug-addon diagnostics, not release throughput or latency guarantees. The prior 10,000-row cancellation fixture stopped before completion and supplies no complete before-timing at that size.
 
 The audit now scans each index once, checks the referenced document through its primary key, compares expected keys using native IS semantics and tracks bounded unique IDs to reject duplicate/missing coverage. A VM-step regression with duplicate and NULL keys checks that quadrupling rows from 64 to 256 uses less than six times the engine work. This guards against per-document index scans; it does not certify all workload scaling or memory usage.
+
+## Isolated document transfer diagnostic
+
+Run `node fastdb/scripts/bench-transfer.cjs [rows] [text-bytes]` after building the addon. Defaults are 1,000 rows and 4,096 repeated ASCII text bytes per document. Inputs are bounded to 10,000 rows and an estimated 16 MiB fixture. Each format runs in a fresh Linux child process with a unique integer index; the harness records import/export time, encoded sizes, current RSS and process peak RSS. It verifies count, numeric sum, text lengths, index integrity and exact export/import/export equality after measurements. Temporary fixtures are removed. This is a maintainer diagnostic, not routine CI.
+
+The [1,000-document report](benchmark-results/2026-09-07-linux-dev-transfer-1000.json) records the clean implementation commit, addon hash and harness hash on Linux x64/Node 24.19.0:
+
+| Format | Encoded input | Import | Export | RSS after import | RSS after export |
+|---|---:|---:|---:|---:|---:|
+| JSON | 4,283,846 bytes | 3,708 ms | 326 ms | 133,619,712 bytes | 151,314,432 bytes |
+| NDJSON | 4,283,822 bytes | 3,621 ms | 322 ms | 131,842,048 bytes | 150,847,488 bytes |
+
+These are one debug-addon sample per format with no forced garbage collection. The input string remains live during export, and peak RSS includes all earlier work in that child, including import; it is not export-only peak memory. Engine pages, native allocators, JavaScript memory and buffer capacities all contribute. The small observed RSS difference does not establish a general memory or speed advantage. No pre-change binary was measured, so this is not before/after evidence for the incremental transfer implementation. Larger/diverse fixtures, repeated samples and optimized builds remain qualification work.

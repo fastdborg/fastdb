@@ -1,0 +1,56 @@
+{
+  "platform": "linux",
+  "arch": "x64",
+  "node": "24.19.0",
+  "sourceCommit": "f7675eb448b5b380da70d393c2a791243b84d78a",
+  "implementationChanges": "",
+  "addonSha256": "d55c5c5416bc57669896a32233746d8b0daaa10f7882aa319bd30d050d355061",
+  "harnessSha256": "a5d6e6cae5b6123f2e504b8c66dc49b3b863ceeb7e223965ae2b2a9442f0d611",
+  "notes": "Single debug-addon sample per format, fresh process per format. Peak RSS is cumulative from child startup and includes import during export. Input and output coexist. Correctness work follows measurements. No forced GC or release performance guarantee.",
+  "samples": [
+    {
+      "format": "json",
+      "count": 1000,
+      "textBytesPerDocument": 4096,
+      "inputBytes": 4283846,
+      "outputBytes": 4283846,
+      "importMs": 3708.096404,
+      "exportMs": 325.8649969999997,
+      "before": {
+        "rssBytes": 87957504,
+        "processPeakRssKiB": 89576
+      },
+      "afterImport": {
+        "rssBytes": 133619712,
+        "processPeakRssKiB": 130488
+      },
+      "afterExport": {
+        "rssBytes": 151314432,
+        "processPeakRssKiB": 147768
+      },
+      "correctness": "passed"
+    },
+    {
+      "format": "ndjson",
+      "count": 1000,
+      "textBytesPerDocument": 4096,
+      "inputBytes": 4283822,
+      "outputBytes": 4283822,
+      "importMs": 3621.122966,
+      "exportMs": 321.94575499999974,
+      "before": {
+        "rssBytes": 87298048,
+        "processPeakRssKiB": 88936
+      },
+      "afterImport": {
+        "rssBytes": 131842048,
+        "processPeakRssKiB": 128752
+      },
+      "afterExport": {
+        "rssBytes": 150847488,
+        "processPeakRssKiB": 147312
+      },
+      "correctness": "passed"
+    }
+  ]
+}

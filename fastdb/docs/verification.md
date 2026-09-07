@@ -1058,3 +1058,10 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 279 Rust tests, thirty
 The transfer integration suite passed with NDJSON linewise validation and transactional replay (`/tmp/fastdb-ndjson-import.log`). A new unit test appends malformed JSON, a non-object typed value and a noncanonical integer after a valid document. Every failure leaves engine total_changes unchanged and preserves prior outer work; valid retry and rollback pass. This demonstrates validation before mutations without retaining a full document vector. Parsing occurs twice, so no throughput improvement is claimed.
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 280 Rust tests, thirty-two Node tests and strict TypeScript (`/tmp/fastdb-ndjson-replay-check.log`), including existing transfer cancellation/rollback coverage. One known trigger-interruption gate remains ignored. No upstream/dependency/format changes. JSON import materialization and broader memory/latency/platform qualification remain open; full V1 remains incomplete.
+
+
+## Isolated transfer diagnostic — 2026-09-07
+
+The new bench-transfer.cjs passed Node syntax checking and a complete default run on Linux x64/Node 24.19.0. Separate JSON/NDJSON child processes imported/exported 1,000 indexed documents with 4,096 ASCII text bytes each. Counts, numeric sums, text lengths, audit counts and export/import/export identity passed. Measurements precede correctness work, and source/addon/harness hashes are stored in benchmark-results/2026-09-07-linux-dev-transfer-1000.json. See benchmarks.md for cumulative peak-RSS and single-run limitations.
+
+No production code changed; the scoped baseline remains 280 Rust tests and thirty-two Node tests with one known ignored trigger gate. No before-change binary comparison, release sizing, other platforms or full V1 completion is claimed.
