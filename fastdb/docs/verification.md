@@ -1381,3 +1381,8 @@ Sorted single-column correlated typed DISTINCT projections now group by the unwr
 Native differential execute/profile coverage includes both integer/real insertion orders, duplicate NULLs, ascending/descending and mixed sort keys, offsets through and beyond the result set, and scalar/membership consumers. The focused numeric-equality regression passes. Broader correlated DISTINCT collation/type semantics, unsorted correlated DISTINCT and general scope/resource qualification remain open; full V1 is incomplete.
 
 Verification: the complete scoped suite passed formatting, Clippy, 323 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
+
+
+## Explicit correlated DISTINCT collation probes (2026-09-07)
+
+A native differential regression now covers BINARY/NOCASE on the outer CASE projection and within its selected branch, together with alias sorting, an explicit BINARY descending sort override, mixed source keys and offsets across the result set. Inputs include `a`, `A` and `b`. Execute and profile_select match the pinned native results for all covered combinations; no production change was needed. This records explicit-expression collation evidence, not general implicit-column or deeper-scope collation qualification. Full V1 remains incomplete.
