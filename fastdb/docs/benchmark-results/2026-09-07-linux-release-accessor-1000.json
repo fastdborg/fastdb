@@ -1,0 +1,183 @@
+{
+  "format": "fastdb-accessor-diagnostic-v1",
+  "commit": "a025bc900c099e6de77160d04c8be1cb877fbc15",
+  "rows": 1000,
+  "dimensions": 768,
+  "binary_sha256": "80d383d176fb1729041b5da09fd63601a5eebd132d27b746f2e1d0d676e54193",
+  "harness_sha256": "0cacfc106c8e404d0a37d469e8b0d840fab87463f60da100918a9c121e698c87",
+  "measurements": [
+    {
+      "workload": "count",
+      "table": "native",
+      "milliseconds": [
+        0.8808030106592923,
+        0.791547994595021,
+        0.9025189938256517
+      ],
+      "median_ms": 0.8808030106592923,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 1000
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "count",
+      "table": "docs",
+      "milliseconds": [
+        0.7965279946802184,
+        0.796626991359517,
+        0.7583749975310639
+      ],
+      "median_ms": 0.7965279946802184,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 1000
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "filter",
+      "table": "native",
+      "milliseconds": [
+        1.122469999245368,
+        1.0626009898260236,
+        1.2094359990442172
+      ],
+      "median_ms": 1.122469999245368,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 10
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "filter",
+      "table": "docs",
+      "milliseconds": [
+        84.56414999091066,
+        125.0607609981671,
+        91.73917699081358
+      ],
+      "median_ms": 91.73917699081358,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Integer",
+              "value": 10
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "vector",
+      "table": "native",
+      "milliseconds": [
+        2.1154410060262308,
+        1.892002997919917,
+        1.8907079938799143
+      ],
+      "median_ms": 1.892002997919917,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Number",
+              "value": 1.7879937441733773e-07
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    },
+    {
+      "workload": "vector",
+      "table": "docs",
+      "milliseconds": [
+        246.07697100145742,
+        261.8861959927017,
+        261.38519500091206
+      ],
+      "median_ms": 261.38519500091206,
+      "result": {
+        "affected": 0,
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            {
+              "type": "Number",
+              "value": 1.7879937441733773e-07
+            }
+          ]
+        ],
+        "transaction": {
+          "after": "autocommit",
+          "before": "autocommit"
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "One in-memory process, native measured before collection, three samples per workload.",
+    "Vector workload is minimum distance, not sorted top-10.",
+    "This comparison does not isolate CPU costs or establish general performance."
+  ]
+}
