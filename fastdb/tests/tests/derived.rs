@@ -263,8 +263,9 @@ fn mixed_derived_comparisons_preserve_native_affinity_and_collation() {
         "INSERT INTO docs {n:1,v:'a'}",
         "INSERT INTO docs {n:2,v:'01'}",
         "INSERT INTO docs {n:3,v:null}",
+        "INSERT INTO docs (n,v) VALUES(4,X'61'),(5,X'464442017061796C6F6164')",
         "CREATE TABLE labels(m INTEGER,label TEXT COLLATE NOCASE)",
-        "INSERT INTO labels VALUES(1,'A'),(2,'1'),(3,NULL)",
+        "INSERT INTO labels VALUES(1,'A'),(2,'1'),(3,NULL),(4,X'61'),(5,X'464442017061796C6F6164')",
     ] {
         q(&c, sql);
     }
@@ -303,7 +304,7 @@ fn mixed_derived_comparisons_preserve_native_affinity_and_collation() {
             // Document values have no declared SQL column affinity/collation.
             // Literal operands isolate the native right-hand column semantics.
             let mut expected = Vec::new();
-            for (n, value) in [(1, "'a'"), (2, "'01'"), (3, "NULL")] {
+            for (n, value) in [(1, "'a'"), (2, "'01'"), (3, "NULL"), (4, "X'61'"), (5, "X'464442017061796C6F6164'")] {
                 let condition = predicate.replace('v', value);
                 expected.extend(
                     q(
