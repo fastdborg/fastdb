@@ -1373,7 +1373,7 @@ impl Scope {
                         && !matches!(distinctness, Some(Distinctness::Distinct))
                     {
                         self.typed(e)?;
-                        **e = expression(&format!("__fastdb_nullable({e})"))?;
+                        **e = expression(&format!("__fastdb_count_value({e})"))?;
                     } else if name.as_str().starts_with("__fastdb_") {
                         self.lower(e)?;
                     } else {

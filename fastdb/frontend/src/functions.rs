@@ -41,6 +41,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 nullable as turso_ext::ScalarFunction,
                 1,
             ),
+            (
+                c"__fastdb_count_value",
+                count_value as turso_ext::ScalarFunction,
+                1,
+            ),
             (c"__fastdb_unwrap", unwrap as turso_ext::ScalarFunction, 1),
             (
                 c"__fastdb_sql_scalar",
@@ -433,6 +438,23 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             }
         };
         Ok(ExtValue::from_blob(value.encode()?))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_count_value")]
+fn count_value(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("count value arity".into()));
+        };
+        // Validate the full value, but COUNT only needs null presence. Avoid
+        // serializing a potentially large composite back into a result blob.
+        if matches!(decode_arg(value)?, Value::Null) {
+            Ok(ExtValue::null())
+        } else {
+            Ok(ExtValue::from_integer(1))
+        }
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }

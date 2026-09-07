@@ -1596,3 +1596,10 @@ At clean commit ae564d1ff, fastdb/scripts/check.sh passed formatting, Clippy, 34
 
 
 Correlated composite COUNT qualification (2026-09-07): native null-presence comparisons cover outer composite fields in COUNT, CASE and coalesce with full, correlated-filtered and empty native inner sources through execute/profile_select. A multirow collection UPDATE consumes these counts, retains managed-index integrity and restores original records on rollback. The focused regression, formatting and focused Clippy pass. The native fixture uses blobs only to represent non-null presence; it does not establish composite equality. Broader correlation/type/resource and full V1 gates remain open.
+
+
+## COUNT presence marker (2026-09-07)
+
+Non-DISTINCT COUNT lowering now uses a private count-value helper that fully decodes/validates its typed argument and returns SQL NULL or integer 1. This removes the prior nullable helper's re-encoding of non-null composites into result blobs. Input decoding and document reads remain; no end-to-end latency or total-memory improvement is claimed without measurement. DISTINCT comparisons retain their existing path.
+
+The complete scoped check passed formatting, Clippy, 350 Rust tests, 44 Node/application tests and strict TypeScript, including scalar/composite/filter/window/correlated COUNT and write qualification. One known trigger-interruption gate remains ignored. No upstream files changed; broader V1 work remains open.
