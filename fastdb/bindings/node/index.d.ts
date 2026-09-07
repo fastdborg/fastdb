@@ -54,8 +54,8 @@ export class AsyncDatabase {
   interrupt(): boolean;
   close(): Promise<void>;
   migrate(migrations: Migration[]): Promise<MigrationReport>;
-  exportDocuments(table: string, format?: TransferFormat): Promise<string>;
-  importDocuments(table: string, input: string, format?: TransferFormat): Promise<ImportReport>;
+  exportDocuments(table: string, format?: TransferFormat, options?: ExecuteOptions): Promise<string>;
+  importDocuments(table: string, input: string, format?: TransferFormat, options?: ExecuteOptions): Promise<ImportReport>;
   execute(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   profileSelect(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<ProfiledQuery>;
   checkCollectionIntegrity(table: string, limits?: IntegrityLimits, options?: ExecuteOptions): Promise<IntegrityReport>;

@@ -290,11 +290,11 @@ class AsyncDatabase {
     return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal));
   }
   async executeBatch(script, options = {}) { return decodeBatch(await this.#request('executeBatch', [script], false, options.signal)); }
-  async exportDocuments(table, format = 'json') {
-    return unwrap(await this.#request('exportDocuments', [table, format])).execution.result;
+  async exportDocuments(table, format = 'json', options = {}) {
+    return unwrap(await this.#request('exportDocuments', [table, format], false, options.signal)).execution.result;
   }
-  async importDocuments(table, input, format = 'json') {
-    const report = unwrap(await this.#request('importDocuments', [table, input, format]));
+  async importDocuments(table, input, format = 'json', options = {}) {
+    const report = unwrap(await this.#request('importDocuments', [table, input, format], false, options.signal));
     return { ...report.execution.result, transaction: report.transaction };
   }
   async migrate(migrations) {

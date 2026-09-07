@@ -283,11 +283,31 @@ impl NativeDatabase {
         })
     }
     #[napi]
-    pub fn export_documents(&self, table: String, format: String) -> napi::Result<String> {
+    pub fn export_documents(
+        &self,
+        table: String,
+        format: String,
+        cancellation_key: Option<String>,
+    ) -> napi::Result<String> {
+        let token = cancellation_key
+            .map(|key| {
+                let key = key.parse::<u64>().map_err(error)?;
+                cancellations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| error("unknown cancellation token"))
+            })
+            .transpose()?;
         self.report(|conn| {
-            Ok(serde_json::Value::String(
-                conn.export_documents(&table, transfer_format(&format)?)?,
-            ))
+            let format = transfer_format(&format)?;
+            let output = if let Some(token) = &token {
+                conn.export_documents_cancellable(&table, format, token)?
+            } else {
+                conn.export_documents(&table, format)?
+            };
+            Ok(serde_json::Value::String(output))
         })
     }
     #[napi]
@@ -296,8 +316,28 @@ impl NativeDatabase {
         table: String,
         input: String,
         format: String,
+        cancellation_key: Option<String>,
     ) -> napi::Result<String> {
-        self.report(|conn| Ok(serde_json::json!({"imported":conn.import_documents(&table,&input,transfer_format(&format)?)?})))
+        let token = cancellation_key
+            .map(|key| {
+                let key = key.parse::<u64>().map_err(error)?;
+                cancellations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| error("unknown cancellation token"))
+            })
+            .transpose()?;
+        self.report(|conn| {
+            let format = transfer_format(&format)?;
+            let imported = if let Some(token) = &token {
+                conn.import_documents_cancellable(&table, &input, format, token)?
+            } else {
+                conn.import_documents(&table, &input, format)?
+            };
+            Ok(serde_json::json!({"imported": imported}))
+        })
     }
     #[napi]
     pub fn migrate(&self, input: String) -> napi::Result<String> {

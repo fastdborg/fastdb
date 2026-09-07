@@ -699,3 +699,55 @@ test('AbortSignal batches retain completed reports and stop before later stateme
     assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM docs'),[0n]);
   } finally { clearTimeout(timer); await db.close(); }
 });
+
+test('AbortSignal transfers preserve atomic imports and return complete exports on retry', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { getEventListeners } = require('node:events');
+  const source = new Database();
+  try {
+    source.execute('CREATE TABLE docs');
+    source.execute('INSERT INTO docs(n) VALUES ' + Array.from({length:1000},(_,i)=>`(${i})`).join(','));
+    for (const format of ['json','ndjson']) {
+      const payload = source.exportDocuments('docs',format);
+      const db = await AsyncDatabase.open();
+      let timer;
+      try {
+        await db.execute('CREATE TABLE docs');
+        await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+        await db.execute('BEGIN');
+        await db.execute('INSERT INTO docs {id:docs:prior,n:1000}');
+        const controller = new AbortController();
+        const importing = db.importDocuments('docs',payload,format,{signal:controller.signal});
+        const following = db.exactlyOne('SELECT n FROM docs WHERE id=docs:prior');
+        const results = Promise.allSettled([importing,following]);
+        timer = setTimeout(()=>controller.abort(),20);
+        const [cancelled,read] = await results;
+        assert.equal(cancelled.status,'rejected');
+        assert.equal(cancelled.reason.code,'FDB_CANCELLED');
+        assert.equal(cancelled.reason.transaction.after,'active');
+        assert.deepEqual(read.value,[1000n]);
+        assert.equal((await db.checkCollectionIntegrity('docs')).documents,1n);
+        assert.equal(getEventListeners(controller.signal,'abort').length,0);
+        const before = new AbortController(); before.abort();
+        await assert.rejects(db.importDocuments('docs','invalid',format,{signal:before.signal}),e=>e.code==='FDB_CANCELLED');
+        await assert.rejects(db.exportDocuments('docs',format,{signal:before.signal}),e=>e.code==='FDB_CANCELLED');
+        const fresh = new AbortController();
+        const imported = await db.importDocuments('docs',payload,format,{signal:fresh.signal});
+        assert.equal(imported.imported,1000);
+        assert.equal(getEventListeners(fresh.signal,'abort').length,0);
+        const exporting = new AbortController();
+        const output = db.exportDocuments('docs',format,{signal:exporting.signal});
+        const rejected = assert.rejects(output,e=>e.code==='FDB_CANCELLED' && e.transaction.after==='active');
+        timer = setTimeout(()=>exporting.abort(),1);
+        await rejected;
+        assert.equal(getEventListeners(exporting.signal,'abort').length,0);
+        const complete = await db.exportDocuments('docs',format,{signal:fresh.signal});
+        assert.equal(complete,await db.exportDocuments('docs',format));
+        assert.equal((await db.checkCollectionIntegrity('docs')).documents,1001n);
+        fresh.abort();
+        await db.execute('ROLLBACK');
+        assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM docs'),[0n]);
+      } finally { clearTimeout(timer); await db.close(); }
+    }
+  } finally { source.close(); }
+});
