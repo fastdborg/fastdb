@@ -96,3 +96,48 @@ fn cli_rejects_non_file_migration_sources_and_allows_retry() {
     assert_eq!(report["applied"], serde_json::json!([1]));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn migration_output_failure_reports_error_after_committed_apply() {
+    let root = std::env::temp_dir().join(format!(
+        "fastdb-migration-output-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let dir = root.join("migrations");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("001_create.sql"), "CREATE TABLE docs;").unwrap();
+    let db = root.join("test.db");
+    let output = Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+        .arg("--migrate")
+        .arg(&dir)
+        .arg(&db)
+        .stdout(std::process::Stdio::from(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open("/dev/full")
+                .unwrap(),
+        ))
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!error.contains("panicked"), "{error}");
+    assert!(!error.is_empty());
+    let retry = Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+        .arg("--migrate")
+        .arg(&dir)
+        .arg(&db)
+        .output()
+        .unwrap();
+    assert!(retry.status.success(), "{retry:?}");
+    let report: serde_json::Value = serde_json::from_slice(&retry.stdout).unwrap();
+    assert_eq!(report["already_applied"], 1);
+    assert_eq!(report["applied"], serde_json::json!([]));
+    std::fs::remove_dir_all(root).unwrap();
+}

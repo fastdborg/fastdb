@@ -192,7 +192,12 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     };
     if let Some(directory) = migrations {
         let plan = migration_plan(&directory)?;
-        println!("{}", serde_json::to_string(&conn.migrate(&plan)?)?);
+        writeln!(
+            io::stdout().lock(),
+            "{}",
+            serde_json::to_string(&conn.migrate(&plan)?)?
+        )?;
+        io::stdout().lock().flush()?;
         return Ok(std::process::ExitCode::SUCCESS);
     }
     if let Some((import, table)) = transfer {
@@ -202,10 +207,17 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 .take(64 * 1024 * 1024 + 1)
                 .read_to_string(&mut input)?;
             let count = conn.import_documents(&table, &input, format)?;
-            println!("{}", serde_json::json!({"imported":count}));
+            writeln!(
+                io::stdout().lock(),
+                "{}",
+                serde_json::json!({"imported":count})
+            )?;
         } else {
-            print!("{}", conn.export_documents(&table, format)?);
+            io::stdout()
+                .lock()
+                .write_all(conn.export_documents(&table, format)?.as_bytes())?;
         }
+        io::stdout().lock().flush()?;
         return Ok(std::process::ExitCode::SUCCESS);
     }
     let mut writer = io::stdout().lock();

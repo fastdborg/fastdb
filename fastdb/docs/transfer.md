@@ -42,3 +42,6 @@ Current limits are 64 MiB of encoded input/output and 100,000 documents per oper
 
 
 Rust cancellable transfer methods accept CancellationToken; Node AsyncDatabase transfer methods accept an optional final `{signal}` argument. Pre-cancelled requests perform no transfer work. Active cancellation is cooperative at engine boundaries: interrupted import rolls back its own writes while preserving prior outer work, and export returns a complete payload or an error. Parsing, conversion and serialization have no fixed cancellation latency; completion can win a race. Node errors carry transaction observations. Use the reported outcome to decide whether a retry or explicit rollback is appropriate.
+
+
+CLI output failures are reported as errors with a nonzero exit, including final stdout flush failures. Migration/import work can commit before writing its success report; an output error does not undo that work. Inspect database state (or rerun an unchanged migration plan to inspect its applied prefix) before retrying writes.

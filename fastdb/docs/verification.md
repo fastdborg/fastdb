@@ -1606,3 +1606,6 @@ The complete scoped check passed formatting, Clippy, 350 Rust tests, 44 Node/app
 
 
 COUNT marker validation qualification (2026-09-07): a private-helper regression verifies valid null returns SQL NULL and false/large composite values return only integer 1. Malformed/truncated encodings, an invalid typed-vector payload and unencoded text reject; a subsequent valid null call succeeds. The focused unit test, formatting and frontend all-target Clippy pass. This confirms full decoding/validation remains in the optimized helper; total resource/performance and broader V1 gates remain open.
+
+
+CLI migration/transfer output errors (2026-09-07): these modes now use fallible writes and explicit stdout flushing instead of panic-on-error print macros. A Linux /dev/full regression confirms migration reporting failure returns an error without panic and reopening retains the committed applied history. Timeout-bounded export/import probes confirm clean export rejection and committed import data despite report failure. All CLI tests, formatting and CLI all-target Clippy pass. Output errors do not imply write rollback; broader platform/recovery and full V1 gates remain open.
