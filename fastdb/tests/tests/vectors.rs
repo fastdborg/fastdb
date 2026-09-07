@@ -207,3 +207,94 @@ fn malformed_vector_metadata_is_rejected_without_native_parsing() {
     quantized.extend([0, 1, 4]);
     assert!(Value::Vector(quantized).validate().is_err());
 }
+
+#[test]
+fn rust_vector_constructors_match_native_encodings_and_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("constructors.db");
+    let expected;
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE points");
+        for values in [
+            vec![1.0f32, 0.0, -1.0],
+            vec![0.0; 9],
+            vec![2.5; 16],
+            vec![-2.0, 0.5, 3.0, 0.0, 4.0, 1.0, -1.0, 2.0, 0.0],
+        ] {
+            let text = format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            for (name, value) in [
+                ("vector32_sparse", Value::vector32_sparse(&values).unwrap()),
+                ("vector8", Value::vector8(&values).unwrap()),
+                ("vector1bit", Value::vector1bit(&values).unwrap()),
+            ] {
+                assert_eq!(value.vector_dimensions().unwrap(), values.len());
+                let native = q(&c, &format!("SELECT {name}('{text}')"));
+                let Value::Vector(bytes) = &value else {
+                    panic!("typed vector")
+                };
+                assert_eq!(
+                    native.rows,
+                    vec![vec![Value::Binary(bytes.clone())]],
+                    "{name}: {text}"
+                );
+                c.execute(
+                    "INSERT INTO points(v) VALUES ($v)",
+                    &Parameters::from([("$v".into(), value)]),
+                )
+                .unwrap();
+            }
+        }
+        expected = q(&c, "SELECT v FROM points ORDER BY id").rows;
+        assert_eq!(
+            c.check_collection_integrity("points", Default::default())
+                .unwrap()
+                .documents,
+            12
+        );
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(q(&c, "SELECT v FROM points ORDER BY id").rows, expected);
+}
+
+#[test]
+fn rust_vector_constructors_enforce_dimensions_and_finite_values() {
+    type Constructor = fn(&[f32]) -> fastdb::Result<Value>;
+    let constructors: [Constructor; 4] = [
+        Value::vector32,
+        Value::vector32_sparse,
+        Value::vector8,
+        Value::vector1bit,
+    ];
+    for constructor in constructors {
+        assert!(constructor(&[]).is_err());
+        assert_eq!(
+            constructor(&vec![0.0; 65_537]).unwrap_err().code(),
+            "FDB_LIMIT"
+        );
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(constructor(&[value]).is_err());
+        }
+        assert_eq!(
+            constructor(&vec![0.0; 65_536])
+                .unwrap()
+                .vector_dimensions()
+                .unwrap(),
+            65_536
+        );
+    }
+    assert_eq!(
+        Value::vector64(&vec![0.0; 65_537]).unwrap_err().code(),
+        "FDB_LIMIT"
+    );
+    assert!(Value::vector64(&[]).is_err());
+}

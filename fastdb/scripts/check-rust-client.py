@@ -65,8 +65,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(c.lookup_index("docs","docs_value",&Value::Integer(i64::MAX))?.len(),1);
         assert!(c.lookup_index("docs","docs_value",&Value::Integer(7))?.is_empty());
         assert_eq!(c.execute("SELECT string::slugify('Hello Rust') AS slug",&Parameters::new())?.exactly_one()?,vec![Value::String("hello-rust".into())]);
-        let vector=Value::vector64(&[0.1,0.2,0.3])?;
-        assert_eq!(c.execute("SELECT $v AS embedding",&Parameters::from([("$v".into(),vector.clone())]))?.exactly_one()?,vec![vector]);
+        for vector in [Value::vector32(&[1.0,0.0,-1.0])?, Value::vector64(&[0.1,0.2,0.3])?, Value::vector32_sparse(&[1.0,0.0,-1.0])?, Value::vector8(&[1.0,0.0,-1.0])?, Value::vector1bit(&[1.0,0.0,-1.0])?] {
+            assert_eq!(vector.vector_dimensions()?,3);
+            assert_eq!(c.execute("SELECT $v AS embedding",&Parameters::from([("$v".into(),vector.clone())]))?.exactly_one()?,vec![vector]);
+        }
     }
     let db=Database::open(&file)?;
     let c=db.connect()?;

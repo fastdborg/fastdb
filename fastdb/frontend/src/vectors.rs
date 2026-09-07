@@ -136,11 +136,13 @@ pub(crate) fn validate_dimension(dims: usize) -> Result<()> {
 }
 impl Value {
     pub fn vector32(values: &[f32]) -> Result<Self> {
+        check_dims(values.len())?;
         let value = Self::Vector(values.iter().flat_map(|v| v.to_le_bytes()).collect());
         value.validate()?;
         Ok(value)
     }
     pub fn vector64(values: &[f64]) -> Result<Self> {
+        check_dims(values.len())?;
         let mut bytes = values
             .iter()
             .flat_map(|v| v.to_le_bytes())
@@ -150,12 +152,51 @@ impl Value {
         value.validate()?;
         Ok(value)
     }
+    /// Convert dense float32 components to the pinned sparse encoding.
+    pub fn vector32_sparse(values: &[f32]) -> Result<Self> {
+        converted32(
+            values,
+            turso_core::vector::vector_types::VectorType::Float32Sparse,
+        )
+    }
+    /// Quantize float32 components with the pinned engine's 8-bit conversion.
+    pub fn vector8(values: &[f32]) -> Result<Self> {
+        converted32(values, turso_core::vector::vector_types::VectorType::Float8)
+    }
+    /// Convert float32 components with the pinned engine's 1-bit conversion.
+    pub fn vector1bit(values: &[f32]) -> Result<Self> {
+        converted32(
+            values,
+            turso_core::vector::vector_types::VectorType::Float1Bit,
+        )
+    }
     pub fn vector_dimensions(&self) -> Result<usize> {
         match self {
             Self::Vector(bytes) => dimensions(bytes),
             _ => Err(Error::Validation("expected typed vector".into())),
         }
     }
+}
+
+fn converted32(
+    values: &[f32],
+    kind: turso_core::vector::vector_types::VectorType,
+) -> Result<Value> {
+    use turso_core::vector::{
+        operations::{convert::vector_convert, serialize::vector_serialize},
+        vector_types::Vector,
+    };
+    check_dims(values.len())?;
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(Error::Validation("vector components must be finite".into()));
+    }
+    let vector = vector_convert(Vector::from_f32(values.to_vec()), kind)?;
+    let crate::EngineValue::Blob(bytes) = vector_serialize(vector) else {
+        unreachable!("serialized vector blob");
+    };
+    let value = Value::Vector(bytes);
+    value.validate()?;
+    Ok(value)
 }
 
 /// The pinned native sparse concat does not shift the right-hand indexes.

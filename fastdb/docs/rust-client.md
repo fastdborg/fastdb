@@ -29,6 +29,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Keep the Database alive while using its connections and serialize operations on each connection. Public APIs do not expose the raw engine connection. Use execute_report and transaction_state when recovery needs the observed transaction state; an error does not universally imply either statement-only or full transaction rollback. See [contracts](contracts.md).
 
+## Typed vector construction
+
+`Value::vector32(&[f32])` and `Value::vector64(&[f64])` construct dense vectors. The Rust client also provides `Value::vector32_sparse(&[f32])`, `Value::vector8(&[f32])`, and `Value::vector1bit(&[f32])`. These accept dense float32 components and use the pinned engine's sparse, quantized and bit conversions:
+
+```rust
+let components = [1.0_f32, 0.0, -1.0];
+let sparse = Value::vector32_sparse(&components)?;
+let quantized = Value::vector8(&components)?;
+let bits = Value::vector1bit(&components)?;
+```
+
+Pass these values through Parameters like any other typed value. Inputs require 1–65,536 finite components; conversion output is validated too. Quantized and bit conversions are lossy. Sparse construction accepts a dense component slice, rather than an index/value-pair format. Dimension bounds are checked before constructor output allocation. Broader numerical and platform qualification remains open.
+
 ## Standalone consumer smoke
 
 From the repository root, with the baseline toolchain and dependency cache available:
@@ -39,7 +52,7 @@ python3 fastdb/scripts/check-rust-client.py
 
 The script requires Python 3.11+ and creates an application in a temporary directory outside the repository workspace. It uses only the FastDB path dependency, seeds the consumer lockfile from the pinned workspace lockfile, then lets Cargo add the consumer and prune unused packages. Registry/git package identities and checksums must remain a subset of the baseline before building. Host-filtered metadata resolution and the build run offline; uncached dependencies fail rather than being fetched implicitly.
 
-The consumer runs outside the workspace, so it does not load this checkout's `.cargo/config.toml`. The script removes the general RUSTFLAGS environment overrides and uses a separate reusable build directory at `target/fastdb-rust-consumer`. It exercises typed record/int64 parameters, field CHECK validation, a unique index, transaction observations, rollback, bundled QuickJS, vector values and close/reopen persistence. It also imports the public profiling/audit result types, checks indexed profiling counters and repeat-call reset, rejects profiling writes, audits reopened data with exact byte limits, and verifies audit-limit failure preserves an active transaction. Temporary source, lockfile and database files are removed when it finishes. Build outputs remain cached.
+The consumer runs outside the workspace, so it does not load this checkout's `.cargo/config.toml`. The script removes the general RUSTFLAGS environment overrides and uses a separate reusable build directory at `target/fastdb-rust-consumer`. It exercises typed record/int64 parameters, field CHECK validation, a unique index, transaction observations, rollback, bundled QuickJS, all five vector constructors and close/reopen persistence. It also imports the public profiling/audit result types, checks indexed profiling counters and repeat-call reset, rejects profiling writes, audits reopened data with exact byte limits, and verifies audit-limit failure preserves an active transaction. Temporary source, lockfile and database files are removed when it finishes. Build outputs remain cached.
 
 This is a local path-consumer check, not cargo package/publish qualification, a guarantee for arbitrary dependency unification, or a cross-platform release claim. Registry distribution of FastDB and its engine/frontend dependency graph, platform/toolchain qualification, public API stabilization and complete distribution notices remain release work.
 
