@@ -1250,6 +1250,26 @@ mod cte_evaluation_tests {
             &params,
         )
         .unwrap();
+        for (table, condition) in [
+            ("baseline", "n=m"),
+            ("baseline", "(n+0)=(m+0)"),
+            ("docs", "n=m"),
+        ] {
+            let sql = format!("SELECT n,value FROM (SELECT n FROM {table}) JOIN counted_view ON {condition} ORDER BY n");
+            CALLS.store(0, Ordering::SeqCst);
+            c.execute(&format!("EXPLAIN QUERY PLAN {sql}"), &params)
+                .unwrap();
+            assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+            let rows = c.execute(&sql, &params).unwrap().rows;
+            assert_eq!(
+                rows,
+                vec![
+                    vec![Value::Integer(1), Value::Integer(1)],
+                    vec![Value::Integer(2), Value::Integer(1)],
+                    vec![Value::Integer(4), Value::Integer(1)]
+                ]
+            );
+        }
         for limit in ["", " LIMIT 0"] {
             let query = |table| {
                 format!("WITH x AS MATERIALIZED (SELECT * FROM counted_view) SELECT n,value FROM (SELECT n FROM {table}) JOIN x ON n=m ORDER BY n{limit}")
