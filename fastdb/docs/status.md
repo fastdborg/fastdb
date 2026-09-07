@@ -1596,3 +1596,10 @@ The complete scoped check passed formatting, Clippy, 395 Rust tests, 44 Node/app
 
 
 Type-sensitive OFFSET qualification (2026-09-08): expanded the pagination parameter-type regression with CASE/typeof in OFFSET as well as LIMIT. Integer and real bindings choose the expected include/exclude branches for direct/derived sources through execute/profile. The expanded focused test, package formatting and focused Clippy pass. Latest combined evidence remains 395 Rust/44 Node tests; broader type/scope/resource and full V1 gates remain open.
+
+
+## Native-inner pagination expression types (2026-09-08)
+
+Replaced native-inner correlation's numeric parameter substitution with the raw SQL pagination identity callback, preserving real versus integer values during typeof/CASE evaluation. The existing relational pagination wrapper remains. Direct/derived logical outer-source regressions fix the reproduced real-binding LIMIT branch error; the obsolete conversion helper was removed. Entirely native entry routing remains unchanged.
+
+The complete scoped check passed formatting, Clippy, 396 Rust tests, 44 Node/application tests and strict TypeScript, including native bound-pagination conversion boundaries, scalar affinity, callback counts and writes. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/evaluation/resource and full V1 release qualification remain open.

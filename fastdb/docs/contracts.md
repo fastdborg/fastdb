@@ -1033,3 +1033,8 @@ Logical expression-subquery pagination now uses counter isolation with table sou
 ## Pagination expression type preservation (2026-09-08)
 
 Logical source-free pagination retains original parameter values when evaluating expressions. The earlier integer-expression substitution changed typeof(Number(1.0)) to integer, making a CASE-based LIMIT choose the wrong branch. Counter isolation now handles register reuse, so that substitution has been removed from the logical pagination path while missing-binding validation remains. Direct/derived execute/profile regressions distinguish integer and real bindings. The separate native correlation conversion remains unchanged; broader type/scope/resource qualification remains open.
+
+
+## Native-inner pagination expression types (2026-09-08)
+
+Native inner SELECTs correlated to a logical outer source now use the private pagination identity callback instead of replacing integral numeric parameters with integer expressions. This preserves typeof/CASE semantics for real versus integer bindings while retaining the existing relational pagination wrapper. A direct/derived outer-source regression fixes the reproduced real-binding branch error. Entirely native entry routing remains unchanged; broader scope/evaluation/resource qualification remains open.

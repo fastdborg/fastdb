@@ -4500,3 +4500,50 @@ fn scalar_pagination_preserves_numeric_expression_types() {
         }
     }
 }
+
+#[test]
+fn native_inner_pagination_preserves_numeric_expression_types() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE lookup(n INTEGER)",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:2}",
+        "INSERT INTO lookup VALUES(1),(2),(3)",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        for numeric in [false, true] {
+            let params = Parameters::from([(
+                "$v".into(),
+                if numeric {
+                    Value::Number(1.0)
+                } else {
+                    Value::Integer(1)
+                },
+            )]);
+            let sql = format!("SELECT (SELECT i.n FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT CASE WHEN typeof($v)='real' THEN 1 ELSE 0 END) FROM {source} ORDER BY n");
+            let expected = (1..=2)
+                .map(|n| {
+                    vec![if numeric {
+                        Value::Integer(n)
+                    } else {
+                        Value::Null
+                    }]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                c.execute(&sql, &params).unwrap().rows,
+                expected,
+                "{sql}: {params:?}"
+            );
+            assert_eq!(
+                c.profile_select(&sql, &params).unwrap().result.rows,
+                expected,
+                "{sql}: {params:?}"
+            );
+        }
+    }
+}

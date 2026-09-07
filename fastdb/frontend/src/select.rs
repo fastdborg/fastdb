@@ -2,20 +2,6 @@
 use crate::{quote, Collection, Connection, Error, Parameters, QueryResult, Result, Value};
 use turso_parser::{ast::*, parser::Parser};
 
-fn pagination_integer(value: &Value) -> Option<i64> {
-    match value {
-        Value::Integer(value) => Some(*value),
-        // Match the pinned engine: exact real-to-integer conversion excludes
-        // both int64 endpoints. i64::MAX rounds to 2^63.
-        Value::Number(value)
-            if *value > i64::MIN as f64 && *value < i64::MAX as f64 && value.fract() == 0.0 =>
-        {
-            Some(*value as i64)
-        }
-        _ => None,
-    }
-}
-
 #[derive(Clone)]
 struct Source {
     table: SelectTable,
@@ -338,25 +324,9 @@ fn native_correlated_predicate(
         inner = wrapped;
     }
     if correlated_query && !metadata {
-        let integers = params
-            .iter()
-            .filter_map(|(name, value)| pagination_integer(value).map(|integer| (name, integer)))
-            .map(|(name, value)| Ok((name.clone(), expression(&value.to_string())?)))
-            .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
         if let Some(limit) = &mut inner.limit {
             for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
-                turso_core::walk_expr_mut(value, &mut |expr| {
-                    if let Expr::Variable(var) = expr {
-                        let name = var
-                            .name
-                            .as_ref()
-                            .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
-                        if let Some(value) = integers.get(&name) {
-                            *expr = value.clone();
-                        }
-                    }
-                    Ok(turso_core::WalkControl::Continue)
-                })?;
+                **value = expression(&format!("__fastdb_pagination_value({value})"))?;
             }
         }
     }
