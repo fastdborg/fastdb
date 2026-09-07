@@ -1,6 +1,6 @@
 # FastDB Node client prototype
 
-This private package builds a native N-API addon backed by the checked FastDB Rust frontend. It does not expose the raw Turso connection. Local evidence covers Linux with Rust 1.88 and Node 22.23.2/24.19.0; release prebuilds, Windows/macOS qualification and additional Node versions remain pending.
+This private package builds a native N-API addon backed by the checked FastDB Rust frontend. It does not expose the raw Turso connection. Local evidence covers Linux with Rust 1.88 and Node 22.0.0/22.23.2/24.19.0; release prebuilds, Windows/macOS qualification and additional Node versions remain pending.
 
 From the repository root, install the declaration checker and run the scoped checks:
 
