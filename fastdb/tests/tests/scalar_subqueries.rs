@@ -1030,3 +1030,56 @@ fn native_scalar_comparisons_preserve_binary_identity() {
         );
     }
 }
+
+#[test]
+fn native_scalar_comparison_insert_failures_preserve_indexes_and_prior_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n,v) VALUES (1,'2'),(2,'2'),(9,'2')");
+    q(&c, "CREATE TABLE native(v INTEGER)");
+    q(&c, "INSERT INTO native VALUES (2)");
+    q(&c, "CREATE TABLE target");
+    q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO target {id:target:prior,n:9}");
+    let prior = q(&c, "SELECT id,n FROM target").rows;
+    for predicate in [
+        "v=(SELECT v FROM native)",
+        "(SELECT v FROM native)=v",
+        "v=((SELECT v FROM native) COLLATE NOCASE)",
+        "((SELECT v FROM native) COLLATE NOCASE)=v",
+    ] {
+        let sql = format!("INSERT INTO target(n) SELECT n FROM docs WHERE {predicate} ORDER BY n");
+        assert!(c.execute(&sql, &Parameters::new()).is_err(), "{sql}");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT id,n FROM target").rows, prior);
+        assert_eq!(
+            c.check_collection_integrity("target", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+        assert!(q(&c, "SELECT n FROM target WHERE n=1").rows.is_empty());
+        let retry = format!(
+            "INSERT INTO target(n) SELECT n FROM docs WHERE ({predicate}) AND n<9 ORDER BY n"
+        );
+        q(&c, &retry);
+        assert_eq!(
+            q(&c, "SELECT n FROM target ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(1)],
+                vec![Value::Integer(2)],
+                vec![Value::Integer(9)]
+            ]
+        );
+        q(&c, "DELETE FROM target WHERE n<9");
+    }
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

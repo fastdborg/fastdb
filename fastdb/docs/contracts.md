@@ -745,3 +745,7 @@ The native scalar comparison matrix now uses nine left-hand values, including mi
 ## Computed native scalar projection affinity (2026-09-07)
 
 The native scalar comparison matrix now includes +v, CAST(v AS TEXT) and CAST(v AS NUMERIC) inside the scalar SELECT. All 1,792 query pairs in the focused probe match native SQL over nine values: four native declarations, seven inner projection forms, eight operators and eight operand/wrapper arrangements (16,128 compared result cells per route). This verifies initial affinity removal and explicit type conversion within the native scalar source. It does not qualify unary-plus/CAST around the outer scalar expression or every computed/compound/CTE form. No production implementation or upstream changes.
+
+## Native scalar comparison write rollback (2026-09-07)
+
+A new regression applies native INTEGER scalar comparisons to document string values in collection INSERT SELECT. Four predicate forms cover both operand orders and explicit COLLATE wrappers. A late unique-index conflict preserves prior IDs/values, active transaction state and index integrity, with no partially inserted indexed rows. Each corrected retry inserts the exact expected rows; final rollback leaves the target and its index empty. This qualifies the tested comparison source through the write/savepoint path without changing production code. Broader native-target conflict policies, cancellation during these comparisons and release/platform qualification remain open.
