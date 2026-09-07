@@ -595,6 +595,18 @@ mod between_tests {
             &crate::Parameters::new(),
         )
         .unwrap();
+        for comparison in [
+            "n=(SELECT between_tick() FROM exists_native)",
+            "(SELECT between_tick() FROM exists_native)>n",
+        ] {
+            CALLS.store(0, Ordering::SeqCst);
+            c.execute(
+                &format!("SELECT {comparison} AS v FROM scalar_inputs"),
+                &crate::Parameters::new(),
+            )
+            .unwrap();
+            assert_eq!(CALLS.load(Ordering::SeqCst), 1, "{comparison}");
+        }
         CALLS.store(0, Ordering::SeqCst);
         let rows = c.execute("SELECT EXISTS (SELECT between_tick() FROM exists_native) AS present FROM scalar_inputs", &crate::Parameters::new()).unwrap().rows;
         assert_eq!(rows, vec![vec![Value::Integer(1)]; 2]);

@@ -952,3 +952,58 @@ fn native_exists_sources_filter_collections_and_validate_bindings() {
         0
     );
 }
+
+#[test]
+fn native_scalar_affinity_matches_native_document_scalar_storage() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(v) VALUES ('2'),(2),('A'),(NULL)");
+    q(&c, "CREATE TABLE lhs(v BLOB)");
+    q(&c, "INSERT INTO lhs VALUES ('2'),(2),('A'),(NULL)");
+    assert_eq!(q(&c, "SELECT a.v,(SELECT b.v FROM lhs b WHERE b.rowid=a.rowid) AS nested FROM lhs a ORDER BY a.rowid").rows, q(&c, "SELECT v,v FROM lhs ORDER BY rowid").rows);
+    for (name, declaration, value) in [
+        ("numbers", "INTEGER", "2"),
+        ("strings", "TEXT", "'2'"),
+        ("letters", "TEXT COLLATE NOCASE", "'a'"),
+    ] {
+        q(&c, &format!("CREATE TABLE {name}(v {declaration})"));
+        q(&c, &format!("INSERT INTO {name} VALUES ({value})"));
+        for op in ["=", "!=", "IS", "IS NOT", "<", "<=", ">", ">="] {
+            for operands in [
+                format!("v {op} (SELECT v FROM {name})"),
+                format!("(SELECT v FROM {name}) {op} v"),
+            ] {
+                let sql = format!("SELECT {operands} AS matched FROM docs");
+                assert_eq!(
+                    q(&c, &sql).rows,
+                    q(&c, &sql.replace("FROM docs", "FROM lhs")).rows,
+                    "{sql}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn native_scalar_comparisons_preserve_binary_identity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "INSERT INTO docs(v) VALUES (x'464442000102'),(docs:a),(NULL)",
+    );
+    q(&c, "CREATE TABLE native(v BLOB)");
+    q(&c, "INSERT INTO native VALUES (x'464442000102')");
+    for comparison in ["v=(SELECT v FROM native)", "(SELECT v FROM native)=v"] {
+        assert_eq!(
+            q(&c, &format!("SELECT {comparison} AS matched FROM docs")).rows,
+            vec![
+                vec![Value::Integer(1)],
+                vec![Value::Integer(0)],
+                vec![Value::Null]
+            ]
+        );
+    }
+}

@@ -531,6 +531,9 @@ test('typed scalar subqueries preserve values in both clients', async () => {
       assert.deepEqual(await db.exactlyOne('SELECT (SELECT $v AS v FROM affinity_native) AS v', {$v:[1n,true]}), [[1n,true]]);
       assert.deepEqual(await db.exactlyOne('WITH chosen AS (SELECT $v AS v FROM affinity_native) SELECT v FROM chosen', {$v:new Record('docs','cte-native')}), [new Record('docs','cte-native')]);
       assert.deepEqual(await db.exactlyOne('SELECT n IN (SELECT +n FROM affinity_docs) AS v FROM affinity_native'), [1n]);
+      await db.execute('CREATE TABLE scalar_numeric(n INTEGER)');
+      await db.execute('INSERT INTO scalar_numeric VALUES (2)');
+      assert.deepEqual(await db.exactlyOne("SELECT '2'=(SELECT n FROM scalar_numeric) AS v FROM docs"), [1n]);
     } finally { await db.close(); }
   }
 });

@@ -25,10 +25,17 @@ impl Source {
     }
 }
 type CteSources = std::collections::BTreeMap<String, Option<Source>>;
-// Each entry stores lowered SQL, consumed binds, and whether an IN RHS
-// projects a column with affinity (false for non-IN subqueries).
-type ExpressionSubqueries =
-    std::collections::BTreeMap<String, (Expr, std::collections::BTreeSet<String>, bool)>;
+#[derive(Clone, PartialEq, Eq)]
+enum SubqueryAffinity {
+    None,
+    MembershipColumn,
+    NativeScalar(String),
+}
+// Each entry stores lowered SQL, consumed binds, and affinity provenance.
+type ExpressionSubqueries = std::collections::BTreeMap<
+    String,
+    (Expr, std::collections::BTreeSet<String>, SubqueryAffinity),
+>;
 struct Scope {
     expression_subqueries: ExpressionSubqueries,
     sources: Vec<Source>,
@@ -500,7 +507,11 @@ impl Scope {
                     // Preserve native LHS affinity for scalar values; encode its
                     // BLOB values into the same collision-resistant RHS keys. Share
                     // one materialized source across both IN branches.
-                    let key = if *column { "v" } else { "+v" };
+                    let key = if *column == SubqueryAffinity::MembershipColumn {
+                        "v"
+                    } else {
+                        "+v"
+                    };
                     *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN (SELECT {key} FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT {key} FROM __fastdb_in_source) END)"))?;
                 } else {
                     self.typed(&mut value)?;
@@ -568,6 +579,103 @@ impl Scope {
         }
         match expr {
             Expr::Binary(a, op, b) => {
+                if matches!(
+                    op,
+                    Operator::Equals
+                        | Operator::NotEquals
+                        | Operator::Is
+                        | Operator::IsNot
+                        | Operator::Less
+                        | Operator::LessEquals
+                        | Operator::Greater
+                        | Operator::GreaterEquals
+                ) {
+                    let native = |value: &Expr| {
+                        matches!(value, Expr::Subquery(_))
+                            && self
+                                .expression_subqueries
+                                .get(&value.to_string())
+                                .is_some_and(|(_, _, affinity)| {
+                                    matches!(affinity, SubqueryAffinity::NativeScalar(_))
+                                })
+                    };
+                    let (left_native, right_native) = (native(a), native(b));
+                    if left_native || right_native {
+                        let (query, value, on_left) = if left_native {
+                            (&**a, &**b, true)
+                        } else {
+                            (&**b, &**a, false)
+                        };
+                        // Validate bindings while retaining the original SQL affinity.
+                        self.preserved(&mut query.clone())?;
+                        let mut logical = value.clone();
+                        if native(value) {
+                            self.preserved(&mut logical)?;
+                            return Ok(());
+                        }
+                        if !self.preserved(&mut logical)? {
+                            let mut lowered = value.clone();
+                            self.lower(&mut lowered)?;
+                            if on_left {
+                                **b = lowered;
+                            } else {
+                                **a = lowered;
+                            }
+                            return Ok(());
+                        }
+
+                        let Expr::Subquery(inner) = query else {
+                            unreachable!()
+                        };
+                        let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
+                        let SubqueryAffinity::NativeScalar(collation) =
+                            &self.expression_subqueries[&query.to_string()].2
+                        else {
+                            unreachable!()
+                        };
+                        let raw = format!(
+                            "((SELECT * FROM __fastdb_native_comparison) COLLATE {})",
+                            quote(if on_left { collation } else { "BINARY" })
+                        );
+                        let raw = raw.as_str();
+                        let key =
+                            format!("(SELECT v FROM (SELECT __fastdb_unwrap({logical}) AS v))");
+                        let compare = |l: &str, r: &str| {
+                            if on_left {
+                                format!("{r} {op} {l}")
+                            } else {
+                                format!("{l} {op} {r}")
+                            }
+                        };
+                        let body = if matches!(
+                            op,
+                            Operator::Equals | Operator::NotEquals | Operator::Is | Operator::IsNot
+                        ) {
+                            let blob = format!("__fastdb_unwrap(__fastdb_pack({raw}))");
+                            format!(
+                                "CASE WHEN typeof({raw})='blob' THEN {} ELSE {} END",
+                                compare(&key, &blob),
+                                compare(&key, raw)
+                            )
+                        } else {
+                            let value = format!("(SELECT v FROM (SELECT __fastdb_range_scalar({logical},{raw}) AS v))");
+                            // Keep the document operand's default collation when
+                            // it precedes a native scalar with declared collation.
+                            compare(
+                                &if on_left {
+                                    value
+                                } else {
+                                    format!("({value} COLLATE BINARY)")
+                                },
+                                raw,
+                            )
+                        };
+                        *expr = expression(&format!(
+                            "(WITH __fastdb_native_comparison AS MATERIALIZED (SELECT * FROM ({}) LIMIT 1) SELECT {body})", sql.trim().trim_end_matches(';')
+                        ))?;
+                        return Ok(());
+                    }
+                }
                 if matches!(
                     op,
                     Operator::Add
@@ -2212,8 +2320,18 @@ impl Connection {
                             sql.trim().trim_end_matches(';')
                         ))?
                             };
-                            expression_subqueries
-                                .insert(expr.to_string(), (lowered, plan.consumed, column));
+                            expression_subqueries.insert(
+                                expr.to_string(),
+                                (
+                                    lowered,
+                                    plan.consumed,
+                                    if column {
+                                        SubqueryAffinity::MembershipColumn
+                                    } else {
+                                        SubqueryAffinity::None
+                                    },
+                                ),
+                            );
                         } else if !membership {
                             native_expression_subqueries.insert(
                                 expr.to_string(),
@@ -2230,7 +2348,11 @@ impl Connection {
                                         })
                                         .map(|token| token.text.to_owned())
                                         .collect(),
-                                    false,
+                                    if exists {
+                                        SubqueryAffinity::None
+                                    } else {
+                                        SubqueryAffinity::NativeScalar("BINARY".into())
+                                    },
                                 ),
                             );
                         }
@@ -2412,6 +2534,49 @@ impl Connection {
         }
         // Native expression queries do not opt an ordinary SQL statement into
         // logical lowering; preserve their values only once that route is chosen.
+        for (sql, (_, _, affinity)) in &mut native_expression_subqueries {
+            if !matches!(affinity, SubqueryAffinity::NativeScalar(_)) {
+                continue;
+            }
+            let Expr::Subquery(inner) = expression(sql)? else {
+                unreachable!()
+            };
+            let mut collation = "BINARY".to_owned();
+            {
+                let mut probe = inner.clone();
+                if probe.with.is_none() {
+                    probe.with = select.with.clone();
+                }
+                let statement = self.prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())?;
+                let program = statement.get_program();
+                if let Some(column) = program.result_columns.first() {
+                    let mut value = column.expr.clone();
+                    let mut implicit = None;
+                    let mut explicit = None;
+                    turso_core::walk_expr_mut(&mut value, &mut |expr| {
+                        match expr {
+                            Expr::Collate(_, name) => {
+                                explicit.get_or_insert_with(|| name.as_str().to_owned());
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                            Expr::Column { table, column, .. } => {
+                                if let Some((_, source)) =
+                                    program.table_references.find_table_by_internal_id(*table)
+                                {
+                                    if let Some(column) = source.get_column_at(*column) {
+                                        implicit.get_or_insert_with(|| column.collation().name());
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        Ok(turso_core::WalkControl::Continue)
+                    })?;
+                    collation = explicit.or(implicit).unwrap_or(collation);
+                }
+            }
+            *affinity = SubqueryAffinity::NativeScalar(collation);
+        }
         expression_subqueries.extend(native_expression_subqueries);
         let distinct = !sources.is_empty() && matches!(distinctness, Some(Distinctness::Distinct));
         if distinct {
