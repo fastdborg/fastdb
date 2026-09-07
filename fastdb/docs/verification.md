@@ -1130,3 +1130,8 @@ Counters exclude catalog/schema/savepoint helpers, decoding and transport. They 
 ## Forward-fetch diagnostic — 2026-09-07
 
 `node --check fastdb/scripts/bench-fetch.cjs` and `node fastdb/scripts/bench-fetch.cjs` passed. Report: benchmark-results/2026-09-07-linux-dev-fetch-1000.json, clean implementation 23f7030c9. Twelve workloads each passed one warmup and three measured samples, checking all returned values, duplicates, expected batch counts and repeatable counters. Target metrics also match between one/two projections. No production changes or scoped-suite rebuild; prior test evidence remains applicable. The single-process debug fixture does not qualify memory, cold caches, optimized builds or platform performance.
+
+
+## Current SQL gate probes — 2026-09-07
+
+Reviewed clean 41a2daf95 and ran isolated BEGIN/ROLLBACK probes through the local addon over matching collection/native integer rows 1,2,3. Correlated scalar comparison succeeds natively but collection lowering reports no such table: d. Leading-WITH UPDATE succeeds natively with RETURNING 12 but is explicitly rejected for collections. The scalar grouping alias/HAVING probe agrees at (1,2). Updated v1-gates.md with exact queries and candidate-lowering requirements; the prior native-membership gap description was stale. No production changes or redundant scoped tests in this audit. These probes direct the next implementation work and do not establish release completion.

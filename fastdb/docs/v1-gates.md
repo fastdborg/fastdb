@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-07
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Baseline reviewed: ab4bcb937; scoped evidence remains 271 Rust tests and 30 Node tests with one ignored trigger-cancellation gate. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Baseline reviewed: 41a2daf95. Latest full Rust evidence is 287 passing tests with one ignored trigger-cancellation gate; the subsequent targeted interruption regression brings distinct Rust coverage to 288. Node coverage is 33 passing tests, with an additional installed-package smoke. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -18,23 +18,30 @@ This is a navigation and prioritization aid, not a replacement for the parent Fa
 
 Cloud beta requirements remain deferred until after embedded V1. They do not block embedded implementation. V2 inverse links, indexed ANN/FTS/spatial and user scripts are not substitutes for unfinished V1 work.
 
-## Native membership gap and follow-up
+## Current SQL probes and implementation priorities
 
-A live probe against the current native addon produced:
+Probed the locally built addon after 41a2daf95 using matching `docs` collection and `native(n INTEGER)` rows 1, 2, 3. Each probe ran inside BEGIN/ROLLBACK, so UPDATE probes did not affect later comparisons.
+
+| Probe | Ordinary table | Collection |
+|---|---|---|
+| Correlated scalar below | (1,NULL), (2,1), (3,2) | FDB_ENGINE: no such table: d |
+| Leading-WITH UPDATE below | RETURNING 12; affected 1 | FDB_UNSUPPORTED: this collection UPDATE clause |
+| `SELECT n%2 AS parity,count(*) AS total FROM source GROUP BY parity HAVING total>1 ORDER BY parity` | (1,2) | (1,2) |
 
 ```sql
-CREATE TABLE docs;
-INSERT INTO docs(n) VALUES (1),(2),(NULL);
-CREATE TABLE native(n INTEGER);
-INSERT INTO native VALUES (1),(NULL);
-SELECT n,n IN (SELECT n FROM native) FROM native;
--- succeeds: (1,1), (NULL,NULL)
-SELECT n,n IN (SELECT n FROM native) FROM docs;
--- FDB_UNSUPPORTED: this collection expression is not implemented for collections
+SELECT d.n,(SELECT max(n) FROM native WHERE n<d.n) AS prior
+FROM docs d ORDER BY d.n;
+
+WITH chosen AS (SELECT 2 AS n)
+UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n;
 ```
 
-The collection result should be qualified against an ordinary-table oracle containing the same left-hand values. The implementation prepass in frontend/src/select.rs caches native scalar/EXISTS sources but deliberately excludes native membership sources. Extending that route must preserve RHS affinity/collation, NULL/NOT IN behavior, raw binary versus typed record identity, parameter validation and single-source evaluation. Simply encoding all RHS values through a function would lose native column affinity. Tests should cover both reads and atomic collection INSERT SELECT with retry/rollback before marking the gap handled.
+Replace `docs` with `native` for the ordinary-table forms. These probes are narrow current behavior evidence, not complete grouping or correlation qualification.
 
-Initial implementation now handles the scalar native-membership cases described in status.md. Follow-up priority is broader operand/CTE/correlation and evaluation-count qualification, followed by remaining write/type semantics and resource accounting. Existing cancellation and packaging evidence should be reused unless a change affects it. The core trigger proposal remains separately reviewable under the project workflow; it is not applied by this audit.
+Next implementation priority is leading-WITH collection UPDATE/DELETE: write.rs explicitly rejects `update.with` and DELETE's WITH. Carry the statement's CTE scope into candidate SELECT lowering while preserving pre-mutation candidate materialization, parameter consumption, typed assignment values, RETURNING and atomic document/index updates. Differential tests must include native and logical CTEs, self-read candidates, failed validation/uniqueness with prior outer work, retry/rollback and cancellation before claiming support. Merely removing the rejection would discard the scope and is insufficient.
 
-The reproducer above records the pre-change failure. Initial native membership lowering and differential/read-write tests now exist; the wider semantic and performance requirements remain open.
+Correlated scalar lowering follows: current native metadata preparation loses the collection outer alias. Preserve correlation inside engine execution rather than pre-executing a correlated source once or caching it as an uncorrelated value. Test per-row native oracles, NULL/empty sources, alias shadowing, type/affinity/collation, parameter use and atomic writes.
+
+Recent resource work adds incremental transfer parsing/encoding, incremental lowered SELECT decoding, fetch reference/encoded-byte budgets, and target batch/row/VM profiling. Public results still materialize; these are not complete memory budgets. Further resource work remains necessary but does not replace unfinished SQL semantics.
+
+The earlier native membership reproducer is now covered by implemented lowering and differential/read-write/CTE tests. Reuse that evidence; do not treat its old failure as current behavior. The core trigger proposal remains separately reviewable under the workflow and has not been applied. Full embedded scope, packaging/recovery/platform gates and external application validation remain intact.
