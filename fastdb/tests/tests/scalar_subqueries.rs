@@ -197,3 +197,126 @@ fn collection_exists_matches_native_membership_and_insert_sources() {
         vec![vec![Value::Integer(0)]]
     );
 }
+
+#[test]
+fn collection_membership_subqueries_match_native_null_and_scalar_semantics() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1}");
+    q(&c, "INSERT INTO docs {n:2}");
+    q(&c, "INSERT INTO docs {n:null}");
+    q(&c, "CREATE TABLE native(n)");
+    q(&c, "INSERT INTO native VALUES (1),(2),(NULL)");
+    for lhs in ["1", "3", "NULL", "'1'", "1.0"] {
+        for predicate in ["1", "n IS NOT NULL", "n=99"] {
+            for negate in ["", "NOT "] {
+                let sql =
+                    format!("SELECT {lhs} {negate}IN (SELECT n FROM docs WHERE {predicate}) AS v");
+                assert_eq!(
+                    q(&c, &sql).rows,
+                    q(&c, &sql.replace("FROM docs", "FROM native")).rows,
+                    "{sql}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs WHERE n IN (SELECT n FROM docs WHERE n=2)"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT (SELECT max(n) FROM docs) IN (SELECT n FROM docs) AS v"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    q(&c, "CREATE TABLE copies");
+    q(
+        &c,
+        "INSERT INTO copies(n) SELECT n FROM docs WHERE n NOT IN (SELECT n FROM docs WHERE n=1)",
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM copies").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}
+
+#[test]
+fn membership_subqueries_preserve_record_binary_keys_and_native_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {id:docs:a,link:docs:a,n:'1'}");
+    q(&c, "INSERT INTO docs {id:docs:b,link:docs:1,n:'2'}");
+    assert_eq!(q(&c, "SELECT docs:a IN (SELECT link FROM docs) AS a,type::record('docs','1') IN (SELECT link FROM docs) AS b").rows, vec![vec![Value::Integer(1), Value::Integer(0)]]);
+    let binary = Value::Binary(
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"String\":\"a\"}}}"
+            .to_vec(),
+    );
+    let result = c
+        .execute(
+            "SELECT $v IN (SELECT link FROM docs) AS v",
+            &Parameters::from([("$v".into(), binary.clone())]),
+        )
+        .unwrap();
+    assert_eq!(result.rows, vec![vec![Value::Integer(0)]]);
+    c.execute(
+        "INSERT INTO docs(link) VALUES ($v)",
+        &Parameters::from([("$v".into(), binary.clone())]),
+    )
+    .unwrap();
+    assert_eq!(
+        c.execute(
+            "SELECT $v IN (SELECT link FROM docs) AS v",
+            &Parameters::from([("$v".into(), binary.clone())])
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    q(&c, "CREATE TABLE binary_lhs(v BLOB)");
+    c.execute(
+        "INSERT INTO binary_lhs VALUES ($v)",
+        &Parameters::from([("$v".into(), binary)]),
+    )
+    .unwrap();
+    assert_eq!(
+        q(
+            &c,
+            "SELECT v IN (SELECT link FROM docs) AS v FROM binary_lhs"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    q(&c, "CREATE TABLE lhs(n INTEGER)");
+    q(&c, "INSERT INTO lhs VALUES (1),(3)");
+    q(&c, "CREATE TABLE rhs(n)");
+    q(&c, "INSERT INTO rhs VALUES ('1'),('2'),(NULL)");
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n,n IN (SELECT n FROM docs) AS present FROM lhs ORDER BY n"
+        )
+        .rows,
+        q(
+            &c,
+            "SELECT n,n IN (SELECT n FROM rhs) AS present FROM lhs ORDER BY n"
+        )
+        .rows
+    );
+    assert_eq!(
+        q(
+            &c,
+            "WITH v AS (SELECT link FROM docs) SELECT docs:a IN (SELECT link FROM v) AS v"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+}

@@ -599,6 +599,20 @@ mod between_tests {
                 usize::from(!inner.starts_with("between_tick"))
             );
         }
+        c.execute(
+            "CREATE TABLE membership_native(n INTEGER)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO membership_native VALUES (7),(8)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        CALLS.store(0, Ordering::SeqCst);
+        let rows = c.execute("SELECT n IN (SELECT between_tick() FROM scalar_inputs) AS v FROM membership_native ORDER BY n", &crate::Parameters::new()).unwrap().rows;
+        assert_eq!(rows, vec![vec![Value::Integer(1)], vec![Value::Integer(0)]]);
+        assert_eq!(CALLS.load(Ordering::SeqCst), 2);
         for (operator, count) in [("UNION", 1), ("INTERSECT", 1), ("EXCEPT", 0)] {
             CALLS.store(0, Ordering::SeqCst);
             let rows = c.execute(&format!("SELECT type::record('docs',between_tick()) AS id {operator} SELECT type::record('docs',between_tick())"), &crate::Parameters::new()).unwrap().rows;

@@ -476,6 +476,28 @@ impl Scope {
         Ok(())
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        if matches!(expr, Expr::InSelect { .. }) {
+            if let Some((query, consumed)) = self.expression_subqueries.get(&expr.to_string()) {
+                let Expr::InSelect { lhs, not, .. } = expr else {
+                    unreachable!()
+                };
+                self.consumed.borrow_mut().extend(consumed.iter().cloned());
+                let mut value = *lhs.clone();
+                let negate = if *not { "NOT " } else { "" };
+                if self.comparison_key(&mut value)? {
+                    *expr = expression(&format!("{value} {negate}IN {query}"))?;
+                } else if native_column_reference(&value) {
+                    // Preserve native LHS affinity for scalar values; encode its
+                    // BLOB values into the same collision-resistant RHS keys. Share
+                    // one materialized source across both IN branches.
+                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN (SELECT v FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT v FROM __fastdb_in_source) END)"))?;
+                } else {
+                    self.typed(&mut value)?;
+                    *expr = expression(&format!("__fastdb_unwrap({value}) {negate}IN {query}"))?;
+                }
+                return Ok(());
+            }
+        }
         if matches!(expr, Expr::Exists(_)) {
             if let Some((lowered, consumed)) = self.expression_subqueries.get(&expr.to_string()) {
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
@@ -2084,11 +2106,20 @@ impl Connection {
         inputs.extend(select.order_by.iter().map(|e| *e.expr.clone()));
         for mut input in inputs {
             turso_core::walk_expr_mut(&mut input, &mut |expr| {
-                if let Expr::Subquery(inner) | Expr::Exists(inner) = &*expr {
+                if let Expr::Subquery(inner)
+                | Expr::Exists(inner)
+                | Expr::InSelect { rhs: inner, .. } = &*expr
+                {
+                    let membership = matches!(expr, Expr::InSelect { .. });
+                    let control = if membership {
+                        turso_core::WalkControl::Continue
+                    } else {
+                        turso_core::WalkControl::SkipChildren
+                    };
                     if subquery_error.is_some()
                         || expression_subqueries.contains_key(&expr.to_string())
                     {
-                        return Ok(turso_core::WalkControl::SkipChildren);
+                        return Ok(control);
                     }
                     let exists = matches!(expr, Expr::Exists(_));
                     let result = (|| -> Result<()> {
@@ -2122,6 +2153,8 @@ impl Connection {
                                     "EXISTS ({})",
                                     sql.trim().trim_end_matches(';')
                                 ))?
+                            } else if membership {
+                                expression(&format!("(WITH __fastdb_members(v) AS ({}) SELECT __fastdb_unwrap({output}) FROM __fastdb_members)", sql.trim().trim_end_matches(';')))?
                             } else {
                                 expression(&format!(
                             "(WITH __fastdb_scalar_result(v) AS ({}) SELECT {output} FROM __fastdb_scalar_result)",
@@ -2136,7 +2169,7 @@ impl Connection {
                     if let Err(error) = result {
                         subquery_error = Some(error);
                     }
-                    return Ok(turso_core::WalkControl::SkipChildren);
+                    return Ok(control);
                 }
                 Ok(turso_core::WalkControl::Continue)
             })?;

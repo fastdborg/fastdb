@@ -651,3 +651,9 @@ This is initial uncorrelated coverage. Correlated collection references, EXISTS/
 ## Initial collection EXISTS subqueries (2026-09-07)
 
 EXISTS and NOT EXISTS now lower supported uncorrelated collection/logical-CTE SELECT sources inside outer SELECT expressions. They return native SQL integer 0/1, test row existence independently of projected types, and accept multiple projected columns. The inner WHERE, GROUP BY/HAVING, compound operators and LIMIT/OFFSET remain part of the engine query. Parameters and earlier CTE references share the statement scope. Collection and native INSERT SELECT sources can use these results. FETCH remains rejected in expression subqueries. Correlation, IN subqueries, native-only inner SELECTs within logical expressions and broader cross-clause/resource qualification remain open.
+
+## Initial collection IN subqueries (2026-09-07)
+
+IN/NOT IN now accept supported uncorrelated one-column collection/logical-CTE SELECT sources. Both sides use the existing scalar/record comparison keys, preserving record versus binary identity, integer versus string record keys and SQL numeric equality. SQL NULL and empty-set membership behavior is retained. Native left column affinity is preserved for scalar values, with binary values converted to binary comparison keys; those branches share one materialized source to avoid reevaluating volatile RHS projections. Parameters, earlier CTE references, scalar subqueries on the left and collection INSERT SELECT filtering are covered. Results are native SQL integer 0/1 or NULL.
+
+Correlated collection sources, native-only RHS queries within logical expressions, row-value membership, composite equality, broader collation/window/write-source coverage and resource/platform qualification remain open. FETCH and multiple RHS result columns remain rejected.
