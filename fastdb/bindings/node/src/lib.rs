@@ -24,6 +24,37 @@ pub fn interrupt_connection(key: String) -> bool {
 fn error(error: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(error.to_string())
 }
+/// Standalone typed construction; no database connection is opened.
+#[napi]
+pub fn vector_from_components(
+    encoding: String,
+    components: napi::bindgen_prelude::Buffer,
+) -> napi::Result<napi::bindgen_prelude::Buffer> {
+    if components.is_empty() || components.len() % 8 != 0 || components.len() > 65_536 * 8 {
+        return Err(error("vector components require 1..65536 binary64 values"));
+    }
+    let values = components
+        .chunks_exact(8)
+        .map(|bytes| f64::from_le_bytes(bytes.try_into().expect("binary64 width")))
+        .collect::<Vec<_>>();
+    let value = if encoding == "float64" {
+        fastdb::Value::vector64(&values)
+    } else {
+        let values = values.iter().map(|value| *value as f32).collect::<Vec<_>>();
+        match encoding.as_str() {
+            "float32" => fastdb::Value::vector32(&values),
+            "sparse32" => fastdb::Value::vector32_sparse(&values),
+            "quantized8" => fastdb::Value::vector8(&values),
+            "bit1" => fastdb::Value::vector1bit(&values),
+            _ => return Err(error("unknown vector encoding")),
+        }
+    }
+    .map_err(error)?;
+    let fastdb::Value::Vector(bytes) = value else {
+        unreachable!("typed vector constructor")
+    };
+    Ok(bytes.into())
+}
 #[napi]
 pub struct NativeDatabase {
     interrupt_key: u64,

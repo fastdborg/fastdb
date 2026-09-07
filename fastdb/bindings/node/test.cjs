@@ -387,3 +387,42 @@ test('typed VALUES CTEs preserve mixed values and atomic inserts in both clients
     } finally { await db.close(); }
   }
 });
+
+test('vector factories match native encodings and work in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const factories = [['float32','vector32'],['float64','vector64'],['sparse32','vector32_sparse'],['quantized8','vector8'],['bit1','vector1bit']];
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE points');
+      for (const [factory, sql] of factories) {
+        for (const values of [[1,0,-1], new Float32Array([0.1,0.2,0.3]), new Float64Array([2.5,2.5,2.5]), new Array(9).fill(0)]) {
+          const vector = Vector[factory](values);
+          assert(vector instanceof Vector);
+          const text = JSON.stringify(Array.from(values));
+          const native = await db.exactlyOne(`SELECT ${sql}($text)`, {$text:text});
+          assert.deepEqual(vector.bytes, native[0]);
+          await db.execute('INSERT INTO points(v) VALUES ($v)', {$v:vector});
+          assert.deepEqual((await db.exactlyOne('SELECT $v AS v', {$v:vector}))[0], vector);
+        }
+      }
+      assert.equal((await db.checkCollectionIntegrity('points')).documents, 20n);
+    } finally { await db.close(); }
+  }
+  for (const [factory] of factories) {
+    for (const input of [[], new Float64Array(65537)]) assert.throws(() => Vector[factory](input), RangeError);
+    for (const input of [[NaN],[Infinity],[-Infinity],[1n],['1'],[undefined],new Array(2), new Uint8Array([1])]) assert.throws(() => Vector[factory](input), TypeError);
+    assert(Vector[factory](new Float32Array(65536)) instanceof Vector);
+  }
+  assert.throws(() => Vector.float32([Number.MAX_VALUE]), RangeError);
+  assert(Vector.float64([Number.MAX_VALUE]) instanceof Vector);
+  assert(Object.is(Vector.float32([-0]).bytes.readFloatLE(), -0));
+  assert(Object.is(Vector.float64([-0]).bytes.readDoubleLE(), -0));
+  const input = [1,2,3]; const vector = Vector.float32(input); input[0] = 99;
+  assert.equal(vector.bytes.readFloatLE(0), 1);
+  const { vectorFromComponents } = require('./fastdb.node');
+  for (const bytes of [Buffer.alloc(0),Buffer.alloc(7),Buffer.alloc(65537*8)]) assert.throws(() => vectorFromComponents('float32', bytes));
+  assert.throws(() => vectorFromComponents('unknown', Buffer.alloc(8)));
+  const invalid = Buffer.alloc(8); invalid.writeDoubleLE(NaN);
+  for (const [factory] of factories) assert.throws(() => vectorFromComponents(factory, invalid));
+});

@@ -1,5 +1,5 @@
 'use strict';
-const { NativeDatabase, interruptConnection } = require('./fastdb.node');
+const { NativeDatabase, interruptConnection, vectorFromComponents } = require('./fastdb.node');
 class Record {
   constructor(table, key) {
     if (typeof table !== 'string' || !['string','bigint'].includes(typeof key)) throw new TypeError('Record requires a table and string or bigint key');
@@ -8,10 +8,29 @@ class Record {
   }
 }
 class Vector {
+  static float32(values) { return constructVector('float32', values); }
+  static float64(values) { return constructVector('float64', values); }
+  static sparse32(values) { return constructVector('sparse32', values); }
+  static quantized8(values) { return constructVector('quantized8', values); }
+  static bit1(values) { return constructVector('bit1', values); }
   constructor(bytes) {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Vector requires encoded bytes');
     this.bytes = Buffer.from(bytes);
   }
+}
+function constructVector(encoding, values) {
+  if (!Array.isArray(values) && !(values instanceof Float32Array) && !(values instanceof Float64Array)) {
+    throw new TypeError('vector components require a number array, Float32Array or Float64Array');
+  }
+  if (values.length < 1 || values.length > 65536) throw new RangeError('vector dimensions must be 1..65536');
+  const bytes = Buffer.alloc(values.length * 8);
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError('vector components must be finite numbers');
+    if (encoding !== 'float64' && !Number.isFinite(Math.fround(value))) throw new RangeError('vector component is outside the finite float32 range');
+    bytes.writeDoubleLE(value, i * 8);
+  }
+  return new Vector(vectorFromComponents(encoding, bytes));
 }
 function encode(value, depth = 0) {
   if (depth > 64) throw new RangeError('value nesting exceeds 64');

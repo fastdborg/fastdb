@@ -121,3 +121,22 @@ console.log(audit.documents, audit.indexEntries);
 ```
 
 The audit checks typed IDs, validation and index entry consistency in one snapshot, without repairing data. FDB_LIMIT returns no partial report; native errors include transaction observations. Limits do not bound engine allocations or time. It is not physical page/B-tree verification or a complete corruption-recovery tool. Async queue, close and connection-wide interruption behavior are unchanged.
+
+## Constructing typed vectors
+
+Vector factories work without opening a database and produce values accepted by either client:
+
+```js
+const { Vector } = require('@fastdb/node');
+const dense = Vector.float32([1, 0, -1]);
+const precise = Vector.float64(new Float64Array([0.1, 0.2, 0.3]));
+const sparse = Vector.sparse32(new Float32Array([1, 0, -1]));
+const quantized = Vector.quantized8([1, 0, -1]);
+const bits = Vector.bit1([1, 0, -1]);
+```
+
+All five accept number arrays (including readonly arrays in TypeScript), Float32Array or Float64Array. Sparse, quantized and bit factories also take dense components. Inputs must contain 1–65,536 finite numbers. float64 retains binary64 inputs; the other factories first convert to float32 and reject overflow to infinity. Quantized and bit conversion are lossy. Inputs are copied, and factories run synchronously even when their results will be used with AsyncDatabase.
+
+The native adapter uses the Rust Value constructors and validates conversion output. JavaScript passes a bounded binary64 buffer, preserving floating-point inputs without JSON number conversion. Invalid container/component types throw TypeError; invalid dimensions and float32 overflow throw RangeError. Native conversion/validation failures throw ordinary native errors without transaction observations because construction opens no connection. `new Vector(encodedBytes)` retains its existing encoded-byte path; binding that value still validates the encoding.
+
+The installed-package smoke exercises all five factories through both clients and type-checks VectorComponents, readonly numeric arrays and rejection of bigint components.

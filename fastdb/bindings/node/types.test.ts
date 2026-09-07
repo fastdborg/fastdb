@@ -60,3 +60,9 @@ async function auditAsync(db: AsyncDatabase) {
   void bytes;
 }
 void auditCount; void auditAsync;
+const factories: Vector[] = [Vector.float32([1,0,-1] as const), Vector.float64(new Float64Array([1])), Vector.sparse32(new Float32Array([1])), Vector.quantized8([1]), Vector.bit1([1])];
+void factories;
+// @ts-expect-error vector components require numbers
+Vector.float32([1n]);
+// @ts-expect-error encoded bytes use the Vector constructor
+Vector.sparse32(new Uint8Array([1]));

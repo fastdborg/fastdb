@@ -1,5 +1,14 @@
 export class Record { readonly table: string; readonly key: string | bigint; constructor(table: string, key: string | bigint); }
-export class Vector { readonly bytes: Uint8Array; constructor(bytes: Uint8Array); }
+export type VectorComponents = readonly number[] | Float32Array | Float64Array;
+export class Vector {
+  readonly bytes: Uint8Array;
+  constructor(bytes: Uint8Array);
+  static float32(values: VectorComponents): Vector;
+  static float64(values: VectorComponents): Vector;
+  static sparse32(values: VectorComponents): Vector;
+  static quantized8(values: VectorComponents): Vector;
+  static bit1(values: VectorComponents): Vector;
+}
 export type Value = null | boolean | string | bigint | number | Uint8Array | Record | Vector | Value[] | { [field: string]: Value };
 export interface Parameters { [name: string]: Value; }
 export interface Transaction { before: 'autocommit' | 'active'; after: 'autocommit' | 'active'; }
