@@ -511,3 +511,57 @@ fn mixed_qualified_native_column_labels_match_source_metadata() {
         }
     }
 }
+
+#[test]
+fn duplicate_native_cte_parameters_preserve_binary_nulls_and_writes() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE copied(a,b)");
+    for (first, second) in [
+        (
+            Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec()),
+            Value::Null,
+        ),
+        (Value::Null, Value::Binary(vec![0, 255, 49])),
+    ] {
+        let params = Parameters::from([
+            ("$first".into(), first.clone()),
+            ("$second".into(), second.clone()),
+        ]);
+        let prefix = "WITH seed(x,x) AS MATERIALIZED (SELECT $first,$second), q AS (SELECT seed.* FROM seed)";
+        for predicate in ["d.n=1", "d.n>2"] {
+            let query = |source: &str| {
+                format!("{prefix} SELECT v.* FROM {source} d JOIN q v ON 1 WHERE {predicate}")
+            };
+            let expected = c.execute(&query("baseline"), &params).unwrap();
+            let sql = query("docs");
+            let actual = c.execute(&sql, &params).unwrap();
+            assert_eq!(actual.columns, expected.columns);
+            assert_eq!(actual.rows, expected.rows);
+            assert_eq!(
+                c.profile_select(&sql, &params).unwrap().result.rows,
+                expected.rows
+            );
+            if predicate == "d.n=1" {
+                assert_eq!(actual.rows, vec![vec![first.clone(), second.clone()]]);
+            } else {
+                assert!(actual.rows.is_empty());
+            }
+        }
+        q(&c, "BEGIN");
+        c.execute(
+            &format!(
+                "{prefix} INSERT INTO copied SELECT v.* FROM docs d JOIN q v ON 1 WHERE d.n=1"
+            ),
+            &params,
+        )
+        .unwrap();
+        assert_eq!(
+            q(&c, "SELECT * FROM copied").rows,
+            vec![vec![first, second]]
+        );
+        q(&c, "ROLLBACK");
+        assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
+    }
+}

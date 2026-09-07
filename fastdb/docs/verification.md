@@ -2262,3 +2262,6 @@ Direct qualified native columns in mixed queries now use their source metadata s
 A separate probe found normalized expression-label spacing: +v.original reports '+ v.original' in logical queries versus '+v.original' in the native baseline. That expression formatting gap remains open; this fix handles direct source-column labels.
 
 The complete fastdb/scripts/check.sh run passed formatting, Clippy, 432 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-column-labels-check.log. Full V1 release qualification remains incomplete.
+
+
+Duplicate native CTE binary/NULL qualification (2026-09-08): a focused regression passes for both binary/NULL position orders through an explicitly named duplicate-column MATERIALIZED seed and a chained native CTE in a collection join. An FDB-prefixed binary payload remains raw bytes. Explicit expected values and native differential results cover normal/profiled execution, empty-result names, native-table INSERT SELECT and rollback. Production code is unchanged; formatting and the focused test pass. Latest full scoped evidence remains 432 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains open.
