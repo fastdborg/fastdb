@@ -21,9 +21,17 @@ impl Source {
     fn typed_field(&self, path: &[String]) -> bool {
         self.collection.is_some()
             || self.derived.as_ref().is_some_and(|columns| {
-                columns
+                let position = columns
                     .iter()
-                    .any(|(name, typed)| *typed && name.eq_ignore_ascii_case(&path[0]))
+                    .position(|(name, _)| name.eq_ignore_ascii_case(&path[0]))
+                    .or_else(|| {
+                        self.derived_physical.as_ref().and_then(|names| {
+                            names
+                                .iter()
+                                .position(|name| name.eq_ignore_ascii_case(&path[0]))
+                        })
+                    });
+                position.is_some_and(|i| columns[i].1)
             })
     }
 }
@@ -1593,6 +1601,26 @@ fn anonymous_source_alias(from: &FromClause, position: usize) -> String {
         candidate.push('_');
     }
 }
+fn derived_physical_names(names: &[String]) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            if seen.insert(name.to_ascii_lowercase()) {
+                name.clone()
+            } else {
+                let mut private = format!("__fastdb_derived_column_{i}");
+                while names.iter().any(|name| name.eq_ignore_ascii_case(&private))
+                    || !seen.insert(private.to_ascii_lowercase())
+                {
+                    private.push('_');
+                }
+                private
+            }
+        })
+        .collect()
+}
 fn source(
     connection: &Connection,
     table: &SelectTable,
@@ -1622,20 +1650,11 @@ fn source(
             if plan.fetched.iter().any(|f| *f) {
                 return Err(unsupported("fetched derived projections"));
             }
-            let mut names = std::collections::BTreeSet::new();
-            if plan
-                .names
-                .iter()
-                .any(|name| !names.insert(name.to_ascii_lowercase()))
-            {
-                return Err(unsupported("duplicate derived projection names"));
-            }
-            // Lowering may use private output aliases (for example DISTINCT).
-            // Give the derived relation its public names by position without
-            // changing references inside the lowered query.
+            let physical = derived_physical_names(&plan.names);
+            // Preserve public names and logical types separately from the
+            // unique runtime names used to address every projected position.
             let lowered = plan.command.to_string();
-            let columns = plan
-                .names
+            let columns = physical
                 .iter()
                 .map(|name| quote(name))
                 .collect::<Vec<_>>()
@@ -1653,7 +1672,7 @@ fn source(
                 collection: None,
                 derived: Some(plan.names.into_iter().zip(plan.typed).collect()),
                 derived_logical: true,
-                derived_physical: None,
+                derived_physical: Some(physical),
                 native_collations: Default::default(),
                 native_expression_collations: Default::default(),
                 consumed: plan.consumed,
@@ -1748,26 +1767,12 @@ fn source(
         // A name-based star expansion cannot address later duplicate columns.
         // Preserve the first public name for ordinary lookup and assign private
         // names to subsequent positions through a CTE column list.
-        let mut seen = std::collections::BTreeSet::new();
-        let physical: Vec<String> = columns
-            .iter()
-            .enumerate()
-            .map(|(i, (name, _))| {
-                if seen.insert(name.to_ascii_lowercase()) {
-                    name.clone()
-                } else {
-                    let mut private = format!("__fastdb_derived_column_{i}");
-                    while columns
-                        .iter()
-                        .any(|(name, _)| name.eq_ignore_ascii_case(&private))
-                        || !seen.insert(private.to_ascii_lowercase())
-                    {
-                        private.push('_');
-                    }
-                    private
-                }
-            })
-            .collect();
+        let physical = derived_physical_names(
+            &columns
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>(),
+        );
         let renamed = physical.iter().zip(&columns).any(|(a, (b, _))| a != b);
         let runtime_select = if renamed {
             let names = physical

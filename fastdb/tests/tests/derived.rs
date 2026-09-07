@@ -152,7 +152,6 @@ fn derived_write_sources_validate_and_keep_unsupported_forms_guarded() {
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT * FROM native").rows.is_empty());
     for sql in [
-        "SELECT q.* FROM (SELECT n,n FROM docs) q",
         "SELECT q.* FROM (SELECT record::fetch(ref) AS target FROM docs) q",
         "SELECT q.* FROM (SELECT '__fastdb_pack'(n) FROM docs) q",
         "SELECT q.* FROM (SELECT * FROM '__fastdb_catalog') q",
@@ -1232,4 +1231,59 @@ fn duplicate_public_projection_names_preserve_positions_and_ordering() {
             vec![Value::Boolean(false), Value::Binary(vec![49])],
         ]
     );
+}
+
+#[test]
+fn duplicate_logical_derived_names_preserve_types_and_first_lookup() {
+    let (_db, c) = setup();
+    for projection in [
+        "flag AS x,data AS X",
+        "data AS x,flag AS X",
+        "n+0 AS x,flag AS X",
+        "flag AS x,n+0 AS X",
+    ] {
+        let expected = q(&c, &format!("SELECT {projection} FROM docs ORDER BY n"));
+        for wrapper in [
+            format!("SELECT q.* FROM (SELECT {projection} FROM docs ORDER BY n) q"),
+            format!(
+                "SELECT r.* FROM (SELECT q.* FROM (SELECT {projection} FROM docs ORDER BY n) q) r"
+            ),
+        ] {
+            let actual = q(&c, &wrapper);
+            assert_eq!(actual.columns, expected.columns, "{wrapper}");
+            assert_eq!(actual.rows, expected.rows, "{wrapper}");
+            assert_eq!(
+                c.profile_select(&wrapper, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows
+            );
+        }
+        let first = q(
+            &c,
+            &format!("SELECT q.X FROM (SELECT {projection} FROM docs ORDER BY n) q"),
+        );
+        assert_eq!(
+            first.rows,
+            expected
+                .rows
+                .into_iter()
+                .map(|row| vec![row[0].clone()])
+                .collect::<Vec<_>>()
+        );
+    }
+    q(&c, "CREATE TABLE copied");
+    q(&c, "DEFINE FIELD flag ON copied TYPE boolean");
+    q(&c, "BEGIN");
+    q(
+        &c,
+        "INSERT INTO copied(flag,data) SELECT q.* FROM (SELECT flag AS x,data AS x FROM docs) q",
+    );
+    assert_eq!(
+        q(&c, "SELECT flag,data FROM copied ORDER BY flag").rows,
+        q(&c, "SELECT flag,data FROM docs ORDER BY flag").rows
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
 }

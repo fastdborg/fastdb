@@ -1953,3 +1953,10 @@ Scoped verification passed formatting, Clippy and 426 Rust tests (one existing i
 
 
 CLI duplicate-name result qualification (2026-09-08): a real-process regression passes in both --script and --line modes. JSON preserves duplicate column names and positional tagged boolean/binary/integer values, distinct native-derived star positions, empty-result column metadata and autocommit observations. No serialization code change was needed. The focused CLI test and formatting pass; latest broader scoped evidence remains 426 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains open.
+
+
+## Duplicate logical derived projections (2026-09-08)
+
+Logical derived sources now accept duplicate projection names. Shared internal-name allocation preserves every projected position through stars and nesting while public names remain intact. Type resolution uses the first matching public column, or the corresponding private column position, rather than treating a later typed duplicate as the first column's type. Regressions cover both boolean/binary orders, mixed native-scalar/logical values, case-insensitive first-name lookup, nested stars, profiling, validated collection INSERT SELECT and rollback. Both Node clients preserve nested typed results. Duplicate CTE output names and fetched derived projections remain separate restrictions.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 428 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-logical-duplicates-check.log. The local Node addon is rebuilt debug output. Full V1 release qualification remains incomplete.
