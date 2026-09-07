@@ -2796,3 +2796,81 @@ fn unsorted_correlated_distinct_exhausts_logical_values() {
         }
     }
 }
+
+#[test]
+fn source_sorted_distinct_bound_pages_and_writes_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "INSERT INTO native VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(10),(10.0),(20),(20.0)",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    let source = "SELECT DISTINCT CASE WHEN d.n>0 THEN n+d.n ELSE d.n END AS x FROM lookup ORDER BY n LIMIT $limit OFFSET $offset";
+    for limit in [0, 1, -1] {
+        for offset in [0, 1, 2, 4] {
+            for real in [false, true] {
+                let value = |n| {
+                    if real {
+                        Value::Number(n as f64)
+                    } else {
+                        Value::Integer(n)
+                    }
+                };
+                let params = Parameters::from([
+                    ("$limit".into(), value(limit)),
+                    ("$offset".into(), value(offset)),
+                ]);
+                for expr in [
+                    format!("({source})"),
+                    format!("21 IN ({source})"),
+                    format!("EXISTS ({source})"),
+                ] {
+                    let native = format!("SELECT {expr} FROM native d ORDER BY d.n")
+                        .replace("$limit", &limit.to_string())
+                        .replace("$offset", &offset.to_string());
+                    let expected = q(&c, &native).rows;
+                    let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+                    assert_eq!(
+                        c.execute(&sql, &params).unwrap().rows,
+                        expected,
+                        "{sql}: {params:?}"
+                    );
+                    assert_eq!(
+                        c.profile_select(&sql, &params).unwrap().result.rows,
+                        expected,
+                        "profile {sql}: {params:?}"
+                    );
+                }
+            }
+        }
+    }
+    let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+    q(&c, "BEGIN");
+    let result = c
+        .execute(
+            &format!("UPDATE docs AS d SET n=({source}) RETURNING n"),
+            &Parameters::from([
+                ("$limit".into(), Value::Integer(1)),
+                ("$offset".into(), Value::Integer(1)),
+            ]),
+        )
+        .unwrap();
+    assert_eq!(result.affected, 2);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(21)], vec![Value::Integer(22)]]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+}

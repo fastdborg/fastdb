@@ -1497,3 +1497,6 @@ Single-column correlated typed DISTINCT now uses logical-value grouping even whe
 Native differential scalar/membership tests now cover ascending and descending source-column ordering with numeric equivalents and duplicate NULLs. An unordered scalar/IN/EXISTS regression checks exhaustion after all three logical values through execute and profile_select without asserting an unspecified row order. Broader correlation, collation/type/resource qualification and full V1 remain open.
 
 Verification: the complete scoped check passed 332 Rust tests, 42 Node/application tests, formatting, Clippy and strict TypeScript. One known trigger-interruption gate remains ignored. No upstream core files changed.
+
+
+Correlated source-sorted DISTINCT qualification (2026-09-07): a native differential matrix verifies integer and integral-real LIMIT/OFFSET bindings across scalar, IN and EXISTS consumers, including zero/unbounded limits and exhausted pages through execute/profile_select. A multirow UPDATE skips duplicate numeric equivalents, stores the expected values, retains managed-index integrity and restores the original records on explicit rollback. The focused regression, formatting and focused Clippy pass. This adds one test after the latest complete 332-Rust/42-Node run; broader V1 qualification remains open.
