@@ -709,6 +709,11 @@ fn closed_derived_sources_preserve_group_alias_precedence() {
         "SELECT 0 AS m,count(*) AS total FROM (SELECT n FROM docs) JOIN labels ON n=m GROUP BY m ORDER BY total",
         "SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) JOIN labels ON n=m GROUP BY n ORDER BY total",
         "SELECT n%2 AS parity,count(*) AS total FROM (SELECT n FROM docs) GROUP BY parity ORDER BY parity",
+        "SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) GROUP BY n HAVING n=0 ORDER BY total",
+        "SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) GROUP BY n HAVING n=1 ORDER BY total",
+        "SELECT count(*) AS n FROM (SELECT n FROM docs) HAVING n=2",
+        "SELECT count(*) AS n FROM (SELECT n FROM docs) HAVING abs(n)=2",
+
     ] {
         let expected = q(&c, &sql.replace("FROM docs", "FROM baseline")).rows;
         assert_eq!(q(&c, sql).rows, expected, "{sql}");

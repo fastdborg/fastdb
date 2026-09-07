@@ -2042,3 +2042,6 @@ The complete scoped check passed formatting, Clippy, 413 Rust tests, 45 Node/app
 
 
 Grouped alias write atomicity qualification (2026-09-08): a new regression exercises INSERT SELECT with two distinct derived source groups projecting the same unique collection key. Statement failure restores prior transaction rows; a filtered retry succeeds. Direct managed-index lookup confirms the retry entry exists and disappears on outer rollback, and the key can be inserted again afterward. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 413 Rust/45 Node tests; this adds one focused test after that run. Broader write/scope/resource and full V1 release gates remain open.
+
+
+Closed-source HAVING alias qualification (2026-09-08): expanded the native-reference derived-source matrix with HAVING predicates colliding with projected constant and aggregate names, including an aggregate alias inside abs(). Execute/profile match the pinned native results. This preserves evidence that HAVING alias precedence differs from the source-column rule used by WHERE, JOIN ON and GROUP BY; no production change was needed. The expanded focused test, formatting and focused Clippy pass. Latest complete scoped evidence remains 413 Rust/45 Node tests; broader aliases, writes, resources and full V1 release gates remain open.
