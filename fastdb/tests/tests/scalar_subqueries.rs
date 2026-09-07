@@ -4330,3 +4330,45 @@ fn scalar_paginated_assignments_preserve_atomicity() {
         vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn scalar_pagination_rejects_nonnumeric_values_and_retries() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1}");
+    q(&c, "INSERT INTO docs {n:2}");
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        let sql = format!(
+            "SELECT (SELECT array::new(d.n) LIMIT $limit OFFSET $offset) FROM {source} ORDER BY n"
+        );
+        let valid = Parameters::from([
+            ("$limit".into(), Value::Integer(1)),
+            ("$offset".into(), Value::Integer(0)),
+        ]);
+        let expected = vec![
+            vec![Value::Array(vec![Value::Integer(1)])],
+            vec![Value::Array(vec![Value::Integer(2)])],
+        ];
+        for name in ["$limit", "$offset"] {
+            for value in [
+                Value::Null,
+                Value::String("invalid".into()),
+                Value::Binary(b"FDB\x01payload".to_vec()),
+            ] {
+                let mut params = valid.clone();
+                params.insert(name.into(), value);
+                assert!(c.execute(&sql, &params).is_err(), "{sql}: {params:?}");
+                assert!(
+                    c.profile_select(&sql, &params).is_err(),
+                    "{sql}: {params:?}"
+                );
+                assert_eq!(c.execute(&sql, &valid).unwrap().rows, expected);
+                assert_eq!(
+                    c.profile_select(&sql, &valid).unwrap().result.rows,
+                    expected
+                );
+            }
+        }
+    }
+}
