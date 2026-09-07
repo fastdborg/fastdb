@@ -1593,3 +1593,6 @@ Collection-reading pagination evaluation qualification (2026-09-08): the callbac
 Removed numeric-to-integer expression substitution from logical source-free pagination. It incorrectly changed typeof(Number(1.0)) and therefore CASE-based LIMIT results. Counter isolation now provides per-invocation reset without replacing parameter values; missing-binding validation remains. Direct/derived execute/profile regressions distinguish integer and real bindings.
 
 The complete scoped check passed formatting, Clippy, 395 Rust tests, 44 Node/application tests and strict TypeScript, including direct/numeric/positional pagination, rejection/retry, recent predicate/aggregate pagination and callback counts. One known trigger-cancellation gate remains ignored. No upstream files changed; native correlation conversion and broader type/scope/resource qualification remain open. Full V1 remains incomplete.
+
+
+Type-sensitive OFFSET qualification (2026-09-08): expanded the pagination parameter-type regression with CASE/typeof in OFFSET as well as LIMIT. Integer and real bindings choose the expected include/exclude branches for direct/derived sources through execute/profile. The expanded focused test, package formatting and focused Clippy pass. Latest combined evidence remains 395 Rust/44 Node tests; broader type/scope/resource and full V1 gates remain open.

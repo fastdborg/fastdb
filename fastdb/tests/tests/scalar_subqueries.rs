@@ -4470,26 +4470,33 @@ fn scalar_pagination_preserves_numeric_expression_types() {
                     Value::Integer(1)
                 },
             )]);
-            let sql = format!("SELECT (SELECT array::new(d.n) LIMIT CASE WHEN typeof($limit)='real' THEN 1 ELSE 0 END) FROM {source} ORDER BY n");
-            let expected = (1..=2)
-                .map(|n| {
-                    vec![if numeric {
-                        Value::Array(vec![Value::Integer(n)])
-                    } else {
-                        Value::Null
-                    }]
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                c.execute(&sql, &params).unwrap().rows,
-                expected,
-                "{sql}: {params:?}"
-            );
-            assert_eq!(
-                c.profile_select(&sql, &params).unwrap().result.rows,
-                expected,
-                "{sql}: {params:?}"
-            );
+            for pagination in [
+                "LIMIT CASE WHEN typeof($limit)='real' THEN 1 ELSE 0 END",
+                "LIMIT 1 OFFSET CASE WHEN typeof($limit)='real' THEN 0 ELSE 1 END",
+            ] {
+                let sql = format!(
+                    "SELECT (SELECT array::new(d.n) {pagination}) FROM {source} ORDER BY n"
+                );
+                let expected = (1..=2)
+                    .map(|n| {
+                        vec![if numeric {
+                            Value::Array(vec![Value::Integer(n)])
+                        } else {
+                            Value::Null
+                        }]
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    c.execute(&sql, &params).unwrap().rows,
+                    expected,
+                    "{sql}: {params:?}"
+                );
+                assert_eq!(
+                    c.profile_select(&sql, &params).unwrap().result.rows,
+                    expected,
+                    "{sql}: {params:?}"
+                );
+            }
         }
     }
 }
