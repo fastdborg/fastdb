@@ -1308,3 +1308,6 @@ Node composite COUNT qualification (2026-09-07): both clients count stored array
 
 
 Installed composite COUNT qualification (2026-09-07): the offline package consumer now checks plain composite/null/missing counts, typed object parameters, FILTER helper evaluation, cumulative windows and profile results through synchronous and worker clients inside rollback-scoped fixtures. Runtime and declaration checks passed on Linux x64 / Node 24.19.0: eight files, 59,805,933 packed bytes. The addon is the build from the preceding combined COUNT implementation check. No publishing occurred; broader platform, composite DISTINCT and full V1 gates remain open.
+
+
+COUNT contract clarification (2026-09-07): contracts.md now records non-DISTINCT COUNT null-presence behavior for composite values, parameters, filters, windows and grouped writes. Its existing Scalar DISTINCT section explicitly leaves generic array/object/vector equality unsupported in V1. Recent notes calling composite COUNT DISTINCT “open” describe an unsupported form, not an added standalone release requirement; no equality semantics or V1 scope have been changed. The remaining SQL/type/resource and release gates still apply. This documentation change was checked against the implementation and the preceding COUNT tests.

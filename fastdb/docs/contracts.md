@@ -173,6 +173,15 @@ The same path expansion applies to SQL-shaped write expressions/predicates, INSE
 Collection expression labels restore public namespace function names and dotted qualified paths from the internal AST representation. Conversion applies to function tokens, not substrings inside string literals or quoted field names. A deep expression such as `upper(u.profile.address.city)` therefore exposes a normalized dotted expression label rather than an internal path function. SELECT and RETURNING use the same naming path. Explicit AS aliases remain the recommended stable application-facing labels; normalized whitespace and identifier quoting are not a promise to reproduce the submitted SQL text byte-for-byte.
 
 
+## COUNT and composite values
+
+In collection queries, non-DISTINCT `COUNT(expression)` counts any supported non-null value, including arrays, objects, records, binary values and vectors. Missing fields behave as null and are excluded; false, empty arrays/objects and empty binary values are present and count. `COUNT(*)` still counts rows. Typed parameters and helper results follow the same null-presence rule.
+
+This also applies to the supported window and grouped INSERT SELECT paths. FILTER excludes a row before evaluating its aggregate argument; an invalid helper input on an included row still raises an error. A failed grouped write follows the normal validation and transaction rules.
+
+`COUNT(DISTINCT expression)` additionally requires the scalar equality rules below. Plain COUNT support does not define generic composite equality or enable composite DISTINCT. Use a scalar projection when distinctness is required.
+
+
 ## Scalar DISTINCT
 
 Collection DISTINCT now groups scalar comparison values while retaining an original typed projection as each group's representative. Numeric integer/float equality and boolean 0/1 comparison follow the pinned engine; null and missing projections deduplicate together. Text stays distinct from numbers, record target names compare case-insensitively with typed keys, and binary values retain their own representation. Equivalent rows with different numeric/boolean representations may return any representative; callers needing a fixed type should project an explicit conversion. Explicit scalar COLLATE expressions retain native collation behavior.
