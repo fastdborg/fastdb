@@ -681,3 +681,7 @@ Interruption inside an AFTER INSERT trigger currently surfaces as FDB_BUSY becau
 ## Source-free typed nested SELECTs (2026-09-07)
 
 Source-free nested SELECTs that reference supplied typed parameters or expanded FastQL helpers now enter typed lowering before the native-only early return. Records, booleans, objects, arrays, binary and vectors retain their identities through scalar subqueries, CTEs and aliased derived sources. Nested scalar levels and EXISTS use the same path; source-free record constructors also work as IN sources. Binary-only CTEs and derived tables retain their native path and column labels; binary scalar subqueries explicitly opt into typed lowering. Numbered parameters retain statement-wide indices. Collection INSERT SELECT retains composite values, while ordinary native targets still reject implicit composite scalar conversion. Pure native inner queries and broader correlation/affinity behavior remain separate qualification work.
+
+## Anonymous parameters across nested sources (2026-09-07)
+
+Anonymous `?` placeholders retain statement-wide numbering across outer projections, scalar subqueries and CTE definitions; Rust/Node parameter maps bind them as `?1`, `?2`, and so on. Regression coverage combines scalar, array and encoded-looking binary inputs, then checks missing/unused parameter rejection for collection INSERT SELECT without changing prior transaction work or managed indexes. Supplying the corrected bindings permits retry; outer rollback removes the inserted documents.

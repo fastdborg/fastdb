@@ -505,3 +505,76 @@ fn source_free_subqueries_and_ctes_preserve_typed_parameters_and_helpers() {
         vec![vec![params["$v"].clone()]]
     );
 }
+
+#[test]
+fn nested_anonymous_parameters_retain_statement_indices_and_fail_before_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let a = Value::Array(vec![Value::Integer(7)]);
+    let b = Value::Binary(b"FDB\x01not-json".to_vec());
+    let params = Parameters::from([
+        ("?1".into(), Value::Integer(4)),
+        ("?2".into(), a.clone()),
+        ("?3".into(), b.clone()),
+    ]);
+    assert_eq!(
+        c.execute(
+            "SELECT ? AS n,(SELECT ? AS v) AS a,(SELECT ? AS v) AS b",
+            &params
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::Integer(4), a.clone(), b.clone()]]
+    );
+    let cte_params = Parameters::from([("?1".into(), a.clone()), ("?2".into(), b.clone())]);
+    assert_eq!(
+        c.execute(
+            "WITH chosen AS (SELECT ? AS a) SELECT a,(SELECT ? AS v) AS b FROM chosen",
+            &cte_params
+        )
+        .unwrap()
+        .rows,
+        vec![vec![a.clone(), b]]
+    );
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {n:9}");
+    let prior = q(&c, "SELECT id,n FROM docs").rows;
+    for invalid in [
+        Parameters::from([("?1".into(), Value::Integer(1))]),
+        Parameters::from([
+            ("?1".into(), Value::Integer(1)),
+            ("?2".into(), a.clone()),
+            ("$unused".into(), Value::Boolean(true)),
+        ]),
+    ] {
+        assert!(c
+            .execute(
+                "INSERT INTO docs(n,v) SELECT ? AS n,(SELECT ? AS v) AS v",
+                &invalid
+            )
+            .is_err());
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT id,n FROM docs").rows, prior);
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+    }
+    c.execute(
+        "INSERT INTO docs(n,v) SELECT ? AS n,(SELECT ? AS v) AS v",
+        &Parameters::from([("?1".into(), Value::Integer(1)), ("?2".into(), a.clone())]),
+    )
+    .unwrap();
+    assert_eq!(q(&c, "SELECT v FROM docs WHERE n=1").rows, vec![vec![a]]);
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}
