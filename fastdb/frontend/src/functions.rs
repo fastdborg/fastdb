@@ -1299,33 +1299,54 @@ mod cte_evaluation_tests {
             }
         }
         for outer_limit in ["", " LIMIT 0"] {
-            let sql = format!("SELECT (SELECT array::new(d.n) LIMIT cte_tick() OFFSET cte_tick()-1) FROM docs d ORDER BY n{outer_limit}");
-            let expected = if outer_limit.is_empty() {
-                vec![1, 2, 4]
-                    .into_iter()
-                    .map(|n| vec![Value::Array(vec![Value::Integer(n)])])
-                    .collect::<Vec<_>>()
-            } else {
-                vec![]
-            };
-            let expected_calls = if outer_limit.is_empty() { 6 } else { 0 };
-            CALLS.store(0, Ordering::SeqCst);
-            assert_eq!(c.execute(&sql, &params).unwrap().rows, expected);
-            assert_eq!(
-                CALLS.load(Ordering::SeqCst),
-                expected_calls,
-                "execute {sql}"
-            );
-            CALLS.store(0, Ordering::SeqCst);
-            assert_eq!(
-                c.profile_select(&sql, &params).unwrap().result.rows,
-                expected
-            );
-            assert_eq!(
-                CALLS.load(Ordering::SeqCst),
-                expected_calls,
-                "profile {sql}"
-            );
+            for skipped in [false, true] {
+                let offset = if skipped {
+                    "cte_tick()"
+                } else {
+                    "cte_tick()-1"
+                };
+                let sql = format!("SELECT (SELECT array::new(d.n,cte_tick()) LIMIT cte_tick() OFFSET {offset}) FROM docs d ORDER BY n{outer_limit}");
+                let expected = if outer_limit.is_empty() {
+                    vec![1, 2, 4]
+                        .into_iter()
+                        .map(|n| {
+                            vec![if skipped {
+                                Value::Null
+                            } else {
+                                Value::Array(vec![Value::Integer(n), Value::Integer(1)])
+                            }]
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
+                let expected_calls = if outer_limit.is_empty() {
+                    if skipped {
+                        6
+                    } else {
+                        9
+                    }
+                } else {
+                    0
+                };
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(c.execute(&sql, &params).unwrap().rows, expected);
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    expected_calls,
+                    "execute {sql}"
+                );
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(
+                    c.profile_select(&sql, &params).unwrap().result.rows,
+                    expected
+                );
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    expected_calls,
+                    "profile {sql}"
+                );
+            }
         }
     }
 }

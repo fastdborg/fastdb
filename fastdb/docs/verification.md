@@ -1841,3 +1841,6 @@ Subquery-computed scalar pagination qualification (2026-09-08): the pagination m
 
 
 Scalar pagination evaluation-count qualification (2026-09-08): the test-only callback regression now measures non-deterministic LIMIT and OFFSET expressions in a correlated logical source-free scalar. Each expression runs once per outer row (six total calls over three rows); an outer LIMIT 0 produces zero calls. Execute/profile agree on values and counts, providing evidence against planning-time or duplicate evaluation in this form. The expanded focused unit test, package formatting and frontend lib/test Clippy pass. Latest combined evidence remains 391 Rust/44 Node tests; broader evaluation/resource and full V1 gates remain open.
+
+
+Scalar pagination projection-evaluation qualification (2026-09-08): the callback regression now includes a volatile projected value. Over three outer rows, admitted scalars produce nine calls (LIMIT, OFFSET and projection), while OFFSET-skipped scalars produce six calls (no projection). Outer LIMIT 0 produces none. Execute/profile values and counts pass alongside formatting and frontend lib/test Clippy. Latest complete scoped evidence remains 391 Rust/44 Node tests; broader evaluation/resource and full V1 gates remain open.
