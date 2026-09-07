@@ -983,3 +983,10 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 273 Rust tests, thirty
 The expanded differential test passes 630 query pairs across eight left values (5,040 result cells per route), covering seven LHS forms, five native declarations, three RHS projections, three source predicates and both membership operators. The first run reproduced a CAST TEXT LHS versus unary-plus RHS mismatch. Restoring only LHS affinity was insufficient: the materialized computed RHS also required removal of artificial column affinity. Explicit CAST boundaries and computed RHS unary plus now preserve the tested baseline coercions (`/tmp/fastdb-membership-lhs-retest.log`).
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checking (`/tmp/fastdb-membership-affinity-check.log`). One known trigger-interruption gate remains ignored. No upstream files or dependencies changed. Broader expression/CTE/correlation metadata, volatile evaluation, cancellation and performance qualification remain open; full V1 remains incomplete.
+
+
+## Native membership cancellation checkpoints — 2026-09-07
+
+The focused compound/subquery interruption suite passed with sixteen native IN/NOT IN combinations added to the existing matrix (`/tmp/fastdb-membership-cancel.log`). Each added case interrupts after exactly two or four source callbacks, checks FDB_CANCELLED, transaction state, preserved prior work, intact source and empty target indexes, then retries for exact rows and rolls back explicit transactions. Coverage spans read/insert and autocommit/outer-transaction cases.
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checks (`/tmp/fastdb-membership-cancel-check.log`). One known trigger-interruption gate remains ignored. This extends deterministic checkpoint evidence without qualifying all interruption points, source evaluation frequency or performance. No production/upstream changes; full V1 remains incomplete.

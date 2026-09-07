@@ -707,3 +707,10 @@ Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests
 The native membership lowering now restores CAST affinity on both operands and removes the artificial column affinity introduced when materializing a computed RHS. The expanded differential matrix covers seven LHS forms (field, unary plus, parentheses, three explicit collations and CAST TEXT), eight scalar/NULL/trailing-space values, five RHS declarations, three RHS projections, three source predicates and IN/NOT IN. This closes a reproduced CAST TEXT versus unary-plus RHS coercion mismatch. Broader computed/CTE/correlated metadata, volatile evaluation and planner/resource qualification remain open.
 
 Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checks. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Native membership cancellation checkpoints (2026-09-07)
+
+The deterministic source-interruption matrix now includes native IN/NOT IN sources in logical queries. Sixteen added combinations cover reads/inserts, autocommit/explicit transactions and cancellation after two/four scalar source callbacks. Checks require FDB_CANCELLED, exact callback counts, preserved prior work/source documents, empty target/index state, exact retry rows and rollback. This tests selected engine-progress checkpoints, not all instruction boundaries or volatile evaluation equivalence.
+
+Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checks. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

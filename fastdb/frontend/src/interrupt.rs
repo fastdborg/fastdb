@@ -818,6 +818,8 @@ mod tests {
             "EXCEPT",
             "IN",
             "NOT IN",
+            "NATIVE IN",
+            "NATIVE NOT IN",
             "EXISTS",
             "SCALAR",
             "LIMIT",
@@ -831,7 +833,7 @@ mod tests {
             let expected = match operator {
                 "INTERSECT" => vec![],
                 "EXCEPT" | "IN" | "NOT IN" | "EXISTS" | "SCALAR" | "LIMIT" | "OFFSET"
-                | "UNION LIMIT" | "UNION OFFSET" => vec![1, 2, 3],
+                | "UNION LIMIT" | "UNION OFFSET" | "NATIVE IN" | "NATIVE NOT IN" => vec![1, 2, 3],
                 _ => vec![1, 2, 3, 11, 12, 13],
             };
             for after in [2, 4] {
@@ -853,6 +855,8 @@ mod tests {
                         c.engine._free_extension_ctx(api);
                         assert_eq!(code, ResultCode::OK);
                     }
+                    q(&c, "CREATE TABLE native_source(value INTEGER)");
+                    q(&c, "INSERT INTO native_source VALUES (1),(2),(3)");
                     q(&c, "CREATE TABLE docs");
                     q(&c, "CREATE TABLE copied");
                     q(&c, "CREATE UNIQUE INDEX copied_value ON copied(value)");
@@ -870,6 +874,8 @@ mod tests {
                         ""
                     };
                     let source = match operator {
+                        "NATIVE IN" => "SELECT value FROM docs WHERE value IN (SELECT union_source_tick(value)+union_source_tick(0) FROM native_source)".to_owned(),
+                        "NATIVE NOT IN" => "SELECT value FROM docs WHERE value NOT IN (SELECT union_source_tick(value)+union_source_tick(10) FROM native_source)".to_owned(),
                         "IN" => "SELECT value FROM docs WHERE value IN (SELECT union_source_tick(value)+union_source_tick(0) FROM docs)".to_owned(),
                         "NOT IN" => "SELECT value FROM docs WHERE value NOT IN (SELECT union_source_tick(value)+union_source_tick(10) FROM docs)".to_owned(),
                         "EXISTS" => "SELECT value FROM docs WHERE EXISTS (SELECT value FROM docs WHERE union_source_tick(value)+union_source_tick(0)=3)".to_owned(),
