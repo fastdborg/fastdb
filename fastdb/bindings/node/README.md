@@ -243,3 +243,14 @@ python3 fastdb/scripts/test-notice-bundle.py
 ```
 
 These verify reproducible output, identical-text deduplication with retained source references, stale inventory and output detection, package identity mismatch, archive corruption and altered notice hashes. Failure cases must leave an existing output file intact.
+
+## Linux artifact requirements
+
+Inspect the actual package addon without loading it (Python 3.11+ and `readelf`):
+
+```sh
+python3 fastdb/scripts/inspect-node-elf.py fastdb/bindings/node/fastdb.node fastdb/docs/node-elf-linux-x64.json
+python3 fastdb/scripts/inspect-node-elf.py fastdb/bindings/node/fastdb.node fastdb/docs/node-elf-linux-x64.json --check
+```
+
+The checked-in report identifies the tested stripped artifact by size and SHA-256, records ELF class/machine, linked libraries, search paths and required symbol versions. This local artifact references GLIBC symbols through 2.35 and has no RPATH/RUNPATH. A successful local Linux test does not establish compatibility with older glibc systems, musl distributions, another architecture or another Node version. A release baseline still needs an explicit build environment and tests on the advertised targets. Regenerate the report whenever the addon changes.

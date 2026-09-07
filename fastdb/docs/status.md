@@ -1900,3 +1900,10 @@ Added --release-stripped to check-node.sh. On Linux it builds the existing relea
 An independently stripped copy exactly matches the package artifact, and the full Cargo artifact remains intact. Full addon: 83,694,824 bytes, SHA-256 e76a6c74394a914e9e53f8e611f0e939760a483ca0dc764cda92cfec1da25a90. Stripped addon: 19,869,688 bytes, SHA-256 adc4dd5c4efff8982c5d65d2e4bc87f2ae0c50ea61d9bb57268a1e33bd1b9a37. Offline tarball installation passed exact notices, sync/worker consumers and strict consumer TypeScript on Linux x64, Node 24.19.0: ten files, 7,734,779 packed bytes.
 
 The local package now contains the stripped release addon; other build modes replace that copy. No publishing or upstream profile changes occurred. Other platforms, symbol-artifact distribution, complete attribution and full V1 release qualification remain open. Latest complete scoped Rust evidence remains 420 tests; this run qualifies the Node artifact, not release-mode Rust tests.
+
+
+## Linux Node ELF requirement report (2026-09-08)
+
+Added a readelf-based artifact inspector and checked-in report for the current stripped addon. It records byte size/hash, ELF64 x86-64 machine, needed libraries, RPATH/RUNPATH and required symbol versions without loading the addon. The observed libraries are libc.so.6, libm.so.6, libgcc_s.so.1 and ld-linux-x86-64.so.2; no embedded search paths are present. The maximum referenced GLIBC symbol version is 2.35. This constrains the current artifact and does not establish broad Linux/musl compatibility.
+
+Exact regeneration/check mode passes; stale output and invalid ELF rejection preserve the previous report. Runtime/package binaries are unchanged. Explicit release build baseline, advertised-platform tests and full V1 qualification remain open. Latest complete scoped Rust evidence remains 420 tests; the prior stripped Node artifact passed 46 client/application tests and package checks.

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "scope": "Observed ELF dependencies; not proof of compatibility with any Linux distribution or Node version",
+  "bytes": 19869688,
+  "sha256": "adc4dd5c4efff8982c5d65d2e4bc87f2ae0c50ea61d9bb57268a1e33bd1b9a37",
+  "elfClass": "ELF64",
+  "machine": "Advanced Micro Devices X86-64",
+  "neededLibraries": [
+    "ld-linux-x86-64.so.2",
+    "libc.so.6",
+    "libgcc_s.so.1",
+    "libm.so.6"
+  ],
+  "searchPaths": [],
+  "requiredSymbolVersions": {
+    "ld-linux-x86-64.so.2": [
+      "GLIBC_2.3"
+    ],
+    "libc.so.6": [
+      "GLIBC_2.10",
+      "GLIBC_2.14",
+      "GLIBC_2.17",
+      "GLIBC_2.18",
+      "GLIBC_2.2.5",
+      "GLIBC_2.25",
+      "GLIBC_2.28",
+      "GLIBC_2.3",
+      "GLIBC_2.3.2",
+      "GLIBC_2.3.4",
+      "GLIBC_2.32",
+      "GLIBC_2.33",
+      "GLIBC_2.34",
+      "GLIBC_2.4"
+    ],
+    "libgcc_s.so.1": [
+      "GCC_3.0",
+      "GCC_3.3",
+      "GCC_4.2.0"
+    ],
+    "libm.so.6": [
+      "GLIBC_2.2.5",
+      "GLIBC_2.29",
+      "GLIBC_2.35"
+    ]
+  },
+  "maximumReferencedGlibcVersion": "2.35"
+}
