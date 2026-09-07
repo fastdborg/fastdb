@@ -528,3 +528,85 @@ fn set_operators_compare_whole_rows_and_keep_empty_derived_metadata() {
         assert!(empty.rows.is_empty());
     }
 }
+
+#[test]
+fn set_collation_precedence_and_representatives_match_native_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for (table, native, values) in [
+        ("a", "na", vec!["'A'", "'a'", "'B '", "'b'", "'x'", "NULL"]),
+        ("b", "nb", vec!["'a'", "'A '", "'b'", "'B'", "'y'", "NULL"]),
+    ] {
+        q(&c, &format!("CREATE TABLE {table}"));
+        q(&c, &format!("CREATE TABLE {native}(v)"));
+        for value in values {
+            q(&c, &format!("INSERT INTO {table}(v) VALUES ({value})"));
+            q(&c, &format!("INSERT INTO {native} VALUES ({value})"));
+        }
+    }
+    let keys = |rows: Vec<Vec<Value>>, collation: &str| {
+        let mut keys = rows
+            .into_iter()
+            .map(|row| match row.as_slice() {
+                [Value::Null] => "null:".to_owned(),
+                [Value::String(value)] => format!(
+                    "text:{}",
+                    match collation {
+                        "NOCASE" => value.to_ascii_lowercase(),
+                        "RTRIM" => value.trim_end_matches(' ').to_owned(),
+                        _ => value.clone(),
+                    }
+                ),
+                _ => panic!("unexpected row: {row:?}"),
+            })
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys
+    };
+    for left in ["", "BINARY", "NOCASE", "RTRIM"] {
+        for right in ["", "BINARY", "NOCASE", "RTRIM"] {
+            let l = if left.is_empty() {
+                "v".to_owned()
+            } else {
+                format!("v COLLATE {left}")
+            };
+            let r = if right.is_empty() {
+                "v".to_owned()
+            } else {
+                format!("v COLLATE {right}")
+            };
+            let collation = if left.is_empty() { right } else { left };
+            for op in ["UNION", "INTERSECT", "EXCEPT"] {
+                let sql = format!("SELECT {l} AS value FROM a {op} SELECT {r} FROM b");
+                let native = sql
+                    .replace("FROM a", "FROM na")
+                    .replace("FROM b", "FROM nb");
+                assert_eq!(
+                    keys(q(&c, &sql).rows, collation),
+                    keys(q(&c, &native).rows, collation),
+                    "{sql}"
+                );
+            }
+        }
+    }
+    for collation in ["", "BINARY", "NOCASE", "RTRIM"] {
+        let value = if collation.is_empty() {
+            "v".to_owned()
+        } else {
+            format!("v COLLATE {collation}")
+        };
+        for first in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+            for second in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+                let sql = format!("SELECT {value} AS value FROM a {first} SELECT {value} FROM b {second} SELECT {value} FROM a");
+                let native = sql
+                    .replace("FROM a", "FROM na")
+                    .replace("FROM b", "FROM nb");
+                assert_eq!(
+                    keys(q(&c, &sql).rows, collation),
+                    keys(q(&c, &native).rows, collation),
+                    "{sql}"
+                );
+            }
+        }
+    }
+}
