@@ -1,6 +1,6 @@
 # Initial migration runner
 
-`Connection::migrate(&[Migration { version, name, sql }])` applies forward migrations to the current database. Pass the complete ordered list, including all previously applied versions. Versions are positive int64 values in strictly increasing order; names contain 1–255 UTF-8 bytes. Empty scripts are valid recorded no-ops.
+`Connection::migrate(&[Migration { version, name, sql }])` applies forward migrations to the current database. Pass the complete ordered list, including all previously applied versions. Versions are positive int64 values in strictly increasing order; names contain 1–255 UTF-8 bytes and no NUL character. Empty scripts are valid recorded no-ops.
 
 ```sh
 fastdb-cli --migrate ./migrations application.db

@@ -166,3 +166,56 @@ fn persistent_migrations_retry_after_writer_conflict_and_reopen() {
         assert_eq!(c.transaction_state(), TransactionState::Autocommit);
     }
 }
+
+#[test]
+fn migration_plan_limits_reject_before_mutation_and_allow_boundary_retry() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let script_limit = 4 * 1024 * 1024;
+    let first = m(1, "CREATE TABLE docs;");
+    let mut invalid = Vec::new();
+    invalid.push((
+        vec![first.clone(), m(2, &" ".repeat(script_limit + 1))],
+        "FDB_LIMIT",
+    ));
+    invalid.push((
+        (1..=1001).map(|version| m(version, "")).collect(),
+        "FDB_LIMIT",
+    ));
+    let comment = format!("--{}", " ".repeat(script_limit - 2));
+    invalid.push((
+        (1..=5).map(|version| m(version, &comment)).collect(),
+        "FDB_LIMIT",
+    ));
+    for name in [
+        "".to_owned(),
+        "a".repeat(256),
+        "é".repeat(128),
+        "bad\0name".into(),
+    ] {
+        let mut next = m(2, "INSERT INTO docs {n:1};");
+        next.name = name;
+        invalid.push((vec![first.clone(), next], "FDB_VALIDATION"));
+    }
+    for version in [0, -1] {
+        invalid.push((vec![m(version, "CREATE TABLE docs;")], "FDB_VALIDATION"));
+    }
+    for (plan, code) in invalid {
+        assert_eq!(c.migrate(&plan).unwrap_err().code(), code);
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+        assert!(c.execute("SELECT * FROM docs", &Parameters::new()).is_err());
+    }
+    let mut boundary = first;
+    boundary.name = format!("{}a", "é".repeat(127));
+    assert_eq!(boundary.name.len(), 255);
+    boundary.sql.push_str("--");
+    boundary
+        .sql
+        .push_str(&" ".repeat(script_limit - boundary.sql.len()));
+    assert_eq!(boundary.sql.len(), script_limit);
+    let report = c.migrate(std::slice::from_ref(&boundary)).unwrap();
+    assert_eq!(report.already_applied, 0);
+    assert_eq!(report.applied, vec![1]);
+    assert_eq!(c.migrate(&[boundary]).unwrap().already_applied, 1);
+    assert!(q(&c, "SELECT * FROM docs").rows.is_empty());
+}
