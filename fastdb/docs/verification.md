@@ -1142,3 +1142,8 @@ Reviewed clean 41a2daf95 and ran isolated BEGIN/ROLLBACK probes through the loca
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-with-writes-check.log`): formatting, Clippy, 289 Rust tests, 34 Node tests and strict TypeScript; one known trigger-interruption gate ignored. New Rust cases use native/collection CTE candidates and compare mutations to an equivalent native chosen-value CTE oracle. They verify RETURNING/affected counts, self-read candidate materialization, missing parameters, uniqueness failure with prior work, integrity, retry and rollback. Existing mutation interruption coverage now includes both WITH write forms. Sync/worker clients verify updates, deletes, index integrity and rollback.
 
 The same-name chained CTE development probe still fails preparation with no such column: n; it is documented as an open qualification gap rather than included in supported-case assertions. A native oracle reading a collection CTE crosses a separate unsupported native-write path; the final oracle uses an equivalent ordinary-table CTE. No upstream implementation files changed.
+
+
+## Same-name CTE write oracle — 2026-09-07
+
+`cargo test --locked -p fastdb-tests --test with_writes` passed two tests (`/tmp/fastdb-same-name-write-oracle.log`). The new ordinary-table regression asserts the pinned difference between candidate SELECT (row 2) and UPDATE/DELETE (all three rows) using a target-named CTE; it verifies affected counts and rollback restoration. Test-package Clippy and formatting passed. No production change; prior 289 Rust / 34 Node scoped evidence plus this new regression yields 290 distinct Rust tests. The collection failure remains unresolved, with the required write-context semantics recorded in v1-gates.md.

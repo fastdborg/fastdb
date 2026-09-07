@@ -863,3 +863,8 @@ The maintainer bench-fetch.cjs harness passed twelve 1,000-position workloads wi
 Collection writes now retain the leading CTE scope in pre-mutation candidate selection. Tests cover parameterized native/collection CTE membership, self-read candidates, RETURNING/affected counts, uniqueness failure, prior outer work, retry/rollback and both Node clients. The interrupted-mutation matrix includes WITH UPDATE/DELETE. Main qualification prevents an unqualified candidate target reference, but deeper same-name CTE resolution remains open: `WITH docs AS (SELECT $n AS n), chosen AS (SELECT n FROM docs) UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n` currently fails preparation with no such column: n. Assignment/RETURNING subqueries and other previously unsupported write clauses remain unqualified.
 
 Scoped checks passed formatting, Clippy, 289 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Same-name write-context baseline (2026-09-07)
+
+A pinned native regression demonstrates that same-name CTE resolution differs between UPDATE/DELETE and a candidate SELECT in the tested chained form: writes affect all three base rows, while SELECT matches only the CTE's value 2. Both with_writes tests passed, including rollback restoration. Collection lowering must preserve this write-context behavior; the existing same-name preparation failure remains open. This evidence rules out simply treating successful SELECT rewriting as sufficient correctness.

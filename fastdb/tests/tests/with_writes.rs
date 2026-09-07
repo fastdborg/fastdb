@@ -82,3 +82,51 @@ fn with_updates_and_deletes_preserve_candidates_and_atomic_indexes() {
         .unwrap();
     q(&c, "ROLLBACK");
 }
+
+#[test]
+fn pinned_same_name_cte_write_resolution_differs_from_candidate_select() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    let prefix = "WITH native AS (SELECT 2 AS n), chosen AS (SELECT n FROM native)";
+    assert_eq!(
+        q(
+            &c,
+            &format!(
+                "{prefix} SELECT n FROM main.native WHERE n IN (SELECT n FROM chosen) ORDER BY n"
+            )
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    for suffix in [
+        "UPDATE native SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n",
+        "DELETE FROM native WHERE n IN (SELECT n FROM chosen) RETURNING n",
+    ] {
+        q(&c, "BEGIN");
+        let result = q(&c, &format!("{prefix} {suffix}"));
+        let expected = if suffix.starts_with("UPDATE") {
+            [11, 12, 13]
+        } else {
+            [1, 2, 3]
+        };
+        assert_eq!(
+            result.rows,
+            expected
+                .into_iter()
+                .map(|n| vec![Value::Integer(n)])
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(result.affected, 3);
+        q(&c, "ROLLBACK");
+        assert_eq!(
+            q(&c, "SELECT n FROM native ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(1)],
+                vec![Value::Integer(2)],
+                vec![Value::Integer(3)]
+            ]
+        );
+    }
+}

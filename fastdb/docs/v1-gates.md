@@ -45,3 +45,10 @@ Correlated scalar lowering follows: current native metadata preparation loses th
 Recent resource work adds incremental transfer parsing/encoding, incremental lowered SELECT decoding, fetch reference/encoded-byte budgets, and target batch/row/VM profiling. Public results still materialize; these are not complete memory budgets. Further resource work remains necessary but does not replace unfinished SQL semantics.
 
 The earlier native membership reproducer is now covered by implemented lowering and differential/read-write/CTE tests. Reuse that evidence; do not treat its old failure as current behavior. The core trigger proposal remains separately reviewable under the workflow and has not been applied. Full embedded scope, packaging/recovery/platform gates and external application validation remain intact.
+
+
+## Same-name CTE write oracle
+
+A current pinned native regression uses `native(n INTEGER)` rows 1,2,3 and the prefix `WITH native AS (SELECT 2 AS n), chosen AS (SELECT n FROM native)`. A qualified candidate `SELECT n FROM main.native WHERE n IN (SELECT n FROM chosen)` returns only 2. The corresponding UPDATE increments all three rows to 11,12,13, and DELETE returns all three original rows. Both writes affect 3. This is measured pinned behavior; it is not general SQLite shadowing semantics.
+
+Consequently, making the existing collection candidate SELECT prepare successfully is insufficient: it could silently select a different write set. The next same-name fix must preserve the native write-context binding when lowering to candidates, and qualify aliases, nested scopes and parameters. Current collection chained same-name forms still fail preparation. An ordinary SELECT whose native CTE merely shares a collection's name also hits managed-name guarding; that is a separate scope/guard gap to investigate.
