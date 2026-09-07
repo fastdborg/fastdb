@@ -221,7 +221,19 @@ impl NativeDatabase {
         table: String,
         max_documents: String,
         max_encoded_bytes: String,
+        cancellation_key: Option<String>,
     ) -> napi::Result<String> {
+        let token = cancellation_key
+            .map(|key| {
+                let key = key.parse::<u64>().map_err(error)?;
+                cancellations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| error("unknown cancellation token"))
+            })
+            .transpose()?;
         self.report(|conn| {
             let mut limits=fastdb::IntegrityLimits::default();
             if !max_documents.is_empty() {
@@ -230,7 +242,7 @@ impl NativeDatabase {
             if !max_encoded_bytes.is_empty() {
                 limits.max_encoded_bytes=max_encoded_bytes.parse().map_err(|_|fastdb::Error::Validation("invalid integrity byte limit".into()))?;
             }
-            let report=conn.check_collection_integrity(&table,limits)?;
+            let report=if let Some(token) = &token { conn.check_collection_integrity_cancellable(&table,limits,token)? } else { conn.check_collection_integrity(&table,limits)? };
             Ok(serde_json::json!({"documents":report.documents.to_string(),"indexes":report.indexes.to_string(),"indexEntries":report.index_entries.to_string(),"encodedBytes":report.encoded_bytes.to_string()}))
         })
     }

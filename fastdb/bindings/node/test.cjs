@@ -621,3 +621,42 @@ test('AbortSignal profiling preserves transaction state and returns complete met
     await db.execute('ROLLBACK');
   } finally { clearTimeout(timer); await db.close(); }
 });
+
+test('AbortSignal integrity audits preserve indexed data and allow exact retry', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { getEventListeners } = require('node:events');
+  const db = await AsyncDatabase.open();
+  let timer;
+  try {
+    await db.execute('CREATE TABLE numbers(n INTEGER)');
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100},(_,i)=>`(${i})`).join(','));
+    await db.execute('CREATE TABLE docs');
+    await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+    await db.execute('INSERT INTO docs(n) SELECT a.n*10+b.n FROM numbers a CROSS JOIN numbers b WHERE b.n<10');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {id:docs:prior,n:1000}');
+    const controller = new AbortController();
+    const audit = db.checkCollectionIntegrity('docs',{}, {signal:controller.signal});
+    const following = db.exactlyOne('SELECT n FROM docs WHERE id=docs:prior');
+    const settled = Promise.allSettled([audit,following]);
+    timer = setTimeout(() => controller.abort(),1);
+    const [cancelled,read] = await settled;
+    assert.equal(cancelled.status,'rejected');
+    assert.equal(cancelled.reason.code,'FDB_CANCELLED');
+    assert.equal(cancelled.reason.transaction.after,'active');
+    assert.equal(read.status,'fulfilled');
+    assert.deepEqual(read.value,[1000n]);
+    assert.equal(getEventListeners(controller.signal,'abort').length,0);
+    const before = new AbortController(); before.abort();
+    await assert.rejects(db.checkCollectionIntegrity('docs',{}, {signal:before.signal}), e => e.code === 'FDB_CANCELLED');
+    const retry = new AbortController();
+    const complete = await db.checkCollectionIntegrity('docs',{}, {signal:retry.signal});
+    assert.equal(complete.documents,1001n);
+    assert.equal(complete.indexEntries,1001n);
+    assert.equal(complete.transaction.after,'active');
+    assert.equal(getEventListeners(retry.signal,'abort').length,0);
+    retry.abort();
+    await db.execute('ROLLBACK');
+    assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM docs'),[1000n]);
+  } finally { clearTimeout(timer); await db.close(); }
+});

@@ -71,7 +71,7 @@ This explicit snapshot audit checks typed IDs, field/CHECK validity and index en
 
 ## Cooperative execution cancellation
 
-`CancellationToken::new()` creates a token that can be cloned and passed to another thread. `cancel()` is idempotent and sticky; `is_cancelled()` observes the request. Pass it to `Connection::execute_cancellable(sql, &parameters, &token)` or `execute_report_cancellable` to apply it to that execution. `profile_select_cancellable` uses the same token contract and returns the existing result/metrics shape. The report includes transaction observations on success or failure. Use a fresh token for a retry. A token retains no database connection.
+`CancellationToken::new()` creates a token that can be cloned and passed to another thread. `cancel()` is idempotent and sticky; `is_cancelled()` observes the request. Pass it to `Connection::execute_cancellable(sql, &parameters, &token)` or `execute_report_cancellable` to apply it to that execution. `profile_select_cancellable` uses the same token contract and returns the existing result/metrics shape. `check_collection_integrity_cancellable(table, limits, &token)` applies it to collection audits. The report includes transaction observations on success or failure. Use a fresh token for a retry. A token retains no database connection.
 
 A pre-cancelled token rejects before parsing or writes with `FDB_CANCELLED`. During execution the frontend polls the token at engine progress boundaries and delivers one interruption, allowing statement/savepoint cleanup to proceed. Its handler is removed when execution returns or unwinds. Cancellation after an execution finishes cannot affect later executions that do not use that token. Calls on a connection must remain serialized.
 

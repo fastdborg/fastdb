@@ -286,8 +286,8 @@ class AsyncDatabase {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)], false, options.signal));
   }
-  async checkCollectionIntegrity(table, limits = {}) {
-    return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)]));
+  async checkCollectionIntegrity(table, limits = {}, options = {}) {
+    return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal));
   }
   async executeBatch(script) { return decodeBatch(await this.#request('executeBatch', [script])); }
   async exportDocuments(table, format = 'json') {

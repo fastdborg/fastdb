@@ -58,7 +58,7 @@ export class AsyncDatabase {
   importDocuments(table: string, input: string, format?: TransferFormat): Promise<ImportReport>;
   execute(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   profileSelect(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<ProfiledQuery>;
-  checkCollectionIntegrity(table: string, limits?: IntegrityLimits): Promise<IntegrityReport>;
+  checkCollectionIntegrity(table: string, limits?: IntegrityLimits, options?: ExecuteOptions): Promise<IntegrityReport>;
   executeBatch(script: string): Promise<BatchExecution[]>;
   all(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[][]>;
   first(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[] | undefined>;

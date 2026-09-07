@@ -65,6 +65,16 @@ impl Connection {
         self.with_cancellation(token, || self.profile_select(sql, params))
     }
 
+    /// Audit collection content with cooperative engine-boundary cancellation.
+    pub fn check_collection_integrity_cancellable(
+        &self,
+        table: &str,
+        limits: crate::IntegrityLimits,
+        token: &CancellationToken,
+    ) -> Result<crate::IntegrityReport> {
+        self.with_cancellation(token, || self.check_collection_integrity(table, limits))
+    }
+
     pub(crate) fn with_cancellation<T>(
         &self,
         token: &CancellationToken,

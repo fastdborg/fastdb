@@ -110,7 +110,7 @@ Counters cover the primary engine statement only; metadata/lowering queries, Rus
 
 ## Collection integrity audit
 
-`checkCollectionIntegrity(table, limits?)` is available on both clients; AsyncDatabase returns a Promise and runs the audit on its worker. It returns bigint `documents`, `indexes`, `indexEntries`, `encodedBytes`, plus transaction observations. Optional `maxDocuments` and `maxEncodedBytes` limits require nonnegative bigint values fitting uint64. Omitted limits use Rust defaults: 100,000 documents and 64 MiB of encoded ID/document bytes. Zero is valid for checking an empty collection.
+`checkCollectionIntegrity(table, limits?)` is available on both clients; AsyncDatabase returns a Promise and runs the audit on its worker. Its optional third argument `{ signal }` requests operation-scoped cancellation using the same token and cleanup contract as query execution. It returns bigint `documents`, `indexes`, `indexEntries`, `encodedBytes`, plus transaction observations. Optional `maxDocuments` and `maxEncodedBytes` limits require nonnegative bigint values fitting uint64. Omitted limits use Rust defaults: 100,000 documents and 64 MiB of encoded ID/document bytes. Zero is valid for checking an empty collection.
 
 ```js
 const audit = await asyncDb.checkCollectionIntegrity('posts', {
@@ -152,4 +152,4 @@ Factory precision tests cover float32 halfway rounding, subnormal underflow and 
 
 Active cancellation is cooperative at engine progress boundaries. Completion can win a race with abort, so use the returned result/error; abort alone does not prove rollback. A cancelled query rejects with `code: 'FDB_CANCELLED'` and the usual transaction observations. `signal.reason` is not substituted for the database report. No fixed cancellation latency is promised for compilation or non-engine work. The pinned trigger-interruption defect remains a release gate.
 
-Listeners and token registry entries are released on response, send failure or worker failure. Tokens do not retain connections; a late abort cannot target another request. The process-local registry permits up to 16,384 outstanding signalled operations across clients, in addition to each client's existing queue bounds. Unsignalled queries use their existing path. Audits, batches, migrations and transfers do not yet accept signals. Sync Database methods are unchanged.
+Listeners and token registry entries are released on response, send failure or worker failure. Tokens do not retain connections; a late abort cannot target another request. The process-local registry permits up to 16,384 outstanding signalled operations across clients, in addition to each client's existing queue bounds. Unsignalled queries use their existing path. Batches, migrations and transfers do not yet accept signals. Sync Database methods are unchanged.
