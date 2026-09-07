@@ -1725,3 +1725,6 @@ Direct relational join ambiguity and NULL qualification (2026-09-08): expanded t
 
 
 Relational join metadata refresh qualification (2026-09-08): a new regression verifies that ALTER TABLE adding a colliding column changes a formerly valid unqualified join into an ambiguity error through execute/profile, while explicit qualification succeeds. Dropping/recreating a view changes its exposed column set on the next query, and restoring the original projection permits retry. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 406 Rust/44 Node tests; this adds one distinct test after that run. Concurrent schema changes, broader scope/resource and full V1 gates remain open.
+
+
+Cross-connection join metadata qualification (2026-09-08): a new regression warms a reader, then uses a second connection to add a colliding table column and replace a view with a colliding projection. The reader observes ambiguity errors instead of stale column metadata; qualified queries remain valid. The focused regression, formatting and focused Clippy pass. This covers sequential cross-connection changes, not simultaneous DDL during preparation/execution. Latest complete scoped evidence remains 406 Rust/44 Node tests; broader schema/scope/resource and full V1 gates remain open.
