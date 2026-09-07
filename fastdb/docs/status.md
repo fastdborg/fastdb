@@ -171,7 +171,7 @@ Top-level SELECT record::fetch(reference) is lowered to a typed reference projec
 
 Relational targets require exactly one explicit TEXT or INTEGER primary key and a matching reference-key type; implicit rowids, composite keys, views and other key declarations are unsupported. Native relational row values are returned in an Object without converting their primary keys to records. Fetch is restricted to top-level SELECT projections; nested fetches, fetched-alias filters/orderings, RETURNING and write expressions are rejected. Qualify a stored source field when its name also names a fetched projection alias.
 
-A two-connection test checks that a fetch inside an established read transaction sees the earlier snapshot after another connection commits a target update. Complete interleaving/crash/resource stress remains a release gate. The current EXPLAIN output describes the outer engine query, not target-batch details. Reference-count limits do not yet bound total fetched bytes or outer-query materialization; planner instrumentation and full resource budgets remain open.
+A two-connection test checks that a fetch inside an established read transaction sees the earlier snapshot after another connection commits a target update. Complete interleaving/crash/resource stress remains a release gate. The current EXPLAIN output describes the outer engine query, not target-batch details. The initial reference-count limit is now supplemented by the encoded-value budgets described below. Outer-query materialization, target-batch instrumentation and full resource budgets remain open.
 
 ## Initial dense vector notes
 
@@ -803,3 +803,10 @@ Scoped checks passed 282 Rust tests, thirty-two Node tests and strict TypeScript
 ## Repeated JSON replay transfer diagnostic (2026-09-07)
 
 Three runs of the unchanged transfer harness against clean implementation 8e7b5893d passed all six format samples. JSON import ranged from 3.64 to 4.03 seconds with 131.9–133.3 MB current RSS after import. These overlap or remain close to the earlier single materializing-path sample, so no reliable speed or memory improvement is claimed. The retained-document-array removal is an implementation property, not a measured total-memory guarantee. Detailed reports and limitations are in benchmarks.md.
+
+
+## Forward-fetch encoded-value budgets (2026-09-07)
+
+Each forward resolver invocation now bounds retained fetched values and duplicate-expanded output separately to 64 MiB of tagged Value JSON bytes. Serialization counts into a writer without allocating encoded copies; output accounting completes before cloning documents. Nulls and repeated references count per output position. Exact-boundary tests cover collection/native targets, Unicode, duplicates, empty/null output, FDB_LIMIT, retained active work, successful retry and rollback. Reference keys, container overhead, current engine chunks and outer-query materialization are not included, so this is not a total-memory cap. Each SQL fetch projection has its own resolver invocation.
+
+Scoped checks passed formatting, Clippy, 284 Rust tests, thirty-two Node tests and strict TypeScript. One trigger-interruption gate remains ignored; full V1 remains incomplete.

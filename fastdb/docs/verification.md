@@ -1079,3 +1079,8 @@ The JSON envelope and document array now use serde visitors to validate and repl
 ## JSON replay transfer benchmark — 2026-09-07
 
 Ran `node fastdb/scripts/bench-transfer.cjs` three times against clean implementation 8e7b5893d. All six JSON/NDJSON samples passed aggregate, index and exact round-trip assertions. Stored report: benchmark-results/2026-09-07-linux-dev-transfer-json-replay-1000.json. Checked all source IDs, empty implementationChanges fields and addon/harness hashes against current files. Existing 283 distinct Rust / 32 Node scoped evidence is unchanged; no production code changed in this measurement task. The report supplies debug workload observations, not proof of release performance or total-memory limits.
+
+
+## Forward-fetch encoded-value limits — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-fetch-budget-check.log`): formatting, scoped Clippy, 284 Rust tests, 32 Node tests and strict TypeScript; one known trigger-interruption gate ignored. The new real-engine unit regression uses private adjustable byte thresholds to check exact acceptance and one-byte-short rejection for collection and native targets with Unicode and duplicate expansion, plus null/empty output, retained active work, retry and outer rollback. Existing forward-link snapshot and query tests remain enabled. The 64 MiB limit counts logical tagged JSON value bytes separately for retained targets and expanded output. Current engine batches, reference keys, containers and outer-query materialization remain outside this accounting.
