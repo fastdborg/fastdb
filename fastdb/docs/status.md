@@ -944,3 +944,8 @@ Scoped checks passed formatting, Clippy, 301 Rust tests, thirty-five Node tests 
 ## Installed predicate-correlation smoke (2026-09-07)
 
 The offline installed Node consumer now exercises bound correlated UPDATE, profiled scalar reads, empty-result NULL and EXISTS DELETE through sync and worker clients. It checks affected rows, index cleanup and rollback to int64 max. The complete smoke passed on Linux x64 / Node 24.19.0, with eight runtime files and a 59,601,946-byte development tarball. Release/platform qualification remains open.
+
+
+## Correlated scalar evaluation counts (2026-09-07)
+
+The existing test-only native function counter now compares seven correlated scalar forms against ordinary tables through execute and profile_select. Two matching outer rows cause two calls, one matching row causes one, empty predicates cause zero, and two explicit scalar occurrences cause four. Arithmetic and comparisons retain the native counts. The targeted regression passed; this qualifies these forms without claiming complete volatile-expression behavior or closing general correlation.

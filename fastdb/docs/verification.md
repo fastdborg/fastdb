@@ -1220,3 +1220,10 @@ An initial collation comparison failed because standalone inner projection metad
 ## Installed predicate correlation — 2026-09-07
 
 `node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-correlated-predicates.log`). The temporary offline consumer verifies bound correlated UPDATE, scalar profile results, empty-result NULL, correlated EXISTS DELETE, index integrity and rollback through both clients. Existing installed declarations, cancellation, vectors, reopen and loader-error checks also passed. Result: Linux x64, Node 24.19.0, eight runtime files, 59,601,946 packed bytes. No production change; prior full scoped 301 Rust / 35 Node evidence remains applicable.
+
+
+## Correlated scalar evaluation counts — 2026-09-07
+
+`cargo test --locked -p fastdb typed_between_evaluates_volatile_left_operand_once` passed (`/tmp/fastdb-correlation-evaluation.log`). The existing counter regression now includes seven correlated scalar forms with direct native row/count oracles, followed by execute and profile_select comparisons. It establishes 2/1/0 calls for two/one/no matching outer rows, two calls through arithmetic and either comparison orientation, and four for two explicit occurrences across two rows. No production change or additional test function; prior full scoped evidence remains 301 Rust / 35 Node tests with one ignored gate. Broader volatile-expression qualification remains open.
+
+Frontend all-target Clippy with warnings denied and formatting also passed.

@@ -736,5 +736,54 @@ mod between_tests {
                 assert_eq!(CALLS.load(Ordering::SeqCst), calls);
             }
         }
+        c.execute(
+            "CREATE TABLE correlation_inputs(n INTEGER)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO correlation_inputs VALUES(1),(2)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        for (projection, expected_calls) in [
+            ("(SELECT between_tick() WHERE d.n>0)", 2),
+            ("(SELECT between_tick() WHERE d.n<2)", 1),
+            ("(SELECT between_tick() WHERE d.n<0)", 0),
+            ("(SELECT between_tick() WHERE d.n>0)+1", 2),
+            ("(SELECT between_tick() WHERE d.n>0)=d.n", 2),
+            ("d.n<(SELECT between_tick() WHERE d.n>0)", 2),
+            (
+                "(SELECT between_tick() WHERE d.n>0)=(SELECT between_tick() WHERE d.n>0)",
+                4,
+            ),
+        ] {
+            let native = format!("SELECT {projection} FROM correlation_inputs AS d ORDER BY d.n");
+            CALLS.store(0, Ordering::SeqCst);
+            let expected = c.execute(&native, &crate::Parameters::new()).unwrap().rows;
+            assert_eq!(
+                CALLS.load(Ordering::SeqCst),
+                expected_calls,
+                "native: {projection}"
+            );
+            let sql = native.replace("correlation_inputs", "scalar_inputs");
+            for profile in [false, true] {
+                CALLS.store(0, Ordering::SeqCst);
+                let actual = if profile {
+                    c.profile_select(&sql, &crate::Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows
+                } else {
+                    c.execute(&sql, &crate::Parameters::new()).unwrap().rows
+                };
+                assert_eq!(actual, expected, "{sql}, profile={profile}");
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    expected_calls,
+                    "{sql}, profile={profile}"
+                );
+            }
+        }
     }
 }
