@@ -598,3 +598,45 @@ fn relational_join_metadata_tracks_schema_rollback() {
     q(&c, "ROLLBACK");
     assert_eq!(q(&c, &view_sql).rows, expected);
 }
+
+#[test]
+fn relational_join_metadata_includes_computed_view_columns() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE label_data(m INTEGER)");
+    q(
+        &c,
+        "CREATE VIEW labels AS SELECT m,'item-' || m AS label FROM label_data",
+    );
+    q(&c, "INSERT INTO label_data(m) VALUES(1),(2)");
+    for sql in [
+        "SELECT n,label FROM (SELECT n FROM docs) JOIN labels ON n=m ORDER BY n",
+        "SELECT n,label FROM (SELECT n FROM docs) JOIN (SELECT * FROM labels) ON n=m ORDER BY n",
+    ] {
+        let expected = vec![
+            vec![Value::Integer(1), Value::String("item-1".into())],
+            vec![Value::Integer(2), Value::String("item-2".into())],
+        ];
+        assert_eq!(q(&c, sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{sql}"
+        );
+    }
+    let star = q(
+        &c,
+        "SELECT * FROM (SELECT n FROM docs WHERE n=1) JOIN labels ON n=m",
+    );
+    assert_eq!(star.columns, vec!["n", "m", "label"]);
+    assert_eq!(
+        star.rows,
+        vec![vec![
+            Value::Integer(1),
+            Value::Integer(1),
+            Value::String("item-1".into())
+        ]]
+    );
+}
