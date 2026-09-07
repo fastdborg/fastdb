@@ -2115,6 +2115,23 @@ impl Connection {
             let mut resolved_ctes = Vec::new();
             for index in 0..with.ctes.len() {
                 let mut cte = with.ctes[index].clone();
+                // The pinned resolver chooses an enclosing same-name CTE.
+                // Preserve that choice before introducing additional WITH levels.
+                let inherited_native = inherited_ctes
+                    .and_then(|ctes| ctes.get(&cte.tbl_name.as_str().to_ascii_lowercase()))
+                    .and_then(Option::as_ref)
+                    .is_some_and(|source| !source.logical());
+                if let Some(inherited) = native_with.filter(|_| inherited_native).and_then(|with| {
+                    with.ctes.iter().find(|outer| {
+                        outer
+                            .tbl_name
+                            .as_str()
+                            .eq_ignore_ascii_case(cte.tbl_name.as_str())
+                    })
+                }) {
+                    cte = inherited.clone();
+                }
+
                 let sql = Cmd::Stmt(Stmt::Select(cte.select.clone())).to_string();
                 let preceding = With {
                     recursive: false,
@@ -2667,12 +2684,16 @@ impl Connection {
                 let mut probe = inner.clone();
                 if probe.with.is_none() {
                     probe.with = select.with.clone();
-                    if let Some(inherited) = native_with {
-                        let mut with = inherited.clone();
-                        if let Some(local) = probe.with.take() {
-                            with.ctes.extend(local.ctes);
-                        }
-                        probe.with = Some(with);
+                    if let Some(inherited) = native_with.filter(|with| !with.ctes.is_empty()) {
+                        let query = Cmd::Stmt(Stmt::Select(probe)).to_string();
+                        let Cmd::Stmt(Stmt::Select(wrapped)) = parsed(&format!(
+                            "{inherited} SELECT * FROM ({})",
+                            query.trim().trim_end_matches(';')
+                        ))?
+                        else {
+                            unreachable!("native metadata scope")
+                        };
+                        probe = wrapped;
                     }
                 }
                 let statement = self.prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())?;

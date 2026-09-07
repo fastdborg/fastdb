@@ -1333,3 +1333,55 @@ fn nested_native_membership_resolves_preceding_ctes() {
         assert_eq!(q(&c,sql).rows,vec![vec![Value::Integer(1)],vec![Value::Null],vec![Value::Null]]);
     }
 }
+
+#[test]
+fn native_membership_local_cte_names_match_pinned_scope_resolution() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2)");
+    q(&c, "CREATE TABLE lhs(n BLOB)");
+    q(&c, "INSERT INTO lhs VALUES (1),(2)");
+    for derived in [false, true] {
+        let query = |table| {
+            if derived {
+                format!("WITH r AS (SELECT 1 AS n) SELECT v FROM (WITH r AS (SELECT 2 AS n) SELECT n IN (SELECT n FROM r) AS v FROM {table}) d")
+            } else {
+                format!("WITH r AS (SELECT 1 AS n), d AS (WITH r AS (SELECT 2 AS n) SELECT n IN (SELECT n FROM r) AS v FROM {table}) SELECT v FROM d")
+            }
+        };
+        let raw_db = turso_core::Database::open_file(
+            turso_core::Database::io_for_path(":memory:").unwrap(),
+            ":memory:",
+        )
+        .unwrap();
+        let raw = raw_db.connect().unwrap();
+        raw.prepare("CREATE TABLE lhs(n BLOB)")
+            .unwrap()
+            .run_collect_rows()
+            .unwrap();
+        raw.prepare("INSERT INTO lhs VALUES (1),(2)")
+            .unwrap()
+            .run_collect_rows()
+            .unwrap();
+        let expected = raw
+            .prepare(query("lhs"))
+            .unwrap()
+            .run_collect_rows()
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|value| match value {
+                        turso_core::Value::Numeric(turso_core::Numeric::Integer(value)) => {
+                            Value::Integer(value)
+                        }
+                        other => panic!("unexpected membership result: {other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(q(&c, &query("lhs")).rows, expected);
+        assert_eq!(q(&c, &query("docs")).rows, expected);
+    }
+}

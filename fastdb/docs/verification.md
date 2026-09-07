@@ -1025,3 +1025,10 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 276 Rust tests, thirty
 Live probes found missing outer-CTE resolution inside derived membership queries and later CTE definitions. Passing native scope corrected the derived query; assembling generated definitions in resolved CTE order also corrected the later-CTE case. The regression covers both and a third CTE consuming the result (`/tmp/fastdb-nested-membership-retest.log`, expanded in the full run).
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 277 Rust tests, thirty-one Node tests and strict TypeScript (`/tmp/fastdb-nested-membership-check.log`). Existing CTE/compound, affinity, evaluation-count and cancellation suites passed. One known trigger-interruption gate remains ignored. No upstream or dependency changes. Broader deep/local-shadowing/correlated scope and full V1 remain incomplete.
+
+
+## Same-name native CTE resolution — 2026-09-07
+
+Nested same-name native CTE probes first exposed duplicate-name errors from flattened metadata scopes. Keeping those scopes nested removed that error but revealed differing selected definitions. A direct turso_core connection confirmed enclosing-native-definition resolution for the tested derived and later-CTE forms. The new regression compares both ordinary and collection routes to that raw baseline. Preserving enclosing definitions was initially too broad and regressed an existing logical collection CTE test; the rule is now restricted to inherited native CTEs.
+
+Final `fastdb/scripts/check.sh` passed formatting, Clippy, 278 Rust tests, thirty-one Node tests and strict TypeScript (`/tmp/fastdb-membership-shadow-final-check.log`). Both the existing logical CTE scope test and the new raw-engine comparison passed. One known trigger-interruption gate remains ignored. No upstream or dependency changes. These pinned cases do not establish general SQLite shadowing compatibility; deeper/recursive scope and full V1 remain incomplete.

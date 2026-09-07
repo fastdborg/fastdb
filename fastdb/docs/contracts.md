@@ -806,3 +806,6 @@ Native membership now delegates match/NULL/empty-set handling to native IN/NOT I
 
 
 The native membership left-value CTE now explicitly uses NOT MATERIALIZED. A forced materialization could make the pinned compiler access the outer cursor before it existed in compound queries. The generated value boundary retains tested single evaluation while the uncorrelated RHS remains shared; this supersedes the earlier forced left-value materialization description.
+
+
+For the tested nested same-name CTE forms, FastDB preserves the pinned engine's enclosing-definition resolution. Native metadata preparation keeps WITH levels nested to avoid artificial duplicate-name errors; logical lowering preserves the selected definition before introducing internal scopes. Do not infer general SQLite shadowing compatibility from these pinned cases.
