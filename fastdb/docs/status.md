@@ -1065,3 +1065,8 @@ Single-column correlated native subqueries now sort covered typed projection ali
 Differential native-table tests cover negative and multi-digit integers, ascending/descending aliases and ordinals, parentheses, explicit BINARY collation, mixed keys and offsets. A registered volatile function verifies native evaluation counts through execute/profile for scalar arithmetic, typed CASE, mixed keys and LIMIT 0. Mixed DISTINCT ordering involving a typed projected alias and an additional ordinary key is explicitly unsupported: adding that key to DISTINCT would change duplicate elimination. General correlated alias expressions, DISTINCT/type semantics and broader scope/resource qualification remain open.
 
 Verification: the complete scoped check passed formatting, Clippy, 318 Rust tests, 35 Node tests and strict TypeScript. One previously recorded trigger-interruption gate remains ignored. No upstream core files changed. Full V1 remains incomplete.
+
+
+## Sorted correlated subquery consumers (2026-09-07)
+
+Additional native differential coverage verifies sorted typed CASE/coalesce subqueries consumed by IN, NOT IN and EXISTS, including mixed numeric/text/NULL inputs, explicit NOCASE collation, alias/ordinal/mixed ordering, zero limits and offsets. Both execute and profile_select match the native table oracle. Separate assertions verify that sorted correlated record and boolean projections retain their logical values and membership identities. All 15 correlated scalar-subquery integration tests pass. This extends qualification of the existing lowering; broader correlated alias/DISTINCT/resource semantics remain open and V1 remains incomplete.

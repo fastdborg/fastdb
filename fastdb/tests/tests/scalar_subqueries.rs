@@ -2100,3 +2100,79 @@ fn mixed_distinct_correlated_typed_ordering_is_rejected() {
         Err(fastdb::Error::Unsupported(_))
     ));
 }
+
+#[test]
+fn correlated_typed_sort_membership_matches_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(-1),(2),(10),(NULL),('a'),('B'),('c')",
+        "INSERT INTO native VALUES(-1),(2),(10),(NULL),('a'),('B'),('c')",
+        "INSERT INTO lookup VALUES(-1),(2),(10),(NULL),('a'),('B'),('c')",
+    ] {
+        q(&c, sql);
+    }
+    for order in [
+        "x DESC NULLS LAST",
+        "x,n DESC",
+        "1 DESC",
+        "x COLLATE NOCASE DESC",
+    ] {
+        for limit in ["0", "1", "2 OFFSET 1"] {
+            for projection in [
+                "CASE WHEN d.n IS NULL THEN NULL ELSE n END",
+                "coalesce(n,d.n)",
+            ] {
+                let source =
+                    format!("SELECT {projection} AS x FROM lookup ORDER BY {order} LIMIT {limit}");
+                for expr in [
+                    format!("d.n IN ({source})"),
+                    format!("d.n NOT IN ({source})"),
+                    format!("EXISTS({source})"),
+                ] {
+                    let expected = q(&c, &format!("SELECT {expr} FROM native d ORDER BY d.n")).rows;
+                    let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+                    assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                    assert_eq!(
+                        c.profile_select(&sql, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected,
+                        "profile {sql}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn correlated_sorted_projection_preserves_record_and_boolean_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {id:docs:a,flag:true}");
+    q(&c, "CREATE TABLE lookup(n)");
+    q(&c, "INSERT INTO lookup VALUES(2),(1)");
+    for field in ["id", "flag"] {
+        for order in ["x", "x DESC,n"] {
+            let projection = format!("SELECT d.{field} AS x FROM lookup ORDER BY {order} LIMIT 1");
+            let sql = format!("SELECT ({projection}),d.{field} IN ({projection}) FROM docs d");
+            let value = q(&c, &format!("SELECT {field} FROM docs")).rows[0][0].clone();
+            let expected = vec![vec![value, Value::Integer(1)]];
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "profile {sql}"
+            );
+        }
+    }
+}
