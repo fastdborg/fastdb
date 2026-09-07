@@ -322,3 +322,47 @@ fn mixed_derived_comparisons_preserve_native_affinity_and_collation() {
         }
     }
 }
+
+#[test]
+fn mixed_compound_comparison_writes_preserve_atomicity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {n:1,v:'a'}",
+        "INSERT INTO docs {n:2,v:'a'}",
+        "CREATE TABLE labels(m INTEGER,label TEXT COLLATE NOCASE)",
+        "INSERT INTO labels VALUES(1,'A'),(2,'1')",
+        "CREATE TABLE copied",
+        "DEFINE FIELD n ON copied TYPE integer REQUIRED CHECK (n<2)",
+        "BEGIN",
+        "INSERT INTO copied {n:0}",
+    ] {
+        q(&c, sql);
+    }
+    let source = "FROM (SELECT n,v FROM docs) CROSS JOIN (SELECT m,label COLLATE BINARY AS label FROM labels WHERE m=1 UNION ALL SELECT m,label FROM labels WHERE m=2)";
+    let sql = format!("INSERT INTO copied (n) SELECT n {source} WHERE v IS label ORDER BY n");
+    assert!(c.execute(&sql, &Parameters::new()).is_err());
+    assert_eq!(
+        q(&c, "SELECT n FROM copied").rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    q(
+        &c,
+        &format!("INSERT INTO copied (n) SELECT n {source} WHERE label IN (v)"),
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM copied").rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    q(
+        &c,
+        &format!("INSERT INTO copied (n) SELECT n {source} WHERE v IS label AND n=1"),
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM copied ORDER BY n").rows,
+        vec![vec![Value::Integer(0)], vec![Value::Integer(1)]]
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT n FROM copied").rows.is_empty());
+}
