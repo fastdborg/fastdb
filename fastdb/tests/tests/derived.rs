@@ -1097,3 +1097,33 @@ fn native_duplicate_derived_names_keep_first_column_collation() {
         }
     }
 }
+
+#[test]
+fn native_duplicate_derived_stars_preserve_write_positions() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE expected(a,b,c)");
+    q(&c, "CREATE TABLE actual(a,b,c)");
+    for projection in [
+        "10 AS x,20 AS x,X'31' AS X",
+        "'A' COLLATE NOCASE AS x,'B' AS X,NULL AS x",
+    ] {
+        q(&c, "DELETE FROM expected");
+        q(&c, "DELETE FROM actual");
+        let insert = |target: &str, source: &str| {
+            format!(
+                "INSERT INTO {target} SELECT q.* FROM {source} d JOIN (SELECT {projection}) q ON 1"
+            )
+        };
+        q(&c, &insert("expected", "baseline"));
+        q(&c, "BEGIN");
+        q(&c, &insert("actual", "docs"));
+        assert_eq!(
+            q(&c, "SELECT * FROM actual").rows,
+            q(&c, "SELECT * FROM expected").rows
+        );
+        q(&c, "ROLLBACK");
+        assert!(q(&c, "SELECT * FROM actual").rows.is_empty());
+    }
+}

@@ -9,6 +9,7 @@ struct Source {
     collection: Option<Collection>,
     derived: Option<Vec<(String, bool)>>,
     derived_logical: bool,
+    derived_physical: Option<Vec<String>>,
     native_collations: std::collections::BTreeMap<String, String>,
     native_expression_collations: std::collections::BTreeMap<String, String>,
     consumed: std::collections::BTreeSet<String>,
@@ -1652,6 +1653,7 @@ fn source(
                 collection: None,
                 derived: Some(plan.names.into_iter().zip(plan.typed).collect()),
                 derived_logical: true,
+                derived_physical: None,
                 native_collations: Default::default(),
                 native_expression_collations: Default::default(),
                 consumed: plan.consumed,
@@ -1667,7 +1669,7 @@ fn source(
             format!("SELECT * FROM ({query})")
         };
         let statement = connection.prepare(probe)?;
-        let columns = (0..statement.num_columns())
+        let columns: Vec<(String, bool)> = (0..statement.num_columns())
             .map(|i| (statement.get_column_name(i).into_owned(), false))
             .collect();
         let program = statement.get_program();
@@ -1743,12 +1745,50 @@ fn source(
                 .entry(statement.get_column_name(i).to_ascii_lowercase())
                 .or_insert_with(|| explicit.or(implicit).unwrap_or_else(|| "BINARY".into()));
         }
+        // A name-based star expansion cannot address later duplicate columns.
+        // Preserve the first public name for ordinary lookup and assign private
+        // names to subsequent positions through a CTE column list.
+        let mut seen = std::collections::BTreeSet::new();
+        let physical: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| {
+                if seen.insert(name.to_ascii_lowercase()) {
+                    name.clone()
+                } else {
+                    let mut private = format!("__fastdb_derived_column_{i}");
+                    while columns
+                        .iter()
+                        .any(|(name, _)| name.eq_ignore_ascii_case(&private))
+                        || !seen.insert(private.to_ascii_lowercase())
+                    {
+                        private.push('_');
+                    }
+                    private
+                }
+            })
+            .collect();
+        let renamed = physical.iter().zip(&columns).any(|(a, (b, _))| a != b);
+        let runtime_select = if renamed {
+            let names = physical
+                .iter()
+                .map(|name| quote(name))
+                .collect::<Vec<_>>()
+                .join(",");
+            let Cmd::Stmt(Stmt::Select(wrapped)) = parsed(&format!(
+                "WITH __fastdb_native_derived({names}) AS ({query}) SELECT * FROM __fastdb_native_derived"
+            ))? else { unreachable!("native derived SELECT wrapper") };
+            wrapped
+        } else {
+            select.clone()
+        };
         return Ok(Source {
-            table: SelectTable::Select(select.clone(), Some(alias.clone())),
+            table: SelectTable::Select(runtime_select, Some(alias.clone())),
             alias: alias.name().as_str().into(),
             collection: None,
             derived: Some(columns),
             derived_logical: false,
+            derived_physical: renamed.then_some(physical),
             native_collations,
             native_expression_collations,
             consumed: Default::default(),
@@ -1838,6 +1878,7 @@ fn source(
         collection,
         derived,
         derived_logical: false,
+        derived_physical: None,
         native_expression_collations: Default::default(),
         native_collations: Default::default(),
         consumed: Default::default(),
@@ -3210,6 +3251,7 @@ impl Connection {
                         collection: None,
                         derived: Some(columns),
                         derived_logical: logical,
+                        derived_physical: None,
                         native_collations: Default::default(),
                         native_expression_collations: Default::default(),
                         consumed,
@@ -4872,12 +4914,16 @@ fn expand_stars(
         }
         for source in sources {
             if let Some(columns) = &source.derived {
-                for (name, _) in columns {
+                for (position, (name, _)) in columns.iter().enumerate() {
+                    let physical = source
+                        .derived_physical
+                        .as_ref()
+                        .map_or(name, |names| &names[position]);
                     expanded.push(ResultColumn::Expr(
                         Box::new(expression(&format!(
                             "{}.{}",
                             quote(&source.alias),
-                            quote(name)
+                            quote(physical)
                         ))?),
                         Some(As::As(Name::from_string(quote(name)))),
                     ));

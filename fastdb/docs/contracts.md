@@ -1073,3 +1073,6 @@ Native membership in JOIN ON (2026-09-08): native IN/NOT IN subqueries reference
 
 
 Native binary placeholders in logical queries (2026-09-08): remaining engine placeholders receive native scalar bindings, preserving raw binary bytes for relational sources and subqueries. Typed logical expressions encode their values during lowering. Managed-index candidate predicates explicitly convert binary bindings to the encoded key representation, allowing one binding to serve both indexed document and native SQL comparisons without confusing raw BLOBs with record identity.
+
+
+Native derived stars with duplicate output names preserve column positions in supported INSERT SELECT queries. Later duplicate columns receive private runtime names while ordinary name lookup retains the first matching column. Case-insensitive duplicates, distinct scalar/binary/NULL values and rollback are covered. This does not remove the existing public duplicate-projection-name restriction or the separate logical-derived duplicate-name restriction.
