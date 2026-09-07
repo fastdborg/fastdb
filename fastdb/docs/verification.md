@@ -1892,3 +1892,6 @@ Grouped scalar pagination qualification (2026-09-08): expanded the correlated sc
 
 
 Windowed scalar pagination qualification (2026-09-08): a new native differential regression covers row_number() in a correlated scalar query with computed OFFSET, including offsets beyond remaining rows. Direct/derived collection sources match literal native pagination through execute/profile, verifying window values precede pagination in this form. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 396 Rust/44 Node tests; this additional test has not received a new combined run. Broader window/scope/resource and full V1 gates remain open.
+
+
+Running-window scalar pagination qualification (2026-09-08): expanded the windowed scalar regression to sum(i.n) and count(*) alongside row_number(). Computed OFFSET selects the already-computed running window value and matches literal native results, including empty outputs, for direct/derived sources through execute/profile. The expanded focused test, formatting and focused Clippy pass. Latest combined evidence remains 396 Rust/44 Node tests; broader window/scope/resource and full V1 gates remain open.
