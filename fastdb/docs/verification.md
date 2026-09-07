@@ -1752,3 +1752,6 @@ Typed-parameter scalar correlation qualification (2026-09-08): a new regression 
 Fixed false NULL results when a logical scalar filter uses a qualified outer record as the left operand of IN/NOT IN. The correlation walker now visits that operand in its enclosing scope before handling the SELECT source. Regressions cover direct/derived outer sources, direct/coalesce operands, and NULL members through execute/profile.
 
 The complete scoped check passed formatting, Clippy, 381 Rust tests, 44 Node/application tests and strict TypeScript. This includes the preceding typed-parameter regression. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/resource and full V1 release qualification remain open.
+
+
+Scalar membership write qualification (2026-09-08): a parameterized multirow UPDATE now has a regression for a source-free assignment with an outer record IN a collection SELECT and a typed boolean filter. A failing CHECK preserves prior transaction work and managed-index integrity; corrected bindings update both intended rows, and rollback restores the originals. The focused regression, package formatting and focused Clippy pass. Latest complete scoped evidence remains 381 Rust/44 Node tests; this additional test has not received a new combined run. Broader write/scope/resource and full V1 release gates remain open.
