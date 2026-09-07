@@ -372,3 +372,33 @@ fn mixed_compound_comparison_writes_preserve_atomicity() {
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT n FROM copied").rows.is_empty());
 }
+
+#[test]
+fn mixed_derived_metadata_preserves_positional_bindings() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE labels(m INTEGER,label TEXT)");
+    q(&c, "INSERT INTO labels VALUES(1,'A'),(2,'B')");
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    let params = Parameters::from([
+        ("?1".into(), Value::Integer(10)),
+        ("?2".into(), Value::Integer(1)),
+        ("?3".into(), Value::String("B".into())),
+    ]);
+    for sql in [
+        "SELECT n+?,label FROM (SELECT n FROM docs WHERE n>=?) JOIN (SELECT m,label FROM labels WHERE label=?) ON n=m",
+        "SELECT n+?1,label FROM (SELECT n FROM docs WHERE n>=?2) JOIN (SELECT m,label FROM labels WHERE label=?3) ON n=m",
+    ] {
+        let expected = vec![vec![Value::Integer(12),Value::String("B".into())]];
+        assert_eq!(c.execute(sql,&params).expect(sql).rows,expected,"{sql}");
+        assert_eq!(c.profile_select(sql,&params).expect(sql).result.rows,expected,"{sql}");
+        let mut missing = params.clone(); missing.remove("?3");
+        let native = sql.replace("FROM docs", "FROM baseline");
+        let unbound = c.execute(&native,&missing).unwrap().rows;
+        assert!(unbound.is_empty());
+        assert_eq!(c.execute(sql,&missing).unwrap().rows,unbound);
+        assert_eq!(c.profile_select(sql,&missing).unwrap().result.rows,unbound);
+
+        assert_eq!(c.execute(sql,&params).expect(sql).rows,expected,"{sql}");
+    }
+}
