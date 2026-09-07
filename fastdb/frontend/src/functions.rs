@@ -565,6 +565,26 @@ mod between_tests {
         assert_eq!(rows, vec![vec![Value::Integer(3)]]);
         assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls);
         assert_eq!(logical_calls, 1);
+        for (source, expected) in [
+            ("SELECT n FROM scalar_inputs", 2),
+            ("SELECT DISTINCT n FROM scalar_inputs", 2),
+            (
+                "SELECT n FROM scalar_inputs UNION ALL SELECT n FROM scalar_inputs",
+                4,
+            ),
+            (
+                "SELECT n FROM scalar_inputs UNION SELECT n FROM scalar_inputs",
+                2,
+            ),
+        ] {
+            CALLS.store(0, Ordering::SeqCst);
+            let rows = c.execute(
+                &format!("{source} LIMIT (SELECT between_tick() FROM scalar_inputs) OFFSET (SELECT between_tick()-7 FROM scalar_inputs)"),
+                &crate::Parameters::new(),
+            ).unwrap().rows;
+            assert_eq!(rows.len(), expected, "{source}");
+            assert_eq!(CALLS.load(Ordering::SeqCst), 2, "{source}");
+        }
         for inner in [
             "between_tick() FROM scalar_inputs",
             "n FROM scalar_inputs WHERE between_tick()=7",

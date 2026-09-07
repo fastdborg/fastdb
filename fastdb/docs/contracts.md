@@ -701,3 +701,9 @@ An outer CTE referenced inside LIMIT fails in both the pinned native engine and 
 Logical compound SELECTs now lower supported uncorrelated scalar subqueries in LIMIT/OFFSET independently of arm fields and output aliases. Initial coverage includes UNION ALL, UNION, INTERSECT and EXCEPT, positive/zero/negative limits, offsets, bound values, native arms with a logical limit source, and successful/failed collection INSERT SELECT. Both Node clients exercise a bound UNION limit.
 
 The pinned engine rejects the tested direct native compound LIMIT/OFFSET subquery form with datatype mismatch. Successful differential comparisons therefore use an equivalent native derived-table wrapper with outer pagination; the direct native rejection is retained separately. This is not a claim of complete native compound-subquery compatibility. Outer CTE visibility, correlation, broader types and resource/platform qualification remain open. No upstream implementation or persisted encoding changes.
+
+## Pagination evaluation and failure qualification (2026-09-07)
+
+A native test-only counter verifies one evaluation each of uncorrelated LIMIT and OFFSET scalar subqueries for plain SELECT, DISTINCT, UNION ALL and UNION. Four query shapes return the expected row counts with exactly two callback invocations per statement.
+
+A transaction regression checks NULL, fractional, invalid-text and outer-field-dependent limits for plain, DISTINCT and UNION collection INSERT SELECT. Each failure preserves the active transaction, prior record IDs/values and managed-index integrity. A corrected insertion succeeds and final rollback removes all transaction-local target rows. This is bounded evaluation/atomicity evidence; cancellation during pagination, broader types/aliases and resource/platform coverage remain unqualified.

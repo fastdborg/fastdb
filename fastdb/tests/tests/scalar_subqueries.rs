@@ -789,3 +789,52 @@ fn compound_subquery_pagination_matches_native_and_is_atomic() {
         vec![vec![Value::Integer(1)]]
     );
 }
+
+#[test]
+fn pagination_errors_preserve_prior_transaction_work_and_scope() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2)");
+    q(&c, "CREATE TABLE target");
+    q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO target {id:target:prior,n:9}");
+    let prior = q(&c, "SELECT id,n FROM target").rows;
+    for source in [
+        "SELECT n FROM docs",
+        "SELECT DISTINCT n FROM docs",
+        "SELECT n FROM docs UNION SELECT n FROM docs",
+    ] {
+        for limit in [
+            "(SELECT n FROM docs WHERE n=99)",
+            "(SELECT 1.5 FROM docs)",
+            "(SELECT 'invalid' FROM docs)",
+            "n+(SELECT min(n) FROM docs)",
+        ] {
+            let sql = format!("INSERT INTO target(n) {source} LIMIT {limit}");
+            assert!(c.execute(&sql, &Parameters::new()).is_err(), "{sql}");
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(q(&c, "SELECT id,n FROM target").rows, prior);
+            assert_eq!(
+                c.check_collection_integrity("target", Default::default())
+                    .unwrap()
+                    .documents,
+                1
+            );
+            assert!(q(&c, "SELECT n FROM target WHERE n=1").rows.is_empty());
+        }
+    }
+    q(&c, "INSERT INTO target(n) SELECT n FROM docs UNION SELECT n FROM docs ORDER BY n LIMIT (SELECT min(n) FROM docs)");
+    assert_eq!(
+        q(&c, "SELECT n FROM target ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(9)]]
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}
