@@ -1056,3 +1056,12 @@ The offline installed Node consumer now runs a parameterized correlated-projecti
 Simple native inner SELECT ORDER BY expressions now rewrite qualified outer collection fields using the existing correlation scope. Disposable metadata probes replace those references with NULL; execution preserves the per-outer-row ordering inside the engine. Differential execute/profile coverage includes scalar, IN and EXISTS forms, ascending/descending expressions, NULLS LAST and multiple sort keys with LIMIT 1.
 
 The complete scoped suite passed formatting, Clippy, 316 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored. Pinned native probes reject outer references in the tested GROUP BY and LIMIT positions; this change does not add those forms. Inner collection/deeper/local-WITH/compound correlation, broader ordering/type/alias cases and full V1 remain incomplete.
+
+
+## Correlated typed projection sort reuse (2026-09-07)
+
+Single-column correlated native subqueries now sort covered typed projection aliases and ordinals by logical values. Native scalar projections retain engine alias reuse; typed CASE/coalesce projections pass through a lazy local CTE with a flattening barrier, so sorting reuses the projected value. Mixed ordinary sort keys travel through that boundary as additional internal columns. LIMIT/OFFSET remain on the outer sort, including zero-limit short-circuiting.
+
+Differential native-table tests cover negative and multi-digit integers, ascending/descending aliases and ordinals, parentheses, explicit BINARY collation, mixed keys and offsets. A registered volatile function verifies native evaluation counts through execute/profile for scalar arithmetic, typed CASE, mixed keys and LIMIT 0. Mixed DISTINCT ordering involving a typed projected alias and an additional ordinary key is explicitly unsupported: adding that key to DISTINCT would change duplicate elimination. General correlated alias expressions, DISTINCT/type semantics and broader scope/resource qualification remain open.
+
+Verification: the complete scoped check passed formatting, Clippy, 318 Rust tests, 35 Node tests and strict TypeScript. One previously recorded trigger-interruption gate remains ignored. No upstream core files changed. Full V1 remains incomplete.

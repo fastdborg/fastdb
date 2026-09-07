@@ -148,17 +148,116 @@ fn native_correlated_predicate(
         }
     }
     let mut typed_projection = false;
-    for column in columns {
-        if let ResultColumn::Expr(value, _) = column {
+    let mut typed_sort_values = Vec::new();
+    for (index, column) in columns.iter_mut().enumerate() {
+        if let ResultColumn::Expr(value, alias) = column {
             // Explicit casts produce native scalars whose affinity must remain
             // attached to the subquery result in outer comparisons.
-            let typed = !has_cast_affinity(value);
+            let mut typed = !has_cast_affinity(value);
             let correlated = rewrite(value, typed)?;
+            if correlated && typed && !metadata {
+                if let Expr::FunctionCall { name, args, .. } = value.as_ref() {
+                    if name.as_str() == "__fastdb_pack" && args.len() == 1 {
+                        // This projection is already a native scalar. Keep the
+                        // engine's alias reuse and pack only the scalar result.
+                        *value = args[0].clone();
+                        typed = false;
+                    }
+                }
+            }
             typed_projection |= correlated && typed;
+            if correlated && typed && !metadata {
+                typed_sort_values.push((index + 1, alias.clone(), value.clone()));
+            }
         }
     }
+    fn sort_base(value: &Expr) -> &Expr {
+        match value {
+            Expr::Collate(value, _) => sort_base(value),
+            Expr::Parenthesized(values) if values.len() == 1 => sort_base(&values[0]),
+            _ => value,
+        }
+    }
+    let single_projection = columns.len() == 1;
+    let mut selected_sorts = 0;
+    let mut sort_selections = Vec::new();
     for sorted in &mut inner.order_by {
+        let selected =
+            typed_sort_values
+                .iter()
+                .find(|(index, alias, _)| match sort_base(&sorted.expr) {
+                    Expr::Literal(Literal::Numeric(n)) => n.parse::<usize>().ok() == Some(*index),
+                    Expr::Id(name) | Expr::Name(name) => alias
+                        .as_ref()
+                        .is_some_and(|a| a.name().as_str().eq_ignore_ascii_case(name.as_str())),
+                    _ => false,
+                });
+        if let Some((_, _, value)) = selected {
+            selected_sorts += 1;
+            sort_selections.push(true);
+            let replacement = expression(&format!("__fastdb_unwrap({value})"))?;
+            replace_order_base(&mut sorted.expr, replacement);
+            continue;
+        }
+        sort_selections.push(false);
         rewrite(&mut sorted.expr, false)?;
+    }
+    if single_projection && selected_sorts > 0 {
+        if selected_sorts != inner.order_by.len()
+            && matches!(
+                &inner.body.select,
+                OneSelect::Select {
+                    distinctness: Some(Distinctness::Distinct),
+                    ..
+                }
+            )
+        {
+            return Err(unsupported(
+                "mixed DISTINCT correlated typed projection ordering",
+            ));
+        }
+        // Keep the projected value available to sorting without evaluating it
+        // twice. OFFSET prevents flattening; a lazy CTE preserves LIMIT 0.
+        // Extra sort keys are safe here only when they cannot affect DISTINCT.
+        let mut ordering = std::mem::take(&mut inner.order_by);
+        let limit = inner.limit.take();
+        let mut names = vec!["v".to_owned()];
+        if let OneSelect::Select { columns, .. } = &mut inner.body.select {
+            for (index, (sorted, selected)) in ordering.iter_mut().zip(&sort_selections).enumerate()
+            {
+                if !selected {
+                    let name = format!("k{index}");
+                    columns.push(ResultColumn::Expr(sorted.expr.clone(), None));
+                    names.push(name.clone());
+                    sorted.expr = Box::new(expression(&name)?);
+                }
+            }
+        }
+        let names = names.join(",");
+        let sql = Cmd::Stmt(Stmt::Select(inner)).to_string();
+        let mut suffix = 0;
+        let name = loop {
+            let name = format!("__fastdb_sorted_projection_{suffix}");
+            if !sql.to_ascii_lowercase().contains(&name) {
+                break name;
+            }
+            suffix += 1;
+        };
+        let Expr::Subquery(mut wrapped) = expression(&format!(
+            "(WITH {name}({names}) AS NOT MATERIALIZED ({} LIMIT -1 OFFSET 0) SELECT v FROM {name})",
+            sql.trim().trim_end_matches(';')
+        ))?
+        else {
+            unreachable!()
+        };
+        for (sorted, selected) in ordering.iter_mut().zip(&sort_selections) {
+            if *selected {
+                replace_order_base(&mut sorted.expr, expression("__fastdb_unwrap(v)")?);
+            }
+        }
+        wrapped.order_by = ordering;
+        wrapped.limit = limit;
+        inner = wrapped;
     }
     Ok((inner, typed_projection))
 }

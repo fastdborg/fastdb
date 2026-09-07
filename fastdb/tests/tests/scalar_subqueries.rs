@@ -2037,3 +2037,66 @@ fn correlated_native_ordering_matches_native_rows_and_nulls() {
         }
     }
 }
+
+#[test]
+fn correlated_projection_sort_aliases_use_logical_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(0),(1)",
+        "INSERT INTO native VALUES(0),(1)",
+        "INSERT INTO lookup VALUES(2),(10),(-1)",
+    ] {
+        q(&c, sql);
+    }
+    for order in [
+        "x",
+        "x DESC",
+        "1",
+        "1 DESC",
+        "(x) DESC",
+        "x COLLATE BINARY DESC",
+        "(1) DESC",
+        "x DESC,n",
+        "n,x DESC",
+    ] {
+        for projection in [
+            "n+d.n",
+            "CASE WHEN d.n>=0 THEN n ELSE d.n END",
+            "coalesce(NULL,n,d.n)",
+        ] {
+            for limit in ["0", "1", "1 OFFSET 1", "1 OFFSET 2"] {
+                let expr = format!(
+                    "(SELECT {projection} AS x FROM lookup ORDER BY {order} LIMIT {limit})"
+                );
+                assert_eq!(
+                    q(&c, &format!("SELECT {expr} FROM docs d ORDER BY d.n")).rows,
+                    q(&c, &format!("SELECT {expr} FROM native d ORDER BY d.n")).rows,
+                    "{projection}: {order} LIMIT {limit}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn mixed_distinct_correlated_typed_ordering_is_rejected() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1)");
+    q(&c, "CREATE TABLE lookup(n)");
+    q(&c, "INSERT INTO lookup VALUES(1),(2)");
+    let sql = "SELECT (SELECT DISTINCT CASE WHEN d.n>0 THEN 1 ELSE d.n END AS x FROM lookup ORDER BY x,n LIMIT 1 OFFSET 1) FROM docs d";
+    assert!(matches!(
+        c.execute(sql, &Parameters::new()),
+        Err(fastdb::Error::Unsupported(_))
+    ));
+    assert!(matches!(
+        c.profile_select(sql, &Parameters::new()),
+        Err(fastdb::Error::Unsupported(_))
+    ));
+}

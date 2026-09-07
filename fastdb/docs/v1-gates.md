@@ -96,3 +96,6 @@ Qualified outer fields now work in simple native inner SELECT projections, with 
 
 
 Initial correlated ORDER BY expressions now match native scalar/IN/EXISTS probes through execute/profile, including NULL placement and multiple sort keys. The complete scoped run passed 316 Rust and 35 Node tests. Tested native GROUP BY/LIMIT outer references retain rejection; broader correlation and ordering qualification remain open. See status.md.
+
+
+Correlated typed projection aliases/ordinals now have logical ordering with projection reuse and initial LIMIT/OFFSET qualification. Volatile-function execute/profile probes preserve native call counts, including LIMIT 0. Mixed DISTINCT ordering with an additional ordinary key remains explicitly unsupported to preserve duplicate semantics. Broader correlated ordering/alias/type qualification remains open; see status.md.
