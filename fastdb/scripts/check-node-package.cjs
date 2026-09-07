@@ -62,6 +62,16 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await client.execute('ROLLBACK');
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
 
+    await client.execute('BEGIN');
+    const memberUpdate=await client.execute('UPDATE docs AS d SET value=$next WHERE d.value IN(SELECT $current WHERE d.value>0) RETURNING value',{$next:8n,$current:9223372036854775807n});
+    assert.deepEqual(memberUpdate.rows,[[8n]]);
+    assert.equal(memberUpdate.affected,1n);
+    const membership='SELECT d.value IN(SELECT $n WHERE d.value>0),d.value NOT IN(SELECT $n WHERE d.value<0),d.value IN(SELECT NULL WHERE d.value>0) FROM docs AS d';
+    assert.deepEqual((await client.profileSelect(membership,{$n:8n})).result.rows,[[1n,1n,null]]);
+    assert.equal((await client.checkCollectionIntegrity('docs')).indexEntries,1n);
+    await client.execute('ROLLBACK');
+    assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
+
     const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
     assert.deepEqual(await client.all(cte),[[2n]]);
   }

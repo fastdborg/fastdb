@@ -965,3 +965,8 @@ IN/NOT IN sources now use qualified outer collection fields in the supported nat
 Tests compare NULL/empty sources, native literal and typed left operands, unary plus/CAST/COLLATE, INTEGER/NOCASE/RTRIM RHS declarations and binary-versus-record identity. Missing parameters, failed INSERT SELECT with prior work, integrity and corrected retry are covered. The native function counter checks per-row source evaluation for IN and NOT IN through execute/profile. Inner collection sources, deeper correlated scopes, non-predicate correlation and broader volatile/planner/resource behavior remain unfinished.
 
 Scoped checks passed formatting, Clippy, 305 Rust tests, thirty-five Node tests and strict TypeScript. Final text-literal collation cases passed separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Installed correlated membership smoke (2026-09-07)
+
+The offline installed Node consumer now exercises a parameterized correlated IN UPDATE and profiles matching, empty NOT IN and NULL membership results through sync and worker clients. It verifies affected rows, managed index integrity and rollback to int64 max. The complete smoke passed on Linux x64 / Node 24.19.0 with eight runtime files and a 59,608,392-byte development tarball. Release/platform qualification remains open.
