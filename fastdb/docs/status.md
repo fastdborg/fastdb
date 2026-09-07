@@ -1784,3 +1784,6 @@ Correlated membership alias binding qualification (2026-09-08): a new native-ref
 
 
 Collection-backed membership alias qualification (2026-09-08): expanded the correlated alias binding regression to a collection RHS with qualified inner fields. Integer IN/NOT IN results, alias arithmetic, repeated bindings and empty inner results match the native reference through execute/profile. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 415 Rust/45 Node tests. This does not qualify all typed operands, correlation forms or V1 release gates.
+
+
+Typed membership alias qualification (2026-09-08): a new regression binds both record references, both Boolean values and distinct binary values (including an FDB-prefixed blob) as projected aliases. Correlated collection IN/NOT IN selects the expected matching/nonmatching row and returns each bound value unchanged through execute/profile. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 415 Rust/45 Node tests; recent additions have focused evidence only. Broader typed comparisons, resources and full V1 release gates remain open.

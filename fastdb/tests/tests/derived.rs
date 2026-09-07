@@ -833,3 +833,32 @@ fn membership_aliases_preserve_correlated_bindings() {
         }
     }
 }
+
+#[test]
+fn membership_aliases_preserve_document_value_types() {
+    let (_db, c) = setup();
+    q(&c, "UPDATE docs SET data=X'46444201' WHERE n=2");
+    for (index, values) in q(&c, "SELECT ref,flag,data FROM docs ORDER BY n")
+        .rows
+        .into_iter()
+        .enumerate()
+    {
+        for (field, value) in ["ref", "flag", "data"].into_iter().zip(values) {
+            let params = Parameters::from([("$value".into(), value.clone())]);
+            for (operator, selected) in [("IN", index as i64 + 1), ("NOT IN", 2 - index as i64)] {
+                let sql = format!("SELECT d.n,$value AS candidate FROM (SELECT n FROM docs) d WHERE candidate {operator} (SELECT x.{field} FROM docs x WHERE x.n=d.n) ORDER BY d.n");
+                let expected = vec![vec![Value::Integer(selected), value.clone()]];
+                assert_eq!(
+                    c.execute(&sql, &params).unwrap().rows,
+                    expected,
+                    "{field} {operator}"
+                );
+                assert_eq!(
+                    c.profile_select(&sql, &params).unwrap().result.rows,
+                    expected,
+                    "{field} {operator}"
+                );
+            }
+        }
+    }
+}
