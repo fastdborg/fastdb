@@ -792,3 +792,8 @@ The cancellable import/export methods reject a pre-cancelled token before transf
 ## Cancellable migrations
 
 Rust migrate_cancellable and async Node migrate's optional signal preserve the runner's single transaction for all pending migrations and exact-source history. A cancellation wrapped in migration context exposes FDB_CANCELLED and retains version/offset details; non-cancellation execution failures remain FDB_MIGRATION. Previously applied history is not part of the rollback. There is no deadline guarantee for plan parsing/compilation, and successful completion can win cancellation races.
+
+
+## Initial native membership lowering
+
+Logical queries can use native IN/NOT IN sources in the covered scalar subset. Native source affinity/collation are retained, empty membership is false (true for NOT IN), a match takes precedence over NULL entries, and an unmatched NULL-bearing set produces NULL. Native BLOBs compare as binary values and do not impersonate typed records. Missing parameters fail before collection writes. Sources/comparisons currently materialize; volatile evaluation and broader planner/resource qualification remain open.

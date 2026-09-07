@@ -29,6 +29,7 @@ type CteSources = std::collections::BTreeMap<String, Option<Source>>;
 enum SubqueryAffinity {
     None,
     MembershipColumn,
+    NativeMembership(String),
     NativeScalar(String),
 }
 // Each entry stores lowered SQL, consumed binds, and affinity provenance.
@@ -498,7 +499,29 @@ impl Scope {
                 let Expr::InSelect { lhs, not, .. } = expr else {
                     unreachable!()
                 };
+                for name in consumed {
+                    if !self.params.contains_key(name) {
+                        return Err(Error::Parameter(name.clone()));
+                    }
+                }
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
+                if let SubqueryAffinity::NativeMembership(collation) = column {
+                    let mut value = *lhs.clone();
+                    let is_column = membership_column(&value);
+                    if !self.comparison_key(&mut value)? {
+                        self.lower(&mut value)?;
+                        **lhs = value;
+                        return Ok(());
+                    }
+                    let key = if is_column { "k" } else { "+k" };
+                    let collation = outer_collation(lhs).unwrap_or(collation);
+                    let key = format!("({key} COLLATE {})", quote(collation));
+                    let negate = if *not { "NOT " } else { "" };
+                    // Preserve native RHS column affinity. Encode only its BLOB
+                    // branch to distinguish native bytes from logical record keys.
+                    *expr = expression(&format!("(WITH __fastdb_native_members(v) AS MATERIALIZED {query}, __fastdb_member_lhs(k) AS MATERIALIZED (SELECT {value}), __fastdb_member_matches(m) AS MATERIALIZED (SELECT CASE WHEN typeof(v)='blob' THEN {key}=__fastdb_unwrap(__fastdb_pack(v)) ELSE {key}=v END FROM __fastdb_native_members CROSS JOIN __fastdb_member_lhs) SELECT {negate}(CASE WHEN count(*)=0 THEN 0 WHEN max(m)=1 THEN 1 WHEN count(m)<count(*) THEN NULL ELSE 0 END) FROM __fastdb_member_matches)"))?;
+                    return Ok(());
+                }
                 let mut value = *lhs.clone();
                 let negate = if *not { "NOT " } else { "" };
                 if self.comparison_key(&mut value)? {
@@ -2350,11 +2373,16 @@ impl Connection {
                                     },
                                 ),
                             );
-                        } else if !membership {
+                        } else {
                             native_expression_subqueries.insert(
                                 expr.to_string(),
                                 (
-                                    if exists {
+                                    if membership {
+                                        expression(&format!(
+                                            "({})",
+                                            sql.trim().trim_end_matches(';')
+                                        ))?
+                                    } else if exists {
                                         expr.clone()
                                     } else {
                                         expression(&format!("__fastdb_pack({expr})"))?
@@ -2366,7 +2394,9 @@ impl Connection {
                                         })
                                         .map(|token| token.text.to_owned())
                                         .collect(),
-                                    if exists {
+                                    if membership {
+                                        SubqueryAffinity::NativeMembership("BINARY".into())
+                                    } else if exists {
                                         SubqueryAffinity::None
                                     } else {
                                         SubqueryAffinity::NativeScalar("BINARY".into())
@@ -2553,11 +2583,15 @@ impl Connection {
         // Native expression queries do not opt an ordinary SQL statement into
         // logical lowering; preserve their values only once that route is chosen.
         for (sql, (_, _, affinity)) in &mut native_expression_subqueries {
-            if !matches!(affinity, SubqueryAffinity::NativeScalar(_)) {
+            if !matches!(
+                affinity,
+                SubqueryAffinity::NativeScalar(_) | SubqueryAffinity::NativeMembership(_)
+            ) {
                 continue;
             }
-            let Expr::Subquery(inner) = expression(sql)? else {
-                unreachable!()
+            let inner = match expression(sql)? {
+                Expr::Subquery(inner) | Expr::InSelect { rhs: inner, .. } => inner,
+                _ => unreachable!(),
             };
             let mut collation = "BINARY".to_owned();
             {
@@ -2593,7 +2627,11 @@ impl Connection {
                     collation = explicit.or(implicit).unwrap_or(collation);
                 }
             }
-            *affinity = SubqueryAffinity::NativeScalar(collation);
+            *affinity = if matches!(affinity, SubqueryAffinity::NativeMembership(_)) {
+                SubqueryAffinity::NativeMembership(collation)
+            } else {
+                SubqueryAffinity::NativeScalar(collation)
+            };
         }
         expression_subqueries.extend(native_expression_subqueries);
         let distinct = !sources.is_empty() && matches!(distinctness, Some(Distinctness::Distinct));

@@ -18,7 +18,7 @@ This is a navigation and prioritization aid, not a replacement for the parent Fa
 
 Cloud beta requirements remain deferred until after embedded V1. They do not block embedded implementation. V2 inverse links, indexed ANN/FTS/spatial and user scripts are not substitutes for unfinished V1 work.
 
-## Confirmed next query gap
+## Native membership gap and follow-up
 
 A live probe against the current native addon produced:
 
@@ -35,4 +35,6 @@ SELECT n,n IN (SELECT n FROM native) FROM docs;
 
 The collection result should be qualified against an ordinary-table oracle containing the same left-hand values. The implementation prepass in frontend/src/select.rs caches native scalar/EXISTS sources but deliberately excludes native membership sources. Extending that route must preserve RHS affinity/collation, NULL/NOT IN behavior, raw binary versus typed record identity, parameter validation and single-source evaluation. Simply encoding all RHS values through a function would lose native column affinity. Tests should cover both reads and atomic collection INSERT SELECT with retry/rollback before marking the gap handled.
 
-Next implementation priority is this mixed-query gap, followed by remaining write/type semantics and resource accounting. Existing cancellation and packaging evidence should be reused unless a change affects it. The core trigger proposal remains separately reviewable under the project workflow; it is not applied by this audit.
+Initial implementation now handles the scalar native-membership cases described in status.md. Follow-up priority is broader operand/CTE/correlation and evaluation-count qualification, followed by remaining write/type semantics and resource accounting. Existing cancellation and packaging evidence should be reused unless a change affects it. The core trigger proposal remains separately reviewable under the project workflow; it is not applied by this audit.
+
+The reproducer above records the pre-change failure. Initial native membership lowering and differential/read-write tests now exist; the wider semantic and performance requirements remain open.

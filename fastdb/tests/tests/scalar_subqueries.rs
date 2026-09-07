@@ -1083,3 +1083,110 @@ fn native_scalar_comparison_insert_failures_preserve_indexes_and_prior_work() {
         0
     );
 }
+
+#[test]
+fn native_membership_sources_match_scalar_affinity_and_null_semantics() {
+    for declaration in [
+        "INTEGER",
+        "TEXT",
+        "TEXT COLLATE NOCASE",
+        "TEXT COLLATE RTRIM",
+        "BLOB",
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(&c, "CREATE TABLE lhs(n BLOB)");
+        q(
+            &c,
+            "INSERT INTO docs(n) VALUES (1),(2),('1'),('a'),('A'),(NULL)",
+        );
+        q(
+            &c,
+            "INSERT INTO lhs VALUES (1),(2),('1'),('a'),('A'),(NULL)",
+        );
+        q(&c, &format!("CREATE TABLE rhs(n {declaration})"));
+        q(&c, "INSERT INTO rhs VALUES (1),('a'),(NULL)");
+        for projection in ["n", "+n", "CAST(n AS TEXT)"] {
+            for predicate in ["1", "n IS NOT NULL", "0"] {
+                for op in ["IN", "NOT IN"] {
+                    let suffix = format!("n {op} (SELECT {projection} FROM rhs WHERE {predicate})");
+                    let expected =
+                        q(&c, &format!("SELECT n,{suffix} FROM lhs ORDER BY rowid")).rows;
+                    let actual = q(&c, &format!("SELECT n,{suffix} FROM docs ORDER BY rowid")).rows;
+                    assert_eq!(actual, expected, "{declaration}: {suffix}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn native_membership_insert_parameters_and_binary_identity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE rhs(n BLOB)");
+    q(&c, "CREATE TABLE target");
+    q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+    let record = Value::Record(fastdb::Record {
+        table: "docs".into(),
+        key: fastdb::Key::String("a".into()),
+    });
+    let bytes = Value::Binary(
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"String\":\"a\"}}}"
+            .to_vec(),
+    );
+    let params = Parameters::from([("$record".into(), record), ("$bytes".into(), bytes)]);
+    c.execute("INSERT INTO docs(n) VALUES ($record),($bytes)", &params)
+        .unwrap();
+    c.execute(
+        "INSERT INTO rhs VALUES ($bytes)",
+        &Parameters::from([("$bytes".into(), params["$bytes"].clone())]),
+    )
+    .unwrap();
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n IN (SELECT n FROM rhs) FROM docs ORDER BY rowid"
+        )
+        .rows,
+        vec![vec![Value::Integer(0)], vec![Value::Integer(1)]]
+    );
+    q(&c, "DELETE FROM docs");
+    q(&c, "DELETE FROM rhs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2)");
+    q(&c, "INSERT INTO rhs VALUES (1),(2)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO target {id:target:prior,n:9}");
+    let sql = "INSERT INTO target(n) SELECT n IN (SELECT n FROM rhs WHERE n>$min) FROM docs";
+    assert_eq!(
+        c.execute(sql, &Parameters::new()).unwrap_err().code(),
+        "FDB_PARAMETER"
+    );
+    let result = c.execute(sql, &Parameters::from([("$min".into(), Value::Integer(0))]));
+    assert!(result.is_err());
+    assert_eq!(
+        q(&c, "SELECT n FROM target").rows,
+        vec![vec![Value::Integer(9)]]
+    );
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        1
+    );
+    assert_eq!(
+        c.execute(sql, &Parameters::from([("$min".into(), Value::Integer(1))]))
+            .unwrap()
+            .affected,
+        2
+    );
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        3
+    );
+    q(&c, "ROLLBACK");
+}
