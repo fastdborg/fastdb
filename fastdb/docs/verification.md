@@ -2141,3 +2141,10 @@ Regeneration/check mode and altered-notice-hash rejection pass; rejection preser
 
 
 Notice bundle integrity regression suite (2026-09-08): added six synthetic offline tests for reproducible generation/deduplication, retained per-file provenance, stale lockfile metadata, mismatched package identities, corrupted archives, altered notice hashes and stale output checks. Every rejection verifies the previous output is preserved. All six tests pass without Cargo or registry access. Runtime and package contents are unchanged; latest complete scoped runtime evidence remains 420 Rust/46 Node tests. Complete attribution review, distribution and full V1 release gates remain open.
+
+
+## Pinned napi-rs repository notices (2026-09-08)
+
+The large-source header probe found no additional inline notices among the unmatched archives. Inspected .cargo_vcs_info.json in the five pinned napi-rs crate archives and retrieved repository LICENSE files at their three recorded commits. All three source files have identical bytes, preserving both the LongYinan and GitHub copyright notices. THIRD_PARTY_NOTICES.md includes the complete text and commit links; notice-source-supplements.json records package/version, source path, revision, URL and SHA-256 provenance. Archive checksums were checked against the existing audit before reading VCS metadata.
+
+The final offline package smoke passed exact installed notices, sync/worker consumers and strict TypeScript on Linux x64, Node 24.19.0: ten files, 59,954,024 packed bytes. An earlier package check caught an introduction edit made after packing began; the rerun used the final unchanged files. The archive candidate inventory remains literal (these licenses were absent from the crate archives). Other omitted repository notices, inline attribution and workspace/bundled-source review remain open. No publication or runtime changes occurred; latest scoped runtime evidence remains 420 Rust/46 Node tests. Full V1 remains incomplete.

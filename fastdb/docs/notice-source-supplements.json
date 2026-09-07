@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "scope": "Repository license sources at crate-recorded commits; supplements cached archive evidence, not a complete attribution audit",
+  "entries": [
+    {
+      "package": "napi-build",
+      "version": "2.3.1",
+      "sourceRevision": "67e711d69b7e681807d157ea85cf8173fd923537",
+      "cratePathInSource": "crates/build",
+      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/67e711d69b7e681807d157ea85cf8173fd923537/LICENSE",
+      "sourceSha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "package": "napi-derive-backend",
+      "version": "5.0.2",
+      "sourceRevision": "0b80be8d9e64ba6c1733fcf31533e4f58bfc46b4",
+      "cratePathInSource": "crates/backend",
+      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/0b80be8d9e64ba6c1733fcf31533e4f58bfc46b4/LICENSE",
+      "sourceSha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "package": "napi-derive",
+      "version": "3.5.2",
+      "sourceRevision": "0b80be8d9e64ba6c1733fcf31533e4f58bfc46b4",
+      "cratePathInSource": "crates/macro",
+      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/0b80be8d9e64ba6c1733fcf31533e4f58bfc46b4/LICENSE",
+      "sourceSha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "package": "napi-sys",
+      "version": "3.2.1",
+      "sourceRevision": "be4b16ca00aa2cecd19be6ffe6de59495b471b14",
+      "cratePathInSource": "crates/sys",
+      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/be4b16ca00aa2cecd19be6ffe6de59495b471b14/LICENSE",
+      "sourceSha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "package": "napi",
+      "version": "3.8.3",
+      "sourceRevision": "0b80be8d9e64ba6c1733fcf31533e4f58bfc46b4",
+      "cratePathInSource": "crates/napi",
+      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/0b80be8d9e64ba6c1733fcf31533e4f58bfc46b4/LICENSE",
+      "sourceSha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    }
+  ]
+}
