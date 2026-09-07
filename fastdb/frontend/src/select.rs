@@ -2465,6 +2465,73 @@ impl Connection {
         };
         self.execute_lowered_select(plan, params).map(Some)
     }
+    fn correlate_source_free_expression(
+        &self,
+        value: &mut Expr,
+        correlation_sources: &[Source],
+        params: &Parameters,
+        ctes: &CteSources,
+        outer_scope: Option<&Scope>,
+    ) -> Result<()> {
+        let mut failure = None;
+        turso_core::walk_expr_mut(value, &mut |expr| {
+            if let Expr::InSelect { lhs, .. } = expr {
+                if let Err(error) = self.correlate_source_free_expression(
+                    lhs,
+                    correlation_sources,
+                    params,
+                    ctes,
+                    outer_scope,
+                ) {
+                    failure = Some(error);
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+            }
+            let exists = matches!(expr, Expr::Exists(_));
+            if let Expr::Subquery(query) | Expr::Exists(query) | Expr::InSelect { rhs: query, .. } =
+                expr
+            {
+                if let Err(error) = self.correlate_collection_inner(
+                    query,
+                    correlation_sources,
+                    params,
+                    ctes,
+                    exists,
+                ) {
+                    failure = Some(error);
+                }
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            if let Some(outer_scope) = outer_scope {
+                let replacement = outer_scope.field(expr).and_then(|field| {
+                    field
+                        .map(|(i, path)| {
+                            let value = outer_scope.accessor(i, &path, true)?;
+                            if outer_scope.sources[i].derived.is_some() {
+                                expression(&format!("__fastdb_correlated_value({value})"))
+                            } else {
+                                Ok(value)
+                            }
+                        })
+                        .transpose()
+                });
+                match replacement {
+                    Ok(Some(value)) => {
+                        *expr = value;
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
+                    Err(error) => failure = Some(error),
+                    Ok(None) => {}
+                }
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn correlate_collection_inner(
         &self,
         inner: &mut Select,
@@ -2537,53 +2604,13 @@ impl Connection {
                     })
                     .chain(where_clause.iter_mut());
                 for value in values {
-                    let mut failure = None;
-                    turso_core::walk_expr_mut(value, &mut |expr| {
-                        let exists = matches!(expr, Expr::Exists(_));
-                        if let Expr::Subquery(query)
-                        | Expr::Exists(query)
-                        | Expr::InSelect { rhs: query, .. } = expr
-                        {
-                            if let Err(error) = self.correlate_collection_inner(
-                                query,
-                                correlation_sources,
-                                params,
-                                ctes,
-                                exists,
-                            ) {
-                                failure = Some(error);
-                            }
-                            return Ok(turso_core::WalkControl::SkipChildren);
-                        }
-                        if logical {
-                            let replacement = outer_scope.field(expr).and_then(|field| {
-                                field
-                                    .map(|(i, path)| {
-                                        let value = outer_scope.accessor(i, &path, true)?;
-                                        if outer_scope.sources[i].derived.is_some() {
-                                            expression(&format!(
-                                                "__fastdb_correlated_value({value})"
-                                            ))
-                                        } else {
-                                            Ok(value)
-                                        }
-                                    })
-                                    .transpose()
-                            });
-                            match replacement {
-                                Ok(Some(value)) => {
-                                    *expr = value;
-                                    return Ok(turso_core::WalkControl::SkipChildren);
-                                }
-                                Err(error) => failure = Some(error),
-                                Ok(None) => {}
-                            }
-                        }
-                        Ok(turso_core::WalkControl::Continue)
-                    })?;
-                    if let Some(error) = failure {
-                        return Err(error);
-                    }
+                    self.correlate_source_free_expression(
+                        value,
+                        correlation_sources,
+                        params,
+                        ctes,
+                        logical.then_some(&outer_scope),
+                    )?;
                 }
             }
         }

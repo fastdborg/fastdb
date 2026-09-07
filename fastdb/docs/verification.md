@@ -1745,3 +1745,10 @@ Derived-source logical scalar qualification (2026-09-08): expanded the filtered 
 
 
 Typed-parameter scalar correlation qualification (2026-09-08): a new regression covers source-free scalar queries routed by boolean and record parameters, with direct and derived outer document sources. Boolean filters include/exclude typed record projections; changing a record parameter selects each corresponding outer record. Execute and profile agree, including NULL for excluded scalar rows. The focused regression, package formatting and focused Clippy pass. Latest complete scoped evidence remains 379 Rust/44 Node tests; this additional test has not received a new combined run. Broader scope/resource and full V1 release gates remain open.
+
+
+## Source-free membership operand correlation (2026-09-08)
+
+Fixed false NULL results when a logical scalar filter uses a qualified outer record as the left operand of IN/NOT IN. The correlation walker now visits that operand in its enclosing scope before handling the SELECT source. Regressions cover direct/derived outer sources, direct/coalesce operands, and NULL members through execute/profile.
+
+The complete scoped check passed formatting, Clippy, 381 Rust tests, 44 Node/application tests and strict TypeScript. This includes the preceding typed-parameter regression. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/resource and full V1 release qualification remain open.

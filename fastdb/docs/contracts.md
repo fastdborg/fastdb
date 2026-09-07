@@ -980,3 +980,8 @@ Source-free scalar SELECT wrappers now carry the outer logical scope into subque
 ## Logical source-free projection binding (2026-09-08)
 
 Source-free scalar queries already selected for logical lowering now bind qualified outer fields in their projections and filters. This admits document helpers such as `array::append(d.v,2)` alongside correlated EXISTS filtering without leaving the outer field unresolved. The routing check follows explicit private logical expressions and typed parameters; ordinary native scalar routing is retained. A regression verifies false filters suppress invalid helper projections, admitted invalid values reject, and corrected filters permit retry through execute/profile. Broader expression/scope/resource qualification remains open.
+
+
+## Source-free membership operand correlation (2026-09-08)
+
+Source-free logical scalar correlation now visits the left operand of IN/NOT IN before descending into its SELECT source. Previously the right-hand query was handled but an outer record on the left remained unbound, producing false NULL scalar results for matching rows. The expression walker preserves the enclosing scope for the left operand and delegates the right-hand SELECT to its own correlation handling. Regressions cover direct/derived outer sources, record and coalesce operands, and right-hand NULL membership through execute/profile. Broader table-bearing scopes and resource qualification remain open.

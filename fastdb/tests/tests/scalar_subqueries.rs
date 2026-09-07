@@ -3794,3 +3794,57 @@ fn source_free_typed_parameters_preserve_correlated_records() {
         }
     }
 }
+
+#[test]
+fn source_free_membership_binds_outer_left_operand() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1,v:[]}",
+        "INSERT INTO docs {id:docs:b,n:2,v:[]}",
+        "INSERT INTO links {owner:docs:a}",
+    ] {
+        q(&c, sql);
+    }
+    for null_member in [false, true] {
+        if null_member {
+            q(&c, "INSERT INTO links {owner:null}");
+        }
+        for source in ["docs d", "(SELECT id,n,v FROM docs) d"] {
+            for lhs in ["d.id", "coalesce(d.id,docs:a)"] {
+                for negated in [false, true] {
+                    let op = if negated { "NOT IN" } else { "IN" };
+                    let sql = format!("SELECT n,(SELECT array::append(d.v,2) WHERE {lhs} {op} (SELECT owner FROM links)) FROM {source} ORDER BY n");
+                    let expected = (0..2)
+                        .map(|row| {
+                            let admitted = if negated {
+                                row == 1 && !null_member
+                            } else {
+                                row == 0
+                            };
+                            vec![
+                                Value::Integer(row + 1),
+                                if admitted {
+                                    Value::Array(vec![Value::Integer(2)])
+                                } else {
+                                    Value::Null
+                                },
+                            ]
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                    assert_eq!(
+                        c.profile_select(&sql, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected,
+                        "{sql}"
+                    );
+                }
+            }
+        }
+    }
+}
