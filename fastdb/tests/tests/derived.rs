@@ -802,28 +802,33 @@ fn membership_aliases_preserve_correlated_bindings() {
     q(&c, "INSERT INTO baseline VALUES(1),(2)");
     q(&c, "CREATE TABLE labels(m INTEGER)");
     q(&c, "INSERT INTO labels VALUES(1),(2)");
-    for operand in ["candidate", "candidate+1"] {
-        for operator in ["IN", "NOT IN"] {
-            let sql = format!("SELECT d.n,$value AS candidate FROM (SELECT n FROM docs) d WHERE {operand} {operator} (SELECT m FROM labels WHERE m=d.n AND m>$minimum) ORDER BY d.n");
-            for (value, minimum) in [(0, 0), (1, 0), (2, 0), (1, 2)] {
-                let params = Parameters::from([
-                    ("$value".into(), Value::Integer(value)),
-                    ("$minimum".into(), Value::Integer(minimum)),
-                ]);
-                let expected = c
-                    .execute(&sql.replace("FROM docs", "FROM baseline"), &params)
-                    .unwrap()
-                    .rows;
-                assert_eq!(
-                    c.execute(&sql, &params).unwrap().rows,
-                    expected,
-                    "{sql}, {value}"
-                );
-                assert_eq!(
-                    c.profile_select(&sql, &params).unwrap().result.rows,
-                    expected,
-                    "{sql}, {value}"
-                );
+    for source in [
+        "SELECT m FROM labels WHERE m=d.n AND m>$minimum",
+        "SELECT x.n FROM docs x WHERE x.n=d.n AND x.n>$minimum",
+    ] {
+        for operand in ["candidate", "candidate+1"] {
+            for operator in ["IN", "NOT IN"] {
+                let sql = format!("SELECT d.n,$value AS candidate FROM (SELECT n FROM docs) d WHERE {operand} {operator} ({source}) ORDER BY d.n");
+                for (value, minimum) in [(0, 0), (1, 0), (2, 0), (1, 2)] {
+                    let params = Parameters::from([
+                        ("$value".into(), Value::Integer(value)),
+                        ("$minimum".into(), Value::Integer(minimum)),
+                    ]);
+                    let expected = c
+                        .execute(&sql.replace("FROM docs", "FROM baseline"), &params)
+                        .unwrap()
+                        .rows;
+                    assert_eq!(
+                        c.execute(&sql, &params).unwrap().rows,
+                        expected,
+                        "{sql}, {value}"
+                    );
+                    assert_eq!(
+                        c.profile_select(&sql, &params).unwrap().result.rows,
+                        expected,
+                        "{sql}, {value}"
+                    );
+                }
             }
         }
     }

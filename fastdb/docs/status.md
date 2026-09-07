@@ -1781,3 +1781,6 @@ The complete scoped check passed formatting, Clippy, 415 Rust tests, 45 Node/app
 
 
 Correlated membership alias binding qualification (2026-09-08): a new native-reference regression exercises a bound projection alias and alias arithmetic on the left of IN/NOT IN, with a native RHS correlated to each derived collection row. Repeated parameter sets cover matching, nonmatching and empty RHS results through execute/profile. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 415 Rust/45 Node tests; this adds one focused test after that run. Broader correlation, binding, resource and full V1 release gates remain open.
+
+
+Collection-backed membership alias qualification (2026-09-08): expanded the correlated alias binding regression to a collection RHS with qualified inner fields. Integer IN/NOT IN results, alias arithmetic, repeated bindings and empty inner results match the native reference through execute/profile. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 415 Rust/45 Node tests. This does not qualify all typed operands, correlation forms or V1 release gates.
