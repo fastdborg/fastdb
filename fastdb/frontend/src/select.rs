@@ -157,6 +157,9 @@ fn native_correlated_predicate(
             typed_projection |= correlated && typed;
         }
     }
+    for sorted in &mut inner.order_by {
+        rewrite(&mut sorted.expr, false)?;
+    }
     Ok((inner, typed_projection))
 }
 // Each entry stores lowered SQL, consumed binds, and affinity provenance.

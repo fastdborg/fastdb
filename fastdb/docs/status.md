@@ -1049,3 +1049,10 @@ The complete scoped suite passed formatting, Clippy, 315 Rust tests, 35 Node tes
 ## Installed correlated-projection smoke (2026-09-07)
 
 The offline installed Node consumer now runs a parameterized correlated-projection UPDATE, profiles record/integer projections and record membership, checks explicit CAST affinity and empty scalar NULL, audits the managed index and rolls back to int64 max through both sync and worker clients. The complete package smoke passed on Linux x64 / Node 24.19.0: eight runtime files and 59,662,439 packed bytes. Broader platform/release qualification and full V1 remain open.
+
+
+## Qualified outer fields in native subquery ordering (2026-09-07)
+
+Simple native inner SELECT ORDER BY expressions now rewrite qualified outer collection fields using the existing correlation scope. Disposable metadata probes replace those references with NULL; execution preserves the per-outer-row ordering inside the engine. Differential execute/profile coverage includes scalar, IN and EXISTS forms, ascending/descending expressions, NULLS LAST and multiple sort keys with LIMIT 1.
+
+The complete scoped suite passed formatting, Clippy, 316 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored. Pinned native probes reject outer references in the tested GROUP BY and LIMIT positions; this change does not add those forms. Inner collection/deeper/local-WITH/compound correlation, broader ordering/type/alias cases and full V1 remain incomplete.

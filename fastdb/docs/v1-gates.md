@@ -93,3 +93,6 @@ The release-profile 100,000 × 768 seeded run at clean `3cac94cae` passed all wa
 
 
 Qualified outer fields now work in simple native inner SELECT projections, with typed logical results and preserved explicit CAST affinity. Scalar/EXISTS/IN, type/empty/parameter/alias cases and atomic writes have initial regression coverage; the complete scoped run passed 315 Rust and 35 Node tests. See status.md. This closes the recorded initial projection probes, not general correlation: inner collections, deeper/local-WITH/compound scopes and other expression positions remain open.
+
+
+Initial correlated ORDER BY expressions now match native scalar/IN/EXISTS probes through execute/profile, including NULL placement and multiple sort keys. The complete scoped run passed 316 Rust and 35 Node tests. Tested native GROUP BY/LIMIT outer references retain rejection; broader correlation and ordering qualification remain open. See status.md.

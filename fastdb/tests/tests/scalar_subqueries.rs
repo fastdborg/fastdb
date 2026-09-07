@@ -2000,3 +2000,40 @@ fn correlated_projection_comparisons_and_shadowing_match_typeless_native() {
         vec![vec![Value::Integer(2)]; 5]
     );
 }
+
+#[test]
+fn correlated_native_ordering_matches_native_rows_and_nulls() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE native(n)");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(NULL)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(NULL)");
+    for ordering in [
+        "n+d.n",
+        "n*d.n DESC",
+        "n+d.n DESC NULLS LAST",
+        "abs(n-d.n),n DESC",
+    ] {
+        for expr in [
+            format!("(SELECT n FROM native ORDER BY {ordering} LIMIT 1)"),
+            format!("d.n IN (SELECT n FROM native ORDER BY {ordering} LIMIT 1)"),
+            format!("EXISTS(SELECT n FROM native ORDER BY {ordering} LIMIT 1)"),
+        ] {
+            let expected = q(
+                &c,
+                &format!("SELECT {expr} AS v FROM native d ORDER BY d.n"),
+            )
+            .rows;
+            let sql = format!("SELECT {expr} AS v FROM docs d ORDER BY d.n");
+            assert_eq!(q(&c, &sql).rows, expected, "{expr}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+        }
+    }
+}
