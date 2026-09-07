@@ -1941,3 +1941,6 @@ Nested native derived collation qualification (2026-09-08): expanded the mixed c
 
 
 Materialized native derived collation qualification (2026-09-08): expanded the mixed comparison matrix to a MATERIALIZED native CTE and an ordered, limited native derived source. Equality, IS, ranges, membership/NULL cases and explicit overrides match native literal references through execute/profile. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; broader projection/collation/scope/resource and full V1 gates remain open.
+
+
+Native derived metadata evaluation qualification (2026-09-08): expanded the controlled function-counter regression with a mixed unnamed derived join reading a MATERIALIZED native CTE. Execute/profile produce the native rows and exactly one callback invocation, including outer LIMIT 0: the pinned engine materializes this FROM source before applying that limit. Metadata preparation adds no callback invocations. The expanded focused unit test, formatting and frontend lib/test Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; broader evaluation/scope/resource and full V1 gates remain open.
