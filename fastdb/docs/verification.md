@@ -2244,3 +2244,12 @@ Duplicate derived composite/index qualification (2026-09-08): a focused regressi
 Collection CTEs now preserve duplicate public output names separately from unique runtime column names. Inferred aliases, explicit column lists, MATERIALIZED definitions, chained stars, first-name lookup and boolean/binary positions are covered through execute/profile. Typed INSERT SELECT and rollback pass, and both Node clients retain chained CTE result values. Removed the obsolete rejection assertion. Mixed native CTE duplicate-name behavior and fetched CTE projections remain separate qualification work.
 
 The complete fastdb/scripts/check.sh run passed formatting, Clippy, 430 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-cte-duplicates-check.log. The local addon is rebuilt debug output. Full V1 release qualification remains incomplete.
+
+
+## Mixed native CTE duplicate-star positions (2026-09-08)
+
+Fixed mixed collection/native CTE stars repeating the first duplicate column: q(x,x) AS (SELECT 10,20) previously returned (10,10) in a collection join. Native duplicate CTE references now receive local source wrappers with distinct positional names, leaving native definitions and chained metadata intact. Differential tests cover inferred/explicit names, aliases, first-column lookup, chained and MATERIALIZED CTEs, execute/profile, checked native INSERT SELECT and rollback. Both Node clients preserve the corrected values.
+
+A probe also found a separate default-label difference: SELECT v.X can report v.X in logical results versus x in the native baseline. The value-lookup regression uses an explicit first_value alias; default qualified-expression labels, broader collation and callback evaluation remain open qualification work.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 431 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-native-cte-duplicates-check.log. Full V1 release qualification remains incomplete.

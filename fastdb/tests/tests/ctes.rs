@@ -423,3 +423,48 @@ fn duplicate_collection_cte_names_preserve_positions_types_and_chains() {
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
 }
+
+#[test]
+fn duplicate_native_cte_stars_keep_positions_in_mixed_queries() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    for definition in [
+        "q AS (SELECT 10 AS x,20 AS X)",
+        "q(x,X) AS (SELECT 10,20)",
+        "q(x,X) AS MATERIALIZED (SELECT 10,20)",
+        "seed AS (SELECT 10 AS x,20 AS X), q AS (SELECT seed.* FROM seed)",
+    ] {
+        for projection in ["v.*", "v.X AS first_value"] {
+            let query = |source: &str| {
+                format!(
+                "WITH {definition} SELECT {projection} FROM {source} d JOIN q v ON 1 ORDER BY d.n"
+            )
+            };
+            let expected = q(&c, &query("baseline"));
+            let sql = query("docs");
+            let actual = q(&c, &sql);
+            assert_eq!(actual.columns, expected.columns, "{sql}");
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows
+            );
+        }
+    }
+    q(&c, "CREATE TABLE copied(a INTEGER,b INTEGER CHECK(b<>a))");
+    q(&c, "BEGIN");
+    q(
+        &c,
+        "WITH q(x,x) AS (SELECT 10,20) INSERT INTO copied SELECT v.* FROM docs d JOIN q v ON 1",
+    );
+    assert_eq!(
+        q(&c, "SELECT * FROM copied").rows,
+        vec![vec![Value::Integer(10), Value::Integer(20)]; 2]
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
+}

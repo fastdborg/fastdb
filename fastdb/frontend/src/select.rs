@@ -1815,6 +1815,33 @@ fn source(
                 .as_ref()
                 .map_or(name.name.as_str(), |a| a.name().as_str())
                 .into();
+            if !source.derived_logical {
+                if let Some(columns) = &source.derived {
+                    let names = columns
+                        .iter()
+                        .map(|(name, _)| name.clone())
+                        .collect::<Vec<_>>();
+                    let physical = derived_physical_names(&names);
+                    if physical != names {
+                        // Keep the native CTE definition and downstream native
+                        // metadata intact. Rename only this mixed-query source.
+                        let names = physical
+                            .iter()
+                            .map(|name| quote(name))
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let Cmd::Stmt(Stmt::Select(wrapped)) = parsed(&format!(
+                            "WITH __fastdb_cte_projection({names}) AS (SELECT * FROM {}) SELECT * FROM __fastdb_cte_projection",
+                            quote(name.name.as_str())
+                        ))? else { unreachable!("native CTE source wrapper") };
+                        source.table = SelectTable::Select(
+                            wrapped,
+                            Some(As::As(Name::exact(source.alias.clone()))),
+                        );
+                        source.derived_physical = Some(physical);
+                    }
+                }
+            }
             return Ok(source);
         }
     }
