@@ -1003,3 +1003,8 @@ Scoped checks passed formatting, Clippy, 309 Rust tests, thirty-five Node tests 
 ## RELEASE cancellation disposition (2026-09-07)
 
 A new 32-case boundary sweep distinguishes actual interrupt delivery from completion before delivery. Six delivered interrupts restore rows with FDB_CANCELLED; one outer-transaction RELEASE boundary returns FDB_ROLLBACK with the complete write set pending, which explicit outer rollback removes. Other thresholds finish before delivery. Transaction modes remain consistent and no partial set is accepted. See atomic-savepoints.md. This is test qualification without a production-code change; interrupted I/O and broader commit outcomes remain open.
+
+
+## Installed import cancellation and caller savepoints (2026-09-07)
+
+The offline installed Node smoke now requests cancellation during a 1,000-document import inside an active transaction and caller savepoint. It verifies FDB_CANCELLED/active state, prior rows and integrity, listener cleanup, a complete fresh retry and rollback to the caller savepoint. The complete smoke passed on Linux x64 / Node 24.19.0 with eight runtime files and a 59,653,802-byte development tarball. Timing determines the delivery point; Rust boundary sweeps provide deterministic interruption evidence. Release/platform qualification remains open.

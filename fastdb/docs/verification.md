@@ -1272,3 +1272,8 @@ The persistent-interrupt export fixture intentionally prevents cleanup as well a
 `cargo test --locked -p fastdb atomic_release_cancellation` passed (/tmp/fastdb-release-delivery.log). A new test sweeps 16 post-write thresholds in each transaction mode, verifies callback delivery, and asserts exact pinned outcomes: three restored FDB_CANCELLED cases per mode, one complete pending FDB_ROLLBACK case in the outer transaction, and success before delivery at later thresholds. It checks initial transaction mode, complete-versus-restored rows and explicit outer rollback. Initial diagnostic output is /tmp/fastdb-release-boundaries.log. No production changes; prior full scoped 309 Rust / 35 Node evidence plus this regression yields 310 distinct Rust tests. The known trigger gate and broader I/O/commit qualification remain open.
 
 Frontend all-target Clippy with warnings denied, formatting and diff checks also passed.
+
+
+## Installed nested import cancellation — 2026-09-07
+
+`node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (/tmp/fastdb-package-savepoint-cancel.log). The temporary installed worker consumer cancels a 1,000-document JSON import with a 20 ms timer, checks FDB_CANCELLED/active state, prior rows, integrity and listener cleanup, then imports all 1,000 documents with a fresh operation and rolls back to the caller savepoint. Existing sync/worker, declaration, loader, vector, reopen and nested-path checks also pass. Result: Linux x64, Node 24.19.0, eight runtime files, 59,653,802 packed bytes. The timer does not prove a specific engine interruption phase. No production changes; prior Rust/Node evidence remains applicable.

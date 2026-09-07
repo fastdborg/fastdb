@@ -150,6 +150,28 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       await assert.rejects(operation(), error => error.code === 'FDB_CANCELLED' && error.transaction.after === 'active');
     }
     assert.equal(require('node:events').getEventListeners(cancelled.signal,'abort').length,0);
+    const importSource=new Database();
+    let payload;
+    try {
+      importSource.execute('CREATE TABLE docs');
+      importSource.execute('INSERT INTO docs(value) VALUES '+Array.from({length:1000},(_,i)=>'('+(10000+i)+')').join(','));
+      payload=importSource.exportDocuments('docs','json');
+    } finally {importSource.close();}
+    await worker.execute('SAVEPOINT import_check');
+    const importing=new AbortController();
+    const pendingImport=worker.importDocuments('docs',payload,'json',{signal:importing.signal});
+    const timer=setTimeout(()=>importing.abort(),20);
+    try {
+      await assert.rejects(pendingImport,error=>error.code==='FDB_CANCELLED' && error.transaction.after==='active');
+    } finally {clearTimeout(timer);}
+    assert.equal((await worker.checkCollectionIntegrity('docs')).documents,1n);
+    assert.deepEqual(await worker.exactlyOne('SELECT value FROM docs'),[7n]);
+    assert.equal(require('node:events').getEventListeners(importing.signal,'abort').length,0);
+    assert.equal((await worker.importDocuments('docs',payload,'json')).imported,1000);
+    assert.equal((await worker.checkCollectionIntegrity('docs')).documents,1001n);
+    await worker.execute('ROLLBACK TO import_check');
+    await worker.execute('RELEASE import_check');
+    assert.deepEqual(await worker.exactlyOne('SELECT value FROM docs'),[7n]);
     const fresh = new AbortController();
     const result = await worker.executeBatch('SELECT value FROM docs;', {signal:fresh.signal});
     assert.deepEqual(result[0].result.rows, [[7n]]);
