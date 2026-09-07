@@ -1250,6 +1250,33 @@ mod cte_evaluation_tests {
             &params,
         )
         .unwrap();
+        for limit in ["", " LIMIT 0"] {
+            let query = |table| {
+                format!("SELECT d.n FROM (SELECT n FROM {table}) d JOIN (SELECT 1 AS marker) ON d.n IN (SELECT cte_tick() FROM baseline) ORDER BY d.n{limit}")
+            };
+            CALLS.store(0, Ordering::SeqCst);
+            c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
+                .unwrap();
+            assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+            let expected = c.execute(&query("baseline"), &params).unwrap().rows;
+            let expected_calls = CALLS.load(Ordering::SeqCst);
+            assert_eq!(expected_calls, 3);
+            // Track the pinned LIMIT 0 evaluation difference explicitly: native
+            // membership builds its RHS first; the logical wrapper skips it.
+            let logical_calls = if limit.is_empty() { expected_calls } else { 0 };
+            CALLS.store(0, Ordering::SeqCst);
+            assert_eq!(c.execute(&query("docs"), &params).unwrap().rows, expected);
+            assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls, "{limit}");
+            CALLS.store(0, Ordering::SeqCst);
+            assert_eq!(
+                c.profile_select(&query("docs"), &params)
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+            assert_eq!(CALLS.load(Ordering::SeqCst), logical_calls, "{limit}");
+        }
         for (table, condition) in [
             ("baseline", "n=m"),
             ("baseline", "(n+0)=(m+0)"),
