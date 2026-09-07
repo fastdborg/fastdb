@@ -935,3 +935,52 @@ fn join_membership_preserves_native_values_and_nulls() {
         }
     }
 }
+
+#[test]
+fn join_membership_writes_preserve_statement_atomicity() {
+    let (_db, c) = setup();
+    for sql in [
+        "CREATE TABLE labels(m INTEGER)",
+        "INSERT INTO labels VALUES(1),(2)",
+        "CREATE TABLE marker(k INTEGER)",
+        "INSERT INTO marker VALUES(1)",
+        "CREATE TABLE copied",
+        "DEFINE FIELD n ON copied TYPE integer REQUIRED CHECK (n<2)",
+        "CREATE UNIQUE INDEX copied_n ON copied(n)",
+        "BEGIN",
+        "INSERT INTO copied {n:0}",
+    ] {
+        q(&c, sql);
+    }
+    let source = "FROM (SELECT n FROM docs) d JOIN marker ON d.n IN (SELECT m FROM labels)";
+    let insert = format!("INSERT INTO copied(n) SELECT d.n {source} ORDER BY d.n");
+    assert!(c.execute(&insert, &Parameters::new()).is_err());
+    assert_eq!(
+        q(&c, "SELECT n FROM copied").rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    assert!(c
+        .lookup_index("copied", "copied_n", &Value::Integer(1))
+        .unwrap()
+        .is_empty());
+    q(
+        &c,
+        &format!("INSERT INTO copied(n) SELECT d.n {source} WHERE d.n=1"),
+    );
+    assert_eq!(
+        c.lookup_index("copied", "copied_n", &Value::Integer(1))
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM copied ORDER BY n").rows,
+        vec![vec![Value::Integer(0)], vec![Value::Integer(1)]]
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT n FROM copied").rows.is_empty());
+    assert!(c
+        .lookup_index("copied", "copied_n", &Value::Integer(1))
+        .unwrap()
+        .is_empty());
+}
