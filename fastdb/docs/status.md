@@ -1696,3 +1696,6 @@ Explicit document-left collation qualification (2026-09-08): expanded the compar
 
 
 Mixed derived binary comparison qualification (2026-09-08): expanded the native-reference matrix with ordinary binary bytes and an FDB-prefixed binary payload on both document and native sides. Covered equality/IS/range/membership operations and explicit collation overrides match native blob-literal references through execute/profile across the existing simple/nested/materialized/compound source matrix. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; broader type/scope/resource and full V1 gates remain open.
+
+
+Mixed derived numeric affinity qualification (2026-09-08): expanded the comparison matrix with integer 1 and fractional 1.5 document values and native TEXT value 1.5, retaining existing numeric strings, NULLs and binary payloads. Covered comparisons, membership and collation overrides match native literal references through execute/profile across the existing derived-source matrix. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; broader numeric/type/scope/resource and full V1 gates remain open.
