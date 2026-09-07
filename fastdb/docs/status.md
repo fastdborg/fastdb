@@ -1991,3 +1991,6 @@ The complete fastdb/scripts/check.sh run passed formatting, Clippy, 432 Rust tes
 
 
 Duplicate native CTE binary/NULL qualification (2026-09-08): a focused regression passes for both binary/NULL position orders through an explicitly named duplicate-column MATERIALIZED seed and a chained native CTE in a collection join. An FDB-prefixed binary payload remains raw bytes. Explicit expected values and native differential results cover normal/profiled execution, empty-result names, native-table INSERT SELECT and rollback. Production code is unchanged; formatting and the focused test pass. Latest full scoped evidence remains 432 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains open.
+
+
+Duplicate native CTE collation qualification (2026-09-08): a 28-case differential matrix passes through execute and profile. Duplicate projections in both NOCASE/BINARY orders retain first-column comparison behavior under ordinary and MATERIALIZED CTEs. Equality, IN/NOT IN, NULL rows/list members and explicit BINARY/NOCASE overrides match the pinned native baseline. Production code is unchanged; formatting and the focused regression pass. Latest full scoped evidence remains 432 Rust tests with one ignored gate and 48 Node/application tests. Callback evaluation and broader V1 release qualification remain open.

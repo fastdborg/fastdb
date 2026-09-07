@@ -565,3 +565,42 @@ fn duplicate_native_cte_parameters_preserve_binary_nulls_and_writes() {
         assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
     }
 }
+
+#[test]
+fn duplicate_native_cte_first_column_retains_collation_and_null_semantics() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1)");
+    q(&c, "CREATE TABLE labels(a TEXT COLLATE NOCASE,b TEXT)");
+    q(&c, "INSERT INTO labels VALUES('A','B'),(NULL,NULL)");
+    for projection in ["a AS x,b AS X", "b AS x,a AS X"] {
+        for materialized in ["", "MATERIALIZED "] {
+            for predicate in [
+                "v.x='a'",
+                "v.X IN('a')",
+                "v.x IN('a','b')",
+                "v.x NOT IN('a')",
+                "v.x IN('a',NULL)",
+                "v.x COLLATE BINARY IN('a')",
+                "v.x COLLATE NOCASE IN('b')",
+            ] {
+                let query = |source: &str| {
+                    format!(
+                    "WITH q AS {materialized}(SELECT {projection} FROM labels) SELECT v.x AS value,{predicate} AS matched FROM {source} d JOIN q v ON 1 WHERE d.n=1 ORDER BY v.x"
+                )
+                };
+                let expected = q(&c, &query("baseline"));
+                let sql = query("docs");
+                assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{sql}"
+                );
+            }
+        }
+    }
+}
