@@ -1094,3 +1094,8 @@ Ran `node fastdb/scripts/bench-transfer.cjs` three times against clean implement
 ## Fetch target evaluation count — 2026-09-07
 
 `cargo test --locked -p fastdb --lib links::tests` passed both tests (`/tmp/fastdb-fetch-evaluation.log`). The new target-row visitor regression counts actual native scalar calls at three budget boundaries, checks FDB_LIMIT, preserved active transaction state, exact retry results/evaluations and outer rollback. Production code is unchanged in this task, so the full scoped suite and Node rebuild were not repeated. Prior baseline: 284 Rust / 32 Node with one ignored gate; current distinct Rust coverage: 285. Scoped frontend Clippy and formatting checks cover the test addition.
+
+
+## Shared SELECT fetch budget — 2026-09-07
+
+`cargo test --locked -p fastdb-tests --test links` passed five tests (`/tmp/fastdb-fetch-shared-budget.log`). The new regression exceeds the 64 MiB expanded-value budget with two projections and 8,192 total references, then successfully retries one projection in the same transaction and rolls back prior work. Explicit aliases keep the fixture within the existing unique projection-name rules. Source inspection confirms execute_lowered_profiled flattens all fetched cells into one call; earlier documentation claiming separate per-projection budgets was corrected. Test-package Clippy and formatting passed. No production code changed; prior full 284 Rust / 32 Node evidence plus two subsequent new regressions gives 286 distinct Rust tests, with the same known ignored gate.

@@ -807,7 +807,7 @@ Three runs of the unchanged transfer harness against clean implementation 8e7b58
 
 ## Forward-fetch encoded-value budgets (2026-09-07)
 
-Each forward resolver invocation now bounds retained fetched values and duplicate-expanded output separately to 64 MiB of tagged Value JSON bytes. Serialization counts into a writer without allocating encoded copies; output accounting completes before cloning documents. Nulls and repeated references count per output position. Exact-boundary tests cover collection/native targets, Unicode, duplicates, empty/null output, FDB_LIMIT, retained active work, successful retry and rollback. Reference keys, container overhead, current engine chunks and outer-query materialization are not included, so this is not a total-memory cap. Each SQL fetch projection has its own resolver invocation.
+Each forward resolver invocation now bounds retained fetched values and duplicate-expanded output separately to 64 MiB of tagged Value JSON bytes. Serialization counts into a writer without allocating encoded copies; output accounting completes before cloning documents. Nulls and repeated references count per output position. Exact-boundary tests cover collection/native targets, Unicode, duplicates, empty/null output, FDB_LIMIT, retained active work, successful retry and rollback. Reference keys, container overhead, current engine chunks and outer-query materialization are not included, so this is not a total-memory cap. All fetch projections in one lowered SELECT share a resolver invocation and its budgets.
 
 Scoped checks passed formatting, Clippy, 284 Rust tests, thirty-two Node tests and strict TypeScript. One trigger-interruption gate remains ignored; full V1 remains incomplete.
 
@@ -822,3 +822,8 @@ Scoped checks passed formatting, Clippy, 284 Rust tests, thirty-two Node tests a
 ## Fetch target evaluation-count regression (2026-09-07)
 
 A test-only scalar counts actual native expression evaluations through the target-row visitor. Budgets accepting zero, one or two rows evaluate exactly one, two or three rows respectively, stop at the first over-budget row with FDB_LIMIT, preserve active transaction work and permit a complete three-row retry. Outer rollback removes prior writes. This qualifies early visitor termination on the tested scalar table scan, not all planner/materialization behavior or cancellation latency. Both link unit tests passed; the prior full 284 Rust / 32 Node baseline remains applicable, with one additional distinct Rust regression.
+
+
+## Shared SQL fetch budget qualification (2026-09-07)
+
+Inspection of execute_lowered_profiled confirms all fetched cells are flattened into one resolver call. Earlier wording claiming separate per-projection budgets was incorrect and is corrected above and in contracts.md. A SQL regression uses 4,096 positions and an 8,192-byte target text: two projections exceed the shared 64 MiB byte limit while staying below the 16,384 reference limit; a one-projection retry succeeds. It checks retained active work and outer rollback. This covers the lowered SELECT fetch path, not total outer-result memory.

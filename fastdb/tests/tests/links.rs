@@ -128,3 +128,37 @@ fn link_reads_observe_the_existing_transaction_snapshot() {
         matches!(&q(&a,"SELECT record::fetch(users:u1) AS u").rows[0][0],Value::Object(d) if d["name"]==Value::String("New".into()))
     );
 }
+
+#[test]
+fn fetch_projections_share_one_statement_byte_budget() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE targets");
+    q(&c, "CREATE TABLE positions(n INTEGER)");
+    q(&c, "INSERT INTO positions VALUES(1)");
+    for _ in 0..12 {
+        q(&c, "INSERT INTO positions SELECT n FROM positions");
+    }
+    q(&c, "BEGIN");
+    let params = Parameters::from([("$text".into(), Value::String("x".repeat(8192)))]);
+    c.execute("INSERT INTO targets {id:targets:a,text:$text}", &params)
+        .unwrap();
+    // Each projection alone is about 32 MiB. Combined expansion exceeds 64 MiB,
+    // while 8,192 references remain below the 16,384-position count limit.
+    let error = c
+        .execute(
+            "SELECT record::fetch(targets:a) AS a,record::fetch(targets:a) AS b FROM positions",
+            &Parameters::new(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_LIMIT", "{error}");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    let rows = q(&c, "SELECT record::fetch(targets:a) FROM positions").rows;
+    assert_eq!(rows.len(), 4096);
+    assert!(rows
+        .iter()
+        .all(|row| matches!(&row[0], Value::Object(doc) if doc["text"] == params["$text"])));
+    drop(rows);
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM targets").rows.is_empty());
+}
