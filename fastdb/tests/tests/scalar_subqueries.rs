@@ -3733,22 +3733,25 @@ fn source_free_correlated_filters_skip_invalid_projections() {
     ] {
         q(&c, sql);
     }
-    let sql = "SELECT n,(SELECT array::append(d.v,2) WHERE EXISTS(SELECT 1 FROM links l WHERE l.owner=d.id)) FROM docs d ORDER BY n";
-    let expected = vec![
-        vec![Value::Integer(1), Value::Array(vec![Value::Integer(2)])],
-        vec![Value::Integer(2), Value::Null],
-    ];
-    assert_eq!(q(&c, sql).rows, expected);
-    assert_eq!(
-        c.profile_select(sql, &Parameters::new())
-            .unwrap()
-            .result
-            .rows,
-        expected
-    );
-    q(&c, "INSERT INTO links {owner:docs:b}");
-    assert!(c.execute(sql, &Parameters::new()).is_err());
-    assert!(c.profile_select(sql, &Parameters::new()).is_err());
-    q(&c, "DELETE FROM links WHERE owner=docs:b");
-    assert_eq!(q(&c, sql).rows, expected);
+    for source in ["docs d", "(SELECT id,n,v FROM docs) d"] {
+        let sql = format!("SELECT n,(SELECT array::append(d.v,2) WHERE EXISTS(SELECT 1 FROM links l WHERE l.owner=d.id)) FROM {source} ORDER BY n");
+        let expected = vec![
+            vec![Value::Integer(1), Value::Array(vec![Value::Integer(2)])],
+            vec![Value::Integer(2), Value::Null],
+        ];
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{sql}"
+        );
+        q(&c, "INSERT INTO links {owner:docs:b}");
+        assert!(c.execute(&sql, &Parameters::new()).is_err(), "{sql}");
+        assert!(c.profile_select(&sql, &Parameters::new()).is_err(), "{sql}");
+        q(&c, "DELETE FROM links WHERE owner=docs:b");
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+    }
 }

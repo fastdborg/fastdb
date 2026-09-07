@@ -1465,3 +1465,6 @@ The complete scoped check passed formatting, Clippy, 378 Rust tests, 44 Node/app
 Source-free scalar queries selected for logical lowering now bind qualified outer document fields in projections and filters. The regression combines array::append with correlated EXISTS: excluded invalid values are not evaluated, admitted invalid values reject, and correcting the filter permits retry. Ordinary native scalar routing remains unchanged.
 
 The complete scoped check passed formatting, Clippy, 379 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; broader expression/scope/resource and full V1 release qualification remain open.
+
+
+Derived-source logical scalar qualification (2026-09-08): expanded the filtered array projection regression to an outer derived SELECT carrying id, n and v. Execute/profile preserve the encoded array, skip excluded invalid values, reject admitted invalid values, and permit execution retry after correcting the filter. The expanded regression, package formatting and focused Clippy pass. Latest combined evidence remains 379 Rust/44 Node tests; broader expression/scope/resource and V1 release gates remain open.
