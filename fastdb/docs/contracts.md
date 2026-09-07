@@ -803,3 +803,6 @@ Native membership's tested operand wrappers now include parentheses, unary plus,
 
 
 Native membership now delegates match/NULL/empty-set handling to native IN/NOT IN, sharing an enclosing materialized source across outer rows. Its left operand has a separate materialized value so type discrimination and comparison do not duplicate volatile evaluation. Scalar affinity/collation and collision-resistant BLOB keys retain their distinct comparison paths. The earlier aggregate-per-row implementation is superseded; broader correlated and compound cases remain unqualified.
+
+
+The native membership left-value CTE now explicitly uses NOT MATERIALIZED. A forced materialization could make the pinned compiler access the outer cursor before it existed in compound queries. The generated value boundary retains tested single evaluation while the uncorrelated RHS remains shared; this supersedes the earlier forced left-value materialization description.

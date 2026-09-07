@@ -550,7 +550,7 @@ impl Scope {
                     // Keep native IN execution so its uncorrelated source can
                     // be cached across outer rows. Only BLOB comparison keys
                     // require encoding of the source values.
-                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS MATERIALIZED (SELECT {value}) SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
+                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}) SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();

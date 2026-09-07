@@ -1203,3 +1203,25 @@ fn native_membership_insert_parameters_and_binary_identity() {
     );
     q(&c, "ROLLBACK");
 }
+
+#[test]
+fn native_membership_compound_arms_keep_shared_sources_in_scope() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2),(NULL)");
+    q(&c, "CREATE TABLE lhs(n BLOB)");
+    q(&c, "INSERT INTO lhs VALUES (1),(2),(NULL)");
+    q(&c, "CREATE TABLE rhs(n INTEGER)");
+    q(&c, "INSERT INTO rhs VALUES (1),(NULL)");
+    for op in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+        let query = |table| {
+            format!("SELECT n IN (SELECT n FROM rhs) AS matched FROM {table} {op} SELECT n NOT IN (SELECT n FROM rhs) FROM {table}")
+        };
+        assert_eq!(
+            q(&c, &query("docs")).rows,
+            q(&c, &query("lhs")).rows,
+            "{op}"
+        );
+    }
+}

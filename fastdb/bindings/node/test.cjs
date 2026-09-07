@@ -835,3 +835,18 @@ test('close drains cancelled operations and rolls back the remaining outer trans
     } finally { reopened.close(); }
   } finally { clearTimeout(timer); await db.close(); fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+test('native membership compound queries prepare in sync and worker clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [()=>new Database(),()=>AsyncDatabase.open()]) {
+    const db=await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs(n) VALUES (1),(2),(NULL)');
+      await db.execute('CREATE TABLE rhs(n INTEGER)');
+      await db.execute('INSERT INTO rhs VALUES (1),(NULL)');
+      assert.deepEqual(await db.all('SELECT n IN (SELECT n FROM rhs) FROM docs UNION ALL SELECT n NOT IN (SELECT n FROM rhs) FROM docs'),[[1n],[null],[null],[0n],[null],[null]]);
+      assert.deepEqual(await db.all('WITH r AS (SELECT n FROM rhs) SELECT n IN (SELECT n FROM r) FROM docs'),[[1n],[null],[null]]);
+    } finally { await db.close(); }
+  }
+});
