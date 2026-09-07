@@ -3599,3 +3599,43 @@ fn correlated_cte_exists_pages_and_empty_aggregates_match_native() {
         }
     }
 }
+
+#[test]
+fn source_free_scalar_wrappers_retain_collection_correlation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a}",
+    ] {
+        q(&c, sql);
+    }
+    for outer in ["docs d", "(SELECT id,n FROM docs) d"] {
+        for body in [
+            "EXISTS(WITH x AS (SELECT owner FROM links l WHERE l.owner=d.id) SELECT 1 FROM x)",
+            "(SELECT count(*) FROM links l WHERE l.owner=d.id)",
+        ] {
+            for wrapped in [
+                format!("(SELECT {body})"),
+                format!("(SELECT (SELECT {body}))"),
+            ] {
+                let sql = format!("SELECT n,{wrapped} FROM {outer} ORDER BY n");
+                let expected = vec![
+                    vec![Value::Integer(1), Value::Integer(1)],
+                    vec![Value::Integer(2), Value::Integer(0)],
+                ];
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected
+                );
+            }
+        }
+    }
+}

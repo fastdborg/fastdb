@@ -968,3 +968,7 @@ The collection correlation pass now visits nonrecursive CTE definitions before l
 ## Correlated CTE EXISTS preparation (2026-09-08)
 
 Logical EXISTS queries containing a local WITH now retain native EXISTS inside a scalar SELECT wrapper. This defers preparation of correlated CTE sources until the outer cursor is available, avoiding a pinned-engine cursor-lookup panic exposed by an UPDATE combining a scalar CTE assignment with an EXISTS CTE filter. Callback regressions cover EXISTS/NOT EXISTS, first-match evaluation and ignored output projections through execute/profile. A correlated multirow write checks local alias shadowing, validation failure, corrected-source retry, index integrity and rollback of both collections. Upstream files remain unchanged; broader planner, scope and resource qualification remain open.
+
+## Source-free scalar wrapper correlation (2026-09-08)
+
+Source-free scalar SELECT wrappers without local WITH or compound arms now carry the enclosing logical source scope into projected subqueries. This fixes the previously recorded extra-wrapper failure for correlated collection queries, including a CTE-backed EXISTS. Execute/profile regressions cover one and two wrapper levels with direct/derived outer sources and record predicates. Wrappers introducing table aliases, other deeper scope combinations and resource qualification remain open.

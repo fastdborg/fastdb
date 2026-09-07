@@ -2489,6 +2489,44 @@ impl Connection {
                 }
             }
         }
+        // A source-free scalar wrapper introduces no table aliases. Carry
+        // the enclosing logical scope into its projected subqueries.
+        if inner.with.is_none() && inner.body.compounds.is_empty() {
+            if let OneSelect::Select {
+                from: None,
+                columns,
+                ..
+            } = &mut inner.body.select
+            {
+                for column in columns {
+                    if let ResultColumn::Expr(value, _) = column {
+                        let mut failure = None;
+                        turso_core::walk_expr_mut(value, &mut |expr| {
+                            let exists = matches!(expr, Expr::Exists(_));
+                            if let Expr::Subquery(query)
+                            | Expr::Exists(query)
+                            | Expr::InSelect { rhs: query, .. } = expr
+                            {
+                                if let Err(error) = self.correlate_collection_inner(
+                                    query,
+                                    correlation_sources,
+                                    params,
+                                    ctes,
+                                    exists,
+                                ) {
+                                    failure = Some(error);
+                                }
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                            Ok(turso_core::WalkControl::Continue)
+                        })?;
+                        if let Some(error) = failure {
+                            return Err(error);
+                        }
+                    }
+                }
+            }
+        }
         if let OneSelect::Select {
             from: Some(from), ..
         } = &inner.body.select
