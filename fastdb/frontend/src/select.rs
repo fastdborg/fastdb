@@ -3131,7 +3131,7 @@ impl Connection {
                     Err(Error::Unsupported(_)) => return Ok(None),
                     Err(e) => return Err(e),
                 };
-                let (columns, logical, consumed) = if let Some(plan) = plan {
+                let (columns, physical, logical, consumed) = if let Some(plan) = plan {
                     if plan.fetched.iter().any(|f| *f) {
                         return Err(unsupported("fetched CTE projections"));
                     }
@@ -3146,11 +3146,8 @@ impl Connection {
                             .map(|c| c.col_name.as_str().to_owned())
                             .collect()
                     };
-                    let mut unique = std::collections::BTreeSet::new();
-                    if names.iter().any(|n| !unique.insert(n.to_ascii_lowercase())) {
-                        return Err(unsupported("duplicate CTE output names"));
-                    }
-                    cte.columns = names
+                    let physical = derived_physical_names(&names);
+                    cte.columns = physical
                         .iter()
                         .map(|n| IndexedColumn {
                             col_name: Name::from_string(quote(n)),
@@ -3169,6 +3166,7 @@ impl Connection {
                     cte.select = body;
                     (
                         names.into_iter().zip(plan.typed).collect(),
+                        Some(physical),
                         true,
                         plan.consumed,
                     )
@@ -3232,7 +3230,7 @@ impl Connection {
                             })
                             .collect();
                     }
-                    (columns, false, consumed)
+                    (columns, None, false, consumed)
                 };
                 cte_logical |= logical;
                 cte_consumed.extend(consumed.iter().cloned());
@@ -3256,7 +3254,7 @@ impl Connection {
                         collection: None,
                         derived: Some(columns),
                         derived_logical: logical,
-                        derived_physical: None,
+                        derived_physical: physical,
                         native_collations: Default::default(),
                         native_expression_collations: Default::default(),
                         consumed,

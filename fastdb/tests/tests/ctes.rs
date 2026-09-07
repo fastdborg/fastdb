@@ -128,7 +128,6 @@ fn cte_insert_sources_validate_atomically_and_reject_unsupported_definitions() {
     assert!(q(&c, "SELECT * FROM native").rows.is_empty());
     for sql in [
         "WITH a(x,y) AS (SELECT n FROM docs) SELECT * FROM a",
-        "WITH a(x,x) AS (SELECT n,flag FROM docs) SELECT * FROM a",
         "WITH a AS (SELECT record::fetch(ref) AS r FROM docs) SELECT * FROM a",
         "WITH RECURSIVE a AS (SELECT n FROM docs) SELECT * FROM a",
         "WITH a AS (SELECT * FROM b), b AS (SELECT n FROM docs) SELECT * FROM a",
@@ -381,4 +380,46 @@ fn values_rows_preserve_mixed_types_and_parameter_identity() {
         );
     }
     q(&c, "ROLLBACK");
+}
+
+#[test]
+fn duplicate_collection_cte_names_preserve_positions_types_and_chains() {
+    let (_db, c) = setup();
+    for definition in [
+        "q AS (SELECT flag AS x,data AS X FROM docs ORDER BY n)",
+        "q(x,X) AS (SELECT flag,data FROM docs ORDER BY n)",
+        "q(x,X) AS MATERIALIZED (SELECT flag,data FROM docs ORDER BY n)",
+    ] {
+        let expected = q(&c, "SELECT flag AS x,data AS X FROM docs ORDER BY n");
+        for tail in [
+            "SELECT q.* FROM q",
+            ", r AS (SELECT q.* FROM q) SELECT r.* FROM r",
+        ] {
+            let sql = format!("WITH {definition} {tail}");
+            let actual = q(&c, &sql);
+            assert_eq!(actual.columns, expected.columns, "{sql}");
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows
+            );
+        }
+        assert_eq!(
+            q(&c, &format!("WITH {definition} SELECT q.X FROM q")).rows,
+            vec![vec![Value::Boolean(true)], vec![Value::Boolean(false)]]
+        );
+    }
+    q(&c, "CREATE TABLE copied");
+    q(&c, "DEFINE FIELD flag ON copied TYPE boolean");
+    q(&c, "BEGIN");
+    q(&c, "WITH q(x,x) AS (SELECT flag,data FROM docs) INSERT INTO copied(flag,data) SELECT q.* FROM q");
+    assert_eq!(
+        q(&c, "SELECT flag,data FROM copied ORDER BY flag").rows,
+        q(&c, "SELECT flag,data FROM docs ORDER BY flag").rows
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
 }

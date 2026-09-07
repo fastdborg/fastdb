@@ -1963,3 +1963,10 @@ The complete fastdb/scripts/check.sh run passed formatting, Clippy, 428 Rust tes
 
 
 Duplicate derived composite/index qualification (2026-09-08): a focused regression passes for object-path and record::id access through case-insensitive duplicate derived names. Positional INSERT SELECT retains object/reference pairs in a collection with object validation and a unique reference index. Repeated insertion rejects without changing existing rows; indexed lookup returns the correct object; rollback removes inserted keys and a subsequent insertion reuses them successfully. The initial test oracle used an unqualified nested field; it was corrected to the documented table-qualified path. Production code is unchanged. Latest full scoped evidence remains 428 Rust tests with one ignored gate and 48 Node/application tests; full V1 qualification remains open.
+
+
+## Duplicate collection CTE output names (2026-09-08)
+
+Collection CTEs now preserve duplicate public output names separately from unique runtime column names. Inferred aliases, explicit column lists, MATERIALIZED definitions, chained stars, first-name lookup and boolean/binary positions are covered through execute/profile. Typed INSERT SELECT and rollback pass, and both Node clients retain chained CTE result values. Removed the obsolete rejection assertion. Mixed native CTE duplicate-name behavior and fetched CTE projections remain separate qualification work.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 430 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-cte-duplicates-check.log. The local addon is rebuilt debug output. Full V1 release qualification remains incomplete.
