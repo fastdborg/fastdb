@@ -312,6 +312,37 @@ fn union_all_parameters_keep_statement_positions_and_binary_identity() {
     ] {
         assert_eq!(c.execute(sql,&params).unwrap().rows,vec![vec![bytes.clone()],vec![bytes.clone()]],"{sql}");
     }
+    q(&c, "CREATE TABLE copied");
+    q(&c, "CREATE TABLE native_copy(data BLOB)");
+    let source =
+        "SELECT data FROM docs WHERE data=$data UNION ALL SELECT data FROM native WHERE data=$data";
+    q(&c, "BEGIN");
+    for target in ["copied", "native_copy"] {
+        let sql = format!("INSERT INTO {target}(data) {source}");
+        assert_eq!(c.execute(&sql, &params).unwrap().affected, 2);
+        assert_eq!(
+            q(&c, &format!("SELECT data FROM {target}")).rows,
+            vec![vec![bytes.clone()], vec![bytes.clone()]]
+        );
+    }
+    q(&c, "ROLLBACK");
+    q(&c, "CREATE UNIQUE INDEX copied_data ON copied(data)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO copied(data) VALUES (X'31')");
+    assert!(c
+        .execute(&format!("INSERT INTO copied(data) {source}"), &params)
+        .is_err());
+    assert_eq!(
+        q(&c, "SELECT data FROM copied").rows,
+        vec![vec![Value::Binary(vec![49])]]
+    );
+    assert!(c
+        .lookup_index("copied", "copied_data", &bytes)
+        .unwrap()
+        .is_empty());
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT data FROM copied").rows.is_empty());
+    assert!(q(&c, "SELECT data FROM native_copy").rows.is_empty());
 }
 
 #[test]

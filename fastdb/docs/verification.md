@@ -2090,3 +2090,6 @@ The native-reference JOIN value matrix now includes a parameterized RHS filter. 
 
 
 Indexed positional binary qualification (2026-09-08): a new regression stores a record and binary bytes matching its current serialized representation in an indexed field. Positional equality bindings keep the values distinct; mixed IN lists preserve both rows through execute/profile with direct, parenthesized and unary-plus binary operands. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 420 Rust/46 Node tests; this adds one focused test after that run. Broader index/binding/type and full V1 release gates remain open.
+
+
+Mixed binary compound write qualification (2026-09-08): expanded the shared-binding UNION ALL regression with INSERT SELECT into relational and collection targets. The same binary parameter selects an indexed document row and native BLOB row, and both target kinds preserve both binary results. A unique collection-key failure restores prior transaction work and removes the statement's index entry; outer rollback leaves both targets empty. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 420 Rust/46 Node tests; broader write/binding/resource and full V1 release gates remain open.
