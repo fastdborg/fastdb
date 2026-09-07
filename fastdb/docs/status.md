@@ -1201,3 +1201,6 @@ Installed-package runtime guard assertions and TypeScript narrowing passed on Li
 
 
 Transport error-guard qualification (2026-09-07): the isolated worker fixture now verifies isFastDBError for shared FDB_WORKER failures and FDB_LIMIT queue rejections without transaction observations. Existing cancellation cleanup and timeout/completion-marker assertions pass. Full V1 remains incomplete.
+
+
+Task-tracker initialization cleanup (2026-09-07): openTracker now preserves both migration and close failures in AggregateError, matching the example's existing transaction-cleanup policy. Successful cleanup rethrows the original migration error. A simulated-client regression verifies error identity/order and exactly one close attempt; both application tests pass, including real persistent atomic task completion. Native interrupted-close durability and full V1 remain open.

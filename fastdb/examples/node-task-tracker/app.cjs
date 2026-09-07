@@ -18,7 +18,11 @@ CREATE TABLE task_events(task_key TEXT PRIMARY KEY, kind TEXT NOT NULL);`,
 async function openTracker(file) {
   const db = await AsyncDatabase.open(file);
   try { await db.migrate(migrations); return db; }
-  catch (error) { await db.close(); throw error; }
+  catch (error) {
+    try { await db.close(); }
+    catch (closeError) { throw new AggregateError([error, closeError], 'Tracker initialization and close failed'); }
+    throw error;
+  }
 }
 
 async function addPerson(db, key, name) {

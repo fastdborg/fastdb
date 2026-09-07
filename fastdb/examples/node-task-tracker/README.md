@@ -18,3 +18,5 @@ The exported `openTracker`, `addPerson`, `addTask`, `completeTask` and `listTask
 The smoke test forces the relational event insert to fail after the document update, checks document/index rollback, retries successfully, rejects repeat completion, and reopens the file through the migration runner. It also checks required-title validation, owner expansion and NDJSON export. The example is included in the scoped Node check; it is an application starting point, not external pilot or production-release evidence.
 
 See the [AI application guide](../../docs/ai-application-guide.md) for a runnable storage-layer walkthrough and suggested application-agent instructions.
+
+`openTracker` closes its connection if migration fails. It rethrows the migration error when cleanup succeeds and retains both errors in an AggregateError when close also fails. The cleanup fault test uses a simulated client; it does not establish native interrupted-close durability.

@@ -31,3 +31,27 @@ test('task tracker persists linked tasks and atomic completion events',async()=>
     assert.match(await db.exportDocuments('tasks','ndjson'),/First task/);
   } finally {if(db)await db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('tracker initialization retains migration and cleanup failures',async()=>{
+  const {AsyncDatabase}=require('../../bindings/node/index.cjs');
+  const originalOpen=AsyncDatabase.open;
+  try {
+    for(const failClose of [false,true]) {
+      const migrationError=Object.assign(new Error('migration failed'),{code:'FDB_MIGRATION'});
+      const closeError=Object.assign(new Error('close failed'),{code:'FDB_WORKER'});
+      let closed=0;
+      AsyncDatabase.open=async()=>({
+        migrate:async migrations=>{assert.equal(migrations[0].version,1n);throw migrationError;},
+        close:async()=>{closed++;if(failClose)throw closeError;},
+      });
+      await assert.rejects(openTracker('unused'),error=>{
+        if(!failClose)return error===migrationError;
+        assert(error instanceof AggregateError);
+        assert.deepEqual(error.errors,[migrationError,closeError]);
+        return true;
+      });
+      assert.equal(closed,1);
+    }
+  } finally {AsyncDatabase.open=originalOpen;}
+});
