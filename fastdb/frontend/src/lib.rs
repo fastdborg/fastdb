@@ -232,7 +232,28 @@ impl Connection {
             )
             .map_err(|_| Error::Limit("atomic operation identifiers exhausted".into()))?;
         let name = format!("__fastdb_statement_{id}");
-        self.run(&format!("SAVEPOINT {name}"), &[])?;
+        if let Err(cause) = self.run(&format!("SAVEPOINT {name}"), &[]) {
+            if self.engine.get_auto_commit() {
+                return Err(cause);
+            }
+            // The callback has not run. Remove an opened frame, or accept the
+            // pinned engine's exact missing-frame error if opening never happened.
+            let rollback = self
+                .run(&format!("ROLLBACK TO {name}"), &[])
+                .and_then(|_| self.run(&format!("RELEASE {name}"), &[]));
+            return match rollback {
+                Ok(_) => Err(cause),
+                Err(Error::Engine(turso_core::LimboError::TxError(message)))
+                    if message == format!("no such savepoint: {name}") =>
+                {
+                    Err(cause)
+                }
+                Err(rollback) => Err(Error::Rollback {
+                    cause: cause.to_string(),
+                    rollback: rollback.to_string(),
+                }),
+            };
+        }
         let result = f().and_then(|v| {
             self.run(&format!("RELEASE {name}"), &[])?;
             Ok(v)

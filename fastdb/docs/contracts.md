@@ -885,3 +885,8 @@ Derived nested access uses a separate value accessor: a valid NULL/scalar/array 
 A deep-path parser helper alone no longer opts a source-free expression subquery into standalone logical lowering before its outer field scope exists. It remains available to the enclosing correlation pass. Regression coverage extends nested paths to source-free scalar, EXISTS and IN forms through direct and derived outer collections. Other explicit logical expressions and typed parameters retain their existing routing; broader mixed-expression correlation remains open.
 
 Atomic operations now use distinct reserved savepoint identities, so cleanup of a failed outer operation includes unfinished inner frames. The nested cancellation regression preserves prior work on FDB_CANCELLED; ambiguous cleanup/RELEASE outcomes remain reported separately. See [atomic-savepoints.md](atomic-savepoints.md) for qualification limits.
+
+
+## Cleanup after cancelled atomic opening (2026-09-07)
+
+Cancellation after a SAVEPOINT opened could leave an unintended active transaction even though the operation callback never ran. Atomic opening errors now clean up their unique frame, accepting only the pinned engine's exact missing-frame error when it never opened. Other cleanup failures remain FDB_ROLLBACK. A boundary sweep checks autocommit and active outer transactions, absence of orphan savepoints, prior rows and successful retry. See atomic-savepoints.md for remaining I/O and RELEASE/commit qualification.

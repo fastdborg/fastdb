@@ -346,7 +346,18 @@ mod tests {
                 c.engine.set_progress_handler(1, Some(Box::new(|| true)));
                 let export = c.export_documents("docs", format);
                 c.engine.set_progress_handler(0, None);
-                assert_eq!(export.unwrap_err().code(), "FDB_CANCELLED");
+                // This deliberately persistent handler also interrupts cleanup.
+                // Public CancellationToken delivery is one-shot; an active outer
+                // transaction must report that cleanup could not be verified.
+                assert_eq!(
+                    export.unwrap_err().code(),
+                    if outer {
+                        "FDB_ROLLBACK"
+                    } else {
+                        "FDB_CANCELLED"
+                    }
+                );
+                assert_eq!(c.transaction_state(), state);
                 let fresh = CancellationToken::new();
                 assert_eq!(
                     c.import_documents_cancellable("docs", &data, format, &fresh)
@@ -432,6 +443,64 @@ mod tests {
             }
             assert_eq!(c.transaction_state(), crate::TransactionState::Active);
             q(&c, "ROLLBACK");
+        }
+    }
+
+    #[test]
+    fn cancelled_atomic_open_preserves_transaction_state() {
+        use std::sync::atomic::AtomicUsize;
+        for outer in [false, true] {
+            let mut rejected_opens = 0;
+            for stop in 1..=16 {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                q(&c, "CREATE TABLE native(n INTEGER)");
+                if outer {
+                    q(&c, "BEGIN");
+                    q(&c, "INSERT INTO native VALUES(9)");
+                }
+                let state = c.transaction_state();
+                let id = c.next_atomic_id.load(Ordering::Relaxed);
+                let ticks = AtomicUsize::new(0);
+                c.engine.set_progress_handler(
+                    1,
+                    Some(Box::new(move || {
+                        ticks.fetch_add(1, Ordering::SeqCst) + 1 == stop
+                    })),
+                );
+                let called = std::cell::Cell::new(false);
+                let result = c.atomic(|| {
+                    called.set(true);
+                    Ok(())
+                });
+                c.engine.set_progress_handler(0, None);
+                if called.get() {
+                    break;
+                }
+                rejected_opens += 1;
+                assert_eq!(result.unwrap_err().code(), "FDB_CANCELLED");
+                assert_eq!(c.transaction_state(), state, "outer={outer}, stop={stop}");
+                assert!(
+                    c.run(&format!("RELEASE __fastdb_statement_{id}"), &[])
+                        .is_err(),
+                    "orphan savepoint: outer={outer}, stop={stop}"
+                );
+                assert_eq!(
+                    q(&c, "SELECT count(*) FROM native").rows,
+                    vec![vec![Value::Integer(i64::from(outer))]]
+                );
+                c.atomic(|| c.run("INSERT INTO native VALUES(1)", &[]))
+                    .unwrap();
+                assert_eq!(
+                    q(&c, "SELECT count(*) FROM native").rows,
+                    vec![vec![Value::Integer(i64::from(outer) + 1)]]
+                );
+                if outer {
+                    q(&c, "ROLLBACK");
+                    assert!(q(&c, "SELECT n FROM native").rows.is_empty());
+                }
+            }
+            assert!(rejected_opens >= 4);
         }
     }
 

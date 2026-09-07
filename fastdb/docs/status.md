@@ -991,3 +991,10 @@ A deep-path parser helper alone no longer opts a source-free expression subquery
 The Node cancellation suite exposed partial import data surviving FDB_CANCELLED. A deterministic 48-boundary nested atomic sweep reproduced the failure at boundary 4. Atomic operations now have unique per-connection savepoint names, so outer cleanup cannot accidentally target an interrupted inner frame. See [atomic-savepoints.md](atomic-savepoints.md) for evidence and remaining savepoint/commit boundaries.
 
 The complete scoped suite passed formatting, Clippy, 308 Rust tests, thirty-five Node tests and strict TypeScript. The Node cancelled-import test passed three additional isolated runs. The installed-package smoke passed direct/derived nested values and source-free correlated profiles across object, NULL, scalar, array and missing parents in both clients, including index integrity and rollback. Result: Linux x64 / Node 24.19.0, eight runtime files, 59,642,181 packed bytes. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Cleanup after cancelled atomic opening (2026-09-07)
+
+Cancellation after a SAVEPOINT opened could leave an unintended active transaction even though the operation callback never ran. Atomic opening errors now clean up their unique frame, accepting only the pinned engine's exact missing-frame error when it never opened. Other cleanup failures remain FDB_ROLLBACK. A boundary sweep checks autocommit and active outer transactions, absence of orphan savepoints, prior rows and successful retry. See atomic-savepoints.md for remaining I/O and RELEASE/commit qualification.
+
+Scoped checks passed formatting, Clippy, 309 Rust tests, thirty-five Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-07
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Latest scoped evidence: 308 passing Rust tests with one ignored trigger-cancellation gate, 35 passing Node tests, formatting, Clippy and strict TypeScript. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Latest scoped evidence: 309 passing Rust tests with one ignored trigger-cancellation gate, 35 passing Node tests, formatting, Clippy and strict TypeScript. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -68,4 +68,7 @@ Native correlated IN/NOT IN now keeps its RHS inside the per-row expression inst
 Nested outer document paths now use the supported predicate correlation route, including derived collection columns. Non-object derived parents return missing fields through a separate accessor; physical stored-document roots remain strict. General nested query scopes and inner collection correlation remain open.
 
 
-Unique atomic savepoint identities fix a reproduced partial-import cancellation failure; a deterministic nested boundary sweep and repeated Node cancellation runs qualify that fix. Top-level savepoint-open and RELEASE/commit outcome boundaries remain open. See atomic-savepoints.md.
+Unique atomic savepoint identities fix a reproduced partial-import cancellation failure; a deterministic nested boundary sweep and repeated Node cancellation runs qualify that fix. Opening I/O failures and RELEASE/commit outcome boundaries remain open. See atomic-savepoints.md.
+
+
+Cancelled atomic opening now removes an opened empty frame and restores the initial transaction state in the deterministic progress-boundary sweep. Exact absent-frame handling is confined to opening failure before callback execution; unverifiable cleanup remains FDB_ROLLBACK.
