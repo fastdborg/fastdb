@@ -36,11 +36,12 @@ Keep the Database alive while using its connections and serialize operations on 
 ```rust
 let components = [1.0_f32, 0.0, -1.0];
 let sparse = Value::vector32_sparse(&components)?;
+let sparse_entries = Value::vector32_sparse_entries(3, &[(0, 1.0), (2, -1.0)])?;
 let quantized = Value::vector8(&components)?;
 let bits = Value::vector1bit(&components)?;
 ```
 
-Pass these values through Parameters like any other typed value. Inputs require 1–65,536 finite components; conversion output is validated too. Quantized and bit conversions are lossy. Sparse construction accepts a dense component slice, rather than an index/value-pair format. Dimension bounds are checked before constructor output allocation. Broader numerical and platform qualification remains open.
+Pass these values through Parameters like any other typed value. Inputs require 1–65,536 finite components; conversion output is validated too. Quantized and bit conversions are lossy. For sparse input, `Value::vector32_sparse_entries(dimensions, &[(index, value)])` avoids allocating a dense array. Indices must be strictly increasing, unique and below the declared dimension, even for zero-valued entries. Values must be finite; positive and negative zeros are omitted. Empty entries represent an all-zero vector with the declared positive dimension. Dimension bounds are checked before constructor output allocation. Broader numerical and platform qualification remains open.
 
 ## Standalone consumer smoke
 

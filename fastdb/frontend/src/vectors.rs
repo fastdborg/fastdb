@@ -159,6 +159,38 @@ impl Value {
             turso_core::vector::vector_types::VectorType::Float32Sparse,
         )
     }
+    /// Construct a sparse vector without allocating a dense component array.
+    /// Indices must be strictly increasing and below `dimensions`. Zero values
+    /// (including negative zero) are omitted; dimensions include trailing zeros.
+    pub fn vector32_sparse_entries(dimensions: usize, entries: &[(usize, f32)]) -> Result<Self> {
+        check_dims(dimensions)?;
+        if entries.len() > dimensions {
+            return Err(invalid());
+        }
+        let mut previous = None;
+        for &(index, value) in entries {
+            if index >= dimensions || previous.is_some_and(|prior| index <= prior) {
+                return Err(invalid());
+            }
+            if !value.is_finite() {
+                return Err(Error::Validation("vector components must be finite".into()));
+            }
+            previous = Some(index);
+        }
+        let count = entries.iter().filter(|(_, value)| *value != 0.0).count();
+        let mut bytes = Vec::with_capacity(count * 8 + 5);
+        for &(_, value) in entries.iter().filter(|(_, value)| *value != 0.0) {
+            bytes.extend(value.to_le_bytes());
+        }
+        for &(index, _) in entries.iter().filter(|(_, value)| *value != 0.0) {
+            bytes.extend((index as u32).to_le_bytes());
+        }
+        bytes.extend((dimensions as u32).to_le_bytes());
+        bytes.push(9);
+        let value = Self::Vector(bytes);
+        value.validate()?;
+        Ok(value)
+    }
     /// Quantize float32 components with the pinned engine's 8-bit conversion.
     pub fn vector8(values: &[f32]) -> Result<Self> {
         converted32(values, turso_core::vector::vector_types::VectorType::Float8)

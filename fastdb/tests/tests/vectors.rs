@@ -307,3 +307,93 @@ fn rust_vector_constructors_enforce_dimensions_and_finite_values() {
         2
     );
 }
+
+#[test]
+fn sparse_entry_constructor_matches_dense_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sparse-entries.db");
+    let sparse = Value::vector32_sparse_entries(5, &[(0, 1.5), (1, -0.0), (3, -2.0)]).unwrap();
+    assert_eq!(
+        sparse,
+        Value::vector32_sparse(&[1.5, 0.0, 0.0, -2.0, 0.0]).unwrap()
+    );
+    let expected;
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE points");
+        q(&c, "DEFINE FIELD v ON points TYPE vector<5> REQUIRED");
+        c.execute(
+            "INSERT INTO points(v) VALUES ($v)",
+            &Parameters::from([("$v".into(), sparse.clone())]),
+        )
+        .unwrap();
+        assert!(c
+            .execute(
+                "INSERT INTO points(v) VALUES ($v)",
+                &Parameters::from([("$v".into(), Value::vector32_sparse_entries(4, &[]).unwrap())])
+            )
+            .is_err());
+        expected = q(&c, "SELECT v FROM points").rows;
+        assert_eq!(expected, vec![vec![sparse]]);
+        assert_eq!(
+            q(&c, "SELECT vector_extract(vector32(v)) AS v FROM points").rows,
+            vec![vec![Value::String("[1.5,0,0,-2,0]".into())]]
+        );
+        assert_eq!(
+            c.check_collection_integrity("points", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        q(&db.connect().unwrap(), "SELECT v FROM points").rows,
+        expected
+    );
+}
+
+#[test]
+fn sparse_entry_constructor_checks_boundaries_before_encoding() {
+    assert!(Value::vector32_sparse_entries(0, &[]).is_err());
+    for dimensions in [65_537, usize::MAX] {
+        assert_eq!(
+            Value::vector32_sparse_entries(dimensions, &[])
+                .unwrap_err()
+                .code(),
+            "FDB_LIMIT"
+        );
+    }
+    for entries in [
+        vec![(2, 1.0)],
+        vec![(usize::MAX, 1.0)],
+        vec![(1, 1.0), (0, 2.0)],
+        vec![(0, 0.0), (0, -0.0)],
+        vec![(0, 1.0), (1, 1.0), (2, 1.0)],
+    ] {
+        assert!(Value::vector32_sparse_entries(2, &entries).is_err());
+    }
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(Value::vector32_sparse_entries(1, &[(0, value)]).is_err());
+    }
+    for entries in [
+        &[][..],
+        &[(0, 0.0), (65_535, -0.0)][..],
+        &[(65_535, f32::MAX)][..],
+    ] {
+        let value = Value::vector32_sparse_entries(65_536, entries).unwrap();
+        assert_eq!(value.vector_dimensions().unwrap(), 65_536);
+        let Value::Vector(bytes) = value else {
+            panic!("typed vector")
+        };
+        assert_eq!(
+            bytes.len(),
+            if entries.last().is_some_and(|(_, value)| *value != 0.0) {
+                13
+            } else {
+                5
+            }
+        );
+    }
+}

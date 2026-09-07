@@ -765,3 +765,9 @@ The final scoped check exited zero: formatting, Clippy with warnings denied, 245
 Rust and Node regressions reject quantizer scale overflow from finite negative/positive float32 maxima and accept an equal-maximum constant vector. The Node case runs while unrelated database work is active, verifies that construction failure leaves that transaction/data intact, and then rolls it back successfully. The focused Node precision probe passed before the full run.
 
 No production implementation, dependencies, upstream files or persisted encodings changed. The client guide and contracts/status document the precision boundaries and finite-input quantization limitation. Broader numerical/platform/resource and full V1 qualification remain open.
+
+## Sparse entry Rust constructor (2026-09-07)
+
+The scoped check exited zero: formatting, Clippy with warnings denied, 247 Rust tests, twenty-one Node tests and strict TypeScript declarations. Two new vector tests exercise sparse index/value construction, equality with dense-input sparse encoding, native dense extraction, typed binding, vector field-dimension rejection, content audit and close/reopen. Boundary cases include empty and zero-only entries at 65,536 dimensions, the last valid index, non-finite components, unordered/duplicate/out-of-range indices and zero/oversized dimensions. The implementation validates before allocation and emits the existing little-endian sparse layout with output storage proportional to nonzero entries.
+
+The standalone Rust consumer also exited zero after exercising the new public API outside the workspace. Its 244 registry/git dependency identities matched the workspace lockfile; the cached build completed in 19.60 seconds. Logs: /tmp/fastdb-sparse-entries-check.log and /tmp/fastdb-sparse-entries-consumer.log. No upstream source, dependency or persisted-format changes. Broader numerical/platform and full V1 qualification remain open.
