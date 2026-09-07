@@ -1255,5 +1255,26 @@ mod cte_evaluation_tests {
                 );
             }
         }
+        for (projection, predicate, calls) in [("1", " WHERE v>0", 2), ("cte_tick()", "", 0)] {
+            for negate in ["", "NOT "] {
+                let source_value = if calls == 0 { "1" } else { "cte_tick()" };
+                let sql = format!("SELECT n,{negate}EXISTS(WITH x AS NOT MATERIALIZED (SELECT {source_value} AS v FROM docs s WHERE s.n>d.n) SELECT {projection} FROM x{predicate}) FROM docs d ORDER BY n");
+                let flag = i64::from(negate.is_empty());
+                let expected = vec![
+                    vec![Value::Integer(1), Value::Integer(flag)],
+                    vec![Value::Integer(2), Value::Integer(flag)],
+                    vec![Value::Integer(4), Value::Integer(1 - flag)],
+                ];
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(c.execute(&sql, &params).unwrap().rows, expected);
+                assert_eq!(CALLS.load(Ordering::SeqCst), calls, "execute {sql}");
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(
+                    c.profile_select(&sql, &params).unwrap().result.rows,
+                    expected
+                );
+                assert_eq!(CALLS.load(Ordering::SeqCst), calls, "profile {sql}");
+            }
+        }
     }
 }

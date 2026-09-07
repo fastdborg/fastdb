@@ -964,3 +964,7 @@ A nonrecursive local WITH can now expose a collection source to a correlated con
 ## Collection CTE definition correlation (2026-09-08)
 
 The collection correlation pass now visits nonrecursive CTE definitions before lowering the consuming query. Collection-backed definitions can reference qualified outer typed fields, including record IDs and numeric predicates, through direct or derived outer sources. Single/chained definition regressions cover execute/profile. The pass skips work when no outer source is logical. Recursive CTEs, native-only definition correlation, compounds, deeper shadowing combinations and resource qualification remain open; this extends the preceding consumer-only support.
+
+## Correlated CTE EXISTS preparation (2026-09-08)
+
+Logical EXISTS queries containing a local WITH now retain native EXISTS inside a scalar SELECT wrapper. This defers preparation of correlated CTE sources until the outer cursor is available, avoiding a pinned-engine cursor-lookup panic exposed by an UPDATE combining a scalar CTE assignment with an EXISTS CTE filter. Callback regressions cover EXISTS/NOT EXISTS, first-match evaluation and ignored output projections through execute/profile. A correlated multirow write checks local alias shadowing, validation failure, corrected-source retry, index integrity and rollback of both collections. Upstream files remain unchanged; broader planner, scope and resource qualification remain open.

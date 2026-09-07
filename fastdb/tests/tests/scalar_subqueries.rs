@@ -3488,3 +3488,58 @@ fn collection_cte_definitions_correlate_outer_fields() {
         }
     }
 }
+
+#[test]
+fn correlated_cte_definitions_preserve_local_aliases_and_write_rollback() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "DEFINE FIELD n ON docs TYPE integer CHECK(n<10)",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+        "INSERT INTO links {owner:docs:b,n:20}",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    let shadow = "SELECT n,(WITH x AS (SELECT n FROM links d WHERE d.n=3) SELECT count(*) FROM x) FROM docs d ORDER BY n";
+    assert_eq!(
+        q(&c, shadow).rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1)],
+            vec![Value::Integer(2), Value::Integer(1)]
+        ]
+    );
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {id:docs:prior,n:5}");
+    let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+    let sql = "UPDATE docs AS d SET n=(WITH x AS (SELECT n FROM links l WHERE l.owner=d.id) SELECT n FROM x) WHERE EXISTS(WITH x AS (SELECT n FROM links l WHERE l.owner=d.id) SELECT 1 FROM x)";
+    assert!(c.execute(sql, &Parameters::new()).is_err());
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "UPDATE links SET n=4 WHERE n=20");
+    assert_eq!(q(&c, sql).affected, 2);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(3)],
+            vec![Value::Integer(4)],
+            vec![Value::Integer(5)]
+        ]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM links ORDER BY n").rows,
+        vec![vec![Value::Integer(3)], vec![Value::Integer(20)]]
+    );
+}

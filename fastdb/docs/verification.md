@@ -1705,3 +1705,10 @@ Local CTE materialization-mode evaluation qualification (2026-09-08): the correl
 Factored collection correlation into a helper that visits nonrecursive CTE definitions before their consuming SELECT. Collection-backed definitions now bind qualified outer record and numeric fields; single/chained definitions and direct/derived outer sources pass execute/profile regressions. The helper skips work when no outer source is logical. This extends consumer-only CTE support; recursive CTEs, native-only definitions, compounds, deeper shadowing and total planning/resource qualification remain open.
 
 The complete scoped check passed formatting, Clippy, 373 Rust tests, 44 Node/application tests and strict TypeScript, including existing callback-count and CTE write regressions. One known trigger-cancellation gate remains ignored. No upstream files changed; full V1 remains incomplete.
+
+
+## Correlated CTE EXISTS preparation fix (2026-09-08)
+
+Fixed a pinned-engine cursor-lookup panic exposed by an UPDATE combining correlated CTE definitions in a scalar assignment and EXISTS filter. Logical EXISTS with a local WITH now remains native EXISTS inside a scalar SELECT wrapper, providing the required outer-cursor preparation order. Regressions verify local aliases, failed validation with prior work, corrected-source retry, managed-index integrity and rollback of source/target collections. Callback counts cover EXISTS/NOT EXISTS first-match evaluation and ignored output projections through execute/profile.
+
+The complete scoped check passed formatting, Clippy, 374 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; broader planner/scope/resource and full V1 release qualification remain open.

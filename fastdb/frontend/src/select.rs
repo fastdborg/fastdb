@@ -3012,10 +3012,16 @@ impl Connection {
                                 && matches!(&inner.body.select, OneSelect::Select { columns, .. }
                                 if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
                             let lowered = if exists {
-                                expression(&format!(
-                                    "EXISTS ({})",
-                                    sql.trim().trim_end_matches(';')
-                                ))?
+                                let body = sql.trim().trim_end_matches(';');
+                                if inner.with.is_some() {
+                                    // A correlated CTE under native EXISTS can be
+                                    // prepared before its outer cursor exists.
+                                    // A scalar SELECT defers it while retaining
+                                    // native EXISTS short-circuit/projection rules.
+                                    expression(&format!("(SELECT EXISTS({body}))"))?
+                                } else {
+                                    expression(&format!("EXISTS ({body})"))?
+                                }
                             } else if membership {
                                 let values = format!(
                                     "SELECT __fastdb_unwrap({output}) AS v FROM __fastdb_members"
