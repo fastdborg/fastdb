@@ -31,6 +31,27 @@ const path = require('node:path');
 const { Database, AsyncDatabase, Record, Vector } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
+  async function withVectorFields(client) {
+    await client.execute('BEGIN');
+    try {
+      for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1]) {
+        const vector = make([1,0,-1]);
+        await client.execute('UPDATE docs SET embedding=$v', {$v:vector});
+        const expected = await client.exactlyOne('SELECT vector_extract($v) AS v', {$v:vector});
+        const actual = await client.profileSelect('SELECT vector_extract(embedding) AS v FROM docs');
+        assert.deepEqual(actual.result.rows, [expected]);
+        assert.equal(actual.metrics.rowsWritten, 0n);
+        assert.deepEqual(await client.exactlyOne('SELECT embedding FROM docs'), [vector]);
+        assert.equal((await client.checkCollectionIntegrity('docs')).documents, 1n);
+      }
+      assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
+    } finally {
+      await client.execute('ROLLBACK');
+    }
+    assert.equal((await client.exactlyOne('SELECT embedding FROM docs'))[0], null);
+    await assert.rejects(async () => client.all('SELECT vector_extract(embedding) FROM docs'));
+    assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
+  }
   async function withWrites(client) {
     await client.execute('BEGIN');
     const changed = await client.execute('WITH chosen AS (SELECT value FROM docs) UPDATE docs SET value=(SELECT $next) WHERE value IN (SELECT value FROM chosen) RETURNING value', {$next:8n});
@@ -119,6 +140,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const vector = make([1,0,-1]);
       assert.deepEqual(db.exactlyOne('SELECT $v AS v', {$v: vector})[0], vector);
     }
+    await withVectorFields(db);
     await withWrites(db);
   } finally { db.close(); }
   const worker = await AsyncDatabase.open(file);
@@ -127,6 +149,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const vector = make(new Float32Array([1,0,-1]));
       assert.deepEqual((await worker.exactlyOne('SELECT $v AS v', {$v: vector}))[0], vector);
     }
+    await withVectorFields(worker);
     const row = await worker.exactlyOne('SELECT id,value FROM docs');
     assert(row[0] instanceof Record);
     assert.equal(row[0].key, 'saved');

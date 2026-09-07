@@ -1297,3 +1297,10 @@ Plain physical collection fields now bypass the intermediate tagged-value serial
 ## Combined accessor large-vector verification (2026-09-07)
 
 The release-profile 100,000 × 768 seeded run at clean `3cac94cae` passed all warmup/sample reference checks. Exact top-10 median was 32.71 seconds versus 47.12 seconds before; primary VM steps fell from 1,200,080 to 1,100,080 while all 100,000 vectors are still scanned. Binary identity, reference values, sample medians and repeated counters were checked. See [benchmarks.md](benchmarks.md) for report, command and measurement limitations. Substantial latency, whole-document decoding, real-workload/platform/resource qualification and full V1 remain open.
+
+
+## Installed vector-field conversion smoke (2026-09-07)
+
+The offline installed Node consumer now stores all five vector encodings, compares profiled field extraction with bound-parameter extraction, verifies typed round trips and collection integrity, and rolls the writes back through sync and dedicated-worker clients. A separate missing-vector rejection check retains the original document. The initial fixture attempted rollback after a rejected vector SELECT had left the pinned engine in autocommit; the corrected fixture checks successful-write rollback before exercising rejection. No production behavior changed for this fixture correction.
+
+The complete offline package smoke passed on Linux x64 / Node 24.19.0: eight runtime files, 59,657,949 packed bytes. This is local installed-addon evidence; broader release/platform qualification and full V1 remain open.
