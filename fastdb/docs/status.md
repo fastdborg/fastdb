@@ -1712,3 +1712,10 @@ The complete scoped check passed formatting, Clippy, 405 Rust tests, 44 Node/app
 
 
 Parenthesized native membership qualification (2026-09-08): expanded the comparison matrix with (+label) IN, nested-parenthesized unary-plus NOT IN with NULL, and an explicit BINARY override. Covered numeric, string, NULL and binary operands match native literal references through execute/profile across the existing derived-source matrix. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 405 Rust/44 Node tests; broader expression/scope/resource and full V1 gates remain open.
+
+
+## Direct relational columns in derived joins (2026-09-08)
+
+Direct relational tables and views now supply engine-prepared visible column names during final source resolution. Joins with collection-derived sources can resolve unqualified names when exactly one known source exposes the name. A new execute/profile regression compares direct table/view joins with qualified forms. Early correlation discovery defers this metadata so local/chained CTE scopes retain their existing lowering; virtual tables remain outside closed-column resolution because star metadata omits hidden columns. Direct-table comparison behavior remains unchanged.
+
+The complete scoped check passed formatting, Clippy, 406 Rust tests, 44 Node/application tests and strict TypeScript. Existing CTE evaluation-count, chained correlation and native membership regressions pass. One known trigger-cancellation gate remains ignored. Open collection/native joins, broader hidden-column/scope/resource and full V1 release qualification remain open. No upstream implementation files changed.

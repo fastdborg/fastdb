@@ -1599,6 +1599,7 @@ fn source(
     ctes: &CteSources,
     native_with: Option<&With>,
     anonymous_alias: String,
+    inspect_native: bool,
 ) -> Result<Source> {
     if let SelectTable::Select(select, alias) = table {
         let generated = As::As(Name::exact(anonymous_alias));
@@ -1805,6 +1806,29 @@ fn source(
             "attached collections or explicit INDEXED clauses",
         ));
     }
+    let local_cte = name.db_name.is_none()
+        && native_with.is_some_and(|with| {
+            with.ctes.iter().any(|cte| {
+                cte.tbl_name
+                    .as_str()
+                    .eq_ignore_ascii_case(name.name.as_str())
+            })
+        });
+    let derived = if inspect_native && collection.is_none() && !local_cte {
+        let statement = connection.prepare(format!("SELECT * FROM {table}"))?;
+        let program = statement.get_program();
+        let columns = (0..statement.num_columns())
+            .map(|i| (statement.get_column_name(i).into_owned(), false))
+            .collect();
+        (!program
+            .table_references
+            .joined_tables()
+            .iter()
+            .any(|source| matches!(source.table, turso_core::schema::Table::Virtual(_))))
+        .then_some(columns)
+    } else {
+        None
+    };
     Ok(Source {
         table: table.clone(),
         alias: alias
@@ -1812,10 +1836,10 @@ fn source(
             .map_or(name.name.as_str(), |a| a.name().as_str())
             .into(),
         collection,
-        derived: None,
+        derived,
         derived_logical: false,
-        native_collations: Default::default(),
         native_expression_collations: Default::default(),
+        native_collations: Default::default(),
         consumed: Default::default(),
     })
 }
@@ -2853,8 +2877,9 @@ impl Connection {
                         table,
                         params,
                         ctes,
-                        None,
+                        inner.with.as_ref(),
                         anonymous_source_alias(from, position),
+                        false,
                     )?);
                 }
             }
@@ -3293,6 +3318,7 @@ impl Connection {
                                             &ctes,
                                             select.with.as_ref().or(native_with),
                                             anonymous_source_alias(from, position),
+                                            false,
                                         )?);
                                     }
                                 }
@@ -3519,6 +3545,7 @@ impl Connection {
                 &ctes,
                 select.with.as_ref().or(native_with),
                 anonymous_source_alias(from, 0),
+                true,
             ) {
                 Ok(s) => s,
                 Err(Error::Unsupported(_)) => return Ok(None),
@@ -3533,6 +3560,7 @@ impl Connection {
                     &ctes,
                     select.with.as_ref().or(native_with),
                     anonymous_source_alias(from, position + 1),
+                    true,
                 ) {
                     Ok(s) => sources.push(s),
                     Err(Error::Unsupported(_)) => return Ok(None),

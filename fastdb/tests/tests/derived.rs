@@ -407,3 +407,41 @@ fn mixed_derived_metadata_preserves_positional_bindings() {
         assert_eq!(c.execute(sql,&params).expect(sql).rows,expected,"{sql}");
     }
 }
+
+#[test]
+fn derived_collection_joins_resolve_relational_columns() {
+    let (_db, c) = setup();
+    q(
+        &c,
+        "CREATE TABLE labels(m INTEGER,label TEXT COLLATE NOCASE)",
+    );
+    q(&c, "INSERT INTO labels VALUES(1,'A'),(2,'B')");
+    q(&c, "CREATE VIEW label_view AS SELECT m,label FROM labels");
+    for source in ["labels", "label_view"] {
+        let sql = format!(
+            "SELECT n,flag,label FROM (SELECT n,flag FROM docs) JOIN {source} ON n=m ORDER BY n"
+        );
+        let expected = q(
+            &c,
+            &format!(
+                "SELECT d.n,d.flag,l.label FROM docs d JOIN {source} l ON d.n=l.m ORDER BY d.n"
+            ),
+        )
+        .rows;
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{sql}"
+        );
+    }
+    assert!(c
+        .execute(
+            "SELECT n FROM (SELECT n FROM docs) JOIN (SELECT m AS n FROM labels) ON 1=1",
+            &Parameters::new()
+        )
+        .is_err());
+}

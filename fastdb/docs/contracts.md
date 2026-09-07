@@ -1058,3 +1058,6 @@ Mixed compound collation provenance (2026-09-08): native derived metadata now re
 
 
 Parenthesized unary-plus collation (2026-09-08): mixed comparison lowering now uses the existing recursive column-affinity check to recognize unary plus through parentheses. The covered (+column) and ((+column)) forms preserve the same derived expression collation as bare +column, including mixed-collation compound sources.
+
+
+Direct relational source names (2026-09-08): supported direct relational tables and views now contribute engine-prepared visible columns to closed-source join name resolution. A derived collection source can join them using an unqualified column when it occurs in exactly one known column list. Open collection sources and virtual tables retain qualification requirements; virtual hidden columns are not treated as a closed star projection. Unresolved local CTEs defer metadata to their existing lowering stage. Metadata preparation does not step the source.
