@@ -1023,3 +1023,8 @@ The existing release-profile CLI built successfully with Rust 1.88.0 and complet
 ## Combined vector-field conversion (2026-09-07)
 
 Plain physical collection fields now bypass the intermediate tagged-value serialization/decode when passed to vector functions. Complete document validation and existing conversion errors remain enforced; other expressions retain generic conversion. Direct equivalence coverage includes five vector encodings, binary/text input, NULL/missing/scalar-parent paths and malformed stored data. Full scoped checks passed: 311 Rust tests, 35 Node tests, formatting, Clippy and strict TypeScript; one existing trigger gate remains ignored. Initial optimized diagnostic results and limitations are in [accessor-performance.md](accessor-performance.md). Full V1 and broader performance qualification remain open.
+
+
+## Combined accessor large-vector verification (2026-09-07)
+
+The release-profile 100,000 × 768 seeded run at clean `3cac94cae` passed all warmup/sample reference checks. Exact top-10 median was 32.71 seconds versus 47.12 seconds before; primary VM steps fell from 1,200,080 to 1,100,080 while all 100,000 vectors are still scanned. Binary identity, reference values, sample medians and repeated counters were checked. See [benchmarks.md](benchmarks.md) for report, command and measurement limitations. Substantial latency, whole-document decoding, real-workload/platform/resource qualification and full V1 remain open.

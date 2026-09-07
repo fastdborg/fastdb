@@ -153,3 +153,20 @@ Run command: `python3 fastdb/scripts/benchmark.py --binary target/release/fastdb
 Loading took 190.51 seconds and index construction 13.03 seconds. The checkpointed size was identical at 1,247,805,440 bytes. All filter and vector reference assertions passed for warmups and measured samples. Independent reference values, per-workload primary engine counters and database size match the debug report exactly; medians and current binary identity were independently checked. The intervening commit contains only diagnostic documentation and its report, so product code and harness were unchanged.
 
 Reported VmHWM observations are 2,622,300,160 then 2,620,866,560 bytes (about 2.44 GiB). The decreasing accounting caveat from the debug run recurs; these observations do not establish a reliable monotonic peak or a meaningful memory improvement. Source code, build configuration, platform and measurement scope are explicit, but these sequential three-sample synthetic runs do not establish general speedup, stable p95, cold-cache behavior or concurrent performance. The 47-second full-scan top-10 latency remains a concrete performance limitation for this workload. Profiling document decoding and vector execution, real embedding distributions, broader scales/platforms and complete resource qualification remain open.
+
+
+## Combined vector-field accessor at 100,000 × 768 (2026-09-07)
+
+The [post-change report](benchmark-results/2026-09-07-linux-release-vector-field-768-100000.json) completed at clean implementation commit `3cac94cae`, using the same release profile, Rust 1.88.0, seeded fixture and unchanged harness. Command: `python3 fastdb/scripts/benchmark.py --binary target/release/fastdb-cli --rows 100000 --dimensions 768 --samples 3 --fixture seeded --output fastdb/docs/benchmark-results/2026-09-07-linux-release-vector-field-768-100000.json`. The rebuilt binary hash matches `cb9e8b99209bf3cef1c589a78113414740407181e7faa1c5b5cec0fcf71dc081`.
+
+| Workload | Median before | Median after | After sample range |
+|---|---:|---:|---:|
+| Unindexed filter | 9.48 s | 9.26 s | 9.16–9.44 s |
+| Indexed filter | 138.64 ms | 117.97 ms | 114.72–122.31 ms |
+| Exact cosine top-10 | 47.12 s | 32.71 s | 32.60–32.76 s |
+
+Warmup and all measured results passed count, ordering, uniqueness, cutoff membership and per-distance reference checks. The independent cosine reference and checkpointed database size (1,247,805,440 bytes) match the baseline. Loading took 192.68 seconds and index construction 12.36 seconds. Report medians, binary/commit identity and repeated counters were independently checked.
+
+Vector primary VM steps fell from 1,200,080 to 1,100,080, consistent with one removed scalar-function call per document. Vector rows read remain 100,000 with 99,999 full-scan steps and one sort. Filter counters remain unchanged. Median top-10 time is 30.6% lower in these sequential runs; unchanged filter timings also vary, so avoid treating the comparison as a universal speedup. The query still takes over 32 seconds on this synthetic workload.
+
+VmHWM observations are 2,622,386,176 then 2,620,030,976 bytes, retaining the earlier platform-accounting decrease. No memory improvement is established. Three warm samples, one machine, synthetic vectors and a single process do not establish stable p95, real-workload performance, cold/concurrent behavior or complete resource qualification. Whole-document decoding and broader V1 gates remain open.

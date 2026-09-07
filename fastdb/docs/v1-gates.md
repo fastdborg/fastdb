@@ -85,3 +85,8 @@ The seeded-vector benchmark at clean commit `bc88ad618b` exited successfully, ch
 ## Optimized vector diagnostic (2026-09-07)
 
 The existing release-profile CLI built successfully with Rust 1.88.0 and completed the same seeded 100,000 × 768 diagnostic at clean commit `83583ecdd`. All warmup/sample count and cosine-reference checks passed. Medians were 9.48 s unindexed filter, 138.64 ms indexed filter and 47.12 s exact top-10. Reference data, engine counters and database size match the debug run; binary identity and medians were verified. See [benchmarks.md](benchmarks.md) for commands, comparison and recurring nonmonotonic VmHWM observations. This adds optimized-build evidence but leaves real workloads, broader platform/scale/resource qualification and full V1 incomplete.
+
+
+## Combined accessor large-vector verification (2026-09-07)
+
+The release-profile 100,000 × 768 seeded run at clean `3cac94cae` passed all warmup/sample reference checks. Exact top-10 median was 32.71 seconds versus 47.12 seconds before; primary VM steps fell from 1,200,080 to 1,100,080 while all 100,000 vectors are still scanned. Binary identity, reference values, sample medians and repeated counters were checked. See [benchmarks.md](benchmarks.md) for report, command and measurement limitations. Substantial latency, whole-document decoding, real-workload/platform/resource qualification and full V1 remain open.
