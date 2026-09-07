@@ -46,7 +46,7 @@ fn tokens_inner(sql: &str, native: bool) -> crate::Result<Vec<fastql_parser::Tok
     match statement {
         Stmt::Select(s) => {
             if native {
-                redact_cte_sources(s, &std::collections::BTreeSet::new());
+                redact_cte_sources(s, &std::collections::BTreeSet::new())?;
             }
             select(s)?;
         }
@@ -247,45 +247,108 @@ fn select(select: &mut Select) -> Result<()> {
 }
 
 // Guard-only proof for CTE declarations and unqualified FROM references.
-// Leave qualified table names and expression qualifiers visible: uncertain
-// roles remain conservatively guarded. This AST is never executed.
-fn redact_cte_sources(select: &mut Select, inherited: &std::collections::BTreeSet<String>) {
-    fn source(table: &mut SelectTable, visible: &std::collections::BTreeSet<String>) {
+// Qualified expressions are redacted only for proven unaliased CTE sources.
+// Schema-qualified tables and uncertain roles remain visible. Never execute this AST.
+fn redact_cte_sources(
+    select: &mut Select,
+    inherited: &std::collections::BTreeSet<String>,
+) -> Result<()> {
+    use std::collections::BTreeSet;
+    fn qualifier(expr: &mut Expr, bound: &BTreeSet<String>) -> Result<()> {
+        turso_core::walk_expr_mut(expr, &mut |expr| {
+            match expr {
+                Expr::Exists(_) | Expr::Subquery(_) | Expr::InSelect { .. } => {
+                    return Ok(WalkControl::SkipChildren)
+                }
+                Expr::Qualified(name, _) if bound.contains(&name.as_str().to_ascii_lowercase()) => {
+                    *name = Name::exact(String::new())
+                }
+                _ => {}
+            }
+            Ok(WalkControl::Continue)
+        })?;
+        Ok(())
+    }
+    fn source(
+        table: &mut SelectTable,
+        visible: &BTreeSet<String>,
+        bound: &mut BTreeSet<String>,
+    ) -> Result<()> {
         match table {
-            SelectTable::Table(name, _, _)
+            SelectTable::Table(name, alias, _)
                 if name.db_name.is_none()
                     && visible.contains(&name.name.as_str().to_ascii_lowercase()) =>
             {
+                if alias.is_none() {
+                    bound.insert(name.name.as_str().to_ascii_lowercase());
+                }
                 name.name = Name::exact(String::new());
             }
-            SelectTable::Select(inner, _) => redact_cte_sources(inner, visible),
-            SelectTable::Sub(from, _) => sources(from, visible),
+            SelectTable::Select(inner, _) => redact_cte_sources(inner, visible)?,
+            SelectTable::Sub(from, _) => sources(from, visible, bound)?,
             _ => {}
         }
+        Ok(())
     }
-    fn sources(from: &mut FromClause, visible: &std::collections::BTreeSet<String>) {
-        source(&mut from.select, visible);
+    fn sources(
+        from: &mut FromClause,
+        visible: &BTreeSet<String>,
+        bound: &mut BTreeSet<String>,
+    ) -> Result<()> {
+        source(&mut from.select, visible, bound)?;
         for join in &mut from.joins {
-            source(&mut join.table, visible);
+            source(&mut join.table, visible, bound)?;
         }
+        for join in &mut from.joins {
+            if let Some(JoinConstraint::On(expr)) = &mut join.constraint {
+                qualifier(expr, bound)?;
+            }
+        }
+        Ok(())
     }
-    fn core(body: &mut OneSelect, visible: &std::collections::BTreeSet<String>) {
+    fn core(body: &mut OneSelect, visible: &BTreeSet<String>) -> Result<BTreeSet<String>> {
+        let mut bound = BTreeSet::new();
         if let OneSelect::Select {
-            from: Some(from), ..
+            from: Some(from),
+            columns,
+            where_clause,
+            group_by,
+            ..
         } = body
         {
-            sources(from, visible);
+            sources(from, visible, &mut bound)?;
+            for column in columns {
+                match column {
+                    ResultColumn::Expr(expr, _) => qualifier(expr, &bound)?,
+                    ResultColumn::TableStar(name)
+                        if bound.contains(&name.as_str().to_ascii_lowercase()) =>
+                    {
+                        *name = Name::exact(String::new())
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(expr) = where_clause {
+                qualifier(expr, &bound)?;
+            }
+            if let Some(group) = group_by {
+                for expr in &mut group.exprs {
+                    qualifier(expr, &bound)?;
+                }
+                if let Some(expr) = &mut group.having {
+                    qualifier(expr, &bound)?;
+                }
+            }
         }
+        Ok(bound)
     }
     let mut visible = inherited.clone();
     if let Some(with) = &mut select.with {
         if with.recursive {
-            return;
+            return Ok(());
         }
         for cte in &mut with.ctes {
-            // Only preceding definitions are known in this body. Do not hide a
-            // self/forward reference that could denote an actual schema table.
-            redact_cte_sources(&mut cte.select, &visible);
+            redact_cte_sources(&mut cte.select, &visible)?;
             let name = cte.tbl_name.as_str().to_ascii_lowercase();
             if !name.starts_with("__fastdb_") && name != "writable_schema" {
                 visible.insert(name);
@@ -293,10 +356,16 @@ fn redact_cte_sources(select: &mut Select, inherited: &std::collections::BTreeSe
             }
         }
     }
-    core(&mut select.body.select, &visible);
-    for compound in &mut select.body.compounds {
-        core(&mut compound.select, &visible);
+    let bound = core(&mut select.body.select, &visible)?;
+    if select.body.compounds.is_empty() {
+        for ordering in &mut select.order_by {
+            qualifier(&mut ordering.expr, &bound)?;
+        }
     }
+    for compound in &mut select.body.compounds {
+        core(&mut compound.select, &visible)?;
+    }
+    Ok(())
 }
 
 fn column_definition(column: &mut ColumnDefinition) -> Result<()> {
@@ -372,6 +441,9 @@ mod cte_guard_tests {
         .unwrap();
         for sql in [
             "WITH docs AS (SELECT 2 AS n) SELECT * FROM main.docs",
+            "WITH docs AS (SELECT 2 AS n) SELECT docs.n FROM main.docs",
+            "WITH docs AS (SELECT 2 AS n) SELECT (SELECT docs.n FROM main.docs) FROM docs",
+            "WITH docs AS (SELECT 2 AS n) SELECT main.docs.n FROM main.docs",
             "WITH alias AS (SELECT * FROM main.docs) SELECT * FROM alias",
             "WITH docs AS (SELECT * FROM __fastdb_catalog) SELECT * FROM docs",
             "WITH __fastdb_catalog AS (SELECT 1 AS n) SELECT n FROM __fastdb_catalog",

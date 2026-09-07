@@ -875,3 +875,10 @@ A pinned native regression demonstrates that same-name CTE resolution differs be
 The native guard now redacts known nonrecursive CTE declarations and unqualified FROM references in its inspection-only AST. CTE-only SELECT/profile queries sharing a collection name pass in simple, chained and derived-source forms; original SQL is unchanged. Direct guard tests retain schema-qualified, internal/reserved, self/forward and nested physical references. Reserved CTE names are never redacted. Qualified expression aliases and deeper scope coverage remain conservative; the same-name UPDATE/DELETE gap is separate and still open.
 
 Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests and strict TypeScript. The final reserved-name guard regression was rerun separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Qualified CTE references in native guarding (2026-09-07)
+
+Qualified fields and stars from proven unaliased CTE FROM sources can now pass the native guard when the CTE shares a collection name. Tests cover projection, filter, ordering, grouping/HAVING and both Node clients. Direct guard regressions keep qualified physical references and nested expression scopes visible. This extends the previous declaration/source redaction without changing executed SQL. Explicit aliases, named windows and deeper scope qualification remain open; same-name collection writes remain a separate gap.
+
+Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

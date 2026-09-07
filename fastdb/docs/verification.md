@@ -1159,3 +1159,8 @@ Extended the existing native same-name regression with UPDATE target aliases. `c
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-guard-final-check.log`): formatting, Clippy, 292 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Final direct guard regression rerun: `/tmp/fastdb-cte-reserved-final.log`, passed. Frontend Clippy rerun covers the final reserved-name handling. Simple/chained/derived CTE reads and profiles now work when a CTE shares a collection name. Direct guard tests retain actual schema and internal references, including self/forward and nested physical references.
 
 An initial integration assertion incorrectly expected valid EXPLAIN collection lowering to fail; protection was instead tested directly at guard_native_sql. Redaction affects only the guard AST; original SQL executes unchanged. Expression qualifiers and deeper scopes remain conservative, and the separate same-name write-context fix remains open.
+
+
+## Qualified CTE guard references — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-qualifiers-check.log`): formatting, Clippy, 292 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Expanded existing tests cover unaliased CTE-qualified fields, stars, filtering, ordering and grouping/HAVING, plus both Node clients. Direct guard checks retain schema-qualified and nested physical references. Qualification proofs come from current FROM sources and do not cross expression subquery boundaries. Original SQL executes unchanged; explicit alias/deeper-scope guarding and same-name writes remain open.

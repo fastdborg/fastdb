@@ -827,3 +827,6 @@ Leading-WITH collection UPDATE and DELETE now carry their CTE definitions into t
 
 
 Native SELECT guarding now recognizes nonrecursive CTE declarations and their proven unqualified FROM references, including preceding CTE chains and derived FROM queries. The guard-only AST redacts those names; the original SQL executes unchanged. A CTE may therefore share a collection's name without being mistaken for a physical collection read in the covered forms. Schema-qualified references, unresolved self/forward references, reserved internal names and uncertain expression qualifiers remain visible to the guard. This does not qualify all nested/qualified CTE references or fix write-context same-name resolution.
+
+
+The guard also recognizes expression qualifiers and table stars belonging to proven unaliased CTE sources in the current FROM scope. This covers projection/filter/grouping/HAVING/join expressions and simple SELECT ordering. Nested expression subqueries are not traversed with the outer qualifier proof; schema-qualified names remain visible. Explicit source aliases, named-window clauses and compound ordering retain conservative guarding where roles are not proven. The inspection AST remains non-executable.
