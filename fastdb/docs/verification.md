@@ -857,3 +857,7 @@ Logs: /tmp/fastdb-native-source-typed.log, /tmp/fastdb-native-source-oracle.log 
 ## Scalar-subquery pagination — 2026-09-07
 
 `fastdb/scripts/check.sh` passed scoped formatting, Clippy, 259 Rust tests, twenty-three Node tests and strict TypeScript checking (log: `/tmp/fastdb-pagination-check.log`). One known trigger-interruption release-gate regression remains ignored. The new pagination regression covers native differential limits, offsets, DISTINCT, bound values, native-only subqueries and failed/successful collection insertion. A separate native oracle confirmed that an outer CTE referenced from LIMIT fails on the pinned engine too; the regression retains both rejection checks. Both Node clients exercise bound DISTINCT pagination. No upstream source changes.
+
+## Compound scalar-subquery pagination — 2026-09-07
+
+`fastdb/scripts/check.sh` passed formatting, Clippy, 260 Rust tests, twenty-three Node tests and strict TypeScript checking (`/tmp/fastdb-compound-pagination-check.log`). The known trigger-interruption release gate remains ignored. Twelve successful native derived-table differential cases cover four set operators and three pagination forms. Additional cases cover bound LIMIT/OFFSET, native arms with a logical subquery, failed insertion with an empty scalar limit and successful insertion. The direct native compound form's datatype-mismatch rejection is recorded separately, not counted as a successful equivalence case. Both Node clients pass bound UNION pagination. No upstream implementation changes.

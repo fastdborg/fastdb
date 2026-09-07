@@ -2813,6 +2813,33 @@ impl Connection {
             }
             plans.push((sql, detected));
         }
+        // Lower pagination independently of compound output names and arm scopes.
+        let mut pagination = select.limit.clone();
+        if let Some(limit) = &pagination {
+            let Cmd::Stmt(Stmt::Select(mut probe)) = parsed("SELECT 1")? else {
+                unreachable!("pagination SELECT")
+            };
+            probe.limit = Some(limit.clone());
+            let sql = Cmd::Stmt(Stmt::Select(probe.clone())).to_string();
+            if let Some(plan) = self.lower_collection_select(
+                &sql,
+                &sql,
+                params,
+                SelectOptions {
+                    trusted: true,
+                    nested: true,
+                    ctes: Some(ctes),
+                    ..Default::default()
+                },
+            )? {
+                logical = true;
+                consumed.extend(plan.consumed);
+                let Cmd::Stmt(Stmt::Select(lowered)) = plan.command else {
+                    unreachable!("pagination SELECT")
+                };
+                pagination = lowered.limit;
+            }
+        }
         if !logical {
             return Ok(None);
         }
@@ -2930,7 +2957,7 @@ impl Connection {
                 expression(&format!("__fastdb_sort_encoded({})", keys[index]))?,
             );
         }
-        result.limit = select.limit.clone();
+        result.limit = pagination;
         let command = Cmd::Stmt(Stmt::Select(result));
         Ok(Some(LoweredSelect {
             command,

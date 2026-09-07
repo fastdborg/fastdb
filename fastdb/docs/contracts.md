@@ -695,3 +695,9 @@ Nested SELECTs reading ordinary SQL tables now enter logical lowering when their
 Single-core collection SELECTs now lower supported uncorrelated logical scalar subqueries in LIMIT and OFFSET, including DISTINCT and collection INSERT SELECT. Pagination uses a separate scope without outer fields or projection aliases. Regression coverage compares positive, zero and negative limits and offsets with native SQL, preserves native-only limit queries, checks bound inner parameters, and verifies an empty scalar limit rejects an insert without target changes. Both Node clients exercise bound pagination with DISTINCT.
 
 An outer CTE referenced inside LIMIT fails in both the pinned native engine and the logical route; this remains a limitation. Compound-query pagination subqueries, correlated queries and broader type/resource qualification remain unfinished. No upstream implementation, dependency or persisted-format changes.
+
+## Compound scalar-subquery pagination (2026-09-07)
+
+Logical compound SELECTs now lower supported uncorrelated scalar subqueries in LIMIT/OFFSET independently of arm fields and output aliases. Initial coverage includes UNION ALL, UNION, INTERSECT and EXCEPT, positive/zero/negative limits, offsets, bound values, native arms with a logical limit source, and successful/failed collection INSERT SELECT. Both Node clients exercise a bound UNION limit.
+
+The pinned engine rejects the tested direct native compound LIMIT/OFFSET subquery form with datatype mismatch. Successful differential comparisons therefore use an equivalent native derived-table wrapper with outer pagination; the direct native rejection is retained separately. This is not a claim of complete native compound-subquery compatibility. Outer CTE visibility, correlation, broader types and resource/platform qualification remain open. No upstream implementation or persisted encoding changes.

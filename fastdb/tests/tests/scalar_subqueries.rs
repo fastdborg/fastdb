@@ -746,3 +746,46 @@ fn scalar_subquery_pagination_matches_native_and_retains_scope() {
         vec![vec![Value::Integer(1)]]
     );
 }
+
+#[test]
+fn compound_subquery_pagination_matches_native_and_is_atomic() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2),(3),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES (1),(2),(3),(3)");
+    for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+        for pagination in [
+            "LIMIT (SELECT max(n) FROM docs) OFFSET (SELECT min(n) FROM docs)",
+            "LIMIT (SELECT n-n FROM docs LIMIT 1)",
+            "LIMIT (SELECT -n FROM docs LIMIT 1)",
+        ] {
+            let sql = format!("SELECT n FROM docs {operator} SELECT n FROM docs WHERE n=3 ORDER BY n {pagination}");
+            let native = format!("SELECT n FROM (SELECT n FROM native {operator} SELECT n FROM native WHERE n=3) ORDER BY n {}", pagination.replace("FROM docs", "FROM native"));
+            assert_eq!(q(&c, &sql).rows, q(&c, &native).rows, "{sql}");
+        }
+    }
+    // The pinned direct native compound form rejects this pagination; wrapping
+    // the compound in a native derived table supplies the successful oracle above.
+    assert!(c.execute("SELECT n FROM native UNION ALL SELECT n FROM native WHERE n=3 ORDER BY n LIMIT (SELECT max(n) FROM native) OFFSET (SELECT min(n) FROM native)", &Parameters::new()).is_err());
+    assert_eq!(q(&c, "SELECT n FROM native UNION SELECT n FROM native ORDER BY n LIMIT (SELECT min(n) FROM docs)").rows, vec![vec![Value::Integer(1)]]);
+    let params = Parameters::from([
+        ("$limit".into(), Value::Integer(2)),
+        ("$offset".into(), Value::Integer(1)),
+    ]);
+    assert_eq!(c.execute("SELECT n FROM docs UNION SELECT n FROM docs ORDER BY n LIMIT (SELECT $limit FROM docs LIMIT 1) OFFSET (SELECT $offset FROM docs LIMIT 1)", &params).unwrap().rows, vec![vec![Value::Integer(2)], vec![Value::Integer(3)]]);
+    q(&c, "CREATE TABLE target");
+    assert!(c.execute("INSERT INTO target(n) SELECT n FROM docs UNION SELECT n FROM docs LIMIT (SELECT n FROM docs WHERE n=99)", &Parameters::new()).is_err());
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+    q(&c, "INSERT INTO target(n) SELECT n FROM docs UNION SELECT n FROM docs ORDER BY n LIMIT (SELECT min(n) FROM docs)");
+    assert_eq!(
+        q(&c, "SELECT n FROM target").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+}
