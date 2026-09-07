@@ -1895,3 +1895,10 @@ Windowed scalar pagination qualification (2026-09-08): a new native differential
 
 
 Running-window scalar pagination qualification (2026-09-08): expanded the windowed scalar regression to sum(i.n) and count(*) alongside row_number(). Computed OFFSET selects the already-computed running window value and matches literal native results, including empty outputs, for direct/derived sources through execute/profile. The expanded focused test, formatting and focused Clippy pass. Latest combined evidence remains 396 Rust/44 Node tests; broader window/scope/resource and full V1 gates remain open.
+
+
+## Source-free named-window correlation (2026-09-08)
+
+Extended source-free correlation to named-window partition/order expressions, fixing unresolved direct outer fields. Scalar expression lowering now also consumes the compiler-only derived-value marker, fixing an escaped-marker function error for derived outer sources. Execute/profile regressions cover both forms against a supported pinned native window query.
+
+The complete scoped check passed formatting, Clippy, 399 Rust tests, 44 Node/application tests and strict TypeScript, including recent native-inner evaluation, DISTINCT/grouped/windowed pagination and scalar affinity coverage. One known trigger-cancellation gate remains ignored. No upstream files changed; custom frames, broader scopes/resources and full V1 release qualification remain open.

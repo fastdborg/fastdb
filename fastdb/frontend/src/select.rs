@@ -976,7 +976,10 @@ impl Scope {
                 "record::fetch is allowed only as a top-level SELECT projection",
             ));
         }
-        if matches!(expr, Expr::Subquery(_)) && self.preserved(expr)? {
+        if (matches!(expr, Expr::Subquery(_))
+            || matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_correlated_value"))
+            && self.preserved(expr)?
+        {
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
             return Ok(());
         }
@@ -2610,6 +2613,7 @@ impl Connection {
                 from: None,
                 columns,
                 where_clause,
+                window_clause,
                 ..
             } = &mut inner.body.select
             {
@@ -2620,7 +2624,16 @@ impl Connection {
                         _ => None,
                     })
                     .chain(where_clause.iter_mut())
-                    .chain(inner.order_by.iter_mut().map(|sort| &mut sort.expr));
+                    .chain(inner.order_by.iter_mut().map(|sort| &mut sort.expr))
+                    .chain(window_clause.iter_mut().flat_map(|definition| {
+                        definition.window.partition_by.iter_mut().chain(
+                            definition
+                                .window
+                                .order_by
+                                .iter_mut()
+                                .map(|sort| &mut sort.expr),
+                        )
+                    }));
                 for value in values {
                     self.correlate_source_free_expression(
                         value,

@@ -4632,3 +4632,42 @@ fn collection_windowed_scalar_pagination_matches_native() {
         }
     }
 }
+
+#[test]
+fn source_free_named_windows_bind_outer_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(n INTEGER)",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:2}",
+        "INSERT INTO baseline VALUES(1),(2)",
+    ] {
+        q(&c, sql);
+    }
+    let native = q(&c,"SELECT n,(SELECT row_number() OVER w WINDOW w AS (PARTITION BY d.n ORDER BY d.n)) FROM baseline d ORDER BY n").rows;
+    assert_eq!(
+        native,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1)],
+            vec![Value::Integer(2), Value::Integer(1)]
+        ]
+    );
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        let sql = format!("SELECT n,(SELECT array::new(row_number() OVER w) WINDOW w AS (PARTITION BY d.n ORDER BY d.n)) FROM {source} ORDER BY n");
+        let expected = vec![
+            vec![Value::Integer(1), Value::Array(vec![Value::Integer(1)])],
+            vec![Value::Integer(2), Value::Array(vec![Value::Integer(1)])],
+        ];
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{sql}"
+        );
+    }
+}

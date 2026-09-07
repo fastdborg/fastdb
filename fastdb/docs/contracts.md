@@ -1038,3 +1038,8 @@ Logical source-free pagination retains original parameter values when evaluating
 ## Native-inner pagination expression types (2026-09-08)
 
 Native inner SELECTs correlated to a logical outer source now use the private pagination identity callback instead of replacing integral numeric parameters with integer expressions. This preserves typeof/CASE semantics for real versus integer bindings while retaining the existing relational pagination wrapper. A direct/derived outer-source regression fixes the reproduced real-binding branch error. Entirely native entry routing remains unchanged; broader scope/evaluation/resource qualification remains open.
+
+
+## Source-free named-window correlation (2026-09-08)
+
+The source-free correlation walker now visits named-window partition and ordering expressions. Scalar expression lowering also removes the compiler-only derived correlated-value marker before engine preparation. Together these fix unresolved outer fields for direct collection sources and an escaped-marker function error for derived sources. A regression covers named-window partition/order references through execute/profile against a supported pinned native form. Custom frames, broader scopes and resource qualification remain open.
