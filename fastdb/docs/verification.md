@@ -1902,3 +1902,6 @@ Running-window scalar pagination qualification (2026-09-08): expanded the window
 Extended source-free correlation to named-window partition/order expressions, fixing unresolved direct outer fields. Scalar expression lowering now also consumes the compiler-only derived-value marker, fixing an escaped-marker function error for derived outer sources. Execute/profile regressions cover both forms against a supported pinned native window query.
 
 The complete scoped check passed formatting, Clippy, 399 Rust tests, 44 Node/application tests and strict TypeScript, including recent native-inner evaluation, DISTINCT/grouped/windowed pagination and scalar affinity coverage. One known trigger-cancellation gate remains ignored. No upstream files changed; custom frames, broader scopes/resources and full V1 release qualification remain open.
+
+
+Source-free named-window expression qualification (2026-09-08): expanded the named-window regression to row_number() and sum(d.n) with direct, arithmetic and text-cast outer partition/order keys. Direct/derived collection sources match native results through execute/profile. The expanded focused test, formatting and focused Clippy pass. Latest combined evidence remains 399 Rust/44 Node tests; broader window/scope/resource and full V1 gates remain open.
