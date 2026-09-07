@@ -233,3 +233,11 @@ python3 fastdb/scripts/bundle-crate-notices.py fastdb/docs/node-dependencies-lin
 ```
 
 The generator rechecks lockfile, inventory, archive and notice-file hashes before writing. Identical texts are deduplicated with per-package source links. The private npm package includes this partial collection (125 distinct texts for 316 candidate files), and the offline package smoke verifies both installed notice files exactly. The twenty packages without collected filename candidates and any other inline/bundled attribution remain review items; this is not a complete distribution-notice claim.
+
+Run the synthetic notice-generator integrity checks without Cargo or registry access:
+
+```sh
+python3 fastdb/scripts/test-notice-bundle.py
+```
+
+These verify reproducible output, identical-text deduplication with retained source references, stale inventory and output detection, package identity mismatch, archive corruption and altered notice hashes. Failure cases must leave an existing output file intact.
