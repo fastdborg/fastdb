@@ -16,6 +16,9 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 NOTICE = re.compile(r"^(LICENSE|LICENCE|COPYING|NOTICE|COPYRIGHT)(?:[._-].*)?$", re.I)
 MAX_NOTICE_BYTES = 4 * 1024 * 1024
+MAX_INLINE_SOURCE_BYTES = 200_000
+INLINE_MARKER = re.compile(r"copyright|SPDX-License|licensed under|is licensed under", re.I)
+INLINE_SUFFIXES = {'.md', '.rst', '.txt', '.rs', '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.hxx'}
 
 
 def sha256(data):
@@ -50,12 +53,35 @@ def inspect_archive(archive, checksum, name, version):
             if len(contents) > MAX_NOTICE_BYTES:
                 raise ValueError(f'Notice candidate exceeds audit bound: {name}/{relative}')
             notices.append({'path': relative, 'bytes': len(contents), 'sha256': sha256(contents)})
-    return {
+        inline = []
+        if not notices:
+            for member in crate.getmembers():
+                if not member.isfile() or not member.name.startswith(prefix):
+                    continue
+                relative = member.name[len(prefix):]
+                if member.size > MAX_INLINE_SOURCE_BYTES or PurePosixPath(relative).suffix.lower() not in INLINE_SUFFIXES:
+                    continue
+                with crate.extractfile(member) as stream:
+                    contents = stream.read(MAX_INLINE_SOURCE_BYTES + 1)
+                if len(contents) > MAX_INLINE_SOURCE_BYTES:
+                    continue
+                markers = [
+                    {'line': number, 'text': line[:240]}
+                    for number, line in enumerate(contents.decode('utf8', errors='replace').splitlines(), 1)
+                    if INLINE_MARKER.search(line)
+                ]
+                if markers:
+                    inline.append({'path': relative, 'sha256': sha256(contents), 'markers': markers})
+    result = {
         'status': 'archive_verified',
         'archiveSha256': actual,
         'declaredLicenseFile': declared,
         'noticeCandidates': sorted(notices, key=lambda item: item['path']),
     }
+    if not notices:
+        result['inlineSearchScope'] = 'Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive'
+        result['inlineNoticeCandidates'] = sorted(inline, key=lambda item: item['path'])
+    return result
 
 
 def main():

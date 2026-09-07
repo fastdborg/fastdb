@@ -176,7 +176,9 @@
       "status": "archive_verified",
       "archiveSha256": "382cece5540ed31a126d26ca551561a670d7940074787b420585bd0d39676e7f",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "aristo",
@@ -184,7 +186,9 @@
       "status": "archive_verified",
       "archiveSha256": "fe6ebb7c22c91a8d0b936448480e0216a9621dc09481a3c08a08f9fe4a64ad57",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "autocfg",
@@ -481,7 +485,24 @@
       "status": "archive_verified",
       "archiveSha256": "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": [
+        {
+          "path": "src/combine.rs",
+          "sha256": "33c2ffe45b8f409f26566bc8fc35a713f5a71279e1ae3b77564b5423fd8d245b",
+          "markers": [
+            {
+              "line": 15,
+              "text": "//! Copyright (C) 1995-2006, 2010, 2011, 2012, 2016 Mark Adler"
+            },
+            {
+              "line": 16,
+              "text": "//! For conditions of distribution and use, see copyright notice in zlib.h"
+            }
+          ]
+        }
+      ]
     },
     {
       "name": "crossbeam-epoch",
@@ -1588,7 +1609,9 @@
       "status": "archive_verified",
       "archiveSha256": "d376940fd5b723c6893cd1ee3f33abbfd86acb1cd1ec079f3ab04a2a3bc4d3b1",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "napi-derive-backend",
@@ -1596,7 +1619,9 @@
       "status": "archive_verified",
       "archiveSha256": "f0864cf6a82e2cfb69067374b64c9253d7e910e5b34db833ed7495dda56ccb18",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "napi-derive",
@@ -1604,7 +1629,9 @@
       "status": "archive_verified",
       "archiveSha256": "2c914b5e420182bfb73504e0607592cdb8e2e21437d450883077669fb72a114d",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "napi-sys",
@@ -1612,7 +1639,9 @@
       "status": "archive_verified",
       "archiveSha256": "8eb602b84d7c1edae45e50bbf1374696548f36ae179dfa667f577e384bb90c2b",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "napi",
@@ -1620,7 +1649,9 @@
       "status": "archive_verified",
       "archiveSha256": "e6944d0bf100571cd6e1a98a316cdca262deb6fccf8d93f5ae1502ca3fc88bd3",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "nohash-hasher",
@@ -1775,7 +1806,9 @@
       "status": "archive_verified",
       "archiveSha256": "d6e7cd9bd638dc2c831519a0caa1c006cab771a92b1303403a8322773c5b72d6",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "parking_lot",
@@ -2102,7 +2135,24 @@
       "status": "archive_verified",
       "archiveSha256": "d8e65c75143ce5d47c55b510297eeb1182f3c739b6043c537670e9fc18612dae",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": [
+        {
+          "path": "README.md",
+          "sha256": "7bdce778165b5c2f67b21b8efa486311027a8b7b502b1c17798807eb5b51012c",
+          "markers": [
+            {
+              "line": 287,
+              "text": "This project is licensed under both the MIT and Apache-2.0 licenses. You are free to choose either license."
+            },
+            {
+              "line": 289,
+              "text": "With thanks to [Nicolas De Carli](https://github.com/Nicoshev) for the original [rapidhash](https://github.com/Nicoshev/rapidhash) C++ implementation, which is licensed under the [MIT License](https://github.com/Nicoshev/rapidhash/blob/mast"
+            }
+          ]
+        }
+      ]
     },
     {
       "name": "regex-automata",
@@ -2191,7 +2241,30 @@
       "status": "archive_verified",
       "archiveSha256": "16e4f499ac5b943d97ee6dbc44f23c2c10426f420f7d2f1793d6318911b6608c",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": [
+        {
+          "path": "README.md",
+          "sha256": "6ed3f903edad2a16c871baf0e2ce13d80a317e4147b9553e5bf186955a4231f5",
+          "markers": [
+            {
+              "line": 59,
+              "text": "This library is licensed under the [MIT License](LICENSE)"
+            }
+          ]
+        },
+        {
+          "path": "src/runtime/schedular/atomic_waker.rs",
+          "sha256": "204e112674416114f52bd7c676a1c032f2f42dec9877ff22a929456ddf9fa74e",
+          "markers": [
+            {
+              "line": 4,
+              "text": "//! All copyright of this file belongs to the futures authors."
+            }
+          ]
+        }
+      ]
     },
     {
       "name": "rquickjs-sys",
@@ -2522,7 +2595,9 @@
       "status": "archive_verified",
       "archiveSha256": "0e3f209c5a8155b8458b1a0d3a6fc9fa09d201e6086fdaae18e9e283b9274f8f",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "siphasher",
@@ -2577,7 +2652,9 @@
       "status": "archive_verified",
       "archiveSha256": "fef461faaeb36c340b6c887167a9054a034f6acfc50a014ead26a02b4356b3de",
       "declaredLicenseFile": null,
-      "noticeCandidates": []
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "stable_deref_trait",

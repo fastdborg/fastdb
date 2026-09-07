@@ -1850,3 +1850,10 @@ Offline packing/installation passed exact notice verification, sync/worker consu
 Added an offline Python 3.11+ audit that checks cached crate archives against Cargo.lock, verifies manifest identity and records declared license-file paths and hashes of notice filename candidates without extracting files. The checked-in Linux report verifies 185 registry archives and 316 candidates; 13 archives have no matching candidates and seven workspace packages require separate inspection. These are source-discovery results, not a complete license bundle or linked-binary inventory.
 
 Exact regeneration/check mode, a valid cfg_block archive, corrupted-archive rejection and stale-report rejection pass. Runtime code and the npm file allowlist are unchanged; no publication occurred. Remaining work includes inspecting unmatched/inline notices, workspace and bundled source attribution, and constructing a complete distribution notice bundle. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests; full V1 release gates remain open.
+
+
+## Inline notice-source discovery (2026-09-08)
+
+Inspected all 13 registry archives without notice filename candidates; none contained missed license-like filenames. Extended the audit to bounded code/text marker searches for those archives, recording source hashes, line references and excerpts. Four files across crc32c, rapidhash and rquickjs-core contain relevant references, including crc32c's zlib copyright reference and rquickjs-core's futures attribution. Ten archives have no hits in the bounded search. All remain subject to complete source/notice review.
+
+Exact regeneration/check mode passes, and all four source hashes and marker line references were independently checked against the cached archives. The report states its size/suffix/marker bounds; no absence-of-license or legal-completeness conclusion is inferred. Runtime/package contents are unchanged. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests; distribution and full V1 release gates remain open.
