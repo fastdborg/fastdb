@@ -125,50 +125,120 @@ impl From<Portable> for Value {
         }
     }
 }
+// Bound the encoded output while serde emits it, without a temporary JSON
+// string for each document. The engine and decoded current row have separate costs.
+struct TransferWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+    exceeded: bool,
+}
+impl std::io::Write for TransferWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+            self.exceeded = true;
+            return Err(std::io::Error::other("transfer byte limit exceeded"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl TransferWriter {
+    fn append(&mut self, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+        self.write_all(bytes)
+            .map_err(|_| Error::Limit("transfer byte limit exceeded".into()))
+    }
+    fn json(&mut self, value: &impl Serialize) -> Result<()> {
+        serde_json::to_writer(&mut *self, value).map_err(|error| {
+            if self.exceeded {
+                Error::Limit("transfer byte limit exceeded".into())
+            } else {
+                error.into()
+            }
+        })
+    }
+}
+
 impl Connection {
     /// Export one collection's documents in a versioned typed format.
     pub fn export_documents(&self, table: &str, format: TransferFormat) -> Result<String> {
+        self.export_documents_bounded(table, format, MAX_BYTES, MAX_DOCUMENTS)
+    }
+
+    fn export_documents_bounded(
+        &self,
+        table: &str,
+        format: TransferFormat,
+        max_bytes: usize,
+        max_documents: usize,
+    ) -> Result<String> {
         self.atomic(|| {
             let collection = self.catalog(table)?;
-            let rows = self.run(
-                &format!(
-                    "SELECT doc FROM {} ORDER BY id LIMIT {}",
-                    crate::quote(&collection.storage),
-                    MAX_DOCUMENTS + 1
-                ),
-                &[],
-            )?;
-            if rows.len() > MAX_DOCUMENTS {
-                return Err(Error::Limit("transfer exceeds 100000 documents".into()));
-            }
-            let documents = rows
-                .into_iter()
-                .map(|row| {
-                    crate::decode_document(&row[0]).map(|d| Portable::from(Value::Object(d)))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let output = match format {
-                TransferFormat::Json => serde_json::to_string(&Bundle {
-                    header: Header::new(),
-                    documents,
-                })?,
-                TransferFormat::Ndjson => {
-                    let mut output = serde_json::to_string(&Header::new())?;
-                    output.push('\n');
-                    for document in documents {
-                        output.push_str(&serde_json::to_string(&document)?);
-                        output.push('\n');
-                        if output.len() > MAX_BYTES {
-                            return Err(Error::Limit("transfer exceeds 64 MiB".into()));
-                        }
-                    }
-                    output
-                }
+            let mut output = TransferWriter {
+                bytes: Vec::new(),
+                limit: max_bytes,
+                exceeded: false,
             };
-            if output.len() > MAX_BYTES {
-                return Err(Error::Limit("transfer exceeds 64 MiB".into()));
+            match format {
+                TransferFormat::Json => {
+                    output.append(b"{\"header\":")?;
+                    output.json(&Header::new())?;
+                    output.append(b",\"documents\":[")?;
+                }
+                TransferFormat::Ndjson => {
+                    output.json(&Header::new())?;
+                    output.append(b"\n")?;
+                }
             }
-            Ok(output)
+            let mut count = 0;
+            let mut failure = None;
+            let mut statement = self.prepare(format!(
+                "SELECT doc FROM {} ORDER BY id LIMIT {}",
+                crate::quote(&collection.storage),
+                max_documents.saturating_add(1)
+            ))?;
+            let execution = crate::parser_stack(|| {
+                statement.run_with_row_callback(|row| {
+                    let result = (|| -> Result<()> {
+                        if count >= max_documents {
+                            return Err(Error::Limit("transfer document limit exceeded".into()));
+                        }
+                        let mut values = row.get_values();
+                        let value = values
+                            .next()
+                            .ok_or_else(|| Error::Storage("missing transfer document".into()))?;
+                        let document =
+                            Portable::from(Value::Object(crate::decode_document(value)?));
+                        if matches!(format, TransferFormat::Json) && count != 0 {
+                            output.append(b",")?;
+                        }
+                        output.json(&document)?;
+                        if matches!(format, TransferFormat::Ndjson) {
+                            output.append(b"\n")?;
+                        }
+                        count += 1;
+                        Ok(())
+                    })();
+                    if let Err(error) = result {
+                        failure = Some(error);
+                        return Err(turso_core::LimboError::Interrupt);
+                    }
+                    Ok(())
+                })
+            });
+            drop(statement);
+            if let Some(error) = failure {
+                return Err(error);
+            }
+            execution?;
+            if matches!(format, TransferFormat::Json) {
+                output.append(b"]}")?;
+            }
+            String::from_utf8(output.bytes)
+                .map_err(|_| Error::Storage("invalid transfer UTF-8".into()))
         })
     }
     /// Insert all transferred documents atomically into an existing collection.
@@ -292,5 +362,83 @@ impl Value {
         let value = Self::from(serde_json::from_value::<Portable>(value)?);
         value.validate()?;
         Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    #[test]
+    fn incremental_export_preserves_format_and_enforces_exact_limits() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("CREATE TABLE docs", &crate::Parameters::new())
+            .unwrap();
+        c.execute("BEGIN", &crate::Parameters::new()).unwrap();
+        c.execute(
+            "INSERT INTO docs {id:docs:a,text:'ไทย',flag:true};",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO docs {id:docs:b,text:'line',flag:false};",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        let docs = ["a", "b"]
+            .into_iter()
+            .map(|key| {
+                let record = Record {
+                    table: "docs".into(),
+                    key: Key::String(key.into()),
+                };
+                Portable::from(Value::Object(c.get(&record).unwrap().unwrap()))
+            })
+            .collect::<Vec<_>>();
+        let expected_json = serde_json::to_string(&Bundle {
+            header: Header::new(),
+            documents: docs,
+        })
+        .unwrap();
+        for format in [TransferFormat::Json, TransferFormat::Ndjson] {
+            let output = c.export_documents("docs", format).unwrap();
+            if matches!(format, TransferFormat::Json) {
+                assert_eq!(output, expected_json);
+            }
+            assert_eq!(
+                c.export_documents_bounded("docs", format, output.len(), 2)
+                    .unwrap(),
+                output
+            );
+            for bytes in [0, 1, output.len() - 1] {
+                assert_eq!(
+                    c.export_documents_bounded("docs", format, bytes, 2)
+                        .unwrap_err()
+                        .code(),
+                    "FDB_LIMIT"
+                );
+                assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+            }
+            assert_eq!(
+                c.export_documents_bounded("docs", format, MAX_BYTES, 1)
+                    .unwrap_err()
+                    .code(),
+                "FDB_LIMIT"
+            );
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .documents,
+                2
+            );
+            let other = crate::Database::open(":memory:").unwrap();
+            let other = other.connect().unwrap();
+            other
+                .execute("CREATE TABLE docs", &crate::Parameters::new())
+                .unwrap();
+            assert_eq!(other.import_documents("docs", &output, format).unwrap(), 2);
+            assert_eq!(other.export_documents("docs", format).unwrap(), output);
+        }
+        c.execute("ROLLBACK", &crate::Parameters::new()).unwrap();
     }
 }

@@ -809,3 +809,6 @@ The native membership left-value CTE now explicitly uses NOT MATERIALIZED. A for
 
 
 For the tested nested same-name CTE forms, FastDB preserves the pinned engine's enclosing-definition resolution. Native metadata preparation keeps WITH levels nested to avoid artificial duplicate-name errors; logical lowering preserves the selected definition before introducing internal scopes. Do not infer general SQLite shadowing compatibility from these pinned cases.
+
+
+Document export enforces its encoded-byte budget while serialization emits bytes. Row callback failures preserve the frontend error, stop the statement and follow existing atomic cleanup. A caller receives a complete payload or an error. Incremental encoding removes full-rowset/full-document-vector intermediates; it is not a streaming public API or total-memory guarantee.

@@ -1044,3 +1044,10 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 278 Rust tests, thirty
 ## AI application guide — 2026-09-07
 
 The JavaScript code block in ai-application-guide.md was extracted directly from the file and executed with Node from the repository root. Its JSON result was parsed and checked for one completed task titled Review the schema with fetched owner Sam. The template smoke passed again (`/tmp/fastdb-ai-guide-template.log`); git diff whitespace checks passed. No production code changed, so the existing scoped baseline remains 278 Rust tests and thirty-two Node tests with one known ignored trigger gate. External pilots and full V1 remain incomplete.
+
+
+## Incremental export encoding — 2026-09-07
+
+The transfer integration suite passed after replacing full-rowset collection with a row callback and bounded writer (`/tmp/fastdb-export-stream.log`). A new unit test checks byte-for-byte JSON compatibility with the previous Bundle serializer, exact byte/document thresholds, zero/one/one-byte-short budgets, FDB_LIMIT, preserved active transaction data and JSON/NDJSON import/export equality. It uses small private test budgets rather than large CI allocations.
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 279 Rust tests, thirty-two Node tests and strict TypeScript (`/tmp/fastdb-export-incremental-check.log`), including existing Rust/Node transfer cancellation and rollback tests. One known trigger-interruption gate remains ignored. No upstream/dependency/format changes. The complete output string, current row, buffer capacity and engine allocations still prevent a hard total-memory claim; broader resource qualification and full V1 remain incomplete.
