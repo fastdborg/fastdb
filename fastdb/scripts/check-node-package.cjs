@@ -31,6 +31,20 @@ const path = require('node:path');
 const { Database, AsyncDatabase, Record, Vector } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
+  async function withWrites(client) {
+    await client.execute('BEGIN');
+    const changed = await client.execute('WITH chosen AS (SELECT value FROM docs) UPDATE docs SET value=$next WHERE value IN (SELECT value FROM chosen) RETURNING value', {$next:8n});
+    assert.deepEqual(changed.rows, [[8n]]);
+    assert.equal(changed.affected,1n);
+    assert.equal((await client.profileSelect('SELECT record::fetch($id)', {$id:new Record('docs','saved')})).result.rows[0][0].value,8n);
+    const removed = await client.execute('WITH chosen AS (SELECT $value AS value) DELETE FROM docs WHERE value IN (SELECT value FROM chosen) RETURNING value', {$value:8n});
+    assert.deepEqual(removed.rows,[[8n]]);
+    assert.equal((await client.checkCollectionIntegrity('docs')).documents,0n);
+    await client.execute('ROLLBACK');
+    assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
+    const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
+    assert.deepEqual(await client.all(cte),[[2n]]);
+  }
   const file = path.join(__dirname, 'database.db');
   const db = new Database(file);
   try {
@@ -61,6 +75,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const vector = make([1,0,-1]);
       assert.deepEqual(db.exactlyOne('SELECT $v AS v', {$v: vector})[0], vector);
     }
+    await withWrites(db);
   } finally { db.close(); }
   const worker = await AsyncDatabase.open(file);
   try {
@@ -115,6 +130,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await worker.execute('ROLLBACK');
     assert.equal((await worker.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
     assert.equal((await worker.checkCollectionIntegrity('docs')).documents, 1n);
+    await withWrites(worker);
   } finally { await worker.close(); }
   const reopened = new Database(file);
   try {

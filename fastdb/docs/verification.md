@@ -1169,3 +1169,8 @@ An initial integration assertion incorrectly expected valid EXPLAIN collection l
 ## CTE source aliases in native guarding — 2026-09-07
 
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-alias-check.log`): formatting, Clippy, 292 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Existing CTE integration tests now cover explicit/implicit source aliases, including aliases sharing collection names, through execute and profile_select. Direct guard tests reject physical-table aliases, internal/reserved aliases and nested physical references. Alias redaction applies only to proven CTE FROM sources in the inspection AST. Same-name write semantics and deeper scope coverage remain open.
+
+
+## Installed Node WITH-write qualification — 2026-09-07
+
+`node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-with-writes.log`). The temporary offline consumer tests both clients' WITH UPDATE/DELETE, RETURNING/affected counts, fetch profiles of updated values, empty collection/index integrity after delete, rollback to int64 max and a collection-named CTE alias. Existing installed declarations, cancellation, vector, reopen and addon-load checks also passed. Result: Linux x64, Node 24.19.0, eight runtime files, 59,569,700 packed bytes. No production change; prior 292 Rust / 34 Node scoped evidence remains applicable.

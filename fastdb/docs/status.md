@@ -889,3 +889,8 @@ Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests 
 Proven CTE FROM sources now support explicit/implicit aliases in guard inspection, including an alias that matches a collection name. Expanded regressions cover qualified projections/stars, filtering/ordering and aliases of collection-named CTEs. Direct guard tests retain physical-table aliases, reserved/internal aliases and nested physical references. Same-name write resolution and deeper/named-window scope coverage remain open.
 
 Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Installed Node WITH-write smoke (2026-09-07)
+
+The offline installed-package smoke now exercises CTE-driven UPDATE/DELETE in synchronous and worker clients, typed RETURNING, fetched values after update, empty index/data state after delete and rollback to the original int64 value. A collection-named CTE alias also executes through the installed client. The complete smoke passed on Linux x64 / Node 24.19.0 with eight runtime files and a 59,569,700-byte development tarball. Release/platform qualification remains open.
