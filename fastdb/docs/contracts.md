@@ -1067,3 +1067,6 @@ Closed-source projection alias precedence (2026-09-08): WHERE, JOIN ON and GROUP
 
 
 Projection aliases in membership operands (2026-09-08): WHERE, JOIN ON and GROUP BY alias expansion retains prepared membership metadata when rewriting the left operand of IN/NOT IN subqueries. The right-hand query keeps its own source scope. This fixes rejection of an alias operand such as SELECT n,0 AS m FROM (SELECT n FROM docs) WHERE m IN (SELECT m FROM labels). Original metadata remains available for other occurrences of the original expression. Broader correlation and alias qualification remains open.
+
+
+Native membership in JOIN ON (2026-09-08): native IN/NOT IN subqueries referenced by logical JOIN ON predicates now remain inline, using the existing native membership conversion path. Hoisting those RHS sources into an outer internal CTE caused the pinned engine to reject the join with no-such-table during preparation. Logical projection aliases in the covered join predicates expand as an extension; the pinned ordinary SQL alias spelling retains its own rejection. Broader volatile-source evaluation, join planning and resource qualification remain open.

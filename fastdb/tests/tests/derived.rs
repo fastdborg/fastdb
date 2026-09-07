@@ -862,3 +862,30 @@ fn membership_aliases_preserve_document_value_types() {
         }
     }
 }
+
+#[test]
+fn membership_aliases_work_in_join_and_group_clauses() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE labels(m INTEGER)");
+    q(&c, "INSERT INTO labels VALUES(1)");
+    for sql in [
+        "SELECT d.n,labels.m FROM (SELECT n FROM docs) d LEFT JOIN labels ON d.n IN (SELECT m FROM labels) ORDER BY d.n",
+        "SELECT d.n,labels.m FROM (SELECT n FROM docs) d LEFT JOIN labels ON d.n NOT IN (SELECT m FROM labels) ORDER BY d.n",
+        "SELECT d.n,labels.m,1 AS candidate FROM (SELECT n FROM docs) d JOIN labels ON candidate IN (SELECT m FROM labels) ORDER BY d.n",
+        "SELECT d.n,labels.m,0 AS candidate FROM (SELECT n FROM docs) d LEFT JOIN labels ON candidate IN (SELECT m FROM labels) ORDER BY d.n",
+        "SELECT 1 AS candidate,count(*) AS total FROM (SELECT n FROM docs) GROUP BY candidate IN (SELECT m FROM labels)",
+        "SELECT 0 AS candidate,count(*) AS total FROM (SELECT n FROM docs) GROUP BY candidate NOT IN (SELECT m FROM labels)",
+    ] {
+        let mut native = sql.replace("FROM docs", "FROM baseline");
+        if sql.contains("ON candidate") {
+            let error = c.execute(&native, &Parameters::new()).unwrap_err().to_string();
+            assert!(error.contains("no such column: candidate"));
+            native = native.replace("ON candidate", if sql.contains("0 AS candidate") { "ON 0" } else { "ON 1" });
+        }
+        let expected = q(&c, &native).rows;
+        assert_eq!(q(&c, sql).rows, expected, "{sql}");
+        assert_eq!(c.profile_select(sql, &Parameters::new()).unwrap().result.rows, expected, "{sql}");
+    }
+}

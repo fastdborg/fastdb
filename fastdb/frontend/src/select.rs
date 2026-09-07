@@ -3634,6 +3634,22 @@ impl Connection {
         {
             return Ok(None);
         }
+        // The pinned engine does not expose outer membership CTEs while
+        // preparing JOIN ON subqueries. Keep these RHS queries in place.
+        let mut join_memberships = std::collections::BTreeSet::new();
+        if let Some(from) = from.as_ref() {
+            for join in &from.joins {
+                if let Some(JoinConstraint::On(predicate)) = &join.constraint {
+                    let mut predicate = *predicate.clone();
+                    turso_core::walk_expr_mut(&mut predicate, &mut |expr| {
+                        if matches!(expr, Expr::InSelect { .. }) {
+                            join_memberships.insert(expr.to_string());
+                        }
+                        Ok(turso_core::WalkControl::Continue)
+                    })?;
+                }
+            }
+        }
         // Native expression queries do not opt an ordinary SQL statement into
         // logical lowering; preserve their values only once that route is chosen.
         for (sql, (lowered, _, affinity)) in &mut native_expression_subqueries {
@@ -3739,7 +3755,9 @@ impl Connection {
                 }
                 continue;
             }
-            if correlated && matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
+            if (correlated || join_memberships.contains(sql))
+                && matches!(affinity, SubqueryAffinity::NativeMembership(_, _))
+            {
                 *lowered = Expr::Subquery(
                     native_correlated_predicate(&inner, &sources, false, params, false)?.0,
                 );

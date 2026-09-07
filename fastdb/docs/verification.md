@@ -2061,3 +2061,10 @@ Collection-backed membership alias qualification (2026-09-08): expanded the corr
 
 
 Typed membership alias qualification (2026-09-08): a new regression binds both record references, both Boolean values and distinct binary values (including an FDB-prefixed blob) as projected aliases. Correlated collection IN/NOT IN selects the expected matching/nonmatching row and returns each bound value unchanged through execute/profile. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 415 Rust/45 Node tests; recent additions have focused evidence only. Broader typed comparisons, resources and full V1 release gates remain open.
+
+
+## JOIN ON membership scope correction (2026-09-08)
+
+Fixed logical JOIN ON membership preparation failing with no such table for an internal hoisted membership CTE. Native membership expressions appearing in JOIN ON now use the existing inline conversion route. Execute/profile regressions cover direct IN/NOT IN LEFT JOIN predicates with right-side NULL extension, logical alias expansion in joins, and membership aliases in GROUP BY. The pinned native JOIN ON alias spelling rejects candidate; those logical extension cases compare with explicit native constants, while direct predicates and grouping use matching SQL.
+
+The complete scoped check passed formatting, Clippy, 418 Rust tests, 45 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. Recent correlated binding and typed alias tests are included in this combined run. Broader volatile-source evaluation, join planning, resources, platform and full V1 release gates remain open. No upstream implementation files changed.
