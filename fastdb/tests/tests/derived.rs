@@ -438,6 +438,43 @@ fn derived_collection_joins_resolve_relational_columns() {
             "{sql}"
         );
     }
+    q(&c, "DELETE FROM labels WHERE m=2");
+    for source in ["labels", "label_view"] {
+        let sql = format!("SELECT n,flag,label FROM (SELECT n,flag FROM docs) LEFT JOIN {source} ON n=m ORDER BY n");
+        let expected = vec![
+            vec![
+                Value::Integer(1),
+                Value::Boolean(true),
+                Value::String("A".into()),
+            ],
+            vec![Value::Integer(2), Value::Boolean(false), Value::Null],
+        ];
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{sql}"
+        );
+        let ambiguous = format!("SELECT m FROM (SELECT n AS m FROM docs) JOIN {source} ON 1=1");
+        assert!(
+            matches!(
+                c.execute(&ambiguous, &Parameters::new()),
+                Err(fastdb::Error::Validation(_))
+            ),
+            "{ambiguous}"
+        );
+        assert!(
+            matches!(
+                c.profile_select(&ambiguous, &Parameters::new()),
+                Err(fastdb::Error::Validation(_))
+            ),
+            "{ambiguous}"
+        );
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+    }
     assert!(c
         .execute(
             "SELECT n FROM (SELECT n FROM docs) JOIN (SELECT m AS n FROM labels) ON 1=1",
