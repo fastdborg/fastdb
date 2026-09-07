@@ -1801,3 +1801,6 @@ The complete scoped check passed formatting, Clippy, 386 Rust tests, 44 Node/app
 Missing variables in logical source-free scalar pagination now report parameter errors before engine execution, fixing the missing-OFFSET datatype-mismatch result. Regressions cover missing LIMIT/OFFSET, extra unused bindings, a binding shared by projection and LIMIT, and valid execute/profile retries after errors.
 
 The complete scoped check passed formatting, Clippy, 387 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; broader native pagination routing, scope/resource and full V1 release qualification remain open.
+
+
+Scalar pagination positional-binding qualification (2026-09-08): a new regression covers numbered and anonymous statement parameters around a correlated source-free scalar query, including a numbered binding shared by projection and LIMIT. An earlier binary projection retains exact bytes while OFFSET 0/1 includes/excludes both scalar rows. Execute/profile, package formatting and focused Clippy pass. Latest complete scoped evidence remains 387 Rust/44 Node tests; this additional test has not received a new combined run. Broader native pagination routing, scope/resource and full V1 release gates remain open.

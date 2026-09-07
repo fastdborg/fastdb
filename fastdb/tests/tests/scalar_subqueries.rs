@@ -4169,3 +4169,53 @@ fn scalar_pagination_preserves_parameter_accounting() {
         assert_eq!(c.profile_select(sql, &valid).unwrap().result.rows, expected);
     }
 }
+
+#[test]
+fn scalar_pagination_retains_statement_parameter_positions() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1}");
+    q(&c, "INSERT INTO docs {n:2}");
+    let binary = Value::Binary(b"FDB\x01parameter".to_vec());
+    for offset in [0, 1] {
+        for (sql, params) in [
+            (
+                "SELECT ?1,(SELECT array::new(d.n,?2) LIMIT ?2 OFFSET ?3) FROM docs d ORDER BY n",
+                Parameters::from([
+                    ("?1".into(), binary.clone()),
+                    ("?2".into(), Value::Integer(1)),
+                    ("?3".into(), Value::Integer(offset)),
+                ]),
+            ),
+            (
+                "SELECT ?,(SELECT array::new(d.n,?) LIMIT ? OFFSET ?) FROM docs d ORDER BY n",
+                Parameters::from([
+                    ("?1".into(), binary.clone()),
+                    ("?2".into(), Value::Integer(1)),
+                    ("?3".into(), Value::Integer(1)),
+                    ("?4".into(), Value::Integer(offset)),
+                ]),
+            ),
+        ] {
+            let expected = (1..=2)
+                .map(|n| {
+                    vec![
+                        binary.clone(),
+                        if offset == 0 {
+                            Value::Array(vec![Value::Integer(n), Value::Integer(1)])
+                        } else {
+                            Value::Null
+                        },
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(c.execute(sql, &params).unwrap().rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(sql, &params).unwrap().result.rows,
+                expected,
+                "{sql}"
+            );
+        }
+    }
+}
