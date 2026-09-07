@@ -1848,6 +1848,8 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
 }
 #[derive(Default)]
 struct SelectOptions<'a> {
+    membership_namespace: usize,
+    native_with: Option<&'a With>,
     restricted_native_clauses: bool,
     ctes: Option<&'a CteSources>,
     nested: bool,
@@ -2065,6 +2067,8 @@ impl Connection {
         options: SelectOptions<'_>,
     ) -> Result<Option<LoweredSelect>> {
         let SelectOptions {
+            membership_namespace,
+            native_with,
             restricted_native_clauses,
             ctes: inherited_ctes,
             nested,
@@ -2632,6 +2636,13 @@ impl Connection {
                 let mut probe = inner.clone();
                 if probe.with.is_none() {
                     probe.with = select.with.clone();
+                    if let Some(inherited) = native_with {
+                        let mut with = inherited.clone();
+                        if let Some(local) = probe.with.take() {
+                            with.ctes.extend(local.ctes);
+                        }
+                        probe.with = Some(with);
+                    }
                 }
                 let statement = self.prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())?;
                 let program = statement.get_program();
@@ -2664,7 +2675,8 @@ impl Connection {
             *affinity = if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
                 let mut suffix = select.with.as_ref().map_or(0, |with| with.ctes.len());
                 let name = loop {
-                    let name = format!("__fastdb_membership_source_{suffix}");
+                    let name =
+                        format!("__fastdb_membership_source_{membership_namespace}_{suffix}");
                     if !expanded.to_ascii_lowercase().contains(&name) {
                         break name;
                     }
@@ -3083,7 +3095,7 @@ impl Connection {
         let arms = std::iter::once(&select.body.select)
             .chain(select.body.compounds.iter().map(|arm| &arm.select));
         let mut plans = Vec::new();
-        for arm in arms {
+        for (arm_index, arm) in arms.enumerate() {
             let body = Select {
                 with: None,
                 body: SelectBody {
@@ -3099,6 +3111,8 @@ impl Connection {
                 &sql,
                 params,
                 SelectOptions {
+                    membership_namespace: arm_index + 1,
+                    native_with: select.with.as_ref().or(options.native_with),
                     trusted: true,
                     nested: true,
                     ctes: Some(ctes),
@@ -3153,6 +3167,18 @@ impl Connection {
         if !logical {
             return Ok(None);
         }
+        if let Some(with) = &select.with {
+            for token in fastql_parser::tokenize(&with.to_string())? {
+                if token.kind == fastql_parser::Kind::Parameter {
+                    consumed.insert(token.text);
+                }
+            }
+        }
+        for name in &consumed {
+            if !params.contains_key(name) {
+                return Err(Error::Parameter(name.clone()));
+            }
+        }
         let distinct = select
             .body
             .compounds
@@ -3163,7 +3189,7 @@ impl Connection {
         let mut names = Vec::new();
         let mut order_names = Vec::new();
         for (index, (sql, detected)) in plans.into_iter().enumerate() {
-            let plan = match detected {
+            let mut plan = match detected {
                 Some(plan) => plan,
                 None => self
                     .lower_collection_select(
@@ -3205,6 +3231,11 @@ impl Connection {
                 })
                 .collect::<Vec<_>>()
                 .join(",");
+            if let Cmd::Stmt(Stmt::Select(arm)) = &mut plan.command {
+                if let Some(with) = arm.with.take() {
+                    definitions.extend(with.ctes.into_iter().map(|cte| cte.to_string()));
+                }
+            }
             let sql = plan.command.to_string();
             let arm_name = format!("__fastdb_union_arm{index}");
             definitions.push(format!(

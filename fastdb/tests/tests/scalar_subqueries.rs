@@ -1225,3 +1225,25 @@ fn native_membership_compound_arms_keep_shared_sources_in_scope() {
         );
     }
 }
+
+#[test]
+fn native_membership_compound_arms_resolve_outer_cte_parameters() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2),(NULL)");
+    q(&c, "CREATE TABLE lhs(n BLOB)");
+    q(&c, "INSERT INTO lhs VALUES (1),(2),(NULL)");
+    q(&c, "CREATE TABLE rhs(n INTEGER)");
+    q(&c, "INSERT INTO rhs VALUES (1),(2),(NULL)");
+    let params = Parameters::from([("$min".into(), Value::Integer(1))]);
+    for op in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+        let query = |table| {
+            format!("WITH r AS (SELECT n FROM rhs WHERE n>$min) SELECT n IN (SELECT n FROM r) AS v FROM {table} {op} SELECT n NOT IN (SELECT n FROM r) FROM {table}")
+        };
+        let expected = c.execute(&query("lhs"), &params).unwrap().rows;
+        let actual = c.execute(&query("docs"), &params).unwrap().rows;
+        assert_eq!(actual, expected, "{op}");
+        assert!(c.execute(&query("docs"), &Parameters::new()).is_err());
+    }
+}
