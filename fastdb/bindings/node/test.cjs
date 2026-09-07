@@ -751,3 +751,37 @@ test('AbortSignal transfers preserve atomic imports and return complete exports 
     }
   } finally { source.close(); }
 });
+
+test('AbortSignal migrations roll back all pending schema, data and history', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { getEventListeners } = require('node:events');
+  const db = await AsyncDatabase.open();
+  let timer;
+  try {
+    const base = {version:1n,name:'base',sql:'CREATE TABLE docs; INSERT INTO docs {id:docs:prior,n:9}; CREATE TABLE numbers(n INTEGER);'};
+    await db.migrate([base]);
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100},(_,i)=>`(${i})`).join(','));
+    const intermediate = {version:2n,name:'intermediate',sql:'CREATE TABLE staged; INSERT INTO staged {id:staged:first};'};
+    const pending = {version:3n,name:'pending',sql:'CREATE TABLE pending; CREATE UNIQUE INDEX pending_n ON pending(n); INSERT INTO pending(n) SELECT a.n*10000+b.n*100+c.n FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c;'};
+    const controller = new AbortController();
+    const operation = db.migrate([base,intermediate,pending],{signal:controller.signal});
+    const rejected = assert.rejects(operation,e=>e.code==='FDB_CANCELLED' && e.transaction.after==='autocommit');
+    timer=setTimeout(()=>controller.abort(),50);
+    await rejected;
+    assert.equal(getEventListeners(controller.signal,'abort').length,0);
+    assert.deepEqual(await db.exactlyOne('SELECT n FROM docs'),[9n]);
+    await assert.rejects(db.execute('SELECT * FROM pending'));
+    await assert.rejects(db.execute('SELECT * FROM staged'));
+    assert.equal((await db.migrate([base])).alreadyApplied,1);
+    const before = new AbortController(); before.abort();
+    await assert.rejects(db.migrate([base,intermediate,pending],{signal:before.signal}),e=>e.code==='FDB_CANCELLED');
+    const fresh = new AbortController();
+    const retry = {...pending,sql:'CREATE TABLE pending; CREATE UNIQUE INDEX pending_n ON pending(n); INSERT INTO pending(n) VALUES (1),(2);'};
+    assert.deepEqual((await db.migrate([base,intermediate,retry],{signal:fresh.signal})).applied,[2n,3n]);
+    assert.equal((await db.migrate([base,intermediate,retry])).alreadyApplied,3);
+    assert.equal((await db.checkCollectionIntegrity('pending')).documents,2n);
+    assert.equal(getEventListeners(fresh.signal,'abort').length,0);
+    fresh.abort();
+    assert.deepEqual(await db.exactlyOne('SELECT n FROM docs'),[9n]);
+  } finally {clearTimeout(timer); await db.close();}
+});

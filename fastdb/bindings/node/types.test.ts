@@ -78,6 +78,9 @@ async function cancellationTypes(db: import('./index').AsyncDatabase) {
   const options: import('./index').ExecuteOptions = {signal: controller.signal};
   await db.execute('SELECT 1', {}, options);
   await db.executeBatch('SELECT 1;', options);
+  await db.migrate([], options);
+  // @ts-expect-error migration signals must be AbortSignal
+  await db.migrate([], {signal: true});
   await db.importDocuments('docs', '', 'json', options);
   await db.exportDocuments('docs', 'ndjson', options);
   // @ts-expect-error transfer signals must be AbortSignal

@@ -82,3 +82,6 @@ Cancellation is cooperative and completion can win the race. Compilation, bundle
 
 
 `import_documents_cancellable(table, input, format, &token)` and `export_documents_cancellable(table, format, &token)` use the same cooperative token contract. Pre-cancellation precedes parsing and catalog access. An interrupted import follows its existing atomic rollback path, preserving prior outer work; an export returns a complete payload or an error. Parsing, document conversion and serialization have no fixed cancellation latency. Completion can win a race, so use the returned outcome and transaction state rather than assuming an abort rolled back.
+
+
+`migrate_cancellable(&plan, &token)` applies the token to the existing all-pending-migrations transaction. A pre-cancelled token rejects before validation; active cancellation follows migration rollback and retains prior applied history. A migration-wrapped interruption exposes FDB_CANCELLED while retaining version/offset/source details. Other migration execution errors retain FDB_MIGRATION. Parsing and compilation have no fixed cancellation latency; completion can win a race.

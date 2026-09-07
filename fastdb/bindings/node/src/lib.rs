@@ -340,7 +340,18 @@ impl NativeDatabase {
         })
     }
     #[napi]
-    pub fn migrate(&self, input: String) -> napi::Result<String> {
+    pub fn migrate(&self, input: String, cancellation_key: Option<String>) -> napi::Result<String> {
+        let token = cancellation_key
+            .map(|key| {
+                let key = key.parse::<u64>().map_err(error)?;
+                cancellations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| error("unknown cancellation token"))
+            })
+            .transpose()?;
         self.report(|conn| {
             let plan: serde_json::Value=serde_json::from_str(&input)?;
             let invalid=||fastdb::Error::Validation("expected migration objects with version, name and sql strings".into());
@@ -349,7 +360,7 @@ impl NativeDatabase {
                 let version=field("version")?.parse::<i64>().map_err(|_|invalid())?;
                 Ok(fastdb::Migration {version,name:field("name")?.into(),sql:field("sql")?.into()})
             }).collect::<fastdb::Result<Vec<_>>>()?;
-            let report=conn.migrate(&plan)?;
+            let report=if let Some(token) = &token { conn.migrate_cancellable(&plan, token)? } else { conn.migrate(&plan)? };
             Ok(serde_json::json!({"alreadyApplied":report.already_applied,"applied":report.applied.iter().map(i64::to_string).collect::<Vec<_>>()}))
         })
     }

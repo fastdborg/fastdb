@@ -297,8 +297,8 @@ class AsyncDatabase {
     const report = unwrap(await this.#request('importDocuments', [table, input, format], false, options.signal));
     return { ...report.execution.result, transaction: report.transaction };
   }
-  async migrate(migrations) {
-    const report = unwrap(await this.#request('migrate', [JSON.stringify(migrationPlan(migrations))]));
+  async migrate(migrations, options = {}) {
+    const report = unwrap(await this.#request('migrate', [JSON.stringify(migrationPlan(migrations))], false, options.signal));
     return { alreadyApplied: report.execution.result.alreadyApplied,
       applied: report.execution.result.applied.map(BigInt), transaction: report.transaction };
   }

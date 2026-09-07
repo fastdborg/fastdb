@@ -941,3 +941,10 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, twenty
 The real-worker transfer test passes both JSON and NDJSON: timed import/export cancellation, prior indexed document preservation, following-request isolation, pre-aborted rejection (including invalid import input), successful 1,000-document retry, complete export equality, listener cleanup, late cancellation and final rollback. The Node-only suite and strict TypeScript passed (`/tmp/fastdb-node-transfer-abort.log`). Timer-based active probes complement the deterministic Rust after-write rollback coverage; they do not establish cancellation latency bounds.
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, twenty-eight Node tests and strict TypeScript checks (`/tmp/fastdb-node-transfer-check.log`). One known trigger-interruption gate remains ignored. No upstream files, dependencies or transfer encodings changed. Migration cancellation, parsing/serialization latency, platform/resource qualification and full V1 remain incomplete.
+
+
+## Migration AbortSignal — 2026-09-07
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, twenty-nine Node tests and strict TypeScript checks (`/tmp/fastdb-migration-abort-check.log`). One known trigger-interruption gate remains ignored. The real-worker migration test cancels a long pending INSERT SELECT after an earlier pending migration, checks FDB_CANCELLED/autocommit, absence of pending schema, retained baseline data/history, pre-aborted rejection, successful replacement pending plan, exact applied versions/history count, index integrity and listener cleanup. Existing non-cancellation migration failure tests still pass with FDB_MIGRATION.
+
+This is a timed active cancellation probe, not exhaustive instruction-level or deadline qualification. Rust migration-wrapped Interrupt now exposes FDB_CANCELLED while preserving version/offset/source context. No upstream files or dependencies changed; broader cancellation/resource/platform qualification and full V1 remain incomplete.

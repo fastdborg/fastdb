@@ -85,6 +85,7 @@ impl Error {
             Self::Parameter(_) => "FDB_PARAMETER",
             Self::Limit(_) => "FDB_LIMIT",
             Self::Cardinality(_) => "FDB_CARDINALITY",
+            Self::Migration { source, .. } if source.code() == "FDB_CANCELLED" => "FDB_CANCELLED",
             Self::Migration { .. } => "FDB_MIGRATION",
             Self::Rollback { .. } => "FDB_ROLLBACK",
         }

@@ -53,7 +53,7 @@ export class AsyncDatabase {
   static open(path?: string): Promise<AsyncDatabase>;
   interrupt(): boolean;
   close(): Promise<void>;
-  migrate(migrations: Migration[]): Promise<MigrationReport>;
+  migrate(migrations: Migration[], options?: ExecuteOptions): Promise<MigrationReport>;
   exportDocuments(table: string, format?: TransferFormat, options?: ExecuteOptions): Promise<string>;
   importDocuments(table: string, input: string, format?: TransferFormat, options?: ExecuteOptions): Promise<ImportReport>;
   execute(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;

@@ -98,6 +98,16 @@ impl Connection {
         self.with_cancellation(token, || self.import_documents(table, input, format))
     }
 
+    /// Run pending migrations with cooperative cancellation. Their schema,
+    /// data and history changes share the existing atomic migration scope.
+    pub fn migrate_cancellable(
+        &self,
+        migrations: &[crate::Migration],
+        token: &CancellationToken,
+    ) -> Result<crate::MigrationReport> {
+        self.with_cancellation(token, || self.migrate(migrations))
+    }
+
     pub(crate) fn with_cancellation<T>(
         &self,
         token: &CancellationToken,

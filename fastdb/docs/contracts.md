@@ -787,3 +787,8 @@ Rust cancellable batch execution/visitation and Node AsyncDatabase.executeBatch'
 ## Cancellable Rust document transfers
 
 The cancellable import/export methods reject a pre-cancelled token before transfer parsing or catalog access and poll active tokens at engine progress boundaries. Import retains its atomic scope: a failure during writes rolls back this import's changes while preserving prior outer work. Export returns a complete string or an error, with no partial payload in an error result. Parsing, conversion and serialization are not directly interrupted and have no fixed latency bound. A cancellation racing completion may still return success. Calls on the connection remain serialized.
+
+
+## Cancellable migrations
+
+Rust migrate_cancellable and async Node migrate's optional signal preserve the runner's single transaction for all pending migrations and exact-source history. A cancellation wrapped in migration context exposes FDB_CANCELLED and retains version/offset details; non-cancellation execution failures remain FDB_MIGRATION. Previously applied history is not part of the rollback. There is no deadline guarantee for plan parsing/compilation, and successful completion can win cancellation races.
