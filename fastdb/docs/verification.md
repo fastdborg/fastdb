@@ -1318,3 +1318,8 @@ Simple native inner SELECT projections now lower qualified outer collection fiel
 Regression coverage includes scalar arithmetic and aggregates, EXISTS/IN, direct boolean/record/object/array values, NULL/empty sources, bound and missing parameters, typed membership, alias shadowing, profiled comparisons and atomic UPDATE uniqueness failure/retry/rollback with prior outer work. A seven-projection/five-operator/four-RHS comparison matrix uses native typeless columns as the collection-field oracle; declared native INTEGER columns have different affinity and are not that oracle. The matrix exposed and verified the CAST-affinity fix.
 
 The complete scoped suite passed formatting, Clippy, 315 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored. Inner collection correlation, deeper/local-WITH/compound correlated scopes, correlation in grouping/window/order/limit expressions and broader volatile/type/resource qualification remain open. Full V1 is incomplete.
+
+
+## Installed correlated-projection smoke (2026-09-07)
+
+The offline installed Node consumer now runs a parameterized correlated-projection UPDATE, profiles record/integer projections and record membership, checks explicit CAST affinity and empty scalar NULL, audits the managed index and rolls back to int64 max through both sync and worker clients. The complete package smoke passed on Linux x64 / Node 24.19.0: eight runtime files and 59,662,439 packed bytes. Broader platform/release qualification and full V1 remain open.

@@ -107,6 +107,17 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.deepEqual(await client.all('SELECT meta FROM docs'),[[null]]);
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
 
+    await client.execute('BEGIN');
+    const projected = await client.execute('UPDATE docs AS d SET value=(SELECT d.value-$delta) RETURNING value',{$delta:9223372036854775799n});
+    assert.deepEqual(projected.rows,[[8n]]);
+    assert.equal(projected.affected,1n);
+    const projectedRead = await client.profileSelect("SELECT (SELECT d.id),(SELECT d.value),d.id IN(SELECT d.id),(SELECT CAST(d.value AS TEXT))=8 FROM docs d");
+    assert.deepEqual(projectedRead.result.rows,[[new Record('docs','saved'),8n,1n,1n]]);
+    assert.deepEqual(await client.all('SELECT (SELECT d.id WHERE 0) FROM docs d'),[[null]]);
+    assert.equal((await client.checkCollectionIntegrity('docs')).indexEntries,1n);
+    await client.execute('ROLLBACK');
+    assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
+
     const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
     assert.deepEqual(await client.all(cte),[[2n]]);
   }
