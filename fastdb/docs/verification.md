@@ -1954,3 +1954,10 @@ Compound native derived collation qualification (2026-09-08): expanded the mixed
 An expanded probe found an unresolved mixed-arm case. For a native UNION ALL whose first label projection explicitly uses BINARY and whose second inherits NOCASE, native literal-left IS matches A against a, while native label IN (a) does not. Current logical lowering returns the opposite membership decisions for a document string in these two forms. See mixed-compound-collation.sql for the executable reproducer; the existing CLI ran it successfully and returned native rows [1]/[] versus logical []/[1,1].
 
 A proposed IS-only override was discarded because it left IN incorrect. Prepared compound projection accessors expose the rightmost arm, which is insufficient as a universal collation rule; a fix must preserve operator-specific pinned behavior and verify both arm orders. Production code and passing regression coverage remain unchanged. The latest full scoped evidence remains 403 Rust/44 Node tests; mixed-arm collation and full V1 release qualification remain open.
+
+
+## Mixed compound collation correction (2026-09-08)
+
+Resolved the recorded BINARY/NOCASE UNION ALL mismatch by distinguishing the engine's exposed derived-column collation from its projected expression collation. Membership uses the exposed column metadata instead of following the rightmost arm; covered document-left IS/IS NOT and unary-plus comparisons retain the expression context. Explicit logical collation precedence remains intact. The expanded execute/profile matrix covers both mixed arm orders, reversed IS operands and IS NOT alongside earlier simple/nested/materialized/compound cases.
+
+The complete scoped check passed formatting, Clippy, 403 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. The rebuilt CLI ran mixed-compound-collation.sql: native IS returned [1] and logical IS [1,1]; both IN forms returned no rows. This supersedes the earlier diagnostic for those forms; broader compound/collation/resource and full V1 release qualification remain open. No upstream implementation files changed.

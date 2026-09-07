@@ -276,11 +276,16 @@ fn mixed_derived_comparisons_preserve_native_affinity_and_collation() {
         "(SELECT m,label FROM labels ORDER BY m LIMIT 3)",
         "(SELECT m,label FROM labels WHERE m<=1 UNION ALL SELECT m,label FROM labels WHERE m>1)",
         "(SELECT m,label FROM labels UNION SELECT m,label FROM labels)",
+        "(SELECT m,label COLLATE BINARY AS label FROM labels WHERE m<=1 UNION ALL SELECT m,label FROM labels WHERE m>1)",
+        "(SELECT m,label FROM labels WHERE m<=1 UNION ALL SELECT m,label COLLATE BINARY AS label FROM labels WHERE m>1)",
     ] {
         for predicate in [
             "v=label",
             "label=v",
             "v IS label",
+            "v IS NOT label",
+            "label IS v",
+            "label IS NOT v",
             "v<label",
             "label IN (v)",
             "label NOT IN (v)",

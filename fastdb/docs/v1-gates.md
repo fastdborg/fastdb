@@ -135,3 +135,6 @@ Correlated single-column typed DISTINCT now deduplicates logical values independ
 
 
 Mixed compound-arm collation remains a reproduced query-correctness gap: see mixed-compound-collation.sql and the corresponding verification entry. Native literal-left IS and native-left IN choose differently for the covered BINARY/NOCASE UNION ALL source; current logical lowering disagrees with both. A single rightmost-arm collation override does not close this gate.
+
+
+The mixed-compound reproducer above now matches native IS and IN results after distinguishing exposed-column and expression collation metadata. Both arm orders and reversed IS/IS NOT operands have regression coverage; full scoped checks pass 403 Rust/44 Node tests, and the rebuilt CLI reproducer passes. This resolves the recorded probe, not broader compound/collation or full V1 qualification.

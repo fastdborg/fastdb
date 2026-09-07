@@ -1052,3 +1052,6 @@ Mixed native/collection derived joins (2026-09-08): native derived projections n
 
 
 Native derived-column membership collation (2026-09-08): metadata records native derived output collations by following prepared derived plans to their projection expressions. Native-left IN/NOT IN applies the selected collation to both the left value and converted list members, preventing incidental typed-accessor collation from changing matches in the pinned engine. Explicit left COLLATE overrides the recorded default. This path preserves list evaluation structure and NULL behavior. Document-value reference tests use native literal operands, which do not introduce a native left column’s declared affinity or implicit collation. Broader projection/collation and scope qualification remains open.
+
+
+Mixed compound collation provenance (2026-09-08): native derived metadata now retains both the exposed output-column collation and the projected expression collation. Membership uses the exposed column metadata; the covered document-left IS/IS NOT and unary-plus comparisons use the expression context without changing explicit logical COLLATE precedence. This corrects the BINARY/NOCASE UNION ALL reproducer in both arm orders. These are pinned-engine behaviors; broader compound/expression qualification remains open.

@@ -10,6 +10,7 @@ struct Source {
     derived: Option<Vec<(String, bool)>>,
     derived_logical: bool,
     native_collations: std::collections::BTreeMap<String, String>,
+    native_expression_collations: std::collections::BTreeMap<String, String>,
     consumed: std::collections::BTreeSet<String>,
 }
 impl Source {
@@ -584,25 +585,36 @@ impl Scope {
             _ => Ok(false),
         }
     }
-    fn derived_native_collation(&self, expr: &Expr) -> Option<String> {
+    fn derived_native_collation<'a>(
+        &'a self,
+        expr: &Expr,
+        expression_collation: bool,
+    ) -> Option<String> {
+        let collations = |source: &'a Source| {
+            if expression_collation {
+                &source.native_expression_collations
+            } else {
+                &source.native_collations
+            }
+        };
         match expr {
             Expr::Collate(_, name) => Some(name.as_str().to_owned()),
-            Expr::Unary(UnaryOperator::Positive, value) => self.derived_native_collation(value),
-            Expr::Parenthesized(values) if values.len() == 1 => {
-                self.derived_native_collation(&values[0])
+            Expr::Unary(UnaryOperator::Positive, value) => {
+                self.derived_native_collation(value, expression_collation)
             }
-            Expr::Qualified(alias, column) => self
-                .sources
-                .iter()
-                .find(|source| source.alias.eq_ignore_ascii_case(alias.as_str()))?
-                .native_collations
-                .get(&column.as_str().to_ascii_lowercase())
-                .cloned(),
+            Expr::Parenthesized(values) if values.len() == 1 => {
+                self.derived_native_collation(&values[0], expression_collation)
+            }
+            Expr::Qualified(alias, column) => collations(
+                self.sources
+                    .iter()
+                    .find(|source| source.alias.eq_ignore_ascii_case(alias.as_str()))?,
+            )
+            .get(&column.as_str().to_ascii_lowercase())
+            .cloned(),
             Expr::Id(column) | Expr::Name(column) => {
                 let mut found = self.sources.iter().filter_map(|source| {
-                    source
-                        .native_collations
-                        .get(&column.as_str().to_ascii_lowercase())
+                    collations(source).get(&column.as_str().to_ascii_lowercase())
                 });
                 let first = found.next()?;
                 found.next().is_none().then(|| first.clone())
@@ -1204,7 +1216,19 @@ impl Scope {
                         // Visit the native column first so their incidental
                         // collation cannot hide its declared collation. Keep
                         // explicit COLLATE precedence in the original order.
-                        let scalar = if !on_left && !native_column_collation(column) {
+                        let expression_collation = (!on_left
+                            && (matches!(op, Operator::Is | Operator::IsNot)
+                                || matches!(column, Expr::Unary(UnaryOperator::Positive, _)))
+                            && !native_column_collation(&left))
+                        .then(|| self.derived_native_collation(column, true))
+                        .flatten();
+                        let scalar = if let Some(collation) = expression_collation {
+                            format!(
+                                "({left} COLLATE {}) {op} ({right} COLLATE {})",
+                                quote(&collation),
+                                quote(&collation)
+                            )
+                        } else if !on_left && !native_column_collation(column) {
                             format!("{right} {op} {left}")
                         } else {
                             format!("{left} {op} {right}")
@@ -1349,7 +1373,7 @@ impl Scope {
                             **value = expression(&format!("__fastdb_unwrap({value})"))?;
                         }
                     }
-                    if let Some(collation) = self.derived_native_collation(&value) {
+                    if let Some(collation) = self.derived_native_collation(&value, false) {
                         value = expression(&format!("({value} COLLATE {})", quote(&collation)))?;
                         for member in rhs.iter_mut() {
                             **member =
@@ -1628,6 +1652,7 @@ fn source(
                 derived: Some(plan.names.into_iter().zip(plan.typed).collect()),
                 derived_logical: true,
                 native_collations: Default::default(),
+                native_expression_collations: Default::default(),
                 consumed: plan.consumed,
             });
         }
@@ -1645,7 +1670,39 @@ fn source(
             .map(|i| (statement.get_column_name(i).into_owned(), false))
             .collect();
         let program = statement.get_program();
+        // Derived column metadata follows the compound's leftmost output.
+        // Expression emission can instead retain the rightmost arm context;
+        // keep both so membership and scalar comparisons do not conflate them.
         let mut native_collations = std::collections::BTreeMap::new();
+        for (i, column) in program.result_columns.iter().enumerate() {
+            let mut value = column.expr.clone();
+            let mut implicit = None;
+            let mut explicit = None;
+            turso_core::walk_expr_mut(&mut value, &mut |expr| {
+                match expr {
+                    Expr::Collate(_, name) => {
+                        explicit.get_or_insert_with(|| name.as_str().to_owned());
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
+                    Expr::Column { table, column, .. } => {
+                        if let Some((_, source)) =
+                            program.table_references.find_table_by_internal_id(*table)
+                        {
+                            if let Some(column) = source.get_column_at(*column) {
+                                implicit.get_or_insert_with(|| column.collation().name());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(turso_core::WalkControl::Continue)
+            })?;
+            native_collations.insert(
+                statement.get_column_name(i).to_ascii_lowercase(),
+                explicit.or(implicit).unwrap_or_else(|| "BINARY".into()),
+            );
+        }
+        let mut native_expression_collations = std::collections::BTreeMap::new();
         for (i, column) in program.result_columns.iter().enumerate() {
             let mut pending = vec![(column.expr.clone(), &program.table_references)];
             let mut implicit = None;
@@ -1680,7 +1737,7 @@ fn source(
                     Ok(turso_core::WalkControl::Continue)
                 })?;
             }
-            native_collations.insert(
+            native_expression_collations.insert(
                 statement.get_column_name(i).to_ascii_lowercase(),
                 explicit.or(implicit).unwrap_or_else(|| "BINARY".into()),
             );
@@ -1692,6 +1749,7 @@ fn source(
             derived: Some(columns),
             derived_logical: false,
             native_collations,
+            native_expression_collations,
             consumed: Default::default(),
         });
     }
@@ -1757,6 +1815,7 @@ fn source(
         derived: None,
         derived_logical: false,
         native_collations: Default::default(),
+        native_expression_collations: Default::default(),
         consumed: Default::default(),
     })
 }
@@ -3111,6 +3170,7 @@ impl Connection {
                         derived: Some(columns),
                         derived_logical: logical,
                         native_collations: Default::default(),
+                        native_expression_collations: Default::default(),
                         consumed,
                     }),
                 );
