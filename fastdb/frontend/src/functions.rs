@@ -1182,3 +1182,76 @@ mod grouped_evaluation_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod cte_evaluation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    #[scalar(name = "cte_tick")]
+    fn cte_tick(_: &[ExtValue]) -> ExtValue {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        ExtValue::from_integer(1)
+    }
+    #[test]
+    fn local_cte_correlation_probes_do_not_execute_sources() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        unsafe {
+            let api = c.engine._build_turso_ext();
+            let code = (api.register_scalar_function)(
+                api.ctx,
+                c"cte_tick".as_ptr(),
+                0,
+                false,
+                0,
+                cte_tick,
+                None,
+                None,
+            );
+            c.engine._free_extension_ctx(api);
+            assert_eq!(code, ResultCode::OK);
+        }
+        let params = crate::Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE TABLE baseline(n)",
+            "INSERT INTO docs {n:1}",
+            "INSERT INTO docs {n:2}",
+            "INSERT INTO docs {n:4}",
+            "INSERT INTO baseline VALUES(1),(2),(4)",
+        ] {
+            c.execute(sql, &params).unwrap();
+        }
+        for limit in [" LIMIT 0", ""] {
+            let sql = |table| {
+                format!("SELECT n,(WITH x AS MATERIALIZED (SELECT n,cte_tick() AS v FROM {table}) SELECT sum(v) FROM x WHERE x.n>=d.n) FROM {table} d ORDER BY n{limit}")
+            };
+            CALLS.store(0, Ordering::SeqCst);
+            let expected = c.execute(&sql("baseline"), &params).unwrap().rows;
+            let expected_calls = CALLS.load(Ordering::SeqCst);
+            if !limit.is_empty() {
+                assert_eq!(expected_calls, 0);
+            } else {
+                assert!(expected_calls > 0);
+            }
+            CALLS.store(0, Ordering::SeqCst);
+            assert_eq!(c.execute(&sql("docs"), &params).unwrap().rows, expected);
+            assert_eq!(
+                CALLS.load(Ordering::SeqCst),
+                expected_calls,
+                "execute {limit}"
+            );
+            CALLS.store(0, Ordering::SeqCst);
+            assert_eq!(
+                c.profile_select(&sql("docs"), &params).unwrap().result.rows,
+                expected
+            );
+            assert_eq!(
+                CALLS.load(Ordering::SeqCst),
+                expected_calls,
+                "profile {limit}"
+            );
+        }
+    }
+}

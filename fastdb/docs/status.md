@@ -1418,3 +1418,6 @@ The final complete scoped check passed formatting, Clippy, 370 Rust tests, 44 No
 
 
 Local CTE correlated write qualification (2026-09-08): a parameterized multirow UPDATE uses local CTE consumers in scalar assignments and EXISTS filters. An invalid bound value rejects the write while preserving prior transaction work and managed indexes; a corrected binding permits retry and rollback restores original rows. The focused regression, formatting and focused Clippy pass. Latest full scoped evidence remains the recorded 370-Rust/44-Node run; broader CTE/correlation/resource and full V1 gates remain open.
+
+
+Local CTE correlation evaluation qualification (2026-09-08): a test-only nondeterministic callback checks a materialized local CTE consumed by a correlated scalar aggregate. LIMIT 0 produces no calls through execute/profile, and active collection queries match native results and evaluation counts. This gives runtime evidence that the lowering probe does not add source evaluation for the covered shape. The focused unit test, formatting and frontend lib/test Clippy pass. Latest full scoped evidence remains the recorded 370-Rust/44-Node run; broader CTE/volatile/resource and full V1 gates remain open.
