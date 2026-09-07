@@ -948,3 +948,10 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, twenty
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, twenty-nine Node tests and strict TypeScript checks (`/tmp/fastdb-migration-abort-check.log`). One known trigger-interruption gate remains ignored. The real-worker migration test cancels a long pending INSERT SELECT after an earlier pending migration, checks FDB_CANCELLED/autocommit, absence of pending schema, retained baseline data/history, pre-aborted rejection, successful replacement pending plan, exact applied versions/history count, index integrity and listener cleanup. Existing non-cancellation migration failure tests still pass with FDB_MIGRATION.
 
 This is a timed active cancellation probe, not exhaustive instruction-level or deadline qualification. Rust migration-wrapped Interrupt now exposes FDB_CANCELLED while preserving version/offset/source context. No upstream files or dependencies changed; broader cancellation/resource/platform qualification and full V1 remain incomplete.
+
+
+## Cancellation queue and close — 2026-09-07
+
+The focused real-worker persistent-close test passed (`/tmp/fastdb-cancel-close.log`). It covers active query cancellation plus queued cancellation for all other signalled operation classes, transaction observations, idempotent close, rejection of new work, listener disposal, dead interrupt handle, and reopening with only the committed document and valid index. The isolated transport test passed 256 signalled queued requests, queue-limit rejection without listener acquisition, slot retention after abort and complete token/listener release after response-channel failure (`/tmp/fastdb-cancel-queue.log`).
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, thirty Node tests and strict TypeScript checking (`/tmp/fastdb-cancel-lifecycle-check.log`). One known trigger-interruption gate remains ignored. These are additional bounded lifecycle probes, not exhaustive race/crash/platform qualification. Production code and upstream files were unchanged; full V1 remains incomplete.

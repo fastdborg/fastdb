@@ -162,3 +162,6 @@ Async `importDocuments(table, input, format?, {signal}?)` and `exportDocuments(t
 
 
 Async `migrate(plan, {signal}?)` supports cooperative cancellation. Interrupted migration statements report FDB_CANCELLED while retaining migration version/byte-offset context in the message. All pending scripts and history rows share one atomic scope and roll back together on failure; previously applied migrations remain intact. A pre-aborted request does no database work, though JavaScript argument validation still runs. Compilation and plan parsing have no fixed cancellation latency, and a successful commit can win the race. Inspect the outcome before retrying.
+
+
+`close()` drains accepted requests before dropping the worker connection; it does not implicitly abort them. Signals can still cancel accepted operations while close is pending. Later submissions reject as closing/closed. Aborted queued requests retain their queue slots until a response or worker failure. The real-worker close regression verifies that dropping an active outer transaction leaves only committed data after reopening; callers should still explicitly commit or roll back during normal operation.

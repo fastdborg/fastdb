@@ -82,5 +82,28 @@ const { getEventListeners } = require('node:events');
     assert.equal(getEventListeners(controller.signal,'abort').length,0);
     await db.close();
   }
+  {
+    const db = await AsyncDatabase.open(); const worker = latest;
+    const controllers = Array.from({length:256},()=>new AbortController());
+    const accepted = controllers.map(controller=>db.execute('SELECT 1',{}, {signal:controller.signal}));
+    const settled = Promise.allSettled(accepted);
+    const excess = new AbortController();
+    await assert.rejects(db.execute('SELECT 2',{}, {signal:excess.signal}), e=>e.code==='FDB_LIMIT');
+    assert.equal(getEventListeners(excess.signal,'abort').length,0);
+    assert.equal(worker.messages.length,256);
+    controllers.forEach(controller=>controller.abort());
+    // Aborted queued work still owns its queue slot until a response/failure.
+    await assert.rejects(db.execute('SELECT 3'), e=>e.code==='FDB_LIMIT');
+    const tokens = worker.messages.map(message=>message.cancellationKey);
+    worker.emit('messageerror',new Error('queue response channel failed'));
+    const outcomes = await settled;
+    assert(outcomes.every(outcome=>outcome.status==='rejected' && outcome.reason.code==='FDB_WORKER'));
+    for (let i=0;i<tokens.length;i++) {
+      assert.equal(cancelOperation(tokens[i]),false);
+      assert.equal(getEventListeners(controllers[i].signal,'abort').length,0);
+    }
+    await db.close();
+    assert.equal(worker.stopped,true);
+  }
   process.stdout.write('worker-faults-complete\n');
 })().catch(error => { console.error(error); process.exitCode = 1; });

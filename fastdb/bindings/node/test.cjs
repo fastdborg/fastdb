@@ -785,3 +785,53 @@ test('AbortSignal migrations roll back all pending schema, data and history', as
     assert.deepEqual(await db.exactlyOne('SELECT n FROM docs'),[9n]);
   } finally {clearTimeout(timer); await db.close();}
 });
+
+test('close drains cancelled operations and rolls back the remaining outer transaction', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { getEventListeners } = require('node:events');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),'fastdb-cancel-close-'));
+  const file = path.join(dir,'test.db');
+  const db = await AsyncDatabase.open(file);
+  let timer;
+  try {
+    await db.execute('CREATE TABLE numbers(n INTEGER)');
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100},(_,i)=>`(${i})`).join(','));
+    await db.execute('CREATE TABLE docs');
+    await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+    await db.execute('INSERT INTO docs {id:docs:committed,n:7}');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {id:docs:prior,n:9}');
+    const active = new AbortController();
+    const queued = new AbortController();
+    const tasks = [
+      db.execute('INSERT INTO docs(n) SELECT a.n*10000+b.n*100+c.n FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c',{}, {signal:active.signal}),
+      db.executeBatch('DELETE FROM docs;', {signal:queued.signal}),
+      db.profileSelect('SELECT * FROM docs',{}, {signal:queued.signal}),
+      db.checkCollectionIntegrity('docs',{}, {signal:queued.signal}),
+      db.importDocuments('docs','invalid','json',{signal:queued.signal}),
+      db.exportDocuments('docs','ndjson',{signal:queued.signal}),
+      db.migrate([], {signal:queued.signal}),
+    ];
+    const settled = Promise.allSettled(tasks);
+    queued.abort();
+    const closing = db.close();
+    assert.equal(db.close(),closing);
+    await assert.rejects(db.execute('SELECT 1'),/closing or closed/);
+    timer = setTimeout(()=>active.abort(),20);
+    const results = await settled;
+    for (const result of results) {
+      assert.equal(result.status,'rejected');
+      assert.equal(result.reason.code,'FDB_CANCELLED');
+      assert.equal(result.reason.transaction.after,'active');
+    }
+    await closing;
+    assert.equal(db.interrupt(),false);
+    assert.equal(getEventListeners(active.signal,'abort').length,0);
+    assert.equal(getEventListeners(queued.signal,'abort').length,0);
+    const reopened = new Database(file);
+    try {
+      assert.deepEqual(reopened.exactlyOne('SELECT n FROM docs'),[7n]);
+      assert.equal(reopened.checkCollectionIntegrity('docs').documents,1n);
+    } finally { reopened.close(); }
+  } finally { clearTimeout(timer); await db.close(); fs.rmSync(dir,{recursive:true,force:true}); }
+});
