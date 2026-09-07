@@ -3158,3 +3158,47 @@ fn correlated_derived_parameters_preserve_binary_and_atomic_insert_validation() 
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT v FROM output").rows.is_empty());
 }
+
+#[test]
+fn correlated_collection_having_retains_unprojected_record_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+        "INSERT INTO links {owner:docs:a,n:4}",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["docs d", "(SELECT id,n FROM docs) d"] {
+        let sql = format!("SELECT n,(SELECT count(*) FROM links l GROUP BY l.owner HAVING l.owner=d.id) FROM {source} ORDER BY n");
+        let expected = vec![
+            vec![Value::Integer(1), Value::Integer(2)],
+            vec![Value::Integer(2), Value::Null],
+        ];
+        assert_eq!(q(&c, &sql).rows, expected);
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected
+        );
+        assert_eq!(q(&c, &format!("SELECT n FROM {source} WHERE EXISTS(SELECT count(*) FROM links l GROUP BY l.owner HAVING l.owner=d.id)")).rows, vec![vec![Value::Integer(1)]]);
+    }
+    let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+    q(&c, "BEGIN");
+    q(&c, "UPDATE docs AS d SET n=n*10+coalesce((SELECT count(*) FROM links l GROUP BY l.owner HAVING l.owner=d.id),0)");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(12)], vec![Value::Integer(20)]]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+}

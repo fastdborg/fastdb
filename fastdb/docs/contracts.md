@@ -930,3 +930,9 @@ Simple expression subqueries reading a collection now resolve qualified outer co
 ## Derived outer fields in collection correlation (2026-09-07)
 
 The initial inner-collection correlation pass also resolves typed outer fields from derived SELECTs and enclosing CTEs. A compiler-only marker carries their encoded-value metadata across recursive lowering and is removed before execution; it adds no runtime conversion. Native columns retain their native treatment. This extends the preceding direct-outer-source restriction, while local inner WITH, compound queries and deeper correlation scopes remain open.
+
+## HAVING and unprojected collection keys (2026-09-07)
+
+Collection HAVING now decodes document scalar keys through the typed accessor and scalar unwrap. This preserves the key value while avoiding the pinned engine's reuse of an unavailable expression-group-key result when that key is absent from the SELECT list. The original scalar accessor remains in GROUP BY. Ordinary native SQL retains pinned engine behavior: for example, `SELECT count(*) FROM t GROUP BY lower(v) HAVING lower(v)='a'` can lose a matching group, while projecting `lower(v)` avoids that failure. Core group-expression collection only marks some expression keys as required outputs; no upstream file is changed here.
+
+The workaround is specific to document scalar accessors in HAVING. Broader derived/expression grouping and volatile-expression qualification remain open. A separate probe, `SELECT count(*),sum(n) FROM docs GROUP BY k HAVING k='A' ORDER BY sum(n)`, currently fails with a missing-column error; ordering by output ordinal succeeds. Aggregate ORDER BY alias resolution remains open.

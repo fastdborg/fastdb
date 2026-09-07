@@ -611,3 +611,67 @@ fn count_scalar_arguments_match_native_null_and_binary_semantics() {
         }
     }
 }
+
+#[test]
+fn having_nonprojected_record_group_key_preserves_matches() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE links",
+        "INSERT INTO links {owner:links:a,n:3}",
+        "INSERT INTO links {owner:links:a,n:4}",
+    ] {
+        q(&c, sql);
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT count(*) FROM links l GROUP BY l.owner HAVING l.owner=links:a"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}
+
+#[test]
+fn having_unprojected_document_keys_match_native_columns() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(k,n)");
+    for (key, n) in [
+        ("'A'", 1),
+        ("'A'", 2),
+        ("'a'", 3),
+        ("NULL", 4),
+        ("1", 5),
+        ("1.0", 6),
+    ] {
+        q(&c, &format!("INSERT INTO docs {{k:{key},n:{n}}}"));
+        q(&c, &format!("INSERT INTO baseline VALUES({key},{n})"));
+    }
+    for (group, having) in [
+        ("k", "k='A'"),
+        ("k", "k IS NULL"),
+        ("k", "k=1"),
+        ("k COLLATE NOCASE", "k COLLATE NOCASE='a'"),
+        ("k", "count(*)>1 AND k IS NOT NULL"),
+    ] {
+        let sql = |table| {
+            format!(
+                "SELECT count(*),sum(n) FROM {table} GROUP BY {group} HAVING {having} ORDER BY 2"
+            )
+        };
+        // Project the native key in the oracle to avoid the pinned engine's
+        // own unprojected expression-key bug (including COLLATE keys).
+        let expected = q(&c, &format!("SELECT {group},count(*),sum(n) FROM baseline GROUP BY {group} HAVING {having} ORDER BY 3")).rows.into_iter().map(|row| row.into_iter().skip(1).collect::<Vec<_>>()).collect::<Vec<_>>();
+        assert_eq!(q(&c, &sql("docs")).rows, expected, "{group}: {having}");
+        assert_eq!(
+            c.profile_select(&sql("docs"), &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected
+        );
+    }
+}

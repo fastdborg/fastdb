@@ -3603,6 +3603,33 @@ impl Connection {
                     }
                 }
                 scope.sql_argument(expr)?;
+                // The pinned engine can reuse an uninitialized group-key
+                // register for a function key referenced only by HAVING.
+                // Decode from the retained document instead: these helpers
+                // produce the same scalar key without matching that expression.
+                let mut rewrite_error = None;
+                turso_core::walk_expr_mut(expr, &mut |value| {
+                    if matches!(
+                        value,
+                        Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+                    ) {
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
+                    if let Expr::FunctionCall { name, .. } = value {
+                        if name.as_str() == "__fastdb_scalar" {
+                            *name = Name::exact("__fastdb_value".into());
+                            match expression(&format!("__fastdb_unwrap({value})")) {
+                                Ok(rewritten) => *value = rewritten,
+                                Err(error) => rewrite_error = Some(error),
+                            }
+                            return Ok(turso_core::WalkControl::SkipChildren);
+                        }
+                    }
+                    Ok(turso_core::WalkControl::Continue)
+                })?;
+                if let Some(error) = rewrite_error {
+                    return Err(error);
+                }
                 // Window source expressions retain their own name-resolution scope.
                 if !scope.sources.is_empty() {
                     scope.standalone_aliases.borrow_mut().clear();

@@ -1355,3 +1355,10 @@ The complete scoped check passed formatting, Clippy, 355 Rust tests, 44 Node/app
 Inner collection expression subqueries now retain typed fields from aliased derived SELECTs and enclosing CTEs. A compiler-only marker carries encoded-value metadata across recursive lowering and is removed before execution. Coverage includes record and nested predicates, scalar record/array/object projections, COUNT, EXISTS, IN, ordering, execute/profile and binary parameters. A failed INSERT SELECT preserves prior work, an integer retry succeeds and rollback removes both writes. Unaliased native derived queries retain native routing; their existing compound-pagination regression passes.
 
 The complete scoped check passed formatting, Clippy, 357 Rust tests, 44 Node/application tests and strict TypeScript, with the known trigger-cancellation gate still ignored. No upstream files changed. Local inner WITH, compounds, deeper correlation scopes and broader V1 release gates remain open.
+
+
+## HAVING with unprojected document keys (2026-09-07)
+
+Fixed silently lost groups when a collection HAVING predicate references a document group key omitted from the projection. HAVING uses the equivalent typed-accessor/unwrap form, avoiding the pinned engine's unavailable expression-key result. Native SQL and upstream files remain unchanged. Regressions cover record keys, NULL/numeric/text/NOCASE keys against projected native-key references, execute/profile, direct and derived outer correlation, EXISTS, indexed UPDATE and rollback.
+
+The complete scoped check passed formatting, Clippy, 360 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. The workaround specifically addresses document scalar accessors; broader grouping and volatile-expression qualification remain open. An additional aggregate ORDER BY expression probe fails with a missing-column error while its output ordinal works; see contracts.md for the reproducer. Full V1 remains incomplete.
