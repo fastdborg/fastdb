@@ -985,3 +985,43 @@ fn join_membership_writes_preserve_statement_atomicity() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn indexed_binary_parameters_preserve_record_separation() {
+    let (_db, c) = setup();
+    let record = q(&c, "SELECT ref FROM docs WHERE n=1").rows[0][0].clone();
+    let bytes = Value::Binary(
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"String\":\"b\"}}}"
+            .to_vec(),
+    );
+    let params = Parameters::from([("?1".into(), bytes), ("?2".into(), record)]);
+    c.execute(
+        "UPDATE docs SET data=?1 WHERE n=1",
+        &Parameters::from([("?1".into(), params["?1"].clone())]),
+    )
+    .unwrap();
+    c.execute(
+        "UPDATE docs SET data=?2 WHERE n=2",
+        &Parameters::from([("?2".into(), params["?2"].clone())]),
+    )
+    .unwrap();
+    q(&c, "CREATE INDEX docs_data ON docs(data)");
+    for predicate in ["data IN (?1,?2)", "data IN ((?1),(?2))", "data IN (+?1,?2)"] {
+        let sql = format!("SELECT n FROM docs WHERE {predicate} ORDER BY n");
+        let expected = vec![vec![Value::Integer(1)], vec![Value::Integer(2)]];
+        assert_eq!(c.execute(&sql, &params).unwrap().rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &params).unwrap().result.rows,
+            expected,
+            "{sql}"
+        );
+    }
+    for (name, n) in [("?1", 1), ("?2", 2)] {
+        let bound = Parameters::from([(name.into(), params[name].clone())]);
+        let sql = format!("SELECT n FROM docs WHERE data={name}");
+        assert_eq!(
+            c.execute(&sql, &bound).unwrap().rows,
+            vec![vec![Value::Integer(n)]]
+        );
+    }
+}
