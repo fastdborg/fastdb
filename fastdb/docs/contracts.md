@@ -944,3 +944,7 @@ ORDER BY expressions that match a native-valued collection projection now reuse 
 ## Function-valued document group keys (2026-09-07)
 
 The HAVING workaround now uses private alternate names for the existing document-scalar and SQL-scalar implementations. This extends it to keys such as `lower(k)` while retaining raw binary payloads for SQL functions. It also replaces the prior typed-accessor/unwrap sequence for direct document keys, avoiding that extra conversion. Projected aggregate expressions, including aggregates inside output arithmetic, are retained for engine reuse; scalar multiargument MIN/MAX remain eligible for rewriting. General volatile/grouping qualification is still open.
+
+## Aggregate spelling and HAVING reuse (2026-09-07)
+
+Projected aggregate matching now compares the aggregate name case-insensitively, preventing extra aggregation when SELECT uses `SUM` and HAVING uses `sum`. Its argument AST remains unchanged: nested function spelling, literals and parameters are not normalized by this pass. This follows the pinned engine's distinction between aggregate-name matching and argument-expression equivalence. The callback-count regression includes mixed-case aggregate spelling across HAVING aliases/expressions, ordering and profiling.

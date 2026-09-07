@@ -1659,3 +1659,10 @@ Projected aggregate evaluation qualification (2026-09-07): a test-only nondeterm
 
 
 Distinct grouped pagination qualification (2026-09-07): differential execute/profile coverage combines SUM/arithmetic/COUNT, DISTINCT, ascending/descending aggregate ordering and page offsets through empty pages, including NULL and integer/real equivalents. Numeric equivalents are compared logically because the native plan may retain a different integer/real representative; no exact representative-type guarantee is added. A grouped DISTINCT INSERT SELECT CHECK failure preserves prior work, a corrected retry succeeds, index integrity passes and rollback removes all writes. The focused regression, formatting and focused Clippy pass. This extends focused evidence after the recorded 364-Rust/44-Node combined run; full V1 remains incomplete.
+
+
+## Case-insensitive projected aggregate reuse (2026-09-07)
+
+Fixed duplicate aggregation when a projected SUM and HAVING sum differ only in the aggregate name's case. Reuse keys normalize only the aggregate name, preserving its argument AST and the pinned engine's argument-equivalence behavior. The callback-count regression now covers mixed aggregate spelling with aliases, repeated expressions, ordering and profiling, retaining one callback per input row like the native reference. A probe changing nested callback spelling showed that the pinned native engine itself can use separate aggregates there; this change does not broaden that equivalence.
+
+The complete scoped check passed formatting, Clippy, 366 Rust tests, 44 Node/application tests and strict TypeScript, with one known trigger-cancellation gate ignored. No upstream files changed. Broader grouping, correlation, resource and full V1 release gates remain open.

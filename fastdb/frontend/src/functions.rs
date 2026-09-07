@@ -1107,7 +1107,11 @@ mod grouped_evaluation_tests {
         ] {
             c.execute(sql, &params).unwrap();
         }
-        for output in ["sum(n+grouped_tick())", "sum(n+grouped_tick())+1"] {
+        for output in [
+            "sum(n+grouped_tick())",
+            "sum(n+grouped_tick())+1",
+            "SUM(n+grouped_tick())",
+        ] {
             for having in ["total>0", "sum(n+grouped_tick())>0"] {
                 for order in ["total", "sum(n+grouped_tick())"] {
                     let sql = |table| {

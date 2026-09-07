@@ -24,6 +24,16 @@ impl Source {
             })
     }
 }
+// Match the aggregate's case-insensitive name while preserving its argument
+// AST, whose equivalence is still determined by the pinned engine.
+fn aggregate_reuse_key(expr: &Expr) -> String {
+    let mut expr = expr.clone();
+    if let Expr::FunctionCall { name, .. } | Expr::FunctionCallStar { name, .. } = &mut expr {
+        *name = Name::exact(name.as_str().to_ascii_lowercase());
+    }
+    expr.to_string()
+}
+
 type CteSources = std::collections::BTreeMap<String, Option<Source>>;
 #[derive(Clone, PartialEq, Eq)]
 enum SubqueryAffinity {
@@ -3637,7 +3647,7 @@ impl Connection {
                                 _ => false,
                             };
                             if aggregate {
-                                projected_calls.insert(expr.to_string());
+                                projected_calls.insert(aggregate_reuse_key(expr));
                                 return Ok(turso_core::WalkControl::SkipChildren);
                             }
                             Ok(turso_core::WalkControl::Continue)
@@ -3647,7 +3657,11 @@ impl Connection {
                 // These aliases use the same implementations and retain binary
                 // payload semantics without matching the group-key expression.
                 turso_core::walk_expr_mut(expr, &mut |value| {
-                    if projected_calls.contains(&value.to_string()) {
+                    if matches!(
+                        value,
+                        Expr::FunctionCall { .. } | Expr::FunctionCallStar { .. }
+                    ) && projected_calls.contains(&aggregate_reuse_key(value))
+                    {
                         return Ok(turso_core::WalkControl::SkipChildren);
                     }
                     if matches!(
