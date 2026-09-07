@@ -976,3 +976,7 @@ Source-free scalar SELECT wrappers without local WITH or compound arms now carry
 ## Source-free scalar WHERE correlation (2026-09-08)
 
 Source-free scalar SELECT wrappers now carry the outer logical scope into subqueries in WHERE as well as projections. This fixes false NULL results when a correlated collection EXISTS should admit the scalar row. Logical EXISTS lowering consistently uses a scalar SELECT wrapper, avoiding the pinned engine's source-free semi-join preparation panic while retaining native EXISTS semantics. Execute/profile regressions cover direct/derived outer sources, COUNT and direct/CTE-backed EXISTS filters. Broader table-bearing scopes and resource qualification remain open.
+
+## Logical source-free projection binding (2026-09-08)
+
+Source-free scalar queries already selected for logical lowering now bind qualified outer fields in their projections and filters. This admits document helpers such as `array::append(d.v,2)` alongside correlated EXISTS filtering without leaving the outer field unresolved. The routing check follows explicit private logical expressions and typed parameters; ordinary native scalar routing is retained. A regression verifies false filters suppress invalid helper projections, admitted invalid values reject, and corrected filters permit retry through execute/profile. Broader expression/scope/resource qualification remains open.

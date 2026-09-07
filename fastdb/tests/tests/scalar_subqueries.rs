@@ -3719,3 +3719,36 @@ fn source_free_where_subqueries_retain_outer_record_correlation() {
         }
     }
 }
+
+#[test]
+fn source_free_correlated_filters_skip_invalid_projections() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1,v:[]}",
+        "INSERT INTO docs {id:docs:b,n:2,v:1}",
+        "INSERT INTO links {owner:docs:a}",
+    ] {
+        q(&c, sql);
+    }
+    let sql = "SELECT n,(SELECT array::append(d.v,2) WHERE EXISTS(SELECT 1 FROM links l WHERE l.owner=d.id)) FROM docs d ORDER BY n";
+    let expected = vec![
+        vec![Value::Integer(1), Value::Array(vec![Value::Integer(2)])],
+        vec![Value::Integer(2), Value::Null],
+    ];
+    assert_eq!(q(&c, sql).rows, expected);
+    assert_eq!(
+        c.profile_select(sql, &Parameters::new())
+            .unwrap()
+            .result
+            .rows,
+        expected
+    );
+    q(&c, "INSERT INTO links {owner:docs:b}");
+    assert!(c.execute(sql, &Parameters::new()).is_err());
+    assert!(c.profile_select(sql, &Parameters::new()).is_err());
+    q(&c, "DELETE FROM links WHERE owner=docs:b");
+    assert_eq!(q(&c, sql).rows, expected);
+}

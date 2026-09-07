@@ -2491,7 +2491,37 @@ impl Connection {
         }
         // A source-free scalar wrapper introduces no table aliases. Carry
         // the enclosing logical scope into its projected and filtering subqueries.
-        if inner.with.is_none() && inner.body.compounds.is_empty() {
+        if inner.with.is_none()
+            && inner.body.compounds.is_empty()
+            && matches!(&inner.body.select, OneSelect::Select { from: None, .. })
+        {
+            let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
+            let logical = fastql_parser::tokenize(&sql)?.iter().any(|token| {
+                (token.kind == fastql_parser::Kind::Word
+                    && token.text.starts_with("__fastdb_")
+                    && token.text != "__fastdb_path")
+                    || (token.kind == fastql_parser::Kind::Parameter
+                        && params.get(&token.text).is_some_and(|value| {
+                            matches!(
+                                value,
+                                Value::Boolean(_)
+                                    | Value::Record(_)
+                                    | Value::Object(_)
+                                    | Value::Array(_)
+                                    | Value::Vector(_)
+                                    | Value::Binary(_)
+                            )
+                        }))
+            });
+            let outer_scope = Scope {
+                qualified_only: true,
+                expression_subqueries: Default::default(),
+                sources: correlation_sources.to_vec(),
+                params: params.clone(),
+                consumed: Default::default(),
+                fetched_aliases: Default::default(),
+                standalone_aliases: Default::default(),
+            };
             if let OneSelect::Select {
                 from: None,
                 columns,
@@ -2524,6 +2554,30 @@ impl Connection {
                                 failure = Some(error);
                             }
                             return Ok(turso_core::WalkControl::SkipChildren);
+                        }
+                        if logical {
+                            let replacement = outer_scope.field(expr).and_then(|field| {
+                                field
+                                    .map(|(i, path)| {
+                                        let value = outer_scope.accessor(i, &path, true)?;
+                                        if outer_scope.sources[i].derived.is_some() {
+                                            expression(&format!(
+                                                "__fastdb_correlated_value({value})"
+                                            ))
+                                        } else {
+                                            Ok(value)
+                                        }
+                                    })
+                                    .transpose()
+                            });
+                            match replacement {
+                                Ok(Some(value)) => {
+                                    *expr = value;
+                                    return Ok(turso_core::WalkControl::SkipChildren);
+                                }
+                                Err(error) => failure = Some(error),
+                                Ok(None) => {}
+                            }
                         }
                         Ok(turso_core::WalkControl::Continue)
                     })?;

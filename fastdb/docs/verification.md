@@ -1732,3 +1732,10 @@ Scalar-wrapper correlated write qualification (2026-09-08): a parameterized mult
 Extended source-free scalar wrapper scope propagation to WHERE subqueries, fixing false NULL results for matching outer record references. Logical EXISTS consistently uses a scalar SELECT wrapper to avoid the pinned source-free semi-join preparation panic while retaining native EXISTS behavior. Execute/profile regressions cover direct/derived outer sources, correlated counts and direct/CTE-backed EXISTS filters.
 
 The complete scoped check passed formatting, Clippy, 378 Rust tests, 44 Node/application tests and strict TypeScript, including existing callback and write-rollback regressions. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/resource and full V1 release qualification remain open.
+
+
+## Logical source-free projection binding (2026-09-08)
+
+Source-free scalar queries selected for logical lowering now bind qualified outer document fields in projections and filters. The regression combines array::append with correlated EXISTS: excluded invalid values are not evaluated, admitted invalid values reject, and correcting the filter permits retry. Ordinary native scalar routing remains unchanged.
+
+The complete scoped check passed formatting, Clippy, 379 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; broader expression/scope/resource and full V1 release qualification remain open.
