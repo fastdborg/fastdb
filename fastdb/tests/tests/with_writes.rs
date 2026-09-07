@@ -144,3 +144,29 @@ fn pinned_same_name_cte_write_resolution_differs_from_candidate_select() {
         );
     }
 }
+
+#[test]
+fn native_cte_names_can_shadow_collections_without_hiding_table_access() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {id:docs:a,n:9}");
+    for sql in [
+        "WITH docs AS (SELECT 2 AS n) SELECT n FROM docs",
+        "WITH docs AS (SELECT 2 AS n), chosen AS (SELECT n FROM docs) SELECT n FROM chosen",
+        "WITH docs AS (SELECT 2 AS n) SELECT n FROM (SELECT n FROM docs) AS chosen",
+    ] {
+        assert_eq!(q(&c, sql).rows, vec![vec![Value::Integer(2)]]);
+        assert_eq!(
+            c.profile_select(sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            vec![vec![Value::Integer(2)]]
+        );
+    }
+    assert_eq!(
+        q(&c, "SELECT n FROM docs").rows,
+        vec![vec![Value::Integer(9)]]
+    );
+}

@@ -877,6 +877,9 @@ test('leading WITH updates and deletes work in both clients', async () => {
   for (const db of [new Database(),await AsyncDatabase.open()]) {
     try {
       await db.execute('CREATE TABLE docs');
+      const cte = 'WITH docs AS (SELECT 2 AS n), chosen AS (SELECT n FROM docs) SELECT n FROM chosen';
+      assert.deepEqual(await db.all(cte), [[2n]]);
+      assert.deepEqual((await db.profileSelect(cte)).result.rows, [[2n]]);
       await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
       await db.execute('INSERT INTO docs(n) VALUES(1),(2),(3)');
       await db.execute('BEGIN');

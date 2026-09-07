@@ -1152,3 +1152,10 @@ The same-name chained CTE development probe still fails preparation with no such
 ## Write-target alias oracle — 2026-09-07
 
 Extended the existing native same-name regression with UPDATE target aliases. `cargo test --locked -p fastdb-tests --test with_writes` passed both tests (`/tmp/fastdb-with-alias-oracle.log`): native-named CTE + AS target updates only 2; target-named CTE + AS target updates all three rows. A live derived-candidate SELECT probe retained SELECT's one-row behavior. Inspected pinned update/delete/planner code to identify separate target and CTE reference scopes. Test-package Clippy and formatting passed. No production change; distinct test count remains 290 Rust, with prior 34 Node evidence. Collection same-name resolution remains open.
+
+
+## CTE-only SELECT guard correction — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-guard-final-check.log`): formatting, Clippy, 292 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Final direct guard regression rerun: `/tmp/fastdb-cte-reserved-final.log`, passed. Frontend Clippy rerun covers the final reserved-name handling. Simple/chained/derived CTE reads and profiles now work when a CTE shares a collection name. Direct guard tests retain actual schema and internal references, including self/forward and nested physical references.
+
+An initial integration assertion incorrectly expected valid EXPLAIN collection lowering to fail; protection was instead tested directly at guard_native_sql. Redaction affects only the guard AST; original SQL executes unchanged. Expression qualifiers and deeper scopes remain conservative, and the separate same-name write-context fix remains open.

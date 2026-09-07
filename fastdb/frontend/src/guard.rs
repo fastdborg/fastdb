@@ -44,7 +44,12 @@ fn tokens_inner(sql: &str, native: bool) -> crate::Result<Vec<fastql_parser::Tok
         Cmd::Stmt(s) | Cmd::Explain(s) | Cmd::ExplainQueryPlan(s) => s,
     };
     match statement {
-        Stmt::Select(s) => select(s)?,
+        Stmt::Select(s) => {
+            if native {
+                redact_cte_sources(s, &std::collections::BTreeSet::new());
+            }
+            select(s)?;
+        }
         Stmt::Insert {
             with,
             body,
@@ -241,6 +246,59 @@ fn select(select: &mut Select) -> Result<()> {
     Ok(())
 }
 
+// Guard-only proof for CTE declarations and unqualified FROM references.
+// Leave qualified table names and expression qualifiers visible: uncertain
+// roles remain conservatively guarded. This AST is never executed.
+fn redact_cte_sources(select: &mut Select, inherited: &std::collections::BTreeSet<String>) {
+    fn source(table: &mut SelectTable, visible: &std::collections::BTreeSet<String>) {
+        match table {
+            SelectTable::Table(name, _, _)
+                if name.db_name.is_none()
+                    && visible.contains(&name.name.as_str().to_ascii_lowercase()) =>
+            {
+                name.name = Name::exact(String::new());
+            }
+            SelectTable::Select(inner, _) => redact_cte_sources(inner, visible),
+            SelectTable::Sub(from, _) => sources(from, visible),
+            _ => {}
+        }
+    }
+    fn sources(from: &mut FromClause, visible: &std::collections::BTreeSet<String>) {
+        source(&mut from.select, visible);
+        for join in &mut from.joins {
+            source(&mut join.table, visible);
+        }
+    }
+    fn core(body: &mut OneSelect, visible: &std::collections::BTreeSet<String>) {
+        if let OneSelect::Select {
+            from: Some(from), ..
+        } = body
+        {
+            sources(from, visible);
+        }
+    }
+    let mut visible = inherited.clone();
+    if let Some(with) = &mut select.with {
+        if with.recursive {
+            return;
+        }
+        for cte in &mut with.ctes {
+            // Only preceding definitions are known in this body. Do not hide a
+            // self/forward reference that could denote an actual schema table.
+            redact_cte_sources(&mut cte.select, &visible);
+            let name = cte.tbl_name.as_str().to_ascii_lowercase();
+            if !name.starts_with("__fastdb_") && name != "writable_schema" {
+                visible.insert(name);
+                cte.tbl_name = Name::exact(String::new());
+            }
+        }
+    }
+    core(&mut select.body.select, &visible);
+    for compound in &mut select.body.compounds {
+        core(&mut compound.select, &visible);
+    }
+}
+
 fn column_definition(column: &mut ColumnDefinition) -> Result<()> {
     for constraint in &mut column.constraints {
         match &mut constraint.constraint {
@@ -298,4 +356,31 @@ fn trigger_command(command: &mut TriggerCmd) -> Result<()> {
         TriggerCmd::Delete { where_clause, .. } => optional(where_clause)?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cte_guard_tests {
+    #[test]
+    fn cte_redaction_preserves_real_schema_and_internal_references() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("CREATE TABLE docs", &crate::Parameters::new())
+            .unwrap();
+        c.guard_native_sql(
+            "WITH docs AS (SELECT 2 AS n), chosen AS (SELECT n FROM docs) SELECT n FROM chosen",
+        )
+        .unwrap();
+        for sql in [
+            "WITH docs AS (SELECT 2 AS n) SELECT * FROM main.docs",
+            "WITH alias AS (SELECT * FROM main.docs) SELECT * FROM alias",
+            "WITH docs AS (SELECT * FROM __fastdb_catalog) SELECT * FROM docs",
+            "WITH __fastdb_catalog AS (SELECT 1 AS n) SELECT n FROM __fastdb_catalog",
+            "WITH writable_schema AS (SELECT 1 AS n) SELECT n FROM writable_schema",
+            "WITH chosen AS (SELECT * FROM docs), docs AS (SELECT 2 AS n) SELECT * FROM chosen",
+            "WITH docs AS (SELECT * FROM docs) SELECT * FROM docs",
+            "WITH docs AS (SELECT 2 AS n) SELECT (SELECT * FROM main.docs)",
+        ] {
+            assert!(c.guard_native_sql(sql).is_err(), "{sql}");
+        }
+    }
 }

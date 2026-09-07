@@ -868,3 +868,10 @@ Scoped checks passed formatting, Clippy, 289 Rust tests, thirty-four Node tests 
 ## Same-name write-context baseline (2026-09-07)
 
 A pinned native regression demonstrates that same-name CTE resolution differs between UPDATE/DELETE and a candidate SELECT in the tested chained form: writes affect all three base rows, while SELECT matches only the CTE's value 2. Both with_writes tests passed, including rollback restoration. Collection lowering must preserve this write-context behavior; the existing same-name preparation failure remains open. This evidence rules out simply treating successful SELECT rewriting as sufficient correctness.
+
+
+## Native CTE names in SELECT guarding (2026-09-07)
+
+The native guard now redacts known nonrecursive CTE declarations and unqualified FROM references in its inspection-only AST. CTE-only SELECT/profile queries sharing a collection name pass in simple, chained and derived-source forms; original SQL is unchanged. Direct guard tests retain schema-qualified, internal/reserved, self/forward and nested physical references. Reserved CTE names are never redacted. Qualified expression aliases and deeper scope coverage remain conservative; the same-name UPDATE/DELETE gap is separate and still open.
+
+Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests and strict TypeScript. The final reserved-name guard regression was rerun separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
