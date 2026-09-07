@@ -75,6 +75,29 @@ impl Connection {
         self.with_cancellation(token, || self.check_collection_integrity(table, limits))
     }
 
+    /// Export a complete transfer payload with cooperative cancellation.
+    /// Serialization is not interrupted; no partial payload is returned.
+    pub fn export_documents_cancellable(
+        &self,
+        table: &str,
+        format: crate::TransferFormat,
+        token: &CancellationToken,
+    ) -> Result<String> {
+        self.with_cancellation(token, || self.export_documents(table, format))
+    }
+
+    /// Import atomically with cooperative cancellation. Parsing has no fixed
+    /// cancellation latency; interrupted writes use the import's rollback path.
+    pub fn import_documents_cancellable(
+        &self,
+        table: &str,
+        input: &str,
+        format: crate::TransferFormat,
+        token: &CancellationToken,
+    ) -> Result<usize> {
+        self.with_cancellation(token, || self.import_documents(table, input, format))
+    }
+
     pub(crate) fn with_cancellation<T>(
         &self,
         token: &CancellationToken,
@@ -260,6 +283,90 @@ mod tests {
                     );
                 }
                 *TOKEN.lock().unwrap() = None;
+            }
+        }
+    }
+
+    #[test]
+    fn transfer_cancellation_preserves_atomic_import_and_prior_work() {
+        for format in [crate::TransferFormat::Json, crate::TransferFormat::Ndjson] {
+            for outer in [false, true] {
+                let source = Database::open(":memory:").unwrap();
+                let source = source.connect().unwrap();
+                q(&source, "CREATE TABLE docs");
+                q(&source, "INSERT INTO docs(n) VALUES (1),(2),(3)");
+                let data = source.export_documents("docs", format).unwrap();
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                q(&c, "CREATE TABLE docs");
+                q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+                if outer {
+                    q(&c, "BEGIN");
+                }
+                q(&c, "INSERT INTO docs {id:docs:prior,n:9}");
+                let state = c.transaction_state();
+                let prior = q(&c, "SELECT id,n FROM docs").rows;
+                let fired = arm_after_write(&c);
+                let result = c.import_documents("docs", &data, format);
+                c.engine.set_progress_handler(0, None);
+                assert!(fired.load(Ordering::SeqCst));
+                assert_eq!(result.unwrap_err().code(), "FDB_CANCELLED");
+                assert_eq!(c.transaction_state(), state);
+                assert_eq!(q(&c, "SELECT id,n FROM docs").rows, prior);
+                assert_eq!(
+                    c.check_collection_integrity("docs", Default::default())
+                        .unwrap()
+                        .documents,
+                    1
+                );
+                let cancelled = CancellationToken::new();
+                cancelled.cancel();
+                assert_eq!(
+                    c.import_documents_cancellable("docs", "invalid", format, &cancelled)
+                        .unwrap_err()
+                        .code(),
+                    "FDB_CANCELLED"
+                );
+                assert_eq!(
+                    c.export_documents_cancellable("docs", format, &cancelled)
+                        .unwrap_err()
+                        .code(),
+                    "FDB_CANCELLED"
+                );
+                c.engine.set_progress_handler(1, Some(Box::new(|| true)));
+                let export = c.export_documents("docs", format);
+                c.engine.set_progress_handler(0, None);
+                assert_eq!(export.unwrap_err().code(), "FDB_CANCELLED");
+                let fresh = CancellationToken::new();
+                assert_eq!(
+                    c.import_documents_cancellable("docs", &data, format, &fresh)
+                        .unwrap(),
+                    3
+                );
+                let complete = c
+                    .export_documents_cancellable("docs", format, &fresh)
+                    .unwrap();
+                assert_eq!(complete, c.export_documents("docs", format).unwrap());
+                assert_eq!(
+                    c.check_collection_integrity("docs", Default::default())
+                        .unwrap()
+                        .documents,
+                    4
+                );
+                fresh.cancel();
+                assert_eq!(
+                    q(&c, "SELECT count(*) FROM docs").rows,
+                    vec![vec![Value::Integer(4)]]
+                );
+                if outer {
+                    q(&c, "ROLLBACK");
+                    assert_eq!(
+                        c.check_collection_integrity("docs", Default::default())
+                            .unwrap()
+                            .documents,
+                        0
+                    );
+                }
             }
         }
     }

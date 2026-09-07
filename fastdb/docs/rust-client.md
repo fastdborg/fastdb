@@ -79,3 +79,6 @@ Cancellation is cooperative and completion can win the race. Compilation, bundle
 
 
 `execute_batch_cancellable(script, &token)` and `visit_batch_cancellable(script, &token, visitor)` apply cancellation to a whole script. Pre-cancellation returns FDB_CANCELLED before splitting. Once split, each statement gets a cancellable execution report; cancellation during or between statements becomes the final error entry, retaining completed reports and their effects. Visitor callbacks are not interrupted, and cancellation requested by a visitor stops the next statement. A visitor returning false still stops normally. No batch transaction is implied; inspect transaction observations and explicitly roll back if needed.
+
+
+`import_documents_cancellable(table, input, format, &token)` and `export_documents_cancellable(table, format, &token)` use the same cooperative token contract. Pre-cancellation precedes parsing and catalog access. An interrupted import follows its existing atomic rollback path, preserving prior outer work; an export returns a complete payload or an error. Parsing, document conversion and serialization have no fixed cancellation latency. Completion can win a race, so use the returned outcome and transaction state rather than assuming an abort rolled back.

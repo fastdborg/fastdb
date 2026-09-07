@@ -782,3 +782,8 @@ A VM-step regression covers duplicate and NULL keys at 64/256 documents. Diagnos
 ## Cancellable batches
 
 Rust cancellable batch execution/visitation and Node AsyncDatabase.executeBatch's optional AbortSignal preserve ordinary batch semantics. Pre-cancellation precedes splitting and produces an outer error. After splitting, a cancelled statement is the last report, with its UTF-8 byte offset and before/after transaction state; earlier successful effects remain. Cancellation is checked at each statement boundary and cooperatively within engine execution, with cleanup allowed after interruption. Visitor callbacks are outside interruption. Completion, including a final commit, can win the cancellation race. No implicit rollback, deadline or callback isolation is promised.
+
+
+## Cancellable Rust document transfers
+
+The cancellable import/export methods reject a pre-cancelled token before transfer parsing or catalog access and poll active tokens at engine progress boundaries. Import retains its atomic scope: a failure during writes rolls back this import's changes while preserving prior outer work. Export returns a complete string or an error, with no partial payload in an error result. Parsing, conversion and serialization are not directly interrupted and have no fixed latency bound. A cancellation racing completion may still return success. Calls on the connection remain serialized.
