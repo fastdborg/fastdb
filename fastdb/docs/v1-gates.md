@@ -132,3 +132,6 @@ Node FastDBError and isFastDBError now support runtime recognition and safe narr
 
 
 Correlated single-column typed DISTINCT now deduplicates logical values independently of projection-alias sorting, correcting source-column pagination and unordered result exhaustion. Native differential execute/profile coverage and the full scoped check pass: 332 Rust tests, 42 Node/application tests, formatting, Clippy and strict TypeScript; one known trigger gate remains ignored. Broader correlation/type/resource and release gates remain open.
+
+
+Mixed compound-arm collation remains a reproduced query-correctness gap: see mixed-compound-collation.sql and the corresponding verification entry. Native literal-left IS and native-left IN choose differently for the covered BINARY/NOCASE UNION ALL source; current logical lowering disagrees with both. A single rightmost-arm collation override does not close this gate.

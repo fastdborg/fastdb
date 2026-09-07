@@ -1673,3 +1673,10 @@ Native derived metadata evaluation qualification (2026-09-08): expanded the cont
 
 
 Compound native derived collation qualification (2026-09-08): expanded the mixed comparison matrix to UNION ALL with disjoint arms and UNION with duplicate arms, using the same declared NOCASE column in both arms. Equality, IS, ranges, membership/NULL cases and explicit overrides match native literal references through execute/profile. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests. Mixed-collation compound arms, broader projection/scope/resource and full V1 gates remain open.
+
+
+## Mixed compound-arm collation diagnostic (2026-09-08)
+
+An expanded probe found an unresolved mixed-arm case. For a native UNION ALL whose first label projection explicitly uses BINARY and whose second inherits NOCASE, native literal-left IS matches A against a, while native label IN (a) does not. Current logical lowering returns the opposite membership decisions for a document string in these two forms. See mixed-compound-collation.sql for the executable reproducer; the existing CLI ran it successfully and returned native rows [1]/[] versus logical []/[1,1].
+
+A proposed IS-only override was discarded because it left IN incorrect. Prepared compound projection accessors expose the rightmost arm, which is insufficient as a universal collation rule; a fix must preserve operator-specific pinned behavior and verify both arm orders. Production code and passing regression coverage remain unchanged. The latest full scoped evidence remains 403 Rust/44 Node tests; mixed-arm collation and full V1 release qualification remain open.
