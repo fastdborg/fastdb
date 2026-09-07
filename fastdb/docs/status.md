@@ -1204,3 +1204,6 @@ Transport error-guard qualification (2026-09-07): the isolated worker fixture no
 
 
 Task-tracker initialization cleanup (2026-09-07): openTracker now preserves both migration and close failures in AggregateError, matching the example's existing transaction-cleanup policy. Successful cleanup rethrows the original migration error. A simulated-client regression verifies error identity/order and exactly one close attempt; both application tests pass, including real persistent atomic task completion. Native interrupted-close durability and full V1 remain open.
+
+
+Task transaction cleanup qualification (2026-09-07): simulated statement failures verify that completeTask does not issue ROLLBACK after a rejected BEGIN, attempts cleanup after UPDATE/INSERT/COMMIT failures, and retains original plus rollback errors in order. All three application tests pass, including the real-engine persistence and atomic completion case. Simulated commit failure is control-flow evidence, not proof of a native commit outcome. Full V1 remains incomplete.

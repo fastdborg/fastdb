@@ -55,3 +55,34 @@ test('tracker initialization retains migration and cleanup failures',async()=>{
     }
   } finally {AsyncDatabase.open=originalOpen;}
 });
+
+test('task completion only rolls back a transaction it started',async()=>{
+  const {Record}=require('../../bindings/node/index.cjs');
+  const id=new Record('tasks','first');
+  for(const failAt of ['BEGIN','UPDATE','INSERT','COMMIT']) {
+    const original=new Error(`failed ${failAt}`);
+    const calls=[];
+    const db={execute:async sql=>{
+      const operation=sql.split(' ')[0]; calls.push(operation);
+      if(operation===failAt)throw original;
+      return {affected:1n};
+    }};
+    await assert.rejects(completeTask(db,id),error=>error===original);
+    assert.deepEqual(calls,failAt==='BEGIN'?['BEGIN']:
+      failAt==='UPDATE'?['BEGIN','UPDATE','ROLLBACK']:
+      failAt==='INSERT'?['BEGIN','UPDATE','INSERT','ROLLBACK']:
+      ['BEGIN','UPDATE','INSERT','COMMIT','ROLLBACK']);
+  }
+  const original=new Error('audit insert failed');
+  const cleanup=new Error('rollback failed');
+  const db={execute:async sql=>{
+    if(sql.startsWith('INSERT'))throw original;
+    if(sql==='ROLLBACK')throw cleanup;
+    return {affected:1n};
+  }};
+  await assert.rejects(completeTask(db,id),error=>{
+    assert(error instanceof AggregateError);
+    assert.deepEqual(error.errors,[original,cleanup]);
+    return true;
+  });
+});
