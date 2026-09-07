@@ -1247,3 +1247,72 @@ fn native_membership_compound_arms_resolve_outer_cte_parameters() {
         assert!(c.execute(&query("docs"), &Parameters::new()).is_err());
     }
 }
+
+#[test]
+fn cte_membership_compound_inserts_preserve_prior_work_and_retry() {
+    for outer in [false, true] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(&c, "INSERT INTO docs(n) VALUES (1),(2)");
+        q(&c, "CREATE TABLE rhs(n INTEGER)");
+        q(&c, "INSERT INTO rhs VALUES (1),(2)");
+        q(&c, "CREATE TABLE target");
+        q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+        if outer {
+            q(&c, "BEGIN");
+        }
+        q(&c, "INSERT INTO target {id:target:prior,n:9}");
+        let state = c.transaction_state();
+        let script="WITH r AS (SELECT n FROM rhs WHERE n>$min) INSERT INTO target(n) SELECT n IN (SELECT n FROM r) FROM docs UNION ALL SELECT 8";
+        let missing = c.execute(script, &Parameters::new()).unwrap_err();
+        assert_eq!(missing.code(), "FDB_PARAMETER");
+        let conflict = c.execute(
+            script,
+            &Parameters::from([("$min".into(), Value::Integer(0))]),
+        );
+        assert!(conflict.is_err());
+        assert_eq!(c.transaction_state(), state);
+        assert_eq!(
+            q(&c, "SELECT n FROM target").rows,
+            vec![vec![Value::Integer(9)]]
+        );
+        assert_eq!(
+            c.check_collection_integrity("target", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+        let retry = c
+            .execute(
+                script,
+                &Parameters::from([("$min".into(), Value::Integer(1))]),
+            )
+            .unwrap();
+        assert_eq!(retry.affected, 3);
+        assert_eq!(
+            q(&c, "SELECT n FROM target ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(0)],
+                vec![Value::Integer(1)],
+                vec![Value::Integer(8)],
+                vec![Value::Integer(9)]
+            ]
+        );
+        assert_eq!(
+            c.check_collection_integrity("target", Default::default())
+                .unwrap()
+                .index_entries,
+            4
+        );
+        if outer {
+            q(&c, "ROLLBACK");
+            assert_eq!(
+                c.check_collection_integrity("target", Default::default())
+                    .unwrap()
+                    .documents,
+                0
+            );
+        }
+    }
+}

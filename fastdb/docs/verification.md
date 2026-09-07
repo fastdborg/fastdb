@@ -1011,3 +1011,10 @@ The minimal fix passed four set-operator comparisons (`/tmp/fastdb-membership-co
 A live probe failed to resolve an outer native CTE from membership subqueries in compound collection arms. Metadata preparation now receives enclosing CTE definitions, and generated arm CTEs are hoisted into the compound scope with separate membership names. The differential test passes parameterized outer CTE membership for UNION ALL, UNION, INTERSECT and EXCEPT. It also requires missing bindings to fail. The first full run still failed that assertion because native CTE consumed tracking only included rewritten binary parameters; logical compound validation now collects enclosing CTE parameter tokens explicitly. The corrected focused run passed (`/tmp/fastdb-membership-cte-final-focused.log`).
 
 Final `fastdb/scripts/check.sh` passed formatting, Clippy, 275 Rust tests, thirty-one Node tests and strict TypeScript (`/tmp/fastdb-membership-cte-final-check.log`). One known trigger-interruption gate remains ignored. Temporary preparation logging was removed. No upstream files or dependencies changed; deeper nested/correlated scope and full V1 remain incomplete.
+
+
+## CTE membership compound write atomicity — 2026-09-07
+
+The focused INSERT SELECT regression passed both autocommit and explicit transactions (`/tmp/fastdb-cte-membership-insert.log`). It combines an outer parameterized native CTE, native membership and UNION ALL; checks FDB_PARAMETER for missing input, uniqueness-failure rollback with prior data/indexes retained, exact three-row retry and explicit rollback.
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 276 Rust tests, thirty-one Node tests and strict TypeScript (`/tmp/fastdb-cte-membership-insert-check.log`). One known trigger-interruption gate remains ignored. No production/upstream changes; broader query/write combinations and full V1 remain incomplete.
