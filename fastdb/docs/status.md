@@ -684,3 +684,8 @@ Final scoped checks passed formatting, Clippy, 271 Rust tests, thirty Node tests
 The Node entrypoint and worker share a packaged native loader. Missing or unloadable addons throw FDB_NATIVE_LOAD with platform/architecture/Node identity, source-build guidance and the original cause. The installed-package smoke verifies the new runtime file inventory and missing/invalid-addon failures inside its temporary consumer installation. Automatic platform selection, prebuilds and broader platform/Node qualification remain open.
 
 Installed-package smoke and full scoped checks passed: formatting, Clippy, 271 Rust tests, thirty Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Installed cancellation API coverage (2026-09-07)
+
+The offline installed-package smoke now covers pre-aborted calls for every signalled async API, preserved active work, listener cleanup, fresh-token batch results and late cancellation isolation. All signal signatures compile against declarations in the installed tarball. The Linux x64/Node 24.19.0 smoke passed; this does not qualify other runtimes/platforms or release prebuilds.

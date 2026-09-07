@@ -168,3 +168,6 @@ Async `migrate(plan, {signal}?)` supports cooperative cancellation. Interrupted 
 
 
 If the native addon is absent or cannot be loaded, importing the package throws `FDB_NATIVE_LOAD`. The message identifies the current platform, architecture and Node version and points to the source build instructions. The original loader error remains in `error.cause` for diagnosing missing libraries, invalid binaries or other loader failures. This diagnostic does not select, download or rebuild an addon automatically.
+
+
+The local package smoke also verifies pre-aborted calls for every signalled API, preserved transaction observations, listener disposal and fresh/late-token behavior using the installed package. Its consumer TypeScript check covers all cancellation options. These supplement the real-worker active-cancellation tests in the checkout.

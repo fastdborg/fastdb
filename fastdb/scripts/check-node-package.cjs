@@ -66,6 +66,29 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal(row[1], 9223372036854775807n);
     await worker.execute('BEGIN');
     await worker.execute('UPDATE docs SET value=7');
+    const cancelled = new AbortController(); cancelled.abort();
+    const options = {signal:cancelled.signal};
+    for (const operation of [
+      () => worker.execute('DELETE FROM docs', {}, options),
+      () => worker.all('SELECT * FROM docs', {}, options),
+      () => worker.first('SELECT * FROM docs', {}, options),
+      () => worker.exactlyOne('SELECT * FROM docs', {}, options),
+      () => worker.executeBatch('DELETE FROM docs;', options),
+      () => worker.profileSelect('SELECT * FROM docs', {}, options),
+      () => worker.checkCollectionIntegrity('docs', {}, options),
+      () => worker.exportDocuments('docs', 'json', options),
+      () => worker.importDocuments('docs', 'invalid', 'ndjson', options),
+      () => worker.migrate([], options),
+    ]) {
+      await assert.rejects(operation(), error => error.code === 'FDB_CANCELLED' && error.transaction.after === 'active');
+    }
+    assert.equal(require('node:events').getEventListeners(cancelled.signal,'abort').length,0);
+    const fresh = new AbortController();
+    const result = await worker.executeBatch('SELECT value FROM docs;', {signal:fresh.signal});
+    assert.deepEqual(result[0].result.rows, [[7n]]);
+    fresh.abort();
+    assert.deepEqual(await worker.exactlyOne('SELECT value FROM docs'), [7n]);
+
     await assert.rejects(worker.checkCollectionIntegrity('docs', {maxDocuments: 0n}), error => error.code === 'FDB_LIMIT' && error.transaction.after === 'active');
     const profile = await worker.profileSelect('SELECT value FROM docs WHERE value=$value', {$value: 7n});
     assert.equal(profile.result.rows[0][0], 7n);
@@ -131,6 +154,20 @@ void counts;
 db.close();
 async function open() {
   const db = await AsyncDatabase.open();
+  const options: import('@fastdb/node').ExecuteOptions = {signal:new AbortController().signal};
+  await db.execute('SELECT 1', {}, options);
+  await db.all('SELECT 1', {}, options);
+  await db.first('SELECT 1', {}, options);
+  await db.exactlyOne('SELECT 1', {}, options);
+  await db.executeBatch('SELECT 1;', options);
+  await db.profileSelect('SELECT 1', {}, options);
+  await db.checkCollectionIntegrity('docs', {}, options);
+  await db.exportDocuments('docs', 'json', options);
+  await db.importDocuments('docs', '', 'ndjson', options);
+  await db.migrate([], options);
+  // @ts-expect-error cancellation requires an AbortSignal
+  await db.migrate([], {signal:true});
+
   const audit: IntegrityReport = await db.checkCollectionIntegrity('docs', limits);
   const profile: ProfiledQuery = await db.profileSelect('SELECT 1');
   const counts: bigint[] = [audit.indexEntries, profile.metrics.rowsRead];
