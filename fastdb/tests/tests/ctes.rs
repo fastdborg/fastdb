@@ -314,3 +314,71 @@ fn values_ctes_and_leading_with_values_insert_atomically() {
         vec![vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn values_rows_preserve_mixed_types_and_parameter_identity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let record = Value::Record(fastdb::Record {
+        table: "docs".into(),
+        key: fastdb::Key::Integer(7),
+    });
+    let bytes = Value::Binary(
+        b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"docs\",\"key\":{\"Integer\":7}}}"
+            .to_vec(),
+    );
+    let array = Value::Array(vec![Value::Integer(1), Value::Null]);
+    let params = Parameters::from([
+        ("$record".into(), record.clone()),
+        ("$bytes".into(), bytes.clone()),
+        ("$array".into(), array.clone()),
+        ("$flag".into(), Value::Boolean(true)),
+    ]);
+    let rows=c.execute("WITH v(n,x) AS (VALUES (1,$record),(2,$bytes),(3,NULL),(4,7),(5,'7'),(6,$array),(7,$flag)) SELECT x FROM v ORDER BY n", &params).unwrap().rows;
+    assert_eq!(
+        rows,
+        vec![
+            vec![record.clone()],
+            vec![bytes.clone()],
+            vec![Value::Null],
+            vec![Value::Integer(7)],
+            vec![Value::String("7".into())],
+            vec![array],
+            vec![Value::Boolean(true)]
+        ]
+    );
+    assert_eq!(c.execute("WITH v(n,x) AS (VALUES (1,$record),(2,$bytes),(3,NULL)) SELECT x=$record FROM v ORDER BY n", &Parameters::from([("$record".into(),record.clone()),("$bytes".into(),bytes)])).unwrap().rows,vec![vec![Value::Integer(1)],vec![Value::Integer(0)],vec![Value::Null]]);
+    assert_eq!(
+        c.execute(
+            "WITH v(x) AS (VALUES (?)) SELECT x FROM v",
+            &Parameters::from([("?1".into(), record.clone())])
+        )
+        .unwrap()
+        .rows,
+        vec![vec![record.clone()]]
+    );
+    q(&c, "CREATE TABLE docs");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {n:1}");
+    for (i, sql) in [
+        "WITH v(id,n) AS (VALUES ($record,2),($record)) INSERT INTO docs(id,n) SELECT id,n FROM v",
+        "WITH v(id,n) AS (VALUES ($record,$missing)) INSERT INTO docs(id,n) SELECT id,n FROM v",
+        "WITH v(id,n) AS (VALUES ($record,2)) INSERT INTO docs(id,n) SELECT id,n FROM v",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // The final case has an extra parameter; none may insert a prefix.
+        let mut params = Parameters::from([("$record".into(), record.clone())]);
+        if i == 2 {
+            params.insert("$unused".into(), Value::Integer(9));
+        }
+        assert!(c.execute(sql, &params).is_err(), "{sql}");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            q(&c, "SELECT n FROM docs").rows,
+            vec![vec![Value::Integer(1)]]
+        );
+    }
+    q(&c, "ROLLBACK");
+}

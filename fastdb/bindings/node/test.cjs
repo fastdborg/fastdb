@@ -359,3 +359,26 @@ test('recursive SQL reports parser depth errors through sync and worker clients'
     } finally { await db.close(); }
   }
 });
+
+test('typed VALUES CTEs preserve mixed values and atomic inserts in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      const id = new Record('docs', 7n);
+      const data = Buffer.from([0,255]);
+      const input = {$id:id, $data:data, $flag:true, $array:[1n,null]};
+      const result = await db.execute('WITH v(n,x) AS (VALUES (1,$id),(2,$data),(3,$flag),(4,$array),(5,NULL)) SELECT x FROM v ORDER BY n', input);
+      assert.deepEqual(result.rows, [[id],[data],[true],[[1n,null]],[null]]);
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await db.execute('BEGIN');
+      await db.execute('WITH v(id,n) AS (VALUES ($id,1)) INSERT INTO docs(id,n) SELECT id,n FROM v', {$id:id});
+      await assert.rejects(Promise.resolve().then(() => db.execute('WITH v(id,n) AS (VALUES (docs:b,2),(docs:c,1)) INSERT INTO docs(id,n) SELECT id,n FROM v')), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents, 1n);
+      assert.equal((await db.exactlyOne('SELECT n FROM docs'))[0], 1n);
+      await db.execute('ROLLBACK');
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents, 0n);
+    } finally { await db.close(); }
+  }
+});
