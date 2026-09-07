@@ -958,14 +958,21 @@ fn native_scalar_affinity_matches_native_document_scalar_storage() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     q(&c, "CREATE TABLE docs");
-    q(&c, "INSERT INTO docs(v) VALUES ('2'),(2),('A'),(NULL)");
+    q(
+        &c,
+        "INSERT INTO docs(v) VALUES ('2'),(2),('A'),('a '),('A '),('a  '),('a\t'),(''),(NULL)",
+    );
     q(&c, "CREATE TABLE lhs(v BLOB)");
-    q(&c, "INSERT INTO lhs VALUES ('2'),(2),('A'),(NULL)");
+    q(
+        &c,
+        "INSERT INTO lhs VALUES ('2'),(2),('A'),('a '),('A '),('a  '),('a\t'),(''),(NULL)",
+    );
     assert_eq!(q(&c, "SELECT a.v,(SELECT b.v FROM lhs b WHERE b.rowid=a.rowid) AS nested FROM lhs a ORDER BY a.rowid").rows, q(&c, "SELECT v,v FROM lhs ORDER BY rowid").rows);
     for (name, declaration, value) in [
         ("numbers", "INTEGER", "2"),
         ("strings", "TEXT", "'2'"),
         ("letters", "TEXT COLLATE NOCASE", "'a'"),
+        ("trimmed", "TEXT COLLATE RTRIM", "'a'"),
     ] {
         q(&c, &format!("CREATE TABLE {name}(v {declaration})"));
         q(&c, &format!("INSERT INTO {name} VALUES ({value})"));

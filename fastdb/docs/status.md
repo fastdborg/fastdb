@@ -584,3 +584,9 @@ Native scalar comparison recognition now sees through parentheses and outer COLL
 The existing affinity matrix now contains 768 native differential query pairs: three native column declarations, four inner projection collation forms, eight comparison operators and eight operand/wrapper arrangements, including conflicting BINARY/NOCASE/RTRIM collations. A callback case checks once-only native evaluation with an outer wrapper; both Node clients exercise a wrapped numeric scalar. Unary-plus/CAST and broader computed/compound/CTE metadata, volatile logical operands and resource/platform qualification remain open. No upstream implementation or encoding changes.
 
 Final scoped checks passed formatting, Clippy, 265 Rust tests, twenty-three Node tests and strict TypeScript checking. One known trigger-interruption release gate remains ignored and unresolved; full V1 remains incomplete.
+
+## Trailing-space collation qualification (2026-09-07)
+
+The native scalar comparison matrix now uses nine left-hand values, including mixed case, one/two trailing spaces, a trailing tab, empty text, integer and NULL. A native TEXT COLLATE RTRIM source joins the prior INTEGER/TEXT/NOCASE declarations. The matrix contains 1,024 query pairs across four declarations, four inner projection forms, eight operators and eight operand/wrapper arrangements (9,216 compared result cells per route). These inputs distinguish trailing-space trimming from case folding and preserve a tab as a separate test case. This expands behavioral evidence without changing production lowering.
+
+Final scoped checks passed formatting, Clippy, 265 Rust tests, twenty-three Node tests and strict TypeScript checking. One known trigger-interruption gate remains ignored and unresolved; full V1 remains incomplete.
