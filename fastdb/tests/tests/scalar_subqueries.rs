@@ -4552,3 +4552,41 @@ fn native_inner_pagination_preserves_numeric_expression_types() {
         }
     }
 }
+
+#[test]
+fn collection_distinct_scalar_pagination_matches_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE items",
+        "CREATE TABLE baseline(n INTEGER)",
+        "CREATE TABLE lookup(n INTEGER)",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:2}",
+        "INSERT INTO items {n:1}",
+        "INSERT INTO items {n:2}",
+        "INSERT INTO items {n:2}",
+        "INSERT INTO items {n:3}",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(1),(2),(2),(3)",
+    ] {
+        q(&c, sql);
+    }
+    for offset in [0, 1, 2, 3] {
+        let native = format!("SELECT n,(SELECT DISTINCT i.n FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}) FROM baseline d ORDER BY n");
+        let expected = q(&c, &native).rows;
+        for source in ["docs d", "(SELECT n FROM docs) d"] {
+            let sql = format!("SELECT n,(SELECT DISTINCT i.n FROM items i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}+0) FROM {source} ORDER BY n");
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "{sql}"
+            );
+        }
+    }
+}

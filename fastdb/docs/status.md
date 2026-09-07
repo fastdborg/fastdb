@@ -1609,3 +1609,6 @@ Native-inner type-sensitive OFFSET qualification (2026-09-08): expanded the nati
 
 
 Native-inner pagination evaluation qualification (2026-09-08): the callback regression now exercises a native table scalar correlated to logical outer rows. LIMIT/OFFSET run once per outer row, projections only for returned rows, and outer LIMIT 0 causes no calls. Offset 0/1 produce nine/eight calls over three outer rows with matching execute/profile results. The expanded focused unit test, formatting and frontend lib/test Clippy pass. Latest combined evidence remains 396 Rust/44 Node tests; broader evaluation/resource and full V1 gates remain open.
+
+
+Distinct scalar pagination qualification (2026-09-08): a new native differential regression verifies computed OFFSET applies after duplicate removal in correlated DISTINCT scalar queries, including offsets beyond the final distinct value. Direct/derived collection sources match literal native results through execute/profile. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 396 Rust/44 Node tests; this additional test has not received a new combined run. Broader type/evaluation/resource and full V1 gates remain open.
