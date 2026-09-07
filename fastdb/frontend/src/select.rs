@@ -234,26 +234,21 @@ fn native_correlated_predicate(
         })?;
     }
     if single_projection && selected_sorts > 0 {
-        if selected_sorts != inner.order_by.len()
-            && matches!(
-                &inner.body.select,
-                OneSelect::Select {
-                    distinctness: Some(Distinctness::Distinct),
-                    ..
-                }
-            )
-        {
-            return Err(unsupported(
-                "mixed DISTINCT correlated typed projection ordering",
-            ));
-        }
         // Keep the projected value available to sorting without evaluating it
         // twice. OFFSET prevents flattening; a lazy CTE preserves LIMIT 0.
-        // Extra sort keys are safe here only when they cannot affect DISTINCT.
+        // DISTINCT belongs outside this boundary so hidden sort keys cannot
+        // turn duplicate projected values into distinct rows.
         let mut ordering = std::mem::take(&mut inner.order_by);
         let limit = inner.limit.take();
         let mut names = vec!["v".to_owned()];
-        if let OneSelect::Select { columns, .. } = &mut inner.body.select {
+        let mut projected_distinctness = None;
+        if let OneSelect::Select {
+            columns,
+            distinctness,
+            ..
+        } = &mut inner.body.select
+        {
+            projected_distinctness = distinctness.take();
             for (index, (sorted, selected)) in ordering.iter_mut().zip(&sort_selections).enumerate()
             {
                 if !selected {
@@ -285,6 +280,9 @@ fn native_correlated_predicate(
             if *selected {
                 replace_order_base(&mut sorted.expr, expression("__fastdb_unwrap(v)")?);
             }
+        }
+        if let OneSelect::Select { distinctness, .. } = &mut wrapped.body.select {
+            *distinctness = projected_distinctness;
         }
         wrapped.order_by = ordering;
         wrapped.limit = limit;

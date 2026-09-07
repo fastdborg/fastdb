@@ -102,3 +102,6 @@ Correlated typed projection aliases/ordinals now have logical ordering with proj
 
 
 Covered correlated ORDER BY alias arithmetic/function expressions now use logical values and match pinned native alias precedence across tables, views and inherited CTEs. The complete scoped check passed 321 Rust and 35 Node tests; broader correlated scope/type/resource qualification remains open. See status.md.
+
+
+Mixed DISTINCT ordering of a single correlated typed projection now deduplicates only the projected value, with hidden sort keys excluded. Native differential pagination and volatile-evaluation tests pass; the complete scoped run passed 322 Rust and 35 Node tests. This supersedes the earlier mixed-ordering rejection. Broader DISTINCT type/collation semantics and full V1 remain open.

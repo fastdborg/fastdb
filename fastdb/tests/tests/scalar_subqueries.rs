@@ -2085,22 +2085,40 @@ fn correlated_projection_sort_aliases_use_logical_values() {
 }
 
 #[test]
-fn mixed_distinct_correlated_typed_ordering_is_rejected() {
+fn mixed_distinct_correlated_typed_ordering_matches_native() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
-    q(&c, "CREATE TABLE docs");
-    q(&c, "INSERT INTO docs(n) VALUES(1)");
-    q(&c, "CREATE TABLE lookup(n)");
-    q(&c, "INSERT INTO lookup VALUES(1),(2)");
-    let sql = "SELECT (SELECT DISTINCT CASE WHEN d.n>0 THEN 1 ELSE d.n END AS x FROM lookup ORDER BY x,n LIMIT 1 OFFSET 1) FROM docs d";
-    assert!(matches!(
-        c.execute(sql, &Parameters::new()),
-        Err(fastdb::Error::Unsupported(_))
-    ));
-    assert!(matches!(
-        c.profile_select(sql, &Parameters::new()),
-        Err(fastdb::Error::Unsupported(_))
-    ));
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "INSERT INTO native VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(1),(2),(10),(2)",
+    ] {
+        q(&c, sql);
+    }
+    for projection in [
+        "CASE WHEN d.n>0 THEN 1 ELSE d.n END",
+        "CASE WHEN n>1 THEN 10 ELSE d.n END",
+    ] {
+        for order in ["x,n", "x DESC,n DESC", "n DESC,x", "x,abs(x) DESC"] {
+            for limit in ["0", "1", "1 OFFSET 1", "1 OFFSET 2"] {
+                let expr=format!("(SELECT DISTINCT {projection} AS x FROM lookup ORDER BY {order} LIMIT {limit})");
+                let expected = q(&c, &format!("SELECT {expr} FROM native d ORDER BY d.n")).rows;
+                let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected,
+                    "profile {sql}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

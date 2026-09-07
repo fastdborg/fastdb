@@ -782,6 +782,9 @@ mod between_tests {
         )
         .unwrap();
         for (projection, expected_calls) in [
+            ("(SELECT DISTINCT CASE WHEN d.n>0 THEN between_tick() ELSE d.n END AS x FROM correlation_inputs ORDER BY x DESC,n LIMIT 0)", 0),
+            ("(SELECT DISTINCT CASE WHEN d.n>0 THEN between_tick() ELSE d.n END AS x FROM correlation_inputs ORDER BY x DESC,n LIMIT 1)", 4),
+            ("(SELECT DISTINCT CASE WHEN d.n>0 THEN 1 ELSE d.n END AS x FROM correlation_inputs ORDER BY x DESC,between_tick() LIMIT 1)", 4),
             ("(SELECT CASE WHEN d.n>0 THEN between_tick() ELSE d.n END AS x FROM correlation_inputs ORDER BY x+0 DESC LIMIT 1)", 8),
             ("(SELECT CASE WHEN d.n>0 THEN between_tick() ELSE d.n END AS x FROM correlation_inputs ORDER BY x DESC LIMIT 0)", 0),
             ("(SELECT CASE WHEN d.n>0 THEN between_tick() ELSE d.n END AS x FROM correlation_inputs ORDER BY x DESC,n LIMIT 1)", 4),

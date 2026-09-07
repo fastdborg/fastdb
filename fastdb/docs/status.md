@@ -1084,3 +1084,12 @@ Verification: the complete scoped suite passed formatting, Clippy, 321 Rust test
 ## Correlated sort alias write atomicity (2026-09-07)
 
 A parameterized correlated CASE projection ordered through `abs(x)` now has write-path regression coverage. A multirow UPDATE that collides on a managed unique index restores both original values and index contents, preserves prior work, and reports unchanged transaction state in autocommit and explicit transactions. Retrying with a non-colliding parameter returns 11 and 12 and supports indexed lookup; outer rollback restores the original documents and removes the prior native-table insert. Integrity audits verify the failure, retry and rollback states. The focused real-engine regression passes; this test-only change does not establish broader correlated write or recovery qualification. Full V1 remains incomplete.
+
+
+## Mixed DISTINCT correlated ordering (2026-09-07)
+
+The previous rejection for mixed DISTINCT ordering of a single correlated typed projection is removed. DISTINCT now applies to the public projected value outside the lazy projection boundary, so additional internal sort columns do not participate in duplicate elimination. Ordering and pagination remain on that outer query.
+
+Native differential execute/profile tests cover constant and varying typed CASE results, repeated inputs, alias/source-key order permutations, alias function expressions, LIMIT 0 and offsets past the distinct result set. Volatile projection and secondary-sort probes check native evaluation counts, including zero-limit short-circuiting. This supersedes the earlier mixed-ordering rejection; broader DISTINCT equality/collation/type semantics and correlated scope/resource qualification remain open. Full V1 is incomplete.
+
+Verification: the complete scoped check passed formatting, Clippy, 322 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
