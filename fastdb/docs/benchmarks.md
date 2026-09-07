@@ -27,7 +27,7 @@ Measured with the local Rust 1.88.0 dev CLI at commit `d732de4bd`; binary hashes
 | 1,000 | 79.7 ms | 4.08 ms | 297.6 ms |
 | 100,000 | 5,844.4 ms | 321.2 ms | 29,416.9 ms |
 
-The 100,000-row load took 310.6 seconds and index construction took 98.0 seconds. Its final process high-water RSS was 177,102,848 bytes and checkpointed database size was 76,652,544 bytes. The indexed plan used the named managed index. Scan counters are still unmeasured. This establishes a 100k synthetic debug baseline, not the full 100k–1m representative-vector gate.
+The 100,000-row load took 310.6 seconds and index construction took 98.0 seconds. Its final process high-water RSS was 177,102,848 bytes and checkpointed database size was 76,652,544 bytes. The indexed plan used the named managed index. These original reports did not measure scan counters. This establishes a 100k synthetic debug baseline, not the full 100k–1m representative-vector gate.
 
 Raw reports: [1,000 documents](benchmark-results/2026-09-07-linux-dev-1000.json), [100,000 documents](benchmark-results/2026-09-07-linux-dev-100000.json).
 
@@ -35,10 +35,26 @@ Raw reports: [1,000 documents](benchmark-results/2026-09-07-linux-dev-1000.json)
 
 The [instrumented report](benchmark-results/2026-09-07-linux-dev-profile-1000.json) records three samples per workload using the profiling implementation. All three samples had identical engine counters. The unindexed filter read 1,000 physical rows with 999 fullscan steps; the indexed filter read 20 physical rows with zero fullscan steps and 31 B-tree seeks. Exact-vector top-10 read 1,000 rows with 999 fullscan steps and one sort. Physical rows include index/table operations and must not be equated with returned documents.
 
-The original 100,000-document artifact has not been rerun with counters. Its null counters remain unmeasured. The instrumented smoke validates reporting and scan reduction, not the outstanding large-scale release qualification.
+The original 100,000-document artifact retains its unmeasured null counters. A later instrumented run is recorded below. The 1,000-document smoke validates reporting and scan reduction, not full release qualification.
 
 ## Parser stack protection smoke
 
 The [parser-stack report](benchmark-results/2026-09-07-linux-dev-parser-stack-1000.json) measures the final same-thread stack guards with three samples per workload and 1,000 documents. Median CLI round trips were 57.4 ms unindexed, 4.27 ms indexed and 304.0 ms exact-vector top-10. The result and plan assertions passed, and scan counters retained the expected 1,000 versus 20 physical rows for unindexed/indexed filters.
 
 Public execution/profiling/audit guards allow internal parsing and execution to reuse an auxiliary stack. An intermediate version with guards only on internal calls measured 84.0/6.16/316.8 ms in a separate small run; these few samples do not isolate overhead or establish a performance trend. The retained report is the final version, run after other validation processes completed. Full representative, optimized, large-scale and platform benchmarking remains open.
+
+## Instrumented 100,000-document run
+
+The [100,000-document instrumented report](benchmark-results/2026-09-07-linux-dev-profile-100000.json) was produced from clean commit `10af87419` with the local Rust 1.88 dev CLI, 16-dimensional synthetic vectors, one warmup and three measured samples per workload. All result and plan assertions passed. Each workload's engine counters were identical across the three samples.
+
+| Workload | Median CLI round trip | Engine rows read | Fullscan steps | Sorts |
+|---|---:|---:|---:|---:|
+| Unindexed equality filter | 5,807.94 ms | 100,000 | 99,999 | 0 |
+| Indexed equality filter | 284.38 ms | 2,000 | 0 | 0 |
+| Exact cosine top-10 | 30,616.53 ms | 100,000 | 99,999 | 1 |
+
+The filter returned the expected count of 1,000 matching documents in both cases. The indexed plan used docs_group and recorded 3,001 B-tree seeks. Rows read are primary engine physical operations, including index/table work, rather than logical matched-document counts. The vector query returned ten ordered distances with the expected zero-distance nearest record.
+
+Loading took 324.99 seconds, index construction 95.70 seconds, and the checkpointed database occupied 76,652,544 bytes. Final process high-water RSS was 176,701,440 bytes, including loading and earlier workloads. The harness completed its TRUNCATE checkpoint and clean CLI exit. Binary identity, source state, all samples and query plans are retained in the report.
+
+This supplies measured 100k scan/index evidence for the synthetic debug workload. Three samples cannot establish stable p95 latency; the reported p95 is the largest sample. The vectors repeat after 997 keys apart from the special nearest record. Representative higher dimensions, 1m-scale evaluation, optimized builds, cold caches, concurrency, platform coverage and release performance conclusions remain open.

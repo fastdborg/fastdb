@@ -396,3 +396,7 @@ SQL execution, profiling, audits and parser/preparation/row-execution callbacks 
 ## Native fallback syntax diagnostics
 
 Malformed first statements reaching native fallback now return the pinned parse error through FDB_ENGINE before unresolved managed names can hide it. Tests compare collection/native SELECT, CTE and INSERT SELECT errors with the raw engine, retain active work and single-statement restrictions, and update CLI/Rust/Node recursive-input expectations to the precise depth diagnostic. FastQL write guards retain their separate unexpanded-syntax fallback.
+
+## Instrumented 100k benchmark evidence
+
+A clean-source 100,000-document run now retains measured engine counters, three samples per workload, plans and binary identity. All result/plan assertions passed. Unindexed/indexed filtering read 100,000/2,000 physical rows with 99,999/zero fullscan steps; exact-vector top-10 read 100,000 rows with one sort. Counters matched across all samples. Median CLI times were 5.81 seconds, 284 ms and 30.62 seconds respectively. See benchmarks.md for raw evidence, loading/index costs and memory. This closes the missing-counter gap for the existing synthetic 16-dimensional dev workload; representative dimensions, 1m-scale, optimized/platform/concurrent and full release qualification remain open.
