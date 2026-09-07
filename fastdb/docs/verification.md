@@ -1557,3 +1557,6 @@ Migration preflight syntax context (2026-09-07): script splitting/tokenization e
 ## Combined migration resource and diagnostic verification (2026-09-07)
 
 At clean implementation commit fe4856c19, fastdb/scripts/check.sh passed formatting, Clippy, 344 Rust tests, 42 Node/application tests and strict TypeScript. One known trigger-interruption gate remains ignored. This combines bounded ledger rows/text, maximum-size persistent history, execution/preflight UTF-8 diagnostic tests and the rebuilt Node addon/client paths. Installed-package evidence remains the separately recorded earlier run. Broader platform, recovery, SQL/type/resource and application release gates remain open; full V1 is incomplete.
+
+
+Node migration diagnostic qualification (2026-09-07): a both-client regression verifies preflight FDB_SYNTAX includes the exact migration version above JavaScript's safe-integer range and the UTF-8 byte offset after multibyte comments, with autocommit observations and no earlier schema mutation. Corrected plans apply, name/source/version mismatches retain FDB_VALIDATION reasons and transaction state, and the unchanged plan remains reusable. The focused synchronous/worker test passes using the addon rebuilt by the preceding full scoped check. Broader V1 release qualification remains open.

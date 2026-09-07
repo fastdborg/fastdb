@@ -1031,3 +1031,43 @@ test('isFastDBError recognizes public errors and validates transaction observati
     await assert.rejects(async()=>db.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && error.transaction===undefined);
   }
 });
+
+test('migration diagnostics preserve UTF-8 locations and history reasons in both clients', async () => {
+  const { AsyncDatabase, isFastDBError } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      const sql = "-- café 日本語\nSELECT 'unterminated";
+      const offset = Buffer.byteLength(sql.slice(0, sql.indexOf("'")));
+      const plan = [
+        {version:1n,name:'base.sql',sql:'CREATE TABLE docs;'},
+        {version:9007199254740993n,name:'pending.sql',sql},
+      ];
+      await assert.rejects(async () => db.migrate(plan), error => {
+        assert(isFastDBError(error));
+        assert.equal(error.code,'FDB_SYNTAX');
+        assert(error.message.includes(`byte ${offset}:`),error.message);
+        assert(error.message.includes('migration 9007199254740993:'),error.message);
+        assert.deepEqual(error.transaction,{before:'autocommit',after:'autocommit'});
+        return true;
+      });
+      await assert.rejects(async () => db.all('SELECT * FROM docs'));
+      plan[1].sql = 'SELECT 1;';
+      assert.deepEqual((await db.migrate(plan)).applied,[1n,9007199254740993n]);
+      for (const [field,value,reason] of [
+        ['name','renamed.sql','name differs'],
+        ['sql','SELECT 1; -- edited','SQL source differs'],
+        ['version',9007199254740994n,'version does not match the applied sequence'],
+      ]) {
+        const changed = [plan[0],{...plan[1],[field]:value}];
+        await assert.rejects(async () => db.migrate(changed),error => {
+          assert.equal(error.code,'FDB_VALIDATION');
+          assert(error.message.includes(reason),error.message);
+          assert.deepEqual(error.transaction,{before:'autocommit',after:'autocommit'});
+          return true;
+        });
+      }
+      assert.equal((await db.migrate(plan)).alreadyApplied,2);
+    } finally { await db.close(); }
+  }
+});
