@@ -2645,3 +2645,65 @@ fn correlated_pagination_reused_bindings_preserve_predicates() {
         }
     }
 }
+
+#[test]
+fn correlated_float_pagination_matches_integer_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(1),(2),(3)",
+    ] {
+        q(&c, sql);
+    }
+    for limit in [0, 1, 2, -1, i64::MIN + 1024, 9_223_372_036_854_774_784] {
+        for offset in [0, 1, 2] {
+            let floats = Parameters::from([
+                ("$limit".into(), Value::Number(limit as f64)),
+                ("$offset".into(), Value::Number(offset as f64)),
+            ]);
+            let integers = Parameters::from([
+                ("$limit".into(), Value::Integer(limit)),
+                ("$offset".into(), Value::Integer(offset)),
+            ]);
+            let source = "SELECT n FROM lookup WHERE n>=d.n ORDER BY n LIMIT $limit OFFSET $offset";
+            for expr in [
+                format!("({source})"),
+                format!("d.n IN ({source})"),
+                format!("EXISTS({source})"),
+            ] {
+                let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+                let expected = c.execute(&sql, &integers).unwrap().rows;
+                assert_eq!(
+                    c.execute(&sql, &floats).unwrap().rows,
+                    expected,
+                    "{sql}: {floats:?}"
+                );
+                assert_eq!(
+                    c.profile_select(&sql, &floats).unwrap().result.rows,
+                    expected,
+                    "profile {sql}: {floats:?}"
+                );
+            }
+        }
+    }
+    for value in [i64::MIN as f64, i64::MAX as f64] {
+        let params = Parameters::from([("$limit".into(), Value::Number(value))]);
+        for expr in [
+            "(SELECT n FROM lookup WHERE n>=d.n ORDER BY n LIMIT $limit)",
+            "d.n IN (SELECT n FROM lookup WHERE n>=d.n ORDER BY n LIMIT $limit)",
+        ] {
+            let sql = format!("SELECT {expr} FROM docs d");
+            assert!(
+                c.execute(&sql, &params).is_err(),
+                "int64 real endpoint: {sql}, {value}"
+            );
+            assert!(
+                c.profile_select(&sql, &params).is_err(),
+                "profile int64 real endpoint: {sql}, {value}"
+            );
+        }
+    }
+}

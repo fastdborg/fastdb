@@ -114,3 +114,6 @@ A derived pagination boundary now preserves bound LIMIT/OFFSET in the covered so
 
 
 Integer bound pagination now has scalar/IN/EXISTS coverage across supported predicate-only, native scalar, CAST and typed CASE correlated sources. Shared correlation tracking and integer-literal lowering address zero-limit replacement and per-outer-row bound-counter reuse. The full scoped check passed 327 Rust and 35 Node tests; other pagination parameter types/expressions and broader V1 gates remain open.
+
+
+Integral real pagination binds now follow the integer-literal correlation path within the pinned engine's exact conversion bounds. Per-row scalar/IN/EXISTS comparisons and endpoint rejections pass; the complete scoped run passed 329 Rust and 35 Node tests. Other coercions, complex pagination and full V1 remain open.

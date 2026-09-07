@@ -1414,3 +1414,12 @@ Verification: the complete scoped check passed formatting, Clippy, 327 Rust test
 ## Reused correlated pagination bindings (2026-09-07)
 
 A native differential regression verifies that lowering an integer pagination bind does not consume its use in a correlated WHERE predicate. Named `$count` and numbered `?1` parameters are reused across the predicate and LIMIT or OFFSET with values 0 through 3. Scalar, IN and EXISTS execute/profile consumers match literal-native results for both outer rows; omitted parameters still report FDB_PARAMETER. The focused real-engine regression passes. Other parameter types/expressions and full V1 remain open.
+
+
+## Integral real pagination binds (2026-09-07)
+
+Supported correlated pagination now normalizes integral real binds to integer literals as well as int64 binds. A real LIMIT 1.0 previously reused the bound counter and missed membership for the second outer row. Conversion follows the pinned engine's exact real-to-integer limits: fractional/non-finite values and both int64 endpoints are excluded, including the exactly representable negative endpoint. Those values continue to engine validation rather than being truncated or saturated.
+
+Differential execute/profile coverage compares real and integer pagination through scalar, IN and EXISTS consumers, including zero/negative limits, offsets and large accepted values near both endpoints. Explicit endpoint probes retain rejection for scalar and membership sources. Other coercions and complex pagination expressions remain open; full V1 is incomplete.
+
+Verification: the complete scoped check passed formatting, Clippy, 329 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.

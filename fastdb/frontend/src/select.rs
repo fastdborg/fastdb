@@ -309,11 +309,20 @@ fn native_correlated_predicate(
         let integers = params
             .iter()
             .filter_map(|(name, value)| {
-                if let Value::Integer(value) = value {
-                    Some((name, value))
-                } else {
-                    None
-                }
+                let integer = match value {
+                    Value::Integer(value) => *value,
+                    // Match the pinned engine: exact real-to-integer conversion
+                    // excludes both int64 endpoints. i64::MAX rounds to 2^63.
+                    Value::Number(value)
+                        if *value > i64::MIN as f64
+                            && *value < i64::MAX as f64
+                            && value.fract() == 0.0 =>
+                    {
+                        *value as i64
+                    }
+                    _ => return None,
+                };
+                Some((name, integer))
             })
             .map(|(name, value)| Ok((name.clone(), expression(&value.to_string())?)))
             .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
