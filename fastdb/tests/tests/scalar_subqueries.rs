@@ -320,3 +320,57 @@ fn membership_subqueries_preserve_record_binary_keys_and_native_affinity() {
         vec![vec![Value::Integer(1)]]
     );
 }
+
+#[test]
+fn membership_subquery_affinity_and_collation_match_native_sql() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(v) VALUES ('1'),('a'),('tail '),(2)");
+    q(&c, "CREATE TABLE rhs(v)");
+    q(&c, "INSERT INTO rhs VALUES ('1'),('a'),('tail '),(2)");
+    let values = "(1),('1'),(2),('2'),('A'),('a'),('tail'),('tail '),(NULL),(X'31')";
+    for (index, declaration) in [
+        "",
+        "INTEGER",
+        "REAL",
+        "NUMERIC",
+        "TEXT",
+        "BLOB",
+        "TEXT COLLATE NOCASE",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let table = format!("left_{index}");
+        q(&c, &format!("CREATE TABLE {table}(v {declaration})"));
+        q(&c, &format!("INSERT INTO {table} VALUES {values}"));
+        for left in [
+            "l.v",
+            "+l.v",
+            "CAST(l.v AS TEXT)",
+            "l.v COLLATE BINARY",
+            "l.v COLLATE NOCASE",
+            "l.v COLLATE RTRIM",
+        ] {
+            for right in [
+                "v",
+                "v COLLATE BINARY",
+                "v COLLATE NOCASE",
+                "v COLLATE RTRIM",
+                "+v",
+                "v || ''",
+            ] {
+                for negate in ["", "NOT "] {
+                    let logical = format!("SELECT {left} {negate}IN (SELECT {right} FROM docs) AS matched FROM {table} l ORDER BY l.rowid");
+                    let native = logical.replace("FROM docs", "FROM rhs");
+                    assert_eq!(
+                        q(&c, &logical).rows,
+                        q(&c, &native).rows,
+                        "{declaration}: {logical}"
+                    );
+                }
+            }
+        }
+    }
+}

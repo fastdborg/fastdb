@@ -513,6 +513,12 @@ test('collection scalar subqueries preserve typed values in both clients', async
       assert.deepEqual(await db.exactlyOne('SELECT n FROM docs WHERE n=(SELECT max(n) FROM docs)'), [1n]);
       assert.deepEqual(await db.exactlyOne('SELECT EXISTS (SELECT link,items FROM docs) AS present,NOT EXISTS (SELECT n FROM docs WHERE n=99) AS absent'), [1n,1n]);
       assert.deepEqual(await db.exactlyOne('SELECT docs:b IN (SELECT link FROM docs) AS present,2 NOT IN (SELECT n FROM docs) AS absent,NULL IN (SELECT n FROM docs) AS unknown'), [1n,1n,null]);
+      await db.execute('CREATE TABLE affinity_docs');
+      await db.execute('INSERT INTO affinity_docs(n) VALUES (2)');
+      assert.deepEqual(await db.exactlyOne("SELECT CAST('2' AS TEXT) IN (SELECT n FROM affinity_docs) AS v"), [0n]);
+      await db.execute('CREATE TABLE affinity_native(n TEXT)');
+      await db.execute("INSERT INTO affinity_native VALUES ('2')");
+      assert.deepEqual(await db.exactlyOne('SELECT n IN (SELECT +n FROM affinity_docs) AS v FROM affinity_native'), [1n]);
     } finally { await db.close(); }
   }
 });

@@ -25,8 +25,10 @@ impl Source {
     }
 }
 type CteSources = std::collections::BTreeMap<String, Option<Source>>;
+// Each entry stores lowered SQL, consumed binds, and whether an IN RHS
+// projects a column with affinity (false for non-IN subqueries).
 type ExpressionSubqueries =
-    std::collections::BTreeMap<String, (Expr, std::collections::BTreeSet<String>)>;
+    std::collections::BTreeMap<String, (Expr, std::collections::BTreeSet<String>, bool)>;
 struct Scope {
     expression_subqueries: ExpressionSubqueries,
     sources: Vec<Source>,
@@ -154,7 +156,8 @@ impl Scope {
     }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
         if matches!(expr, Expr::Subquery(_)) {
-            if let Some((lowered, consumed)) = self.expression_subqueries.get(&expr.to_string()) {
+            if let Some((lowered, consumed, _)) = self.expression_subqueries.get(&expr.to_string())
+            {
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
                 *expr = lowered.clone();
                 return Ok(true);
@@ -477,7 +480,9 @@ impl Scope {
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
         if matches!(expr, Expr::InSelect { .. }) {
-            if let Some((query, consumed)) = self.expression_subqueries.get(&expr.to_string()) {
+            if let Some((query, consumed, column)) =
+                self.expression_subqueries.get(&expr.to_string())
+            {
                 let Expr::InSelect { lhs, not, .. } = expr else {
                     unreachable!()
                 };
@@ -490,7 +495,8 @@ impl Scope {
                     // Preserve native LHS affinity for scalar values; encode its
                     // BLOB values into the same collision-resistant RHS keys. Share
                     // one materialized source across both IN branches.
-                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN (SELECT v FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT v FROM __fastdb_in_source) END)"))?;
+                    let key = if *column { "v" } else { "+v" };
+                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN (SELECT {key} FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT {key} FROM __fastdb_in_source) END)"))?;
                 } else {
                     self.typed(&mut value)?;
                     *expr = expression(&format!("__fastdb_unwrap({value}) {negate}IN {query}"))?;
@@ -499,7 +505,8 @@ impl Scope {
             }
         }
         if matches!(expr, Expr::Exists(_)) {
-            if let Some((lowered, consumed)) = self.expression_subqueries.get(&expr.to_string()) {
+            if let Some((lowered, consumed, _)) = self.expression_subqueries.get(&expr.to_string())
+            {
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
                 *expr = lowered.clone();
                 return Ok(());
@@ -1072,6 +1079,15 @@ fn native_column_collation(expr: &Expr) -> bool {
         Expr::Unary(UnaryOperator::Positive, value) => native_column_collation(value),
         Expr::Parenthesized(values) if values.len() == 1 => native_column_collation(&values[0]),
         _ => false,
+    }
+}
+
+fn membership_column(expr: &Expr) -> bool {
+    match expr {
+        Expr::Unary(UnaryOperator::Positive, _) => false,
+        Expr::Collate(value, _) => membership_column(value),
+        Expr::Parenthesized(values) if values.len() == 1 => membership_column(&values[0]),
+        _ => native_column_reference(expr),
     }
 }
 
@@ -2148,13 +2164,30 @@ impl Connection {
                                 "__fastdb_pack(v)"
                             };
                             let sql = plan.command.to_string();
+                            let column = membership
+                                && matches!(&inner.body.select, OneSelect::Select { columns, .. }
+                                if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
                             let lowered = if exists {
                                 expression(&format!(
                                     "EXISTS ({})",
                                     sql.trim().trim_end_matches(';')
                                 ))?
                             } else if membership {
-                                expression(&format!("(WITH __fastdb_members(v) AS ({}) SELECT __fastdb_unwrap({output}) FROM __fastdb_members)", sql.trim().trim_end_matches(';')))?
+                                let values = format!(
+                                    "SELECT __fastdb_unwrap({output}) AS v FROM __fastdb_members"
+                                );
+                                // A field has typeless column affinity, which differs
+                                // from a function expression with no affinity. Restore
+                                // a column boundary after decoding its comparison key.
+                                let values = if column {
+                                    format!("SELECT v FROM ({values}) AS __fastdb_member_values")
+                                } else {
+                                    values
+                                };
+                                expression(&format!(
+                                    "(WITH __fastdb_members(v) AS ({}) {values})",
+                                    sql.trim().trim_end_matches(';')
+                                ))?
                             } else {
                                 expression(&format!(
                             "(WITH __fastdb_scalar_result(v) AS ({}) SELECT {output} FROM __fastdb_scalar_result)",
@@ -2162,7 +2195,7 @@ impl Connection {
                         ))?
                             };
                             expression_subqueries
-                                .insert(expr.to_string(), (lowered, plan.consumed));
+                                .insert(expr.to_string(), (lowered, plan.consumed, column));
                         }
                         Ok(())
                     })();
