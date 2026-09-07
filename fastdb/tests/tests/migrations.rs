@@ -277,3 +277,46 @@ fn maximum_aggregate_utf8_history_survives_reopen_and_exact_retry() {
         assert_eq!(c.transaction_state(), TransactionState::Autocommit);
     }
 }
+
+#[test]
+fn migration_failure_reports_utf8_statement_offset_and_underlying_error() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let initial = m(1, "CREATE TABLE docs; DEFINE FIELD n ON docs TYPE integer;");
+    c.migrate(std::slice::from_ref(&initial)).unwrap();
+    let prefix = "CREATE TABLE staged; -- café 日本語\n  ";
+    let failing = "INSERT INTO docs {id:docs:first,n:'bad'};";
+    let pending = m(7, &format!("{prefix}{failing} CREATE TABLE skipped;"));
+    let mut plan = [initial, pending];
+    let error = c.migrate(&plan).unwrap_err();
+    assert_eq!(error.code(), "FDB_MIGRATION");
+    match error {
+        fastdb::Error::Migration {
+            version,
+            offset,
+            source,
+        } => {
+            assert_eq!(version, 7);
+            assert_eq!(offset, prefix.len());
+            assert_eq!(source.code(), "FDB_VALIDATION");
+            assert!(offset > prefix.chars().count());
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+    assert!(q(&c, "SELECT * FROM docs").rows.is_empty());
+    for table in ["staged", "skipped"] {
+        assert!(c
+            .execute(&format!("SELECT * FROM {table}"), &Parameters::new())
+            .is_err());
+    }
+    plan[1].sql = plan[1].sql.replace("n:'bad'", "n:2");
+    let report = c.migrate(&plan).unwrap();
+    assert_eq!(report.already_applied, 1);
+    assert_eq!(report.applied, vec![7]);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs").rows,
+        vec![vec![fastdb::Value::Integer(2)]]
+    );
+    assert_eq!(c.migrate(&plan).unwrap().already_applied, 2);
+}

@@ -1272,3 +1272,6 @@ Migration history value bounds (2026-09-07): a bounded metadata query now valida
 
 
 Maximum valid migration history qualification (2026-09-07): a file-backed integration regression applies four exactly 4 MiB scripts totaling 16 MiB, with multibyte UTF-8 comment padding and collection DDL. Reopening the database and rerunning the exact plan skips all four versions, preserves the created collections and returns autocommit. This confirms the new stored-history size checks accept the documented byte boundary. All six migration integration tests, formatting and focused Clippy pass. Broader resource/platform/recovery and full V1 qualification remain open.
+
+
+Migration source-location qualification (2026-09-07): a regression verifies FDB_MIGRATION carries the pending version, exact UTF-8 byte offset after multibyte comments and the underlying FDB_VALIDATION cause. Earlier pending DDL rolls back, later statements remain absent, and correcting the failed source applies only the pending nonconsecutive version before exact rerun skips it. All seven migration integration tests, formatting and focused Clippy pass. Full V1 remains incomplete.
