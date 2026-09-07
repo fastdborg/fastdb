@@ -969,17 +969,30 @@ fn native_scalar_affinity_matches_native_document_scalar_storage() {
     ] {
         q(&c, &format!("CREATE TABLE {name}(v {declaration})"));
         q(&c, &format!("INSERT INTO {name} VALUES ({value})"));
-        for op in ["=", "!=", "IS", "IS NOT", "<", "<=", ">", ">="] {
-            for operands in [
-                format!("v {op} (SELECT v FROM {name})"),
-                format!("(SELECT v FROM {name}) {op} v"),
-            ] {
-                let sql = format!("SELECT {operands} AS matched FROM docs");
-                assert_eq!(
-                    q(&c, &sql).rows,
-                    q(&c, &sql.replace("FROM docs", "FROM lhs")).rows,
-                    "{sql}"
-                );
+        for projection in [
+            "v",
+            "v COLLATE BINARY",
+            "v COLLATE NOCASE",
+            "v COLLATE RTRIM",
+        ] {
+            for op in ["=", "!=", "IS", "IS NOT", "<", "<=", ">", ">="] {
+                for operands in [
+                    format!("v {op} (SELECT {projection} FROM {name})"),
+                    format!("(SELECT {projection} FROM {name}) {op} v"),
+                    format!("v {op} ((SELECT {projection} FROM {name}) COLLATE NOCASE)"),
+                    format!("((SELECT {projection} FROM {name}) COLLATE NOCASE) {op} v"),
+                    format!("(v COLLATE BINARY) {op} ((SELECT {projection} FROM {name}) COLLATE NOCASE)"),
+                    format!("((SELECT {projection} FROM {name}) COLLATE NOCASE) {op} (v COLLATE BINARY)"),
+                    format!("(v COLLATE NOCASE) {op} ((SELECT {projection} FROM {name}) COLLATE RTRIM)"),
+                    format!("((SELECT {projection} FROM {name}) COLLATE RTRIM) {op} (v COLLATE NOCASE)"),
+                ] {
+                    let sql = format!("SELECT {operands} AS matched FROM docs");
+                    assert_eq!(
+                        q(&c, &sql).rows,
+                        q(&c, &sql.replace("FROM docs", "FROM lhs")).rows,
+                        "{sql}"
+                    );
+                }
             }
         }
     }

@@ -598,6 +598,7 @@ mod between_tests {
         for comparison in [
             "n=(SELECT between_tick() FROM exists_native)",
             "(SELECT between_tick() FROM exists_native)>n",
+            "n=((SELECT between_tick() FROM exists_native) COLLATE NOCASE)",
         ] {
             CALLS.store(0, Ordering::SeqCst);
             c.execute(

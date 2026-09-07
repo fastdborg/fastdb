@@ -534,6 +534,7 @@ test('typed scalar subqueries preserve values in both clients', async () => {
       await db.execute('CREATE TABLE scalar_numeric(n INTEGER)');
       await db.execute('INSERT INTO scalar_numeric VALUES (2)');
       assert.deepEqual(await db.exactlyOne("SELECT '2'=(SELECT n FROM scalar_numeric) AS v FROM docs"), [1n]);
+      assert.deepEqual(await db.exactlyOne("SELECT '2'=((SELECT n FROM scalar_numeric) COLLATE NOCASE) AS v FROM docs"), [1n]);
     } finally { await db.close(); }
   }
 });

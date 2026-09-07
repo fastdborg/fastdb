@@ -576,3 +576,11 @@ Direct native scalar subqueries compared with typed document values now retain n
 The regression compares forty-eight query pairs (INTEGER, TEXT and TEXT COLLATE NOCASE sources; eight equality/range operators; both operand orders) over string, integer and NULL document values. Additional coverage checks native-only correlation, binary-versus-record identity and one native source evaluation across multiple outer rows. This is initial direct-scalar comparison coverage: explicit COLLATE wrappers, broader computed/compound/CTE metadata, volatile logical operands and resource/platform qualification remain open. No upstream implementation or encoding changes.
 
 Final scoped checks passed formatting, Clippy, 265 Rust tests, twenty-three Node tests and strict TypeScript checking. The known trigger-interruption gate remains ignored and unresolved; full V1 remains incomplete.
+
+## Explicit collation around native scalars (2026-09-07)
+
+Native scalar comparison recognition now sees through parentheses and outer COLLATE wrappers without losing native affinity. Explicit outer collation uses left-operand precedence when both sides specify one, and document operand wrappers retain their comparison role. The native scalar result remains shared rather than reevaluated for each comparison branch.
+
+The existing affinity matrix now contains 768 native differential query pairs: three native column declarations, four inner projection collation forms, eight comparison operators and eight operand/wrapper arrangements, including conflicting BINARY/NOCASE/RTRIM collations. A callback case checks once-only native evaluation with an outer wrapper; both Node clients exercise a wrapped numeric scalar. Unary-plus/CAST and broader computed/compound/CTE metadata, volatile logical operands and resource/platform qualification remain open. No upstream implementation or encoding changes.
+
+Final scoped checks passed formatting, Clippy, 265 Rust tests, twenty-three Node tests and strict TypeScript checking. One known trigger-interruption release gate remains ignored and unresolved; full V1 remains incomplete.

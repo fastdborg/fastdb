@@ -591,6 +591,7 @@ impl Scope {
                         | Operator::GreaterEquals
                 ) {
                     let native = |value: &Expr| {
+                        let value = order_base(value);
                         matches!(value, Expr::Subquery(_))
                             && self
                                 .expression_subqueries
@@ -607,8 +608,8 @@ impl Scope {
                             (&**b, &**a, false)
                         };
                         // Validate bindings while retaining the original SQL affinity.
-                        self.preserved(&mut query.clone())?;
-                        let mut logical = value.clone();
+                        self.preserved(&mut order_base(query).clone())?;
+                        let mut logical = order_base(value).clone();
                         if native(value) {
                             self.preserved(&mut logical)?;
                             return Ok(());
@@ -624,18 +625,27 @@ impl Scope {
                             return Ok(());
                         }
 
-                        let Expr::Subquery(inner) = query else {
+                        let Expr::Subquery(inner) = order_base(query) else {
                             unreachable!()
                         };
                         let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                         let SubqueryAffinity::NativeScalar(collation) =
-                            &self.expression_subqueries[&query.to_string()].2
+                            &self.expression_subqueries[&order_base(query).to_string()].2
                         else {
                             unreachable!()
                         };
+                        let native_explicit = outer_collation(query);
+                        let logical_explicit = outer_collation(value);
+                        let explicit = if on_left {
+                            native_explicit.or(logical_explicit)
+                        } else {
+                            logical_explicit.or(native_explicit)
+                        };
+                        let collation =
+                            explicit.unwrap_or(if on_left { collation } else { "BINARY" });
                         let raw = format!(
                             "((SELECT * FROM __fastdb_native_comparison) COLLATE {})",
-                            quote(if on_left { collation } else { "BINARY" })
+                            quote(collation)
                         );
                         let raw = raw.as_str();
                         let key =
@@ -665,7 +675,7 @@ impl Scope {
                                 &if on_left {
                                     value
                                 } else {
-                                    format!("({value} COLLATE BINARY)")
+                                    format!("({value} COLLATE {})", quote(collation))
                                 },
                                 raw,
                             )
@@ -1438,6 +1448,14 @@ fn lower_source(
     }
     Ok(())
 }
+fn outer_collation(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Collate(_, name) => Some(name.as_str()),
+        Expr::Parenthesized(values) if values.len() == 1 => outer_collation(&values[0]),
+        _ => None,
+    }
+}
+
 fn order_base(expr: &Expr) -> &Expr {
     match expr {
         Expr::Collate(expr, _) => order_base(expr),
