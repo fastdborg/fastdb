@@ -1287,3 +1287,58 @@ fn duplicate_logical_derived_names_preserve_types_and_first_lookup() {
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
 }
+
+#[test]
+fn duplicate_derived_composites_keep_paths_records_and_indexed_writes() {
+    let (_db, c) = setup();
+    let sql = "SELECT q.x.city FROM (SELECT profile AS x,ref AS X FROM docs ORDER BY n) q";
+    assert_eq!(
+        q(&c, sql).rows,
+        q(&c, "SELECT docs.profile.city FROM docs ORDER BY n").rows
+    );
+    assert_eq!(
+        c.profile_select(sql, &Parameters::new())
+            .unwrap()
+            .result
+            .rows,
+        q(&c, sql).rows
+    );
+    let sql = "SELECT record::id(q.X) FROM (SELECT ref AS x,profile AS X FROM docs ORDER BY n) q";
+    assert_eq!(
+        q(&c, sql).rows,
+        q(&c, "SELECT record::id(ref) FROM docs ORDER BY n").rows
+    );
+    q(&c, "CREATE TABLE copied");
+    q(&c, "DEFINE FIELD profile ON copied TYPE object");
+    q(&c, "CREATE UNIQUE INDEX copied_ref ON copied(ref)");
+    q(&c, "BEGIN");
+    let insert = "INSERT INTO copied(profile,ref) SELECT q.* FROM (SELECT profile AS x,ref AS X FROM docs) q";
+    q(&c, insert);
+    let expected = q(&c, "SELECT profile,ref FROM docs ORDER BY ref");
+    assert_eq!(
+        q(&c, "SELECT profile,ref FROM copied ORDER BY ref").rows,
+        expected.rows
+    );
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(
+        q(&c, "SELECT profile,ref FROM copied ORDER BY ref").rows,
+        expected.rows
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT copied.profile.city FROM copied WHERE ref=docs:b"
+        )
+        .rows,
+        vec![vec![Value::String("A".into())]]
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM copied WHERE ref=docs:b")
+        .rows
+        .is_empty());
+    q(&c, insert);
+    assert_eq!(
+        q(&c, "SELECT profile,ref FROM copied ORDER BY ref").rows,
+        expected.rows
+    );
+}
