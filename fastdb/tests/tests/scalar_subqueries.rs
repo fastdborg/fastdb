@@ -4267,3 +4267,60 @@ fn scalar_pagination_rejects_nonintegral_numbers_and_retries() {
         }
     }
 }
+
+#[test]
+fn scalar_paginated_assignments_preserve_atomicity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "DEFINE FIELD n ON docs TYPE integer CHECK(n<10)",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {id:docs:prior,n:5}");
+    let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+    let sql = "UPDATE docs AS d SET n=(SELECT d.n+$extra WHERE $admit LIMIT $limit OFFSET $offset) WHERE n<5";
+    let invalid = Parameters::from([
+        ("$extra".into(), Value::Integer(8)),
+        ("$admit".into(), Value::Boolean(true)),
+        ("$limit".into(), Value::Number(1.0)),
+        ("$offset".into(), Value::Number(0.0)),
+    ]);
+    assert!(c.execute(sql, &invalid).is_err());
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    let valid = Parameters::from([
+        ("$extra".into(), Value::Integer(2)),
+        ("$admit".into(), Value::Boolean(true)),
+        ("$limit".into(), Value::Number(1.0)),
+        ("$offset".into(), Value::Number(0.0)),
+    ]);
+    let mut bad_pagination = valid.clone();
+    bad_pagination.insert("$offset".into(), Value::Number(1.5));
+    assert!(c.execute(sql, &bad_pagination).is_err());
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    assert_eq!(c.execute(sql, &valid).unwrap().affected, 2);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(3)],
+            vec![Value::Integer(4)],
+            vec![Value::Integer(5)]
+        ]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+}
