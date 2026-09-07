@@ -1384,5 +1384,41 @@ mod cte_evaluation_tests {
                 );
             }
         }
+        for offset in [0, 1] {
+            for outer_limit in ["", " LIMIT 0"] {
+                let reference = format!("SELECT (SELECT s.n+1 FROM baseline s WHERE s.n>=d.n LIMIT 1 OFFSET {offset}) FROM docs d ORDER BY n{outer_limit}");
+                let expected = c.execute(&reference, &params).unwrap().rows;
+                let offset_expr = if offset == 0 {
+                    "cte_tick()-1"
+                } else {
+                    "cte_tick()"
+                };
+                let sql = format!("SELECT (SELECT s.n+cte_tick() FROM baseline s WHERE s.n>=d.n LIMIT cte_tick() OFFSET {offset_expr}) FROM docs d ORDER BY n{outer_limit}");
+                let expected_calls = if !outer_limit.is_empty() {
+                    0
+                } else if offset == 0 {
+                    9
+                } else {
+                    8
+                };
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(c.execute(&sql, &params).unwrap().rows, expected);
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    expected_calls,
+                    "execute {sql}"
+                );
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(
+                    c.profile_select(&sql, &params).unwrap().result.rows,
+                    expected
+                );
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    expected_calls,
+                    "profile {sql}"
+                );
+            }
+        }
     }
 }

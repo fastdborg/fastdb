@@ -1606,3 +1606,6 @@ The complete scoped check passed formatting, Clippy, 396 Rust tests, 44 Node/app
 
 
 Native-inner type-sensitive OFFSET qualification (2026-09-08): expanded the native-inner pagination regression with CASE/typeof in OFFSET, including a branch that skips every matching row. Integer/real bindings preserve their expected branches through execute/profile with direct/derived logical outer sources. The expanded focused test, formatting and focused Clippy pass. Latest combined evidence remains 396 Rust/44 Node tests; broader scope/evaluation/resource and full V1 gates remain open.
+
+
+Native-inner pagination evaluation qualification (2026-09-08): the callback regression now exercises a native table scalar correlated to logical outer rows. LIMIT/OFFSET run once per outer row, projections only for returned rows, and outer LIMIT 0 causes no calls. Offset 0/1 produce nine/eight calls over three outer rows with matching execute/profile results. The expanded focused unit test, formatting and frontend lib/test Clippy pass. Latest combined evidence remains 396 Rust/44 Node tests; broader evaluation/resource and full V1 gates remain open.
