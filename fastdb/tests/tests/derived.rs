@@ -906,6 +906,7 @@ fn join_membership_preserves_native_values_and_nulls() {
         "SELECT v FROM labels",
         "SELECT v FROM labels WHERE v IS NOT NULL",
         "SELECT v FROM labels WHERE 0",
+        "SELECT v FROM labels WHERE v=$value",
     ] {
         for operator in ["IN", "NOT IN"] {
             for value in [

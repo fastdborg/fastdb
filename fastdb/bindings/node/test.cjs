@@ -1113,3 +1113,29 @@ test('unnamed derived joins preserve client values and ambiguity errors', async 
     } finally { await db.close(); }
   }
 });
+
+test('JOIN membership preserves binary bindings and NULL rows in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      const bytes = Buffer.from([70, 68, 66, 1, 0, 255]);
+      const other = Buffer.from([49]);
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {n:1,data:$data}', {$data:bytes});
+      await db.execute('INSERT INTO docs {n:2,data:$data}', {$data:other});
+      await db.execute('CREATE TABLE labels(v BLOB)');
+      await db.execute('INSERT INTO labels VALUES($value)', {$value:bytes});
+      await db.execute('CREATE TABLE marker(m INTEGER)');
+      await db.execute('INSERT INTO marker VALUES(7)');
+      for (const operator of ['IN', 'NOT IN']) {
+        const sql = `SELECT d.n,d.data,marker.m FROM (SELECT n,data FROM docs) d LEFT JOIN marker ON d.data ${operator} (SELECT v FROM labels WHERE v=$value) ORDER BY d.n`;
+        const expected = operator === 'IN'
+          ? [[1n, bytes, 7n], [2n, other, null]]
+          : [[1n, bytes, null], [2n, other, 7n]];
+        assert.deepEqual((await db.execute(sql, {$value:bytes})).rows, expected);
+        assert.deepEqual((await db.profileSelect(sql, {$value:bytes})).result.rows, expected);
+      }
+    } finally { await db.close(); }
+  }
+});

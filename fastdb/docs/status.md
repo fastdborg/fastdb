@@ -1806,3 +1806,10 @@ JOIN membership LIMIT 0 diagnosis (2026-09-08): added native controls for a plai
 
 
 JOIN membership write atomicity qualification (2026-09-08): a new INSERT SELECT regression exercises JOIN ON membership feeding a checked, uniquely indexed collection. A later invalid row causes statement failure while preserving prior transaction work and removing the earlier statement row's index entry. A filtered retry succeeds; outer rollback removes both rows and index entries. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 418 Rust/45 Node tests; recent additions have focused evidence only. Broader writes, evaluation timing, resources and full V1 release gates remain open.
+
+
+## Native binary binding correction (2026-09-08)
+
+A new sync/worker Node JOIN membership regression exposed a wrong result when a native RHS filtered its BLOB column using a binary binding. Lowered SELECT execution had bound binary placeholders as encoded index keys. Remaining native placeholders now receive scalar bindings with raw BLOB bytes; managed-index candidate predicates explicitly convert binary parameters into index keys. The existing mixed UNION binary/index regression caught that dependency during development and passes with the final fix.
+
+The native-reference JOIN value matrix now includes a parameterized RHS filter. The client regression verifies binary preservation and LEFT JOIN NULL extension for IN and NOT IN in both clients. The complete scoped check passed formatting, Clippy, 420 Rust tests, 46 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. Broader binding/scope, evaluation timing, resources, platform and full V1 release gates remain open. No upstream implementation files changed.

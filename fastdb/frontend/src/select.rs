@@ -1917,8 +1917,20 @@ fn blob_literal(expr: &Expr) -> bool {
 }
 // SQL blob literals denote binary values, never pre-encoded record identity.
 // Apply the same scalar-key representation used by typed fields and parameters.
-fn index_literal(expr: &Expr) -> Result<Expr> {
-    if blob_literal(expr) {
+fn index_literal(expr: &Expr, params: &Parameters) -> Result<Expr> {
+    let mut binary_parameter = false;
+    let mut probe = expr.clone();
+    turso_core::walk_expr_mut(&mut probe, &mut |value| {
+        if let Expr::Variable(var) = value {
+            let name = var
+                .name
+                .as_ref()
+                .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
+            binary_parameter |= matches!(params.get(&name), Some(Value::Binary(_)));
+        }
+        Ok(turso_core::WalkControl::Continue)
+    })?;
+    if blob_literal(expr) || binary_parameter {
         expression(&format!(
             "__fastdb_unwrap(__fastdb_pack({}))",
             order_base(expr)
@@ -2038,12 +2050,16 @@ fn indexed_filter(
                         lhs: key,
                         rhs: keys
                             .into_iter()
-                            .map(|e| index_literal(e).map(Box::new))
+                            .map(|e| index_literal(e, &scope.params).map(Box::new))
                             .collect::<Result<_>>()?,
                         not: false,
                     }
                 } else {
-                    Expr::Binary(key, Operator::Equals, Box::new(index_literal(keys[0])?))
+                    Expr::Binary(
+                        key,
+                        Operator::Equals,
+                        Box::new(index_literal(keys[0], &scope.params)?),
+                    )
                 };
                 return Ok(Some((index.clone(), filter)));
             }
@@ -4635,14 +4651,10 @@ impl Connection {
                 }
                 return Err(Error::Parameter(name.clone()));
             };
-            statement.bind_at(
-                index,
-                if native_insert {
-                    crate::scalar(value)?
-                } else {
-                    crate::index_scalar(value)?
-                },
-            )?;
+            // Logical expressions encode and consume typed values during
+            // lowering. Remaining placeholders belong to native SQL and need
+            // raw scalar bindings, including unwrapped BLOB bytes.
+            statement.bind_at(index, crate::scalar(value)?)?;
         }
         let engine_names = (0..statement.num_columns())
             .map(|i| statement.get_column_name(i).into_owned())

@@ -1070,3 +1070,6 @@ Projection aliases in membership operands (2026-09-08): WHERE, JOIN ON and GROUP
 
 
 Native membership in JOIN ON (2026-09-08): native IN/NOT IN subqueries referenced by logical JOIN ON predicates now remain inline, using the existing native membership conversion path. Hoisting those RHS sources into an outer internal CTE caused the pinned engine to reject the join with no-such-table during preparation. Logical projection aliases in the covered join predicates expand as an extension; the pinned ordinary SQL alias spelling retains its own rejection. Broader volatile-source evaluation, join planning and resource qualification remain open.
+
+
+Native binary placeholders in logical queries (2026-09-08): remaining engine placeholders receive native scalar bindings, preserving raw binary bytes for relational sources and subqueries. Typed logical expressions encode their values during lowering. Managed-index candidate predicates explicitly convert binary bindings to the encoded key representation, allowing one binding to serve both indexed document and native SQL comparisons without confusing raw BLOBs with record identity.
