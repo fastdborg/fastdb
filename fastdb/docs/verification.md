@@ -1780,3 +1780,10 @@ The complete scoped check passed formatting, Clippy, 384 Rust tests, 44 Node/app
 
 
 Inherited scalar value qualification (2026-09-08): a new regression passes stored values through a native-shaped source-free child SELECT into an array helper in its logical parent. All ten public Value variants are represented, including binary bytes beginning with FDB and a float32 vector; direct/derived outer sources preserve exact values through execute/profile. The fixture uses array::new(), preserving ordinary SQL bracket-quoting rules. The focused regression, package formatting and focused Clippy pass. Latest complete scoped evidence remains 384 Rust/44 Node tests; this additional test has not received a new combined run. Broader scope/resource and full V1 release gates remain open.
+
+
+## Source-free scalar ordering correlation (2026-09-08)
+
+Extended source-free scalar correlation to ORDER BY expressions, fixing an unresolved outer numeric field in a logical array projection. A pinned native comparison establishes support for the scalar ordering form; direct/derived collection regressions pass execute/profile.
+
+The complete scoped check passed formatting, Clippy, 386 Rust tests, 44 Node/application tests and strict TypeScript, including the preceding inherited-value regression. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/resource and full V1 release qualification remain open.

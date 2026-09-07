@@ -4055,3 +4055,47 @@ fn inherited_scalar_binding_preserves_outer_value_types() {
         }
     }
 }
+
+#[test]
+fn source_free_scalar_ordering_binds_outer_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(n INTEGER)",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:2}",
+        "INSERT INTO baseline VALUES(1),(2)",
+    ] {
+        q(&c, sql);
+    }
+    let native = q(
+        &c,
+        "SELECT n,(SELECT d.n ORDER BY d.n DESC) FROM baseline d ORDER BY n",
+    )
+    .rows;
+    assert_eq!(
+        native,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1)],
+            vec![Value::Integer(2), Value::Integer(2)]
+        ]
+    );
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        let sql =
+            format!("SELECT n,(SELECT array::new(d.n) ORDER BY d.n DESC) FROM {source} ORDER BY n");
+        let expected = vec![
+            vec![Value::Integer(1), Value::Array(vec![Value::Integer(1)])],
+            vec![Value::Integer(2), Value::Array(vec![Value::Integer(2)])],
+        ];
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{sql}"
+        );
+    }
+}

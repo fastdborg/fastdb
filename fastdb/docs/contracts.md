@@ -995,3 +995,8 @@ The correlation pass for collection-reading scalar SELECTs now binds qualified o
 ## Inherited logical scalar correlation (2026-09-08)
 
 Source-free scalar children of an already logical source-free expression inherit its logical binding context. Qualified outer fields therefore remain typed even when the child itself has no helper or typed parameter. This fixes the recorded `(SELECT d.id WHERE true)` membership operand failure inside an array-helper scalar query. The regression covers direct/derived outer sources, IN/NOT IN and RHS NULL members through execute/profile. Native entry routing and table-bearing scope rules are unchanged; broader scope/affinity/resource qualification remains open.
+
+
+## Source-free scalar ordering correlation (2026-09-08)
+
+Source-free scalar correlation now visits ORDER BY expressions as well as projections and filters. This fixes an unresolved outer numeric field in `SELECT array::new(d.n) ORDER BY d.n DESC`; the corresponding pinned native scalar ordering form succeeds. Direct/derived collection regressions verify execution and profiling results. This extends binding coverage; it does not establish general grouped/windowed scope or resource qualification.

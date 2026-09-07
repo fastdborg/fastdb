@@ -2650,7 +2650,8 @@ impl Connection {
                         ResultColumn::Expr(value, _) => Some(value),
                         _ => None,
                     })
-                    .chain(where_clause.iter_mut());
+                    .chain(where_clause.iter_mut())
+                    .chain(inner.order_by.iter_mut().map(|sort| &mut sort.expr));
                 for value in values {
                     self.correlate_source_free_expression(
                         value,
