@@ -400,3 +400,7 @@ Malformed first statements reaching native fallback now return the pinned parse 
 ## Instrumented 100k benchmark evidence
 
 A clean-source 100,000-document run now retains measured engine counters, three samples per workload, plans and binary identity. All result/plan assertions passed. Unindexed/indexed filtering read 100,000/2,000 physical rows with 99,999/zero fullscan steps; exact-vector top-10 read 100,000 rows with one sort. Counters matched across all samples. Median CLI times were 5.81 seconds, 284 ms and 30.62 seconds respectively. See benchmarks.md for raw evidence, loading/index costs and memory. This closes the missing-counter gap for the existing synthetic 16-dimensional dev workload; representative dimensions, 1m-scale, optimized/platform/concurrent and full release qualification remain open.
+
+## Seeded vector benchmark reference
+
+The harness now offers a per-record seeded vector fixture alongside the unchanged cyclic default and records fixture/Python versions. Its independent float32-coordinate cosine reference validates distances, top-10 cutoff membership, mandatory nearer records and distance/ID ordering with an explicit roundoff tolerance. Cyclic 16-dimensional and seeded 768-dimensional 1,000-document runs passed all assertions; raw reports are retained. This extends numerical/dimensional benchmark coverage, while real embedding distributions and large high-dimensional release workloads remain open.
