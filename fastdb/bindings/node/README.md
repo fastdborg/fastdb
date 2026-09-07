@@ -213,3 +213,12 @@ node fastdb/scripts/inventory-node-dependencies.cjs x86_64-unknown-linux-gnu fas
 ```
 
 This offline, locked, package-scoped Cargo query records normal and build dependencies, declared license expressions, the target and the lockfile hash. The checked-in Linux inventory contains 192 package/version entries. `cfg_block` 0.1.1 has no license expression in the query output: its pinned manifest instead declares `license-file = "LICENSE"`. That source file contains an Apache 2.0 notice; the package notice file includes it and the Apache 2.0 text. The inventory retains the absent expression rather than replacing Cargo metadata with an inferred value. Build tools are included; development dependencies are excluded. The inventory is an audit input, not evidence that every listed crate is linked into the addon, a complete component inventory, or a replacement for license texts. Bundled C/C++ sources and other vendored components require separate inspection. Regenerate for dependency changes and qualify other advertised targets separately.
+
+With Python 3.11+ and the same Cargo cache, inspect cached source archives:
+
+```sh
+python3 fastdb/scripts/audit-crate-notices.py fastdb/docs/node-dependencies-linux-x64.json fastdb/docs/node-crate-notices-linux-x64.json
+python3 fastdb/scripts/audit-crate-notices.py fastdb/docs/node-dependencies-linux-x64.json fastdb/docs/node-crate-notices-linux-x64.json --check
+```
+
+The audit checks archive checksums against Cargo.lock and records declared license-file paths plus hashes of license/notice filename candidates, including nested bundled sources. It reads archives without extracting them. Missing/ambiguous archives, checksum mismatches and stale reports fail explicitly. The current report verifies 185 archives with 316 candidate files; 13 archives have no matching candidates and seven workspace packages require separate inspection. Filename discovery can miss inline notices or unconventional names, and identifying a file does not establish that all required notices are included in the package. The report is kept outside the npm runtime package.

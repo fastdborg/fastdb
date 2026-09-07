@@ -2117,3 +2117,10 @@ This is an audit input, not a linked-binary inventory or complete notice bundle.
 Inspected pinned cfg_block 0.1.1: Cargo.toml and Cargo.toml.orig declare license-file = "LICENSE", explaining the absent license expression in cargo tree. That file contains Trevor Gross's 2022 copyright and Apache 2.0 notice. The dependency path is fastdb-node → fastdb → turso_core → cfg_block. The Node notice file now includes the source notice and Apache 2.0 text from the pinned checkout, with source paths and SHA-256 hashes. The machine inventory preserves Cargo's absent expression rather than substituting inferred metadata.
 
 Offline packing/installation passed exact notice verification, sync/worker consumer checks and strict consumer TypeScript: Linux x64, Node 24.19.0, nine files, 59,915,316 packed bytes with the existing debug addon. The specific missing-expression investigation is resolved; complete dependency and bundled-source notice qualification remains open. No publication or upstream implementation changes occurred. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests; full V1 remains incomplete.
+
+
+## Checksummed crate notice-source inventory (2026-09-08)
+
+Added an offline Python 3.11+ audit that checks cached crate archives against Cargo.lock, verifies manifest identity and records declared license-file paths and hashes of notice filename candidates without extracting files. The checked-in Linux report verifies 185 registry archives and 316 candidates; 13 archives have no matching candidates and seven workspace packages require separate inspection. These are source-discovery results, not a complete license bundle or linked-binary inventory.
+
+Exact regeneration/check mode, a valid cfg_block archive, corrupted-archive rejection and stale-report rejection pass. Runtime code and the npm file allowlist are unchanged; no publication occurred. Remaining work includes inspecting unmatched/inline notices, workspace and bundled source attribution, and constructing a complete distribution notice bundle. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests; full V1 release gates remain open.
