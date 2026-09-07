@@ -9,6 +9,7 @@ struct Source {
     collection: Option<Collection>,
     derived: Option<Vec<(String, bool)>>,
     derived_logical: bool,
+    native_collations: std::collections::BTreeMap<String, String>,
     consumed: std::collections::BTreeSet<String>,
 }
 impl Source {
@@ -581,6 +582,32 @@ impl Scope {
             Expr::Parenthesized(values) if values.len() == 1 => self.native_column(&values[0]),
             _ if native_column_reference(expr) => Ok(!self.preserved(&mut expr.clone())?),
             _ => Ok(false),
+        }
+    }
+    fn derived_native_collation(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Collate(_, name) => Some(name.as_str().to_owned()),
+            Expr::Unary(UnaryOperator::Positive, value) => self.derived_native_collation(value),
+            Expr::Parenthesized(values) if values.len() == 1 => {
+                self.derived_native_collation(&values[0])
+            }
+            Expr::Qualified(alias, column) => self
+                .sources
+                .iter()
+                .find(|source| source.alias.eq_ignore_ascii_case(alias.as_str()))?
+                .native_collations
+                .get(&column.as_str().to_ascii_lowercase())
+                .cloned(),
+            Expr::Id(column) | Expr::Name(column) => {
+                let mut found = self.sources.iter().filter_map(|source| {
+                    source
+                        .native_collations
+                        .get(&column.as_str().to_ascii_lowercase())
+                });
+                let first = found.next()?;
+                found.next().is_none().then(|| first.clone())
+            }
+            _ => None,
         }
     }
     fn sql_argument(&self, expr: &mut Expr) -> Result<()> {
@@ -1322,6 +1349,13 @@ impl Scope {
                             **value = expression(&format!("__fastdb_unwrap({value})"))?;
                         }
                     }
+                    if let Some(collation) = self.derived_native_collation(&value) {
+                        value = expression(&format!("({value} COLLATE {})", quote(&collation)))?;
+                        for member in rhs.iter_mut() {
+                            **member =
+                                expression(&format!("({member} COLLATE {})", quote(&collation)))?;
+                        }
+                    }
                     let list = rhs
                         .iter()
                         .map(ToString::to_string)
@@ -1593,6 +1627,7 @@ fn source(
                 collection: None,
                 derived: Some(plan.names.into_iter().zip(plan.typed).collect()),
                 derived_logical: true,
+                native_collations: Default::default(),
                 consumed: plan.consumed,
             });
         }
@@ -1609,12 +1644,54 @@ fn source(
         let columns = (0..statement.num_columns())
             .map(|i| (statement.get_column_name(i).into_owned(), false))
             .collect();
+        let program = statement.get_program();
+        let mut native_collations = std::collections::BTreeMap::new();
+        for (i, column) in program.result_columns.iter().enumerate() {
+            let mut pending = vec![(column.expr.clone(), &program.table_references)];
+            let mut implicit = None;
+            let mut explicit = None;
+            while let Some((mut value, tables)) = pending.pop() {
+                turso_core::walk_expr_mut(&mut value, &mut |expr| {
+                    match expr {
+                        Expr::Collate(_, name) => {
+                            explicit.get_or_insert_with(|| name.as_str().to_owned());
+                            return Ok(turso_core::WalkControl::SkipChildren);
+                        }
+                        Expr::Column { table, column, .. } => {
+                            if let Some((_, source)) = tables.find_table_by_internal_id(*table) {
+                                if let turso_core::schema::Table::FromClauseSubquery(derived) =
+                                    source
+                                {
+                                    if let Some(result) =
+                                        derived.plan.select_result_columns().get(*column)
+                                    {
+                                        pending.push((
+                                            result.expr.clone(),
+                                            derived.plan.select_table_references(),
+                                        ));
+                                    }
+                                } else if let Some(column) = source.get_column_at(*column) {
+                                    implicit.get_or_insert_with(|| column.collation().name());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    Ok(turso_core::WalkControl::Continue)
+                })?;
+            }
+            native_collations.insert(
+                statement.get_column_name(i).to_ascii_lowercase(),
+                explicit.or(implicit).unwrap_or_else(|| "BINARY".into()),
+            );
+        }
         return Ok(Source {
             table: SelectTable::Select(select.clone(), Some(alias.clone())),
             alias: alias.name().as_str().into(),
             collection: None,
             derived: Some(columns),
             derived_logical: false,
+            native_collations,
             consumed: Default::default(),
         });
     }
@@ -1679,6 +1756,7 @@ fn source(
         collection,
         derived: None,
         derived_logical: false,
+        native_collations: Default::default(),
         consumed: Default::default(),
     })
 }
@@ -3032,6 +3110,7 @@ impl Connection {
                         collection: None,
                         derived: Some(columns),
                         derived_logical: logical,
+                        native_collations: Default::default(),
                         consumed,
                     }),
                 );

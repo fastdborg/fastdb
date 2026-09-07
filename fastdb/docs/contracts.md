@@ -1049,3 +1049,6 @@ Unnamed derived collection sources (2026-09-08): supported derived SELECTs no lo
 
 
 Mixed native/collection derived joins (2026-09-08): native derived projections now expose engine-prepared column names to the same closed-column resolver. Metadata preparation does not step the source. Native projection columns remain untyped SQL values; their affinity and collation stay with the engine. Unnamed native derived sources receive their internal aliases when included in a logical plan, including mixed star expansion. Direct native tables combined with open collection sources still use the existing qualification rules.
+
+
+Native derived-column membership collation (2026-09-08): metadata records native derived output collations by following prepared derived plans to their projection expressions. Native-left IN/NOT IN applies the selected collation to both the left value and converted list members, preventing incidental typed-accessor collation from changing matches in the pinned engine. Explicit left COLLATE overrides the recorded default. This path preserves list evaluation structure and NULL behavior. Document-value reference tests use native literal operands, which do not introduce a native left column’s declared affinity or implicit collation. Broader projection/collation and scope qualification remains open.

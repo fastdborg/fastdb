@@ -1654,3 +1654,10 @@ Unnamed derived-source correlation qualification (2026-09-08): a new regression 
 Native derived sources now expose engine-prepared projection names to closed-column name resolution, retaining native SQL value types. Mixed unnamed derived left/right joins resolve unambiguous names and preserve typed collection values and NULL extension. Their generated aliases are also applied during lowering, allowing mixed star expansion with the public column names. A new regression covers these paths through execute/profile and checks star output. Preparation obtains metadata without stepping native sources. Direct open collection/native-table joins retain qualification requirements; broader scope/resource and full V1 release gates remain open.
 
 The complete scoped check passed formatting, Clippy, 402 Rust tests, 44 Node/application tests and strict TypeScript, including the preceding unnamed-source parameter/correlation regression. One known trigger-cancellation gate remains ignored. No upstream implementation changes.
+
+
+## Native derived membership collation (2026-09-08)
+
+Fixed a reproduced mismatch where a native NOCASE derived column did not match a document string in IN/NOT IN lists. Prepared native projection metadata now tracks collations through derived plans; membership lowering applies the selected collation to converted list values as well as the native operand. Explicit left COLLATE retains precedence. Native-literal reference tests cover equality, IS, ranges, singleton/multiple membership, NULLs and BINARY/NOCASE overrides through execute/profile. No source pre-execution or upstream implementation changes were introduced.
+
+The complete scoped check passed formatting, Clippy, 403 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. Broader collation/projection/scope/resource and full V1 release qualification remain open.
