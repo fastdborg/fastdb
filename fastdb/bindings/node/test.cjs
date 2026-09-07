@@ -1092,3 +1092,24 @@ test('composite count preserves null presence through both clients', async () =>
     } finally { await db.close(); }
   }
 });
+
+test('unnamed derived joins preserve client values and ambiguity errors', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      const bytes = Buffer.from([70,68,66,1,0,255]);
+      await db.execute('INSERT INTO docs {n:1,flag:true,link:docs:b,data:$data}', {$data:bytes});
+      await db.execute('CREATE TABLE labels(m INTEGER,label TEXT)');
+      await db.execute("INSERT INTO labels VALUES(1,'A')");
+      const sql = 'SELECT n,flag,link,data,label FROM (SELECT n,flag,link,data FROM docs) JOIN labels ON n=m';
+      const expected = [1n,true,new Record('docs','b'),bytes,'A'];
+      assert.deepEqual(await db.exactlyOne(sql),expected);
+      assert.deepEqual((await db.profileSelect(sql)).result.rows,[expected]);
+      await db.execute('ALTER TABLE labels ADD COLUMN n INTEGER');
+      await assert.rejects(async () => db.execute(sql), {code:'FDB_VALIDATION'});
+      assert.deepEqual(await db.exactlyOne('SELECT d.n,flag,link,data,label FROM (SELECT n,flag,link,data FROM docs) d JOIN labels l ON d.n=l.m'),expected);
+    } finally { await db.close(); }
+  }
+});

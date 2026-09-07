@@ -2005,3 +2005,6 @@ Cross-connection join metadata qualification (2026-09-08): a new regression warm
 
 
 Join metadata schema rollback qualification (2026-09-08): a new regression creates a column collision inside a transaction, observes query rejection, rolls back, and verifies restored execute/profile results and rollback of accompanying document work. Transactional view replacement similarly restores its original columns and query result after rollback. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 406 Rust/44 Node tests; broader schema concurrency/resource and full V1 gates remain open.
+
+
+Node unnamed derived join qualification (2026-09-08): a new sync/worker client regression preserves bigint, Boolean, record and FDB-prefixed binary values through an unnamed collection-derived/direct-table join and SELECT profiling. Adding a colliding table column reports FDB_VALIDATION in both clients; a qualified retry preserves all values. The rebuilt-addon Node check passed all 45 Node/application tests and strict TypeScript. Latest complete combined scoped evidence remains 406 Rust/44 Node tests; later Rust additions and this client regression have focused evidence only. Broader client/schema/resource and full V1 gates remain open.
