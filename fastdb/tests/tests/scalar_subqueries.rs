@@ -2887,3 +2887,66 @@ fn source_sorted_distinct_bound_pages_and_writes_match_native() {
     c.check_collection_integrity("docs", Default::default())
         .unwrap();
 }
+
+#[test]
+fn correlated_composite_counts_match_native_presence_and_empty_sources() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(n,v)",
+        "CREATE TABLE lookup(k)",
+        "INSERT INTO lookup VALUES(1),(2)",
+        "INSERT INTO docs {n:1,v:[]}",
+        "INSERT INTO docs {n:2,v:null}",
+        "INSERT INTO docs {n:3,v:{a:1}}",
+        "INSERT INTO baseline VALUES(1,x'01'),(2,NULL),(3,x'02')",
+    ] {
+        q(&c, sql);
+    }
+    for argument in ["d.v", "CASE WHEN k>0 THEN d.v END", "coalesce(d.v,NULL)"] {
+        for predicate in ["1", "k>=d.n", "0"] {
+            let inner = format!("SELECT count({argument}) FROM lookup WHERE {predicate}");
+            let sql = |table| format!("SELECT n,({inner}) FROM {table} d ORDER BY n");
+            let expected = q(&c, &sql("baseline")).rows;
+            assert_eq!(
+                q(&c, &sql("docs")).rows,
+                expected,
+                "{argument}: {predicate}"
+            );
+            assert_eq!(
+                c.profile_select(&sql("docs"), &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "profile {argument}: {predicate}"
+            );
+        }
+    }
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    let before = q(&c, "SELECT id,n FROM docs ORDER BY n").rows;
+    q(&c, "BEGIN");
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE docs AS d SET n=n*10+(SELECT count(d.v) FROM lookup)"
+        )
+        .affected,
+        3
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(12)],
+            vec![Value::Integer(20)],
+            vec![Value::Integer(32)]
+        ]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+}

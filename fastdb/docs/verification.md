@@ -1593,3 +1593,6 @@ COUNT scalar compatibility qualification (2026-09-07): a native differential mat
 ## Combined COUNT qualification (2026-09-07)
 
 At clean commit ae564d1ff, fastdb/scripts/check.sh passed formatting, Clippy, 349 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-interruption gate remains ignored. This combines plain composite COUNT with scalar/native compatibility, FILTER, window/grouped-write and both-client coverage. The addon was rebuilt before client tests. Installed-package evidence remains the separately recorded COUNT smoke. Generic composite DISTINCT remains unsupported under the existing contract; remaining SQL/type/resource, recovery, distribution and application gates still prevent full V1 completion.
+
+
+Correlated composite COUNT qualification (2026-09-07): native null-presence comparisons cover outer composite fields in COUNT, CASE and coalesce with full, correlated-filtered and empty native inner sources through execute/profile_select. A multirow collection UPDATE consumes these counts, retains managed-index integrity and restores original records on rollback. The focused regression, formatting and focused Clippy pass. The native fixture uses blobs only to represent non-null presence; it does not establish composite equality. Broader correlation/type/resource and full V1 gates remain open.
