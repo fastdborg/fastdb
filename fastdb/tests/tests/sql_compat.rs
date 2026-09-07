@@ -101,3 +101,45 @@ fn malformed_collection_sql_preserves_native_parse_errors_and_active_work() {
     );
     c.execute("ROLLBACK", &Parameters::new()).unwrap();
 }
+
+#[test]
+fn native_source_free_scalar_limit_parameter_matches_pinned_preparation() {
+    let baseline =
+        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let raw = baseline.connect().unwrap();
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE baseline(n INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2)",
+    ] {
+        raw.prepare(sql).unwrap().run_collect_rows().unwrap();
+        c.execute(sql, &Parameters::new()).unwrap();
+    }
+    let sql = "SELECT n,(SELECT d.n ORDER BY d.n DESC LIMIT $limit OFFSET $offset) FROM baseline d ORDER BY n";
+    let stmt = raw.prepare(sql).unwrap();
+    assert!(stmt.parameter_index("$limit").is_none());
+    assert!(stmt.parameter_index("$offset").is_some());
+    let params = Parameters::from([
+        ("$limit".into(), Value::Integer(1)),
+        ("$offset".into(), Value::Integer(0)),
+    ]);
+    assert!(matches!(c.execute(sql,&params),Err(fastdb::Error::Parameter(name)) if name=="$limit"));
+    assert!(
+        matches!(c.profile_select(sql,&params),Err(fastdb::Error::Parameter(name)) if name=="$limit")
+    );
+    let literal =
+        "SELECT n,(SELECT d.n ORDER BY d.n DESC LIMIT 1 OFFSET 0) FROM baseline d ORDER BY n";
+    let expected = raw
+        .prepare(literal)
+        .unwrap()
+        .run_collect_rows()
+        .unwrap()
+        .into_iter()
+        .map(|row| row.into_iter().map(convert).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        c.execute(literal, &Parameters::new()).unwrap().rows,
+        expected
+    );
+}
