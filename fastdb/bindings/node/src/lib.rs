@@ -56,6 +56,36 @@ pub fn vector_from_components(
     Ok(bytes.into())
 }
 #[napi]
+pub fn vector_from_sparse_entries(
+    dimensions: f64,
+    entries: napi::bindgen_prelude::Buffer,
+) -> napi::Result<napi::bindgen_prelude::Buffer> {
+    if !dimensions.is_finite()
+        || dimensions.fract() != 0.0
+        || !(1.0..=65_536.0).contains(&dimensions)
+    {
+        return Err(error("vector dimensions must be 1..65536"));
+    }
+    let dimensions = dimensions as usize;
+    if entries.len() % 12 != 0 || entries.len() / 12 > dimensions {
+        return Err(error("sparse entries require bounded index/binary64 pairs"));
+    }
+    let entries = entries
+        .chunks_exact(12)
+        .map(|bytes| {
+            let index = u32::from_le_bytes(bytes[..4].try_into().expect("index width"));
+            let value = f64::from_le_bytes(bytes[4..].try_into().expect("binary64 width"));
+            (index as usize, value as f32)
+        })
+        .collect::<Vec<_>>();
+    let fastdb::Value::Vector(bytes) =
+        fastdb::Value::vector32_sparse_entries(dimensions, &entries).map_err(error)?
+    else {
+        unreachable!("typed vector constructor")
+    };
+    Ok(bytes.into())
+}
+#[napi]
 pub struct NativeDatabase {
     interrupt_key: u64,
     inner: Option<(fastdb::Connection, fastdb::Database)>,

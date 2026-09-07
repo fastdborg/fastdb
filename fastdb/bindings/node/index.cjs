@@ -1,5 +1,5 @@
 'use strict';
-const { NativeDatabase, interruptConnection, vectorFromComponents } = require('./fastdb.node');
+const { NativeDatabase, interruptConnection, vectorFromComponents, vectorFromSparseEntries } = require('./fastdb.node');
 class Record {
   constructor(table, key) {
     if (typeof table !== 'string' || !['string','bigint'].includes(typeof key)) throw new TypeError('Record requires a table and string or bigint key');
@@ -11,6 +11,25 @@ class Vector {
   static float32(values) { return constructVector('float32', values); }
   static float64(values) { return constructVector('float64', values); }
   static sparse32(values) { return constructVector('sparse32', values); }
+  static sparse32Entries(dimensions, entries) {
+    if (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > 65536) throw new RangeError('vector dimensions must be 1..65536');
+    if (!Array.isArray(entries)) throw new TypeError('sparse entries require an array of index/value pairs');
+    if (entries.length > dimensions) throw new RangeError('sparse entry count exceeds dimensions');
+    const bytes = Buffer.alloc(entries.length * 12);
+    let previous = -1;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!Array.isArray(entry) || entry.length !== 2) throw new TypeError('sparse entries require index/value pairs');
+      const [index, value] = entry;
+      if (!Number.isInteger(index) || index <= previous || index >= dimensions) throw new RangeError('sparse indices must be increasing and within dimensions');
+      if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError('vector components must be finite numbers');
+      if (!Number.isFinite(Math.fround(value))) throw new RangeError('vector component is outside the finite float32 range');
+      bytes.writeUInt32LE(index, i * 12);
+      bytes.writeDoubleLE(value, i * 12 + 4);
+      previous = index;
+    }
+    return new Vector(vectorFromSparseEntries(dimensions, bytes));
+  }
   static quantized8(values) { return constructVector('quantized8', values); }
   static bit1(values) { return constructVector('bit1', values); }
   constructor(bytes) {

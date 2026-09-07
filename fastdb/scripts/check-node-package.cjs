@@ -49,14 +49,14 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.ok(profile.metrics.btreeSeeks > 0n);
     assert.equal(typeof profile.metrics.indexSteps, 'bigint');
     assert.equal(profile.metrics.rowsWritten, 0n);
-    for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1]) {
+    for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1, () => Vector.sparse32Entries(3, [[0,1],[2,-1]])]) {
       const vector = make([1,0,-1]);
       assert.deepEqual(db.exactlyOne('SELECT $v AS v', {$v: vector})[0], vector);
     }
   } finally { db.close(); }
   const worker = await AsyncDatabase.open(file);
   try {
-    for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1]) {
+    for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1, () => Vector.sparse32Entries(3, [[0,1],[2,-1]])]) {
       const vector = make(new Float32Array([1,0,-1]));
       assert.deepEqual((await worker.exactlyOne('SELECT $v AS v', {$v: vector}))[0], vector);
     }
@@ -88,12 +88,16 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
   run(process.execPath, ['smoke.cjs'], consumer);
   // Check declaration resolution from the installed package, with the local
   // compiler as a tool only; the package has no runtime registry dependencies.
-  fs.writeFileSync(path.join(consumer, 'smoke.ts'), `import { Database, AsyncDatabase, Record, Vector, VectorComponents, IntegrityLimits, IntegrityReport, ProfiledQuery } from '@fastdb/node';
+  fs.writeFileSync(path.join(consumer, 'smoke.ts'), `import { Database, AsyncDatabase, Record, Vector, VectorComponents, SparseVectorEntry, IntegrityLimits, IntegrityReport, ProfiledQuery } from '@fastdb/node';
 const db = new Database();
 db.execute('SELECT $id', { $id: new Record('docs', 1n) });
 const components: VectorComponents = [1,0,-1] as const;
 const vector: Vector = Vector.quantized8(components);
 void vector;
+const entries: readonly SparseVectorEntry[] = [[0,1],[2,-1]] as const;
+Vector.sparse32Entries(3, entries);
+// @ts-expect-error sparse values require numbers
+Vector.sparse32Entries(3, [[0,1n]]);
 // @ts-expect-error components require numbers
 Vector.bit1([1n]);
 const limits: IntegrityLimits = {maxDocuments: 1n};

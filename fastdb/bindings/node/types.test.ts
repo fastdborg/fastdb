@@ -66,3 +66,9 @@ void factories;
 Vector.float32([1n]);
 // @ts-expect-error encoded bytes use the Vector constructor
 Vector.sparse32(new Uint8Array([1]));
+const sparseEntries: readonly import('./index').SparseVectorEntry[] = [[0, 1], [2, -1]] as const;
+const sparseFromEntries: Vector = Vector.sparse32Entries(3, sparseEntries);
+// @ts-expect-error Entries require index/value tuples.
+Vector.sparse32Entries(3, [1, 2]);
+// @ts-expect-error Entry components are numbers.
+Vector.sparse32Entries(3, [[0, 1n]]);

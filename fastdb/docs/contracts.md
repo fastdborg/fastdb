@@ -637,3 +637,7 @@ Vector-factory precision regressions verify known IEEE-754 patterns for float32 
 ## Sparse entry construction (2026-09-07)
 
 Value::vector32_sparse_entries(dimensions, entries) accepts Rust index/float32 pairs without a dense intermediate. Dimensions must be 1–65,536; all supplied indices must be unique, strictly increasing and in range, including indices paired with zero. Components must be finite. Validation precedes output allocation; the pinned sparse layout is encoded in little-endian form and passes the common vector validator. Zero and negative-zero entries are omitted, empty entries are accepted, and declared trailing-zero dimensions are retained. Output allocation scales with nonzero entries. Existing dense-input constructors and persisted formats are unchanged.
+
+## Node sparse entries (2026-09-07)
+
+Vector.sparse32Entries(dimensions, entries) constructs typed sparse vectors from index/number pairs, including readonly SparseVectorEntry tuples in TypeScript. JavaScript checks dimensions, count, pair shape, ordered unique in-range indices and finite float32-compatible values. A bounded index/binary64 buffer delegates to the Rust sparse-entry constructor; the native boundary independently rejects invalid dimensions, buffer lengths, indices and components. Values narrow to float32 before zero omission. Empty entries retain the declared positive dimensions, and no dense intermediate is allocated. Construction is synchronous and connection-free, and resulting values work with both Node clients.

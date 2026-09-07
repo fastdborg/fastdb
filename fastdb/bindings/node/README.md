@@ -133,12 +133,15 @@ const precise = Vector.float64(new Float64Array([0.1, 0.2, 0.3]));
 const sparse = Vector.sparse32(new Float32Array([1, 0, -1]));
 const quantized = Vector.quantized8([1, 0, -1]);
 const bits = Vector.bit1([1, 0, -1]);
+const sparseEntries = Vector.sparse32Entries(65536, [[0, 1], [65535, -1]]);
 ```
 
-All five accept number arrays (including readonly arrays in TypeScript), Float32Array or Float64Array. Sparse, quantized and bit factories also take dense components. Inputs must contain 1–65,536 finite numbers. float64 retains binary64 inputs; the other factories first convert to float32 and reject overflow to infinity. Quantized and bit conversion are lossy. Inputs are copied, and factories run synchronously even when their results will be used with AsyncDatabase.
+The five dense-input factories accept number arrays (including readonly arrays in TypeScript), Float32Array or Float64Array. Sparse, quantized and bit factories also take dense components. Inputs must contain 1–65,536 finite numbers. float64 retains binary64 inputs; the other factories first convert to float32 and reject overflow to infinity. Quantized and bit conversion are lossy. Inputs are copied, and factories run synchronously even when their results will be used with AsyncDatabase.
+
+`Vector.sparse32Entries(dimensions, entries)` accepts an array of `[index, value]` pairs (readonly tuples are supported by the exported TypeScript `SparseVectorEntry` type). Dimensions must be 1–65,536. Indices must be unique, strictly increasing and in range, including zero-valued entries. Values must be finite and fit float32. Zero entries are omitted after float32 conversion; empty entries create an all-zero vector with the declared dimensions. Input and output storage scale with entry count, with no dense intermediate. Invalid indices throw RangeError; malformed pairs throw TypeError.
 
 The native adapter uses the Rust Value constructors and validates conversion output. JavaScript passes a bounded binary64 buffer, preserving floating-point inputs without JSON number conversion. Invalid container/component types throw TypeError; invalid dimensions and float32 overflow throw RangeError. Native conversion/validation failures throw ordinary native errors without transaction observations because construction opens no connection. `new Vector(encodedBytes)` retains its existing encoded-byte path; binding that value still validates the encoding.
 
-The installed-package smoke exercises all five factories through both clients and type-checks VectorComponents, readonly numeric arrays and rejection of bigint components.
+The installed-package smoke exercises all five dense-input factories and the sparse-entry factory through both clients and type-checks VectorComponents, readonly numeric arrays and rejection of bigint components.
 
 Factory precision tests cover float32 halfway rounding, subnormal underflow and signed zero with known IEEE-754 bits. float64 preserves the smallest positive/negative subnormal, an adjacent-to-one value and the largest finite binary64 value. Sparse/quantized/bit factories operate on the narrowed float32 values. Quantized conversion can fail even for finite inputs: the pinned scale calculation overflows for a range spanning negative to positive float32 maximum. Such constructor errors occur locally and do not change an existing database transaction.

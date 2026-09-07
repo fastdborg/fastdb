@@ -1,4 +1,5 @@
 export class Record { readonly table: string; readonly key: string | bigint; constructor(table: string, key: string | bigint); }
+export type SparseVectorEntry = readonly [index: number, value: number];
 export type VectorComponents = readonly number[] | Float32Array | Float64Array;
 export class Vector {
   readonly bytes: Uint8Array;
@@ -6,6 +7,7 @@ export class Vector {
   static float32(values: VectorComponents): Vector;
   static float64(values: VectorComponents): Vector;
   static sparse32(values: VectorComponents): Vector;
+  static sparse32Entries(dimensions: number, entries: readonly SparseVectorEntry[]): Vector;
   static quantized8(values: VectorComponents): Vector;
   static bit1(values: VectorComponents): Vector;
 }

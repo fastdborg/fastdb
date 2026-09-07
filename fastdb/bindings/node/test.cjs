@@ -454,3 +454,48 @@ test('vector factories preserve precision boundaries and reject conversion overf
     assert.equal(db.checkCollectionIntegrity('docs').documents, 0n);
   } finally { db.close(); }
 });
+
+test('sparse entry vectors validate indices and roundtrip through both clients', async () => {
+  const entries = [[0, 1 + 2 ** -24], [1, -0], [3, -2]];
+  const vector = Vector.sparse32Entries(5, entries);
+  assert.deepEqual(vector.bytes, Vector.sparse32([1, 0, 0, -2, 0]).bytes);
+  entries[0][1] = 99;
+  assert.equal(vector.bytes.readFloatLE(), 1);
+  assert.equal(Vector.sparse32Entries(65536, []).bytes.length, 5);
+  assert.equal(Vector.sparse32Entries(65536, [[0, -0], [65535, 0]]).bytes.length, 5);
+  const last = Vector.sparse32Entries(65536, [[65535, 1]]);
+  assert.equal(last.bytes.length, 13);
+  assert.equal(last.bytes.readUInt32LE(4), 65535);
+  assert.equal(last.bytes.readUInt32LE(8), 65536);
+  for (const dimensions of [0, -1, 1.5, 65537, NaN, Infinity, '3', 3n]) assert.throws(() => Vector.sparse32Entries(dimensions, []), RangeError);
+  for (const input of [null, {}, new Float32Array(2), [null], [[0]], [[0, 1, 2]], new Array(1), [[0, NaN]], [[0, Infinity]], [[0, 1n]]]) assert.throws(() => Vector.sparse32Entries(3, input), TypeError);
+  for (const input of [[[0, 0], [0, -0]], [[1, 1], [0, 2]], [[-1, 1]], [[3, 1]], [[0.5, 1]], [[NaN, 1]], [['0', 1]], [[0, Number.MAX_VALUE]], [[0, 1], [1, 1], [2, 1], [3, 1]]]) assert.throws(() => Vector.sparse32Entries(3, input), RangeError);
+  const { vectorFromSparseEntries } = require('./fastdb.node');
+  for (const dims of [0, 1.5, 65537, NaN, Infinity]) assert.throws(() => vectorFromSparseEntries(dims, Buffer.alloc(0)));
+  for (const bytes of [Buffer.alloc(1), Buffer.alloc(13), Buffer.alloc(4 * 12)]) assert.throws(() => vectorFromSparseEntries(3, bytes));
+  const invalid = Buffer.alloc(12);
+  invalid.writeUInt32LE(3);
+  assert.throws(() => vectorFromSparseEntries(3, invalid));
+  invalid.writeUInt32LE(0);
+  for (const value of [NaN, Infinity, Number.MAX_VALUE]) {
+    invalid.writeDoubleLE(value, 4);
+    assert.throws(() => vectorFromSparseEntries(3, invalid));
+  }
+  assert.throws(() => vectorFromSparseEntries(3, Buffer.alloc(24))); // Duplicate zero-valued indices.
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE points');
+      await db.execute('DEFINE FIELD v ON points TYPE vector<5> REQUIRED');
+      await db.execute('INSERT INTO points(v) VALUES ($v)', {$v:vector});
+      assert.deepEqual((await db.exactlyOne('SELECT v FROM points'))[0], vector);
+      assert.equal((await db.exactlyOne('SELECT vector_extract(vector32(v)) AS v FROM points'))[0], '[1,0,0,-2,0]');
+      assert.equal((await db.checkCollectionIntegrity('points')).documents, 1n);
+      await db.execute('BEGIN');
+      assert.throws(() => Vector.sparse32Entries(5, [[5, 1]]), RangeError);
+      assert.deepEqual((await db.exactlyOne('SELECT v FROM points'))[0], vector);
+      await db.execute('ROLLBACK');
+    } finally { await db.close(); }
+  }
+});
