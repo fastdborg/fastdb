@@ -709,3 +709,67 @@ fn aggregate_order_expressions_use_lowered_collection_fields() {
         }
     }
 }
+
+#[test]
+fn ordered_grouped_insert_failure_restores_prior_work_and_indexes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE totals",
+        "DEFINE FIELD total ON totals TYPE integer CHECK (total<5)",
+        "CREATE UNIQUE INDEX totals_total ON totals(total)",
+        "CREATE TABLE native_totals(total INTEGER UNIQUE CHECK(total<5))",
+        "INSERT INTO docs {k:'a',n:1}",
+        "INSERT INTO docs {k:'a',n:2}",
+        "INSERT INTO docs {k:'b',n:8}",
+        "INSERT INTO docs {k:'c',n:4}",
+    ] {
+        q(&c, sql);
+    }
+    for target in ["totals", "native_totals"] {
+        q(&c, "BEGIN");
+        q(&c, &format!("INSERT INTO {target}(total) VALUES(1)"));
+        let source = "SELECT sum(n) FROM docs GROUP BY k ORDER BY sum(n)";
+        assert_eq!(
+            q(&c, source).rows,
+            vec![
+                vec![Value::Integer(3)],
+                vec![Value::Integer(4)],
+                vec![Value::Integer(8)]
+            ]
+        );
+        // The final sorted group fails after two otherwise valid candidates.
+        assert!(c
+            .execute(
+                &format!("INSERT INTO {target}(total) {source}"),
+                &Parameters::new()
+            )
+            .is_err());
+        assert_eq!(
+            q(&c, &format!("SELECT total FROM {target} ORDER BY total")).rows,
+            vec![vec![Value::Integer(1)]]
+        );
+        if target == "totals" {
+            c.check_collection_integrity(target, Default::default())
+                .unwrap();
+        }
+        assert_eq!(q(&c, &format!("INSERT INTO {target}(total) SELECT sum(n) FROM docs GROUP BY k HAVING sum(n)<5 ORDER BY sum(n)")).affected, 2);
+        assert_eq!(
+            q(&c, &format!("SELECT total FROM {target} ORDER BY total")).rows,
+            vec![
+                vec![Value::Integer(1)],
+                vec![Value::Integer(3)],
+                vec![Value::Integer(4)]
+            ]
+        );
+        if target == "totals" {
+            c.check_collection_integrity(target, Default::default())
+                .unwrap();
+        }
+        q(&c, "ROLLBACK");
+        assert!(q(&c, &format!("SELECT total FROM {target}"))
+            .rows
+            .is_empty());
+    }
+}
