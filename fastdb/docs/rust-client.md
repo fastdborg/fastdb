@@ -68,3 +68,11 @@ println!("{} documents, {} index entries", audit.documents, audit.index_entries)
 ```
 
 This explicit snapshot audit checks typed IDs, field/CHECK validity and index entry consistency without repairing data. Defaults permit 100,000 documents and 64 MiB of processed encoded ID/document bytes; override the public limit fields for larger audits. FDB_LIMIT returns no partial report. These limits do not bound engine memory or elapsed time. See contracts.md for scope and error behavior; native page/B-tree checking remains separate.
+
+## Cooperative execution cancellation
+
+`CancellationToken::new()` creates a token that can be cloned and passed to another thread. `cancel()` is idempotent and sticky; `is_cancelled()` observes the request. Pass it to `Connection::execute_cancellable(sql, &parameters, &token)` or `execute_report_cancellable` to apply it to that execution. The report includes transaction observations on success or failure. Use a fresh token for a retry. A token retains no database connection.
+
+A pre-cancelled token rejects before parsing or writes with `FDB_CANCELLED`. During execution the frontend polls the token at engine progress boundaries and delivers one interruption, allowing statement/savepoint cleanup to proceed. Its handler is removed when execution returns or unwinds. Cancellation after an execution finishes cannot affect later executions that do not use that token. Calls on a connection must remain serialized.
+
+Cancellation is cooperative and completion can win the race. Compilation, bundled function work and other non-engine work have no fixed cancellation latency; performance and platform qualification remain open. Inspect transaction state after an interrupted execution. The documented pinned trigger-interruption defect remains an unresolved release gate. Node AbortSignal integration is not implemented yet.

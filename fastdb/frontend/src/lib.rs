@@ -9,7 +9,7 @@ mod integrity;
 pub use integrity::{IntegrityLimits, IntegrityReport};
 mod interrupt;
 mod links;
-pub use interrupt::InterruptHandle;
+pub use interrupt::{CancellationToken, InterruptHandle};
 mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;

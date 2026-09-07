@@ -1,6 +1,30 @@
 //! A cancellation-only handle that does not keep a database connection alive.
-use crate::Connection;
+use crate::{Connection, ExecutionReport, Parameters, QueryResult, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
+/// A sticky cancellation request scoped to executions that explicitly use it.
+/// Clones share the request; cancellation does not retain a connection.
+#[derive(Clone, Default)]
+pub struct CancellationToken(Arc<AtomicBool>);
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+struct ProgressGuard<'a>(&'a turso_core::Connection);
+impl Drop for ProgressGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set_progress_handler(0, None);
+    }
+}
+
 #[derive(Clone)]
 pub struct InterruptHandle {
     connection: Weak<turso_core::Connection>,
@@ -18,6 +42,48 @@ impl InterruptHandle {
     }
 }
 impl Connection {
+    /// Execute with cooperative cancellation at engine progress boundaries.
+    /// A pre-cancelled token rejects before parsing or writes. Cancellation is
+    /// best effort; completion can win a race with cancel(). Serialize calls on
+    /// this connection. Compilation and non-engine work have no latency bound.
+    pub fn execute_cancellable(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        token: &CancellationToken,
+    ) -> Result<QueryResult> {
+        if token.is_cancelled() {
+            return Err(crate::Error::Engine(turso_core::LimboError::Interrupt));
+        }
+        let token = token.clone();
+        let delivered = AtomicBool::new(false);
+        self.engine.set_progress_handler(
+            1,
+            Some(Box::new(move || {
+                // Deliver once so statement/savepoint cleanup can execute afterward.
+                token.is_cancelled() && !delivered.swap(true, Ordering::SeqCst)
+            })),
+        );
+        let _guard = ProgressGuard(&self.engine);
+        self.execute(sql, params)
+    }
+
+    /// Cancellable execution with transaction observations on both outcomes.
+    pub fn execute_report_cancellable(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        token: &CancellationToken,
+    ) -> ExecutionReport {
+        let transaction_before = self.transaction_state();
+        let result = self.execute_cancellable(sql, params, token);
+        ExecutionReport {
+            result,
+            transaction_before,
+            transaction_after: self.transaction_state(),
+        }
+    }
+
     pub fn interrupt_handle(&self) -> InterruptHandle {
         InterruptHandle {
             connection: Arc::downgrade(&self.engine),
@@ -30,6 +96,137 @@ mod tests {
     use super::*;
     use crate::{Database, Parameters, Value};
     use std::sync::atomic::{AtomicBool, Ordering};
+    #[test]
+    fn cancellation_tokens_reject_before_writes_and_do_not_cancel_later_work() {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(&c, "BEGIN");
+        q(&c, "INSERT INTO docs {id:docs:prior,n:9}");
+        let prior = q(&c, "SELECT id,n FROM docs").rows;
+        let token = CancellationToken::new();
+        let other = token.clone();
+        std::thread::spawn(move || other.cancel()).join().unwrap();
+        assert!(token.is_cancelled());
+        let report =
+            c.execute_report_cancellable("INSERT INTO docs {n:1}", &Parameters::new(), &token);
+        assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED");
+        assert_eq!(report.transaction_before, crate::TransactionState::Active);
+        assert_eq!(report.transaction_after, crate::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT id,n FROM docs").rows, prior);
+        let fresh = CancellationToken::new();
+        c.execute_cancellable("INSERT INTO docs {n:2}", &Parameters::new(), &fresh)
+            .unwrap();
+        fresh.cancel();
+        q(&c, "INSERT INTO docs {n:3}");
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            3
+        );
+        q(&c, "ROLLBACK");
+    }
+
+    #[test]
+    fn cancellation_tokens_interrupt_sources_and_preserve_retry_and_transaction_state() {
+        use std::sync::{atomic::AtomicUsize, Mutex};
+        use turso_ext::{scalar, ResultCode, Value as ExtValue};
+        static TOKEN: Mutex<Option<CancellationToken>> = Mutex::new(None);
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        #[scalar(name = "cancel_token_tick")]
+        fn cancel_token_tick(args: &[ExtValue]) -> ExtValue {
+            if CALLS.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+                TOKEN.lock().unwrap().as_ref().unwrap().cancel();
+            }
+            ExtValue::from_integer(args[0].to_integer().unwrap())
+        }
+        for insert in [false, true] {
+            for outer in [false, true] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                unsafe {
+                    let api = c.engine._build_turso_ext();
+                    let code = (api.register_scalar_function)(
+                        api.ctx,
+                        c"cancel_token_tick".as_ptr(),
+                        1,
+                        false,
+                        0,
+                        cancel_token_tick,
+                        None,
+                        None,
+                    );
+                    c.engine._free_extension_ctx(api);
+                    assert_eq!(code, ResultCode::OK);
+                }
+                q(&c, "CREATE TABLE docs");
+                q(&c, "INSERT INTO docs(n) VALUES (1),(2),(3)");
+                q(&c, "CREATE TABLE target");
+                q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+                if outer {
+                    q(&c, "BEGIN");
+                    q(&c, "INSERT INTO target {id:target:prior,n:9}");
+                }
+                let prior = q(&c, "SELECT id,n FROM target").rows;
+                let token = CancellationToken::new();
+                *TOKEN.lock().unwrap() = Some(token.clone());
+                CALLS.store(0, Ordering::SeqCst);
+                let sql = format!(
+                    "{}SELECT cancel_token_tick(n) AS n FROM docs",
+                    if insert { "INSERT INTO target(n) " } else { "" }
+                );
+                let report = c.execute_report_cancellable(&sql, &Parameters::new(), &token);
+                assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED");
+                assert_eq!(
+                    report.transaction_after,
+                    if outer {
+                        crate::TransactionState::Active
+                    } else {
+                        crate::TransactionState::Autocommit
+                    }
+                );
+                assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+                assert_eq!(q(&c, "SELECT id,n FROM target").rows, prior);
+                assert_eq!(
+                    c.check_collection_integrity("target", Default::default())
+                        .unwrap()
+                        .documents,
+                    u64::from(outer)
+                );
+                let retry = q(&c, &sql);
+                if insert {
+                    assert_eq!(retry.affected, 3);
+                } else {
+                    assert_eq!(
+                        retry.rows,
+                        vec![
+                            vec![Value::Integer(1)],
+                            vec![Value::Integer(2)],
+                            vec![Value::Integer(3)]
+                        ]
+                    );
+                }
+                assert_eq!(
+                    c.check_collection_integrity("target", Default::default())
+                        .unwrap()
+                        .documents,
+                    u64::from(outer) + if insert { 3 } else { 0 }
+                );
+                if outer {
+                    q(&c, "ROLLBACK");
+                    assert_eq!(
+                        c.check_collection_integrity("target", Default::default())
+                            .unwrap()
+                            .documents,
+                        0
+                    );
+                }
+                *TOKEN.lock().unwrap() = None;
+            }
+        }
+    }
+
     fn arm_after_write(connection: &Connection) -> Arc<AtomicBool> {
         let baseline = connection.engine.total_changes();
         let engine = Arc::downgrade(&connection.engine);
