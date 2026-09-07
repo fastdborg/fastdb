@@ -357,9 +357,27 @@ mod tests {
 
     #[test]
     fn native_target_subquery_cancellation_matches_native_transaction_disposition() {
+        check_native_target_subquery_cancellation(false);
+    }
+
+    #[test]
+    #[ignore = "Pinned trigger executor converts Interrupt to Busy; see docs/trigger-interrupt.md"]
+    fn native_target_after_write_cancellation_requires_interrupt_propagation() {
+        check_native_target_subquery_cancellation(true);
+    }
+
+    fn check_native_target_subquery_cancellation(after_write: bool) {
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::AtomicUsize;
         use turso_ext::{scalar, ResultCode, Value as ExtValue};
         static CALLS: AtomicUsize = AtomicUsize::new(0);
+        static WRITES: AtomicUsize = AtomicUsize::new(0);
+        #[scalar(name = "native_write_tick")]
+        fn native_write_tick(_: &[ExtValue]) -> ExtValue {
+            WRITES.fetch_add(1, Ordering::SeqCst);
+            ExtValue::from_integer(0)
+        }
         #[scalar(name = "native_subquery_tick")]
         fn native_subquery_tick(args: &[ExtValue]) -> ExtValue {
             CALLS.fetch_add(1, Ordering::SeqCst);
@@ -371,7 +389,8 @@ mod tests {
             "EXISTS (SELECT value FROM docs WHERE native_subquery_tick(value)+native_subquery_tick(0)=3)",
             "value <= (SELECT max(native_subquery_tick(value)+native_subquery_tick(0)) FROM docs)",
         ] {
-            for after in [2, 4] {
+            for after in if after_write { &[0][..] } else { &[2, 4][..] } {
+                let after = *after;
                 for outer in [false, true] {
                     let mut observed = Vec::new();
                     for logical in [false, true] {
@@ -380,6 +399,8 @@ mod tests {
                         unsafe {
                             let api = c.engine._build_turso_ext();
                             let code = (api.register_scalar_function)(api.ctx, c"native_subquery_tick".as_ptr(), 1, false, 0, native_subquery_tick, None, None);
+                            assert_eq!(code, ResultCode::OK);
+                            let code = (api.register_scalar_function)(api.ctx, c"native_write_tick".as_ptr(), 0, false, 0, native_write_tick, None, None);
                             c.engine._free_extension_ctx(api);
                             assert_eq!(code, ResultCode::OK);
                         }
@@ -388,27 +409,39 @@ mod tests {
                         q(&c, "CREATE TABLE source_native(value INTEGER)");
                         q(&c, "INSERT INTO source_native VALUES (1),(2),(3)");
                         q(&c, "CREATE TABLE target(value INTEGER UNIQUE)");
+                        q(&c, "CREATE TABLE effects(value INTEGER)");
+                        q(&c, "CREATE TRIGGER target_effect AFTER INSERT ON target BEGIN INSERT INTO effects VALUES (new.value); SELECT native_write_tick(); END");
                         q(&c, "CREATE TABLE prior(value INTEGER)");
                         if outer { q(&c, "BEGIN"); q(&c, "INSERT INTO prior VALUES (99)"); }
                         let sql = format!("INSERT INTO target SELECT value FROM docs WHERE {predicate}");
                         let sql = if logical { sql } else { sql.replace("FROM docs", "FROM source_native") };
                         CALLS.store(0, Ordering::SeqCst);
+                        WRITES.store(0, Ordering::SeqCst);
                         let fired = Arc::new(AtomicBool::new(false));
                         let flag = fired.clone();
-                        c.engine.set_progress_handler(1, Some(Box::new(move || CALLS.load(Ordering::SeqCst) >= after && !flag.swap(true, Ordering::SeqCst))));
+                        c.engine.set_progress_handler(1, Some(Box::new(move || (if after == 0 { WRITES.load(Ordering::SeqCst) > 0 } else { CALLS.load(Ordering::SeqCst) >= after }) && !flag.swap(true, Ordering::SeqCst))));
                         let report = c.execute_report(&sql, &Parameters::new());
                         c.engine.set_progress_handler(0, None);
                         assert!(fired.load(Ordering::SeqCst), "{sql}");
-                        assert_eq!(CALLS.load(Ordering::SeqCst), after);
-                        assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED", "{sql}");
+                        if after == 0 {
+                            assert_eq!(WRITES.load(Ordering::SeqCst), 1);
+                        } else {
+                            assert_eq!(CALLS.load(Ordering::SeqCst), after);
+                            assert_eq!(WRITES.load(Ordering::SeqCst), 0);
+                        }
+                        let error = report.result.unwrap_err();
+                        assert_eq!(error.code(), "FDB_CANCELLED", "{sql}");
                         assert!(q(&c, "SELECT * FROM target").rows.is_empty());
+                        assert!(q(&c, "SELECT * FROM effects").rows.is_empty());
                         observed.push((report.transaction_after, q(&c, "SELECT * FROM prior").rows));
                         assert_eq!(c.check_collection_integrity("docs", Default::default()).unwrap().documents, 3);
                         assert_eq!(q(&c, &sql).affected, 3);
                         assert_eq!(q(&c, "SELECT value FROM target ORDER BY value").rows, vec![vec![Value::Integer(1)], vec![Value::Integer(2)], vec![Value::Integer(3)]]);
+                        assert_eq!(q(&c, "SELECT value FROM effects ORDER BY value").rows, q(&c, "SELECT value FROM target ORDER BY value").rows);
                         if c.transaction_state() == crate::TransactionState::Active {
                             q(&c, "ROLLBACK");
                             assert!(q(&c, "SELECT * FROM target").rows.is_empty());
+                        assert!(q(&c, "SELECT * FROM effects").rows.is_empty());
                         }
                     }
                     assert_eq!(observed[0], observed[1], "{predicate}, after={after}, outer={outer}");

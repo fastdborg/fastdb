@@ -673,3 +673,7 @@ The deterministic source-cancellation matrix now includes IN, NOT IN, EXISTS and
 ## Native-target subquery source cancellation (2026-09-07)
 
 Native-table INSERT SELECT cancellation during IN, NOT IN, EXISTS and scalar aggregate source evaluation now has direct differential coverage against the pinned native SQL route. At two callback boundaries, in autocommit and explicit transactions, both routes must report FDB_CANCELLED, leave an empty native target, expose matching transaction/prior-work state and permit exact retry. Tests compare the observed native disposition rather than assuming every interrupted engine write retains its outer transaction. This covers source evaluation before target rows are produced; interruption after partial native writes remains a separate qualification area.
+
+## Observed pinned trigger cancellation exception (2026-09-07)
+
+Interruption inside an AFTER INSERT trigger currently surfaces as FDB_BUSY because the pinned OpProgram executor maps child Interrupt and Busy results to Busy. Do not treat the completed source-evaluation tests as proof of correct error classification inside trigger execution. The first native/autocommit reproducer leaves both target and trigger-effect tables empty; broader after-write transaction behavior still requires qualification. The strict regression is an ignored, explicitly failing V1 release gate. See [the proposed core fix](trigger-interrupt.md); approval and validation remain pending.
