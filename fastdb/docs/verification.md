@@ -1051,3 +1051,10 @@ The JavaScript code block in ai-application-guide.md was extracted directly from
 The transfer integration suite passed after replacing full-rowset collection with a row callback and bounded writer (`/tmp/fastdb-export-stream.log`). A new unit test checks byte-for-byte JSON compatibility with the previous Bundle serializer, exact byte/document thresholds, zero/one/one-byte-short budgets, FDB_LIMIT, preserved active transaction data and JSON/NDJSON import/export equality. It uses small private test budgets rather than large CI allocations.
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 279 Rust tests, thirty-two Node tests and strict TypeScript (`/tmp/fastdb-export-incremental-check.log`), including existing Rust/Node transfer cancellation and rollback tests. One known trigger-interruption gate remains ignored. No upstream/dependency/format changes. The complete output string, current row, buffer capacity and engine allocations still prevent a hard total-memory claim; broader resource qualification and full V1 remain incomplete.
+
+
+## NDJSON import preflight/replay — 2026-09-07
+
+The transfer integration suite passed with NDJSON linewise validation and transactional replay (`/tmp/fastdb-ndjson-import.log`). A new unit test appends malformed JSON, a non-object typed value and a noncanonical integer after a valid document. Every failure leaves engine total_changes unchanged and preserves prior outer work; valid retry and rollback pass. This demonstrates validation before mutations without retaining a full document vector. Parsing occurs twice, so no throughput improvement is claimed.
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 280 Rust tests, thirty-two Node tests and strict TypeScript (`/tmp/fastdb-ndjson-replay-check.log`), including existing transfer cancellation/rollback coverage. One known trigger-interruption gate remains ignored. No upstream/dependency/format changes. JSON import materialization and broader memory/latency/platform qualification remain open; full V1 remains incomplete.

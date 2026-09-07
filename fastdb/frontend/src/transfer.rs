@@ -251,51 +251,35 @@ impl Connection {
         if input.len() > MAX_BYTES {
             return Err(Error::Limit("transfer exceeds 64 MiB".into()));
         }
-        let parse_error =
-            |e: serde_json::Error| Error::Validation(format!("document transfer: {e}"));
-        let portable =
-            match format {
-                TransferFormat::Json => {
-                    let bundle: Bundle = serde_json::from_str(input).map_err(parse_error)?;
-                    bundle.header.check()?;
-                    bundle.documents
+        if matches!(format, TransferFormat::Ndjson) {
+            // Validate every line before any mutation, without retaining a full
+            // document vector. The immutable input is replayed inside the transaction.
+            let mut count = 0;
+            for document in ndjson_documents(input)? {
+                document?;
+                count += 1;
+                if count > MAX_DOCUMENTS {
+                    return Err(Error::Limit("transfer exceeds 100000 documents".into()));
                 }
-                TransferFormat::Ndjson => {
-                    let mut lines = input.lines();
-                    let header: Header = serde_json::from_str(
-                        lines
-                            .next()
-                            .ok_or_else(|| Error::Validation("missing transfer header".into()))?,
-                    )
-                    .map_err(parse_error)?;
-                    header.check()?;
-                    let mut documents = Vec::new();
-                    for (i, line) in lines.enumerate() {
-                        documents.push(serde_json::from_str(line).map_err(|e| {
-                            Error::Validation(format!("transfer line {}: {e}", i + 2))
-                        })?);
-                        if documents.len() > MAX_DOCUMENTS {
-                            return Err(Error::Limit("transfer exceeds 100000 documents".into()));
-                        }
-                    }
-                    documents
+            }
+            return self.atomic(|| {
+                self.catalog(table)?;
+                for document in ndjson_documents(input)? {
+                    self.insert(table, document?)?;
                 }
-            };
-        if portable.len() > MAX_DOCUMENTS {
+                Ok(count)
+            });
+        }
+        let bundle: Bundle = serde_json::from_str(input)
+            .map_err(|error| Error::Validation(format!("document transfer: {error}")))?;
+        bundle.header.check()?;
+        if bundle.documents.len() > MAX_DOCUMENTS {
             return Err(Error::Limit("transfer exceeds 100000 documents".into()));
         }
-        let documents = portable
+        let documents = bundle
+            .documents
             .into_iter()
-            .map(|v| {
-                let value = Value::from(v);
-                value.validate()?;
-                let Value::Object(doc) = value else {
-                    return Err(Error::Validation(
-                        "transfer entries must be typed objects".into(),
-                    ));
-                };
-                Ok(doc)
-            })
+            .map(transfer_document)
             .collect::<Result<Vec<Document>>>()?;
         self.atomic(|| {
             self.catalog(table)?;
@@ -306,6 +290,33 @@ impl Connection {
             Ok(count)
         })
     }
+}
+
+fn transfer_document(portable: Portable) -> Result<Document> {
+    let value = Value::from(portable);
+    value.validate()?;
+    let Value::Object(document) = value else {
+        return Err(Error::Validation(
+            "transfer entries must be typed objects".into(),
+        ));
+    };
+    Ok(document)
+}
+
+fn ndjson_documents(input: &str) -> Result<impl Iterator<Item = Result<Document>> + '_> {
+    let mut lines = input.lines();
+    let header: Header = serde_json::from_str(
+        lines
+            .next()
+            .ok_or_else(|| Error::Validation("missing transfer header".into()))?,
+    )
+    .map_err(|error| Error::Validation(format!("document transfer: {error}")))?;
+    header.check()?;
+    Ok(lines.enumerate().map(|(index, line)| {
+        let portable = serde_json::from_str(line)
+            .map_err(|error| Error::Validation(format!("transfer line {}: {error}", index + 2)))?;
+        transfer_document(portable)
+    }))
 }
 
 fn unique_fields<'de, D: serde::Deserializer<'de>>(
@@ -368,6 +379,62 @@ impl Value {
 #[cfg(test)]
 mod export_tests {
     use super::*;
+    #[test]
+    fn ndjson_preflight_rejects_late_invalid_entries_before_writes() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("CREATE TABLE docs", &crate::Parameters::new())
+            .unwrap();
+        c.execute(
+            "INSERT INTO docs {id:docs:first,n:1}",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        let payload = c.export_documents("docs", TransferFormat::Ndjson).unwrap();
+        c.execute("DELETE FROM docs", &crate::Parameters::new())
+            .unwrap();
+        c.execute("BEGIN", &crate::Parameters::new()).unwrap();
+        c.execute(
+            "INSERT INTO docs {id:docs:prior,n:9}",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        let before = c.engine.total_changes();
+        for suffix in [
+            "invalid",
+            "{\"type\":\"Integer\",\"value\":\"1\"}",
+            "{\"type\":\"Object\",\"value\":{\"n\":{\"type\":\"Integer\",\"value\":\"01\"}}}",
+        ] {
+            assert!(c
+                .import_documents(
+                    "docs",
+                    &format!("{payload}{suffix}\n"),
+                    TransferFormat::Ndjson
+                )
+                .is_err());
+            assert_eq!(c.engine.total_changes(), before);
+            assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .documents,
+                1
+            );
+        }
+        assert_eq!(
+            c.import_documents("docs", &payload, TransferFormat::Ndjson)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            2
+        );
+        c.execute("ROLLBACK", &crate::Parameters::new()).unwrap();
+    }
+
     #[test]
     fn incremental_export_preserves_format_and_enforces_exact_limits() {
         let db = crate::Database::open(":memory:").unwrap();
