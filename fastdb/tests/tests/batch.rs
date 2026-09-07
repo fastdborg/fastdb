@@ -111,3 +111,72 @@ fn batch_visitors_can_stop_without_executing_later_statements() {
         )
         .is_err());
 }
+
+#[test]
+fn cancellable_batches_stop_at_statement_boundaries_and_preserve_prior_work() {
+    for outer in [false, true] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("CREATE TABLE docs", &Parameters::new()).unwrap();
+        c.execute("CREATE UNIQUE INDEX docs_n ON docs(n)", &Parameters::new())
+            .unwrap();
+        if outer {
+            c.execute("BEGIN", &Parameters::new()).unwrap();
+        }
+        let state = c.transaction_state();
+        let token = fastdb::CancellationToken::new();
+        let script = "-- ไทย\nINSERT INTO docs {id:docs:first,n:1}; INSERT INTO docs {id:docs:second,n:2}; DELETE FROM docs;";
+        let mut entries = Vec::new();
+        c.visit_batch_cancellable(script, &token, |entry| {
+            entries.push(entry);
+            token.cancel();
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].execution.result.is_ok());
+        assert_eq!(
+            entries[1].offset,
+            script.find("INSERT INTO docs {id:docs:second").unwrap()
+        );
+        assert_eq!(
+            entries[1].execution.result.as_ref().unwrap_err().code(),
+            "FDB_CANCELLED"
+        );
+        assert_eq!(entries[1].execution.transaction_before, state);
+        assert_eq!(entries[1].execution.transaction_after, state);
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+        // Pre-cancellation precedes even malformed-script parsing and visitation.
+        assert_eq!(
+            c.execute_batch_cancellable("SELECT '", &token)
+                .unwrap_err()
+                .code(),
+            "FDB_CANCELLED"
+        );
+        let retry = c
+            .execute_batch_cancellable(
+                "INSERT INTO docs {id:docs:second,n:2}; SELECT n FROM docs ORDER BY n",
+                &fastdb::CancellationToken::new(),
+            )
+            .unwrap();
+        assert_eq!(retry.len(), 2);
+        assert_eq!(
+            retry[1].execution.result.as_ref().unwrap().rows,
+            vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+        );
+        if outer {
+            c.execute("ROLLBACK", &Parameters::new()).unwrap();
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .documents,
+                0
+            );
+        }
+    }
+}

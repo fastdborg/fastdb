@@ -660,3 +660,42 @@ test('AbortSignal integrity audits preserve indexed data and allow exact retry',
     assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM docs'),[1000n]);
   } finally { clearTimeout(timer); await db.close(); }
 });
+
+test('AbortSignal batches retain completed reports and stop before later statements', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { getEventListeners } = require('node:events');
+  const db = await AsyncDatabase.open();
+  let timer;
+  try {
+    await db.execute('CREATE TABLE numbers(n INTEGER)');
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100},(_,i)=>`(${i})`).join(','));
+    await db.execute('CREATE TABLE docs');
+    await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+    await db.execute('BEGIN');
+    const prefix = '-- ไทย\nINSERT INTO docs {id:docs:prior,n:9}; ';
+    const script = prefix + 'INSERT INTO docs(n) SELECT a.n*10000+b.n*100+c.n FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c; DELETE FROM docs; COMMIT;';
+    const controller = new AbortController();
+    const batch = db.executeBatch(script,{signal:controller.signal});
+    const following = db.exactlyOne('SELECT n FROM docs WHERE id=docs:prior');
+    timer = setTimeout(() => controller.abort(),50);
+    const [reports,read] = await Promise.all([batch,following]);
+    assert.equal(reports.length,2);
+    assert.equal(reports[0].result.affected,1n);
+    assert.equal(reports[1].offset,Buffer.byteLength(prefix));
+    assert.equal(reports[1].error.code,'FDB_CANCELLED');
+    assert.equal(reports[1].transaction.before,'active');
+    assert.equal(reports[1].transaction.after,'active');
+    assert.deepEqual(read,[9n]);
+    assert.equal((await db.checkCollectionIntegrity('docs')).documents,1n);
+    assert.equal(getEventListeners(controller.signal,'abort').length,0);
+    const before = new AbortController(); before.abort();
+    await assert.rejects(db.executeBatch("SELECT '",{signal:before.signal}),e=>e.code==='FDB_CANCELLED');
+    const fresh = new AbortController();
+    const retry = await db.executeBatch('INSERT INTO docs {id:docs:retry,n:10}; SELECT n FROM docs ORDER BY n;', {signal:fresh.signal});
+    assert.deepEqual(retry[1].result.rows,[[9n],[10n]]);
+    assert.equal(getEventListeners(fresh.signal,'abort').length,0);
+    fresh.abort();
+    await db.execute('ROLLBACK');
+    assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM docs'),[0n]);
+  } finally { clearTimeout(timer); await db.close(); }
+});

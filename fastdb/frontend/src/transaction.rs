@@ -61,17 +61,61 @@ impl Connection {
         Ok(reports)
     }
 
+    /// Execute a batch with cooperative cancellation. Completed statements keep
+    /// their effects. Cancellation during or between statements is reported at
+    /// the affected statement; a pre-cancelled batch fails before splitting.
+    pub fn execute_batch_cancellable(
+        &self,
+        script: &str,
+        token: &crate::CancellationToken,
+    ) -> Result<Vec<BatchExecution>> {
+        let mut reports = Vec::new();
+        self.visit_batch_cancellable(script, token, |report| {
+            reports.push(report);
+            Ok(true)
+        })?;
+        Ok(reports)
+    }
+
+    /// Cancellable batch visitor. Visitor work itself is not interrupted.
+    /// A cancellation requested by the visitor stops the next statement.
+    pub fn visit_batch_cancellable(
+        &self,
+        script: &str,
+        token: &crate::CancellationToken,
+        visitor: impl FnMut(BatchExecution) -> Result<bool>,
+    ) -> Result<()> {
+        if token.is_cancelled() {
+            return Err(crate::Error::Engine(turso_core::LimboError::Interrupt));
+        }
+        self.visit_batch_impl(script, Some(token), visitor)
+    }
+
     /// Visit results between statements. False stops early; visitor errors are
     /// returned without rolling back earlier work. Execution errors are visited
     /// once and always stop the script. The full script is split before execution.
     pub fn visit_batch(
         &self,
         script: &str,
+        visitor: impl FnMut(BatchExecution) -> Result<bool>,
+    ) -> Result<()> {
+        self.visit_batch_impl(script, None, visitor)
+    }
+
+    fn visit_batch_impl(
+        &self,
+        script: &str,
+        token: Option<&crate::CancellationToken>,
         mut visitor: impl FnMut(BatchExecution) -> Result<bool>,
     ) -> Result<()> {
         let statements = fastql_parser::split_script(script)?;
         for statement in statements {
-            let execution = self.execute_report(statement.sql, &Parameters::new());
+            let execution = match token {
+                Some(token) => {
+                    self.execute_report_cancellable(statement.sql, &Parameters::new(), token)
+                }
+                None => self.execute_report(statement.sql, &Parameters::new()),
+            };
             let failed = execution.result.is_err();
             let proceed = visitor(BatchExecution {
                 offset: statement.offset,

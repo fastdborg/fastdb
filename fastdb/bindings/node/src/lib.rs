@@ -247,10 +247,25 @@ impl NativeDatabase {
         })
     }
     #[napi]
-    pub fn execute_batch(&self, script: String) -> napi::Result<String> {
+    pub fn execute_batch(
+        &self,
+        script: String,
+        cancellation_key: Option<String>,
+    ) -> napi::Result<String> {
+        let token = cancellation_key
+            .map(|key| {
+                let key = key.parse::<u64>().map_err(error)?;
+                cancellations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| error("unknown cancellation token"))
+            })
+            .transpose()?;
         self.report(|conn| {
             let mut entries=Vec::new();
-            conn.visit_batch(&script, |entry| {
+            let visitor = |entry: fastdb::BatchExecution| {
                 let execution=entry.execution;
                 let result=execution.result.and_then(query_value);
                 let proceed=result.is_ok();
@@ -262,7 +277,8 @@ impl NativeDatabase {
                 value["transaction"]=serde_json::json!({"before":execution.transaction_before,"after":execution.transaction_after});
                 entries.push(value);
                 Ok(proceed)
-            })?;
+            };
+            if let Some(token) = &token { conn.visit_batch_cancellable(&script, token, visitor)?; } else { conn.visit_batch(&script, visitor)?; }
             Ok(serde_json::Value::Array(entries))
         })
     }

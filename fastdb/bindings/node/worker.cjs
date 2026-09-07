@@ -8,7 +8,7 @@ parentPort.on('message', ({ id, method, args, cancellationKey }) => {
     if (!methods.has(method)) throw new Error('unknown database worker operation');
     const result = method === 'execute' && cancellationKey !== undefined
       ? db.executeCancellable(...args, cancellationKey)
-      : (method === 'profileSelect' || method === 'checkCollectionIntegrity') && cancellationKey !== undefined
+      : (method === 'profileSelect' || method === 'checkCollectionIntegrity' || method === 'executeBatch') && cancellationKey !== undefined
         ? db[method](...args, cancellationKey) : db[method](...args);
     parentPort.postMessage({ id, result });
     if (method === 'close') parentPort.close();

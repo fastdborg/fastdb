@@ -289,7 +289,7 @@ class AsyncDatabase {
   async checkCollectionIntegrity(table, limits = {}, options = {}) {
     return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal));
   }
-  async executeBatch(script) { return decodeBatch(await this.#request('executeBatch', [script])); }
+  async executeBatch(script, options = {}) { return decodeBatch(await this.#request('executeBatch', [script], false, options.signal)); }
   async exportDocuments(table, format = 'json') {
     return unwrap(await this.#request('exportDocuments', [table, format])).execution.result;
   }

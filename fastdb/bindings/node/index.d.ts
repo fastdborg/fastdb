@@ -59,7 +59,7 @@ export class AsyncDatabase {
   execute(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   profileSelect(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<ProfiledQuery>;
   checkCollectionIntegrity(table: string, limits?: IntegrityLimits, options?: ExecuteOptions): Promise<IntegrityReport>;
-  executeBatch(script: string): Promise<BatchExecution[]>;
+  executeBatch(script: string, options?: ExecuteOptions): Promise<BatchExecution[]>;
   all(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[][]>;
   first(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[] | undefined>;
   exactlyOne(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[]>;

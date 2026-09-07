@@ -170,7 +170,7 @@ mod tests {
             ExtValue::from_integer(args[0].to_integer().unwrap())
         }
         for insert in [false, true] {
-            for outer in [false, true] {
+            for (outer, batch) in [(false, false), (true, false), (false, true), (true, true)] {
                 let db = Database::open(":memory:").unwrap();
                 let c = db.connect().unwrap();
                 unsafe {
@@ -204,7 +204,16 @@ mod tests {
                     "{}SELECT cancel_token_tick(n) AS n FROM docs",
                     if insert { "INSERT INTO target(n) " } else { "" }
                 );
-                let report = c.execute_report_cancellable(&sql, &Parameters::new(), &token);
+                let report = if batch {
+                    let script = format!("SELECT 42; {sql}; DELETE FROM target;");
+                    let mut entries = c.execute_batch_cancellable(&script, &token).unwrap();
+                    assert_eq!(entries.len(), 2);
+                    assert!(entries[0].execution.result.is_ok());
+                    assert_eq!(entries[1].offset, "SELECT 42; ".len());
+                    entries.pop().unwrap().execution
+                } else {
+                    c.execute_report_cancellable(&sql, &Parameters::new(), &token)
+                };
                 assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED");
                 assert_eq!(
                     report.transaction_after,
