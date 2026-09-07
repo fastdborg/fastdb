@@ -136,3 +136,20 @@ Loading took 966.79 seconds and index construction 179.27 seconds. The checkpoin
 The recorded `/proc` VmHWM values range from 2,637,705,216 to 2,641,252,352 bytes (about 2.46 GiB), but the last value decreases despite the same child process. Preserve these raw observations; the platform/accounting inconsistency means they should not be treated as a reliable monotonic peak or evidence of a memory reduction. They also include earlier workloads and loading, not isolated query memory.
 
 This establishes a completed synthetic 100,000 × 768 correctness/performance diagnostic. It does not qualify release latency: the build is unoptimized, the data are seeded synthetic vectors, there is one process with warm caches, and three samples cannot establish a stable p95. Real embedding distributions, optimized builds, platform coverage, larger scales, cold/concurrent workloads and complete resource limits remain open. These measured latencies warrant profiling before making performance claims.
+
+
+## Optimized 100,000 × 768 comparison (2026-09-07)
+
+The [release-profile report](benchmark-results/2026-09-07-linux-release-seeded-768-100000.json) completed successfully at clean commit `83583ecdda91aa3f595dcef7d39545523520ac47`. Build command: `cargo build --locked --release -p fastdb-cli`, with Rust 1.88.0 and the same dependency lockfile. The existing release profile uses thin LTO, four code-generation units, abort-on-panic and line-table debug information; compilation took 2m48s. This is the `release` profile, not `release-official` or a published artifact.
+
+Run command: `python3 fastdb/scripts/benchmark.py --binary target/release/fastdb-cli --rows 100000 --dimensions 768 --samples 3 --fixture seeded --output fastdb/docs/benchmark-results/2026-09-07-linux-release-seeded-768-100000.json`. The unchanged harness hash is recorded in the preceding diagnostic. The binary SHA-256 was verified against the report: `80d383d176fb1729041b5da09fd63601a5eebd132d27b746f2e1d0d676e54193`.
+
+| Workload | Optimized median | Optimized sample range | Debug median |
+|---|---:|---:|---:|
+| Unindexed filter | 9.48 s | 9.33–9.52 s | 82.45 s |
+| Indexed filter | 138.64 ms | 132.74–148.26 ms | 1,124.82 ms |
+| Exact cosine top-10 | 47.12 s | 47.03–47.29 s | 388.11 s |
+
+Loading took 190.51 seconds and index construction 13.03 seconds. The checkpointed size was identical at 1,247,805,440 bytes. All filter and vector reference assertions passed for warmups and measured samples. Independent reference values, per-workload primary engine counters and database size match the debug report exactly; medians and current binary identity were independently checked. The intervening commit contains only diagnostic documentation and its report, so product code and harness were unchanged.
+
+Reported VmHWM observations are 2,622,300,160 then 2,620,866,560 bytes (about 2.44 GiB). The decreasing accounting caveat from the debug run recurs; these observations do not establish a reliable monotonic peak or a meaningful memory improvement. Source code, build configuration, platform and measurement scope are explicit, but these sequential three-sample synthetic runs do not establish general speedup, stable p95, cold-cache behavior or concurrent performance. The 47-second full-scan top-10 latency remains a concrete performance limitation for this workload. Profiling document decoding and vector execution, real embedding distributions, broader scales/platforms and complete resource qualification remain open.
