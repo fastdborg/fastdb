@@ -281,8 +281,22 @@ fn native_correlated_predicate(
                 replace_order_base(&mut sorted.expr, expression("__fastdb_unwrap(v)")?);
             }
         }
-        if let OneSelect::Select { distinctness, .. } = &mut wrapped.body.select {
-            *distinctness = projected_distinctness;
+        if let OneSelect::Select {
+            distinctness,
+            group_by,
+            ..
+        } = &mut wrapped.body.select
+        {
+            if matches!(projected_distinctness, Some(Distinctness::Distinct)) {
+                // Retain a typed representative, but compare logical SQL
+                // values so integer/real equivalents form one distinct row.
+                *group_by = Some(GroupBy {
+                    exprs: vec![Box::new(expression("__fastdb_unwrap(v)")?)],
+                    having: None,
+                });
+            } else {
+                *distinctness = projected_distinctness;
+            }
         }
         wrapped.order_by = ordering;
         wrapped.limit = limit;

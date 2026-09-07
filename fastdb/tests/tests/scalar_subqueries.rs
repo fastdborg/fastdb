@@ -2332,3 +2332,43 @@ fn correlated_sort_alias_writes_preserve_atomic_indexes_and_retry() {
         }
     }
 }
+
+#[test]
+fn correlated_distinct_numeric_equality_matches_native() {
+    for inputs in [
+        "(1),(1.0),(2)",
+        "(1.0),(1),(2)",
+        "(NULL),(NULL),(1),(1.0),(2)",
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE TABLE native(n)",
+            "CREATE TABLE lookup(n)",
+            "INSERT INTO docs(n) VALUES(1)",
+            "INSERT INTO native VALUES(1)",
+        ] {
+            q(&c, sql);
+        }
+        q(&c, &format!("INSERT INTO lookup VALUES{inputs}"));
+        for order in ["x", "x,n", "x DESC,n"] {
+            for offset in 0..4 {
+                let source=format!("SELECT DISTINCT CASE WHEN d.n>0 THEN n ELSE d.n END AS x FROM lookup ORDER BY {order} LIMIT 1 OFFSET {offset}");
+                for expr in [format!("({source})"), format!("d.n IN ({source})")] {
+                    let expected = q(&c, &format!("SELECT {expr} FROM native d")).rows;
+                    let sql = format!("SELECT {expr} FROM docs d");
+                    assert_eq!(q(&c, &sql).rows, expected, "{inputs}: {sql}");
+                    assert_eq!(
+                        c.profile_select(&sql, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected,
+                        "profile {inputs}: {sql}"
+                    );
+                }
+            }
+        }
+    }
+}

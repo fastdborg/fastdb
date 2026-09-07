@@ -105,3 +105,6 @@ Covered correlated ORDER BY alias arithmetic/function expressions now use logica
 
 
 Mixed DISTINCT ordering of a single correlated typed projection now deduplicates only the projected value, with hidden sort keys excluded. Native differential pagination and volatile-evaluation tests pass; the complete scoped run passed 322 Rust and 35 Node tests. This supersedes the earlier mixed-ordering rejection. Broader DISTINCT type/collation semantics and full V1 remain open.
+
+
+Sorted correlated typed DISTINCT now compares logical SQL values and retains a typed representative, correcting integer/real duplicate pagination. Native scalar/membership execute/profile tests cover insertion order and NULLs; the complete scoped check passed 323 Rust and 35 Node tests. Unsorted correlated DISTINCT, broader collation/type semantics and full V1 remain open.

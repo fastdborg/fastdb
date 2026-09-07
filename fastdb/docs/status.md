@@ -1098,3 +1098,12 @@ Verification: the complete scoped check passed formatting, Clippy, 322 Rust test
 ## DISTINCT correlated consumer qualification (2026-09-07)
 
 The mixed DISTINCT correlated-ordering matrix now compares scalar, IN, NOT IN and EXISTS consumers against native tables, including repeated NULL inputs, constant/varying CASE projections and empty pages after LIMIT/OFFSET. Execute and profile_select agree with the native oracle. Record and boolean assertions additionally verify that an offset past the single distinct value returns scalar NULL and false membership even when multiple native source rows exist. All 17 correlated scalar-subquery integration tests pass. This extends regression coverage of the existing implementation; broader DISTINCT type/collation semantics and full V1 remain open.
+
+
+## Logical equality in correlated DISTINCT ordering (2026-09-07)
+
+Sorted single-column correlated typed DISTINCT projections now group by the unwrapped logical SQL value while returning a typed representative, matching the existing collection DISTINCT strategy. Previously encoded integer 1 and real 1.0 survived as separate rows, causing OFFSET 1 to return 1.0 instead of 2. Hidden sort keys remain outside the grouping key.
+
+Native differential execute/profile coverage includes both integer/real insertion orders, duplicate NULLs, ascending/descending and mixed sort keys, offsets through and beyond the result set, and scalar/membership consumers. The focused numeric-equality regression passes. Broader correlated DISTINCT collation/type semantics, unsorted correlated DISTINCT and general scope/resource qualification remain open; full V1 is incomplete.
+
+Verification: the complete scoped suite passed formatting, Clippy, 323 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.
