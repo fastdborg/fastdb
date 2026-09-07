@@ -827,3 +827,10 @@ A test-only scalar counts actual native expression evaluations through the targe
 ## Shared SQL fetch budget qualification (2026-09-07)
 
 Inspection of execute_lowered_profiled confirms all fetched cells are flattened into one resolver call. Earlier wording claiming separate per-projection budgets was incorrect and is corrected above and in contracts.md. A SQL regression uses 4,096 positions and an 8,192-byte target text: two projections exceed the shared 64 MiB byte limit while staying below the 16,384 reference limit; a one-projection retry succeeds. It checks retained active work and outer rollback. This covers the lowered SELECT fetch path, not total outer-result memory.
+
+
+## Incremental lowered SELECT decoding (2026-09-07)
+
+Lowered SELECT execution now decodes directly from engine row callbacks, removing the full intermediate engine-value rowset. It checks the combined fetch-reference count before retaining each decoded row. The evaluation-count regression now scans 24,576 native positions with a fetched projection, expects FDB_LIMIT after 16,385 scalar evaluations and verifies active state, a two-row retry and rollback. Complete decoded results are still retained; ordinary result-byte budgets, engine materialization and whole-query memory remain open.
+
+Scoped checks passed formatting, Clippy, 286 Rust tests, thirty-two Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

@@ -818,3 +818,6 @@ JSON and NDJSON document imports preflight the complete immutable input before m
 
 
 Forward-fetch target batches retain their 128-key query grouping but consume engine rows individually. Budget/decoding failures stop row iteration, preserve the original frontend error and drop the statement before atomic cleanup. A full target batch is no longer collected before budget checks. Schema metadata still uses small materialized queries; current-row decoding and engine allocations remain outside the encoded-value budget.
+
+
+Lowered SELECT results are decoded as engine rows arrive, without first retaining a complete engine-value rowset. Public results still retain all decoded rows. For fetch queries, the combined reference-position limit is checked at each row before retaining its decoded output; the first excess row may already have evaluated native expressions. A limit failure returns no partial result and follows existing atomic cleanup. This does not bound non-fetch result bytes, engine sorting/materialization or all query memory.

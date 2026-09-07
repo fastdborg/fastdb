@@ -1099,3 +1099,8 @@ Ran `node fastdb/scripts/bench-transfer.cjs` three times against clean implement
 ## Shared SELECT fetch budget — 2026-09-07
 
 `cargo test --locked -p fastdb-tests --test links` passed five tests (`/tmp/fastdb-fetch-shared-budget.log`). The new regression exceeds the 64 MiB expanded-value budget with two projections and 8,192 total references, then successfully retries one projection in the same transaction and rolls back prior work. Explicit aliases keep the fixture within the existing unique projection-name rules. Source inspection confirms execute_lowered_profiled flattens all fetched cells into one call; earlier documentation claiming separate per-projection budgets was corrected. Test-package Clippy and formatting passed. No production code changed; prior full 284 Rust / 32 Node evidence plus two subsequent new regressions gives 286 distinct Rust tests, with the same known ignored gate.
+
+
+## Lowered SELECT row decoding — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-select-row-decode-check.log`): formatting, scoped Clippy, 286 Rust tests, 32 Node tests and strict TypeScript; one known trigger-interruption gate ignored. Lowered results now decode in engine callbacks, and fetched-reference counting stops before retaining the first excess decoded row. The scalar evaluation regression uses 24,576 rows, proves exactly 16,385 evaluations at the 16,384-position limit, and verifies active transaction state, two-row retry and rollback. Existing typed/compound/write/profile/client tests passed through the new path. Public results remain materialized; engine-side sorts/materialization and ordinary result bytes are not bounded by this change.

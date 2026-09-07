@@ -5,6 +5,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 const CHUNK: usize = 128;
+pub(crate) const MAX_FETCH_REFERENCES: usize = 16_384;
 const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
 
 // Count the logical tagged JSON representation without allocating encoded copies.
@@ -38,7 +39,7 @@ impl Connection {
     /// At most 16,384 positions and 64 MiB each of fetched/output tagged JSON
     /// values are accepted. Duplicates count toward output; this is not a heap cap.
     pub fn fetch_records(&self, references: &[Value]) -> Result<Vec<Value>> {
-        if references.len() > 16_384 {
+        if references.len() > MAX_FETCH_REFERENCES {
             return Err(Error::Limit("fetch reference count exceeds 16384".into()));
         }
         self.atomic(|| self.fetch_records_inner(references, MAX_FETCH_BYTES))
@@ -323,6 +324,33 @@ mod tests {
             );
             assert_eq!(TARGET_CALLS.load(Ordering::SeqCst), 3);
         }
+        for _ in 0..13 {
+            c.execute("INSERT INTO targets SELECT n FROM targets", &params)
+                .unwrap();
+        }
+        TARGET_CALLS.store(0, Ordering::SeqCst);
+        let error = c
+            .execute(
+                "SELECT fetch_target_tick(n),record::fetch(type::record('missing',n)) FROM targets",
+                &params,
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT", "{error}");
+        assert_eq!(
+            TARGET_CALLS.load(Ordering::SeqCst),
+            MAX_FETCH_REFERENCES + 1
+        );
+        assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+        TARGET_CALLS.store(0, Ordering::SeqCst);
+        let retry = c.execute("SELECT fetch_target_tick(n),record::fetch(type::record('missing',n)) FROM targets LIMIT 2", &params).unwrap();
+        assert_eq!(
+            retry.rows,
+            vec![
+                vec![Value::Integer(1), Value::Null],
+                vec![Value::Integer(2), Value::Null]
+            ]
+        );
+        assert_eq!(TARGET_CALLS.load(Ordering::SeqCst), 2);
         c.execute("ROLLBACK", &params).unwrap();
         assert!(c
             .execute("SELECT * FROM targets", &params)

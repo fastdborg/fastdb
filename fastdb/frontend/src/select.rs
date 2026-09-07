@@ -3484,21 +3484,48 @@ impl Connection {
             .map(|i| statement.get_column_name(i).into_owned())
             .collect();
         let mut rows = Vec::new();
-        for row in crate::collect_rows(&mut statement)? {
-            let mut output = Vec::new();
-            for (i, value) in row.into_iter().enumerate() {
-                if !native_insert && !explain && typed[i] {
-                    output.push(match value {
-                        turso_core::Value::Blob(b) => Value::decode(&b)?,
-                        turso_core::Value::Null => Value::Null,
-                        _ => return Err(Error::Storage("invalid typed projection".into())),
-                    });
-                } else {
-                    output.push(crate::from_engine(value));
+        let fetches_per_row = if native_insert || explain {
+            0
+        } else {
+            fetched.iter().filter(|fetch| **fetch).count()
+        };
+        let mut reference_count = 0;
+        let mut failure = None;
+        let execution = crate::parser_stack(|| {
+            statement.run_with_row_callback(|row| {
+                let result = (|| -> Result<()> {
+                    if fetches_per_row
+                        > crate::links::MAX_FETCH_REFERENCES.saturating_sub(reference_count)
+                    {
+                        return Err(Error::Limit("fetch reference count exceeds 16384".into()));
+                    }
+                    reference_count += fetches_per_row;
+                    let mut output = Vec::new();
+                    for (i, value) in row.get_values().enumerate() {
+                        if !native_insert && !explain && typed[i] {
+                            output.push(match value {
+                                turso_core::Value::Blob(b) => Value::decode(b)?,
+                                turso_core::Value::Null => Value::Null,
+                                _ => return Err(Error::Storage("invalid typed projection".into())),
+                            });
+                        } else {
+                            output.push(crate::from_engine(value.clone()));
+                        }
+                    }
+                    rows.push(output);
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    failure = Some(error);
+                    return Err(turso_core::LimboError::Interrupt);
                 }
-            }
-            rows.push(output);
+                Ok(())
+            })
+        });
+        if let Some(error) = failure {
+            return Err(error);
         }
+        execution?;
         if !native_insert && !explain && fetched.iter().any(|v| *v) {
             let refs = rows
                 .iter()
