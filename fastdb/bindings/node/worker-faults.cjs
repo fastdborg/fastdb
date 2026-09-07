@@ -7,7 +7,7 @@ const threads = require('node:worker_threads');
 let latest;
 let startupFailure;
 class FaultWorker extends EventEmitter {
-  messages = []; stopped = false; rejectClose = false; rejectRequest = false;
+  messages = []; stopped = false; rejectClose = false; rejectRequest = false; exitBeforeCloseAck = false;
   constructor() {
     super(); latest = this;
     const failure = startupFailure;
@@ -27,6 +27,7 @@ class FaultWorker extends EventEmitter {
     if (message.method === 'close') {
       if (this.rejectClose) throw new Error('transport closed');
       queueMicrotask(() => {
+        if (this.exitBeforeCloseAck) { this.stopped = true; this.emit('exit', 7); return; }
         this.emit('message', { id: message.id });
         this.stopped = true; this.emit('exit', 0);
       });
@@ -122,6 +123,24 @@ const { getEventListeners } = require('node:events');
     }
     await db.close();
     assert.equal(worker.stopped,true);
+  }
+  for (const failure of ['send','exit']) {
+    const db = await AsyncDatabase.open(); const worker = latest;
+    const controller = new AbortController();
+    const operation = db.execute('SELECT 1', {}, {signal:controller.signal});
+    const token = worker.messages[0].cancellationKey;
+    worker.rejectClose = failure === 'send';
+    worker.exitBeforeCloseAck = failure === 'exit';
+    const close = db.close();
+    assert.equal(db.close(), close);
+    const outcomes = await Promise.allSettled([operation, close]);
+    assert(outcomes.every(outcome => outcome.status === 'rejected' && outcome.reason.code === 'FDB_WORKER'));
+    assert.equal(outcomes[0].reason, outcomes[1].reason);
+    assert.equal(worker.stopped, true);
+    assert.equal(cancelOperation(token), false);
+    assert.equal(getEventListeners(controller.signal,'abort').length, 0);
+    assert.equal(db.close(), close);
+    await assert.rejects(db.execute('SELECT 2'), error => error === outcomes[0].reason);
   }
   process.stdout.write('worker-faults-complete\n');
 })().catch(error => { console.error(error); process.exitCode = 1; });

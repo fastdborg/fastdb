@@ -1436,3 +1436,6 @@ Negative-offset qualification (2026-09-07): the native correlated integer-pagina
 ## Async worker startup failure qualification (2026-09-07)
 
 The isolated transport fixture now covers error, early exit and message-decoding failure before the ready handshake. AsyncDatabase.open rejects with FDB_WORKER only after worker exit; a damaged response channel requests one close. A real-worker regression repeats failure to open a missing-parent path three times, then successfully creates, writes, closes and reopens another database. All 35 Node binding tests pass, including the transport fixture. This is startup lifecycle qualification; it does not establish native crash recovery or broader platform release readiness. Full V1 remains incomplete.
+
+
+Worker close-failure qualification (2026-09-07): the isolated transport fixture now covers a failed close send and exit before close acknowledgement with pending cancellable work. Both operation and close reject with the same FDB_WORKER error, cancellation tokens/listeners are released, subsequent requests retain that failure, and close remains promise-idempotent. The fixture and its timeout/completion-marker wrapper pass. This establishes transport lifecycle behavior, not native interrupted-close durability. Full V1 remains incomplete.
