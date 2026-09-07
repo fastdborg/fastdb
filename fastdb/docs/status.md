@@ -949,3 +949,10 @@ The offline installed Node consumer now exercises bound correlated UPDATE, profi
 ## Correlated scalar evaluation counts (2026-09-07)
 
 The existing test-only native function counter now compares seven correlated scalar forms against ordinary tables through execute and profile_select. Two matching outer rows cause two calls, one matching row causes one, empty predicates cause zero, and two explicit scalar occurrences cause four. Arithmetic and comparisons retain the native counts. The targeted regression passed; this qualifies these forms without claiming complete volatile-expression behavior or closing general correlation.
+
+
+## Correlated native HAVING predicates (2026-09-07)
+
+Qualified outer collection fields now lower inside native scalar/EXISTS HAVING predicates using the same metadata/runtime separation as WHERE and JOIN ON. Differential coverage includes scalar aggregates, projection aliases in HAVING, grouped first-row selection, EXISTS, local alias shadowing, parameters, execute/profile results and atomic UPDATE failure/retry/rollback. Both Node clients exercise a grouped scalar read with a HAVING projection alias. Correlation in GROUP BY expressions, inner collection sources, correlated IN and deeper scopes remain open.
+
+Scoped checks passed formatting, Clippy, 302 Rust tests, thirty-five Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

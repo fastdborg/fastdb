@@ -1562,3 +1562,86 @@ fn correlated_scalar_affinity_and_collation_match_native_matrix() {
         }
     }
 }
+
+#[test]
+fn native_having_predicates_correlate_with_collection_candidates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "DEFINE FIELD n ON docs TYPE integer");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE lookup(n INTEGER)");
+    q(&c, "INSERT INTO lookup VALUES(1),(2),(3)");
+    for projection in [
+        "(SELECT max(n) FROM lookup HAVING max(n)>d.n)",
+        "(SELECT max(n) AS maximum FROM lookup HAVING maximum>d.n)",
+        "(SELECT n FROM lookup GROUP BY n HAVING n<d.n ORDER BY n DESC)",
+        "EXISTS(SELECT n FROM lookup GROUP BY n HAVING n<d.n)",
+        "(SELECT max(n) FROM lookup WHERE n>=d.n HAVING count(*)>1)",
+        "(SELECT max(d.n) FROM lookup AS d HAVING max(d.n)>1)",
+    ] {
+        let sql = format!("SELECT d.n,{projection} FROM docs AS d ORDER BY d.n");
+        let expected = q(&c, &sql.replace("FROM docs AS d", "FROM native AS d")).rows;
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected
+        );
+    }
+    let sql="SELECT d.n,(SELECT max(n) FROM lookup HAVING max(n)>d.n+$delta) FROM docs AS d ORDER BY d.n";
+    let params = Parameters::from([("$delta".into(), Value::Integer(1))]);
+    assert_eq!(
+        c.execute(sql, &params).unwrap().rows,
+        c.execute(&sql.replace("FROM docs AS d", "FROM native AS d"), &params)
+            .unwrap()
+            .rows
+    );
+    assert!(c.execute(sql, &Parameters::new()).is_err());
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(n) VALUES(9)");
+    let error = c
+        .execute(
+            "UPDATE docs AS d SET n=(SELECT max(n) FROM lookup HAVING max(n)>d.n)",
+            &Parameters::new(),
+        )
+        .unwrap_err();
+    assert!(matches!(error.code(), "FDB_CONSTRAINT" | "FDB_VALIDATION"));
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)],
+            vec![Value::Integer(9)]
+        ]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        4
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    let retry=q(&c,"UPDATE docs AS d SET n=n+(SELECT count(*) FROM lookup HAVING max(n)>=d.n)+10 WHERE n<9 RETURNING n");
+    assert_eq!(
+        retry.rows,
+        vec![
+            vec![Value::Integer(14)],
+            vec![Value::Integer(15)],
+            vec![Value::Integer(16)]
+        ]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        q(&c, "SELECT n FROM native ORDER BY n").rows
+    );
+}

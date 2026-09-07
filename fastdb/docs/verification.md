@@ -1227,3 +1227,8 @@ An initial collation comparison failed because standalone inner projection metad
 `cargo test --locked -p fastdb typed_between_evaluates_volatile_left_operand_once` passed (`/tmp/fastdb-correlation-evaluation.log`). The existing counter regression now includes seven correlated scalar forms with direct native row/count oracles, followed by execute and profile_select comparisons. It establishes 2/1/0 calls for two/one/no matching outer rows, two calls through arithmetic and either comparison orientation, and four for two explicit occurrences across two rows. No production change or additional test function; prior full scoped evidence remains 301 Rust / 35 Node tests with one ignored gate. Broader volatile-expression qualification remains open.
 
 Frontend all-target Clippy with warnings denied and formatting also passed.
+
+
+## Correlated native HAVING — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-correlated-having-check.log`): formatting, Clippy, 302 Rust tests, 35 Node tests and strict TypeScript; one known trigger-interruption gate remains ignored. A new regression compares aggregate/grouped scalar and EXISTS HAVING predicates with native tables through execute/profile, including HAVING projection aliases, local alias shadowing, parameters and empty results. It checks failed UPDATE rollback, prior work, integrity and corrected retry. Both Node clients additionally exercise a correlated HAVING alias read/profile. Initial live probes had rejected the collection forms while native queries returned per-row results; those cases now pass. GROUP BY expression correlation and broader nested/native/collection scope qualification remain open.

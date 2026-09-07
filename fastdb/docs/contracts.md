@@ -859,3 +859,8 @@ FROM docs AS d ORDER BY d.n;
 ```
 
 Here `docs` is a collection and `lookup(n INTEGER)` is an ordinary table. With both containing 1, 2, 3, the result is `(1,NULL), (2,1), (3,2)`.
+
+
+## Correlated native HAVING predicates (2026-09-07)
+
+Qualified outer collection fields now lower inside native scalar/EXISTS HAVING predicates using the same metadata/runtime separation as WHERE and JOIN ON. Differential coverage includes scalar aggregates, projection aliases in HAVING, grouped first-row selection, EXISTS, local alias shadowing, parameters, execute/profile results and atomic UPDATE failure/retry/rollback. Both Node clients exercise a grouped scalar read with a HAVING projection alias. Correlation in GROUP BY expressions, inner collection sources, correlated IN and deeper scopes remain open.

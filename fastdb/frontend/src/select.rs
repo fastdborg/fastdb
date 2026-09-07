@@ -46,7 +46,10 @@ fn native_correlated_predicate(
         return Ok(inner);
     }
     let OneSelect::Select {
-        from, where_clause, ..
+        from,
+        where_clause,
+        group_by,
+        ..
     } = &mut inner.body.select
     else {
         return Ok(inner);
@@ -107,6 +110,9 @@ fn native_correlated_predicate(
         Ok(())
     };
     if let Some(value) = where_clause {
+        rewrite(value)?;
+    }
+    if let Some(value) = group_by.as_mut().and_then(|group| group.having.as_mut()) {
         rewrite(value)?;
     }
     if let Some(from) = from {
