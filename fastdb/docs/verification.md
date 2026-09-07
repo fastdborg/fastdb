@@ -1725,3 +1725,10 @@ The complete scoped check passed formatting, Clippy, 376 Rust tests, 44 Node/app
 
 
 Scalar-wrapper correlated write qualification (2026-09-08): a parameterized multirow UPDATE uses a source-free scalar wrapper around its assignment subquery and another around a correlated CTE EXISTS filter. Invalid bindings preserve prior work and managed-index integrity; valid bindings allow retry and rollback restores original rows. The focused regression, formatting and focused Clippy pass. Latest combined evidence remains 376 Rust/44 Node tests; broader correlation/write/resource and full V1 gates remain open.
+
+
+## Source-free scalar WHERE correlation (2026-09-08)
+
+Extended source-free scalar wrapper scope propagation to WHERE subqueries, fixing false NULL results for matching outer record references. Logical EXISTS consistently uses a scalar SELECT wrapper to avoid the pinned source-free semi-join preparation panic while retaining native EXISTS behavior. Execute/profile regressions cover direct/derived outer sources, correlated counts and direct/CTE-backed EXISTS filters.
+
+The complete scoped check passed formatting, Clippy, 378 Rust tests, 44 Node/application tests and strict TypeScript, including existing callback and write-rollback regressions. One known trigger-cancellation gate remains ignored. No upstream files changed; broader scope/resource and full V1 release qualification remain open.

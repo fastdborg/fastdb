@@ -2490,39 +2490,45 @@ impl Connection {
             }
         }
         // A source-free scalar wrapper introduces no table aliases. Carry
-        // the enclosing logical scope into its projected subqueries.
+        // the enclosing logical scope into its projected and filtering subqueries.
         if inner.with.is_none() && inner.body.compounds.is_empty() {
             if let OneSelect::Select {
                 from: None,
                 columns,
+                where_clause,
                 ..
             } = &mut inner.body.select
             {
-                for column in columns {
-                    if let ResultColumn::Expr(value, _) = column {
-                        let mut failure = None;
-                        turso_core::walk_expr_mut(value, &mut |expr| {
-                            let exists = matches!(expr, Expr::Exists(_));
-                            if let Expr::Subquery(query)
-                            | Expr::Exists(query)
-                            | Expr::InSelect { rhs: query, .. } = expr
-                            {
-                                if let Err(error) = self.correlate_collection_inner(
-                                    query,
-                                    correlation_sources,
-                                    params,
-                                    ctes,
-                                    exists,
-                                ) {
-                                    failure = Some(error);
-                                }
-                                return Ok(turso_core::WalkControl::SkipChildren);
+                let values = columns
+                    .iter_mut()
+                    .filter_map(|column| match column {
+                        ResultColumn::Expr(value, _) => Some(value),
+                        _ => None,
+                    })
+                    .chain(where_clause.iter_mut());
+                for value in values {
+                    let mut failure = None;
+                    turso_core::walk_expr_mut(value, &mut |expr| {
+                        let exists = matches!(expr, Expr::Exists(_));
+                        if let Expr::Subquery(query)
+                        | Expr::Exists(query)
+                        | Expr::InSelect { rhs: query, .. } = expr
+                        {
+                            if let Err(error) = self.correlate_collection_inner(
+                                query,
+                                correlation_sources,
+                                params,
+                                ctes,
+                                exists,
+                            ) {
+                                failure = Some(error);
                             }
-                            Ok(turso_core::WalkControl::Continue)
-                        })?;
-                        if let Some(error) = failure {
-                            return Err(error);
+                            return Ok(turso_core::WalkControl::SkipChildren);
                         }
+                        Ok(turso_core::WalkControl::Continue)
+                    })?;
+                    if let Some(error) = failure {
+                        return Err(error);
                     }
                 }
             }
@@ -3051,15 +3057,10 @@ impl Connection {
                                 if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
                             let lowered = if exists {
                                 let body = sql.trim().trim_end_matches(';');
-                                if inner.with.is_some() {
-                                    // A correlated CTE under native EXISTS can be
-                                    // prepared before its outer cursor exists.
-                                    // A scalar SELECT defers it while retaining
-                                    // native EXISTS short-circuit/projection rules.
-                                    expression(&format!("(SELECT EXISTS({body}))"))?
-                                } else {
-                                    expression(&format!("EXISTS ({body})"))?
-                                }
+                                // A scalar SELECT avoids premature correlated
+                                // CTE preparation and source-free semi-join
+                                // planning while retaining native EXISTS rules.
+                                expression(&format!("(SELECT EXISTS({body}))"))?
                             } else if membership {
                                 let values = format!(
                                     "SELECT __fastdb_unwrap({output}) AS v FROM __fastdb_members"

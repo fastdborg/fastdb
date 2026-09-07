@@ -972,3 +972,7 @@ Logical EXISTS queries containing a local WITH now retain native EXISTS inside a
 ## Source-free scalar wrapper correlation (2026-09-08)
 
 Source-free scalar SELECT wrappers without local WITH or compound arms now carry the enclosing logical source scope into projected subqueries. This fixes the previously recorded extra-wrapper failure for correlated collection queries, including a CTE-backed EXISTS. Execute/profile regressions cover one and two wrapper levels with direct/derived outer sources and record predicates. Wrappers introducing table aliases, other deeper scope combinations and resource qualification remain open.
+
+## Source-free scalar WHERE correlation (2026-09-08)
+
+Source-free scalar SELECT wrappers now carry the outer logical scope into subqueries in WHERE as well as projections. This fixes false NULL results when a correlated collection EXISTS should admit the scalar row. Logical EXISTS lowering consistently uses a scalar SELECT wrapper, avoiding the pinned engine's source-free semi-join preparation panic while retaining native EXISTS semantics. Execute/profile regressions cover direct/derived outer sources, COUNT and direct/CTE-backed EXISTS filters. Broader table-bearing scopes and resource qualification remain open.

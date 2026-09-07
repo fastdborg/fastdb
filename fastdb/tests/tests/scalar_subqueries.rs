@@ -3683,3 +3683,39 @@ fn scalar_wrapper_correlated_updates_preserve_atomicity() {
         vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn source_free_where_subqueries_retain_outer_record_correlation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a}",
+    ] {
+        q(&c, sql);
+    }
+    for outer in ["docs d", "(SELECT id,n FROM docs) d"] {
+        for predicate in [
+            "EXISTS(SELECT 1 FROM links l WHERE l.owner=d.id)",
+            "(SELECT count(*) FROM links l WHERE l.owner=d.id)>0",
+            "EXISTS(WITH x AS (SELECT owner FROM links l WHERE l.owner=d.id) SELECT 1 FROM x)",
+        ] {
+            let sql = format!("SELECT n,(SELECT 1 WHERE {predicate}) FROM {outer} ORDER BY n");
+            let expected = vec![
+                vec![Value::Integer(1), Value::Integer(1)],
+                vec![Value::Integer(2), Value::Null],
+            ];
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+        }
+    }
+}
