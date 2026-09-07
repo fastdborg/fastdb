@@ -1039,3 +1039,8 @@ Final `fastdb/scripts/check.sh` passed formatting, Clippy, 278 Rust tests, thirt
 The executable Node template combines migrations, document validation, typed records/booleans, a managed index, one-hop owner expansion and document/relational transactions. The smoke passed title validation, deliberately conflicting event insertion after a task update, rollback/index integrity, retry, duplicate-completion rejection, linked listing, migration reopen and NDJSON export (`/tmp/fastdb-task-tracker.log`). The CLI ran twice against a temporary database and retained one completed task. Initial example assumptions about UPSERT DOCUMENT and SQL boolean literals were corrected to supported object UPSERT and bound booleans.
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 278 Rust tests, thirty-two Node tests (31 binding tests plus the template) and strict TypeScript (`/tmp/fastdb-task-tracker-check.log`). One known trigger-interruption gate remains ignored. The template test now runs in the scoped Node check. No engine/upstream/dependency changes; external pilots and full V1 remain incomplete.
+
+
+## AI application guide — 2026-09-07
+
+The JavaScript code block in ai-application-guide.md was extracted directly from the file and executed with Node from the repository root. Its JSON result was parsed and checked for one completed task titled Review the schema with fetched owner Sam. The template smoke passed again (`/tmp/fastdb-ai-guide-template.log`); git diff whitespace checks passed. No production code changed, so the existing scoped baseline remains 278 Rust tests and thirty-two Node tests with one known ignored trigger gate. External pilots and full V1 remain incomplete.

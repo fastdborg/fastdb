@@ -767,3 +767,8 @@ Final scoped checks passed formatting, Clippy, 278 Rust tests, thirty-one Node t
 fastdb/examples/node-task-tracker provides a runnable asynchronous Node storage-layer template with migrations, typed record/boolean parameters, field validation, a managed index, one-hop owner expansion and atomic task/event writes. Its smoke test forces the second transactional write to fail, verifies document/index rollback, retries, rejects duplicate completion, reopens through migration validation and exports NDJSON. The CLI demo was run twice against one temporary file without duplicating its seeded task. The example test is now included in check-node.sh. This supplies an initial tested template, not external pilot or production qualification.
 
 Final scoped checks passed formatting, Clippy, 278 Rust tests, thirty-two Node tests including the template, and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## AI-assisted application guide (2026-09-07)
+
+[AI application guide](ai-application-guide.md) provides a complete runnable task-tracker workflow, current syntax/type/result rules, transaction ownership, migration/cancellation/transfer behavior and suggested application-agent instructions. The JavaScript code block was extracted and executed from the repository root; its completed task and fetched owner were asserted, and the template smoke passed again. This is initial tested guidance, not external developer/pilot validation.
