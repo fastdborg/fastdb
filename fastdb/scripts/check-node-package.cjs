@@ -72,6 +72,20 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await client.execute('ROLLBACK');
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
 
+    await client.execute('BEGIN');
+    for (const meta of [{deep:{n:8n}},null,7n,[],{}]) {
+      await client.execute('UPDATE docs SET meta=$meta',{$meta:meta});
+      const expected=meta && !Array.isArray(meta) && typeof meta==='object' && meta.deep ? 8n : null;
+      const derived='SELECT d.meta.deep.n FROM (SELECT meta FROM docs) AS d';
+      assert.deepEqual(await client.all(derived),[[expected]]);
+      const nested='SELECT (SELECT $n WHERE d.meta.deep.n=$n) FROM (SELECT meta FROM docs) AS d';
+      assert.deepEqual((await client.profileSelect(nested,{$n:8n})).result.rows,[[expected]]);
+    }
+    assert.equal((await client.checkCollectionIntegrity('docs')).indexEntries,1n);
+    await client.execute('ROLLBACK');
+    assert.deepEqual(await client.all('SELECT meta FROM docs'),[[null]]);
+    assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
+
     const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
     assert.deepEqual(await client.all(cte),[[2n]]);
   }

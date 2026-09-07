@@ -979,3 +979,15 @@ The correlation detector now recognizes nested outer document paths, including t
 Qualification exposed a derived-accessor error for NULL/scalar parents. A separate nested-value accessor now returns missing fields for valid non-object parents while physical document access stays strict; a direct accessor regression checks malformed encodings and stored-root rejection.
 
 Scoped checks passed formatting, Clippy, 307 Rust tests, thirty-five Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Source-free correlated deep paths (2026-09-07)
+
+A deep-path parser helper alone no longer opts a source-free expression subquery into standalone logical lowering before its outer field scope exists. It remains available to the enclosing correlation pass. Regression coverage extends nested paths to source-free scalar, EXISTS and IN forms through direct and derived outer collections. Other explicit logical expressions and typed parameters retain their existing routing; broader mixed-expression correlation remains open.
+
+
+## Nested savepoint cancellation and installed deep paths (2026-09-07)
+
+The Node cancellation suite exposed partial import data surviving FDB_CANCELLED. A deterministic 48-boundary nested atomic sweep reproduced the failure at boundary 4. Atomic operations now have unique per-connection savepoint names, so outer cleanup cannot accidentally target an interrupted inner frame. See [atomic-savepoints.md](atomic-savepoints.md) for evidence and remaining savepoint/commit boundaries.
+
+The complete scoped suite passed formatting, Clippy, 308 Rust tests, thirty-five Node tests and strict TypeScript. The Node cancelled-import test passed three additional isolated runs. The installed-package smoke passed direct/derived nested values and source-free correlated profiles across object, NULL, scalar, array and missing parents in both clients, including index integrity and rollback. Result: Linux x64 / Node 24.19.0, eight runtime files, 59,642,181 packed bytes. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

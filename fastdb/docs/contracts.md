@@ -878,3 +878,10 @@ Tests compare NULL/empty sources, native literal and typed left operands, unary 
 The correlation detector now recognizes nested outer document paths, including the parser's deep-path helper, and substitutes the complete path only in metadata probes. Runtime lowering uses the existing typed field accessor and comparison rules. Scalar, EXISTS, IN/NOT IN, HAVING and JOIN predicate regressions compare shallow/deep nested paths with native scalar-column oracles, including NULL, missing paths and scalar parents. Derived collection sources retain nested typed access; local aliases continue to shadow the outer source. A correlated UPDATE checks affected rows, index integrity and rollback. Deeper query scopes and inner collection sources remain unfinished.
 
 Derived nested access uses a separate value accessor: a valid NULL/scalar/array parent yields a missing field (NULL), while malformed encodings still fail. Physical stored-document accessors continue to require object roots. This also applies to ordinary nested projections over derived collection columns.
+
+
+## Source-free correlated deep paths (2026-09-07)
+
+A deep-path parser helper alone no longer opts a source-free expression subquery into standalone logical lowering before its outer field scope exists. It remains available to the enclosing correlation pass. Regression coverage extends nested paths to source-free scalar, EXISTS and IN forms through direct and derived outer collections. Other explicit logical expressions and typed parameters retain their existing routing; broader mixed-expression correlation remains open.
+
+Atomic operations now use distinct reserved savepoint identities, so cleanup of a failed outer operation includes unfinished inner frames. The nested cancellation regression preserves prior work on FDB_CANCELLED; ambiguous cleanup/RELEASE outcomes remain reported separately. See [atomic-savepoints.md](atomic-savepoints.md) for qualification limits.

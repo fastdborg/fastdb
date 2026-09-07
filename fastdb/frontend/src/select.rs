@@ -2766,7 +2766,10 @@ impl Connection {
             && fastql_parser::tokenize(&logical_input)?
                 .iter()
                 .any(|token| {
-                    (token.kind == fastql_parser::Kind::Word && token.text.starts_with("__fastdb_"))
+                    (token.kind == fastql_parser::Kind::Word && token.text.starts_with("__fastdb_")
+                        // A source-free nested path has no local field scope.
+                        // Leave it for the enclosing correlation pass.
+                        && !(nested && expression_subquery && from.is_none() && token.text == "__fastdb_path"))
                         || (token.kind == fastql_parser::Kind::Parameter
                             && params.get(&token.text).is_some_and(|value| {
                                 matches!(

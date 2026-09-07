@@ -1795,6 +1795,9 @@ fn correlated_predicates_resolve_nested_document_paths() {
     for field in ["d.meta.n", "d.meta.deep.n"] {
         for projection in [
             format!("(SELECT max(n) FROM rhs WHERE n<={field})"),
+            format!("(SELECT 1 WHERE {field}=1)"),
+            format!("EXISTS(SELECT 1 WHERE {field}=1)"),
+            format!("1 IN(SELECT 1 WHERE {field}=1)"),
             format!("EXISTS(SELECT n FROM rhs WHERE n={field})"),
             format!("d.n IN(SELECT n FROM rhs WHERE n<={field})"),
             format!("d.n NOT IN(SELECT n FROM rhs GROUP BY n HAVING n<={field})"),
