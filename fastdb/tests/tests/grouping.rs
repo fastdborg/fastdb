@@ -852,3 +852,76 @@ fn having_helper_aliases_reuse_projected_aggregates() {
         vec![vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn distinct_grouped_aggregate_pages_match_native_and_validate_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(k,n)");
+    for (key, value) in [("a", "1"), ("b", "1.0"), ("c", "2"), ("d", "NULL")] {
+        q(&c, &format!("INSERT INTO docs {{k:'{key}',n:{value}}}"));
+        q(&c, &format!("INSERT INTO baseline VALUES('{key}',{value})"));
+    }
+    // DISTINCT merges integer/real equivalents; the retained representation
+    // can differ with the engine plan. Compare logical numeric values here.
+    let logical = |rows: Vec<Vec<Value>>| {
+        rows.into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|value| match value {
+                        Value::Integer(n) => Value::Number(n as f64),
+                        value => value,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    for aggregate in ["sum(n)", "sum(n)+1", "count(n)"] {
+        for direction in ["ASC", "DESC"] {
+            for offset in 0..4 {
+                let sql = |table| {
+                    format!("SELECT DISTINCT {aggregate} AS total FROM {table} GROUP BY k ORDER BY {aggregate} {direction} LIMIT 1 OFFSET {offset}")
+                };
+                let expected = logical(q(&c, &sql("baseline")).rows);
+                assert_eq!(
+                    logical(q(&c, &sql("docs")).rows),
+                    expected,
+                    "{aggregate}: {direction}: {offset}"
+                );
+                assert_eq!(
+                    logical(
+                        c.profile_select(&sql("docs"), &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows
+                    ),
+                    expected
+                );
+            }
+        }
+    }
+    q(&c, "CREATE TABLE totals");
+    q(
+        &c,
+        "DEFINE FIELD total ON totals TYPE integer CHECK(total<2)",
+    );
+    q(&c, "CREATE UNIQUE INDEX totals_total ON totals(total)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO totals {total:0}");
+    let invalid = "INSERT INTO totals(total) SELECT DISTINCT count(*)+1 FROM docs GROUP BY k ORDER BY count(*)+1 LIMIT 1";
+    assert!(c.execute(invalid, &Parameters::new()).is_err());
+    assert_eq!(
+        q(&c, "SELECT total FROM totals").rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    assert_eq!(q(&c,"INSERT INTO totals(total) SELECT DISTINCT count(*) FROM docs GROUP BY k ORDER BY count(*) LIMIT 1").affected,1);
+    assert_eq!(
+        q(&c, "SELECT total FROM totals ORDER BY total").rows,
+        vec![vec![Value::Integer(0)], vec![Value::Integer(1)]]
+    );
+    c.check_collection_integrity("totals", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT total FROM totals").rows.is_empty());
+}
