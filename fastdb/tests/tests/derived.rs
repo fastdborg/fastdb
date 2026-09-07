@@ -715,3 +715,47 @@ fn closed_derived_sources_preserve_group_alias_precedence() {
         assert_eq!(c.profile_select(sql, &Parameters::new()).unwrap().result.rows, expected, "{sql}");
     }
 }
+
+#[test]
+fn closed_source_group_alias_writes_restore_unique_indexes() {
+    let (_db, c) = setup();
+    for sql in [
+        "CREATE TABLE copied",
+        "CREATE UNIQUE INDEX copied_n ON copied(n)",
+        "BEGIN",
+        "INSERT INTO copied {n:9,total:9}",
+    ] {
+        q(&c, sql);
+    }
+    let insert = "INSERT INTO copied(n,total) SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) GROUP BY n";
+    // Two distinct source groups project the same unique key. The second write
+    // must fail and restore the first write as well as its managed index entry.
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(
+        q(&c, "SELECT n,total FROM copied").rows,
+        vec![vec![Value::Integer(9), Value::Integer(9)]]
+    );
+    assert!(q(&c, "SELECT total FROM copied WHERE n=0").rows.is_empty());
+    q(&c, "INSERT INTO copied(n,total) SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) WHERE n=1 GROUP BY n");
+    assert_eq!(
+        q(&c, "SELECT total FROM copied WHERE n=0").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(
+        c.lookup_index("copied", "copied_n", &Value::Integer(0))
+            .unwrap()
+            .len(),
+        1
+    );
+    q(&c, "ROLLBACK");
+    assert!(c
+        .lookup_index("copied", "copied_n", &Value::Integer(0))
+        .unwrap()
+        .is_empty());
+    assert!(q(&c, "SELECT n FROM copied").rows.is_empty());
+    q(&c, "INSERT INTO copied {n:0,total:2}");
+    assert_eq!(
+        q(&c, "SELECT total FROM copied WHERE n=0").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}
