@@ -202,3 +202,14 @@ If the native addon is absent or cannot be loaded, importing the package throws 
 
 
 The local package smoke also verifies pre-aborted calls for every signalled API, preserved transaction observations, listener disposal and fresh/late-token behavior using the installed package. Its consumer TypeScript check covers all cancellation options. These supplement the real-worker active-cancellation tests in the checkout.
+
+## Dependency declaration inventory
+
+From the checkout root, with the pinned Rust toolchain available:
+
+```sh
+node fastdb/scripts/inventory-node-dependencies.cjs x86_64-unknown-linux-gnu fastdb/docs/node-dependencies-linux-x64.json
+node fastdb/scripts/inventory-node-dependencies.cjs x86_64-unknown-linux-gnu fastdb/docs/node-dependencies-linux-x64.json --check
+```
+
+This offline, locked, package-scoped Cargo query records normal and build dependencies, declared license expressions, the target and the lockfile hash. The checked-in Linux inventory contains 192 package/version entries. `cfg_block` 0.1.1 has no license expression in the query output and needs source inspection. Build tools are included; development dependencies are excluded. The inventory is an audit input, not evidence that every listed crate is linked into the addon, a complete component inventory, or a replacement for license texts. Bundled C/C++ sources and other vendored components require separate inspection. Regenerate for dependency changes and qualify other advertised targets separately.

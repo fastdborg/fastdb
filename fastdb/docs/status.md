@@ -1829,3 +1829,10 @@ Native subquery binary binding qualification (2026-09-08): a new native-referenc
 The private Node package now includes THIRD_PARTY_NOTICES.md with the license texts from pinned rquickjs 0.12.2 and rquickjs-sys 0.12.2's bundled QuickJS source. Source paths and original-file SHA-256 hashes record provenance. The npm allowlist includes the notice, and the offline package smoke verifies its installed contents exactly match the checkout.
 
 The actual tarball installed and passed synchronous/worker consumer checks and strict consumer TypeScript on Linux x64, Node 24.19.0: nine files, 59,910,932 packed bytes using the existing local debug addon. This change does not claim a complete dependency-notice inventory, optimized release artifact, additional platform support or publication readiness. The package remains private; no publishing occurred. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests. Full V1 release gates remain open.
+
+
+## Node dependency declaration inventory (2026-09-08)
+
+Added an offline, locked, package-scoped Cargo inventory generator and a checked-in x86_64-unknown-linux-gnu inventory of 192 package/version entries, including normal/build dependencies, declared license expressions and the Cargo.lock SHA-256. Regeneration matches exactly; check mode rejects a deliberately stale inventory. cfg_block 0.1.1 has no license expression in the Cargo tree output and remains a source-inspection item.
+
+This is an audit input, not a linked-binary inventory or complete notice bundle. Build tools are included, dev dependencies excluded, and bundled native sources still need separate review. A workspace-wide offline metadata attempt required an uncached unrelated crate; the final package-scoped query succeeds offline. No registry access, publishing or upstream implementation edits occurred. Latest complete scoped runtime evidence remains 420 Rust/46 Node tests. Distribution and full V1 release gates remain open.
