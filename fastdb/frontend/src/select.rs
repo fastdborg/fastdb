@@ -3932,7 +3932,7 @@ impl Connection {
         }
         if !scope.sources.is_empty() {
             if let Some(predicate) = where_clause {
-                expand_projection_aliases(predicate, &original_columns, false)?;
+                expand_projection_aliases(predicate, &original_columns, false, &scope.sources)?;
             }
         }
         let candidates = scope
@@ -3978,7 +3978,7 @@ impl Connection {
                 if let Some(constraint) = &mut join.constraint {
                     match constraint {
                         JoinConstraint::On(e) => {
-                            expand_projection_aliases(e, &original_columns, false)?;
+                            expand_projection_aliases(e, &original_columns, false, &scope.sources)?;
                             scope.sql_argument(e)?;
                         }
                         JoinConstraint::Using(_) => return Err(unsupported("USING joins")),
@@ -3999,7 +3999,7 @@ impl Connection {
             for expr in &mut group.exprs {
                 let ordinal = expand_group_position(expr, &original_columns)?;
                 if !ordinal && !scope.sources.is_empty() {
-                    expand_projection_aliases(expr, &original_columns, true)?;
+                    expand_projection_aliases(expr, &original_columns, true, &scope.sources)?;
                 }
                 scope.lower(expr)?;
             }
@@ -4727,13 +4727,24 @@ fn expand_projection_aliases(
     expr: &mut Expr,
     columns: &[ResultColumn],
     protect_ordinals: bool,
+    sources: &[Source],
 ) -> Result<()> {
     let mut aliases = std::collections::BTreeMap::new();
     for column in columns {
         let ResultColumn::Expr(original, Some(alias)) = column else {
             continue;
         };
-        if alias.is_explicit() {
+        // Closed SQL sources give declared columns precedence over projection
+        // aliases. Open document sources retain their existing alias-first rule.
+        let source_column = sources.iter().all(|source| source.derived.is_some())
+            && sources.iter().any(|source| {
+                source.derived.as_ref().is_some_and(|columns| {
+                    columns
+                        .iter()
+                        .any(|(name, _)| name.eq_ignore_ascii_case(alias.name().as_str()))
+                })
+            });
+        if alias.is_explicit() && !source_column {
             let value = if protect_ordinals && projection_position(original).is_some() {
                 expression(&format!("coalesce({original}, NULL)"))?
             } else {

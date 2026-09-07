@@ -694,3 +694,24 @@ fn relational_join_metadata_preserves_rowid_resolution() {
         vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn closed_derived_sources_preserve_group_alias_precedence() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE labels(m INTEGER)");
+    q(&c, "INSERT INTO labels VALUES(1),(2)");
+    for sql in [
+        "SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) GROUP BY n ORDER BY total",
+        "SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) WHERE n=1 GROUP BY n",
+        "SELECT 0 AS N,count(*) AS total FROM (SELECT n FROM docs) GROUP BY (n) ORDER BY total",
+        "SELECT 0 AS m,count(*) AS total FROM (SELECT n FROM docs) JOIN labels ON n=m GROUP BY m ORDER BY total",
+        "SELECT 0 AS n,count(*) AS total FROM (SELECT n FROM docs) JOIN labels ON n=m GROUP BY n ORDER BY total",
+        "SELECT n%2 AS parity,count(*) AS total FROM (SELECT n FROM docs) GROUP BY parity ORDER BY parity",
+    ] {
+        let expected = q(&c, &sql.replace("FROM docs", "FROM baseline")).rows;
+        assert_eq!(q(&c, sql).rows, expected, "{sql}");
+        assert_eq!(c.profile_select(sql, &Parameters::new()).unwrap().result.rows, expected, "{sql}");
+    }
+}

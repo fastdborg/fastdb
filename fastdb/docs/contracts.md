@@ -1061,3 +1061,6 @@ Parenthesized unary-plus collation (2026-09-08): mixed comparison lowering now u
 
 
 Direct relational source names (2026-09-08): supported direct relational tables and views now contribute engine-prepared visible columns to closed-source join name resolution. A derived collection source can join them using an unqualified column when it occurs in exactly one known column list. Open collection sources and virtual tables retain qualification requirements; virtual hidden columns are not treated as a closed star projection. Unresolved local CTEs defer metadata to their existing lowering stage. Metadata preparation does not step the source.
+
+
+Closed-source projection alias precedence (2026-09-08): WHERE, JOIN ON and GROUP BY alias expansion now preserves a matching source column when every source exposes a known column list. For example, SELECT 0 AS n,count(*) FROM (SELECT n FROM docs) GROUP BY n groups by the derived n values. Matching is case-insensitive. Projection aliases without a source-name collision still expand; open document scopes retain their existing alias-first rule. Broader alias and nested-scope qualification remains open.

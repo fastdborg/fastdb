@@ -2032,3 +2032,10 @@ Relational rowid join qualification (2026-09-08): a new regression verifies that
 
 
 Pinned experimental table-feature boundary (2026-09-08): a new native-reference regression verifies that generated columns and WITHOUT ROWID retain the pinned engine's default feature-flag rejection, including the exact native error. Creating and dropping a normal table with the same name after each rejection succeeds in both engines, checking that failed DDL leaves no conflicting table behind. The focused regression, formatting and focused Clippy pass. These experimental features remain disabled. Latest complete scoped evidence remains 410 Rust/45 Node tests; this and the later rowid regression have focused evidence only. Broader SQL compatibility and full V1 release gates remain open.
+
+
+## Closed-source alias precedence correction (2026-09-08)
+
+Fixed a reproduced wrong result in SELECT 0 AS n,count(*) FROM (SELECT n FROM docs) GROUP BY n: projection alias expansion collapsed two source groups into one. WHERE, JOIN ON and GROUP BY now preserve matching source names when all source column lists are known. Open document scopes retain their existing alias-first behavior. A native-reference regression covers grouping, filtering, case-insensitive names, both sides of mixed joins and non-colliding aliases through execute/profile.
+
+The complete scoped check passed formatting, Clippy, 413 Rust tests, 45 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. This run also includes the recent rowid and experimental table-feature boundary tests. Broader alias/nested-scope, resource, platform and full V1 release gates remain open. No upstream implementation files changed.
