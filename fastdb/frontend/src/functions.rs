@@ -660,6 +660,28 @@ mod between_tests {
         let rows = c.execute("SELECT n IN (SELECT between_tick() FROM scalar_inputs) AS v FROM membership_native ORDER BY n", &crate::Parameters::new()).unwrap().rows;
         assert_eq!(rows, vec![vec![Value::Integer(1)], vec![Value::Integer(0)]]);
         assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+        for outer in ["membership_native", "scalar_inputs"] {
+            for not in ["", "NOT "] {
+                CALLS.store(0, Ordering::SeqCst);
+                let rows = c.execute(&format!("SELECT n {not}IN (SELECT between_tick() FROM membership_native) FROM {outer}"), &crate::Parameters::new()).unwrap().rows;
+                assert_eq!(rows.len(), 2);
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    2,
+                    "native membership source calls: {outer}, {not}"
+                );
+            }
+        }
+        for outer in ["membership_native", "scalar_inputs"] {
+            CALLS.store(0, Ordering::SeqCst);
+            let rows = c.execute(&format!("SELECT (between_tick()+n) IN (SELECT n FROM membership_native) FROM {outer}"), &crate::Parameters::new()).unwrap().rows;
+            assert_eq!(rows.len(), 2);
+            assert_eq!(
+                CALLS.load(Ordering::SeqCst),
+                2,
+                "membership LHS calls: {outer}"
+            );
+        }
         for (operator, count) in [("UNION", 1), ("INTERSECT", 1), ("EXCEPT", 0)] {
             CALLS.store(0, Ordering::SeqCst);
             let rows = c.execute(&format!("SELECT type::record('docs',between_tick()) AS id {operator} SELECT type::record('docs',between_tick())"), &crate::Parameters::new()).unwrap().rows;

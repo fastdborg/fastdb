@@ -29,7 +29,7 @@ type CteSources = std::collections::BTreeMap<String, Option<Source>>;
 enum SubqueryAffinity {
     None,
     MembershipColumn,
-    NativeMembership(String),
+    NativeMembership(String, String),
     NativeScalar(String),
 }
 // Each entry stores lowered SQL, consumed binds, and affinity provenance.
@@ -505,7 +505,7 @@ impl Scope {
                     }
                 }
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
-                if let SubqueryAffinity::NativeMembership(collation) = column {
+                if let SubqueryAffinity::NativeMembership(collation, shared) = column {
                     let mut value = *lhs.clone();
                     let is_column = membership_column(&value)
                         || matches!(order_base(&value), Expr::Cast { .. });
@@ -520,7 +520,13 @@ impl Scope {
                             type_name: type_name.clone(),
                         }
                         .to_string(),
-                        _ => if is_column { "k" } else { "+k" }.to_owned(),
+                        _ => {
+                            if is_column {
+                                "k".to_owned()
+                            } else {
+                                "+k".to_owned()
+                            }
+                        }
                     };
                     let mut native_value = "v".to_owned();
                     if let Expr::Subquery(inner) = query {
@@ -541,9 +547,10 @@ impl Scope {
                     let collation = outer_collation(lhs).unwrap_or(collation);
                     let key = format!("({key} COLLATE {})", quote(collation));
                     let negate = if *not { "NOT " } else { "" };
-                    // Preserve native RHS column affinity. Encode only its BLOB
-                    // branch to distinguish native bytes from logical record keys.
-                    *expr = expression(&format!("(WITH __fastdb_native_members(v) AS MATERIALIZED {query}, __fastdb_member_lhs(k) AS MATERIALIZED (SELECT {value}), __fastdb_member_matches(m) AS MATERIALIZED (SELECT CASE WHEN typeof(v)='blob' THEN {key}=__fastdb_unwrap(__fastdb_pack(v)) ELSE {key}={native_value} END FROM __fastdb_native_members CROSS JOIN __fastdb_member_lhs) SELECT {negate}(CASE WHEN count(*)=0 THEN 0 WHEN max(m)=1 THEN 1 WHEN count(m)<count(*) THEN NULL ELSE 0 END) FROM __fastdb_member_matches)"))?;
+                    // Keep native IN execution so its uncorrelated source can
+                    // be cached across outer rows. Only BLOB comparison keys
+                    // require encoding of the source values.
+                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS MATERIALIZED (SELECT {value}) SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();
@@ -2419,7 +2426,10 @@ impl Connection {
                                         .map(|token| token.text.to_owned())
                                         .collect(),
                                     if membership {
-                                        SubqueryAffinity::NativeMembership("BINARY".into())
+                                        SubqueryAffinity::NativeMembership(
+                                            "BINARY".into(),
+                                            String::new(),
+                                        )
                                     } else if exists {
                                         SubqueryAffinity::None
                                     } else {
@@ -2609,7 +2619,7 @@ impl Connection {
         for (sql, (_, _, affinity)) in &mut native_expression_subqueries {
             if !matches!(
                 affinity,
-                SubqueryAffinity::NativeScalar(_) | SubqueryAffinity::NativeMembership(_)
+                SubqueryAffinity::NativeScalar(_) | SubqueryAffinity::NativeMembership(_, _)
             ) {
                 continue;
             }
@@ -2651,8 +2661,30 @@ impl Connection {
                     collation = explicit.or(implicit).unwrap_or(collation);
                 }
             }
-            *affinity = if matches!(affinity, SubqueryAffinity::NativeMembership(_)) {
-                SubqueryAffinity::NativeMembership(collation)
+            *affinity = if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
+                let mut suffix = select.with.as_ref().map_or(0, |with| with.ctes.len());
+                let name = loop {
+                    let name = format!("__fastdb_membership_source_{suffix}");
+                    if !expanded.to_ascii_lowercase().contains(&name) {
+                        break name;
+                    }
+                    suffix += 1;
+                };
+                let sql = Cmd::Stmt(Stmt::Select(inner)).to_string();
+                let Cmd::Stmt(Stmt::Select(mut generated)) = parsed(&format!(
+                    "WITH {name}(v) AS MATERIALIZED ({}) SELECT 1",
+                    sql.trim().trim_end_matches(';')
+                ))?
+                else {
+                    unreachable!()
+                };
+                let generated = generated.with.take().expect("membership WITH");
+                if let Some(with) = &mut select.with {
+                    with.ctes.extend(generated.ctes);
+                } else {
+                    select.with = Some(generated);
+                }
+                SubqueryAffinity::NativeMembership(collation, name)
             } else {
                 SubqueryAffinity::NativeScalar(collation)
             };

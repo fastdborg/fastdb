@@ -714,3 +714,12 @@ Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests
 The deterministic source-interruption matrix now includes native IN/NOT IN sources in logical queries. Sixteen added combinations cover reads/inserts, autocommit/explicit transactions and cancellation after two/four scalar source callbacks. Checks require FDB_CANCELLED, exact callback counts, preserved prior work/source documents, empty target/index state, exact retry rows and rollback. This tests selected engine-progress checkpoints, not all instruction boundaries or volatile evaluation equivalence.
 
 Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checks. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Shared native membership evaluation (2026-09-07)
+
+Native membership sources now use a generated materialized CTE at the enclosing SELECT scope, and final comparison uses native IN/NOT IN execution. This replaces per-row aggregate comparisons that re-evaluated a native source for each collection row. The logical left operand is separately materialized once per outer evaluation; the BLOB branch converts RHS comparison keys while the scalar branch retains affinity/collation handling. Generated names avoid source-text collisions.
+
+Deterministic callback probes compare native and collection routes for source evaluation and volatile left operands. Broader CTE/correlation/compound source semantics and planner/resource qualification remain open. No upstream source changes.
+
+Final scoped checks passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

@@ -990,3 +990,10 @@ Full `fastdb/scripts/check.sh` passed formatting, Clippy, 273 Rust tests, thirty
 The focused compound/subquery interruption suite passed with sixteen native IN/NOT IN combinations added to the existing matrix (`/tmp/fastdb-membership-cancel.log`). Each added case interrupts after exactly two or four source callbacks, checks FDB_CANCELLED, transaction state, preserved prior work, intact source and empty target indexes, then retries for exact rows and rolls back explicit transactions. Coverage spans read/insert and autocommit/outer-transaction cases.
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript checks (`/tmp/fastdb-membership-cancel-check.log`). One known trigger-interruption gate remains ignored. This extends deterministic checkpoint evidence without qualifying all interruption points, source evaluation frequency or performance. No production/upstream changes; full V1 remains incomplete.
+
+
+## Shared native membership source evaluation — 2026-09-07
+
+A deterministic callback probe reproduced four native RHS evaluations for two source rows/two outer collection rows, versus two on the native route (`/tmp/fastdb-membership-evaluations.log`). Hoisting the CTE alone did not correct the pinned engine's execution behavior. The final implementation uses native IN/NOT IN against a shared enclosing source and materializes the left value separately. Source callbacks now match the native two-call baseline for both membership operators, and a volatile left expression runs exactly once per outer row.
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 273 Rust tests, thirty Node tests and strict TypeScript (`/tmp/fastdb-membership-shared-check.log`). This includes the 630-query-pair affinity matrix, binary/record identity and deterministic cancellation/retry coverage. One known trigger-interruption gate remains ignored. No upstream or dependency changes. Broader correlation/CTE/compound semantics and performance/resource qualification remain open; full V1 remains incomplete.

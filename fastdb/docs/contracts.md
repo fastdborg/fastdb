@@ -800,3 +800,6 @@ Logical queries can use native IN/NOT IN sources in the covered scalar subset. N
 
 
 Native membership's tested operand wrappers now include parentheses, unary plus, explicit BINARY/NOCASE/RTRIM collation and CAST TEXT. Lowering preserves cast affinity and keeps computed RHS expressions without column affinity after materialization. This is essential when a TEXT cast on the left compares against a numeric expression on the right. Broader expression metadata remains unqualified.
+
+
+Native membership now delegates match/NULL/empty-set handling to native IN/NOT IN, sharing an enclosing materialized source across outer rows. Its left operand has a separate materialized value so type discrimination and comparison do not duplicate volatile evaluation. Scalar affinity/collation and collision-resistant BLOB keys retain their distinct comparison paths. The earlier aggregate-per-row implementation is superseded; broader correlated and compound cases remain unqualified.
