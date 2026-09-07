@@ -1245,6 +1245,35 @@ mod cte_evaluation_tests {
         ] {
             c.execute(sql, &params).unwrap();
         }
+        c.execute(
+            "CREATE VIEW counted_view AS SELECT n AS m,cte_tick() AS value FROM baseline",
+            &params,
+        )
+        .unwrap();
+        for limit in ["", " LIMIT 0"] {
+            let query = |table| {
+                format!("WITH x AS MATERIALIZED (SELECT * FROM counted_view) SELECT n,value FROM (SELECT n FROM {table}) JOIN x ON n=m ORDER BY n{limit}")
+            };
+            CALLS.store(0, Ordering::SeqCst);
+            c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
+                .unwrap();
+            assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+            let expected = c.execute(&query("baseline"), &params).unwrap().rows;
+            let expected_calls = CALLS.load(Ordering::SeqCst);
+            assert_eq!(expected_calls, 3);
+            CALLS.store(0, Ordering::SeqCst);
+            assert_eq!(c.execute(&query("docs"), &params).unwrap().rows, expected);
+            assert_eq!(CALLS.load(Ordering::SeqCst), expected_calls);
+            CALLS.store(0, Ordering::SeqCst);
+            assert_eq!(
+                c.profile_select(&query("docs"), &params)
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+            assert_eq!(CALLS.load(Ordering::SeqCst), expected_calls);
+        }
         for limit in ["", " LIMIT 0"] {
             let query = |table| {
                 format!("SELECT n FROM (SELECT n FROM {table}) CROSS JOIN (WITH x AS MATERIALIZED (SELECT cte_tick() AS m) SELECT m FROM x) WHERE n=m ORDER BY n{limit}")

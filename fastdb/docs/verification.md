@@ -2011,3 +2011,8 @@ Node unnamed derived join qualification (2026-09-08): a new sync/worker client r
 
 
 Computed view-column qualification (2026-09-08): a new regression checks a native view computing a text label, both as a direct join source and through a derived star, with exact values through execute/profile and source-order star names. The focused regression, formatting and focused Clippy pass. An initial generated-column DDL probe was rejected by the pinned engine with “Generated columns require --experimental-generated-columns flag”; that experimental flag remains disabled, and no generated-column support is claimed. Latest complete scoped evidence remains 406 Rust/44 Node tests; broader source/resource and full V1 gates remain open.
+
+
+Computed view evaluation qualification (2026-09-08): expanded the controlled callback regression with a native computed view consumed through a MATERIALIZED CTE in a mixed join. EXPLAIN QUERY PLAN invokes no callbacks; execute/profile match native rows and exactly three callbacks, including outer LIMIT 0 (the pinned engine materializes first). The focused unit test, formatting and frontend lib/test Clippy pass.
+
+An initial non-materialized view join probe produced three native versus nine logical callback evaluations for the same three result rows; this is retained as an open evaluation/plan qualification issue, not a promise of per-result-row evaluation. The materialized test isolates metadata preparation from that distinction. Latest complete scoped evidence remains 406 Rust/44 Node tests; broader view evaluation/resource and full V1 gates remain open.
