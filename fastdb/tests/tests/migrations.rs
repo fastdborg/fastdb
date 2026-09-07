@@ -27,8 +27,25 @@ fn migrations_apply_once_and_reject_changed_or_missing_history() {
     assert_eq!(q(&c, "SELECT * FROM audit").rows.len(), 1);
     let mut changed = plan.clone();
     changed[0].sql.push(' ');
-    assert!(c.migrate(&changed).is_err());
+    let error = c.migrate(&changed).unwrap_err();
+    assert_eq!(error.code(), "FDB_VALIDATION");
+    assert!(error.to_string().contains("SQL source differs"));
+    changed = plan.clone();
+    changed[0].name.push_str("_renamed");
+    assert!(c
+        .migrate(&changed)
+        .unwrap_err()
+        .to_string()
+        .contains("name differs"));
+    changed = plan.clone();
+    changed[1].version = 3;
+    assert!(c
+        .migrate(&changed)
+        .unwrap_err()
+        .to_string()
+        .contains("version does not match the applied sequence"));
     assert!(c.migrate(&plan[..1]).is_err());
+    assert_eq!(c.migrate(&plan).unwrap().already_applied, 2);
     assert_eq!(c.transaction_state(), TransactionState::Autocommit);
     assert!(c
         .execute("SELECT * FROM __fastdb_migrations", &Parameters::new())

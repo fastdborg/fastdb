@@ -84,10 +84,19 @@ impl Connection {
             let history=self.run("SELECT version,name,script FROM __fastdb_migrations ORDER BY version",&[])?;
             if history.len()>migrations.len() {return Err(Error::Validation("migration plan omits applied history".into()));}
             for (row,migration) in history.iter().zip(migrations) {
-                if row.len()!=3 || crate::from_engine(row[0].clone())!=crate::Value::Integer(migration.version)
-                    || crate::from_engine(row[1].clone())!=crate::Value::String(migration.name.clone())
-                    || crate::from_engine(row[2].clone())!=crate::Value::String(migration.sql.clone()) {
-                    return Err(Error::Validation(format!("applied migration history differs at version {}",migration.version)));
+                let difference = if row.len() != 3 {
+                    Some("invalid history row")
+                } else if crate::from_engine(row[0].clone()) != crate::Value::Integer(migration.version) {
+                    Some("version does not match the applied sequence")
+                } else if crate::from_engine(row[1].clone()) != crate::Value::String(migration.name.clone()) {
+                    Some("name differs")
+                } else if crate::from_engine(row[2].clone()) != crate::Value::String(migration.sql.clone()) {
+                    Some("SQL source differs (including whitespace and comments)")
+                } else {
+                    None
+                };
+                if let Some(difference) = difference {
+                    return Err(Error::Validation(format!("applied migration history differs at supplied version {}: {difference}",migration.version)));
                 }
             }
             let mut applied=Vec::new();

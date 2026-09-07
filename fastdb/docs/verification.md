@@ -1523,3 +1523,6 @@ CLI migration source validation (2026-09-07): the loader now checks that each .s
 
 
 CLI migration source diagnostics (2026-09-07): metadata/open/read, filename/version and file-budget failures now identify the migration path while retaining the underlying error text where available. The CLI retry regression additionally covers invalid UTF-8 content and malformed versions, asserting file-specific diagnostics and no applied prefix before a valid rerun. Both CLI migration tests, formatting and CLI all-target Clippy pass. Broader V1 tool qualification remains open.
+
+
+Migration history diagnostics (2026-09-07): applied-prefix mismatch errors now distinguish version-sequence, name and exact SQL-source changes while retaining FDB_VALIDATION. Messages identify the supplied version and mention whitespace/comment sensitivity without printing stored SQL. Expanded regression assertions cover each mismatch and successful reuse of the original plan. All five migration integration tests, formatting and focused Clippy pass. History corruption/upgrade and broader V1 qualification remain open.
