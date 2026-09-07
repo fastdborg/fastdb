@@ -1577,3 +1577,6 @@ Scalar pagination projection-evaluation qualification (2026-09-08): the callback
 Extended counter isolation to logical expression subqueries with table sources. A correlated scalar reading items n=1,2,3 with outer n=1,2 and OFFSET 1+0 previously returned 2 twice; the corrected results are 2 and 3. Direct/derived outer-source regressions cover literal, arithmetic and coalesce offsets through execute/profile.
 
 The complete scoped check passed formatting, Clippy, 393 Rust tests, 44 Node/application tests and strict TypeScript, including recent nonnumeric/subquery-computed pagination and callback evaluation checks. One known trigger-cancellation gate remains ignored. No upstream files changed; broader pagination/evaluation/resource and full V1 release qualification remain open.
+
+
+Correlated predicate pagination qualification (2026-09-08): a new native differential regression covers EXISTS/NOT EXISTS and IN/NOT IN with computed LIMIT/OFFSET, including excluded and empty inner results. Direct/derived outer collection sources match literal native pagination through execute/profile. The focused regression, package formatting and focused Clippy pass. Latest complete scoped evidence remains 393 Rust/44 Node tests; this additional test has not received a new combined run. Broader pagination/evaluation/resource and full V1 gates remain open.

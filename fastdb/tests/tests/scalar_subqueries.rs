@@ -4408,3 +4408,43 @@ fn collection_scalar_computed_offsets_reset_per_outer_row() {
         }
     }
 }
+
+#[test]
+fn correlated_predicate_pagination_matches_literal_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE items",
+        "CREATE TABLE baseline(n INTEGER)",
+        "CREATE TABLE lookup(n INTEGER)",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:2}",
+        "INSERT INTO docs {n:3}",
+        "INSERT INTO items {n:1}",
+        "INSERT INTO items {n:2}",
+        "INSERT INTO items {n:3}",
+        "INSERT INTO baseline VALUES(1),(2),(3)",
+        "INSERT INTO lookup VALUES(1),(2),(3)",
+    ] {
+        q(&c, sql);
+    }
+    for (limit, offset) in [(0, 0), (1, 0), (1, 1), (1, 2)] {
+        for predicate in ["EXISTS", "NOT EXISTS", "(d.n+1) IN", "(d.n+1) NOT IN"] {
+            let native = format!("SELECT n,{predicate}(SELECT i.n FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT {limit} OFFSET {offset}) FROM baseline d ORDER BY n");
+            let expected = q(&c, &native).rows;
+            for source in ["docs d", "(SELECT n FROM docs) d"] {
+                let sql = format!("SELECT n,{predicate}(SELECT i.n FROM items i WHERE i.n>=d.n ORDER BY i.n LIMIT {limit}+0 OFFSET {offset}+0) FROM {source} ORDER BY n");
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected,
+                    "{sql}"
+                );
+            }
+        }
+    }
+}
