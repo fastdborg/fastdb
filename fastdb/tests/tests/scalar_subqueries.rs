@@ -3813,7 +3813,11 @@ fn source_free_membership_binds_outer_left_operand() {
             q(&c, "INSERT INTO links {owner:null}");
         }
         for source in ["docs d", "(SELECT id,n,v FROM docs) d"] {
-            for lhs in ["d.id", "coalesce(d.id,docs:a)"] {
+            for lhs in [
+                "d.id",
+                "coalesce(d.id,docs:a)",
+                "(SELECT d.id WHERE record::id(d.id) IS NOT NULL)",
+            ] {
                 for negated in [false, true] {
                     let op = if negated { "NOT IN" } else { "IN" };
                     let sql = format!("SELECT n,(SELECT array::append(d.v,2) WHERE {lhs} {op} (SELECT owner FROM links)) FROM {source} ORDER BY n");
