@@ -1905,3 +1905,6 @@ The complete scoped check passed formatting, Clippy, 399 Rust tests, 44 Node/app
 
 
 Source-free named-window expression qualification (2026-09-08): expanded the named-window regression to row_number() and sum(d.n) with direct, arithmetic and text-cast outer partition/order keys. Direct/derived collection sources match native results through execute/profile. The expanded focused test, formatting and focused Clippy pass. Latest combined evidence remains 399 Rust/44 Node tests; broader window/scope/resource and full V1 gates remain open.
+
+
+Collection window partition correlation qualification (2026-09-08): expanded collection-reading scalar window pagination coverage to direct and arithmetic outer partition keys, preserving the existing unpartitioned cases. row_number(), sum(i.n) and count(*) match pinned native results for offsets 0–3 through execute/profile with direct and derived outer collection sources. The expanded focused test, formatting and focused Clippy pass. No production change was needed. Latest combined evidence remains 399 Rust/44 Node tests; broader window/scope/resource and full V1 gates remain open.

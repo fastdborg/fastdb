@@ -4614,20 +4614,26 @@ fn collection_windowed_scalar_pagination_matches_native() {
         q(&c, sql);
     }
     for offset in [0, 1, 2, 3] {
-        for window in ["row_number()", "sum(i.n)", "count(*)"] {
-            let native = format!("SELECT n,(SELECT {window} OVER (ORDER BY i.n) FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}) FROM baseline d ORDER BY n");
-            let expected = q(&c, &native).rows;
-            for source in ["docs d", "(SELECT n FROM docs) d"] {
-                let sql = format!("SELECT n,(SELECT {window} OVER (ORDER BY i.n) FROM items i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}+0) FROM {source} ORDER BY n");
-                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
-                assert_eq!(
-                    c.profile_select(&sql, &Parameters::new())
-                        .unwrap()
-                        .result
-                        .rows,
-                    expected,
-                    "{sql}"
-                );
+        for specification in [
+            "ORDER BY i.n",
+            "PARTITION BY d.n ORDER BY i.n",
+            "PARTITION BY d.n+1 ORDER BY i.n",
+        ] {
+            for window in ["row_number()", "sum(i.n)", "count(*)"] {
+                let native = format!("SELECT n,(SELECT {window} OVER ({specification}) FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}) FROM baseline d ORDER BY n");
+                let expected = q(&c, &native).rows;
+                for source in ["docs d", "(SELECT n FROM docs) d"] {
+                    let sql = format!("SELECT n,(SELECT {window} OVER ({specification}) FROM items i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}+0) FROM {source} ORDER BY n");
+                    assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                    assert_eq!(
+                        c.profile_select(&sql, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected,
+                        "{sql}"
+                    );
+                }
             }
         }
     }
