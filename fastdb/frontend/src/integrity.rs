@@ -92,27 +92,6 @@ impl Connection {
                         }
                         self.validate_integrity_candidate(&c, &doc)
                             .map_err(stored)?;
-                        for index in &c.indexes {
-                            let key = crate::index_scalar(
-                                crate::path_value(&doc, &index.path)
-                                    .map_err(stored)?
-                                    .unwrap_or(&Value::Null),
-                            )
-                            .map_err(stored)?;
-                            let rows = self.run(
-                                &format!(
-                                    "SELECT count(*) FROM {} WHERE \"key\" IS ?1 AND id=?2",
-                                    quote(&index.storage)
-                                ),
-                                &[key, EngineValue::Blob(id.clone())],
-                            )?;
-                            if count(&rows)? != 1 {
-                                return Err(Error::Storage(format!(
-                                    "missing or duplicate entry in index {}",
-                                    index.name
-                                )));
-                            }
-                        }
                         Ok(())
                     })();
                     match check {
@@ -132,13 +111,80 @@ impl Connection {
             }
             execution?;
             for index in &c.indexes {
-                let entries = count(&self.run(
-                    &format!("SELECT count(*) FROM {}", quote(&index.storage)),
-                    &[],
-                )?)?;
+                let mut seen = std::collections::BTreeSet::new();
+                let mut failure = None;
+                let mut statement =
+                    self.prepare(format!("SELECT id,\"key\" FROM {}", quote(&index.storage)))?;
+                let execution = crate::parser_stack(|| {
+                    statement.run_with_row_callback(|row| {
+                        let check = (|| -> Result<()> {
+                            let mut values = row.get_values();
+                            let (Some(EngineValue::Blob(id)), Some(key)) =
+                                (values.next(), values.next())
+                            else {
+                                return Err(Error::Storage(format!(
+                                    "invalid entry in index {}",
+                                    index.name
+                                )));
+                            };
+                            // At most one bounded ID per audited document is retained.
+                            if seen.len() as u64 >= report.documents
+                                || id.len() as u64 > report.encoded_bytes
+                                || seen.contains(id)
+                            {
+                                return Err(Error::Storage(format!(
+                                    "extra or duplicate entry in index {}",
+                                    index.name
+                                )));
+                            }
+                            let rows = self.run(
+                                &format!("SELECT doc FROM {} WHERE id=?1", quote(&c.storage)),
+                                &[EngineValue::Blob(id.clone())],
+                            )?;
+                            let [body] = rows.as_slice() else {
+                                return Err(Error::Storage(format!(
+                                    "orphan entry in index {}",
+                                    index.name
+                                )));
+                            };
+                            let [body] = body.as_slice() else {
+                                return Err(Error::Storage("invalid document lookup".into()));
+                            };
+                            let doc = crate::decode_document(body).map_err(stored)?;
+                            let expected = crate::index_scalar(
+                                crate::path_value(&doc, &index.path)
+                                    .map_err(stored)?
+                                    .unwrap_or(&Value::Null),
+                            )
+                            .map_err(stored)?;
+                            if count(&self.run("SELECT ?1 IS ?2", &[expected, key.clone()])?)? != 1
+                            {
+                                return Err(Error::Storage(format!(
+                                    "stale entry in index {}",
+                                    index.name
+                                )));
+                            }
+                            seen.insert(id.clone());
+                            Ok(())
+                        })();
+                        match check {
+                            Ok(()) => Ok(()),
+                            Err(error) => {
+                                failure = Some(error);
+                                Err(turso_core::LimboError::Interrupt)
+                            }
+                        }
+                    })
+                });
+                drop(statement);
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+                execution?;
+                let entries = seen.len() as u64;
                 if entries != report.documents {
                     return Err(Error::Storage(format!(
-                        "extra or missing entries in index {}",
+                        "missing entries in index {}",
                         index.name
                     )));
                 }
@@ -180,6 +226,51 @@ mod tests {
         }
         (db, c)
     }
+    #[test]
+    fn audit_index_work_scales_without_per_document_index_scans() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let mut measurements = Vec::new();
+        for count in [64, 256] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            c.execute("CREATE TABLE docs", &Parameters::new()).unwrap();
+            c.execute("CREATE INDEX docs_g ON docs(g)", &Parameters::new())
+                .unwrap();
+            let values = (0..count)
+                .map(|n| format!("({n},{})", if n % 2 == 0 { "NULL" } else { "7" }))
+                .collect::<Vec<_>>()
+                .join(",");
+            c.execute(
+                &format!("INSERT INTO docs(n,g) VALUES {values}"),
+                &Parameters::new(),
+            )
+            .unwrap();
+            let steps = Arc::new(AtomicUsize::new(0));
+            let observed = steps.clone();
+            c.engine.set_progress_handler(
+                1,
+                Some(Box::new(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                })),
+            );
+            let result = c.check_collection_integrity("docs", Default::default());
+            c.engine.set_progress_handler(0, None);
+            let report = result.unwrap();
+            assert_eq!(report.documents, count);
+            assert_eq!(report.index_entries, count);
+            measurements.push(steps.load(Ordering::Relaxed));
+        }
+        assert!(measurements[0] > 0);
+        assert!(
+            measurements[1] < measurements[0] * 6,
+            "audit VM steps: {measurements:?}"
+        );
+    }
+
     #[test]
     fn checks_documents_indexes_and_limits_without_changing_outer_work() {
         let (_db, c) = setup();

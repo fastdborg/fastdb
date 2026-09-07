@@ -913,3 +913,10 @@ The focused real-worker profiling test passes active/pre-cancellation, following
 ## Cancellable integrity audits — 2026-09-07
 
 The real-worker test passes active/pre-cancellation on an indexed collection, following-query isolation, prior transaction data, exact 1,001-document/index-entry retry counts, listener cleanup and rollback (`/tmp/fastdb-audit-abort-bounded.log`, about seven seconds). The initial 10,000-document workload was intentionally terminated after more than 80 seconds CPU without completion; its population/audit phases were not instrumented, so the costly phase remains an investigation gap. Full `fastdb/scripts/check.sh` passed formatting, Clippy, 268 Rust tests, twenty-six Node tests and strict TypeScript checks (`/tmp/fastdb-audit-abort-check.log`). One known trigger-interruption gate remains ignored. No upstream source changes.
+
+
+## Index audit scan scaling — 2026-09-07
+
+The audit now streams each index once and checks document primary-key lookups, native key equality and unique document coverage. Existing corruption and cancellation regressions pass; a new VM-step regression checks 64/256 documents with duplicate and NULL keys without wall-clock assertions. Scoped checks passed formatting, Clippy, 269 Rust tests and twenty-six Node tests, with strict TypeScript checking (`/tmp/fastdb-audit-scaling-check.log`). One known trigger-interruption gate remains ignored.
+
+Separate insertion/audit diagnostics identified poor audit scaling: at 1,000 documents, audit time changed from about 3.40 seconds to 0.79 seconds while insertion stayed near 2.5 seconds. A subsequent 10,000-document VALUES workload completed insertion in 27.7 seconds and audit in 8.65 seconds. This is not an exact repeat of the previously stopped INSERT SELECT cancellation fixture. The maintainer script `fastdb/scripts/bench-audit.cjs` passed syntax and 100-row execution checks. See benchmarks.md for measurement limits. No upstream files, dependencies or stored schema changed; broader performance and full V1 qualification remain open.

@@ -70,3 +70,11 @@ The enhanced harness passed both [cyclic 16-dimensional](benchmark-results/2026-
 | Seeded, 768 dimensions | 805.27 ms | 19.98 ms | 3,715.40 ms |
 
 Both filters read 1,000/20 physical rows before/after indexing, with 999/zero fullscan steps. Exact search read 1,000 rows with 999 fullscan steps and one sort. The seeded database occupied 12,500,992 bytes after checkpoint, and final process high-water RSS was 63,053,824 bytes. Loading took 8.43 seconds and index construction 1.33 seconds. The two fixture sizes and distributions differ, so this table does not isolate dimensionality's effect. These are small synthetic dev-build runs, not real embedding distributions or high-dimensional 100k–1m qualification.
+
+## Collection audit diagnostic
+
+After building the local Node addon, run `node fastdb/scripts/bench-audit.cjs` for 100/300/1,000 rows or pass explicit counts up to 10,000. It uses an in-memory collection and one unique integer index, prints insertion and audit phases separately, and validates document/index-entry counts. It is maintainer-run rather than part of routine CI.
+
+On this Linux development machine, before the index-audit change the 100/300/1,000-row audit times were about 89/431/3,397 ms; after the change they were about 82/253/792 ms. Insertion at 1,000 rows remained about 2.5 seconds. A subsequent 10,000-row run completed insertion in 27.7 seconds and auditing in 8.65 seconds. These are single-run debug-addon diagnostics, not release throughput or latency guarantees. The prior 10,000-row cancellation fixture stopped before completion and supplies no complete before-timing at that size.
+
+The audit now scans each index once, checks the referenced document through its primary key, compares expected keys using native IS semantics and tracks bounded unique IDs to reject duplicate/missing coverage. A VM-step regression with duplicate and NULL keys checks that quadrupling rows from 64 to 256 uses less than six times the engine work. This guards against per-document index scans; it does not certify all workload scaling or memory usage.
