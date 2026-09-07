@@ -1857,3 +1857,6 @@ Correlated predicate pagination qualification (2026-09-08): a new native differe
 
 
 Aggregate predicate pagination qualification (2026-09-08): the correlated EXISTS/NOT EXISTS and IN/NOT IN pagination regression now includes count(*) with an empty-input outer case. Computed pagination matches literal native results, including removal of the aggregate output row, through execute/profile for direct/derived sources. The expanded focused regression, package formatting and focused Clippy pass. Latest combined evidence remains 393 Rust/44 Node tests; broader pagination/evaluation/resource and full V1 gates remain open.
+
+
+Collection-reading pagination evaluation qualification (2026-09-08): the callback regression now covers a paginated scalar reading a collection. LIMIT/OFFSET evaluate once per outer row, projections only for returned rows, and outer LIMIT 0 causes no calls. Offset 0/1 cases produce nine/eight calls over three outer rows and match literal-query results through execute/profile. The expanded focused unit test, formatting and frontend lib/test Clippy pass. Latest combined evidence remains 393 Rust/44 Node tests; broader evaluation/resource and full V1 gates remain open.
