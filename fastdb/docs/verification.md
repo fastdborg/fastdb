@@ -2217,3 +2217,10 @@ All 27 derived tests pass. The complete fastdb/scripts/check.sh run passed forma
 
 
 Duplicate derived-star conflict qualification (2026-09-08): added a parameterized native CTE regression comparing collection-backed INSERT SELECT with the pinned native baseline under ABORT, FAIL, IGNORE and REPLACE. Explicit outcome and row assertions verify that ABORT removes the statement's partial writes, FAIL retains its first row, and IGNORE/REPLACE succeed with the expected values. A pre-existing row survives every disposition; the outer transaction accepts another write and rolls back fully. A CHECK requiring distinct first/second values also detects the former duplicate-star corruption. The focused regression passes; production code is unchanged. Latest full scoped evidence remains 424 Rust tests with one ignored gate and 47 Node/application tests. Full V1 qualification remains open.
+
+
+## Public duplicate projection names (2026-09-08)
+
+Removed the blanket rejection of duplicate public projection names. Results preserve ordered column names and positional values, including typed booleans/binary values and duplicate native-derived stars. Differential regressions cover case-insensitive names, first-name and ordinal ORDER BY, nested ordering expressions, DISTINCT, profiling and empty-result metadata. Updated the old rejection test to assert positional values. Logical derived sources and CTE duplicate-name restrictions remain separate open work.
+
+Scoped verification passed formatting, Clippy and 426 Rust tests (one existing ignored trigger-cancellation gate). The new Node test initially used unsupported object-body binary-literal syntax; after changing only that fixture to a bound binary parameter, all 48 Node/application tests and strict TypeScript passed with the rebuilt addon. Logs: /tmp/fastdb-duplicate-public-check.log and /tmp/fastdb-duplicate-public-node.log. No Rust code changed after the passing Rust run. Full V1 release qualification remains incomplete.

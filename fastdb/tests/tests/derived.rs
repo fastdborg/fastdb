@@ -1186,3 +1186,50 @@ fn duplicate_derived_star_writes_preserve_native_conflict_policies() {
         assert!(q(&c, "SELECT * FROM expected").rows.is_empty());
     }
 }
+
+#[test]
+fn duplicate_public_projection_names_preserve_positions_and_ordering() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    for projection in ["n AS x,3-n AS x", "n AS x,3-n AS X"] {
+        for distinct in ["", "DISTINCT "] {
+            for order in ["x", "2", "x+0"] {
+                let query = |source: &str| {
+                    format!("SELECT {distinct}{projection} FROM {source} ORDER BY {order}")
+                };
+                let expected = q(&c, &query("baseline"));
+                let sql = query("docs");
+                let actual = q(&c, &sql);
+                assert_eq!(actual.columns, expected.columns, "{sql}");
+                assert_eq!(actual.rows, expected.rows, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{sql}"
+                );
+            }
+        }
+    }
+    for suffix in ["ORDER BY d.n", "WHERE d.n=0"] {
+        let query = |source: &str| {
+            format!("SELECT q.* FROM {source} d JOIN (SELECT 10 AS x,20 AS x) q ON 1 {suffix}")
+        };
+        let expected = q(&c, &query("baseline"));
+        let actual = q(&c, &query("docs"));
+        assert_eq!(actual.columns, expected.columns);
+        assert_eq!(actual.rows, expected.rows);
+    }
+    let result = q(&c, "SELECT flag AS x,data AS x FROM docs ORDER BY n");
+    assert_eq!(result.columns, vec!["x", "x"]);
+    assert_eq!(
+        result.rows,
+        vec![
+            vec![Value::Boolean(true), Value::Binary(vec![49])],
+            vec![Value::Boolean(false), Value::Binary(vec![49])],
+        ]
+    );
+}

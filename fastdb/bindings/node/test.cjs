@@ -1169,3 +1169,20 @@ test('native loader enforces the declared Node minimum before loading', () => {
     }
   }
 });
+
+test('duplicate projection names preserve positional values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {n:1,flag:true,data:$data}', { $data: Buffer.from([49]) });
+      const result = await db.execute('SELECT flag AS x,data AS x FROM docs');
+      assert.deepEqual(result.columns, ['x', 'x']);
+      assert.deepEqual(result.rows, [[true, Buffer.from([49])]]);
+      const star = await db.execute('SELECT q.* FROM docs d JOIN (SELECT 10 AS x,20 AS x) q ON 1');
+      assert.deepEqual(star.columns, ['x', 'x']);
+      assert.deepEqual(star.rows, [[10n, 20n]]);
+    } finally { await db.close(); }
+  }
+});

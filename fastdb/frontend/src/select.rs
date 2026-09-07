@@ -3974,13 +3974,6 @@ impl Connection {
                 }
             }
         }
-        for (i, name) in names.iter().enumerate() {
-            if !positional && names[..i].contains(name) {
-                return Err(Error::Validation(
-                    "duplicate projection names; use AS".into(),
-                ));
-            }
-        }
         *scope.fetched_aliases.borrow_mut() = names
             .iter()
             .zip(&fetched)

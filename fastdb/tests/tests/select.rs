@@ -77,9 +77,17 @@ fn full_documents_preserve_absence_and_literal_keys() {
     assert!(c
         .execute("SELECT u.profile = u.tags FROM users u", &Parameters::new())
         .is_err());
-    assert!(c
-        .execute("SELECT name, name FROM users", &Parameters::new())
-        .is_err());
+    let duplicate = query(&c, "SELECT name, name FROM users ORDER BY id");
+    assert_eq!(duplicate.columns, vec!["name", "name"]);
+    let single = query(&c, "SELECT name FROM users ORDER BY id");
+    assert_eq!(
+        duplicate.rows,
+        single
+            .rows
+            .into_iter()
+            .map(|row| vec![row[0].clone(), row[0].clone()])
+            .collect::<Vec<_>>()
+    );
 }
 #[test]
 fn joins_and_typed_parameter_filters() {
