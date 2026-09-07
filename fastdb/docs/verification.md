@@ -1472,3 +1472,6 @@ The Node package now exports FastDBError (Error with a string code and optional 
 Both-client runtime tests cover execution, cardinality and closed-handle errors; strict TypeScript checks narrowing from unknown and optional transaction access. All 40 Node/application tests and strict TypeScript pass. This improves public error handling without making every constructor/argument error a database error; broader release qualification and full V1 remain open.
 
 Installed-package runtime guard assertions and TypeScript narrowing passed on Linux x64 / Node 24.19.0: eight runtime files and 59,806,060 packed bytes. No publishing occurred.
+
+
+Transport error-guard qualification (2026-09-07): the isolated worker fixture now verifies isFastDBError for shared FDB_WORKER failures and FDB_LIMIT queue rejections without transaction observations. Existing cancellation cleanup and timeout/completion-marker assertions pass. Full V1 remains incomplete.

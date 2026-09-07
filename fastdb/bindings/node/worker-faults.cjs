@@ -36,7 +36,7 @@ class FaultWorker extends EventEmitter {
   async terminate() { this.stopped = true; this.emit('exit', 1); return 1; }
 }
 threads.Worker = FaultWorker;
-const { AsyncDatabase } = require('./index.cjs');
+const { AsyncDatabase, isFastDBError } = require('./index.cjs');
 const { cancelOperation } = require('./fastdb.node');
 const { getEventListeners } = require('node:events');
 (async () => {
@@ -59,7 +59,7 @@ const { getEventListeners } = require('node:events');
     const cause = new Error('injected message decoding failure');
     worker.emit('messageerror', cause);
     const outcomes = await settled;
-    assert(outcomes.every(r => r.status === 'rejected' && r.reason.code === 'FDB_WORKER'));
+    assert(outcomes.every(r => r.status === 'rejected' && isFastDBError(r.reason) && r.reason.code === 'FDB_WORKER'));
     assert.equal(outcomes[0].reason, outcomes[1].reason);
     assert.equal(outcomes[0].reason.cause, cause);
     assert.equal(cancelOperation(token),false);
@@ -107,12 +107,12 @@ const { getEventListeners } = require('node:events');
     const accepted = controllers.map(controller=>db.execute('SELECT 1',{}, {signal:controller.signal}));
     const settled = Promise.allSettled(accepted);
     const excess = new AbortController();
-    await assert.rejects(db.execute('SELECT 2',{}, {signal:excess.signal}), e=>e.code==='FDB_LIMIT');
+    await assert.rejects(db.execute('SELECT 2',{}, {signal:excess.signal}), e=>isFastDBError(e) && e.code==='FDB_LIMIT' && e.transaction===undefined);
     assert.equal(getEventListeners(excess.signal,'abort').length,0);
     assert.equal(worker.messages.length,256);
     controllers.forEach(controller=>controller.abort());
     // Aborted queued work still owns its queue slot until a response/failure.
-    await assert.rejects(db.execute('SELECT 3'), e=>e.code==='FDB_LIMIT');
+    await assert.rejects(db.execute('SELECT 3'), e=>isFastDBError(e) && e.code==='FDB_LIMIT' && e.transaction===undefined);
     const tokens = worker.messages.map(message=>message.cancellationKey);
     worker.emit('messageerror',new Error('queue response channel failed'));
     const outcomes = await settled;
