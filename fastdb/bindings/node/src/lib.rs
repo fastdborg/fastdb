@@ -186,9 +186,26 @@ impl NativeDatabase {
         })
     }
     #[napi]
-    pub fn profile_select(&self, sql: String, parameters: String) -> napi::Result<String> {
+    pub fn profile_select(
+        &self,
+        sql: String,
+        parameters: String,
+        cancellation_key: Option<String>,
+    ) -> napi::Result<String> {
+        let token = cancellation_key
+            .map(|key| {
+                let key = key.parse::<u64>().map_err(error)?;
+                cancellations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| error("unknown cancellation token"))
+            })
+            .transpose()?;
         self.report(|conn| {
-            let profile = conn.profile_select(&sql, &decode_parameters(&parameters)?)?;
+            let params = decode_parameters(&parameters)?;
+            let profile = if let Some(token) = &token { conn.profile_select_cancellable(&sql, &params, token)? } else { conn.profile_select(&sql, &params)? };
             let m = profile.metrics;
             Ok(serde_json::json!({"result":query_value(profile.result)?, "metrics":{
                 "rowsRead":m.rows_read.to_string(), "rowsWritten":m.rows_written.to_string(),

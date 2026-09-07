@@ -282,9 +282,9 @@ class AsyncDatabase {
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
   }
-  async profileSelect(sql, parameters = {}) {
+  async profileSelect(sql, parameters = {}, options = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
-    return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)]));
+    return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)], false, options.signal));
   }
   async checkCollectionIntegrity(table, limits = {}) {
     return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)]));

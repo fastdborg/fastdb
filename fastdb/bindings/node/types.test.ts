@@ -77,6 +77,7 @@ async function cancellationTypes(db: import('./index').AsyncDatabase) {
   const controller = new AbortController();
   const options: import('./index').ExecuteOptions = {signal: controller.signal};
   await db.execute('SELECT 1', {}, options);
+  await db.profileSelect('SELECT 1', {}, options);
   await db.all('SELECT 1', {}, options);
   await db.first('SELECT 1', {}, options);
   await db.exactlyOne('SELECT 1', {}, options);

@@ -583,3 +583,41 @@ test('AbortSignal cancels only its queued or active query and cleans up listener
     assert.deepEqual(await db.all('SELECT * FROM docs'),[]);
   } finally { clearTimeout(timer); await db.close(); }
 });
+
+test('AbortSignal profiling preserves transaction state and returns complete metrics on retry', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { getEventListeners } = require('node:events');
+  const db = await AsyncDatabase.open();
+  let timer;
+  try {
+    await db.execute('CREATE TABLE numbers(n INTEGER)');
+    await db.execute('INSERT INTO numbers VALUES ' + Array.from({length:100},(_,i)=>`(${i})`).join(','));
+    await db.execute('BEGIN');
+    await db.execute('CREATE TABLE prior');
+    await db.execute('INSERT INTO prior {id:prior:a,n:9}');
+    const active = new AbortController();
+    const pending = db.profileSelect('SELECT count(*) FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c', {}, {signal:active.signal});
+    const following = db.exactlyOne('SELECT n FROM prior');
+    const settled = Promise.allSettled([pending,following]);
+    timer = setTimeout(() => active.abort(),10);
+    const [cancelled,success] = await settled;
+    assert.equal(cancelled.status,'rejected');
+    assert.equal(cancelled.reason.code,'FDB_CANCELLED');
+    assert.equal(cancelled.reason.transaction.after,'active');
+    assert.equal('metrics' in cancelled.reason,false);
+    assert.equal(success.status,'fulfilled');
+    assert.deepEqual(success.value,[9n]);
+    assert.equal(getEventListeners(active.signal,'abort').length,0);
+    const before = new AbortController(); before.abort();
+    await assert.rejects(db.profileSelect('SELECT n FROM prior',{}, {signal:before.signal}), e => e.code === 'FDB_CANCELLED');
+    const retry = new AbortController();
+    const profile = await db.profileSelect('SELECT n FROM prior',{}, {signal:retry.signal});
+    assert.deepEqual(profile.result.rows,[[9n]]);
+    assert(profile.metrics.vmSteps>0n);
+    assert.equal(profile.result.transaction.after,'active');
+    assert.equal(getEventListeners(retry.signal,'abort').length,0);
+    retry.abort();
+    assert.deepEqual(await db.exactlyOne('SELECT n FROM prior'),[9n]);
+    await db.execute('ROLLBACK');
+  } finally { clearTimeout(timer); await db.close(); }
+});

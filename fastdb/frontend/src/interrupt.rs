@@ -52,6 +52,24 @@ impl Connection {
         params: &Parameters,
         token: &CancellationToken,
     ) -> Result<QueryResult> {
+        self.with_cancellation(token, || self.execute(sql, params))
+    }
+
+    /// Profile a SELECT using the same cooperative cancellation contract.
+    pub fn profile_select_cancellable(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        token: &CancellationToken,
+    ) -> Result<crate::ProfiledQuery> {
+        self.with_cancellation(token, || self.profile_select(sql, params))
+    }
+
+    pub(crate) fn with_cancellation<T>(
+        &self,
+        token: &CancellationToken,
+        operation: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
         if token.is_cancelled() {
             return Err(crate::Error::Engine(turso_core::LimboError::Interrupt));
         }
@@ -65,7 +83,7 @@ impl Connection {
             })),
         );
         let _guard = ProgressGuard(&self.engine);
-        self.execute(sql, params)
+        operation()
     }
 
     /// Cancellable execution with transaction observations on both outcomes.
