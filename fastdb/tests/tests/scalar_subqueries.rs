@@ -578,3 +578,103 @@ fn nested_anonymous_parameters_retain_statement_indices_and_fail_before_writes()
         0
     );
 }
+
+#[test]
+fn native_source_expression_subqueries_preserve_explicit_logical_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE native(n INTEGER,b BLOB)");
+    q(&c, "INSERT INTO native VALUES (1,X'31'),(2,X'32')");
+    assert_eq!(
+        c.execute(
+            "SELECT '1' IN (SELECT n FROM native WHERE b=$b) AS v",
+            &Parameters::from([("$b".into(), Value::Binary(vec![49]))])
+        )
+        .unwrap()
+        .rows,
+        q(
+            &c,
+            "SELECT '1' IN (SELECT n FROM native WHERE b=X'31') AS v"
+        )
+        .rows
+    );
+    let record = q(&c, "SELECT type::record('docs','key') AS v").rows[0][0].clone();
+    for value in [
+        record,
+        Value::Boolean(false),
+        Value::Array(vec![Value::Integer(8)]),
+        Value::Object(Default::default()),
+        Value::Binary(b"FDB\x01not-json".to_vec()),
+        Value::vector32(&[0.0, 1.0]).unwrap(),
+    ] {
+        let params = Parameters::from([("$v".into(), value.clone())]);
+        for sql in [
+            "WITH chosen AS (SELECT $v AS v FROM native WHERE n=2) SELECT v FROM chosen",
+            "SELECT v FROM (SELECT $v AS v FROM native WHERE n=2) chosen",
+        ] {
+            assert_eq!(
+                c.execute(sql, &params).unwrap().rows,
+                vec![vec![value.clone()]],
+                "{sql}"
+            );
+        }
+        assert_eq!(
+            c.execute(
+                "SELECT (SELECT $v AS v FROM native WHERE n=2) AS v",
+                &params
+            )
+            .unwrap()
+            .rows,
+            vec![vec![value]]
+        );
+        assert_eq!(
+            c.execute(
+                "SELECT (SELECT $v AS v FROM native WHERE n=99) AS v",
+                &params
+            )
+            .unwrap()
+            .rows,
+            vec![vec![Value::Null]]
+        );
+        assert_eq!(
+            c.execute(
+                "SELECT EXISTS (SELECT $v AS v FROM native WHERE n=2) AS v",
+                &params
+            )
+            .unwrap()
+            .rows,
+            vec![vec![Value::Integer(1)]]
+        );
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT docs:key IN (SELECT type::record('docs','key') AS v FROM native) AS v"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    let params = Parameters::from([
+        ("$v".into(), Value::Array(vec![Value::Boolean(true)])),
+        ("$b".into(), Value::Binary(vec![50])),
+    ]);
+    assert_eq!(
+        c.execute(
+            "SELECT (SELECT $v AS v FROM native WHERE b=$b) AS v",
+            &params
+        )
+        .unwrap()
+        .rows,
+        vec![vec![params["$v"].clone()]]
+    );
+    q(&c, "CREATE TABLE docs");
+    c.execute(
+        "INSERT INTO docs(v) SELECT (SELECT $v AS v FROM native WHERE b=$b) AS v",
+        &params,
+    )
+    .unwrap();
+    assert_eq!(
+        q(&c, "SELECT v FROM docs").rows,
+        vec![vec![params["$v"].clone()]]
+    );
+}

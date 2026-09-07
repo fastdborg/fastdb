@@ -2313,25 +2313,43 @@ impl Connection {
                 }
             }
         }
-        let source_free_logical = from.is_none()
-            && fastql_parser::tokenize(expanded)?.iter().any(|token| {
-                (token.kind == fastql_parser::Kind::Word && token.text.starts_with("__fastdb_"))
-                    || (token.kind == fastql_parser::Kind::Parameter
-                        && params.get(&token.text).is_some_and(|value| {
-                            matches!(
-                                value,
-                                Value::Boolean(_)
-                                    | Value::Record(_)
-                                    | Value::Object(_)
-                                    | Value::Array(_)
-                                    | Value::Vector(_)
-                            ) || (expression_subquery && matches!(value, Value::Binary(_)))
-                        }))
-            });
+        // A native source opts in for explicit logical projections. A binary
+        // parameter used only by its WHERE clause must keep native affinity.
+        let logical_input = if from.is_some() && nested {
+            std::borrow::Cow::Owned(
+                columns
+                    .iter()
+                    .filter_map(|column| match column {
+                        ResultColumn::Expr(value, _) => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        } else {
+            std::borrow::Cow::Borrowed(expanded)
+        };
+        let explicit_logical_expression = (from.is_none() || nested)
+            && fastql_parser::tokenize(&logical_input)?
+                .iter()
+                .any(|token| {
+                    (token.kind == fastql_parser::Kind::Word && token.text.starts_with("__fastdb_"))
+                        || (token.kind == fastql_parser::Kind::Parameter
+                            && params.get(&token.text).is_some_and(|value| {
+                                matches!(
+                                    value,
+                                    Value::Boolean(_)
+                                        | Value::Record(_)
+                                        | Value::Object(_)
+                                        | Value::Array(_)
+                                        | Value::Vector(_)
+                                ) || (expression_subquery && matches!(value, Value::Binary(_)))
+                            }))
+                });
         if (native_insert.is_some() || nested)
             && !cte_logical
             && expression_subqueries.is_empty()
-            && !source_free_logical
+            && !explicit_logical_expression
             && sources.iter().all(|source| !source.logical())
         {
             return Ok(None);

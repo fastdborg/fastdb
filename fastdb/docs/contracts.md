@@ -685,3 +685,7 @@ Source-free nested SELECTs that reference supplied typed parameters or expanded 
 ## Anonymous parameters across nested sources (2026-09-07)
 
 Anonymous `?` placeholders retain statement-wide numbering across outer projections, scalar subqueries and CTE definitions; Rust/Node parameter maps bind them as `?1`, `?2`, and so on. Regression coverage combines scalar, array and encoded-looking binary inputs, then checks missing/unused parameter rejection for collection INSERT SELECT without changing prior transaction work or managed indexes. Supplying the corrected bindings permits retry; outer rollback removes the inserted documents.
+
+## Explicit typed projections over native nested sources (2026-09-07)
+
+Nested SELECTs reading ordinary SQL tables now enter logical lowering when their projections contain supplied typed parameters or expanded FastQL helpers. Records, booleans, objects, arrays, vectors and binary values retain their identities through expression subqueries; logical types also survive CTE and derived-table boundaries. Empty scalar results remain NULL, EXISTS tests row existence, and record constructors can supply IN sources. Binary-only CTE/derived projections keep their existing native route. A binary parameter used only in a native WHERE clause does not enable logical lowering: its native column affinity must remain intact. Broader native projection metadata, helper-only predicates, correlation and resource/platform qualification remain open.
