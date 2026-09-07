@@ -2181,3 +2181,10 @@ The local package now contains the stripped release addon; other build modes rep
 Added a readelf-based artifact inspector and checked-in report for the current stripped addon. It records byte size/hash, ELF64 x86-64 machine, needed libraries, RPATH/RUNPATH and required symbol versions without loading the addon. The observed libraries are libc.so.6, libm.so.6, libgcc_s.so.1 and ld-linux-x86-64.so.2; no embedded search paths are present. The maximum referenced GLIBC symbol version is 2.35. This constrains the current artifact and does not establish broad Linux/musl compatibility.
 
 Exact regeneration/check mode passes; stale output and invalid ELF rejection preserve the previous report. Runtime/package binaries are unchanged. Explicit release build baseline, advertised-platform tests and full V1 qualification remain open. Latest complete scoped Rust evidence remains 420 tests; the prior stripped Node artifact passed 46 client/application tests and package checks.
+
+
+## Node 22 cross-runtime artifact qualification (2026-09-08)
+
+Downloaded official Node 22.23.2 linux-x64 into a temporary directory and verified its archive against the version-specific SHASUMS256.txt (archive SHA-256 d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307). The existing stripped addon was used without rebuilding. All 46 client/application tests and checkout strict TypeScript pass under Node 22.23.2. Offline package installation also passes exact notices, sync/worker consumers and strict consumer TypeScript: Linux x64, ten files, 7,735,042 packed bytes at verification.
+
+This adds Node 22.23.2 evidence to Node 24.19.0 for the same native artifact. It does not qualify every Node 22 minor/patch, other libc/platform targets or general distribution readiness. The user's default Node installation was unchanged; no publishing occurred. Source: https://nodejs.org/dist/v22.23.2/SHASUMS256.txt. Latest complete scoped Rust evidence remains 420 tests. Full V1 release gates remain open.
