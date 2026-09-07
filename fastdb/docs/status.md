@@ -1311,3 +1311,6 @@ Installed composite COUNT qualification (2026-09-07): the offline package consum
 
 
 COUNT contract clarification (2026-09-07): contracts.md now records non-DISTINCT COUNT null-presence behavior for composite values, parameters, filters, windows and grouped writes. Its existing Scalar DISTINCT section explicitly leaves generic array/object/vector equality unsupported in V1. Recent notes calling composite COUNT DISTINCT “open” describe an unsupported form, not an added standalone release requirement; no equality semantics or V1 scope have been changed. The remaining SQL/type/resource and release gates still apply. This documentation change was checked against the implementation and the preceding COUNT tests.
+
+
+COUNT scalar compatibility qualification (2026-09-07): a native differential matrix checks COUNT, COUNT ALL and COUNT DISTINCT over mixed null/numeric/boolean/text/binary inputs, explicit text/blob casts, CASE, NULLIF, NOCASE and literals. Empty and internal-prefix-looking blobs remain ordinary binary inputs. Execute/profile_select match native counts across the matrix. All twelve grouping tests, formatting and focused Clippy pass. This supplements the composite COUNT change without defining composite DISTINCT equality; broader V1 gates remain open.

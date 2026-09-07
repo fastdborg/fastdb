@@ -564,3 +564,50 @@ fn composite_count_windows_and_grouped_writes_preserve_counts() {
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT * FROM totals").rows.is_empty());
 }
+
+#[test]
+fn count_scalar_arguments_match_native_null_and_binary_semantics() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(v)");
+    for value in [
+        "NULL",
+        "0",
+        "false",
+        "1",
+        "1.0",
+        "''",
+        "'A'",
+        "'a'",
+        "x''",
+        "x'46444201'",
+    ] {
+        q(&c, &format!("INSERT INTO docs(v) VALUES({value})"));
+        q(&c, &format!("INSERT INTO baseline VALUES({value})"));
+    }
+    for expr in [
+        "v",
+        "CAST(v AS TEXT)",
+        "CAST(v AS BLOB)",
+        "v COLLATE NOCASE",
+        "CASE WHEN v IS NULL THEN NULL ELSE v END",
+        "NULLIF(v,0)",
+        "x'46444201'",
+        "NULL",
+    ] {
+        for modifier in ["", "ALL ", "DISTINCT "] {
+            let sql = |table| format!("SELECT count({modifier}{expr}) FROM {table}");
+            let expected = q(&c, &sql("baseline")).rows;
+            assert_eq!(q(&c, &sql("docs")).rows, expected, "{modifier}{expr}");
+            assert_eq!(
+                c.profile_select(&sql("docs"), &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "profile {modifier}{expr}"
+            );
+        }
+    }
+}
