@@ -1089,3 +1089,8 @@ Ran `node fastdb/scripts/bench-transfer.cjs` three times against clean implement
 ## Incremental forward-fetch target rows — 2026-09-07
 
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-fetch-stream-check.log`): formatting, scoped Clippy, 284 Rust tests, 32 Node tests and strict TypeScript; one known trigger-interruption gate ignored. Existing exact-byte-limit tests now exercise callback failure propagation for both collection and relational targets, including retained active work, retry and rollback. Existing multi-batch, order/duplicate and snapshot tests remain enabled. Collection/native target queries retain their 128-key grouping but no longer collect whole result batches before budget checks. No API, encoding or total-memory guarantee changed.
+
+
+## Fetch target evaluation count — 2026-09-07
+
+`cargo test --locked -p fastdb --lib links::tests` passed both tests (`/tmp/fastdb-fetch-evaluation.log`). The new target-row visitor regression counts actual native scalar calls at three budget boundaries, checks FDB_LIMIT, preserved active transaction state, exact retry results/evaluations and outer rollback. Production code is unchanged in this task, so the full scoped suite and Node rebuild were not repeated. Prior baseline: 284 Rust / 32 Node with one ignored gate; current distinct Rust coverage: 285. Scoped frontend Clippy and formatting checks cover the test addition.

@@ -255,6 +255,82 @@ fn visit_target_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use turso_ext::{scalar, ResultCode, Value as ExtValue};
+    static TARGET_CALLS: AtomicUsize = AtomicUsize::new(0);
+    #[scalar(name = "fetch_target_tick")]
+    fn target_tick(args: &[ExtValue]) -> ExtValue {
+        TARGET_CALLS.fetch_add(1, Ordering::SeqCst);
+        ExtValue::from_integer(args[0].to_integer().unwrap())
+    }
+
+    #[test]
+    fn target_budget_failure_stops_engine_evaluation_before_later_rows() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        unsafe {
+            let api = c.engine._build_turso_ext();
+            let code = (api.register_scalar_function)(
+                api.ctx,
+                c"fetch_target_tick".as_ptr(),
+                1,
+                false,
+                0,
+                target_tick,
+                None,
+                None,
+            );
+            c.engine._free_extension_ctx(api);
+            assert_eq!(code, ResultCode::OK);
+        }
+        let params = crate::Parameters::new();
+        c.execute("CREATE TABLE targets(n INTEGER)", &params)
+            .unwrap();
+        c.execute("BEGIN", &params).unwrap();
+        c.execute("INSERT INTO targets VALUES(1),(2),(3)", &params)
+            .unwrap();
+        for accepted in [0, 1, 2] {
+            let bytes = serde_json::to_vec(&Value::Integer(1)).unwrap().len();
+            let mut budget = FetchBudget {
+                used: 0,
+                limit: accepted * bytes,
+            };
+            TARGET_CALLS.store(0, Ordering::SeqCst);
+            let error = c
+                .atomic(|| {
+                    let mut statement = c.prepare("SELECT fetch_target_tick(n) FROM targets")?;
+                    visit_target_rows(&mut statement, |row| {
+                        budget.charge(&from_engine(row[0].clone())).map(|_| ())
+                    })
+                })
+                .unwrap_err();
+            assert_eq!(error.code(), "FDB_LIMIT");
+            assert_eq!(TARGET_CALLS.load(Ordering::SeqCst), accepted + 1);
+            assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+            TARGET_CALLS.store(0, Ordering::SeqCst);
+            let mut values = Vec::new();
+            c.atomic(|| {
+                let mut statement = c.prepare("SELECT fetch_target_tick(n) FROM targets")?;
+                visit_target_rows(&mut statement, |row| {
+                    values.push(from_engine(row[0].clone()));
+                    Ok(())
+                })
+            })
+            .unwrap();
+            assert_eq!(
+                values,
+                vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+            );
+            assert_eq!(TARGET_CALLS.load(Ordering::SeqCst), 3);
+        }
+        c.execute("ROLLBACK", &params).unwrap();
+        assert!(c
+            .execute("SELECT * FROM targets", &params)
+            .unwrap()
+            .rows
+            .is_empty());
+    }
+
     #[test]
     fn fetch_byte_limits_include_duplicates_and_preserve_outer_work() {
         let db = crate::Database::open(":memory:").unwrap();

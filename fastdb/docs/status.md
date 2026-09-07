@@ -817,3 +817,8 @@ Scoped checks passed formatting, Clippy, 284 Rust tests, thirty-two Node tests a
 Collection and native target batches now use engine row callbacks instead of collecting every target row before decoding and charging the byte budget. A budget/decoding failure stops iteration and preserves its frontend error through statement drop and atomic cleanup. The prior full-chunk memory caveat is reduced to the current row, although engine allocations, reference/container overhead and outer-query materialization still prevent a total-memory guarantee. Existing tests exercise exact budget failures/retries in active transactions and the multi-batch order/duplicate/snapshot contracts.
 
 Scoped checks passed formatting, Clippy, 284 Rust tests, thirty-two Node tests and strict TypeScript. One trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Fetch target evaluation-count regression (2026-09-07)
+
+A test-only scalar counts actual native expression evaluations through the target-row visitor. Budgets accepting zero, one or two rows evaluate exactly one, two or three rows respectively, stop at the first over-budget row with FDB_LIMIT, preserve active transaction work and permit a complete three-row retry. Outer rollback removes prior writes. This qualifies early visitor termination on the tested scalar table scan, not all planner/materialization behavior or cancellation latency. Both link unit tests passed; the prior full 284 Rust / 32 Node baseline remains applicable, with one additional distinct Rust regression.
