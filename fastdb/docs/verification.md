@@ -1428,3 +1428,6 @@ Verification: the complete scoped check passed formatting, Clippy, 329 Rust test
 ## Reused real pagination parameter identity (2026-09-07)
 
 A regression verifies that normalizing integral real pagination binds does not change the same parameter's type elsewhere. Named `$count` and numbered `?1` binds are simultaneously projected, inspected with typeof, used in a correlated predicate and supplied to LIMIT. Values 0.0, 1.0 and 2.0 retain real projections/type names while producing the expected per-outer-row membership results through execute and profile_select. The focused real-engine test passes. Full V1 remains incomplete.
+
+
+Negative-offset qualification (2026-09-07): the native correlated integer-pagination matrix and real/integer equivalence matrix now include OFFSET -2 through execute/profile scalar, IN and EXISTS consumers. Results match the native negative-offset behavior. All nine pagination integration tests pass, including scope, binding reuse and write failure/retry cases. Full V1 remains incomplete.

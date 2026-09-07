@@ -2560,7 +2560,7 @@ fn correlated_native_bound_pagination_matches_literal_native() {
         "CASE WHEN d.n>0 THEN n ELSE d.n END",
     ] {
         for limit in [0, 1, 2, -1] {
-            for offset in [0, 1, 2, 4] {
+            for offset in [-2, 0, 1, 2, 4] {
                 let params = Parameters::from([
                     ("$limit".into(), Value::Integer(limit)),
                     ("$offset".into(), Value::Integer(offset)),
@@ -2659,7 +2659,7 @@ fn correlated_float_pagination_matches_integer_values() {
         q(&c, sql);
     }
     for limit in [0, 1, 2, -1, i64::MIN + 1024, 9_223_372_036_854_774_784] {
-        for offset in [0, 1, 2] {
+        for offset in [-2, 0, 1, 2] {
             let floats = Parameters::from([
                 ("$limit".into(), Value::Number(limit as f64)),
                 ("$offset".into(), Value::Number(offset as f64)),
