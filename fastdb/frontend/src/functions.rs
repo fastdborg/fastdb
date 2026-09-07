@@ -1064,3 +1064,81 @@ mod count_value_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod grouped_evaluation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[scalar(name = "grouped_tick")]
+    fn grouped_tick(_: &[ExtValue]) -> ExtValue {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        ExtValue::from_integer(1)
+    }
+
+    #[test]
+    fn projected_aggregate_aliases_do_not_repeat_volatile_arguments() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        unsafe {
+            let api = c.engine._build_turso_ext();
+            let code = (api.register_scalar_function)(
+                api.ctx,
+                c"grouped_tick".as_ptr(),
+                0,
+                false,
+                0,
+                grouped_tick,
+                None,
+                None,
+            );
+            c.engine._free_extension_ctx(api);
+            assert_eq!(code, ResultCode::OK);
+        }
+        let params = crate::Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE TABLE baseline(k,n)",
+            "INSERT INTO docs {k:'a',n:1}",
+            "INSERT INTO docs {k:'a',n:2}",
+            "INSERT INTO docs {k:'b',n:4}",
+            "INSERT INTO baseline VALUES('a',1),('a',2),('b',4)",
+        ] {
+            c.execute(sql, &params).unwrap();
+        }
+        for output in ["sum(n+grouped_tick())", "sum(n+grouped_tick())+1"] {
+            for having in ["total>0", "sum(n+grouped_tick())>0"] {
+                for order in ["total", "sum(n+grouped_tick())"] {
+                    let sql = |table| {
+                        format!("SELECT k,{output} AS total FROM {table} GROUP BY k HAVING {having} ORDER BY {order},k")
+                    };
+                    CALLS.store(0, Ordering::SeqCst);
+                    let expected = c.execute(&sql("baseline"), &params).unwrap().rows;
+                    assert_eq!(
+                        CALLS.load(Ordering::SeqCst),
+                        3,
+                        "native {output}: {having}: {order}"
+                    );
+                    CALLS.store(0, Ordering::SeqCst);
+                    assert_eq!(c.execute(&sql("docs"), &params).unwrap().rows, expected);
+                    assert_eq!(
+                        CALLS.load(Ordering::SeqCst),
+                        3,
+                        "{output}: {having}: {order}"
+                    );
+                    CALLS.store(0, Ordering::SeqCst);
+                    assert_eq!(
+                        c.profile_select(&sql("docs"), &params).unwrap().result.rows,
+                        expected
+                    );
+                    assert_eq!(
+                        CALLS.load(Ordering::SeqCst),
+                        3,
+                        "profile {output}: {having}: {order}"
+                    );
+                }
+            }
+        }
+    }
+}
