@@ -1,4 +1,4 @@
-import { AsyncDatabase, Database, Record, Vector, Value } from './index';
+import { AsyncDatabase, Database, Record, Vector, Value, isFastDBError } from './index';
 const db = new Database();
 const row: Value[] = db.exactlyOne('SELECT $id', { $id: new Record('docs', 1n) });
 const rows: Value[][] = db.all('SELECT $blob', { $blob: new Uint8Array([1,2]) });
@@ -100,3 +100,17 @@ void cancellationTypes;
 const fetchMetrics = db.profileSelect('SELECT 1').metrics;
 const fetchCounters: bigint[] = [fetchMetrics.fetchBatches, fetchMetrics.fetchRowsRead, fetchMetrics.fetchVmSteps];
 void fetchCounters;
+
+
+function checkError(value: unknown) {
+  if (isFastDBError(value)) {
+    const code: string = value.code;
+    const transaction: import('./index').Transaction | undefined = value.transaction;
+    const error: import('./index').FastDBError = value;
+    void code; void transaction; void error;
+  } else {
+    // @ts-expect-error unknown errors do not expose database fields
+    value.code;
+  }
+}
+void checkError;

@@ -126,3 +126,6 @@ Public Node closed/closing operations now expose FDB_CLOSED without transaction 
 
 
 Node exactlyOne now exposes FDB_CARDINALITY with completed-statement transaction observations while retaining RangeError. Write-effect and rollback regressions, all 38 Node/application tests, strict TypeScript and installed-package assertions pass. The helper does not undo completed writes; broader error/release qualification remains open.
+
+
+Node FastDBError and isFastDBError now support runtime recognition and safe narrowing of caught unknown errors, with optional transaction observations. All 40 Node/application tests, strict TypeScript and installed-package guard/declaration checks pass. Broader error and release qualification remains open.

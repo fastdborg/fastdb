@@ -1014,3 +1014,20 @@ test('exactlyOne preserves execution errors and worker cancellation', async () =
     } finally { await db.close(); }
   }
 });
+
+
+test('isFastDBError recognizes public errors and validates transaction observations', async () => {
+  const { AsyncDatabase, isFastDBError } = require('./index.cjs');
+  for (const value of [null,undefined,{},new Error('ordinary'),{code:'FDB_ENGINE'},Object.assign(new Error(),{code:'FDB_'}),Object.assign(new Error(),{code:'FDB_ENGINE',transaction:null}),Object.assign(new Error(),{code:'FDB_ENGINE',transaction:{before:'active',after:'committed'}})]) {
+    assert.equal(isFastDBError(value),false);
+  }
+  for (const open of [()=>new Database(), ()=>AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await assert.rejects(async()=>db.execute('INSERT INTO docs {n:$missing}'), error=>isFastDBError(error) && error.code==='FDB_PARAMETER');
+      await assert.rejects(async()=>db.exactlyOne('SELECT 1 WHERE 0'), error=>isFastDBError(error) && error.code==='FDB_CARDINALITY' && error.transaction.after==='autocommit');
+    } finally { await db.close(); }
+    await assert.rejects(async()=>db.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && error.transaction===undefined);
+  }
+});

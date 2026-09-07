@@ -28,7 +28,7 @@ try {
 'use strict';
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { Database, AsyncDatabase, Record, Vector } = require('@fastdb/node');
+const { Database, AsyncDatabase, Record, Vector, isFastDBError } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
   async function withVectorFields(client) {
@@ -54,7 +54,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
   }
   async function withWrites(client) {
     await client.execute('BEGIN');
-    await assert.rejects(async()=>client.exactlyOne('SELECT value FROM docs WHERE 0'), error=>error instanceof RangeError && error.code==='FDB_CARDINALITY' && error.transaction.before==='active' && error.transaction.after==='active');
+    await assert.rejects(async()=>client.exactlyOne('SELECT value FROM docs WHERE 0'), error=>isFastDBError(error) && error instanceof RangeError && error.code==='FDB_CARDINALITY' && error.transaction.before==='active' && error.transaction.after==='active');
     const changed = await client.execute('WITH chosen AS (SELECT value FROM docs) UPDATE docs SET value=(SELECT $next) WHERE value IN (SELECT value FROM chosen) RETURNING value', {$next:8n});
     assert.deepEqual(changed.rows, [[8n]]);
     assert.equal(changed.affected,1n);
@@ -173,7 +173,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await withVectorFields(db);
     await withWrites(db);
   } finally { db.close(); }
-  assert.throws(()=>db.all('SELECT 1'), error=>error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
+  assert.throws(()=>db.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   const worker = await AsyncDatabase.open(file);
   try {
     for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1, () => Vector.sparse32Entries(3, [[0,1],[2,-1]])]) {
@@ -252,7 +252,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal((await worker.checkCollectionIntegrity('docs')).documents, 1n);
     await withWrites(worker);
   } finally { await worker.close(); }
-  await assert.rejects(worker.all('SELECT 1'), error=>error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
+  await assert.rejects(worker.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   const reopened = new Database(file);
   try {
     assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n);
@@ -286,6 +286,15 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
   // Check declaration resolution from the installed package, with the local
   // compiler as a tool only; the package has no runtime registry dependencies.
   fs.writeFileSync(path.join(consumer, 'smoke.ts'), `import { Database, AsyncDatabase, Record, Vector, VectorComponents, SparseVectorEntry, IntegrityLimits, IntegrityReport, ProfiledQuery } from '@fastdb/node';
+function inspectError(error: unknown): string | undefined {
+  if (guard(error)) {
+    const typed: import('@fastdb/node').FastDBError = error;
+    return typed.transaction?.after ?? typed.code;
+  }
+  return undefined;
+}
+import { isFastDBError as guard } from '@fastdb/node';
+void inspectError;
 const db = new Database();
 db.execute('SELECT $id', { $id: new Record('docs', 1n) });
 const components: VectorComponents = [1,0,-1] as const;

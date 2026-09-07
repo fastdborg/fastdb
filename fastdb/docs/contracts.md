@@ -906,3 +906,10 @@ Regression coverage exercises execute, row helpers, profiling, batches, integrit
 Synchronous and worker exactlyOne helpers now retain RangeError while attaching FDB_CARDINALITY and the completed execute result's transaction observations. The code matches Rust's cardinality error. The helper checks rows after successful statement execution; it does not undo writes or roll back a transaction. Closed-handle and engine failures still propagate through execute.
 
 Both-client regressions cover empty reads, autocommit INSERT RETURNING with two rows, an UPDATE RETURNING mismatch inside an explicit transaction, managed index integrity, explicit rollback and a successful single-row retry. All 38 Node/application tests and strict TypeScript pass. Broader error and release qualification remains open; full V1 is incomplete.
+
+
+## Typed Node error recognition (2026-09-07)
+
+The Node package now exports FastDBError (Error with a string code and optional transaction observations) and isFastDBError(unknown), a runtime predicate and TypeScript type guard. It recognizes Error instances with FDB-prefixed identifier codes and validates any before/after observations as active/autocommit. Plain objects, uncoded errors and malformed transaction observations are rejected. The guard supports errors without observations, including FDB_CLOSED.
+
+Both-client runtime tests cover execution, cardinality and closed-handle errors; strict TypeScript checks narrowing from unknown and optional transaction access. All 40 Node/application tests and strict TypeScript pass. This improves public error handling without making every constructor/argument error a database error; broader release qualification and full V1 remain open.

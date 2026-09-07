@@ -1189,3 +1189,12 @@ The offline installed-package cardinality assertions passed through both clients
 
 
 Cardinality-helper error precedence (2026-09-07): both Node clients retain FDB_CONSTRAINT and active transaction observations when exactlyOne executes a rejected unique write. A pre-aborted worker exactlyOne retains FDB_CANCELLED with active state, and a subsequent read succeeds. Index integrity remains valid after rollback. Both focused exactlyOne tests pass; full V1 remains incomplete.
+
+
+## Typed Node error recognition (2026-09-07)
+
+The Node package now exports FastDBError (Error with a string code and optional transaction observations) and isFastDBError(unknown), a runtime predicate and TypeScript type guard. It recognizes Error instances with FDB-prefixed identifier codes and validates any before/after observations as active/autocommit. Plain objects, uncoded errors and malformed transaction observations are rejected. The guard supports errors without observations, including FDB_CLOSED.
+
+Both-client runtime tests cover execution, cardinality and closed-handle errors; strict TypeScript checks narrowing from unknown and optional transaction access. All 40 Node/application tests and strict TypeScript pass. This improves public error handling without making every constructor/argument error a database error; broader release qualification and full V1 remain open.
+
+Installed-package runtime guard assertions and TypeScript narrowing passed on Linux x64 / Node 24.19.0: eight runtime files and 59,806,060 packed bytes. No publishing occurred.

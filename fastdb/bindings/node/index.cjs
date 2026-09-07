@@ -143,6 +143,14 @@ function decodeProfile(raw) {
     affected: BigInt(result.affected), transaction: report.transaction },
     metrics: Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, BigInt(value)])) };
 }
+function isFastDBError(value) {
+  if (!(value instanceof Error) || typeof value.code !== 'string' || !/^FDB_[A-Z][A-Z0-9_]*$/.test(value.code)) return false;
+  const transaction = value.transaction;
+  return transaction === undefined || (transaction !== null && typeof transaction === 'object' &&
+    (transaction.before === 'autocommit' || transaction.before === 'active') &&
+    (transaction.after === 'autocommit' || transaction.after === 'active'));
+}
+exports.isFastDBError = isFastDBError;
 function cardinalityError(count, transaction) {
   const error = new RangeError(`expected exactly one row, got ${count}`);
   error.code = 'FDB_CARDINALITY';
