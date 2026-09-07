@@ -920,3 +920,8 @@ Scoped checks passed formatting, Clippy, 295 Rust tests, thirty-four Node tests 
 The candidate validator now preserves a parenthesized wrapper when inspecting the left operand of IN/NOT IN subqueries. This lets the AST walker visit a nested scalar-subquery root instead of leaving it rejected by the surrounding scalar validator. Differential assignment tests cover scalar-subquery operands, nested membership, NULL/empty sets and retained rejection of outer aggregate assignments. The executable expression remains unchanged.
 
 Scoped checks passed formatting, Clippy, 296 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Installed subquery-assignment smoke (2026-09-07)
+
+The installed Node consumer now uses a parameterized scalar UPDATE assignment and a nested scalar-IN assignment in both sync and worker clients. It checks RETURNING/affected counts, fetched values, managed index entries and rollback to int64 max. The complete offline smoke passed on Linux x64 / Node 24.19.0, with eight runtime files and a 59,579,238-byte development tarball. Release/platform qualification remains open.

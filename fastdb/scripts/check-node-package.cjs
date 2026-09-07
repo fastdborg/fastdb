@@ -33,7 +33,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
 (async () => {
   async function withWrites(client) {
     await client.execute('BEGIN');
-    const changed = await client.execute('WITH chosen AS (SELECT value FROM docs) UPDATE docs SET value=$next WHERE value IN (SELECT value FROM chosen) RETURNING value', {$next:8n});
+    const changed = await client.execute('WITH chosen AS (SELECT value FROM docs) UPDATE docs SET value=(SELECT $next) WHERE value IN (SELECT value FROM chosen) RETURNING value', {$next:8n});
     assert.deepEqual(changed.rows, [[8n]]);
     assert.equal(changed.affected,1n);
     assert.equal((await client.profileSelect('SELECT record::fetch($id)', {$id:new Record('docs','saved')})).result.rows[0][0].value,8n);
@@ -42,6 +42,14 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal((await client.checkCollectionIntegrity('docs')).documents,0n);
     await client.execute('ROLLBACK');
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
+    await client.execute('BEGIN');
+    const nested=await client.execute('UPDATE docs SET value=(SELECT 1) IN (SELECT 1) RETURNING value');
+    assert.deepEqual(nested.rows,[[1n]]);
+    assert.equal(nested.affected,1n);
+    assert.equal((await client.checkCollectionIntegrity('docs')).indexEntries,1n);
+    await client.execute('ROLLBACK');
+    assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
+
     const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
     assert.deepEqual(await client.all(cte),[[2n]]);
   }

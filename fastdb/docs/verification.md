@@ -1196,3 +1196,8 @@ A development oracle initially updated its source before the collection query re
 ## Nested membership assignment operands — 2026-09-07
 
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-nested-assignment-check.log`): formatting, Clippy, 296 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. A live probe showed scalar-subquery left operands of IN/NOT IN were rejected by assignment validation. Preserving a parenthesized validation wrapper lets the walker visit the nested root. New native UPDATE comparisons cover scalar and nested membership operands, NULL/empty sets, affected counts and rollback; outer aggregate assignments remain rejected with stored data unchanged. Original executable expressions are not altered by validation.
+
+
+## Installed subquery assignments — 2026-09-07
+
+`node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-subquery-assignments.log`). The temporary offline consumer exercises bound scalar and nested membership UPDATE assignments through both clients, RETURNING, index consistency and rollback to int64 max. Existing installed declarations, vectors, cancellation, reopen and loader-error checks also passed. Result: Linux x64, Node 24.19.0, eight runtime files, 59,579,238 packed bytes. No production changes; prior 296 Rust / 34 Node scoped evidence remains applicable.
