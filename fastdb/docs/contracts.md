@@ -707,3 +707,9 @@ The pinned engine rejects the tested direct native compound LIMIT/OFFSET subquer
 A native test-only counter verifies one evaluation each of uncorrelated LIMIT and OFFSET scalar subqueries for plain SELECT, DISTINCT, UNION ALL and UNION. Four query shapes return the expected row counts with exactly two callback invocations per statement.
 
 A transaction regression checks NULL, fractional, invalid-text and outer-field-dependent limits for plain, DISTINCT and UNION collection INSERT SELECT. Each failure preserves the active transaction, prior record IDs/values and managed-index integrity. A corrected insertion succeeds and final rollback removes all transaction-local target rows. This is bounded evaluation/atomicity evidence; cancellation during pagination, broader types/aliases and resource/platform coverage remain unqualified.
+
+## Pagination cancellation qualification (2026-09-07)
+
+The compound/subquery interruption regression now includes LIMIT and OFFSET scalar sources for plain and UNION queries. Thirty-two new cases cover read/collection-insert execution, callback thresholds two/four and autocommit/explicit transactions. Each requires FDB_CANCELLED at the exact threshold, no returned partial rowset, empty target/index state, intact source documents and prior transaction work, and exact successful retry; explicit transactions also verify final rollback. The complete matrix now covers ninety-six cases.
+
+OFFSET probes use distinct row-dependent callback arguments to reach both cancellation thresholds; repeating an identical callback expression did not reach the fourth-call threshold in the diagnostic. This is source-phase cancellation evidence. Trigger after-write interruption remains a separate unresolved release gate, and per-operation cancellation, hard resource caps and platform qualification remain incomplete.

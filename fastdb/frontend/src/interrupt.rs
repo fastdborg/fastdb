@@ -469,13 +469,18 @@ mod tests {
             "NOT IN",
             "EXISTS",
             "SCALAR",
+            "LIMIT",
+            "OFFSET",
+            "UNION LIMIT",
+            "UNION OFFSET",
         ]
         .into_iter()
         .flat_map(|operator| [false, true].map(|insert| (operator, insert)))
         {
             let expected = match operator {
                 "INTERSECT" => vec![],
-                "EXCEPT" | "IN" | "NOT IN" | "EXISTS" | "SCALAR" => vec![1, 2, 3],
+                "EXCEPT" | "IN" | "NOT IN" | "EXISTS" | "SCALAR" | "LIMIT" | "OFFSET"
+                | "UNION LIMIT" | "UNION OFFSET" => vec![1, 2, 3],
                 _ => vec![1, 2, 3, 11, 12, 13],
             };
             for after in [2, 4] {
@@ -518,6 +523,10 @@ mod tests {
                         "NOT IN" => "SELECT value FROM docs WHERE value NOT IN (SELECT union_source_tick(value)+union_source_tick(10) FROM docs)".to_owned(),
                         "EXISTS" => "SELECT value FROM docs WHERE EXISTS (SELECT value FROM docs WHERE union_source_tick(value)+union_source_tick(0)=3)".to_owned(),
                         "SCALAR" => "SELECT value FROM docs WHERE value <= (SELECT max(union_source_tick(value)+union_source_tick(0)) FROM docs)".to_owned(),
+                        "LIMIT" => "SELECT value FROM docs LIMIT (SELECT max(union_source_tick(value)+union_source_tick(0)) FROM docs)".to_owned(),
+                        "OFFSET" => "SELECT value FROM docs LIMIT -1 OFFSET (SELECT sum(union_source_tick(value)+union_source_tick(0)-value) FROM docs)".to_owned(),
+                        "UNION LIMIT" => "SELECT value FROM docs UNION SELECT value FROM docs LIMIT (SELECT max(union_source_tick(value)+union_source_tick(0)) FROM docs)".to_owned(),
+                        "UNION OFFSET" => "SELECT value FROM docs UNION SELECT value FROM docs LIMIT -1 OFFSET (SELECT sum(union_source_tick(value)+union_source_tick(0)-value) FROM docs)".to_owned(),
                         _ => format!("SELECT union_source_tick(value) AS value FROM docs {operator} SELECT union_source_tick(value+10) FROM docs"),
                     };
                     let statement = format!("{prefix}{source}");
@@ -535,7 +544,7 @@ mod tests {
                     c.engine.set_progress_handler(0, None);
                     assert!(
                         fired.load(Ordering::SeqCst),
-                        "{operator}, source point {after}, insert={insert}, outer={outer}"
+                        "{operator}, source point {after}, insert={insert}, outer={outer}, calls={}, result={:?}", ROWS.load(Ordering::SeqCst), report.result
                     );
                     assert_eq!(ROWS.load(Ordering::SeqCst), after);
                     assert_eq!(

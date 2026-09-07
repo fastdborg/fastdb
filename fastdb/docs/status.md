@@ -544,3 +544,11 @@ A native test-only counter verifies one evaluation each of uncorrelated LIMIT an
 A transaction regression checks NULL, fractional, invalid-text and outer-field-dependent limits for plain, DISTINCT and UNION collection INSERT SELECT. Each failure preserves the active transaction, prior record IDs/values and managed-index integrity. A corrected insertion succeeds and final rollback removes all transaction-local target rows. This is bounded evaluation/atomicity evidence; cancellation during pagination, broader types/aliases and resource/platform coverage remain unqualified.
 
 The final scoped check passed formatting, Clippy, 261 Rust tests, twenty-three Node tests and strict TypeScript checking. The known trigger-interruption gate remains ignored and unresolved; full V1 remains incomplete.
+
+## Pagination cancellation qualification (2026-09-07)
+
+The compound/subquery interruption regression now includes LIMIT and OFFSET scalar sources for plain and UNION queries. Thirty-two new cases cover read/collection-insert execution, callback thresholds two/four and autocommit/explicit transactions. Each requires FDB_CANCELLED at the exact threshold, no returned partial rowset, empty target/index state, intact source documents and prior transaction work, and exact successful retry; explicit transactions also verify final rollback. The complete matrix now covers ninety-six cases.
+
+OFFSET probes use distinct row-dependent callback arguments to reach both cancellation thresholds; repeating an identical callback expression did not reach the fourth-call threshold in the diagnostic. This is source-phase cancellation evidence. Trigger after-write interruption remains a separate unresolved release gate, and per-operation cancellation, hard resource caps and platform qualification remain incomplete.
+
+The final scoped check passed formatting, Clippy, 261 Rust tests, twenty-three Node tests and strict TypeScript checks. One known trigger-interruption release gate remains ignored; full V1 remains incomplete.
