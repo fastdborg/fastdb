@@ -72,6 +72,23 @@ fn cli_rejects_non_file_migration_sources_and_allows_retry() {
     );
     assert!(error.contains("002_directory.sql"), "{error}");
     std::fs::remove_dir(invalid).unwrap();
+    for (name, contents, diagnostic) in [
+        ("002_invalid_utf8.sql", vec![0xff], "cannot read migration"),
+        (
+            "bad_version.sql",
+            b"SELECT 1;".to_vec(),
+            "invalid migration version",
+        ),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(&path, contents).unwrap();
+        let output = run();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(diagnostic), "{error}");
+        assert!(error.contains(name), "{error}");
+        std::fs::remove_file(path).unwrap();
+    }
     let output = run();
     assert!(output.status.success(), "{output:?}");
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

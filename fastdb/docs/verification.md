@@ -1520,3 +1520,6 @@ At clean implementation commit afbe25599, fastdb/scripts/check.sh passed formatt
 
 
 CLI migration source validation (2026-09-07): the loader now checks that each .sql source resolves to a regular file before opening it, preventing a stable named-pipe source from blocking the bounded content reader. Non-file errors identify the path; regular-file symlinks remain accepted. Both CLI migration integration tests pass, including rejection followed by an unapplied-prefix retry. A timeout-bounded Linux probe verifies FIFO rejection and symlink success. Formatting and CLI all-target Clippy pass. Concurrent path replacement, broader platform and full V1 qualification remain open.
+
+
+CLI migration source diagnostics (2026-09-07): metadata/open/read, filename/version and file-budget failures now identify the migration path while retaining the underlying error text where available. The CLI retry regression additionally covers invalid UTF-8 content and malformed versions, asserting file-specific diagnostics and no applied prefix before a valid rerun. Both CLI migration tests, formatting and CLI all-target Clippy pass. Broader V1 tool qualification remains open.

@@ -471,7 +471,10 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
         if path.extension().is_none_or(|e| e != "sql") {
             continue;
         }
-        if !std::fs::metadata(&path)?.is_file() {
+        if !std::fs::metadata(&path)
+            .map_err(|error| format!("cannot inspect migration {}: {error}", path.display()))?
+            .is_file()
+        {
             return Err(format!(
                 "migration source must be a regular file: {}",
                 path.display()
@@ -481,19 +484,30 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .ok_or("migration filename must be UTF-8")?
+            .ok_or_else(|| format!("migration filename must be UTF-8: {}", path.display()))?
             .to_owned();
-        let (version, _) = name
-            .split_once('_')
-            .ok_or("expected VERSION_name.sql migration filename")?;
-        let version = version.parse::<i64>()?;
+        let (version, _) = name.split_once('_').ok_or_else(|| {
+            format!(
+                "expected VERSION_name.sql migration filename: {}",
+                path.display()
+            )
+        })?;
+        let version = version
+            .parse::<i64>()
+            .map_err(|error| format!("invalid migration version in {}: {error}", path.display()))?;
         let mut sql = String::new();
-        std::fs::File::open(&path)?
+        std::fs::File::open(&path)
+            .map_err(|error| format!("cannot open migration {}: {error}", path.display()))?
             .take(4 * 1024 * 1024 + 1)
-            .read_to_string(&mut sql)?;
+            .read_to_string(&mut sql)
+            .map_err(|error| format!("cannot read migration {}: {error}", path.display()))?;
         bytes += sql.len();
         if sql.len() > 4 * 1024 * 1024 || bytes > 16 * 1024 * 1024 || plan.len() >= 1000 {
-            return Err("migration files exceed runner limits".into());
+            return Err(format!(
+                "migration files exceed runner limits while loading {}",
+                path.display()
+            )
+            .into());
         }
         plan.push(fastdb::Migration { version, name, sql });
     }
