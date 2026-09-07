@@ -991,3 +991,26 @@ test('exactlyOne cardinality errors retain completed statement transaction obser
     } finally { await db.close(); }
   }
 });
+
+test('exactlyOne preserves execution errors and worker cancellation', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await db.execute('INSERT INTO docs {n:1}');
+      await db.execute('BEGIN');
+      await assert.rejects(async()=>db.exactlyOne('INSERT INTO docs {n:1} RETURNING n'), error=>
+        error.code === 'FDB_CONSTRAINT' && error.transaction.before==='active' && error.transaction.after==='active');
+      assert.deepEqual(await db.exactlyOne('SELECT count(*) FROM docs'),[1n]);
+      if (db instanceof AsyncDatabase) {
+        const controller=new AbortController(); controller.abort();
+        await assert.rejects(db.exactlyOne('SELECT n FROM docs',{}, {signal:controller.signal}), error=>
+          error.code==='FDB_CANCELLED' && error.transaction.before==='active' && error.transaction.after==='active');
+        assert.deepEqual(await db.exactlyOne('SELECT n FROM docs'),[1n]);
+      }
+      await db.execute('ROLLBACK');
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,1n);
+    } finally { await db.close(); }
+  }
+});

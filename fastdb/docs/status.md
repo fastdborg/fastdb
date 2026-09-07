@@ -1186,3 +1186,6 @@ Synchronous and worker exactlyOne helpers now retain RangeError while attaching 
 Both-client regressions cover empty reads, autocommit INSERT RETURNING with two rows, an UPDATE RETURNING mismatch inside an explicit transaction, managed index integrity, explicit rollback and a successful single-row retry. All 38 Node/application tests and strict TypeScript pass. Broader error and release qualification remains open; full V1 is incomplete.
 
 The offline installed-package cardinality assertions passed through both clients on Linux x64 / Node 24.19.0: eight runtime files and 59,805,622 packed bytes. No publishing occurred.
+
+
+Cardinality-helper error precedence (2026-09-07): both Node clients retain FDB_CONSTRAINT and active transaction observations when exactlyOne executes a rejected unique write. A pre-aborted worker exactlyOne retains FDB_CANCELLED with active state, and a subsequent read succeeds. Index integrity remains valid after rollback. Both focused exactlyOne tests pass; full V1 remains incomplete.
