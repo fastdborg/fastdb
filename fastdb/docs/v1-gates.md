@@ -111,3 +111,6 @@ Sorted correlated typed DISTINCT now compares logical SQL values and retains a t
 
 
 A derived pagination boundary now preserves bound LIMIT/OFFSET in the covered sorted correlated typed projections despite the pinned scalar compiler replacing non-literal limits. Literal-native differential tests and both installed Node clients pass; full scoped checks passed 325 Rust and 35 Node tests. Other pagination forms and broader release qualification remain open.
+
+
+Integer bound pagination now has scalar/IN/EXISTS coverage across supported predicate-only, native scalar, CAST and typed CASE correlated sources. Shared correlation tracking and integer-literal lowering address zero-limit replacement and per-outer-row bound-counter reuse. The full scoped check passed 327 Rust and 35 Node tests; other pagination parameter types/expressions and broader V1 gates remain open.

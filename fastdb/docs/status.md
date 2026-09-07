@@ -1126,3 +1126,12 @@ Verification: the complete scoped check passed formatting, Clippy, 325 Rust test
 ## Correlated pagination rejection and retry (2026-09-07)
 
 A real-engine UPDATE regression now verifies that bound NULL, fractional, invalid-text and array LIMIT/OFFSET values reject the covered correlated DISTINCT source without changing documents, managed indexes, prior native-table work or observed transaction state. Missing parameters report FDB_PARAMETER. Both autocommit and explicit transactions permit a valid retry returning the expected updated values; outer rollback restores the original document IDs/values and removes prior pending work. Integrity audits cover rejection, retry and rollback states. The focused regression passes; this test-only qualification does not close broader pagination or recovery gates. Full V1 remains incomplete.
+
+
+## Pagination across supported native correlation forms (2026-09-07)
+
+The pagination boundary now also covers supported predicate-only/native scalar, CAST and typed CASE correlated sources, rather than only typed projection-alias sorting. Scalar and EXISTS consumers preserve requested pagination inside a relation. Native membership retains its existing correlation structure; adding another derived wrapper there produced wrong per-outer-row membership in a probe.
+
+Integer LIMIT/OFFSET parameters in supported correlated sources are lowered to parsed SQL integer literals, avoiding a bound-counter reuse issue that made the second outer row miss an expected native membership match. Native ordinary SQL delegation is unchanged. Differential execute/profile tests compare scalar, IN and EXISTS with literal-native pagination across four projection forms, limits 0/1/2/-1 and offsets 0/1/2/4. These probes pass; other parameter types, complex pagination expressions and broader correlation/resource qualification remain open. Full V1 remains incomplete.
+
+Verification: the complete scoped check passed formatting, Clippy, 327 Rust tests, 35 Node tests and strict TypeScript. One known trigger-interruption gate remains ignored.

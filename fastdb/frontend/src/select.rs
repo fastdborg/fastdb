@@ -41,6 +41,7 @@ fn native_correlated_predicate(
     sources: &[Source],
     metadata: bool,
     params: &Parameters,
+    scalar_pagination: bool,
 ) -> Result<(Select, bool)> {
     let mut inner = inner.clone();
     if inner.with.is_some() || !inner.body.compounds.is_empty() {
@@ -126,16 +127,17 @@ fn native_correlated_predicate(
         }
         Ok(correlated)
     };
+    let mut correlated_query = false;
     if let Some(value) = where_clause {
-        rewrite(value, false)?;
+        correlated_query |= rewrite(value, false)?;
     }
     if let Some(value) = group_by.as_mut().and_then(|group| group.having.as_mut()) {
-        rewrite(value, false)?;
+        correlated_query |= rewrite(value, false)?;
     }
     if let Some(from) = from {
         for join in &mut from.joins {
             if let Some(JoinConstraint::On(value)) = &mut join.constraint {
-                rewrite(value, false)?;
+                correlated_query |= rewrite(value, false)?;
             }
         }
     }
@@ -155,6 +157,7 @@ fn native_correlated_predicate(
             // attached to the subquery result in outer comparisons.
             let mut typed = !has_cast_affinity(value);
             let correlated = rewrite(value, typed)?;
+            correlated_query |= correlated;
             if correlated && typed && !metadata {
                 if let Expr::FunctionCall { name, args, .. } = value.as_ref() {
                     if name.as_str() == "__fastdb_pack" && args.len() == 1 {
@@ -209,7 +212,7 @@ fn native_correlated_predicate(
             continue;
         }
         sort_selections.push(false);
-        rewrite(&mut sorted.expr, false)?;
+        correlated_query |= rewrite(&mut sorted.expr, false)?;
         // The pinned engine resolves projection aliases inside ORDER BY
         // expressions before same-named input columns. Preserve that binding
         // while exposing logical scalar values to arithmetic/functions.
@@ -300,20 +303,53 @@ fn native_correlated_predicate(
         }
         wrapped.order_by = ordering;
         wrapped.limit = limit;
-        // Keep pagination on a relation: the pinned scalar-subquery compiler
-        // otherwise replaces a bound LIMIT with its implicit one-row limit.
-        if wrapped.limit.is_some() {
-            let sql = Cmd::Stmt(Stmt::Select(wrapped)).to_string();
-            let Expr::Subquery(paginated) = expression(&format!(
-                "(SELECT v FROM ({}) LIMIT -1 OFFSET 0)",
-                sql.trim().trim_end_matches(';')
-            ))?
-            else {
-                unreachable!()
-            };
-            wrapped = paginated;
-        }
         inner = wrapped;
+    }
+    if correlated_query && !metadata {
+        let integers = params
+            .iter()
+            .filter_map(|(name, value)| {
+                if let Value::Integer(value) = value {
+                    Some((name, value))
+                } else {
+                    None
+                }
+            })
+            .map(|(name, value)| Ok((name.clone(), expression(&value.to_string())?)))
+            .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+        if let Some(limit) = &mut inner.limit {
+            for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
+                turso_core::walk_expr_mut(value, &mut |expr| {
+                    if let Expr::Variable(var) = expr {
+                        let name = var
+                            .name
+                            .as_ref()
+                            .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
+                        if let Some(value) = integers.get(&name) {
+                            *expr = value.clone();
+                        }
+                    }
+                    Ok(turso_core::WalkControl::Continue)
+                })?;
+            }
+        }
+    }
+    // Keep pagination on a relation: the pinned scalar-subquery compiler
+    // otherwise replaces a bound LIMIT with its implicit one-row limit.
+    if correlated_query
+        && !metadata
+        && inner.limit.is_some()
+        && (scalar_pagination || selected_sorts > 0)
+    {
+        let sql = Cmd::Stmt(Stmt::Select(inner)).to_string();
+        let Expr::Subquery(paginated) = expression(&format!(
+            "(SELECT * FROM ({}) LIMIT -1 OFFSET 0)",
+            sql.trim().trim_end_matches(';')
+        ))?
+        else {
+            unreachable!()
+        };
+        inner = paginated;
     }
     Ok((inner, typed_projection))
 }
@@ -2997,8 +3033,9 @@ impl Connection {
         // logical lowering; preserve their values only once that route is chosen.
         for (sql, (lowered, _, affinity)) in &mut native_expression_subqueries {
             if let Expr::Exists(inner) = expression(sql)? {
-                *lowered =
-                    Expr::Exists(native_correlated_predicate(&inner, &sources, false, params)?.0);
+                *lowered = Expr::Exists(
+                    native_correlated_predicate(&inner, &sources, false, params, true)?.0,
+                );
                 continue;
             }
             if !matches!(
@@ -3013,7 +3050,8 @@ impl Connection {
             };
             let mut collation = "BINARY".to_owned();
             let correlated = {
-                let (mut probe, _) = native_correlated_predicate(&inner, &sources, true, params)?;
+                let (mut probe, _) =
+                    native_correlated_predicate(&inner, &sources, true, params, false)?;
                 let correlated = Cmd::Stmt(Stmt::Select(probe.clone())).to_string()
                     != Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                 if probe.with.is_none() {
@@ -3063,8 +3101,13 @@ impl Connection {
                 }
                 correlated
             };
-            let (runtime, typed_projection) =
-                native_correlated_predicate(&inner, &sources, false, params)?;
+            let (runtime, typed_projection) = native_correlated_predicate(
+                &inner,
+                &sources,
+                false,
+                params,
+                matches!(affinity, SubqueryAffinity::NativeScalar(_)),
+            )?;
             if typed_projection {
                 let runtime_sql = Cmd::Stmt(Stmt::Select(runtime)).to_string();
                 let runtime_sql = runtime_sql.trim().trim_end_matches(';');
@@ -3092,8 +3135,9 @@ impl Connection {
                 continue;
             }
             if correlated && matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
-                *lowered =
-                    Expr::Subquery(native_correlated_predicate(&inner, &sources, false, params)?.0);
+                *lowered = Expr::Subquery(
+                    native_correlated_predicate(&inner, &sources, false, params, false)?.0,
+                );
                 *affinity = SubqueryAffinity::NativeMembership(collation, String::new());
                 continue;
             }
@@ -3123,7 +3167,8 @@ impl Connection {
                 }
                 SubqueryAffinity::NativeMembership(collation, name)
             } else {
-                let (runtime, _) = native_correlated_predicate(&inner, &sources, false, params)?;
+                let (runtime, _) =
+                    native_correlated_predicate(&inner, &sources, false, params, true)?;
                 *lowered = expression(&format!(
                     "__fastdb_pack(({}))",
                     Cmd::Stmt(Stmt::Select(runtime))

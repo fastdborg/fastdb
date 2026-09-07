@@ -2538,3 +2538,57 @@ fn correlated_bound_pagination_errors_preserve_writes_and_retry() {
         }
     }
 }
+
+#[test]
+fn correlated_native_bound_pagination_matches_literal_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "INSERT INTO native VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(1),(2),(10)",
+    ] {
+        q(&c, sql);
+    }
+    for projection in [
+        "n",
+        "n+d.n",
+        "CAST(n+d.n AS TEXT)",
+        "CASE WHEN d.n>0 THEN n ELSE d.n END",
+    ] {
+        for limit in [0, 1, 2, -1] {
+            for offset in [0, 1, 2, 4] {
+                let params = Parameters::from([
+                    ("$limit".into(), Value::Integer(limit)),
+                    ("$offset".into(), Value::Integer(offset)),
+                ]);
+                let source=format!("SELECT {projection} FROM lookup WHERE n>=d.n ORDER BY n LIMIT $limit OFFSET $offset");
+                for expr in [
+                    format!("({source})"),
+                    format!("d.n IN ({source})"),
+                    format!("EXISTS({source})"),
+                ] {
+                    let literal = expr
+                        .replace("$limit", &limit.to_string())
+                        .replace("$offset", &offset.to_string());
+                    let expected =
+                        q(&c, &format!("SELECT {literal} FROM native d ORDER BY d.n")).rows;
+                    let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+                    assert_eq!(
+                        c.execute(&sql, &params).unwrap().rows,
+                        expected,
+                        "{sql}: {params:?}"
+                    );
+                    assert_eq!(
+                        c.profile_select(&sql, &params).unwrap().result.rows,
+                        expected,
+                        "profile {sql}: {params:?}"
+                    );
+                }
+            }
+        }
+    }
+}
