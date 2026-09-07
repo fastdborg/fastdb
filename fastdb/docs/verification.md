@@ -1448,3 +1448,6 @@ Public Database and AsyncDatabase operations now report FDB_CLOSED after close; 
 Regression coverage exercises execute, row helpers, profiling, batches, integrity inspection, transfers and migrations across both closed clients, plus submissions while closing. All 37 Node binding/application tests and strict TypeScript pass. Native interrupted-close durability and broader release qualification remain open; full V1 is incomplete.
 
 The offline installed Node package smoke also passed FDB_CLOSED assertions for both clients on Linux x64 / Node 24.19.0: eight runtime files and 59,805,368 packed bytes. No publishing occurred.
+
+
+Closed-worker cancellation qualification (2026-09-07): the transport fixture verifies that an operation submitted during close with an AbortSignal returns FDB_CLOSED without another worker message or retained abort listener. An already-aborted signal submitted after close behaves the same way. The timeout/completion-marker test wrapper passes. Full V1 remains incomplete.

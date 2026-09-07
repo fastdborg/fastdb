@@ -142,5 +142,20 @@ const { getEventListeners } = require('node:events');
     assert.equal(db.close(), close);
     await assert.rejects(db.execute('SELECT 2'), error => error === outcomes[0].reason);
   }
+  {
+    const db = await AsyncDatabase.open(); const worker = latest;
+    const close = db.close();
+    const controller = new AbortController();
+    const before = worker.messages.length;
+    await assert.rejects(db.execute('SELECT 1', {}, {signal:controller.signal}), error => error.code === 'FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
+    assert.equal(worker.messages.length,before);
+    assert.equal(getEventListeners(controller.signal,'abort').length,0);
+    controller.abort();
+    await close;
+    assert.equal(worker.stopped,true);
+    await assert.rejects(db.profileSelect('SELECT 1', {}, {signal:controller.signal}), error => error.code === 'FDB_CLOSED');
+    assert.equal(getEventListeners(controller.signal,'abort').length,0);
+    assert.equal(worker.messages.length,before);
+  }
   process.stdout.write('worker-faults-complete\n');
 })().catch(error => { console.error(error); process.exitCode = 1; });
