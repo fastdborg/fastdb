@@ -3057,3 +3057,104 @@ fn inner_collection_correlation_preserves_types_shadowing_and_write_rollback() {
     q(&c, "ROLLBACK");
     assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
 }
+
+#[test]
+fn inner_collection_correlation_accepts_typed_derived_and_cte_outer_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1,v:[1],meta:{key:3}}",
+        "INSERT INTO docs {id:docs:b,n:2,v:null,meta:{key:0}}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+    ] {
+        q(&c, sql);
+    }
+    for (prefix, source) in [
+        ("", "(SELECT id,n,v,meta FROM docs) d"),
+        (
+            "WITH outer_docs AS (SELECT id,n,v,meta FROM docs) ",
+            "outer_docs d",
+        ),
+    ] {
+        for predicate in ["l.owner=d.id", "l.n=d.meta.key"] {
+            let sql = format!("{prefix}SELECT d.n,(SELECT count(*) FROM links l WHERE {predicate}) FROM {source} ORDER BY d.n");
+            let expected = vec![
+                vec![Value::Integer(1), Value::Integer(1)],
+                vec![Value::Integer(2), Value::Integer(0)],
+            ];
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+        }
+        for predicate in [
+            "EXISTS(SELECT d.id FROM links l WHERE l.owner=d.id)",
+            "d.id IN(SELECT l.owner FROM links l WHERE l.n>d.n)",
+            "(SELECT l.n FROM links l WHERE l.owner=d.id ORDER BY d.n LIMIT 1)=3",
+        ] {
+            let sql = format!("{prefix}SELECT d.n FROM {source} WHERE {predicate}");
+            assert_eq!(q(&c, &sql).rows, vec![vec![Value::Integer(1)]], "{sql}");
+        }
+        for field in ["id", "v", "meta", "meta.key"] {
+            let sql = format!("{prefix}SELECT (SELECT d.{field} FROM links l WHERE l.owner=d.id) FROM {source} WHERE d.n=1");
+            assert_eq!(
+                q(&c, &sql).rows,
+                q(&c, &format!("SELECT d.{field} FROM docs d WHERE n=1")).rows,
+                "{sql}"
+            );
+        }
+    }
+}
+
+#[test]
+fn correlated_derived_parameters_preserve_binary_and_atomic_insert_validation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "CREATE TABLE output",
+        "INSERT INTO docs {id:docs:a,n:1}",
+        "INSERT INTO links {owner:docs:a}",
+        "DEFINE FIELD v ON output TYPE integer",
+    ] {
+        q(&c, sql);
+    }
+    let value = Value::Binary(b"FDB\x01payload".to_vec());
+    let params = Parameters::from([("$value".into(), value.clone())]);
+    let sql = "SELECT (SELECT d.payload FROM links l WHERE l.owner=d.id) FROM (SELECT id,$value AS payload FROM docs) d";
+    assert_eq!(
+        c.execute(sql, &params).unwrap().rows,
+        vec![vec![value.clone()]]
+    );
+    assert_eq!(
+        c.profile_select(sql, &params).unwrap().result.rows,
+        vec![vec![value]]
+    );
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO output {v:7}");
+    assert!(c
+        .execute(&format!("INSERT INTO output(v) {sql}"), &params)
+        .is_err());
+    assert_eq!(
+        q(&c, "SELECT v FROM output").rows,
+        vec![vec![Value::Integer(7)]]
+    );
+    let params = Parameters::from([("$value".into(), Value::Integer(8))]);
+    assert_eq!(
+        c.execute(&format!("INSERT INTO output(v) {sql}"), &params)
+            .unwrap()
+            .affected,
+        1
+    );
+    c.check_collection_integrity("output", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT v FROM output").rows.is_empty());
+}

@@ -512,6 +512,14 @@ impl Scope {
         runtime
     }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
+        // This compiler-only marker carries a derived column's logical type
+        // across recursive lowering without adding a runtime conversion.
+        if let Expr::FunctionCall { name, args, .. } = expr {
+            if name.as_str() == "__fastdb_correlated_value" && args.len() == 1 {
+                *expr = *args[0].clone();
+                return Ok(true);
+            }
+        }
         // Accessors inserted for an outer collection already return encoded
         // logical values. Packing them again would turn records into binary.
         if matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_value") {
@@ -2775,7 +2783,10 @@ impl Connection {
                                 for table in std::iter::once(&from.select)
                                     .chain(from.joins.iter().map(|j| &j.table))
                                 {
-                                    if matches!(table.as_ref(), SelectTable::Table(..)) {
+                                    if matches!(
+                                        table.as_ref(),
+                                        SelectTable::Table(..) | SelectTable::Select(_, Some(_))
+                                    ) {
                                         resolved.push(source(
                                             self,
                                             table,
@@ -2813,7 +2824,7 @@ impl Connection {
                                     sources: correlation_sources
                                         .iter()
                                         .filter(|outer| {
-                                            outer.collection.is_some()
+                                            outer.logical()
                                                 && !local.iter().any(|s| {
                                                     s.alias.eq_ignore_ascii_case(&outer.alias)
                                                 })
@@ -2880,7 +2891,16 @@ impl Connection {
                                         }
                                         match scope.field(value).and_then(|field| {
                                             field
-                                                .map(|(i, path)| scope.accessor(i, &path, true))
+                                                .map(|(i, path)| {
+                                                    let value = scope.accessor(i, &path, true)?;
+                                                    if scope.sources[i].derived.is_some() {
+                                                        expression(&format!(
+                                                            "__fastdb_correlated_value({value})"
+                                                        ))
+                                                    } else {
+                                                        Ok(value)
+                                                    }
+                                                })
                                                 .transpose()
                                         }) {
                                             Ok(Some(rewritten)) => {

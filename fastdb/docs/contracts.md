@@ -926,3 +926,7 @@ Both-client runtime tests cover execution, cardinality and closed-handle errors;
 ## Initial inner-collection correlation (2026-09-07)
 
 Simple expression subqueries reading a collection now resolve qualified outer collection fields before inner typed-expression lowering. Record IDs retain their logical identity instead of comparing an inner record against the outer storage string. The generated outer accessor is already encoded and must not be packed again. Local aliases shadow outer aliases. This pass covers direct table sources without a local WITH or compound query; deeper scopes, derived outer sources and broader correlation qualification remain open.
+
+## Derived outer fields in collection correlation (2026-09-07)
+
+The initial inner-collection correlation pass also resolves typed outer fields from derived SELECTs and enclosing CTEs. A compiler-only marker carries their encoded-value metadata across recursive lowering and is removed before execution; it adds no runtime conversion. Native columns retain their native treatment. This extends the preceding direct-outer-source restriction, while local inner WITH, compound queries and deeper correlation scopes remain open.

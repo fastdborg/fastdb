@@ -1348,3 +1348,10 @@ CLI help output handling (2026-09-07): --help and -h now use fallible stdout wri
 Qualified outer collection fields now lower before a simple inner collection expression subquery, retaining encoded values across the recursive lowering boundary. This fixes silent record-identity non-matches in EXISTS and scalar COUNT, and missing outer-field bindings in IN predicates. Source lookup is lazy; local aliases shadow outer aliases. Regression coverage includes execute/profile, scalar outer record/array/object/nested projections, numeric predicates, multirow UPDATE, managed-index integrity and rollback. A former unsupported-query assertion now verifies matching correlated scalar results.
 
 The complete scoped check passed formatting, Clippy, 355 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. The rebuilt synchronous and worker Node clients also pass the original EXISTS/COUNT/IN probes. The pass is limited to direct table sources without local WITH or compounds; derived outer sources, deeper scopes and broader correlation/type/resource qualification remain open. Full V1 is not complete. No upstream files changed.
+
+
+## Derived outer fields in collection correlation (2026-09-07)
+
+Inner collection expression subqueries now retain typed fields from aliased derived SELECTs and enclosing CTEs. A compiler-only marker carries encoded-value metadata across recursive lowering and is removed before execution. Coverage includes record and nested predicates, scalar record/array/object projections, COUNT, EXISTS, IN, ordering, execute/profile and binary parameters. A failed INSERT SELECT preserves prior work, an integer retry succeeds and rollback removes both writes. Unaliased native derived queries retain native routing; their existing compound-pagination regression passes.
+
+The complete scoped check passed formatting, Clippy, 357 Rust tests, 44 Node/application tests and strict TypeScript, with the known trigger-cancellation gate still ignored. No upstream files changed. Local inner WITH, compounds, deeper correlation scopes and broader V1 release gates remain open.
