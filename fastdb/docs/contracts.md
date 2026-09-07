@@ -1043,3 +1043,6 @@ Native inner SELECTs correlated to a logical outer source now use the private pa
 ## Source-free named-window correlation (2026-09-08)
 
 The source-free correlation walker now visits named-window partition and ordering expressions. Scalar expression lowering also removes the compiler-only derived correlated-value marker before engine preparation. Together these fix unresolved outer fields for direct collection sources and an escaped-marker function error for derived sources. A regression covers named-window partition/order references through execute/profile against a supported pinned native form. Custom frames, broader scopes and resource qualification remain open.
+
+
+Unnamed derived collection sources (2026-09-08): supported derived SELECTs no longer require a user alias. Lowering assigns private per-source aliases while preserving public projection names and typed values. Joins whose sources all expose known derived projection lists resolve an unqualified column only when its name is unambiguous; open collection/native join scopes still require qualification. Duplicate derived output names and fetched derived projections retain their existing restrictions.

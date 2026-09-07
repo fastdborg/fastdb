@@ -161,3 +161,42 @@ fn derived_write_sources_validate_and_keep_unsupported_forms_guarded() {
         assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
     }
 }
+
+#[test]
+fn unnamed_derived_collections_preserve_values_and_join_scope() {
+    let (_db, c) = setup();
+    for (anonymous, named) in [
+        ("SELECT n,flag,data FROM (SELECT n,flag,data FROM docs) ORDER BY n", "SELECT n,flag,data FROM (SELECT n,flag,data FROM docs) d ORDER BY n"),
+        ("SELECT n,m FROM (SELECT n FROM docs) JOIN (SELECT n AS m FROM docs) ON n=m ORDER BY n", "SELECT n,m FROM (SELECT n FROM docs) a JOIN (SELECT n AS m FROM docs) b ON n=m ORDER BY n"),
+        ("SELECT * FROM (SELECT flag,data FROM docs WHERE n=1)", "SELECT * FROM (SELECT flag,data FROM docs WHERE n=1) d"),
+        ("SELECT flag,data FROM (SELECT flag,data FROM (SELECT flag,data FROM docs))", "SELECT flag,data FROM docs"),
+        ("SELECT n,m FROM (SELECT n+0 AS n FROM docs) JOIN (SELECT n+0 AS m FROM docs) ON n=m ORDER BY n", "SELECT a.n AS n,b.m AS m FROM (SELECT n+0 AS n FROM docs) a JOIN (SELECT n+0 AS m FROM docs) b ON a.n=b.m ORDER BY a.n"),
+    ] {
+        let expected = q(&c, named);
+        let actual = q(&c, anonymous);
+        assert_eq!(actual.columns, expected.columns, "{anonymous}");
+        assert_eq!(actual.rows, expected.rows, "{anonymous}");
+        assert_eq!(c.profile_select(anonymous, &Parameters::new()).unwrap().result.rows, expected.rows, "{anonymous}");
+    }
+    assert!(c
+        .execute(
+            "SELECT n FROM (SELECT n FROM docs) __fastdb_anonymous_0",
+            &Parameters::new()
+        )
+        .is_err());
+    assert!(c
+        .execute(
+            "SELECT n FROM (SELECT n FROM docs) JOIN (SELECT n FROM docs) ON 1=1",
+            &Parameters::new()
+        )
+        .is_err());
+    q(&c, "CREATE TABLE copied");
+    q(
+        &c,
+        "INSERT INTO copied (n,flag,data) SELECT n,flag,data FROM (SELECT n,flag,data FROM docs)",
+    );
+    assert_eq!(
+        q(&c, "SELECT n,flag,data FROM copied ORDER BY n").rows,
+        q(&c, "SELECT n,flag,data FROM docs ORDER BY n").rows
+    );
+}

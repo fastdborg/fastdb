@@ -93,7 +93,7 @@ Keep upstream implementation files unchanged. No cloud implementation or V2/V3 f
 
 `frontend/src/select.rs` parses through the pinned SQLite AST and rewrites collection sources/field expressions. `frontend/src/functions.rs` registers static pure accessors on each private engine connection before exposing it. Scalar access rejects objects/arrays/vectors; typed projections decode the tagged value. Record ORDER BY uses canonical targets and signed integer ordering before string keys. Index candidates are selected only for simple equality/AND predicates with constant or bound keys, and the original predicate is retained for correctness. Other predicates remain engine-evaluated scans; no index use is claimed for them.
 
-The current result metadata distinguishes direct typed field projections from ordinary SQL scalar expression results. Typed values flowing through arbitrary expressions, binary literals compared to typed binary fields, mixed record/scalar ordering, complete alias resolution, and metadata snapshot races still require work before V1 semantics can freeze. Scalar DISTINCT now has initial coverage; Nonrecursive collection CTEs and aliased typed derived-table sources are now supported as described below. This does not reduce the master-plan scope.
+The current result metadata distinguishes direct typed field projections from ordinary SQL scalar expression results. Typed values flowing through arbitrary expressions, binary literals compared to typed binary fields, mixed record/scalar ordering, complete alias resolution, and metadata snapshot races still require work before V1 semantics can freeze. Scalar DISTINCT now has initial coverage; Nonrecursive collection CTEs and aliased or unnamed typed derived-table sources are now supported as described below. This does not reduce the master-plan scope.
 
 ## SQL-shaped write notes
 
@@ -1637,3 +1637,10 @@ Collection window partition correlation qualification (2026-09-08): expanded col
 
 
 Mixed-scope window qualification (2026-09-08): window partitions now have regression coverage for i.n % d.n and ordering by i.n * -d.n, combining local and correlated fields so both partition membership and ordering affect running results. Direct/derived outer collection queries match pinned native results through execute/profile across row_number(), sum and count with offsets 0–3. No production fix was needed. The complete scoped check passed formatting, Clippy, 399 Rust tests, 44 Node/application tests and strict TypeScript; one known trigger-cancellation gate remains ignored. The status overview now reflects the existing operation-scoped Node cancellation APIs. Broader scope/resource and full V1 release gates remain open.
+
+
+## Unnamed derived collection sources (2026-09-08)
+
+Supported derived collection SELECTs now receive private per-source aliases when no user alias is present. Public projection names and logical values remain intact through nesting, stars and INSERT SELECT. Unqualified names in joins resolve when every source has a known derived column list and exactly one source contains the name; ambiguous names remain rejected. Tests cover typed booleans/binary values, scalar projections, nested sources, joins, metadata, managed-name rejection and writes through execute/profile where applicable. This supersedes the earlier unaliased-source restriction; duplicate names, fetched derived projections and broader mixed-scope qualification remain open.
+
+The complete scoped check passed formatting, Clippy, 400 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream implementation files changed. Full V1 release qualification remains incomplete.

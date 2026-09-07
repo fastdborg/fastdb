@@ -1911,3 +1911,10 @@ Collection window partition correlation qualification (2026-09-08): expanded col
 
 
 Mixed-scope window qualification (2026-09-08): window partitions now have regression coverage for i.n % d.n and ordering by i.n * -d.n, combining local and correlated fields so both partition membership and ordering affect running results. Direct/derived outer collection queries match pinned native results through execute/profile across row_number(), sum and count with offsets 0–3. No production fix was needed. The complete scoped check passed formatting, Clippy, 399 Rust tests, 44 Node/application tests and strict TypeScript; one known trigger-cancellation gate remains ignored. The status overview now reflects the existing operation-scoped Node cancellation APIs. Broader scope/resource and full V1 release gates remain open.
+
+
+## Unnamed derived collection sources (2026-09-08)
+
+Supported derived collection SELECTs now receive private per-source aliases when no user alias is present. Public projection names and logical values remain intact through nesting, stars and INSERT SELECT. Unqualified names in joins resolve when every source has a known derived column list and exactly one source contains the name; ambiguous names remain rejected. Tests cover typed booleans/binary values, scalar projections, nested sources, joins, metadata, managed-name rejection and writes through execute/profile where applicable. This supersedes the earlier unaliased-source restriction; duplicate names, fetched derived projections and broader mixed-scope qualification remain open.
+
+The complete scoped check passed formatting, Clippy, 400 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream implementation files changed. Full V1 release qualification remains incomplete.

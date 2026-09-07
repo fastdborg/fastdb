@@ -411,6 +411,24 @@ impl Scope {
                 return Ok(None);
             }
             if self.sources.len() != 1 {
+                // Derived projections have a closed column set, so an unqualified
+                // column can be resolved without guessing about document fields.
+                if self.sources.iter().all(|source| source.derived.is_some()) {
+                    let mut matches = self.sources.iter().enumerate().filter(|(_, source)| {
+                        source
+                            .derived
+                            .as_ref()
+                            .unwrap()
+                            .iter()
+                            .any(|(name, _)| name.eq_ignore_ascii_case(&parts[0]))
+                    });
+                    let first = matches.next();
+                    if matches.next().is_none() {
+                        return Ok(first.and_then(|(i, source)| {
+                            source.typed_field(&parts).then_some((i, parts))
+                        }));
+                    }
+                }
                 return Err(Error::Validation(
                     "qualify fields in collection joins".into(),
                 ));
@@ -1492,17 +1510,41 @@ fn expression(sql: &str) -> Result<Expr> {
     };
     Ok(*e)
 }
+// Keep generated relation names distinct from every explicit name in this scope.
+fn anonymous_source_alias(from: &FromClause, position: usize) -> String {
+    let mut candidate = format!("__fastdb_anonymous_{position}");
+    loop {
+        let occupied = std::iter::once(&from.select)
+            .chain(from.joins.iter().map(|j| &j.table))
+            .any(|table| {
+                let name = match table.as_ref() {
+                    SelectTable::Table(name, alias, _) => Some(
+                        alias
+                            .as_ref()
+                            .map_or(name.name.as_str(), |a| a.name().as_str()),
+                    ),
+                    SelectTable::Select(_, alias) => alias.as_ref().map(|a| a.name().as_str()),
+                    _ => None,
+                };
+                name.is_some_and(|name| name.eq_ignore_ascii_case(&candidate))
+            });
+        if !occupied {
+            return candidate;
+        }
+        candidate.push('_');
+    }
+}
 fn source(
     connection: &Connection,
     table: &SelectTable,
     params: &Parameters,
     ctes: &CteSources,
     native_with: Option<&With>,
+    anonymous_alias: String,
 ) -> Result<Source> {
     if let SelectTable::Select(select, alias) = table {
-        let Some(alias) = alias else {
-            return Err(unsupported("derived collection source without alias"));
-        };
+        let generated = As::As(Name::exact(anonymous_alias));
+        let alias = alias.as_ref().unwrap_or(&generated);
         let sql = Cmd::Stmt(Stmt::Select(select.clone())).to_string();
         let plan = connection.lower_collection_select(
             &sql,
@@ -1555,7 +1597,7 @@ fn source(
             });
         }
         return Ok(Source {
-            table: table.clone(),
+            table: SelectTable::Select(select.clone(), Some(alias.clone())),
             alias: alias.name().as_str().into(),
             collection: None,
             derived: None,
@@ -2651,12 +2693,19 @@ impl Connection {
         {
             let tables = std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table));
             let mut local = Vec::new();
-            for table in tables {
+            for (position, table) in tables.enumerate() {
                 if matches!(
                     table.as_ref(),
-                    SelectTable::Table(..) | SelectTable::Select(_, Some(_))
+                    SelectTable::Table(..) | SelectTable::Select(..)
                 ) {
-                    local.push(source(self, table, params, ctes, None)?);
+                    local.push(source(
+                        self,
+                        table,
+                        params,
+                        ctes,
+                        None,
+                        anonymous_source_alias(from, position),
+                    )?);
                 }
             }
             // A local WITH may hide the logical source behind a
@@ -3077,12 +3126,13 @@ impl Connection {
                                 from: Some(from), ..
                             } = &select.body.select
                             {
-                                for table in std::iter::once(&from.select)
+                                for (position, table) in std::iter::once(&from.select)
                                     .chain(from.joins.iter().map(|j| &j.table))
+                                    .enumerate()
                                 {
                                     if matches!(
                                         table.as_ref(),
-                                        SelectTable::Table(..) | SelectTable::Select(_, Some(_))
+                                        SelectTable::Table(..) | SelectTable::Select(..)
                                     ) {
                                         resolved.push(source(
                                             self,
@@ -3090,6 +3140,7 @@ impl Connection {
                                             params,
                                             &ctes,
                                             select.with.as_ref().or(native_with),
+                                            anonymous_source_alias(from, position),
                                         )?);
                                     }
                                 }
@@ -3315,19 +3366,21 @@ impl Connection {
                 params,
                 &ctes,
                 select.with.as_ref().or(native_with),
+                anonymous_source_alias(from, 0),
             ) {
                 Ok(s) => s,
                 Err(Error::Unsupported(_)) => return Ok(None),
                 Err(e) => return Err(e),
             };
             sources.push(first);
-            for join in &from.joins {
+            for (position, join) in from.joins.iter().enumerate() {
                 match source(
                     self,
                     &join.table,
                     params,
                     &ctes,
                     select.with.as_ref().or(native_with),
+                    anonymous_source_alias(from, position + 1),
                 ) {
                     Ok(s) => sources.push(s),
                     Err(Error::Unsupported(_)) => return Ok(None),
