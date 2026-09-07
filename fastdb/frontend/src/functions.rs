@@ -52,6 +52,18 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 sql_scalar as turso_ext::ScalarFunction,
                 1,
             ),
+            // Same implementations, distinct expression identities for HAVING
+            // on the pinned engine's nonprojected function group keys.
+            (
+                c"__fastdb_having_sql_scalar",
+                sql_scalar as turso_ext::ScalarFunction,
+                1,
+            ),
+            (
+                c"__fastdb_having_scalar",
+                document_scalar as turso_ext::ScalarFunction,
+                2,
+            ),
             (c"__fastdb_helper", helper as turso_ext::ScalarFunction, -1),
             (
                 c"__fastdb_scalar",

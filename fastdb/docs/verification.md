@@ -1646,3 +1646,10 @@ The complete scoped check passed formatting, Clippy, 361 Rust tests, 44 Node/app
 
 
 Ordered grouped INSERT SELECT qualification (2026-09-07): a regression verifies SUM-expression sorting and a CHECK failure in the final sorted group for both typed collection and ordinary SQL targets. Prior transaction work survives the rejected statement; a filtered retry inserts the two valid groups, managed collection indexes remain consistent and rollback removes all transaction writes. The focused regression, formatting and focused Clippy pass. This is additional focused evidence after the recorded 361-Rust/44-Node combined check, not a new combined run. Broader write/grouping and V1 release gates remain open.
+
+
+## Function-valued HAVING group keys (2026-09-07)
+
+Extended the nonprojected document group-key workaround to native scalar function arguments. Private helper aliases use the existing document-scalar and SQL-scalar implementations, preserving binary payload behavior and replacing the earlier direct-key decode/unwrap sequence. Regressions compare lower/hex/length/typeof over text, binary and NULL through direct and derived sources against projected native-key references. A plan assertion confirms projected aggregates, including those nested in output arithmetic, keep one aggregate step. Group keys nested inside a different projected aggregate are also covered.
+
+The final complete scoped check passed formatting, Clippy, 364 Rust tests, 44 Node/application tests and strict TypeScript; one known trigger-cancellation gate remains ignored. No upstream files changed. Broader grouping/volatile-expression, correlation, resource and full V1 release qualification remain open.

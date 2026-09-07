@@ -3605,10 +3605,51 @@ impl Connection {
                 scope.sql_argument(expr)?;
                 // The pinned engine can reuse an uninitialized group-key
                 // register for a function key referenced only by HAVING.
-                // Decode from the retained document instead: these helpers
-                // produce the same scalar key without matching that expression.
-                let mut rewrite_error = None;
+                // Preserve projected expressions, including aggregate calls
+                // nested in output arithmetic, so HAVING can reuse them.
+                let mut projected_calls = std::collections::BTreeSet::new();
+                for column in columns.iter() {
+                    if let ResultColumn::Expr(value, _) = column {
+                        let mut value = *value.clone();
+                        turso_core::walk_expr_mut(&mut value, &mut |expr| {
+                            if matches!(
+                                expr,
+                                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+                            ) {
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                            // Aggregate names/arities follow the pinned engine;
+                            // scalar MIN/MAX calls must still be rewritten.
+                            let aggregate = match expr {
+                                Expr::FunctionCall { name, args, .. } => {
+                                    match name.as_str().to_ascii_lowercase().as_str() {
+                                        "min" | "max" => args.len() == 1,
+                                        "avg" | "count" | "sum" | "total" | "group_concat"
+                                        | "string_agg" | "array_agg" | "json_group_array"
+                                        | "jsonb_group_array" | "json_group_object"
+                                        | "jsonb_group_object" => true,
+                                        _ => false,
+                                    }
+                                }
+                                Expr::FunctionCallStar { name, .. } => {
+                                    name.as_str().eq_ignore_ascii_case("count")
+                                }
+                                _ => false,
+                            };
+                            if aggregate {
+                                projected_calls.insert(expr.to_string());
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                            Ok(turso_core::WalkControl::Continue)
+                        })?;
+                    }
+                }
+                // These aliases use the same implementations and retain binary
+                // payload semantics without matching the group-key expression.
                 turso_core::walk_expr_mut(expr, &mut |value| {
+                    if projected_calls.contains(&value.to_string()) {
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
                     if matches!(
                         value,
                         Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
@@ -3616,20 +3657,18 @@ impl Connection {
                         return Ok(turso_core::WalkControl::SkipChildren);
                     }
                     if let Expr::FunctionCall { name, .. } = value {
-                        if name.as_str() == "__fastdb_scalar" {
-                            *name = Name::exact("__fastdb_value".into());
-                            match expression(&format!("__fastdb_unwrap({value})")) {
-                                Ok(rewritten) => *value = rewritten,
-                                Err(error) => rewrite_error = Some(error),
+                        match name.as_str() {
+                            "__fastdb_scalar" => {
+                                *name = Name::exact("__fastdb_having_scalar".into())
                             }
-                            return Ok(turso_core::WalkControl::SkipChildren);
+                            "__fastdb_sql_scalar" => {
+                                *name = Name::exact("__fastdb_having_sql_scalar".into())
+                            }
+                            _ => {}
                         }
                     }
                     Ok(turso_core::WalkControl::Continue)
                 })?;
-                if let Some(error) = rewrite_error {
-                    return Err(error);
-                }
                 // Window source expressions retain their own name-resolution scope.
                 if !scope.sources.is_empty() {
                     scope.standalone_aliases.borrow_mut().clear();

@@ -940,3 +940,7 @@ The workaround is specific to document scalar accessors in HAVING. Broader deriv
 ## Aggregate ORDER BY expression matching (2026-09-07)
 
 ORDER BY expressions that match a native-valued collection projection now reuse that projection's lowered expression even without DISTINCT. This fixes the preceding `ORDER BY sum(n)` missing-column failure: the aggregate result is native, but its argument still requires collection-field translation. Alias and ordinal resolution keep their existing precedence. Differential execute/profile coverage includes SUM, AVG, MIN, MAX and COUNT, parenthesized expressions, aliases, ordinals and descending order. Broader grouping and expression qualification remain open.
+
+## Function-valued document group keys (2026-09-07)
+
+The HAVING workaround now uses private alternate names for the existing document-scalar and SQL-scalar implementations. This extends it to keys such as `lower(k)` while retaining raw binary payloads for SQL functions. It also replaces the prior typed-accessor/unwrap sequence for direct document keys, avoiding that extra conversion. Projected aggregate expressions, including aggregates inside output arithmetic, are retained for engine reuse; scalar multiargument MIN/MAX remain eligible for rewriting. General volatile/grouping qualification is still open.

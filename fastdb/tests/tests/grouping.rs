@@ -773,3 +773,82 @@ fn ordered_grouped_insert_failure_restores_prior_work_and_indexes() {
             .is_empty());
     }
 }
+
+#[test]
+fn having_function_keys_preserve_native_scalar_and_binary_arguments() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE baseline(k)");
+    for value in [
+        Value::String("A".into()),
+        Value::String("A".into()),
+        Value::String("b".into()),
+        Value::Binary(vec![65]),
+        Value::Null,
+    ] {
+        let params = Parameters::from([("$v".into(), value)]);
+        c.execute("INSERT INTO docs {k:$v}", &params).unwrap();
+        c.execute("INSERT INTO baseline VALUES($v)", &params)
+            .unwrap();
+    }
+    for (key, predicate) in [
+        ("lower(k)", "lower(k)='a'"),
+        ("hex(k)", "hex(k)='41'"),
+        ("length(k)", "length(k)=1"),
+        ("typeof(k)", "typeof(k)='blob'"),
+    ] {
+        let expected = q(
+            &c,
+            &format!(
+                "SELECT {key},count(*) FROM baseline GROUP BY {key} HAVING {predicate} ORDER BY 2"
+            ),
+        )
+        .rows
+        .into_iter()
+        .map(|r| vec![r[1].clone()])
+        .collect::<Vec<_>>();
+        for source in ["docs", "(SELECT k FROM docs) d"] {
+            let sql = format!(
+                "SELECT count(*) FROM {source} GROUP BY {key} HAVING {predicate} ORDER BY 1"
+            );
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn having_helper_aliases_reuse_projected_aggregates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {k:'A',n:1}");
+    q(&c, "INSERT INTO docs {k:'A',n:2}");
+    for output in ["sum(n)", "sum(n)+1"] {
+        let sql = format!("SELECT {output} FROM docs GROUP BY k HAVING sum(n)>0");
+        let plan = q(&c, &format!("EXPLAIN {sql}"));
+        assert_eq!(
+            plan.rows
+                .iter()
+                .filter(|row| row.get(1) == Some(&Value::String("AggStep".into())))
+                .count(),
+            1,
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT sum(length(k)) FROM docs GROUP BY lower(k) HAVING lower(k)='a'"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}
