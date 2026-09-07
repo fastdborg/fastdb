@@ -956,3 +956,7 @@ Expression-subquery correlation now resolves aliased derived inner sources as we
 ## Pinned outer GROUP BY reference limitation (2026-09-07)
 
 The pinned engine rejects an inner grouping key that references an outer row, for example `SELECT n,(SELECT count(*) FROM lookup l GROUP BY d.n) FROM baseline d`, with FDB_ENGINE. The same limitation occurs with derived outer sources and collection queries. This is a verified native-engine boundary, not evidence of a collection-only binding mismatch or a promise of complete SQLite compatibility. Predicate correlation remains available. Regression coverage confirms failed execute/profile/UPDATE attempts preserve prior work, valid predicate-correlated reads succeed afterward, index integrity holds and rollback restores the original rows.
+
+## Local collection CTE consumers and correlation (2026-09-07)
+
+A nonrecursive local WITH can now expose a collection source to a correlated consuming SELECT. A lowering-only probe identifies logical CTE output when the source name alone is insufficient, then qualified outer typed fields are translated in the consuming query. Tests cover single/chained CTE definitions with direct/derived outer sources, COUNT, EXISTS, IN and execute/profile. This adds planning work, not a frontend execution of the inner query. Correlation inside CTE definitions, recursive CTEs, compounds and broader scope/resource qualification remain open.

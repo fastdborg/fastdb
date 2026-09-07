@@ -1408,3 +1408,10 @@ Inner-derived correlated write qualification (2026-09-07): a multirow UPDATE use
 
 
 Pinned outer GROUP BY reference qualification (2026-09-07): native SQL and collection probes both reject inner grouping keys referencing an outer row, including direct/derived outer sources. The focused regression verifies FDB_ENGINE through execute/profile/UPDATE, preservation of prior transaction work, successful predicate-correlated reads afterward, index integrity and rollback. Formatting and focused Clippy pass. contracts.md records this pinned native limitation; it does not establish a new collection-only implementation requirement. Latest combined evidence remains 367 Rust/44 Node tests; full V1 remains incomplete.
+
+
+## Local collection CTE consumer correlation (2026-09-07)
+
+Fixed false record non-matches when a nonrecursive local WITH exposes collection fields to a correlated consuming SELECT. A lowering-only probe determines whether local CTE output is logical, including when a CTE shadows a collection name, before rewriting qualified outer typed fields. Tests cover single/chained/shadowing CTEs, direct/derived outer sources, COUNT, EXISTS, IN and execute/profile. This adds planning work without frontend execution of the inner SQL query. Correlation within CTE definitions, recursive CTEs, compounds and broader scope/resource qualification remain open.
+
+The final complete scoped check passed formatting, Clippy, 370 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; full V1 remains incomplete.

@@ -2826,10 +2826,39 @@ impl Connection {
                                     local.push(source(self, table, params, &ctes, None)?);
                                 }
                             }
-                            if inner.with.is_none()
+                            // A local WITH may hide the logical source behind a
+                            // CTE name. Probe lowering only (never execution) to
+                            // distinguish it from a wholly native inner query.
+                            let local_cte_logical =
+                                if inner.with.as_ref().is_some_and(|with| !with.recursive)
+                                    && inner.body.compounds.is_empty()
+                                {
+                                    let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
+                                    self.lower_collection_select(
+                                        &sql,
+                                        &sql,
+                                        params,
+                                        SelectOptions {
+                                            trusted: true,
+                                            nested: true,
+                                            positional: exists,
+                                            expression_subquery: true,
+                                            ctes: Some(&ctes),
+                                            ..Default::default()
+                                        },
+                                    )?
+                                    .is_some()
+                                } else {
+                                    false
+                                };
+                            if inner.with.as_ref().is_none_or(|with| !with.recursive)
                                 && inner.body.compounds.is_empty()
                                 && local.len() == 1 + from.joins.len()
-                                && local.iter().any(Source::logical)
+                                && if inner.with.is_some() {
+                                    local_cte_logical
+                                } else {
+                                    local.iter().any(Source::logical)
+                                }
                             {
                                 let scope = Scope {
                                     qualified_only: true,

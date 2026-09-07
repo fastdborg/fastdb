@@ -3355,3 +3355,49 @@ fn pinned_outer_group_key_rejection_preserves_transaction_work() {
         );
     }
 }
+
+#[test]
+fn local_collection_cte_consumers_correlate_outer_records() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1,v:[1]}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+    ] {
+        q(&c, sql);
+    }
+    for outer in ["docs d", "(SELECT id,n,v FROM docs) d"] {
+        for definitions in [
+            "x AS (SELECT owner,n FROM links)",
+            "seed AS (SELECT owner,n FROM links),x AS (SELECT owner,n FROM seed)",
+            "docs AS (SELECT owner,n FROM links),x AS (SELECT owner,n FROM docs)",
+        ] {
+            let inner = format!("WITH {definitions} SELECT count(*) FROM x WHERE x.owner=d.id");
+            let sql = format!("SELECT n,({inner}) FROM {outer} ORDER BY n");
+            let expected = vec![
+                vec![Value::Integer(1), Value::Integer(1)],
+                vec![Value::Integer(2), Value::Integer(0)],
+            ];
+            assert_eq!(q(&c, &sql).rows, expected);
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+            for predicate in [
+                format!("EXISTS(WITH {definitions} SELECT 1 FROM x WHERE x.owner=d.id)"),
+                format!("d.id IN(WITH {definitions} SELECT x.owner FROM x WHERE x.n>d.n)"),
+            ] {
+                assert_eq!(
+                    q(&c, &format!("SELECT n FROM {outer} WHERE {predicate}")).rows,
+                    vec![vec![Value::Integer(1)]]
+                );
+            }
+        }
+    }
+}
