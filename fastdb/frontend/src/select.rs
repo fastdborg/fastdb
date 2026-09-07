@@ -158,6 +158,11 @@ impl Scope {
         if matches!(expr, Expr::Subquery(_)) {
             if let Some((lowered, consumed, _)) = self.expression_subqueries.get(&expr.to_string())
             {
+                for name in consumed {
+                    if !self.params.contains_key(name) {
+                        return Err(Error::Parameter(name.clone()));
+                    }
+                }
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
                 *expr = lowered.clone();
                 return Ok(true);
@@ -2087,6 +2092,7 @@ impl Connection {
         // original AST spelling so aliases and repeated lowering probes retain
         // type/parameter metadata; each occurrence still belongs to the engine.
         let mut expression_subqueries = ExpressionSubqueries::new();
+        let mut native_scalar_subqueries = ExpressionSubqueries::new();
         let mut subquery_error = None;
         let mut inputs = Vec::new();
         match &select.body.select {
@@ -2203,6 +2209,21 @@ impl Connection {
                             };
                             expression_subqueries
                                 .insert(expr.to_string(), (lowered, plan.consumed, column));
+                        } else if !exists && !membership {
+                            native_scalar_subqueries.insert(
+                                expr.to_string(),
+                                (
+                                    expression(&format!("__fastdb_pack({expr})"))?,
+                                    fastql_parser::tokenize(&sql)?
+                                        .into_iter()
+                                        .filter(|token| {
+                                            token.kind == fastql_parser::Kind::Parameter
+                                        })
+                                        .map(|token| token.text.to_owned())
+                                        .collect(),
+                                    false,
+                                ),
+                            );
                         }
                         Ok(())
                     })();
@@ -2380,6 +2401,9 @@ impl Connection {
         {
             return Ok(None);
         }
+        // Native scalar queries do not opt an ordinary SQL statement into
+        // logical lowering; preserve their values only once that route is chosen.
+        expression_subqueries.extend(native_scalar_subqueries);
         let distinct = !sources.is_empty() && matches!(distinctness, Some(Distinctness::Distinct));
         if distinct {
             *distinctness = None;

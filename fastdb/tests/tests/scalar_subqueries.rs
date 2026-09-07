@@ -838,3 +838,50 @@ fn pagination_errors_preserve_prior_transaction_work_and_scope() {
         0
     );
 }
+
+#[test]
+fn native_scalar_sources_project_into_collection_queries() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2)");
+    q(&c, "CREATE TABLE native(n INTEGER,b BLOB)");
+    q(
+        &c,
+        "INSERT INTO native VALUES (3,x'464442000102'),(4,x'ff')",
+    );
+    assert_eq!(q(&c, "SELECT n,(SELECT max(n) FROM native) AS maximum,(SELECT b FROM native ORDER BY n LIMIT 1) AS bytes,(SELECT n FROM native WHERE n=99) AS missing FROM docs ORDER BY n").rows,
+        vec![vec![Value::Integer(1),Value::Integer(4),Value::Binary(vec![70,68,66,0,1,2]),Value::Null],vec![Value::Integer(2),Value::Integer(4),Value::Binary(vec![70,68,66,0,1,2]),Value::Null]]);
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs WHERE n<(SELECT min(n) FROM native) ORDER BY n"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        c.execute(
+            "SELECT (SELECT b FROM native WHERE n=$n) AS b FROM docs LIMIT 1",
+            &Parameters::from([("$n".into(), Value::Integer(4))])
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::Binary(vec![255])]]
+    );
+    assert!(c
+        .execute(
+            "SELECT (SELECT n,b FROM native) AS v FROM docs",
+            &Parameters::new()
+        )
+        .is_err());
+    q(&c, "CREATE TABLE target");
+    q(&c, "INSERT INTO target(n,b) SELECT (SELECT max(n) FROM native),(SELECT b FROM native ORDER BY n LIMIT 1) FROM docs LIMIT 1");
+    assert_eq!(
+        q(&c, "SELECT n,b FROM target").rows,
+        vec![vec![
+            Value::Integer(4),
+            Value::Binary(vec![70, 68, 66, 0, 1, 2])
+        ]]
+    );
+}

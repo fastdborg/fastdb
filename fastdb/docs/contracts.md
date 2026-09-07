@@ -713,3 +713,9 @@ A transaction regression checks NULL, fractional, invalid-text and outer-field-d
 The compound/subquery interruption regression now includes LIMIT and OFFSET scalar sources for plain and UNION queries. Thirty-two new cases cover read/collection-insert execution, callback thresholds two/four and autocommit/explicit transactions. Each requires FDB_CANCELLED at the exact threshold, no returned partial rowset, empty target/index state, intact source documents and prior transaction work, and exact successful retry; explicit transactions also verify final rollback. The complete matrix now covers ninety-six cases.
 
 OFFSET probes use distinct row-dependent callback arguments to reach both cancellation thresholds; repeating an identical callback expression did not reach the fourth-call threshold in the diagnostic. This is source-phase cancellation evidence. Trigger after-write interruption remains a separate unresolved release gate, and per-operation cancellation, hard resource caps and platform qualification remain incomplete.
+
+## Native scalar sources in logical queries (2026-09-07)
+
+A native-only scalar SELECT can now supply a value inside a collection/logical SELECT without being traversed as an outer document expression. The frontend packs its native result at the typed boundary after selecting logical lowering; a native-only scalar source does not itself opt ordinary SQL into that route. Initial tests cover INTEGER, TEXT and encoded-looking BLOB values, empty-result NULL, named parameters, filtering, multi-column rejection and collection INSERT SELECT. Both Node clients project a native-table scalar result through a collection query.
+
+This does not establish general native EXISTS/IN support inside logical expressions, correlated collection access, logical VALUES coverage or complete mixed-affinity/collation equivalence. Those and broader resource/platform qualification remain open. No upstream source or persisted-format changes.
