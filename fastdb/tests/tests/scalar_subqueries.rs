@@ -2352,7 +2352,7 @@ fn correlated_distinct_numeric_equality_matches_native() {
             q(&c, sql);
         }
         q(&c, &format!("INSERT INTO lookup VALUES{inputs}"));
-        for order in ["x", "x,n", "x DESC,n"] {
+        for order in ["x", "x,n", "x DESC,n", "n", "n DESC"] {
             for offset in 0..4 {
                 let source=format!("SELECT DISTINCT CASE WHEN d.n>0 THEN n ELSE d.n END AS x FROM lookup ORDER BY {order} LIMIT 1 OFFSET {offset}");
                 for expr in [format!("({source})"), format!("d.n IN ({source})")] {
@@ -2755,6 +2755,43 @@ fn correlated_float_pagination_preserves_reused_parameter_type() {
                 c.profile_select(&sql, &params).unwrap().result.rows,
                 expected,
                 "profile {sql}, count={count}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unsorted_correlated_distinct_exhausts_logical_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "INSERT INTO native VALUES(1),(2)",
+        "INSERT INTO lookup VALUES(1),(1.0),(2),(2.0),(NULL),(NULL)",
+    ] {
+        q(&c, sql);
+    }
+    // No ordering is promised; after three logical values every page is empty.
+    for offset in [3, 4, 6] {
+        let source = format!("SELECT DISTINCT CASE WHEN d.n>0 THEN n ELSE d.n END FROM lookup LIMIT 1 OFFSET {offset}");
+        for expr in [
+            format!("({source})"),
+            format!("d.n IN ({source})"),
+            format!("EXISTS ({source})"),
+        ] {
+            let expected = q(&c, &format!("SELECT {expr} FROM native d ORDER BY d.n")).rows;
+            let sql = format!("SELECT {expr} FROM docs d ORDER BY d.n");
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "profile {sql}"
             );
         }
     }

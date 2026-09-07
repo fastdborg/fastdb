@@ -1214,3 +1214,12 @@ Task transaction cleanup qualification (2026-09-07): simulated statement failure
 A multirow collection UPDATE regression exercises NFKD expansion beyond the bundled output limit. The failure leaves documents and managed indexes intact, but the pinned engine rolls back the entire active transaction, including earlier ordinary-table writes; execute_report observes active → autocommit. An ordinary-table SELECT invoking the same helper confirms this transaction disposition. This is a helper-query comparison, not ordinary UPDATE namespace support. A valid retry in a new transaction succeeds, and explicit rollback restores the original collection values with a clean integrity audit.
 
 The preceding complete scoped check passed 330 Rust tests and 42 Node/application tests, formatting, Clippy and strict TypeScript, with one known trigger-interruption gate ignored. The additional overflow regression passed separately with all three bundled integration tests and focused Clippy. Broader QuickJS runtime/platform/performance qualification and full V1 remain open.
+
+
+## Correlated DISTINCT independent of projection sorting (2026-09-07)
+
+Single-column correlated typed DISTINCT now uses logical-value grouping even when ORDER BY refers only to a native source column or is absent. Previously this boundary was enabled only by a sort naming the typed projection alias/ordinal, allowing integer 1 and real 1.0 to survive as separate rows and produce incorrect pagination. The existing lazy projection boundary retains typed representatives and excludes hidden sort keys from equality.
+
+Native differential scalar/membership tests now cover ascending and descending source-column ordering with numeric equivalents and duplicate NULLs. An unordered scalar/IN/EXISTS regression checks exhaustion after all three logical values through execute and profile_select without asserting an unspecified row order. Broader correlation, collation/type/resource qualification and full V1 remain open.
+
+Verification: the complete scoped check passed 332 Rust tests, 42 Node/application tests, formatting, Clippy and strict TypeScript. One known trigger-interruption gate remains ignored. No upstream core files changed.

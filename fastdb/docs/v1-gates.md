@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-07
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 330 passing Rust tests with one ignored trigger-cancellation gate, 42 passing Node/application tests, formatting, Clippy and strict TypeScript. Later focused checks are recorded below and in verification.md. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 332 passing Rust tests with one ignored trigger-cancellation gate, 42 passing Node/application tests, formatting, Clippy and strict TypeScript. Later focused checks are recorded below and in verification.md. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -129,3 +129,6 @@ Node exactlyOne now exposes FDB_CARDINALITY with completed-statement transaction
 
 
 Node FastDBError and isFastDBError now support runtime recognition and safe narrowing of caught unknown errors, with optional transaction observations. All 40 Node/application tests, strict TypeScript and installed-package guard/declaration checks pass. Broader error and release qualification remains open.
+
+
+Correlated single-column typed DISTINCT now deduplicates logical values independently of projection-alias sorting, correcting source-column pagination and unordered result exhaustion. Native differential execute/profile coverage and the full scoped check pass: 332 Rust tests, 42 Node/application tests, formatting, Clippy and strict TypeScript; one known trigger gate remains ignored. Broader correlation/type/resource and release gates remain open.

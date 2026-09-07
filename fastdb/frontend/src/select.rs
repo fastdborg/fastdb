@@ -236,7 +236,15 @@ fn native_correlated_predicate(
             Ok(turso_core::WalkControl::Continue)
         })?;
     }
-    if single_projection && selected_sorts > 0 {
+    let typed_distinct = !typed_sort_values.is_empty()
+        && matches!(
+            &inner.body.select,
+            OneSelect::Select {
+                distinctness: Some(Distinctness::Distinct),
+                ..
+            }
+        );
+    if single_projection && (selected_sorts > 0 || typed_distinct) {
         // Keep the projected value available to sorting without evaluating it
         // twice. OFFSET prevents flattening; a lazy CTE preserves LIMIT 0.
         // DISTINCT belongs outside this boundary so hidden sort keys cannot
