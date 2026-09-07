@@ -1120,3 +1120,8 @@ Counters exclude catalog/schema/savepoint helpers, decoding and transport. They 
 ## Installed Node target-counter qualification — 2026-09-07
 
 `node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-fetch-profile.log`). The tarball was installed offline into a temporary consumer; sync and worker fetch profiles verified bigint target counters and fetched values, and strict TypeScript checked the installed declarations. Existing reopen, vector, cancellation and addon-load failure probes also passed. Report: Linux x64, Node 24.19.0, eight runtime files, 59,564,850 packed bytes. Temporary files were removed by the harness. No production changes; prior 287 Rust / 33 Node scoped evidence remains applicable.
+
+
+## Fetch-profile interruption qualification — 2026-09-07
+
+`cargo test --locked -p fastdb --lib links::tests` passed all three tests (`/tmp/fastdb-fetch-profile-interrupt.log`). The new test counts VM progress for a 130-target/two-batch profile and injects one-shot interrupts at step 1, quarter/half/three-quarter progress and one step before measured completion, under autocommit and active transaction modes. Every case fired, returned FDB_CANCELLED, preserved state/data and allowed equal rows/counters on retry; outer rollback removed prior uncommitted work. Scoped frontend Clippy and formatting passed. Production code is unchanged; no full-suite or Node rebuild repeated. Current distinct Rust coverage is 288, with the existing known ignored gate. These progress thresholds do not prove fixed latency or every engine phase.

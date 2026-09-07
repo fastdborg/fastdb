@@ -846,3 +846,8 @@ Verification passed formatting, scoped Clippy, 287 Rust tests, thirty-three Node
 ## Installed Node fetch profiling smoke (2026-09-07)
 
 The offline Node package consumer now checks installed sync/worker fetch profiles: deduplicated target counters, bigint transport, lossless fetched int64 values and active transaction observations. Installed TypeScript declarations expose all three target counters as bigint. The complete package smoke passed on Linux x64 / Node 24.19.0 with eight runtime files and a 59,564,850-byte development tarball. This does not establish release prebuild or additional-platform support.
+
+
+## Fetch-profile interruption sweep (2026-09-07)
+
+A real-engine regression measures total VM progress for a 130-target/two-batch fetch profile, then interrupts at five progress thresholds in both autocommit and an existing transaction. All ten cases return FDB_CANCELLED, retain transaction state and prior collection data, and permit exact result/counter retry; outer rollback remains effective. Thresholds span the measured workflow and are not labels for specific target/compiler/cleanup phases or a cancellation-latency guarantee. All three link unit tests passed; prior 287 Rust / 33 Node scoped evidence remains, plus one new distinct Rust regression.

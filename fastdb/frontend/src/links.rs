@@ -302,6 +302,92 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_fetch_profiles_preserve_prior_work_and_retry_counters() {
+        use std::sync::{atomic::AtomicBool, Arc};
+        for outer in [false, true] {
+            let db = crate::Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            let params = crate::Parameters::new();
+            c.execute("CREATE TABLE docs", &params).unwrap();
+            c.execute("CREATE TABLE positions(n INTEGER PRIMARY KEY)", &params)
+                .unwrap();
+            c.execute("BEGIN", &params).unwrap();
+            for n in 0..130 {
+                c.execute(
+                    &format!("INSERT INTO docs {{id:type::record('docs',{n}),n:{n}}}"),
+                    &params,
+                )
+                .unwrap();
+                c.execute(&format!("INSERT INTO positions VALUES({n})"), &params)
+                    .unwrap();
+            }
+            c.execute("COMMIT", &params).unwrap();
+            if outer {
+                c.execute("BEGIN", &params).unwrap();
+                c.execute("INSERT INTO docs {id:docs:prior,n:999}", &params)
+                    .unwrap();
+            }
+            let state = c.transaction_state();
+            let sql = "SELECT record::fetch(type::record('docs',n)) FROM positions ORDER BY n";
+            let steps = Arc::new(AtomicUsize::new(0));
+            let count = steps.clone();
+            c.engine.set_progress_handler(
+                1,
+                Some(Box::new(move || {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    false
+                })),
+            );
+            let baseline = c.profile_select(sql, &params);
+            c.engine.set_progress_handler(0, None);
+            let baseline = baseline.unwrap();
+            assert_eq!(baseline.metrics.fetch_batches, 2);
+            let total = steps.load(Ordering::SeqCst);
+            assert!(total > 100);
+            for stop in [1, total / 4, total / 2, total * 3 / 4, total - 1] {
+                let ticks = Arc::new(AtomicUsize::new(0));
+                let fired = Arc::new(AtomicBool::new(false));
+                let tick = ticks.clone();
+                let flag = fired.clone();
+                c.engine.set_progress_handler(
+                    1,
+                    Some(Box::new(move || {
+                        tick.fetch_add(1, Ordering::SeqCst) + 1 >= stop
+                            && !flag.swap(true, Ordering::SeqCst)
+                    })),
+                );
+                let result = c.profile_select(sql, &params);
+                c.engine.set_progress_handler(0, None);
+                assert!(fired.load(Ordering::SeqCst), "stop {stop}/{total}");
+                assert_eq!(
+                    result.unwrap_err().code(),
+                    "FDB_CANCELLED",
+                    "stop {stop}/{total}, outer={outer}"
+                );
+                assert_eq!(c.transaction_state(), state);
+                let retry = c.profile_select(sql, &params).unwrap();
+                assert_eq!(retry.result.rows, baseline.result.rows);
+                assert_eq!(retry.metrics, baseline.metrics);
+                assert_eq!(
+                    c.check_collection_integrity("docs", Default::default())
+                        .unwrap()
+                        .documents,
+                    if outer { 131 } else { 130 }
+                );
+            }
+            if outer {
+                c.execute("ROLLBACK", &params).unwrap();
+            }
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .documents,
+                130
+            );
+        }
+    }
+
+    #[test]
     fn target_budget_failure_stops_engine_evaluation_before_later_rows() {
         let db = crate::Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();
