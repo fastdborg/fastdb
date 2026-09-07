@@ -1084,3 +1084,8 @@ Ran `node fastdb/scripts/bench-transfer.cjs` three times against clean implement
 ## Forward-fetch encoded-value limits — 2026-09-07
 
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-fetch-budget-check.log`): formatting, scoped Clippy, 284 Rust tests, 32 Node tests and strict TypeScript; one known trigger-interruption gate ignored. The new real-engine unit regression uses private adjustable byte thresholds to check exact acceptance and one-byte-short rejection for collection and native targets with Unicode and duplicate expansion, plus null/empty output, retained active work, retry and outer rollback. Existing forward-link snapshot and query tests remain enabled. The 64 MiB limit counts logical tagged JSON value bytes separately for retained targets and expanded output. Current engine batches, reference keys, containers and outer-query materialization remain outside this accounting.
+
+
+## Incremental forward-fetch target rows — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-fetch-stream-check.log`): formatting, scoped Clippy, 284 Rust tests, 32 Node tests and strict TypeScript; one known trigger-interruption gate ignored. Existing exact-byte-limit tests now exercise callback failure propagation for both collection and relational targets, including retained active work, retry and rollback. Existing multi-batch, order/duplicate and snapshot tests remain enabled. Collection/native target queries retain their 128-key grouping but no longer collect whole result batches before budget checks. No API, encoding or total-memory guarantee changed.

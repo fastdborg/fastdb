@@ -810,3 +810,10 @@ Three runs of the unchanged transfer harness against clean implementation 8e7b58
 Each forward resolver invocation now bounds retained fetched values and duplicate-expanded output separately to 64 MiB of tagged Value JSON bytes. Serialization counts into a writer without allocating encoded copies; output accounting completes before cloning documents. Nulls and repeated references count per output position. Exact-boundary tests cover collection/native targets, Unicode, duplicates, empty/null output, FDB_LIMIT, retained active work, successful retry and rollback. Reference keys, container overhead, current engine chunks and outer-query materialization are not included, so this is not a total-memory cap. Each SQL fetch projection has its own resolver invocation.
 
 Scoped checks passed formatting, Clippy, 284 Rust tests, thirty-two Node tests and strict TypeScript. One trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Incremental forward-fetch target reads (2026-09-07)
+
+Collection and native target batches now use engine row callbacks instead of collecting every target row before decoding and charging the byte budget. A budget/decoding failure stops iteration and preserves its frontend error through statement drop and atomic cleanup. The prior full-chunk memory caveat is reduced to the current row, although engine allocations, reference/container overhead and outer-query materialization still prevent a total-memory guarantee. Existing tests exercise exact budget failures/retries in active transactions and the multi-batch order/duplicate/snapshot contracts.
+
+Scoped checks passed formatting, Clippy, 284 Rust tests, thirty-two Node tests and strict TypeScript. One trigger-interruption gate remains ignored; full V1 remains incomplete.

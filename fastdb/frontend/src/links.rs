@@ -87,21 +87,25 @@ impl Connection {
                             .iter()
                             .map(|(id, _)| EngineValue::Blob(id.clone()))
                             .collect::<Vec<_>>();
-                        let rows = self.run(
-                            &format!(
-                                "SELECT id,doc FROM {} WHERE id IN ({slots})",
-                                quote(&collection.storage)
-                            ),
-                            &params,
-                        )?;
-                        for row in rows {
+                        let mut statement = self.prepare(format!(
+                            "SELECT id,doc FROM {} WHERE id IN ({slots})",
+                            quote(&collection.storage)
+                        ))?;
+                        for (i, value) in params.into_iter().enumerate() {
+                            statement.bind_at(
+                                std::num::NonZeroUsize::new(i + 1).expect("one based"),
+                                value,
+                            )?;
+                        }
+                        visit_target_rows(&mut statement, |row| {
                             let EngineValue::Blob(id) = &row[0] else {
                                 return Err(Error::Storage("invalid fetched id".into()));
                             };
                             let value = Value::Object(crate::decode_document(&row[1])?);
                             let bytes = budget.charge(&value)?;
                             found.insert(id.clone(), (value, bytes));
-                        }
+                            Ok(())
+                        })?;
                     }
                 }
                 Err(Error::NotFound(_)) => {
@@ -176,7 +180,7 @@ impl Connection {
                         let names = (0..statement.num_columns())
                             .map(|i| statement.get_column_name(i).into_owned())
                             .collect::<Vec<_>>();
-                        for row in crate::collect_rows(&mut statement)? {
+                        visit_target_rows(&mut statement, |row| {
                             let doc = names
                                 .iter()
                                 .cloned()
@@ -195,7 +199,8 @@ impl Connection {
                             let value = Value::Object(doc);
                             let bytes = budget.charge(&value)?;
                             found.insert(id, (value, bytes));
-                        }
+                            Ok(())
+                        })?;
                     }
                 }
                 Err(e) => return Err(e),
@@ -222,6 +227,29 @@ impl Connection {
             })
             .collect())
     }
+}
+
+// Preserve frontend budget/decoding errors while interrupting engine iteration.
+// The caller drops the statement before its enclosing atomic scope cleans up.
+fn visit_target_rows(
+    statement: &mut turso_core::Statement,
+    mut visit: impl FnMut(Vec<EngineValue>) -> Result<()>,
+) -> Result<()> {
+    let mut failure = None;
+    let execution = crate::parser_stack(|| {
+        statement.run_with_row_callback(|row| {
+            if let Err(error) = visit(row.get_values().cloned().collect()) {
+                failure = Some(error);
+                return Err(turso_core::LimboError::Interrupt);
+            }
+            Ok(())
+        })
+    });
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    execution?;
+    Ok(())
 }
 
 #[cfg(test)]
