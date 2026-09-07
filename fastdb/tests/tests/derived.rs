@@ -482,3 +482,42 @@ fn derived_collection_joins_resolve_relational_columns() {
         )
         .is_err());
 }
+
+#[test]
+fn relational_join_metadata_refreshes_after_schema_change() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE labels(m INTEGER,label TEXT)");
+    q(&c, "INSERT INTO labels VALUES(1,'A')");
+    let sql = "SELECT n,label FROM (SELECT n FROM docs) JOIN labels ON n=m";
+    let expected = vec![vec![Value::Integer(1), Value::String("A".into())]];
+    assert_eq!(q(&c, sql).rows, expected);
+    q(&c, "ALTER TABLE labels ADD COLUMN n INTEGER");
+    assert!(matches!(
+        c.execute(sql, &Parameters::new()),
+        Err(fastdb::Error::Validation(_))
+    ));
+    assert!(matches!(
+        c.profile_select(sql, &Parameters::new()),
+        Err(fastdb::Error::Validation(_))
+    ));
+    let qualified = "SELECT d.n,label FROM (SELECT n FROM docs) d JOIN labels l ON d.n=l.m";
+    assert_eq!(q(&c, qualified).rows, expected);
+    q(&c, "CREATE VIEW label_view AS SELECT m,label FROM labels");
+    let view_sql = sql.replace("JOIN labels", "JOIN label_view");
+    assert_eq!(q(&c, &view_sql).rows, expected);
+    q(&c, "DROP VIEW label_view");
+    q(&c, "CREATE VIEW label_view AS SELECT m,label,n FROM labels");
+    assert!(matches!(
+        c.execute(&view_sql, &Parameters::new()),
+        Err(fastdb::Error::Validation(_))
+    ));
+    q(&c, "DROP VIEW label_view");
+    q(&c, "CREATE VIEW label_view AS SELECT m,label FROM labels");
+    assert_eq!(
+        c.profile_select(&view_sql, &Parameters::new())
+            .unwrap()
+            .result
+            .rows,
+        expected
+    );
+}

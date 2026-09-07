@@ -1996,3 +1996,6 @@ The complete scoped check passed formatting, Clippy, 406 Rust tests, 44 Node/app
 
 
 Direct relational join ambiguity and NULL qualification (2026-09-08): expanded the table/view join regression with unmatched LEFT JOIN rows, explicit typed/NULL expected values, colliding column-name rejection through execute/profile and valid retry after rejection. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 406 Rust/44 Node tests; broader name-resolution/scope/resource and full V1 gates remain open.
+
+
+Relational join metadata refresh qualification (2026-09-08): a new regression verifies that ALTER TABLE adding a colliding column changes a formerly valid unqualified join into an ambiguity error through execute/profile, while explicit qualification succeeds. Dropping/recreating a view changes its exposed column set on the next query, and restoring the original projection permits retry. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 406 Rust/44 Node tests; this adds one distinct test after that run. Concurrent schema changes, broader scope/resource and full V1 gates remain open.
