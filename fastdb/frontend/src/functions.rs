@@ -585,6 +585,20 @@ mod between_tests {
             assert_eq!(rows.len(), expected, "{source}");
             assert_eq!(CALLS.load(Ordering::SeqCst), 2, "{source}");
         }
+        c.execute(
+            "CREATE TABLE exists_native(n INTEGER)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO exists_native VALUES (1),(2)",
+            &crate::Parameters::new(),
+        )
+        .unwrap();
+        CALLS.store(0, Ordering::SeqCst);
+        let rows = c.execute("SELECT EXISTS (SELECT between_tick() FROM exists_native) AS present FROM scalar_inputs", &crate::Parameters::new()).unwrap().rows;
+        assert_eq!(rows, vec![vec![Value::Integer(1)]; 2]);
+        assert_eq!(CALLS.load(Ordering::SeqCst), 0);
         for inner in [
             "between_tick() FROM scalar_inputs",
             "n FROM scalar_inputs WHERE between_tick()=7",

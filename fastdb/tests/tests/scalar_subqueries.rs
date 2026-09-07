@@ -885,3 +885,70 @@ fn native_scalar_sources_project_into_collection_queries() {
         ]]
     );
 }
+
+#[test]
+fn native_exists_sources_filter_collections_and_validate_bindings() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES (1),(2)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES (1),(2)");
+    for inner in [
+        "SELECT * FROM native",
+        "SELECT n,n FROM native WHERE n=99",
+        "SELECT count(*) FROM native WHERE n=99",
+        "SELECT n FROM native LIMIT 0",
+        "SELECT n FROM native LIMIT 1 OFFSET 2",
+    ] {
+        let sql = format!("SELECT n,EXISTS ({inner}) AS present,NOT EXISTS ({inner}) AS absent FROM docs ORDER BY n");
+        assert_eq!(
+            q(&c, &sql).rows,
+            q(&c, &sql.replace("FROM docs", "FROM native")).rows,
+            "{sql}"
+        );
+    }
+    let sql = "SELECT n FROM docs WHERE EXISTS (SELECT n FROM native WHERE n=$n) ORDER BY n";
+    assert_eq!(
+        c.execute(sql, &Parameters::from([("$n".into(), Value::Integer(2))]))
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    q(&c, "CREATE TABLE target");
+    q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO target {id:target:prior,n:9}");
+    let prior = q(&c, "SELECT id,n FROM target").rows;
+    assert!(c
+        .execute(&format!("INSERT INTO target(n) {sql}"), &Parameters::new())
+        .is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(q(&c, "SELECT id,n FROM target").rows, prior);
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        1
+    );
+    c.execute(
+        &format!("INSERT INTO target(n) {sql}"),
+        &Parameters::from([("$n".into(), Value::Integer(2))]),
+    )
+    .unwrap();
+    assert_eq!(
+        q(&c, "SELECT n FROM target ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(9)]
+        ]
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

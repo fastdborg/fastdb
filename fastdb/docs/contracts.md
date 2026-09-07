@@ -719,3 +719,9 @@ OFFSET probes use distinct row-dependent callback arguments to reach both cancel
 A native-only scalar SELECT can now supply a value inside a collection/logical SELECT without being traversed as an outer document expression. The frontend packs its native result at the typed boundary after selecting logical lowering; a native-only scalar source does not itself opt ordinary SQL into that route. Initial tests cover INTEGER, TEXT and encoded-looking BLOB values, empty-result NULL, named parameters, filtering, multi-column rejection and collection INSERT SELECT. Both Node clients project a native-table scalar result through a collection query.
 
 This does not establish general native EXISTS/IN support inside logical expressions, correlated collection access, logical VALUES coverage or complete mixed-affinity/collation equivalence. Those and broader resource/platform qualification remain open. No upstream source or persisted-format changes.
+
+## Native EXISTS sources in logical queries (2026-09-07)
+
+Native-only EXISTS/NOT EXISTS sources now remain native expressions inside collection/logical SELECTs. They do not independently opt ordinary SQL into logical lowering. The typed boundary validates their bound parameters before collection writes. Differential cases cover stars, multiple projections, empty sources, count aggregates and inner LIMIT/OFFSET. Missing-parameter insertion preserves prior IDs/values, index integrity and transaction state; corrected retry and final rollback succeed. A callback regression checks that unused native EXISTS projections are not evaluated, and both Node clients exercise a bound native EXISTS projection.
+
+Native IN sources, correlated collection references, broader CTE/alias behavior and resource/platform qualification remain unfinished. No upstream implementation or persisted-format changes.
