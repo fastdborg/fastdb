@@ -1819,3 +1819,6 @@ Indexed positional binary qualification (2026-09-08): a new regression stores a 
 
 
 Mixed binary compound write qualification (2026-09-08): expanded the shared-binding UNION ALL regression with INSERT SELECT into relational and collection targets. The same binary parameter selects an indexed document row and native BLOB row, and both target kinds preserve both binary results. A unique collection-key failure restores prior transaction work and removes the statement's index entry; outer rollback leaves both targets empty. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 420 Rust/46 Node tests; broader write/binding/resource and full V1 release gates remain open.
+
+
+Native subquery binary binding qualification (2026-09-08): a new native-reference regression covers raw binary parameters in uncorrelated and correlated scalar subqueries and correlated EXISTS expressions. Execute/profile preserve the binary result and unmatched scalar NULL; EXISTS is explicitly cast to INTEGER for native result comparison. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 420 Rust/46 Node tests; recent additions have focused evidence only. Broader correlation/binding/resource and full V1 release gates remain open.

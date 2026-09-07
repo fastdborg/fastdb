@@ -1025,3 +1025,46 @@ fn indexed_binary_parameters_preserve_record_separation() {
         );
     }
 }
+
+#[test]
+fn native_subqueries_preserve_binary_parameters() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE native(n INTEGER,data BLOB)");
+    let bytes = Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec());
+    let params = Parameters::from([("$data".into(), bytes)]);
+    c.execute("INSERT INTO native VALUES(1,$data)", &params)
+        .unwrap();
+    for expression in [
+        "(SELECT data FROM native WHERE data=$data)",
+        "(SELECT data FROM native WHERE data=$data AND n=d.n)",
+        "EXISTS (SELECT 1 FROM native WHERE data=$data AND n=d.n)",
+    ] {
+        let sql =
+            format!("SELECT d.n,{expression} AS found FROM (SELECT n FROM docs) d ORDER BY d.n");
+        let expected = c
+            .execute(&sql.replace("FROM docs", "FROM baseline"), &params)
+            .unwrap()
+            .rows;
+        // EXISTS is a typed Boolean in logical queries; compare it numerically.
+        let logical = if expression.starts_with("EXISTS") {
+            sql.replace(
+                &format!("{expression} AS found"),
+                &format!("CAST({expression} AS INTEGER) AS found"),
+            )
+        } else {
+            sql.clone()
+        };
+        assert_eq!(
+            c.execute(&logical, &params).unwrap().rows,
+            expected,
+            "{logical}"
+        );
+        assert_eq!(
+            c.profile_select(&logical, &params).unwrap().result.rows,
+            expected,
+            "{logical}"
+        );
+    }
+}
