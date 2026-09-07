@@ -530,6 +530,10 @@ mod between_tests {
         let rows = c.execute("WITH v(id) AS MATERIALIZED (VALUES (type::record('docs',between_tick())),(type::record('docs',between_tick()))) SELECT record::id(a.id),record::id(b.id) FROM v a JOIN v b ON 1", &crate::Parameters::new()).unwrap().rows;
         assert_eq!(rows, vec![vec![Value::Integer(7), Value::Integer(7)]; 4]);
         assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+        CALLS.store(0, Ordering::SeqCst);
+        let rows = c.execute("WITH v(id) AS MATERIALIZED (VALUES (type::record('docs',between_tick())),(type::record('docs',between_tick()))) SELECT record::id(id) FROM v UNION ALL SELECT record::id(id) FROM v", &crate::Parameters::new()).unwrap().rows;
+        assert_eq!(rows, vec![vec![Value::Integer(7)]; 4]);
+        assert_eq!(CALLS.load(Ordering::SeqCst), 2);
         c.execute(
             "CREATE TABLE native_between(value INTEGER)",
             &crate::Parameters::new(),

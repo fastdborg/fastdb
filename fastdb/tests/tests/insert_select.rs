@@ -97,7 +97,7 @@ fn unsupported_source_clauses_never_silently_insert_a_prefix() {
     q(&c, "CREATE TABLE dst");
     assert!(c
         .execute(
-            "INSERT INTO dst (n) VALUES (1) UNION ALL SELECT 2",
+            "INSERT INTO dst (n) VALUES (1) UNION SELECT 2",
             &Parameters::new()
         )
         .is_err());

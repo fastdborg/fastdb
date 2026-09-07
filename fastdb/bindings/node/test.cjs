@@ -370,6 +370,8 @@ test('typed VALUES CTEs preserve mixed values and atomic inserts in both clients
       const input = {$id:id, $data:data, $flag:true, $array:[1n,null]};
       const result = await db.execute('WITH v(n,x) AS (VALUES (1,$id),(2,$data),(3,$flag),(4,$array),(5,NULL)) SELECT x FROM v ORDER BY n', input);
       assert.deepEqual(result.rows, [[id],[data],[true],[[1n,null]],[null]]);
+      const union = await db.execute('SELECT $id AS x UNION ALL SELECT $data UNION ALL SELECT $flag', {$id:id, $data:data, $flag:true});
+      assert.deepEqual(union.rows, [[id],[data],[true]]);
       await db.execute('CREATE TABLE docs');
       await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
       await db.execute('BEGIN');

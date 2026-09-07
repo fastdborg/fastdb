@@ -386,9 +386,11 @@ impl Connection {
                 if upsert.is_some() {
                     return Err(unsupported("collection ON CONFLICT; use document UPSERT"));
                 }
-                let values = if let (OneSelect::Values(rows), None) =
-                    (&select.body.select, &select.with)
-                {
+                let values = if let (OneSelect::Values(rows), None, true) = (
+                    &select.body.select,
+                    &select.with,
+                    select.body.compounds.is_empty(),
+                ) {
                     if !select.body.compounds.is_empty()
                         || !select.order_by.is_empty()
                         || select.limit.is_some()

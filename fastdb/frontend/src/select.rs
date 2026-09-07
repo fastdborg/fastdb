@@ -1928,6 +1928,32 @@ impl Connection {
             }
             select.with = Some(with);
         }
+        if !select.body.compounds.is_empty() {
+            return self
+                .lower_union_all(
+                    select,
+                    params,
+                    cte_consumed,
+                    cte_logical || (trusted && positional && native_insert.is_none()),
+                    SelectOptions {
+                        ctes: Some(&ctes),
+                        ignore_unused,
+                        ..Default::default()
+                    },
+                )?
+                .map(|mut plan| {
+                    plan.explain = explain;
+                    if let Cmd::Stmt(statement) = plan.command {
+                        plan.command = match &cmd {
+                            Cmd::Explain(_) => Cmd::Explain(statement),
+                            Cmd::ExplainQueryPlan(_) => Cmd::ExplainQueryPlan(statement),
+                            _ => Cmd::Stmt(statement),
+                        };
+                    }
+                    self.finish_select(plan, native_insert, restricted_native_clauses)
+                })
+                .transpose();
+        }
         if let OneSelect::Values(rows) = &mut select.body.select {
             let mut logical = cte_logical || (trusted && positional && native_insert.is_none());
             for row in rows.iter_mut() {
@@ -2383,6 +2409,211 @@ impl Connection {
             }
             lower_distinct(select, &typed, &order_outputs)?;
         }
+        self.finish_select(
+            LoweredSelect {
+                command: cmd,
+                typed,
+                fetched,
+                names,
+                consumed: scope.consumed.into_inner(),
+                ignore_unused,
+                explain,
+                native_insert: false,
+            },
+            native_insert,
+            restricted_native_clauses,
+        )
+        .map(Some)
+    }
+    fn lower_union_all(
+        &self,
+        select: &Select,
+        params: &Parameters,
+        mut consumed: std::collections::BTreeSet<String>,
+        mut logical: bool,
+        options: SelectOptions<'_>,
+    ) -> Result<Option<LoweredSelect>> {
+        let ctes = options.ctes.expect("compound CTE scope");
+        let arms = std::iter::once(&select.body.select)
+            .chain(select.body.compounds.iter().map(|arm| &arm.select));
+        let mut plans = Vec::new();
+        for arm in arms {
+            let body = Select {
+                with: None,
+                body: SelectBody {
+                    select: arm.clone(),
+                    compounds: Vec::new(),
+                },
+                order_by: Vec::new(),
+                limit: None,
+            };
+            let sql = Cmd::Stmt(Stmt::Select(body)).to_string();
+            let detected = self.lower_collection_select(
+                &sql,
+                &sql,
+                params,
+                SelectOptions {
+                    trusted: true,
+                    nested: true,
+                    ctes: Some(ctes),
+                    ..Default::default()
+                },
+            )?;
+            logical |= detected.is_some();
+            for token in fastql_parser::tokenize(&sql)? {
+                logical |=
+                    token.kind == fastql_parser::Kind::Word && token.text.starts_with("__fastdb_");
+                logical |= token.kind == fastql_parser::Kind::Parameter
+                    && params.get(&token.text).is_some_and(|v| {
+                        matches!(
+                            v,
+                            Value::Boolean(_)
+                                | Value::Record(_)
+                                | Value::Object(_)
+                                | Value::Array(_)
+                                | Value::Vector(_)
+                        )
+                    });
+            }
+            plans.push((sql, detected));
+        }
+        if !logical {
+            return Ok(None);
+        }
+        if select
+            .body
+            .compounds
+            .iter()
+            .any(|arm| arm.operator != CompoundOperator::UnionAll)
+        {
+            return Err(unsupported("typed UNION, INTERSECT and EXCEPT"));
+        }
+        let mut lowered = Vec::new();
+        let mut definitions = Vec::new();
+        let mut names = Vec::new();
+        for (index, (sql, detected)) in plans.into_iter().enumerate() {
+            let plan = match detected {
+                Some(plan) => plan,
+                None => self
+                    .lower_collection_select(
+                        &sql,
+                        &sql,
+                        params,
+                        SelectOptions {
+                            trusted: true,
+                            positional: true,
+                            ctes: Some(ctes),
+                            ..Default::default()
+                        },
+                    )?
+                    .ok_or_else(|| unsupported("this typed UNION ALL arm"))?,
+            };
+            if plan.fetched.iter().any(|fetch| *fetch) {
+                return Err(unsupported("fetched UNION ALL projections"));
+            }
+            if index == 0 {
+                names = plan.names.clone();
+            }
+            if plan.names.len() != names.len() {
+                return Err(Error::Validation("UNION ALL column count mismatch".into()));
+            }
+            consumed.extend(plan.consumed);
+            let keys = (0..names.len())
+                .map(|i| format!("__fastdb_v{i}"))
+                .collect::<Vec<_>>();
+            let values = keys
+                .iter()
+                .zip(&plan.typed)
+                .map(|(key, typed)| {
+                    if *typed {
+                        key.clone()
+                    } else {
+                        format!("__fastdb_pack({key})")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = plan.command.to_string();
+            let arm_name = format!("__fastdb_union_arm{index}");
+            definitions.push(format!(
+                "{arm_name}({}) AS ({})",
+                keys.join(","),
+                sql.trim().trim_end_matches(';')
+            ));
+            lowered.push(format!("SELECT {values} FROM {arm_name}"));
+        }
+        let width = names.len();
+        let keys = (0..width)
+            .map(|i| format!("__fastdb_v{i}"))
+            .collect::<Vec<_>>();
+        let columns = keys
+            .iter()
+            .zip(&names)
+            .map(|(key, name)| format!("{key} AS {}", quote(name)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let Cmd::Stmt(Stmt::Select(mut result)) = parsed(&format!(
+            "WITH {}, __fastdb_union({}) AS ({}) SELECT {columns} FROM __fastdb_union",
+            definitions.join(","),
+            keys.join(","),
+            lowered.join(" UNION ALL ")
+        ))?
+        else {
+            unreachable!()
+        };
+        // Keep user CTE definitions at one shared scope, including MATERIALIZED hints.
+        let generated = result.with.take().expect("generated WITH");
+        result.with = Some(match select.with.clone() {
+            Some(mut with) => {
+                with.ctes.extend(generated.ctes);
+                with
+            }
+            None => generated,
+        });
+        result.order_by = select.order_by.clone();
+        for sorted in &mut result.order_by {
+            let position = projection_position(&sorted.expr);
+            let index = match order_base(&sorted.expr) {
+                Expr::Id(name) | Expr::Name(name) => names
+                    .iter()
+                    .position(|n| n.eq_ignore_ascii_case(name.as_str())),
+                _ => position.filter(|p| *p > 0 && *p <= width).map(|p| p - 1),
+            }
+            .ok_or_else(|| unsupported("UNION ALL ORDER BY requires an output name or position"))?;
+            replace_order_base(
+                &mut sorted.expr,
+                expression(&format!("__fastdb_sort_encoded({})", keys[index]))?,
+            );
+        }
+        result.limit = select.limit.clone();
+        let command = Cmd::Stmt(Stmt::Select(result));
+        Ok(Some(LoweredSelect {
+            command,
+            typed: vec![true; width],
+            fetched: vec![false; width],
+            names,
+            consumed,
+            ignore_unused: options.ignore_unused,
+            explain: false,
+            native_insert: false,
+        }))
+    }
+    fn finish_select(
+        &self,
+        plan: LoweredSelect,
+        native_insert: Option<&Stmt>,
+        restricted_native_clauses: bool,
+    ) -> Result<LoweredSelect> {
+        let LoweredSelect {
+            command: cmd,
+            typed,
+            fetched,
+            names,
+            consumed,
+            ignore_unused,
+            explain,
+            ..
+        } = plan;
         if let Some(insert) = native_insert {
             if restricted_native_clauses {
                 return Err(unsupported(
@@ -2421,27 +2652,27 @@ impl Connection {
                 unreachable!("INSERT SELECT template")
             };
             *select = source;
-            return Ok(Some(LoweredSelect {
+            return Ok(LoweredSelect {
                 command: Cmd::Stmt(insert),
                 typed: Vec::new(),
                 fetched: Vec::new(),
                 names: Vec::new(),
-                consumed: scope.consumed.into_inner(),
+                consumed,
                 ignore_unused: false,
                 explain: false,
                 native_insert: true,
-            }));
+            });
         }
-        Ok(Some(LoweredSelect {
+        Ok(LoweredSelect {
             command: cmd,
             typed,
             fetched,
             names,
-            consumed: scope.consumed.into_inner(),
+            consumed,
             ignore_unused,
             explain,
             native_insert: false,
-        }))
+        })
     }
     fn execute_lowered_select(
         &self,
