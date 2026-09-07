@@ -1481,3 +1481,10 @@ Task-tracker initialization cleanup (2026-09-07): openTracker now preserves both
 
 
 Task transaction cleanup qualification (2026-09-07): simulated statement failures verify that completeTask does not issue ROLLBACK after a rejected BEGIN, attempts cleanup after UPDATE/INSERT/COMMIT failures, and retains original plus rollback errors in order. All three application tests pass, including the real-engine persistence and atomic completion case. Simulated commit failure is control-flow evidence, not proof of a native commit outcome. Full V1 remains incomplete.
+
+
+## Bundled normalization output overflow (2026-09-07)
+
+A multirow collection UPDATE regression exercises NFKD expansion beyond the bundled output limit. The failure leaves documents and managed indexes intact, but the pinned engine rolls back the entire active transaction, including earlier ordinary-table writes; execute_report observes active → autocommit. An ordinary-table SELECT invoking the same helper confirms this transaction disposition. This is a helper-query comparison, not ordinary UPDATE namespace support. A valid retry in a new transaction succeeds, and explicit rollback restores the original collection values with a clean integrity audit.
+
+The preceding complete scoped check passed 330 Rust tests and 42 Node/application tests, formatting, Clippy and strict TypeScript, with one known trigger-interruption gate ignored. The additional overflow regression passed separately with all three bundled integration tests and focused Clippy. Broader QuickJS runtime/platform/performance qualification and full V1 remain open.
