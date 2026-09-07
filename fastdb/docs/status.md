@@ -882,3 +882,10 @@ Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests 
 Qualified fields and stars from proven unaliased CTE FROM sources can now pass the native guard when the CTE shares a collection name. Tests cover projection, filter, ordering, grouping/HAVING and both Node clients. Direct guard regressions keep qualified physical references and nested expression scopes visible. This extends the previous declaration/source redaction without changing executed SQL. Explicit aliases, named windows and deeper scope qualification remain open; same-name collection writes remain a separate gap.
 
 Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Aliased CTE sources in native guarding (2026-09-07)
+
+Proven CTE FROM sources now support explicit/implicit aliases in guard inspection, including an alias that matches a collection name. Expanded regressions cover qualified projections/stars, filtering/ordering and aliases of collection-named CTEs. Direct guard tests retain physical-table aliases, reserved/internal aliases and nested physical references. Same-name write resolution and deeper/named-window scope coverage remain open.
+
+Scoped checks passed formatting, Clippy, 292 Rust tests, thirty-four Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

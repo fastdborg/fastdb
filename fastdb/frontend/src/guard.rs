@@ -247,7 +247,7 @@ fn select(select: &mut Select) -> Result<()> {
 }
 
 // Guard-only proof for CTE declarations and unqualified FROM references.
-// Qualified expressions are redacted only for proven unaliased CTE sources.
+// Qualified expressions are redacted only for proven CTE sources.
 // Schema-qualified tables and uncertain roles remain visible. Never execute this AST.
 fn redact_cte_sources(
     select: &mut Select,
@@ -279,7 +279,13 @@ fn redact_cte_sources(
                 if name.db_name.is_none()
                     && visible.contains(&name.name.as_str().to_ascii_lowercase()) =>
             {
-                if alias.is_none() {
+                if let Some(alias) = alias {
+                    let identifier = alias.name().as_str().to_ascii_lowercase();
+                    if !identifier.starts_with("__fastdb_") && identifier != "writable_schema" {
+                        bound.insert(identifier);
+                        *alias = As::As(Name::exact(String::new()));
+                    }
+                } else {
                     bound.insert(name.name.as_str().to_ascii_lowercase());
                 }
                 name.name = Name::exact(String::new());
@@ -441,6 +447,10 @@ mod cte_guard_tests {
         .unwrap();
         for sql in [
             "WITH docs AS (SELECT 2 AS n) SELECT * FROM main.docs",
+            "WITH safe AS (SELECT 2 AS n) SELECT docs.n FROM main.docs AS docs",
+            "WITH safe AS (SELECT 2 AS n) SELECT __fastdb_catalog.n FROM safe AS __fastdb_catalog",
+            "WITH safe AS (SELECT 2 AS n) SELECT writable_schema.n FROM safe AS writable_schema",
+            "WITH safe AS (SELECT 2 AS n) SELECT (SELECT docs.n FROM main.docs AS docs) FROM safe AS docs",
             "WITH docs AS (SELECT 2 AS n) SELECT docs.n FROM main.docs",
             "WITH docs AS (SELECT 2 AS n) SELECT (SELECT docs.n FROM main.docs) FROM docs",
             "WITH docs AS (SELECT 2 AS n) SELECT main.docs.n FROM main.docs",

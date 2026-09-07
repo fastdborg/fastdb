@@ -830,3 +830,6 @@ Native SELECT guarding now recognizes nonrecursive CTE declarations and their pr
 
 
 The guard also recognizes expression qualifiers and table stars belonging to proven unaliased CTE sources in the current FROM scope. This covers projection/filter/grouping/HAVING/join expressions and simple SELECT ordering. Nested expression subqueries are not traversed with the outer qualifier proof; schema-qualified names remain visible. Explicit source aliases, named-window clauses and compound ordering retain conservative guarding where roles are not proven. The inspection AST remains non-executable.
+
+
+Explicit and implicit FROM aliases of proven CTE sources now receive the same guard-only qualifier treatment. Alias declarations are redacted only with their proven CTE source; reserved/internal aliases remain visible and rejected. Physical-table aliases and nested expression scopes do not inherit this exemption. Original SQL and its engine name resolution are unchanged.

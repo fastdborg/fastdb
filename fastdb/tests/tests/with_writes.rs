@@ -153,6 +153,9 @@ fn native_cte_names_can_shadow_collections_without_hiding_table_access() {
     q(&c, "INSERT INTO docs {id:docs:a,n:9}");
     for sql in [
         "WITH docs AS (SELECT 2 AS n) SELECT n FROM docs",
+        "WITH safe AS (SELECT 2 AS n) SELECT docs.n FROM safe AS docs WHERE docs.n>1 ORDER BY docs.n",
+        "WITH safe AS (SELECT 2 AS n) SELECT docs.* FROM safe docs",
+        "WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d",
         "WITH docs AS (SELECT 2 AS n) SELECT docs.n FROM docs WHERE docs.n>1 ORDER BY docs.n",
         "WITH docs AS (SELECT 2 AS n) SELECT docs.* FROM docs",
         "WITH docs AS (SELECT 2 AS n) SELECT docs.n FROM docs GROUP BY docs.n HAVING docs.n>1",

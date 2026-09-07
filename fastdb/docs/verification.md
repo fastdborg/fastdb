@@ -1164,3 +1164,8 @@ An initial integration assertion incorrectly expected valid EXPLAIN collection l
 ## Qualified CTE guard references — 2026-09-07
 
 `fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-qualifiers-check.log`): formatting, Clippy, 292 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Expanded existing tests cover unaliased CTE-qualified fields, stars, filtering, ordering and grouping/HAVING, plus both Node clients. Direct guard checks retain schema-qualified and nested physical references. Qualification proofs come from current FROM sources and do not cross expression subquery boundaries. Original SQL executes unchanged; explicit alias/deeper-scope guarding and same-name writes remain open.
+
+
+## CTE source aliases in native guarding — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-cte-alias-check.log`): formatting, Clippy, 292 Rust tests, 34 Node tests and strict TypeScript; one known ignored gate. Existing CTE integration tests now cover explicit/implicit source aliases, including aliases sharing collection names, through execute and profile_select. Direct guard tests reject physical-table aliases, internal/reserved aliases and nested physical references. Alias redaction applies only to proven CTE FROM sources in the inspection AST. Same-name write semantics and deeper scope coverage remain open.
