@@ -5,11 +5,21 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const threads = require('node:worker_threads');
 let latest;
+let startupFailure;
 class FaultWorker extends EventEmitter {
   messages = []; stopped = false; rejectClose = false; rejectRequest = false;
   constructor() {
     super(); latest = this;
-    queueMicrotask(() => this.emit('message', { ready: true, interruptKey: '0' }));
+    const failure = startupFailure;
+    queueMicrotask(() => {
+      if (failure === 'exit') { this.stopped = true; this.emit('exit', 7); }
+      else if (failure === 'error') {
+        this.emit('error', new Error('startup worker error'));
+        this.stopped = true; this.emit('exit', 1);
+      } else if (failure === 'messageerror') {
+        this.emit('messageerror', new Error('startup response decoding error'));
+      } else this.emit('message', { ready: true, interruptKey: '0' });
+    });
   }
   postMessage(message) {
     this.messages.push(message);
@@ -29,6 +39,14 @@ const { AsyncDatabase } = require('./index.cjs');
 const { cancelOperation } = require('./fastdb.node');
 const { getEventListeners } = require('node:events');
 (async () => {
+  for (const failure of ['error','exit','messageerror']) {
+    startupFailure = failure;
+    await assert.rejects(AsyncDatabase.open(), error => error.code === 'FDB_WORKER');
+    assert.equal(latest.stopped,true);
+    assert.equal(latest.messages.filter(message => message.method === 'close').length, failure === 'messageerror' ? 1 : 0);
+  }
+  startupFailure = undefined;
+
   for (const brokenSend of [false, true]) {
     const db = await AsyncDatabase.open();
     const worker = latest; worker.rejectClose = brokenSend;

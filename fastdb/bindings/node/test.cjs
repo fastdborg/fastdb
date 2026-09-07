@@ -924,3 +924,26 @@ test('native scalar predicates correlate in sync and worker clients', async () =
     } finally {await db.close();}
   }
 });
+
+
+test('async startup failure permits repeated opens and a healthy retry', {timeout:10000}, async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(),'fastdb-open-failure-'));
+  try {
+    for (let attempt=0; attempt<3; attempt++) {
+      await assert.rejects(AsyncDatabase.open(path.join(directory,'missing','database.db')), error=>error.code==='FDB_WORKER');
+    }
+    const file=path.join(directory,'database.db');
+    const db=await AsyncDatabase.open(file);
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {id:docs:saved,n:7}');
+    } finally { await db.close(); }
+    const reopened=await AsyncDatabase.open(file);
+    try { assert.deepEqual(await reopened.exactlyOne('SELECT n FROM docs'),[7n]); }
+    finally { await reopened.close(); }
+  } finally { fs.rmSync(directory,{recursive:true,force:true}); }
+});

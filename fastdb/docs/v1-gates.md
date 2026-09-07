@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-07
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Latest scoped evidence: 309 passing Rust tests with one ignored trigger-cancellation gate, 35 passing Node tests, formatting, Clippy and strict TypeScript. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 329 passing Rust tests with one ignored trigger-cancellation gate, 35 passing Node tests, formatting, Clippy and strict TypeScript. Later focused checks are recorded below and in verification.md. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -117,3 +117,6 @@ Integer bound pagination now has scalar/IN/EXISTS coverage across supported pred
 
 
 Integral real pagination binds now follow the integer-literal correlation path within the pinned engine's exact conversion bounds. Per-row scalar/IN/EXISTS comparisons and endpoint rejections pass; the complete scoped run passed 329 Rust and 35 Node tests. Other coercions, complex pagination and full V1 remain open.
+
+
+Async startup failure coverage now includes pre-ready transport error/exit/messageerror and repeated real failed-open/retry/reopen behavior. All 35 Node binding tests pass; broader lifecycle/platform and release gates remain open.

@@ -1431,3 +1431,8 @@ A regression verifies that normalizing integral real pagination binds does not c
 
 
 Negative-offset qualification (2026-09-07): the native correlated integer-pagination matrix and real/integer equivalence matrix now include OFFSET -2 through execute/profile scalar, IN and EXISTS consumers. Results match the native negative-offset behavior. All nine pagination integration tests pass, including scope, binding reuse and write failure/retry cases. Full V1 remains incomplete.
+
+
+## Async worker startup failure qualification (2026-09-07)
+
+The isolated transport fixture now covers error, early exit and message-decoding failure before the ready handshake. AsyncDatabase.open rejects with FDB_WORKER only after worker exit; a damaged response channel requests one close. A real-worker regression repeats failure to open a missing-parent path three times, then successfully creates, writes, closes and reopens another database. All 35 Node binding tests pass, including the transport fixture. This is startup lifecycle qualification; it does not establish native crash recovery or broader platform release readiness. Full V1 remains incomplete.
