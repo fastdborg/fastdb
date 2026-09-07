@@ -1570,3 +1570,10 @@ Scalar pagination evaluation-count qualification (2026-09-08): the test-only cal
 
 
 Scalar pagination projection-evaluation qualification (2026-09-08): the callback regression now includes a volatile projected value. Over three outer rows, admitted scalars produce nine calls (LIMIT, OFFSET and projection), while OFFSET-skipped scalars produce six calls (no projection). Outer LIMIT 0 produces none. Execute/profile values and counts pass alongside formatting and frontend lib/test Clippy. Latest complete scoped evidence remains 391 Rust/44 Node tests; broader evaluation/resource and full V1 gates remain open.
+
+
+## Collection-reading pagination counter isolation (2026-09-08)
+
+Extended counter isolation to logical expression subqueries with table sources. A correlated scalar reading items n=1,2,3 with outer n=1,2 and OFFSET 1+0 previously returned 2 twice; the corrected results are 2 and 3. Direct/derived outer-source regressions cover literal, arithmetic and coalesce offsets through execute/profile.
+
+The complete scoped check passed formatting, Clippy, 393 Rust tests, 44 Node/application tests and strict TypeScript, including recent nonnumeric/subquery-computed pagination and callback evaluation checks. One known trigger-cancellation gate remains ignored. No upstream files changed; broader pagination/evaluation/resource and full V1 release qualification remain open.

@@ -1023,3 +1023,8 @@ Native scalar LIMIT preparation diagnosis (2026-09-08): direct turso_core prepar
 ## Source-free pagination counter isolation (2026-09-08)
 
 Logical source-free expression-subquery LIMIT/OFFSET values now pass through a private SQL identity callback registered as non-deterministic. The callback preserves raw SQL types; the engine still performs MustBeInt conversion. This keeps mutable pagination counters separate from hoisted constant-expression registers, fixing the recorded arithmetic OFFSET discrepancy without pre-executing expressions. Direct, addition and coalesce pagination expressions with integer/exact numeric bindings now have execute/profile coverage against literal pagination semantics. The ordinary native scalar compiler's computed-LIMIT behavior remains unchanged. Callback cost, broader pagination scopes and full resource qualification remain open.
+
+
+## Collection-reading pagination counter isolation (2026-09-08)
+
+Logical expression-subquery pagination now uses counter isolation with table sources as well as source-free queries. A correlated scalar over items n=1,2,3 with outer n=1,2 and OFFSET 1+0 previously returned 2 for both outer rows; it now returns 2 and 3. Direct/derived outer-source regressions cover literal, arithmetic and coalesce offsets through execute/profile. Ordinary native entry routing remains unchanged; broader pagination/evaluation/resource qualification remains open.

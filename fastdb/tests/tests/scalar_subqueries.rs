@@ -4373,3 +4373,38 @@ fn scalar_pagination_rejects_nonnumeric_values_and_retries() {
         }
     }
 }
+
+#[test]
+fn collection_scalar_computed_offsets_reset_per_outer_row() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE items",
+        "INSERT INTO docs {n:1}",
+        "INSERT INTO docs {n:2}",
+        "INSERT INTO items {n:1}",
+        "INSERT INTO items {n:2}",
+        "INSERT INTO items {n:3}",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        for offset in ["1", "1+0", "coalesce(1,0)"] {
+            let sql = format!("SELECT n,(SELECT i.n FROM items i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}) FROM {source} ORDER BY n");
+            let expected = vec![
+                vec![Value::Integer(1), Value::Integer(2)],
+                vec![Value::Integer(2), Value::Integer(3)],
+            ];
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "{sql}"
+            );
+        }
+    }
+}
