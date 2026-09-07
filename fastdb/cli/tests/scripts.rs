@@ -188,3 +188,41 @@ fn cli_profiles_selects_without_allowing_profiled_writes() {
         assert_eq!(rows[4]["rows"][0][0]["value"], 1);
     }
 }
+
+#[test]
+fn duplicate_columns_keep_positional_tagged_json_in_script_and_line_modes() {
+    for mode in ["--script", "--line"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+            .args([mode, ":memory:"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"CREATE TABLE docs;\nINSERT INTO docs {flag:true};\nUPDATE docs SET data=X'31';\nSELECT flag AS x,data AS x FROM docs;\nSELECT q.* FROM docs d JOIN (SELECT 10 AS x,20 AS x) q ON 1;\nSELECT flag AS x,data AS x FROM docs WHERE false;\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{mode}");
+        let reports = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 6, "{mode}");
+        for report in &reports[3..] {
+            assert_eq!(report["columns"], serde_json::json!(["x", "x"]));
+            assert_eq!(report["transaction"]["after"], "autocommit");
+        }
+        assert_eq!(
+            reports[3]["rows"],
+            serde_json::json!([[
+                {"type":"Boolean","value":true}, {"type":"Binary","value":[49]}
+            ]])
+        );
+        assert_eq!(
+            reports[4]["rows"],
+            serde_json::json!([[
+                {"type":"Integer","value":10}, {"type":"Integer","value":20}
+            ]])
+        );
+        assert_eq!(reports[5]["rows"], serde_json::json!([]));
+    }
+}
