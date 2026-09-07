@@ -558,3 +558,43 @@ fn relational_join_metadata_refreshes_across_connections() {
         Err(fastdb::Error::Validation(_))
     ));
 }
+
+#[test]
+fn relational_join_metadata_tracks_schema_rollback() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE labels(m INTEGER,label TEXT)");
+    q(&c, "INSERT INTO labels VALUES(1,'A')");
+    let sql = "SELECT n,label FROM (SELECT n FROM docs) JOIN labels ON n=m";
+    let expected = q(&c, sql).rows;
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs {n:3}");
+    q(&c, "ALTER TABLE labels ADD COLUMN n INTEGER");
+    assert!(matches!(
+        c.execute(sql, &Parameters::new()),
+        Err(fastdb::Error::Validation(_))
+    ));
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, sql).rows, expected);
+    assert_eq!(
+        c.profile_select(sql, &Parameters::new())
+            .unwrap()
+            .result
+            .rows,
+        expected
+    );
+    assert_eq!(
+        q(&c, "SELECT count(*) FROM docs").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    q(&c, "CREATE VIEW label_view AS SELECT m,label FROM labels");
+    let view_sql = sql.replace("JOIN labels", "JOIN label_view");
+    q(&c, "BEGIN");
+    q(&c, "DROP VIEW label_view");
+    q(
+        &c,
+        "CREATE VIEW label_view AS SELECT m AS n,label FROM labels",
+    );
+    assert!(c.execute(&view_sql, &Parameters::new()).is_err());
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, &view_sql).rows, expected);
+}
