@@ -604,3 +604,36 @@ fn duplicate_native_cte_first_column_retains_collation_and_null_semantics() {
         }
     }
 }
+
+#[test]
+fn duplicate_native_cte_companions_preserve_nested_scope_identity() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    let query = |source: &str| {
+        format!(
+        "WITH outer_values(x,x) AS (SELECT 10,20) SELECT o.*,v.* FROM {source} d JOIN outer_values o ON 1 JOIN (WITH inner_values(x,x) AS (SELECT 30,40) SELECT i.* FROM {source} e JOIN inner_values i ON 1 WHERE e.n=1) v ON 1 WHERE d.n=1"
+    )
+    };
+    let expected = q(&c, &query("baseline"));
+    assert_eq!(
+        expected.rows,
+        vec![vec![
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(30),
+            Value::Integer(40)
+        ]]
+    );
+    let sql = query("docs");
+    let actual = q(&c, &sql);
+    assert_eq!(actual.columns, expected.columns);
+    assert_eq!(actual.rows, expected.rows);
+    assert_eq!(
+        c.profile_select(&sql, &Parameters::new())
+            .unwrap()
+            .result
+            .rows,
+        expected.rows
+    );
+}

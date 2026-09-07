@@ -2280,3 +2280,6 @@ A NOT MATERIALIZED callback probe exposed repeated evaluation introduced by per-
 The callback regression now covers MATERIALIZED and NOT MATERIALIZED definitions, one/two references and LIMIT 0. Normal/profiled rows and callback counts match the native baseline, with no callbacks during EXPLAIN. Existing positional, type, collation, binary/NULL, chained-source and write checks remain green.
 
 The complete fastdb/scripts/check.sh run passed formatting, Clippy, 434 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-shared-cte-check.log. Full V1 release qualification remains incomplete.
+
+
+Nested duplicate CTE companion qualification (2026-09-08): a focused regression passes with separate outer and nested native duplicate-name CTEs in collection joins. Explicit expected values (10,20,30,40), native differential column/row checks and profiling verify that generated companion scopes do not substitute one source for another. Formatting passes; production code is unchanged. Latest full scoped evidence remains 434 Rust tests with one ignored gate and 48 Node/application tests. Broader scope and V1 release qualification remain open.
