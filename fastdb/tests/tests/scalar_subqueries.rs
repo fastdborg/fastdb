@@ -4431,19 +4431,23 @@ fn correlated_predicate_pagination_matches_literal_native() {
     }
     for (limit, offset) in [(0, 0), (1, 0), (1, 1), (1, 2)] {
         for predicate in ["EXISTS", "NOT EXISTS", "(d.n+1) IN", "(d.n+1) NOT IN"] {
-            let native = format!("SELECT n,{predicate}(SELECT i.n FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT {limit} OFFSET {offset}) FROM baseline d ORDER BY n");
-            let expected = q(&c, &native).rows;
-            for source in ["docs d", "(SELECT n FROM docs) d"] {
-                let sql = format!("SELECT n,{predicate}(SELECT i.n FROM items i WHERE i.n>=d.n ORDER BY i.n LIMIT {limit}+0 OFFSET {offset}+0) FROM {source} ORDER BY n");
-                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
-                assert_eq!(
-                    c.profile_select(&sql, &Parameters::new())
-                        .unwrap()
-                        .result
-                        .rows,
-                    expected,
-                    "{sql}"
-                );
+            for (projection, filter, ordering) in
+                [("i.n", "i.n>=d.n", "i.n"), ("count(*)", "i.n>d.n", "1")]
+            {
+                let native = format!("SELECT n,{predicate}(SELECT {projection} FROM lookup i WHERE {filter} ORDER BY {ordering} LIMIT {limit} OFFSET {offset}) FROM baseline d ORDER BY n");
+                let expected = q(&c, &native).rows;
+                for source in ["docs d", "(SELECT n FROM docs) d"] {
+                    let sql = format!("SELECT n,{predicate}(SELECT {projection} FROM items i WHERE {filter} ORDER BY {ordering} LIMIT {limit}+0 OFFSET {offset}+0) FROM {source} ORDER BY n");
+                    assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                    assert_eq!(
+                        c.profile_select(&sql, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected,
+                        "{sql}"
+                    );
+                }
             }
         }
     }

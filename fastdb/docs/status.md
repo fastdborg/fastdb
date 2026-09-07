@@ -1580,3 +1580,6 @@ The complete scoped check passed formatting, Clippy, 393 Rust tests, 44 Node/app
 
 
 Correlated predicate pagination qualification (2026-09-08): a new native differential regression covers EXISTS/NOT EXISTS and IN/NOT IN with computed LIMIT/OFFSET, including excluded and empty inner results. Direct/derived outer collection sources match literal native pagination through execute/profile. The focused regression, package formatting and focused Clippy pass. Latest complete scoped evidence remains 393 Rust/44 Node tests; this additional test has not received a new combined run. Broader pagination/evaluation/resource and full V1 gates remain open.
+
+
+Aggregate predicate pagination qualification (2026-09-08): the correlated EXISTS/NOT EXISTS and IN/NOT IN pagination regression now includes count(*) with an empty-input outer case. Computed pagination matches literal native results, including removal of the aggregate output row, through execute/profile for direct/derived sources. The expanded focused regression, package formatting and focused Clippy pass. Latest combined evidence remains 393 Rust/44 Node tests; broader pagination/evaluation/resource and full V1 gates remain open.
