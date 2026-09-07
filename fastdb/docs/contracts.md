@@ -1010,3 +1010,8 @@ Integer parameter references in logical source-free expression-subquery paginati
 ## Source-free pagination parameter accounting (2026-09-08)
 
 Logical source-free scalar pagination now checks that referenced variables have bindings before engine execution. A missing OFFSET previously surfaced as an engine datatype mismatch; it now reports a parameter error. A regression covers missing LIMIT/OFFSET, an unused extra binding, a LIMIT binding also consumed by the typed projection, and corrected execute/profile retries. Broader native pagination routing and resource qualification remain open.
+
+
+## Exact numeric scalar pagination bindings (2026-09-08)
+
+Source-free logical scalar pagination now shares the native correlation path's exact-integer conversion for bound numbers. Integral Number values strictly inside the int64 endpoints are lowered to integer expressions, fixing repeated OFFSET state for bindings such as 1.0. Integer values retain their full int64 range; fractional/out-of-range numbers remain on the existing engine path. Expanded direct/derived execute/profile regressions compare integer and numeric LIMIT/OFFSET bindings against literal native results. Broader native routing and pagination/resource qualification remain open.

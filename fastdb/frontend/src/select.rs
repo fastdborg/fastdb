@@ -2,6 +2,20 @@
 use crate::{quote, Collection, Connection, Error, Parameters, QueryResult, Result, Value};
 use turso_parser::{ast::*, parser::Parser};
 
+fn pagination_integer(value: &Value) -> Option<i64> {
+    match value {
+        Value::Integer(value) => Some(*value),
+        // Match the pinned engine: exact real-to-integer conversion excludes
+        // both int64 endpoints. i64::MAX rounds to 2^63.
+        Value::Number(value)
+            if *value > i64::MIN as f64 && *value < i64::MAX as f64 && value.fract() == 0.0 =>
+        {
+            Some(*value as i64)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone)]
 struct Source {
     table: SelectTable,
@@ -326,22 +340,7 @@ fn native_correlated_predicate(
     if correlated_query && !metadata {
         let integers = params
             .iter()
-            .filter_map(|(name, value)| {
-                let integer = match value {
-                    Value::Integer(value) => *value,
-                    // Match the pinned engine: exact real-to-integer conversion
-                    // excludes both int64 endpoints. i64::MAX rounds to 2^63.
-                    Value::Number(value)
-                        if *value > i64::MIN as f64
-                            && *value < i64::MAX as f64
-                            && value.fract() == 0.0 =>
-                    {
-                        *value as i64
-                    }
-                    _ => return None,
-                };
-                Some((name, integer))
-            })
+            .filter_map(|(name, value)| pagination_integer(value).map(|integer| (name, integer)))
             .map(|(name, value)| Ok((name.clone(), expression(&value.to_string())?)))
             .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
         if let Some(limit) = &mut inner.limit {
@@ -3994,7 +3993,7 @@ impl Connection {
                             if !params.contains_key(&name) {
                                 missing = Some(name.clone());
                             }
-                            if let Some(Value::Integer(integer)) = params.get(&name) {
+                            if let Some(integer) = params.get(&name).and_then(pagination_integer) {
                                 *expr = expression(&integer.to_string()).map_err(|error| {
                                     turso_core::LimboError::InternalError(error.to_string())
                                 })?;

@@ -1804,3 +1804,10 @@ The complete scoped check passed formatting, Clippy, 387 Rust tests, 44 Node/app
 
 
 Scalar pagination positional-binding qualification (2026-09-08): a new regression covers numbered and anonymous statement parameters around a correlated source-free scalar query, including a numbered binding shared by projection and LIMIT. An earlier binary projection retains exact bytes while OFFSET 0/1 includes/excludes both scalar rows. Execute/profile, package formatting and focused Clippy pass. Latest complete scoped evidence remains 387 Rust/44 Node tests; this additional test has not received a new combined run. Broader native pagination routing, scope/resource and full V1 release gates remain open.
+
+
+## Exact numeric scalar pagination bindings (2026-09-08)
+
+Shared the native correlation path's exact-integer binding conversion with logical source-free scalar pagination. This fixes inconsistent per-outer-row OFFSET behavior for Number(1.0), preserving the pinned conversion bounds. Expanded execute/profile regressions compare integral numeric and integer bindings against literal native LIMIT/OFFSET results for direct/derived sources.
+
+The complete scoped check passed formatting, Clippy, 388 Rust tests, 44 Node/application tests and strict TypeScript, including the preceding positional-binding regression. One known trigger-cancellation gate remains ignored. No upstream files changed; broader native routing, pagination/resource and full V1 release qualification remain open.
