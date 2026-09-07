@@ -4128,3 +4128,44 @@ fn source_free_scalar_ordering_binds_outer_fields() {
         }
     }
 }
+
+#[test]
+fn scalar_pagination_preserves_parameter_accounting() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1}");
+    q(&c, "INSERT INTO docs {n:2}");
+    let sql =
+        "SELECT (SELECT array::new(d.n,$limit) LIMIT $limit OFFSET $offset) FROM docs d ORDER BY n";
+    let valid = Parameters::from([
+        ("$limit".into(), Value::Integer(1)),
+        ("$offset".into(), Value::Integer(0)),
+    ]);
+    let expected = vec![
+        vec![Value::Array(vec![Value::Integer(1), Value::Integer(1)])],
+        vec![Value::Array(vec![Value::Integer(2), Value::Integer(1)])],
+    ];
+    assert_eq!(c.execute(sql, &valid).unwrap().rows, expected);
+    for invalid in [
+        Parameters::from([("$limit".into(), Value::Integer(1))]),
+        Parameters::from([("$offset".into(), Value::Integer(0))]),
+        Parameters::from([
+            ("$limit".into(), Value::Integer(1)),
+            ("$offset".into(), Value::Integer(0)),
+            ("$unused".into(), Value::Integer(0)),
+        ]),
+    ] {
+        let result = c.execute(sql, &invalid);
+        assert!(
+            matches!(result, Err(fastdb::Error::Parameter(_))),
+            "{invalid:?}: {result:?}"
+        );
+        assert!(matches!(
+            c.profile_select(sql, &invalid),
+            Err(fastdb::Error::Parameter(_))
+        ));
+        assert_eq!(c.execute(sql, &valid).unwrap().rows, expected);
+        assert_eq!(c.profile_select(sql, &valid).unwrap().result.rows, expected);
+    }
+}

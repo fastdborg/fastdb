@@ -1794,3 +1794,10 @@ The complete scoped check passed formatting, Clippy, 386 Rust tests, 44 Node/app
 Fixed integer-bound OFFSET state leaking across correlated source-free logical scalar invocations. Pagination integer variables now become integer expressions with consumed bindings tracked. Expanded execute/profile regressions compare bound LIMIT 0/1/-1 and OFFSET 0/1/2 against literal native queries for direct/derived outer sources. The native-shaped bound query rejects `$limit`, so that separate native routing gap remains open; additional wrapping alone did not fix the logical OFFSET discrepancy and is not part of the change.
 
 The complete scoped check passed formatting, Clippy, 386 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; noninteger/general pagination, scope/resource and full V1 release qualification remain open.
+
+
+## Source-free pagination parameter accounting (2026-09-08)
+
+Missing variables in logical source-free scalar pagination now report parameter errors before engine execution, fixing the missing-OFFSET datatype-mismatch result. Regressions cover missing LIMIT/OFFSET, extra unused bindings, a binding shared by projection and LIMIT, and valid execute/profile retries after errors.
+
+The complete scoped check passed formatting, Clippy, 387 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; broader native pagination routing, scope/resource and full V1 release qualification remain open.

@@ -1005,3 +1005,8 @@ Source-free scalar correlation now visits ORDER BY expressions as well as projec
 ## Bound source-free scalar pagination (2026-09-08)
 
 Integer parameter references in logical source-free expression-subquery pagination are lowered to integer expressions while recording consumed bindings. This avoids a pinned execution discrepancy in which OFFSET 1 suppressed only the first outer row, instead of every one-row correlated scalar result. Execute/profile comparisons use literal native pagination as the oracle for LIMIT 0/1/-1 and offsets 0/1/2, with direct/derived outer sources. The native-shaped parameterized oracle itself rejects `$limit`; that separate native routing gap and noninteger/general pagination qualification remain open.
+
+
+## Source-free pagination parameter accounting (2026-09-08)
+
+Logical source-free scalar pagination now checks that referenced variables have bindings before engine execution. A missing OFFSET previously surfaced as an engine datatype mismatch; it now reports a parameter error. A regression covers missing LIMIT/OFFSET, an unused extra binding, a LIMIT binding also consumed by the typed projection, and corrected execute/profile retries. Broader native pagination routing and resource qualification remain open.
