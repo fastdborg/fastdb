@@ -356,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_compound_sources_discard_rows_and_allow_exact_retry() {
+    fn interrupted_compound_and_subquery_sources_discard_rows_and_allow_exact_retry() {
         use std::sync::atomic::AtomicUsize;
         use turso_ext::{scalar, ResultCode, Value as ExtValue};
         static ROWS: AtomicUsize = AtomicUsize::new(0);
@@ -365,13 +365,22 @@ mod tests {
             ROWS.fetch_add(1, Ordering::SeqCst);
             ExtValue::from_integer(args[0].to_integer().expect("integer source"))
         }
-        for (operator, insert) in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"]
-            .into_iter()
-            .flat_map(|operator| [false, true].map(|insert| (operator, insert)))
+        for (operator, insert) in [
+            "UNION ALL",
+            "UNION",
+            "INTERSECT",
+            "EXCEPT",
+            "IN",
+            "NOT IN",
+            "EXISTS",
+            "SCALAR",
+        ]
+        .into_iter()
+        .flat_map(|operator| [false, true].map(|insert| (operator, insert)))
         {
             let expected = match operator {
                 "INTERSECT" => vec![],
-                "EXCEPT" => vec![1, 2, 3],
+                "EXCEPT" | "IN" | "NOT IN" | "EXISTS" | "SCALAR" => vec![1, 2, 3],
                 _ => vec![1, 2, 3, 11, 12, 13],
             };
             for after in [2, 4] {
@@ -409,7 +418,14 @@ mod tests {
                     } else {
                         ""
                     };
-                    let statement = format!("{prefix}SELECT union_source_tick(value) AS value FROM docs {operator} SELECT union_source_tick(value+10) FROM docs");
+                    let source = match operator {
+                        "IN" => "SELECT value FROM docs WHERE value IN (SELECT union_source_tick(value)+union_source_tick(0) FROM docs)".to_owned(),
+                        "NOT IN" => "SELECT value FROM docs WHERE value NOT IN (SELECT union_source_tick(value)+union_source_tick(10) FROM docs)".to_owned(),
+                        "EXISTS" => "SELECT value FROM docs WHERE EXISTS (SELECT value FROM docs WHERE union_source_tick(value)+union_source_tick(0)=3)".to_owned(),
+                        "SCALAR" => "SELECT value FROM docs WHERE value <= (SELECT max(union_source_tick(value)+union_source_tick(0)) FROM docs)".to_owned(),
+                        _ => format!("SELECT union_source_tick(value) AS value FROM docs {operator} SELECT union_source_tick(value+10) FROM docs"),
+                    };
+                    let statement = format!("{prefix}{source}");
                     ROWS.store(0, Ordering::SeqCst);
                     let fired = Arc::new(AtomicBool::new(false));
                     let flag = fired.clone();

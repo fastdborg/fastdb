@@ -665,3 +665,7 @@ A direct column-shaped RHS projection in a collection IN subquery now exposes it
 ## Subquery insert rollback coverage (2026-09-07)
 
 Collection INSERT SELECT sources filtered by IN, NOT IN, EXISTS or a scalar-subquery comparison retain the statement savepoint contract. A late unique-index failure restores target documents and index entries while preserving earlier work in an explicit transaction. The regression checks original record IDs/values, index-backed absence of partial rows, integrity audits, successful retry after each failure and outer rollback. This evidence concerns managed collection uniqueness failures; it does not imply that arbitrary engine errors preserve an outer transaction.
+
+## Subquery source cancellation coverage (2026-09-07)
+
+The deterministic source-cancellation matrix now includes IN, NOT IN, EXISTS and scalar aggregate subqueries. Progress-handler interruption after two/four source callback evaluations is tested for reads and collection INSERT SELECT in autocommit and explicit transactions. Checks require FDB_CANCELLED, the expected observed transaction state, preserved prior work, empty audited insert targets, unchanged audited sources and exact retry results. These tests exercise cooperative cancellation during source evaluation; they do not establish per-operation Node cancellation, hard deadlines or all engine-error transaction dispositions.
