@@ -3956,6 +3956,19 @@ impl Connection {
                         alias.name().as_str().to_owned()
                     } else if let Some((_, path)) = &field {
                         path.last().expect("nonempty path").clone()
+                    } else if let Expr::Qualified(qualifier, column) = &expr {
+                        scope
+                            .sources
+                            .iter()
+                            .find(|source| source.alias.eq_ignore_ascii_case(qualifier.as_str()))
+                            .and_then(|source| source.derived.as_ref())
+                            .and_then(|columns| {
+                                columns
+                                    .iter()
+                                    .find(|(name, _)| name.eq_ignore_ascii_case(column.as_str()))
+                            })
+                            .map(|(name, _)| Ok(name.clone()))
+                            .unwrap_or_else(|| public_expression_name(&expr))?
                     } else {
                         public_expression_name(&expr)?
                     };

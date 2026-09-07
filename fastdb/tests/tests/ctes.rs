@@ -468,3 +468,46 @@ fn duplicate_native_cte_stars_keep_positions_in_mixed_queries() {
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
 }
+
+#[test]
+fn mixed_qualified_native_column_labels_match_source_metadata() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE labels(Original INTEGER)");
+    q(&c, "INSERT INTO labels VALUES(10)");
+    for (prefix, source) in [
+        ("", "labels v"),
+        ("", "(SELECT Original FROM labels) v"),
+        ("WITH q AS (SELECT Original FROM labels) ", "q v"),
+        (
+            "WITH q AS (SELECT Original,20 AS ORIGINAL FROM labels) ",
+            "q v",
+        ),
+    ] {
+        for expression in [
+            "v.original",
+            "v.ORIGINAL",
+            "(v.original)",
+            "v.original AS explicit",
+        ] {
+            let query = |outer: &str| {
+                format!(
+                    "{prefix}SELECT {expression} FROM {outer} d JOIN {source} ON 1 ORDER BY d.n"
+                )
+            };
+            let expected = q(&c, &query("baseline"));
+            let sql = query("docs");
+            let actual = q(&c, &sql);
+            assert_eq!(actual.columns, expected.columns, "{sql}");
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .columns,
+                expected.columns
+            );
+        }
+    }
+}

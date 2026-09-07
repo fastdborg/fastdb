@@ -1979,3 +1979,12 @@ Fixed mixed collection/native CTE stars repeating the first duplicate column: q(
 A probe also found a separate default-label difference: SELECT v.X can report v.X in logical results versus x in the native baseline. The value-lookup regression uses an explicit first_value alias; default qualified-expression labels, broader collation and callback evaluation remain open qualification work.
 
 The complete fastdb/scripts/check.sh run passed formatting, Clippy, 431 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-native-cte-duplicates-check.log. Full V1 release qualification remains incomplete.
+
+
+## Qualified native column result labels (2026-09-08)
+
+Direct qualified native columns in mixed queries now use their source metadata spelling for default labels. For example, v.X referencing the first x column in a duplicate-name CTE reports x rather than v.X. Existing document field naming and explicit aliases retain their paths. Differential execute/profile tests cover ordinary tables, derived sources, CTEs, duplicate CTE names, case variants, parentheses and aliases. Both Node clients check the corrected label and first value.
+
+A separate probe found normalized expression-label spacing: +v.original reports '+ v.original' in logical queries versus '+v.original' in the native baseline. That expression formatting gap remains open; this fix handles direct source-column labels.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 432 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-column-labels-check.log. Full V1 release qualification remains incomplete.
