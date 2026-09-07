@@ -981,6 +981,9 @@ fn native_scalar_affinity_matches_native_document_scalar_storage() {
             "v COLLATE BINARY",
             "v COLLATE NOCASE",
             "v COLLATE RTRIM",
+            "+v",
+            "CAST(v AS TEXT)",
+            "CAST(v AS NUMERIC)",
         ] {
             for op in ["=", "!=", "IS", "IS NOT", "<", "<=", ">", ">="] {
                 for operands in [

@@ -590,3 +590,9 @@ Final scoped checks passed formatting, Clippy, 265 Rust tests, twenty-three Node
 The native scalar comparison matrix now uses nine left-hand values, including mixed case, one/two trailing spaces, a trailing tab, empty text, integer and NULL. A native TEXT COLLATE RTRIM source joins the prior INTEGER/TEXT/NOCASE declarations. The matrix contains 1,024 query pairs across four declarations, four inner projection forms, eight operators and eight operand/wrapper arrangements (9,216 compared result cells per route). These inputs distinguish trailing-space trimming from case folding and preserve a tab as a separate test case. This expands behavioral evidence without changing production lowering.
 
 Final scoped checks passed formatting, Clippy, 265 Rust tests, twenty-three Node tests and strict TypeScript checking. One known trigger-interruption gate remains ignored and unresolved; full V1 remains incomplete.
+
+## Computed native scalar projection affinity (2026-09-07)
+
+The native scalar comparison matrix now includes +v, CAST(v AS TEXT) and CAST(v AS NUMERIC) inside the scalar SELECT. All 1,792 query pairs in the focused probe match native SQL over nine values: four native declarations, seven inner projection forms, eight operators and eight operand/wrapper arrangements (16,128 compared result cells per route). This verifies initial affinity removal and explicit type conversion within the native scalar source. It does not qualify unary-plus/CAST around the outer scalar expression or every computed/compound/CTE form. No production implementation or upstream changes.
+
+Final scoped checks passed formatting, Clippy, 265 Rust tests, twenty-three Node tests and strict TypeScript checks. The known trigger-interruption gate remains ignored and unresolved; full V1 remains incomplete.
