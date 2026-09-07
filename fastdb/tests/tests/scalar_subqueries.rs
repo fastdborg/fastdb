@@ -2392,20 +2392,33 @@ fn correlated_distinct_projection_collation_matches_native() {
             format!("(CASE WHEN d.n>0 THEN n ELSE d.n END) COLLATE {collation}"),
             format!("CASE WHEN d.n>0 THEN n COLLATE {collation} ELSE d.n END"),
         ] {
-            for order in ["x", "x COLLATE BINARY DESC", "x,n DESC"] {
+            for order in [
+                "x",
+                "x COLLATE BINARY DESC",
+                "x,n DESC",
+                "n",
+                "n COLLATE NOCASE DESC,n COLLATE BINARY",
+            ] {
                 for offset in 0..3 {
                     let source=format!("SELECT DISTINCT {projection} AS x FROM lookup ORDER BY {order} LIMIT 1 OFFSET {offset}");
-                    let expected = q(&c, &format!("SELECT ({source}) FROM native d")).rows;
-                    let sql = format!("SELECT ({source}) FROM docs d");
-                    assert_eq!(q(&c, &sql).rows, expected, "{sql}");
-                    assert_eq!(
-                        c.profile_select(&sql, &Parameters::new())
-                            .unwrap()
-                            .result
-                            .rows,
-                        expected,
-                        "profile {sql}"
-                    );
+                    for expr in [
+                        format!("({source})"),
+                        format!("'A' IN ({source})"),
+                        format!("'a' COLLATE NOCASE IN ({source})"),
+                        format!("EXISTS ({source})"),
+                    ] {
+                        let expected = q(&c, &format!("SELECT {expr} FROM native d")).rows;
+                        let sql = format!("SELECT {expr} FROM docs d");
+                        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                        assert_eq!(
+                            c.profile_select(&sql, &Parameters::new())
+                                .unwrap()
+                                .result
+                                .rows,
+                            expected,
+                            "profile {sql}"
+                        );
+                    }
                 }
             }
         }
