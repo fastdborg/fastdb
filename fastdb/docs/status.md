@@ -18,7 +18,7 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 - Field definitions (basic types, required/nullable, nested paths, overwrite) and single-path managed scalar/reference indexes with unique/nonunique variants. Rust APIs and initial FastQL declarations.
 - Statement savepoints, transactional catalog/index maintenance, mixed ordinary SQL/document transactions, and deterministic partial-write/index-build interruption coverage.
 - Weak Rust interrupt handles and out-of-queue Node interruption, with distinct cancellation errors and callback row collection preserving engine Interrupt vs Busy.
-- Dedicated-worker AsyncDatabase with ordered submissions, bounded request queues, graceful close, fatal transport cleanup and initial query AbortSignal cancellation; cancellation for other operation types and broader lifecycle qualification remain open.
+- Dedicated-worker AsyncDatabase with ordered submissions, bounded request queues, graceful close, fatal transport cleanup and operation-scoped AbortSignal cancellation for queries, profiles, integrity checks, batches, migrations and document transfers; broader lifecycle and release qualification remain open.
 - Initial native synchronous Node client with TypeScript declarations, bigint/typed-value conversion, query/cardinality methods, transaction errors, explicit close, script batches, migrations and JSON/NDJSON document transfers.
 - Forward migration runner and CLI directory loading, exact-source history checks, and atomic pending runs.
 - Versioned typed JSON/NDJSON collection import/export through Rust APIs and CLI, with atomic validated inserts and decimal-string int64 encoding.
@@ -1634,3 +1634,6 @@ Source-free named-window expression qualification (2026-09-08): expanded the nam
 
 
 Collection window partition correlation qualification (2026-09-08): expanded collection-reading scalar window pagination coverage to direct and arithmetic outer partition keys, preserving the existing unpartitioned cases. row_number(), sum(i.n) and count(*) match pinned native results for offsets 0–3 through execute/profile with direct and derived outer collection sources. The expanded focused test, formatting and focused Clippy pass. No production change was needed. Latest combined evidence remains 399 Rust/44 Node tests; broader window/scope/resource and full V1 gates remain open.
+
+
+Mixed-scope window qualification (2026-09-08): window partitions now have regression coverage for i.n % d.n and ordering by i.n * -d.n, combining local and correlated fields so both partition membership and ordering affect running results. Direct/derived outer collection queries match pinned native results through execute/profile across row_number(), sum and count with offsets 0–3. No production fix was needed. The complete scoped check passed formatting, Clippy, 399 Rust tests, 44 Node/application tests and strict TypeScript; one known trigger-cancellation gate remains ignored. The status overview now reflects the existing operation-scoped Node cancellation APIs. Broader scope/resource and full V1 release gates remain open.

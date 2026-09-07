@@ -4618,6 +4618,8 @@ fn collection_windowed_scalar_pagination_matches_native() {
             "ORDER BY i.n",
             "PARTITION BY d.n ORDER BY i.n",
             "PARTITION BY d.n+1 ORDER BY i.n",
+            "PARTITION BY i.n % d.n ORDER BY i.n",
+            "PARTITION BY i.n % d.n ORDER BY i.n * -d.n",
         ] {
             for window in ["row_number()", "sum(i.n)", "count(*)"] {
                 let native = format!("SELECT n,(SELECT {window} OVER ({specification}) FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}) FROM baseline d ORDER BY n");
