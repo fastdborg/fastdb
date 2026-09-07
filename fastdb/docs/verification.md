@@ -1244,3 +1244,10 @@ A native probe showed an enclosing WITH source cannot resolve the correlated out
 ## Installed correlated membership — 2026-09-07
 
 `node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-correlated-membership.log`). Both installed clients exercise bound correlated IN updates, profiled match/empty/NULL results, index integrity and rollback to int64 max. Existing installed declarations, cancellation, vectors, reopen and loader-error checks also passed. Result: Linux x64, Node 24.19.0, eight runtime files, 59,608,392 packed bytes. No production change; prior full scoped 305 Rust / 35 Node evidence remains applicable.
+
+
+## Correlated nested paths and derived parents — 2026-09-07
+
+`fastdb/scripts/check.sh` passed (`/tmp/fastdb-correlated-paths-qualified-check.log`): formatting, Clippy, 307 Rust tests, 35 Node tests and strict TypeScript; one known trigger-interruption gate remains ignored. New integration coverage compares two nested path depths across scalar/EXISTS/IN/NOT IN, HAVING and JOIN predicates, five parent/value cases, derived sources, direct nested projections, local alias shadowing and UPDATE integrity/rollback. Native scalar columns supply equivalent NULL/value oracles. A new direct accessor unit verifies NULL/scalar/array parents yield missing values only through the derived accessor, while stored accessors reject non-object roots and all accessors reject malformed encodings.
+
+Live probes initially failed metadata preparation on nested outer paths. Qualifier recognition fixed those cases; derived-source qualification then exposed the existing accessor's object-root assumption. A dedicated nested-value accessor fixes that read behavior without relaxing physical document validation. The added direct projection uses explicit aliases to satisfy the existing unique-output-name contract. No upstream implementation or persisted-format changes; broader query scope/type/resource release gates remain open.

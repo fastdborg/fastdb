@@ -1774,3 +1774,78 @@ fn correlated_membership_keeps_native_binary_and_record_identities_distinct() {
         );
     }
 }
+
+#[test]
+fn correlated_predicates_resolve_nested_document_paths() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1,meta:{n:1,deep:{n:1}}}");
+    q(&c, "INSERT INTO docs {n:2,meta:{n:2,deep:{n:2}}}");
+    q(&c, "INSERT INTO docs {n:3,meta:{n:null,deep:{n:null}}}");
+    q(&c, "INSERT INTO docs {n:4,meta:{}}");
+    q(&c, "INSERT INTO docs {n:5,meta:7}");
+    q(&c, "CREATE TABLE native(n INTEGER,v INTEGER)");
+    q(
+        &c,
+        "INSERT INTO native VALUES(1,1),(2,2),(3,NULL),(4,NULL),(5,NULL)",
+    );
+    q(&c, "CREATE TABLE rhs(n INTEGER)");
+    q(&c, "INSERT INTO rhs VALUES(1),(2),(NULL)");
+    for field in ["d.meta.n", "d.meta.deep.n"] {
+        for projection in [
+            format!("(SELECT max(n) FROM rhs WHERE n<={field})"),
+            format!("EXISTS(SELECT n FROM rhs WHERE n={field})"),
+            format!("d.n IN(SELECT n FROM rhs WHERE n<={field})"),
+            format!("d.n NOT IN(SELECT n FROM rhs GROUP BY n HAVING n<={field})"),
+            format!("(SELECT max(x.n) FROM rhs x JOIN rhs y ON x.n=y.n AND y.n<={field})"),
+        ] {
+            let sql = format!("SELECT d.n,{projection} FROM docs AS d ORDER BY d.n");
+            let oracle = sql
+                .replace("FROM docs AS d", "FROM native AS d")
+                .replace(field, "d.v");
+            let expected = q(&c, &oracle).rows;
+            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+            let derived = sql.replace("FROM docs AS d", "FROM (SELECT n,meta FROM docs) AS d");
+            assert_eq!(q(&c, &derived).rows, expected, "{derived}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "{sql}"
+            );
+        }
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT d.n,d.meta.n AS shallow,d.meta.deep.n AS deep FROM (SELECT n,meta FROM docs) AS d ORDER BY d.n"
+        )
+        .rows,
+        q(&c, "SELECT n,v,v FROM native ORDER BY n").rows
+    );
+    for field in ["d.meta.n", "d.meta.deep.n"] {
+        let sql = format!("SELECT (SELECT n FROM rhs AS d WHERE n={field}) FROM docs AS d");
+        assert!(
+            c.execute(&sql, &Parameters::new()).is_err(),
+            "local alias must shadow outer: {sql}"
+        );
+    }
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "BEGIN");
+    let result=q(&c,"UPDATE docs AS d SET n=n+10 WHERE d.n IN(SELECT n FROM rhs WHERE n=d.meta.deep.n) RETURNING n");
+    assert_eq!(result.affected, 2);
+    assert_eq!(
+        result.rows,
+        vec![vec![Value::Integer(11)], vec![Value::Integer(12)]]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        q(&c, "SELECT n FROM native ORDER BY n").rows
+    );
+}

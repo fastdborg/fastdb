@@ -82,6 +82,19 @@ fn native_correlated_predicate(
         fetched_aliases: Default::default(),
         standalone_aliases: Default::default(),
     };
+    fn qualifier(expr: &Expr) -> Option<&str> {
+        match expr {
+            Expr::Qualified(alias, _) | Expr::DoublyQualified(alias, _, _) => Some(alias.as_str()),
+            Expr::FieldAccess { base, .. } => qualifier(base),
+            Expr::FunctionCall { name, args, .. } if name.as_str() == "__fastdb_path" => {
+                match args.first()?.as_ref() {
+                    Expr::Id(alias) | Expr::Name(alias) => Some(alias.as_str()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
     let rewrite = |value: &mut Expr| -> Result<()> {
         let mut correlated = false;
         turso_core::walk_expr_mut(value, &mut |expr| {
@@ -91,11 +104,9 @@ fn native_correlated_predicate(
             ) {
                 return Ok(turso_core::WalkControl::SkipChildren);
             }
-            if let Expr::Qualified(alias, _) = expr {
-                if !local.contains(&alias.as_str().to_ascii_lowercase())
-                    && sources
-                        .iter()
-                        .any(|s| s.alias.eq_ignore_ascii_case(alias.as_str()))
+            if let Some(alias) = qualifier(expr) {
+                if !local.contains(&alias.to_ascii_lowercase())
+                    && sources.iter().any(|s| s.alias.eq_ignore_ascii_case(alias))
                 {
                     correlated = true;
                     if metadata {
@@ -218,14 +229,12 @@ impl Scope {
                 });
             }
             let path = serde_json::to_string(nested)?.replace('\'', "''");
-            return expression(&format!(
-                "{}({value},'{path}')",
-                if typed {
-                    "__fastdb_value"
-                } else {
-                    "__fastdb_scalar"
-                }
-            ));
+            let value = format!("__fastdb_nested_value({value},'{path}')");
+            return expression(&if typed {
+                value
+            } else {
+                format!("__fastdb_unwrap({value})")
+            });
         }
         if !typed && path == ["id"] {
             return expression(&format!("{}.id", quote(&self.sources[i].alias)));

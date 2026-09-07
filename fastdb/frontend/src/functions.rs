@@ -49,6 +49,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 2,
             ),
             (
+                c"__fastdb_nested_value",
+                nested_value as turso_ext::ScalarFunction,
+                2,
+            ),
+            (
                 c"__fastdb_value",
                 document_value as turso_ext::ScalarFunction,
                 2,
@@ -109,15 +114,20 @@ fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
             .to_text()
             .ok_or_else(|| Error::Storage("expected field path".into()))?,
     )?;
-    let Value::Object(doc) = Value::decode(&bytes)? else {
-        return Err(Error::Storage("expected object".into()));
+    let value = match Value::decode(&bytes)? {
+        Value::Object(doc) => {
+            if path.is_empty() {
+                Value::Object(doc)
+            } else {
+                read_path(&doc, &path)?.cloned().unwrap_or(Value::Null)
+            }
+        }
+        // Derived columns may contain any logical value. A non-object parent
+        // has no nested object fields; stored document roots remain strict.
+        _ if mode == 3 => Value::Null,
+        _ => return Err(Error::Storage("expected object".into())),
     };
-    let value = if path.is_empty() {
-        Value::Object(doc)
-    } else {
-        read_path(&doc, &path)?.cloned().unwrap_or(Value::Null)
-    };
-    if mode == 1 {
+    if mode == 1 || mode == 3 {
         return Ok(ExtValue::from_blob(value.encode()?));
     }
     if mode == 2 {
@@ -172,6 +182,10 @@ fn read_path<'a>(doc: &'a crate::Document, path: &[String]) -> Result<Option<&'a
 #[scalar(name = "__fastdb_scalar")]
 fn document_scalar(args: &[ExtValue]) -> ExtValue {
     get(args, 0).unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+#[scalar(name = "__fastdb_nested_value")]
+fn nested_value(args: &[ExtValue]) -> ExtValue {
+    get(args, 3).unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
 #[scalar(name = "__fastdb_value")]
 fn document_value(args: &[ExtValue]) -> ExtValue {
@@ -791,6 +805,44 @@ mod between_tests {
                     expected_calls,
                     "{sql}, profile={profile}"
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod nested_accessor_tests {
+    use super::*;
+    #[test]
+    fn derived_accessors_allow_scalar_parents_without_weakening_stored_roots() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for bytes in [
+            Value::Integer(7).encode().unwrap(),
+            Value::Null.encode().unwrap(),
+            Value::Array(vec![]).encode().unwrap(),
+            vec![0xff],
+        ] {
+            for function in ["__fastdb_nested_value", "__fastdb_value", "__fastdb_scalar"] {
+                let mut statement = c
+                    .prepare(format!("SELECT {function}(?1,'[\"n\"]')"))
+                    .unwrap();
+                statement
+                    .bind_at(
+                        std::num::NonZeroUsize::new(1).unwrap(),
+                        turso_core::Value::Blob(bytes.clone()),
+                    )
+                    .unwrap();
+                let result = crate::collect_rows(&mut statement);
+                if function == "__fastdb_nested_value" && bytes != [0xff] {
+                    let rows = result.unwrap();
+                    let turso_core::Value::Blob(value) = &rows[0][0] else {
+                        panic!("typed nested value")
+                    };
+                    assert_eq!(Value::decode(value).unwrap(), Value::Null);
+                } else {
+                    assert!(result.is_err(), "{function}, {bytes:?}");
+                }
             }
         }
     }

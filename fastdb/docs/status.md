@@ -970,3 +970,12 @@ Scoped checks passed formatting, Clippy, 305 Rust tests, thirty-five Node tests 
 ## Installed correlated membership smoke (2026-09-07)
 
 The offline installed Node consumer now exercises a parameterized correlated IN UPDATE and profiles matching, empty NOT IN and NULL membership results through sync and worker clients. It verifies affected rows, managed index integrity and rollback to int64 max. The complete smoke passed on Linux x64 / Node 24.19.0 with eight runtime files and a 59,608,392-byte development tarball. Release/platform qualification remains open.
+
+
+## Nested outer fields in correlated predicates (2026-09-07)
+
+The correlation detector now recognizes nested outer document paths, including the parser's deep-path helper, and substitutes the complete path only in metadata probes. Runtime lowering uses the existing typed field accessor and comparison rules. Scalar, EXISTS, IN/NOT IN, HAVING and JOIN predicate regressions compare shallow/deep nested paths with native scalar-column oracles, including NULL, missing paths and scalar parents. Derived collection sources retain nested typed access; local aliases continue to shadow the outer source. A correlated UPDATE checks affected rows, index integrity and rollback. Deeper query scopes and inner collection sources remain unfinished.
+
+Qualification exposed a derived-accessor error for NULL/scalar parents. A separate nested-value accessor now returns missing fields for valid non-object parents while physical document access stays strict; a direct accessor regression checks malformed encodings and stored-root rejection.
+
+Scoped checks passed formatting, Clippy, 307 Rust tests, thirty-five Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
