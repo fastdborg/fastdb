@@ -200,3 +200,34 @@ fn unnamed_derived_collections_preserve_values_and_join_scope() {
         q(&c, "SELECT n,flag,data FROM docs ORDER BY n").rows
     );
 }
+
+#[test]
+fn unnamed_derived_sources_preserve_parameters_and_correlation() {
+    let (_db, c) = setup();
+    let mut params = Parameters::new();
+    params.insert("$min".into(), Value::Integer(1));
+    params.insert("$extra".into(), Value::Integer(5));
+    for source in ["docs d", "(SELECT n FROM docs) d"] {
+        for (anonymous, named) in [
+            ("SELECT n+$extra FROM (SELECT n FROM docs WHERE n>=$min) WHERE n>=d.n ORDER BY n LIMIT 1", "SELECT n+$extra FROM (SELECT n FROM docs WHERE n>=$min) i WHERE n>=d.n ORDER BY n LIMIT 1"),
+            ("SELECT flag FROM (SELECT n,flag FROM docs WHERE n>=$min) WHERE n=d.n AND $extra=5", "SELECT flag FROM (SELECT n,flag FROM docs WHERE n>=$min) i WHERE n=d.n AND $extra=5"),
+        ] {
+            let expected_sql = format!("SELECT n,({named}) FROM {source} ORDER BY n");
+            let sql = format!("SELECT n,({anonymous}) FROM {source} ORDER BY n");
+            let expected = c.execute(&expected_sql, &params).unwrap().rows;
+            let values = if anonymous.starts_with("SELECT flag") {
+                [Value::Boolean(true), Value::Boolean(false)]
+            } else {
+                [Value::Integer(6), Value::Integer(7)]
+            };
+            assert_eq!(expected, vec![vec![Value::Integer(1), values[0].clone()], vec![Value::Integer(2), values[1].clone()]]);
+            let mut missing = params.clone();
+            missing.remove("$min");
+            assert!(matches!(c.execute(&sql, &missing), Err(fastdb::Error::Parameter(_))));
+            assert!(matches!(c.profile_select(&sql, &missing), Err(fastdb::Error::Parameter(_))));
+
+            assert_eq!(c.execute(&sql, &params).expect(&sql).rows, expected, "{sql}");
+            assert_eq!(c.profile_select(&sql, &params).expect(&sql).result.rows, expected, "{sql}");
+        }
+    }
+}
