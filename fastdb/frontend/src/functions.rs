@@ -1223,35 +1223,37 @@ mod cte_evaluation_tests {
         ] {
             c.execute(sql, &params).unwrap();
         }
-        for limit in [" LIMIT 0", ""] {
-            let sql = |table| {
-                format!("SELECT n,(WITH x AS MATERIALIZED (SELECT n,cte_tick() AS v FROM {table}) SELECT sum(v) FROM x WHERE x.n>=d.n) FROM {table} d ORDER BY n{limit}")
-            };
-            CALLS.store(0, Ordering::SeqCst);
-            let expected = c.execute(&sql("baseline"), &params).unwrap().rows;
-            let expected_calls = CALLS.load(Ordering::SeqCst);
-            if !limit.is_empty() {
-                assert_eq!(expected_calls, 0);
-            } else {
-                assert!(expected_calls > 0);
+        for materialization in ["MATERIALIZED", "NOT MATERIALIZED", ""] {
+            for limit in [" LIMIT 0", ""] {
+                let sql = |table| {
+                    format!("SELECT n,(WITH x AS {materialization} (SELECT n,cte_tick() AS v FROM {table}) SELECT sum(v) FROM x WHERE x.n>=d.n) FROM {table} d ORDER BY n{limit}")
+                };
+                CALLS.store(0, Ordering::SeqCst);
+                let expected = c.execute(&sql("baseline"), &params).unwrap().rows;
+                let expected_calls = CALLS.load(Ordering::SeqCst);
+                if !limit.is_empty() {
+                    assert_eq!(expected_calls, 0);
+                } else {
+                    assert!(expected_calls > 0);
+                }
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(c.execute(&sql("docs"), &params).unwrap().rows, expected);
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    expected_calls,
+                    "execute {materialization}: {limit}"
+                );
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(
+                    c.profile_select(&sql("docs"), &params).unwrap().result.rows,
+                    expected
+                );
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    expected_calls,
+                    "profile {materialization}: {limit}"
+                );
             }
-            CALLS.store(0, Ordering::SeqCst);
-            assert_eq!(c.execute(&sql("docs"), &params).unwrap().rows, expected);
-            assert_eq!(
-                CALLS.load(Ordering::SeqCst),
-                expected_calls,
-                "execute {limit}"
-            );
-            CALLS.store(0, Ordering::SeqCst);
-            assert_eq!(
-                c.profile_select(&sql("docs"), &params).unwrap().result.rows,
-                expected
-            );
-            assert_eq!(
-                CALLS.load(Ordering::SeqCst),
-                expected_calls,
-                "profile {limit}"
-            );
         }
     }
 }

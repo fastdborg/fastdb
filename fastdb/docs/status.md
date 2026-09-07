@@ -1421,3 +1421,6 @@ Local CTE correlated write qualification (2026-09-08): a parameterized multirow 
 
 
 Local CTE correlation evaluation qualification (2026-09-08): a test-only nondeterministic callback checks a materialized local CTE consumed by a correlated scalar aggregate. LIMIT 0 produces no calls through execute/profile, and active collection queries match native results and evaluation counts. This gives runtime evidence that the lowering probe does not add source evaluation for the covered shape. The focused unit test, formatting and frontend lib/test Clippy pass. Latest full scoped evidence remains the recorded 370-Rust/44-Node run; broader CTE/volatile/resource and full V1 gates remain open.
+
+
+Local CTE materialization-mode evaluation qualification (2026-09-08): the correlated callback regression now covers MATERIALIZED, NOT MATERIALIZED and default CTE planning. Each mode matches native results and actual evaluation counts through execute/profile, including zero calls with LIMIT 0. The expanded focused test, formatting and frontend lib/test Clippy pass. This does not freeze optimizer behavior across engine upgrades or establish general volatile-expression qualification. Latest combined evidence remains the recorded 370-Rust/44-Node run; full V1 gates remain open.
