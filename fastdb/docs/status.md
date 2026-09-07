@@ -1275,3 +1275,6 @@ Maximum valid migration history qualification (2026-09-07): a file-backed integr
 
 
 Migration source-location qualification (2026-09-07): a regression verifies FDB_MIGRATION carries the pending version, exact UTF-8 byte offset after multibyte comments and the underlying FDB_VALIDATION cause. Earlier pending DDL rolls back, later statements remain absent, and correcting the failed source applies only the pending nonconsecutive version before exact rerun skips it. All seven migration integration tests, formatting and focused Clippy pass. Full V1 remains incomplete.
+
+
+Migration preflight syntax context (2026-09-07): script splitting/tokenization errors now include the migration version while retaining FDB_SYNTAX and script-relative UTF-8 byte offsets. A regression checks an unterminated quote after multibyte comments, no earlier migration mutation and a successful valid retry. All eight migration integration tests, formatting and frontend/tests all-target Clippy pass. Full V1 remains incomplete.

@@ -320,3 +320,24 @@ fn migration_failure_reports_utf8_statement_offset_and_underlying_error() {
     );
     assert_eq!(c.migrate(&plan).unwrap().already_applied, 2);
 }
+
+#[test]
+fn migration_preflight_syntax_identifies_version_without_mutation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let source = "-- café 日本語\nSELECT 'unterminated";
+    let plan = [m(1, "CREATE TABLE docs;"), m(7, source)];
+    let error = c.migrate(&plan).unwrap_err();
+    assert_eq!(error.code(), "FDB_SYNTAX");
+    match error {
+        fastdb::Error::Syntax(error) => {
+            assert_eq!(error.offset, source.find('\'').unwrap());
+            assert!(error.message.contains("migration 7:"));
+            assert!(error.message.contains("unterminated quote"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+    assert!(c.execute("SELECT * FROM docs", &Parameters::new()).is_err());
+    assert_eq!(c.migrate(&plan[..1]).unwrap().applied, vec![1]);
+}

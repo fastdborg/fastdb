@@ -42,9 +42,16 @@ impl Connection {
             if migration.sql.len() > 4 * 1024 * 1024 {
                 return Err(Error::Limit("migration script exceeds 4 MiB".into()));
             }
-            let statements = fastql_parser::split_script(&migration.sql)?;
+            let statements = fastql_parser::split_script(&migration.sql).map_err(|mut error| {
+                error.message = format!("migration {}: {}", migration.version, error.message);
+                error
+            })?;
             for statement in &statements {
-                let tokens = fastql_parser::tokenize(statement.sql)?;
+                let tokens = fastql_parser::tokenize(statement.sql).map_err(|mut error| {
+                    error.offset += statement.offset;
+                    error.message = format!("migration {}: {}", migration.version, error.message);
+                    error
+                })?;
                 let first = tokens.first().expect("nonempty statement");
                 if first.kind != fastql_parser::Kind::Word
                     || !matches!(
