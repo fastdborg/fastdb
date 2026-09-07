@@ -1661,6 +1661,7 @@ struct SelectOptions<'a> {
     restricted_native_clauses: bool,
     ctes: Option<&'a CteSources>,
     nested: bool,
+    expression_subquery: bool,
     trusted: bool,
     ignore_unused: bool,
     positional: bool,
@@ -1877,6 +1878,7 @@ impl Connection {
             restricted_native_clauses,
             ctes: inherited_ctes,
             nested,
+            expression_subquery,
             trusted,
             ignore_unused,
             positional,
@@ -2148,6 +2150,7 @@ impl Connection {
                                 trusted: true,
                                 nested: true,
                                 positional: exists,
+                                expression_subquery: true,
                                 ctes: Some(&ctes),
                                 ..Default::default()
                             },
@@ -2310,9 +2313,25 @@ impl Connection {
                 }
             }
         }
+        let source_free_logical = from.is_none()
+            && fastql_parser::tokenize(expanded)?.iter().any(|token| {
+                (token.kind == fastql_parser::Kind::Word && token.text.starts_with("__fastdb_"))
+                    || (token.kind == fastql_parser::Kind::Parameter
+                        && params.get(&token.text).is_some_and(|value| {
+                            matches!(
+                                value,
+                                Value::Boolean(_)
+                                    | Value::Record(_)
+                                    | Value::Object(_)
+                                    | Value::Array(_)
+                                    | Value::Vector(_)
+                            ) || (expression_subquery && matches!(value, Value::Binary(_)))
+                        }))
+            });
         if (native_insert.is_some() || nested)
             && !cte_logical
             && expression_subqueries.is_empty()
+            && !source_free_logical
             && sources.iter().all(|source| !source.logical())
         {
             return Ok(None);

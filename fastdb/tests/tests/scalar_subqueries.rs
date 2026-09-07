@@ -432,3 +432,76 @@ fn subquery_insert_failures_restore_documents_indexes_and_prior_work() {
         ]
     );
 }
+
+#[test]
+fn source_free_subqueries_and_ctes_preserve_typed_parameters_and_helpers() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let record = q(&c, "SELECT type::record('docs','key') AS v").rows[0][0].clone();
+    for value in [
+        record,
+        Value::Boolean(true),
+        Value::Array(vec![Value::Integer(1)]),
+        Value::Object(Default::default()),
+        Value::Binary(b"FDB\x01payload".to_vec()),
+        Value::vector32(&[1.0, 0.0]).unwrap(),
+    ] {
+        let params = Parameters::from([("$v".into(), value.clone())]);
+        for sql in [
+            "SELECT (SELECT $v AS v) AS v",
+            "WITH chosen AS (SELECT $v AS v) SELECT v FROM chosen",
+            "SELECT v FROM (SELECT $v AS v) chosen",
+            "SELECT (SELECT (SELECT $v AS v) AS v) AS v",
+        ] {
+            assert_eq!(
+                c.execute(sql, &params).unwrap().rows,
+                vec![vec![value.clone()]],
+                "{sql}"
+            );
+        }
+        assert_eq!(
+            c.execute("SELECT EXISTS (SELECT $v AS v) AS v", &params)
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(1)]]
+        );
+    }
+    assert_eq!(
+        q(&c, "SELECT (SELECT type::record('docs','key') AS v) AS v").rows,
+        q(&c, "SELECT type::record('docs','key') AS v").rows
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT docs:key IN (SELECT type::record('docs','key') AS v) AS v"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    q(&c, "CREATE TABLE docs");
+    let numbered = Parameters::from([
+        ("?1".into(), Value::Integer(3)),
+        ("?2".into(), Value::Array(vec![Value::Boolean(true)])),
+    ]);
+    assert_eq!(
+        c.execute("SELECT ?1 AS n,(SELECT ?2 AS v) AS v", &numbered)
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(3), numbered["?2"].clone()]]
+    );
+    q(&c, "CREATE TABLE native(v BLOB)");
+    assert!(c
+        .execute(
+            "INSERT INTO native SELECT $v AS v",
+            &Parameters::from([("$v".into(), Value::Array(vec![]))])
+        )
+        .is_err());
+    assert!(q(&c, "SELECT * FROM native").rows.is_empty());
+    let params = Parameters::from([("$v".into(), Value::Array(vec![Value::Integer(7)]))]);
+    c.execute("INSERT INTO docs(v) SELECT (SELECT $v AS v) AS v", &params)
+        .unwrap();
+    assert_eq!(
+        q(&c, "SELECT v FROM docs").rows,
+        vec![vec![params["$v"].clone()]]
+    );
+}

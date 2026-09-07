@@ -501,7 +501,7 @@ test('sparse entry vectors validate indices and roundtrip through both clients',
 });
 
 
-test('collection scalar subqueries preserve typed values in both clients', async () => {
+test('typed scalar subqueries preserve values in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
     const db = await open();
@@ -513,6 +513,10 @@ test('collection scalar subqueries preserve typed values in both clients', async
       assert.deepEqual(await db.exactlyOne('SELECT n FROM docs WHERE n=(SELECT max(n) FROM docs)'), [1n]);
       assert.deepEqual(await db.exactlyOne('SELECT EXISTS (SELECT link,items FROM docs) AS present,NOT EXISTS (SELECT n FROM docs WHERE n=99) AS absent'), [1n,1n]);
       assert.deepEqual(await db.exactlyOne('SELECT docs:b IN (SELECT link FROM docs) AS present,2 NOT IN (SELECT n FROM docs) AS absent,NULL IN (SELECT n FROM docs) AS unknown'), [1n,1n,null]);
+      for (const value of [new Record('docs','key'), [1n,true], {ok:true}, Buffer.from([0,255]), Vector.float32([1,0])]) {
+        assert.deepEqual(await db.exactlyOne('SELECT (SELECT $v AS v) AS v', {$v:value}), [value]);
+        assert.deepEqual(await db.exactlyOne('WITH chosen AS (SELECT $v AS v) SELECT v FROM chosen', {$v:value}), [value]);
+      }
       await db.execute('CREATE TABLE affinity_docs');
       await db.execute('INSERT INTO affinity_docs(n) VALUES (2)');
       assert.deepEqual(await db.exactlyOne("SELECT CAST('2' AS TEXT) IN (SELECT n FROM affinity_docs) AS v"), [0n]);
