@@ -704,7 +704,7 @@ impl Connection {
         }
     }
     pub(crate) fn guard_native_sql(&self, sql: &str) -> Result<()> {
-        let tokens = guard::tokens(sql)?;
+        let tokens = guard::native_tokens(sql)?;
         let collections = self.run("SELECT name FROM __fastdb_catalog", &[])?;
         for token in &tokens {
             // Reject unresolved managed references; value literals in covered AST

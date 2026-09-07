@@ -22,7 +22,22 @@ pub(crate) fn internal_names(sql: &str) -> crate::Result<()> {
 }
 
 pub(crate) fn tokens(sql: &str) -> crate::Result<Vec<fastql_parser::Token>> {
+    tokens_inner(sql, false)
+}
+
+pub(crate) fn native_tokens(sql: &str) -> crate::Result<Vec<fastql_parser::Token>> {
+    tokens_inner(sql, true)
+}
+
+fn tokens_inner(sql: &str, native: bool) -> crate::Result<Vec<fastql_parser::Token>> {
     let Ok(mut cmd) = crate::select::parsed(sql) else {
+        if native {
+            // Preserve the pinned engine's first-statement parse error before
+            // unresolved managed names can hide it. FastQL write guards retain
+            // lexical fallback for syntax that has not been expanded yet.
+            crate::parser_stack(|| turso_parser::parser::Parser::new(sql.as_bytes()).next_cmd())
+                .map_err(turso_core::LimboError::from)?;
+        }
         return Ok(fastql_parser::tokenize(sql)?);
     };
     let statement = match &mut cmd {

@@ -47,3 +47,57 @@ fn ordinary_sql_matches_the_pinned_engine() {
         assert_eq!(actual.rows, expected, "{sql}");
     }
 }
+
+#[test]
+fn malformed_collection_sql_preserves_native_parse_errors_and_active_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let baseline =
+        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let raw = baseline.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(v INTEGER)",
+        "BEGIN",
+        "INSERT INTO docs {v:1}",
+    ] {
+        c.execute(sql, &Parameters::new()).unwrap();
+    }
+    for sql in [
+        "SELECT 1 + FROM docs",
+        "SELECT * FROM docs WHERE",
+        "WITH x AS (SELECT * FROM docs WHERE) SELECT * FROM x",
+        "INSERT INTO native SELECT FROM docs",
+        "SELECT 'docs' + FROM native",
+        "SELECT 1 + FROM native",
+    ] {
+        let expected = raw
+            .prepare(sql)
+            .expect_err("baseline parse failure")
+            .to_string();
+        let report = c.execute_report(sql, &Parameters::new());
+        let fastdb::Error::Engine(actual) = report.result.unwrap_err() else {
+            panic!("expected native parse error: {sql}");
+        };
+        assert_eq!(actual.to_string(), expected, "{sql}");
+        assert_eq!(report.transaction_after, fastdb::TransactionState::Active);
+    }
+    assert_eq!(
+        c.execute("SELECT v FROM docs", &Parameters::new())
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert!(c
+        .execute("SELECT * FROM native", &Parameters::new())
+        .unwrap()
+        .rows
+        .is_empty());
+    assert_eq!(
+        c.execute("SELECT 1; SELECT 2", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_UNSUPPORTED"
+    );
+    c.execute("ROLLBACK", &Parameters::new()).unwrap();
+}

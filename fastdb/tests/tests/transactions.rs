@@ -268,11 +268,8 @@ fn recursive_sql_returns_depth_errors_on_a_small_caller_stack() {
                     let report =
                         c.execute_report(&format!("SELECT {expr}{suffix}"), &Parameters::new());
                     let error = report.result.unwrap_err();
-                    if suffix.is_empty() {
-                        assert!(error.to_string().contains("maximum depth 100"));
-                    } else {
-                        assert_eq!(error.code(), "FDB_UNSUPPORTED");
-                    }
+                    assert_eq!(error.code(), "FDB_ENGINE");
+                    assert!(error.to_string().contains("maximum depth 100"));
                     assert!(c
                         .profile_select(&format!("SELECT {expr}{suffix}"), &Parameters::new())
                         .unwrap_err()

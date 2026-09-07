@@ -60,15 +60,12 @@ fn recursive_sql_returns_errors_instead_of_aborting_the_process() {
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert_eq!(reports.len(), commands.len());
-    for (i, report) in reports[4..16].iter().enumerate() {
-        if i % 2 == 0 {
-            assert!(report["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("maximum depth 100"));
-        } else {
-            assert_eq!(report["error"]["code"], "FDB_UNSUPPORTED");
-        }
+    for report in &reports[4..16] {
+        assert_eq!(report["error"]["code"], "FDB_ENGINE");
+        assert!(report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("maximum depth 100"));
         assert_eq!(report["transaction"]["after"], "active");
     }
     assert_eq!(reports[16]["rows"][0][0]["value"], 1);

@@ -346,8 +346,8 @@ test('recursive SQL reports parser depth errors through sync and worker clients'
       for (const expression of ['NOT '.repeat(2000) + '1', 'CASE WHEN 1 THEN '.repeat(200) + '1' + ' ELSE 0 END'.repeat(200)]) {
         for (const suffix of ['', ' FROM docs']) {
           await assert.rejects(Promise.resolve().then(() => db.execute('SELECT ' + expression + suffix)), error => {
-            if (suffix) assert.equal(error.code, 'FDB_UNSUPPORTED');
-            else assert.match(error.message, /maximum depth 100/);
+            assert.equal(error.code, 'FDB_ENGINE');
+            assert.match(error.message, /maximum depth 100/);
             assert.equal(error.transaction.after, 'active');
             return true;
           });
