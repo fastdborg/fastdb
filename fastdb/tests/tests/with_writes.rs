@@ -100,6 +100,20 @@ fn pinned_same_name_cte_write_resolution_differs_from_candidate_select() {
         .rows,
         vec![vec![Value::Integer(2)]]
     );
+    for (cte_name, expected) in [("native", vec![12]), ("target", vec![11, 12, 13])] {
+        q(&c, "BEGIN");
+        let sql = format!("WITH {cte_name} AS (SELECT 2 AS n), chosen AS (SELECT n FROM {cte_name}) UPDATE native AS target SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n");
+        let result = q(&c, &sql);
+        assert_eq!(
+            result.rows,
+            expected
+                .into_iter()
+                .map(|n| vec![Value::Integer(n)])
+                .collect::<Vec<_>>(),
+            "{sql}"
+        );
+        q(&c, "ROLLBACK");
+    }
     for suffix in [
         "UPDATE native SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n",
         "DELETE FROM native WHERE n IN (SELECT n FROM chosen) RETURNING n",

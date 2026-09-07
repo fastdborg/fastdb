@@ -1147,3 +1147,8 @@ The same-name chained CTE development probe still fails preparation with no such
 ## Same-name CTE write oracle — 2026-09-07
 
 `cargo test --locked -p fastdb-tests --test with_writes` passed two tests (`/tmp/fastdb-same-name-write-oracle.log`). The new ordinary-table regression asserts the pinned difference between candidate SELECT (row 2) and UPDATE/DELETE (all three rows) using a target-named CTE; it verifies affected counts and rollback restoration. Test-package Clippy and formatting passed. No production change; prior 289 Rust / 34 Node scoped evidence plus this new regression yields 290 distinct Rust tests. The collection failure remains unresolved, with the required write-context semantics recorded in v1-gates.md.
+
+
+## Write-target alias oracle — 2026-09-07
+
+Extended the existing native same-name regression with UPDATE target aliases. `cargo test --locked -p fastdb-tests --test with_writes` passed both tests (`/tmp/fastdb-with-alias-oracle.log`): native-named CTE + AS target updates only 2; target-named CTE + AS target updates all three rows. A live derived-candidate SELECT probe retained SELECT's one-row behavior. Inspected pinned update/delete/planner code to identify separate target and CTE reference scopes. Test-package Clippy and formatting passed. No production change; distinct test count remains 290 Rust, with prior 34 Node evidence. Collection same-name resolution remains open.
