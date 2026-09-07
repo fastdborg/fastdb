@@ -404,6 +404,7 @@ mod tests {
     fn interrupted_collection_mutations_restore_documents_and_indexes() {
         for (statement, outer) in [
             "UPDATE docs SET value=value+100",
+            "UPDATE docs AS d SET value=value+100 WHERE 1 IN (SELECT 1 WHERE d.value>0)",
             "UPDATE docs SET value=value+(SELECT 100)",
             "UPDATE docs AS d SET value=value+(SELECT 100 WHERE d.value>0)",
             "DELETE FROM docs AS d WHERE EXISTS(SELECT 1 WHERE d.value>0)",

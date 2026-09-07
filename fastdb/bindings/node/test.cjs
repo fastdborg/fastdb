@@ -911,6 +911,9 @@ test('native scalar predicates correlate in sync and worker clients', async () =
       const grouped='SELECT d.n,(SELECT max(n) AS maximum FROM lookup HAVING maximum>d.n) FROM docs AS d ORDER BY d.n';
       assert.deepEqual(await db.all(grouped),[[1n,3n],[2n,3n],[3n,null]]);
       assert.deepEqual((await db.profileSelect(grouped)).result.rows,[[1n,3n],[2n,3n],[3n,null]]);
+      const membership='SELECT d.n,d.n IN(SELECT n FROM lookup WHERE n=d.n AND n<3) FROM docs AS d ORDER BY d.n';
+      assert.deepEqual(await db.all(membership),[[1n,1n],[2n,1n],[3n,0n]]);
+      assert.deepEqual((await db.profileSelect(membership)).result.rows,[[1n,1n],[2n,1n],[3n,0n]]);
       await db.execute('BEGIN');
       const result=await db.execute('UPDATE docs AS d SET n=(SELECT max(n) FROM lookup WHERE n<=d.n)+$delta RETURNING n',{$delta:10n});
       assert.equal(result.affected,3n);

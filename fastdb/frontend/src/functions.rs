@@ -748,6 +748,14 @@ mod between_tests {
         .unwrap();
         for (projection, expected_calls) in [
             ("(SELECT between_tick() WHERE d.n>0)", 2),
+            (
+                "d.n IN (SELECT between_tick() FROM correlation_inputs WHERE n<=d.n)",
+                3,
+            ),
+            (
+                "d.n NOT IN (SELECT between_tick() FROM correlation_inputs WHERE n<=d.n)",
+                3,
+            ),
             ("(SELECT between_tick() WHERE d.n<2)", 1),
             ("(SELECT between_tick() WHERE d.n<0)", 0),
             ("(SELECT between_tick() WHERE d.n>0)+1", 2),
@@ -766,7 +774,7 @@ mod between_tests {
                 expected_calls,
                 "native: {projection}"
             );
-            let sql = native.replace("correlation_inputs", "scalar_inputs");
+            let sql = native.replace("FROM correlation_inputs AS d", "FROM scalar_inputs AS d");
             for profile in [false, true] {
                 CALLS.store(0, Ordering::SeqCst);
                 let actual = if profile {

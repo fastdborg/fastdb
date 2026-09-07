@@ -956,3 +956,12 @@ The existing test-only native function counter now compares seven correlated sca
 Qualified outer collection fields now lower inside native scalar/EXISTS HAVING predicates using the same metadata/runtime separation as WHERE and JOIN ON. Differential coverage includes scalar aggregates, projection aliases in HAVING, grouped first-row selection, EXISTS, local alias shadowing, parameters, execute/profile results and atomic UPDATE failure/retry/rollback. Both Node clients exercise a grouped scalar read with a HAVING projection alias. Correlation in GROUP BY expressions, inner collection sources, correlated IN and deeper scopes remain open.
 
 Scoped checks passed formatting, Clippy, 302 Rust tests, thirty-five Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Correlated native membership predicates (2026-09-07)
+
+IN/NOT IN sources now use qualified outer collection fields in the supported native predicate scopes. An uncorrelated native RHS retains its enclosing shared materialized CTE; a correlated RHS stays in a local materialized CTE inside the membership expression. Native left operands retain native IN execution with the rewritten RHS. Logical left operands retain binary comparison keys and the existing affinity/collation conversions. Sources are evaluated by the engine for their outer rows, without frontend pre-execution.
+
+Tests compare NULL/empty sources, native literal and typed left operands, unary plus/CAST/COLLATE, INTEGER/NOCASE/RTRIM RHS declarations and binary-versus-record identity. Missing parameters, failed INSERT SELECT with prior work, integrity and corrected retry are covered. The native function counter checks per-row source evaluation for IN and NOT IN through execute/profile. Inner collection sources, deeper correlated scopes, non-predicate correlation and broader volatile/planner/resource behavior remain unfinished.
+
+Scoped checks passed formatting, Clippy, 305 Rust tests, thirty-five Node tests and strict TypeScript. Final text-literal collation cases passed separately. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

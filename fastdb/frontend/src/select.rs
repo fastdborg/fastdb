@@ -29,6 +29,7 @@ type CteSources = std::collections::BTreeMap<String, Option<Source>>;
 enum SubqueryAffinity {
     None,
     MembershipColumn,
+    // An empty source name keeps a correlated RHS local to its membership expression.
     NativeMembership(String, String),
     NativeScalar(String),
 }
@@ -601,7 +602,7 @@ impl Scope {
             if let Some((query, consumed, column)) =
                 self.expression_subqueries.get(&expr.to_string())
             {
-                let Expr::InSelect { lhs, not, .. } = expr else {
+                let Expr::InSelect { lhs, not, rhs } = expr else {
                     unreachable!()
                 };
                 for name in consumed {
@@ -617,6 +618,12 @@ impl Scope {
                     if !self.comparison_key(&mut value)? {
                         self.lower(&mut value)?;
                         **lhs = value;
+                        if shared.is_empty() {
+                            let Expr::Subquery(inner) = query else {
+                                unreachable!()
+                            };
+                            *rhs = inner.clone();
+                        }
                         return Ok(());
                     }
                     let key = match order_base(lhs) {
@@ -655,7 +662,17 @@ impl Scope {
                     // Keep native IN execution so its uncorrelated source can
                     // be cached across outer rows. Only BLOB comparison keys
                     // require encoding of the source values.
-                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}) SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
+                    let local = if shared.is_empty() {
+                        format!(", __fastdb_correlated_members(v) AS MATERIALIZED {query}")
+                    } else {
+                        String::new()
+                    };
+                    let shared = if shared.is_empty() {
+                        "__fastdb_correlated_members"
+                    } else {
+                        shared.as_str()
+                    };
+                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();
@@ -2803,12 +2820,8 @@ impl Connection {
                 _ => unreachable!(),
             };
             let mut collation = "BINARY".to_owned();
-            {
-                let mut probe = if matches!(affinity, SubqueryAffinity::NativeScalar(_)) {
-                    native_correlated_predicate(&inner, &sources, true, params)?
-                } else {
-                    inner.clone()
-                };
+            let correlated = {
+                let mut probe = native_correlated_predicate(&inner, &sources, true, params)?;
                 let correlated = Cmd::Stmt(Stmt::Select(probe.clone())).to_string()
                     != Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                 if probe.with.is_none() {
@@ -2852,10 +2865,18 @@ impl Connection {
                     })?;
                     // Correlated scalar results are registers in the pinned engine:
                     // their projected collation does not propagate to the outer comparison.
-                    if !correlated {
+                    if !correlated || matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
                         collation = explicit.or(implicit).unwrap_or(collation);
                     }
                 }
+                correlated
+            };
+            if correlated && matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
+                *lowered = Expr::Subquery(native_correlated_predicate(
+                    &inner, &sources, false, params,
+                )?);
+                *affinity = SubqueryAffinity::NativeMembership(collation, String::new());
+                continue;
             }
             *affinity = if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
                 let mut suffix = select.with.as_ref().map_or(0, |with| with.ctes.len());

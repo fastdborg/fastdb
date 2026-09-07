@@ -1645,3 +1645,132 @@ fn native_having_predicates_correlate_with_collection_candidates() {
         q(&c, "SELECT n FROM native ORDER BY n").rows
     );
 }
+
+#[test]
+fn correlated_native_membership_matches_null_and_empty_sets() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3),(NULL)");
+    q(&c, "CREATE TABLE native(n BLOB)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3),(NULL)");
+    q(&c, "CREATE TABLE rhs(n INTEGER)");
+    q(&c, "INSERT INTO rhs VALUES(1),(2),(NULL)");
+    for predicate in ["n<d.n", "n=d.n", "n<d.n OR n IS NULL", "n>d.n+100"] {
+        for negate in ["", "NOT "] {
+            for lhs in ["d.n", "+d.n", "CAST(d.n AS TEXT)", "2"] {
+                let sql=format!("SELECT d.n,{lhs} {negate}IN(SELECT n FROM rhs WHERE {predicate}) FROM docs AS d ORDER BY d.n");
+                let expected = q(&c, &sql.replace("FROM docs AS d", "FROM native AS d")).rows;
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected,
+                    "profile: {sql}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn correlated_membership_preserves_native_affinity_and_atomic_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "INSERT INTO docs(n,v) VALUES(1,'2'),(2,2),(3,'A'),(4,'a '),(5,NULL)",
+    );
+    q(&c, "CREATE TABLE lhs(n INTEGER,v BLOB)");
+    q(
+        &c,
+        "INSERT INTO lhs VALUES(1,'2'),(2,2),(3,'A'),(4,'a '),(5,NULL)",
+    );
+    for (name, declaration, value) in [
+        ("numbers", "INTEGER", "2"),
+        ("letters", "TEXT COLLATE NOCASE", "'a'"),
+        ("trimmed", "TEXT COLLATE RTRIM", "'a'"),
+    ] {
+        q(&c, &format!("CREATE TABLE {name}(v {declaration})"));
+        q(&c, &format!("INSERT INTO {name} VALUES({value}),(NULL)"));
+        for projection in ["v", "+v", "CAST(v AS TEXT)", "v COLLATE BINARY"] {
+            for left in [
+                "d.v",
+                "+d.v",
+                "CAST(d.v AS TEXT)",
+                "d.v COLLATE NOCASE",
+                "'A'",
+            ] {
+                for negate in ["", "NOT "] {
+                    let sql=format!("SELECT {left} {negate}IN(SELECT {projection} FROM {name} WHERE d.n<5) FROM docs AS d ORDER BY d.n");
+                    assert_eq!(
+                        q(&c, &sql).rows,
+                        q(&c, &sql.replace("FROM docs AS d", "FROM lhs AS d")).rows,
+                        "{sql}"
+                    );
+                }
+            }
+        }
+    }
+    q(&c, "CREATE TABLE target");
+    q(&c, "CREATE UNIQUE INDEX target_n ON target(n)");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO target(n) VALUES(2)");
+    let sql="INSERT INTO target(n) SELECT d.n FROM docs AS d WHERE d.n IN(SELECT n FROM lhs WHERE n<=d.n+$delta)";
+    assert!(c.execute(sql, &Parameters::new()).is_err());
+    let params = Parameters::from([("$delta".into(), Value::Integer(0))]);
+    assert_eq!(
+        c.execute(sql, &params).unwrap_err().code(),
+        "FDB_CONSTRAINT"
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM target").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        c.check_collection_integrity("target", Default::default())
+            .unwrap()
+            .documents,
+        1
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    let retry = format!("{sql} AND d.n<>2");
+    assert_eq!(c.execute(&retry, &params).unwrap().affected, 4);
+    c.check_collection_integrity("target", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT n FROM target").rows.is_empty());
+}
+
+#[test]
+fn correlated_membership_keeps_native_binary_and_record_identities_distinct() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "INSERT INTO docs(n,v) VALUES(1,x'464442000102'),(2,docs:a),(3,NULL)",
+    );
+    q(&c, "CREATE TABLE rhs(v BLOB)");
+    q(&c, "INSERT INTO rhs VALUES(x'464442000102')");
+    for negate in ["", "NOT "] {
+        let rows = q(
+            &c,
+            &format!(
+                "SELECT d.v {negate}IN(SELECT v FROM rhs WHERE d.n>0) FROM docs AS d ORDER BY d.n"
+            ),
+        )
+        .rows;
+        assert_eq!(
+            rows,
+            vec![
+                vec![Value::Integer(i64::from(negate.is_empty()))],
+                vec![Value::Integer(i64::from(!negate.is_empty()))],
+                vec![Value::Null]
+            ]
+        );
+    }
+}

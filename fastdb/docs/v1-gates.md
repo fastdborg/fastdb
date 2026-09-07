@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-07
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Latest scoped evidence: 302 passing Rust tests with one ignored trigger-cancellation gate, 35 passing Node tests, formatting, Clippy and strict TypeScript. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Latest scoped evidence: 305 passing Rust tests with one ignored trigger-cancellation gate, 35 passing Node tests, formatting, Clippy and strict TypeScript. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -40,7 +40,7 @@ Replace `docs` with `native` for the ordinary-table forms. These probes are narr
 
 The leading-WITH rejection above is a pre-change probe. Initial collection UPDATE/DELETE support now carries CTE scope into candidate SELECT lowering and preserves pre-mutation materialization and atomic writes. Tests cover native/collection CTE membership, self-reads, RETURNING, uniqueness failure/retry/rollback and mutation cancellation. Remaining work includes same-name CTE resolution (the chained target-name fixture fails preparation), broader assignments/RETURNING, validation/type coverage and other write clauses. Correlated scalar lowering remains a separate gap.
 
-The original correlated scalar probe above now passes for native inner SELECT predicates: metadata preparation substitutes outer references in a disposable probe, and runtime predicates lower qualified outer fields. Scalar/EXISTS WHERE, JOIN ON and HAVING forms have initial coverage; inner collection sources, correlated IN, deeper scopes and non-predicate correlation remain open. Preserve correlation inside engine execution rather than pre-executing a correlated source once or caching it as an uncorrelated value. Test per-row native oracles, NULL/empty sources, alias shadowing, type/affinity/collation, parameter use and atomic writes.
+The original correlated scalar probe above now passes for native inner SELECT predicates: metadata preparation substitutes outer references in a disposable probe, and runtime predicates lower qualified outer fields. Scalar/EXISTS WHERE, JOIN ON and HAVING forms have initial coverage; inner collection sources, deeper scopes and non-predicate correlation remain open. Preserve correlation inside engine execution rather than pre-executing a correlated source once or caching it as an uncorrelated value. Test per-row native oracles, NULL/empty sources, alias shadowing, type/affinity/collation, parameter use and atomic writes.
 
 Recent resource work adds incremental transfer parsing/encoding, incremental lowered SELECT decoding, fetch reference/encoded-byte budgets, and target batch/row/VM profiling. Public results still materialize; these are not complete memory budgets. Further resource work remains necessary but does not replace unfinished SQL semantics.
 
@@ -60,3 +60,6 @@ Relevant pinned engine code: core/translate/update.rs builds target_table with t
 
 
 The predicate-correlation regression matrix additionally checks native scalar affinity and pinned correlated-result collation behavior. This advances the dialect gate without closing general correlation or the other embedded release gates. See status.md and verification.md for current test counts.
+
+
+Native correlated IN/NOT IN now keeps its RHS inside the per-row expression instead of hoisting it into outer WITH scope. Initial native NULL/affinity/collation, evaluation-count and atomic-write comparisons pass; this does not close general correlated SQL qualification.
