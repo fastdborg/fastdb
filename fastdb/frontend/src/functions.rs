@@ -1144,5 +1144,41 @@ mod grouped_evaluation_tests {
                 }
             }
         }
+        for (minimum, calls) in [(1, 2), (10, 0)] {
+            let params = crate::Parameters::from([("$minimum".into(), Value::Integer(minimum))]);
+            let aggregate = "sum(n+grouped_tick()) FILTER (WHERE n>$minimum)";
+            for having in [
+                "total IS NOT NULL".to_owned(),
+                format!("{aggregate} IS NOT NULL"),
+            ] {
+                let sql = |table| {
+                    format!("SELECT k,{aggregate} AS total FROM {table} GROUP BY k HAVING {having} ORDER BY {aggregate},k")
+                };
+                CALLS.store(0, Ordering::SeqCst);
+                let expected = c.execute(&sql("baseline"), &params).unwrap().rows;
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    calls,
+                    "native FILTER {minimum}"
+                );
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(c.execute(&sql("docs"), &params).unwrap().rows, expected);
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    calls,
+                    "FILTER {minimum}: {having}"
+                );
+                CALLS.store(0, Ordering::SeqCst);
+                assert_eq!(
+                    c.profile_select(&sql("docs"), &params).unwrap().result.rows,
+                    expected
+                );
+                assert_eq!(
+                    CALLS.load(Ordering::SeqCst),
+                    calls,
+                    "profile FILTER {minimum}: {having}"
+                );
+            }
+        }
     }
 }
