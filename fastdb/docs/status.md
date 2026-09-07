@@ -1402,3 +1402,6 @@ Filtered aggregate evaluation qualification (2026-09-07): the runtime callback c
 Aliased inner derived sources now participate in outer-field correlation resolution, fixing silent record non-matches in EXISTS and scalar COUNT. Regressions cover direct/derived outer sources, derived inner filters and limits, COUNT, EXISTS, IN, typed array projections and execute/profile. Local alias handling uses the existing source metadata. Local inner WITH, compounds and deeper scope qualification remain open.
 
 The complete scoped check passed formatting, Clippy, 367 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; full V1 remains incomplete.
+
+
+Inner-derived correlated write qualification (2026-09-07): a multirow UPDATE uses an inner derived source for scalar assignments and another for correlated EXISTS filtering. A CHECK failure preserves prior transaction work and managed-index integrity; correcting the source permits retry, and rollback restores both source and target collections. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains the recorded 367-Rust/44-Node run; broader correlation/write and full V1 gates remain open.
