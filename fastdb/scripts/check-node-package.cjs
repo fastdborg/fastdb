@@ -17,7 +17,7 @@ const run = (command, args, cwd) => execFileSync(command, args, {
 try {
   const [packed] = JSON.parse(run(npm, ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', temporary], packageDir));
   assert.deepEqual(packed.files.map(file => file.path).sort(), [
-    'LICENSE.md', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs',
+    'LICENSE.md', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs', 'native.cjs',
   ].sort());
   assert(packed.files.find(file => file.path === 'fastdb.node').size > 0);
   const consumer = path.join(temporary, 'consumer');
@@ -86,6 +86,27 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
 })().catch(error => { console.error(error); process.exitCode = 1; });
 `);
   run(process.execPath, ['smoke.cjs'], consumer);
+  // Exercise missing/incompatible artifacts only inside the temporary install.
+  const installedAddon = path.join(consumer, 'node_modules/@fastdb/node/fastdb.node');
+  const savedAddon = installedAddon + '.saved';
+  fs.renameSync(installedAddon, savedAddon);
+  try {
+    const failureProbe = `const assert = require('node:assert/strict');
+      assert.throws(()=>require('@fastdb/node'), error => {
+        assert.equal(error.code, 'FDB_NATIVE_LOAD');
+        assert(error.cause instanceof Error);
+        assert(error.message.includes(process.platform + '/' + process.arch));
+        assert(error.message.includes('check-node.sh'));
+        return true;
+      });`;
+    run(process.execPath, ['-e', failureProbe], consumer);
+    fs.writeFileSync(installedAddon, 'invalid native addon');
+    run(process.execPath, ['-e', failureProbe], consumer);
+  } finally {
+    fs.rmSync(installedAddon, {force:true});
+    fs.renameSync(savedAddon, installedAddon);
+  }
+
   // Check declaration resolution from the installed package, with the local
   // compiler as a tool only; the package has no runtime registry dependencies.
   fs.writeFileSync(path.join(consumer, 'smoke.ts'), `import { Database, AsyncDatabase, Record, Vector, VectorComponents, SparseVectorEntry, IntegrityLimits, IntegrityReport, ProfiledQuery } from '@fastdb/node';

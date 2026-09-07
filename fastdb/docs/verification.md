@@ -955,3 +955,10 @@ This is a timed active cancellation probe, not exhaustive instruction-level or d
 The focused real-worker persistent-close test passed (`/tmp/fastdb-cancel-close.log`). It covers active query cancellation plus queued cancellation for all other signalled operation classes, transaction observations, idempotent close, rejection of new work, listener disposal, dead interrupt handle, and reopening with only the committed document and valid index. The isolated transport test passed 256 signalled queued requests, queue-limit rejection without listener acquisition, slot retention after abort and complete token/listener release after response-channel failure (`/tmp/fastdb-cancel-queue.log`).
 
 Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, thirty Node tests and strict TypeScript checking (`/tmp/fastdb-cancel-lifecycle-check.log`). One known trigger-interruption gate remains ignored. These are additional bounded lifecycle probes, not exhaustive race/crash/platform qualification. Production code and upstream files were unchanged; full V1 remains incomplete.
+
+
+## Native addon load diagnostics — 2026-09-07
+
+The offline installed-package smoke passed on Linux x64, Node 24.19.0 (`/tmp/fastdb-native-loader-package.log`): eight exact package files, synchronous/worker query and type checks, then missing and invalid native-addon probes inside the temporary installation. Both failure probes require FDB_NATIVE_LOAD, platform identity, source-build guidance and an Error cause. The addon is restored before cleanup. The debug tarball measured 59,315,966 bytes in this run; this is not release artifact sizing qualification.
+
+Full `fastdb/scripts/check.sh` passed formatting, Clippy, 271 Rust tests, thirty Node tests and strict TypeScript checking (`/tmp/fastdb-native-loader-check.log`). One known trigger-interruption gate remains ignored. No upstream files or dependencies changed, and nothing was published. Prebuild selection, other platforms/Node versions and full V1 remain incomplete.

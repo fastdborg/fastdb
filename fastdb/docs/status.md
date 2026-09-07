@@ -677,3 +677,10 @@ Final scoped checks passed formatting, Clippy, 271 Rust tests, twenty-nine Node 
 A real-worker regression now queues cancelled batches, profiles, audits, transfers and migrations behind an interrupted query, then closes the connection. It checks cancellation transaction observations, idempotent close, new-request rejection during closing, listener disposal, dead interrupt handle and file reopening with only committed data/indexes retained. A transport fixture fills all 256 request slots with signalled work, verifies rejected requests gain no listeners and aborted queued requests retain slots, then verifies failure releases all accepted tokens/listeners and closes the worker. This extends lifecycle evidence without claiming exhaustive interleavings, native crash recovery or platform qualification.
 
 Final scoped checks passed formatting, Clippy, 271 Rust tests, thirty Node tests and strict TypeScript checks. One known trigger-interruption gate remains ignored; full V1 remains incomplete.
+
+
+## Native addon load diagnostics (2026-09-07)
+
+The Node entrypoint and worker share a packaged native loader. Missing or unloadable addons throw FDB_NATIVE_LOAD with platform/architecture/Node identity, source-build guidance and the original cause. The installed-package smoke verifies the new runtime file inventory and missing/invalid-addon failures inside its temporary consumer installation. Automatic platform selection, prebuilds and broader platform/Node qualification remain open.
+
+Installed-package smoke and full scoped checks passed: formatting, Clippy, 271 Rust tests, thirty Node tests and strict TypeScript. One known trigger-interruption gate remains ignored; full V1 remains incomplete.

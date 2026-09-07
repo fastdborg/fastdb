@@ -1,6 +1,6 @@
 'use strict';
 const { parentPort, workerData } = require('node:worker_threads');
-const { NativeDatabase } = require('./fastdb.node');
+const { NativeDatabase } = require('./native.cjs');
 const db = new NativeDatabase(workerData.path);
 const methods = new Set(['execute', 'profileSelect', 'checkCollectionIntegrity', 'executeBatch', 'migrate', 'exportDocuments', 'importDocuments', 'close']);
 parentPort.on('message', ({ id, method, args, cancellationKey }) => {

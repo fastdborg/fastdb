@@ -1,5 +1,5 @@
 'use strict';
-const { NativeDatabase, interruptConnection, createCancellationToken, cancelOperation, releaseCancellationToken, vectorFromComponents, vectorFromSparseEntries } = require('./fastdb.node');
+const { NativeDatabase, interruptConnection, createCancellationToken, cancelOperation, releaseCancellationToken, vectorFromComponents, vectorFromSparseEntries } = require('./native.cjs');
 class Record {
   constructor(table, key) {
     if (typeof table !== 'string' || !['string','bigint'].includes(typeof key)) throw new TypeError('Record requires a table and string or bigint key');

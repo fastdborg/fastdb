@@ -19,6 +19,7 @@
   "files": [
     "index.cjs",
     "worker.cjs",
+    "native.cjs",
     "index.d.ts",
     "fastdb.node",
     "LICENSE.md",
