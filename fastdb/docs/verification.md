@@ -1201,3 +1201,10 @@ A development oracle initially updated its source before the collection query re
 ## Installed subquery assignments — 2026-09-07
 
 `node --check fastdb/scripts/check-node-package.cjs` and `node fastdb/scripts/check-node-package.cjs` passed (`/tmp/fastdb-package-subquery-assignments.log`). The temporary offline consumer exercises bound scalar and nested membership UPDATE assignments through both clients, RETURNING, index consistency and rollback to int64 max. Existing installed declarations, vectors, cancellation, reopen and loader-error checks also passed. Result: Linux x64, Node 24.19.0, eight runtime files, 59,579,238 packed bytes. No production changes; prior 296 Rust / 34 Node scoped evidence remains applicable.
+
+
+## Self-read and late assignment validation — 2026-09-07
+
+`cargo test --locked -p fastdb-tests --test with_writes` passed all eight tests (`/tmp/fastdb-assignment-atomicity-final.log`). The added regression checks native-equivalent self-read assignment results and a CASE assignment that writes an earlier row before a later NULL fails integer validation. An increased total_changes counter establishes that the failure follows a write; collection integrity, prior outer work, successful retry and final rollback are checked. Production code is unchanged. Prior full scoped evidence of 296 Rust / 34 Node tests plus this regression yields 297 distinct Rust tests; the known trigger-interruption gate remains ignored.
+
+Test-package Clippy with warnings denied, formatting and `git diff --check` also passed.

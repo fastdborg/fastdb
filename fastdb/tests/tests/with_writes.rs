@@ -359,3 +359,89 @@ fn nested_membership_assignment_operands_reach_select_lowering() {
         vec![vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn self_read_assignments_and_late_validation_preserve_atomic_candidates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "DEFINE FIELD n ON docs TYPE integer");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(
+        &c,
+        "INSERT INTO docs(id,n) VALUES(docs:a,1),(docs:b,2),(docs:c,3)",
+    );
+    q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    q(&c, "BEGIN");
+    let actual = q(
+        &c,
+        "UPDATE docs SET n=n+(SELECT max(n) FROM docs) RETURNING n",
+    );
+    let expected = q(
+        &c,
+        "UPDATE native SET n=n+(SELECT max(n) FROM native) RETURNING n",
+    );
+    assert_eq!(actual.rows, expected.rows);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(4)],
+            vec![Value::Integer(5)],
+            vec![Value::Integer(6)]
+        ]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(id,n) VALUES(docs:z,9)");
+    let changes_before = q(&c, "SELECT total_changes()").rows;
+    let error=c.execute("UPDATE docs SET n=CASE WHEN n=1 THEN n+10 ELSE (SELECT n FROM native WHERE 0) END RETURNING n",&Parameters::new()).unwrap_err();
+    assert_eq!(error.code(), "FDB_VALIDATION");
+    let changes_after = q(&c, "SELECT total_changes()").rows;
+    assert!(
+        matches!((&changes_before[0][0], &changes_after[0][0]), (Value::Integer(before), Value::Integer(after)) if after > before)
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)],
+            vec![Value::Integer(9)]
+        ]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        4
+    );
+    let result = q(
+        &c,
+        "UPDATE docs SET n=CASE WHEN n=1 THEN n+10 ELSE (SELECT 100)+n END RETURNING n",
+    );
+    assert_eq!(result.affected, 4);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(11)],
+            vec![Value::Integer(102)],
+            vec![Value::Integer(103)],
+            vec![Value::Integer(109)]
+        ]
+    );
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)]
+        ]
+    );
+}

@@ -925,3 +925,8 @@ Scoped checks passed formatting, Clippy, 296 Rust tests, thirty-four Node tests 
 ## Installed subquery-assignment smoke (2026-09-07)
 
 The installed Node consumer now uses a parameterized scalar UPDATE assignment and a nested scalar-IN assignment in both sync and worker clients. It checks RETURNING/affected counts, fetched values, managed index entries and rollback to int64 max. The complete offline smoke passed on Linux x64 / Node 24.19.0, with eight runtime files and a 59,579,238-byte development tarball. Release/platform qualification remains open.
+
+
+## Self-read assignment atomicity (2026-09-07)
+
+A new regression compares a multi-row self-read scalar UPDATE with native results, then forces a typed validation failure after an earlier candidate has written. The engine total_changes counter confirms a write occurred; data and managed indexes return to their pre-statement state while prior outer-transaction work survives. A corrected retry succeeds and outer rollback restores the original rows. All eight with_writes tests passed. Full V1 remains incomplete.
