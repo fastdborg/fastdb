@@ -812,3 +812,6 @@ For the tested nested same-name CTE forms, FastDB preserves the pinned engine's 
 
 
 Document export enforces its encoded-byte budget while serialization emits bytes. Row callback failures preserve the frontend error, stop the statement and follow existing atomic cleanup. A caller receives a complete payload or an error. Incremental encoding removes full-rowset/full-document-vector intermediates; it is not a streaming public API or total-memory guarantee.
+
+
+JSON and NDJSON document imports preflight the complete immutable input before mutations, then decode each document again inside the atomic write scope. No complete decoded document array is retained. JSON accepts either envelope field order and rejects duplicate/unknown/missing envelope fields, invalid versions and trailing input before writes. Replay failures retain their database error codes and follow the existing transaction cleanup contract. Parsing twice is a CPU tradeoff; the complete input, current document and engine allocations remain outside a total-memory bound. See transfer.md for the versioned encoding and limits.

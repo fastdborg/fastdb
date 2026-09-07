@@ -1,0 +1,173 @@
+{
+  "notes": "Three sequential runs of the unchanged transfer diagnostic after JSON preflight/replay. Each format/sample uses a fresh child. Earlier baseline has only one sample; no causal speed or memory conclusion.",
+  "runs": [
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "node": "24.19.0",
+      "sourceCommit": "8e7b5893dc1bf29c0acf9d00b45fc560232a41c8",
+      "implementationChanges": "",
+      "addonSha256": "925a3b667e43d339ec88df693a2cce1d0c90cad44dca75837aff40db3c07840b",
+      "harnessSha256": "a5d6e6cae5b6123f2e504b8c66dc49b3b863ceeb7e223965ae2b2a9442f0d611",
+      "notes": "Single debug-addon sample per format, fresh process per format. Peak RSS is cumulative from child startup and includes import during export. Input and output coexist. Correctness work follows measurements. No forced GC or release performance guarantee.",
+      "samples": [
+        {
+          "format": "json",
+          "count": 1000,
+          "textBytesPerDocument": 4096,
+          "inputBytes": 4283846,
+          "outputBytes": 4283846,
+          "importMs": 3641.879375,
+          "exportMs": 341.5699770000001,
+          "before": {
+            "rssBytes": 87322624,
+            "processPeakRssKiB": 88956
+          },
+          "afterImport": {
+            "rssBytes": 131858432,
+            "processPeakRssKiB": 128768
+          },
+          "afterExport": {
+            "rssBytes": 150863872,
+            "processPeakRssKiB": 147328
+          },
+          "correctness": "passed"
+        },
+        {
+          "format": "ndjson",
+          "count": 1000,
+          "textBytesPerDocument": 4096,
+          "inputBytes": 4283822,
+          "outputBytes": 4283822,
+          "importMs": 3680.993077,
+          "exportMs": 320.0498779999998,
+          "before": {
+            "rssBytes": 87232512,
+            "processPeakRssKiB": 88952
+          },
+          "afterImport": {
+            "rssBytes": 131842048,
+            "processPeakRssKiB": 128752
+          },
+          "afterExport": {
+            "rssBytes": 150847488,
+            "processPeakRssKiB": 147312
+          },
+          "correctness": "passed"
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "node": "24.19.0",
+      "sourceCommit": "8e7b5893dc1bf29c0acf9d00b45fc560232a41c8",
+      "implementationChanges": "",
+      "addonSha256": "925a3b667e43d339ec88df693a2cce1d0c90cad44dca75837aff40db3c07840b",
+      "harnessSha256": "a5d6e6cae5b6123f2e504b8c66dc49b3b863ceeb7e223965ae2b2a9442f0d611",
+      "notes": "Single debug-addon sample per format, fresh process per format. Peak RSS is cumulative from child startup and includes import during export. Input and output coexist. Correctness work follows measurements. No forced GC or release performance guarantee.",
+      "samples": [
+        {
+          "format": "json",
+          "count": 1000,
+          "textBytesPerDocument": 4096,
+          "inputBytes": 4283846,
+          "outputBytes": 4283846,
+          "importMs": 3889.3318919999997,
+          "exportMs": 402.62453600000026,
+          "before": {
+            "rssBytes": 87805952,
+            "processPeakRssKiB": 89512
+          },
+          "afterImport": {
+            "rssBytes": 132997120,
+            "processPeakRssKiB": 129880
+          },
+          "afterExport": {
+            "rssBytes": 150691840,
+            "processPeakRssKiB": 147160
+          },
+          "correctness": "passed"
+        },
+        {
+          "format": "ndjson",
+          "count": 1000,
+          "textBytesPerDocument": 4096,
+          "inputBytes": 4283822,
+          "outputBytes": 4283822,
+          "importMs": 3563.08647,
+          "exportMs": 324.65313100000003,
+          "before": {
+            "rssBytes": 87879680,
+            "processPeakRssKiB": 89584
+          },
+          "afterImport": {
+            "rssBytes": 132714496,
+            "processPeakRssKiB": 129604
+          },
+          "afterExport": {
+            "rssBytes": 151064576,
+            "processPeakRssKiB": 147524
+          },
+          "correctness": "passed"
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "node": "24.19.0",
+      "sourceCommit": "8e7b5893dc1bf29c0acf9d00b45fc560232a41c8",
+      "implementationChanges": "",
+      "addonSha256": "925a3b667e43d339ec88df693a2cce1d0c90cad44dca75837aff40db3c07840b",
+      "harnessSha256": "a5d6e6cae5b6123f2e504b8c66dc49b3b863ceeb7e223965ae2b2a9442f0d611",
+      "notes": "Single debug-addon sample per format, fresh process per format. Peak RSS is cumulative from child startup and includes import during export. Input and output coexist. Correctness work follows measurements. No forced GC or release performance guarantee.",
+      "samples": [
+        {
+          "format": "json",
+          "count": 1000,
+          "textBytesPerDocument": 4096,
+          "inputBytes": 4283846,
+          "outputBytes": 4283846,
+          "importMs": 4028.0168159999994,
+          "exportMs": 428.4623680000004,
+          "before": {
+            "rssBytes": 85831680,
+            "processPeakRssKiB": 87500
+          },
+          "afterImport": {
+            "rssBytes": 133308416,
+            "processPeakRssKiB": 130184
+          },
+          "afterExport": {
+            "rssBytes": 151003136,
+            "processPeakRssKiB": 147464
+          },
+          "correctness": "passed"
+        },
+        {
+          "format": "ndjson",
+          "count": 1000,
+          "textBytesPerDocument": 4096,
+          "inputBytes": 4283822,
+          "outputBytes": 4283822,
+          "importMs": 3841.935402,
+          "exportMs": 329.6762119999994,
+          "before": {
+            "rssBytes": 88375296,
+            "processPeakRssKiB": 89348
+          },
+          "afterImport": {
+            "rssBytes": 132767744,
+            "processPeakRssKiB": 129656
+          },
+          "afterExport": {
+            "rssBytes": 151117824,
+            "processPeakRssKiB": 147576
+          },
+          "correctness": "passed"
+        }
+      ]
+    }
+  ]
+}

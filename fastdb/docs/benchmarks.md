@@ -91,3 +91,15 @@ The [1,000-document report](benchmark-results/2026-09-07-linux-dev-transfer-1000
 | NDJSON | 4,283,822 bytes | 3,621 ms | 322 ms | 131,842,048 bytes | 150,847,488 bytes |
 
 These are one debug-addon sample per format with no forced garbage collection. The input string remains live during export, and peak RSS includes all earlier work in that child, including import; it is not export-only peak memory. Engine pages, native allocators, JavaScript memory and buffer capacities all contribute. The small observed RSS difference does not establish a general memory or speed advantage. No pre-change binary was measured, so this is not before/after evidence for the incremental transfer implementation. Larger/diverse fixtures, repeated samples and optimized builds remain qualification work.
+
+
+## JSON preflight/replay measurements
+
+The [three-run report](benchmark-results/2026-09-07-linux-dev-transfer-json-replay-1000.json) measures clean implementation `8e7b5893d` with the unchanged transfer harness, 1,000 documents and 4,096 text bytes per document. All six fresh-process format samples passed content aggregates, index integrity and exact round trips. Source, addon and harness identities are retained and were checked against the current files.
+
+| Format | Import median (range) | Export median (range) | RSS after import range |
+|---|---:|---:|---:|
+| JSON | 3,889 ms (3,642–4,028) | 403 ms (342–428) | 131,858,432–133,308,416 bytes |
+| NDJSON | 3,681 ms (3,563–3,842) | 325 ms (320–330) | 131,842,048–132,767,744 bytes |
+
+The earlier JSON materializing implementation had one sample at 3,708 ms import and 133,619,712 bytes RSS after import. Its timing falls inside the new range; the small RSS difference does not establish a repeatable reduction. Export implementation was unchanged, yet its timing also varied. This is not a controlled causal comparison or optimized-build result. The new import implementation removes the retained decoded document array and parses twice; this workload does not show that tradeoff dominates whole-process costs. Larger/diverse fixtures, controlled repeated baseline samples and release builds remain open.

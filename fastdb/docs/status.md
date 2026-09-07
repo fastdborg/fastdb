@@ -798,3 +798,8 @@ The maintainer bench-transfer.cjs harness now measures JSON/NDJSON import/export
 JSON import now decodes one document at a time during validation and replays the immutable input inside the atomic insert scope. It no longer retains the full portable/document vectors. Envelope field order remains unrestricted; duplicate/unknown/missing fields, invalid versions, trailing input and late invalid entries are rejected before writes. The document-count limit is enforced during sequence decoding. Replay preserves database error codes and rolls back imported rows/indexes while retaining prior outer transaction work. Parsing twice trades CPU for lower retained document memory; this does not establish a total-memory or parsing-latency bound.
 
 Scoped checks passed 282 Rust tests, thirty-two Node tests and strict TypeScript; the added JSON constraint/retry integration regression then passed in the four-test transfer suite, bringing distinct Rust coverage to 283. One trigger-interruption gate remains ignored. Full V1 remains incomplete.
+
+
+## Repeated JSON replay transfer diagnostic (2026-09-07)
+
+Three runs of the unchanged transfer harness against clean implementation 8e7b5893d passed all six format samples. JSON import ranged from 3.64 to 4.03 seconds with 131.9–133.3 MB current RSS after import. These overlap or remain close to the earlier single materializing-path sample, so no reliable speed or memory improvement is claimed. The retained-document-array removal is an implementation property, not a measured total-memory guarantee. Detailed reports and limitations are in benchmarks.md.

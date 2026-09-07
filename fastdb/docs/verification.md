@@ -1074,3 +1074,8 @@ The JSON envelope and document array now use serde visitors to validate and repl
 - `fastdb/scripts/check.sh`: passed; log `/tmp/fastdb-json-replay-check.log`; 282 Rust passed, one ignored; 32 Node passed; strict TypeScript, formatting and scoped Clippy passed.
 - The subsequently added integration test passed with `cargo test --locked -p fastdb-tests --test transfer`: four passed (`/tmp/fastdb-json-replay-integration.log`). Distinct current Rust coverage is 283. Final formatting and test-package Clippy were rerun for that addition.
 - Prior transfer benchmark report predates this change and does not measure its performance. The complete input, current document and engine allocations remain outside a total-memory guarantee.
+
+
+## JSON replay transfer benchmark — 2026-09-07
+
+Ran `node fastdb/scripts/bench-transfer.cjs` three times against clean implementation 8e7b5893d. All six JSON/NDJSON samples passed aggregate, index and exact round-trip assertions. Stored report: benchmark-results/2026-09-07-linux-dev-transfer-json-replay-1000.json. Checked all source IDs, empty implementationChanges fields and addon/harness hashes against current files. Existing 283 distinct Rust / 32 Node scoped evidence is unchanged; no production code changed in this measurement task. The report supplies debug workload observations, not proof of release performance or total-memory limits.
