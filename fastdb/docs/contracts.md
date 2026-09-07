@@ -1064,3 +1064,6 @@ Direct relational source names (2026-09-08): supported direct relational tables 
 
 
 Closed-source projection alias precedence (2026-09-08): WHERE, JOIN ON and GROUP BY alias expansion now preserves a matching source column when every source exposes a known column list. For example, SELECT 0 AS n,count(*) FROM (SELECT n FROM docs) GROUP BY n groups by the derived n values. Matching is case-insensitive. Projection aliases without a source-name collision still expand; open document scopes retain their existing alias-first rule. Broader alias and nested-scope qualification remains open.
+
+
+Projection aliases in membership operands (2026-09-08): WHERE, JOIN ON and GROUP BY alias expansion retains prepared membership metadata when rewriting the left operand of IN/NOT IN subqueries. The right-hand query keeps its own source scope. This fixes rejection of an alias operand such as SELECT n,0 AS m FROM (SELECT n FROM docs) WHERE m IN (SELECT m FROM labels). Original metadata remains available for other occurrences of the original expression. Broader correlation and alias qualification remains open.

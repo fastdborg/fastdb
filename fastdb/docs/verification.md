@@ -2045,3 +2045,10 @@ Grouped alias write atomicity qualification (2026-09-08): a new regression exerc
 
 
 Closed-source HAVING alias qualification (2026-09-08): expanded the native-reference derived-source matrix with HAVING predicates colliding with projected constant and aggregate names, including an aggregate alias inside abs(). Execute/profile match the pinned native results. This preserves evidence that HAVING alias precedence differs from the source-column rule used by WHERE, JOIN ON and GROUP BY; no production change was needed. The expanded focused test, formatting and focused Clippy pass. Latest complete scoped evidence remains 413 Rust/45 Node tests; broader aliases, writes, resources and full V1 release gates remain open.
+
+
+## Membership alias plan preservation (2026-09-08)
+
+Fixed rejection of a projection alias on the left of IN (SELECT ...): alias substitution changed the expression lookup key after subquery metadata preparation. Alias expansion now carries the RHS metadata to the rewritten key while retaining the original entry and keeping RHS source scope intact. Native-reference execute/profile coverage includes scalar/EXISTS source-name shadowing, IN/NOT IN, arithmetic alias operands and nested membership.
+
+The complete scoped check passed formatting, Clippy, 415 Rust tests, 45 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. This combines the recent grouped-write rollback and HAVING alias checks with the membership fix. Broader correlation/alias, resource, platform and full V1 release gates remain open. No upstream implementation files changed.

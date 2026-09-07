@@ -764,3 +764,33 @@ fn closed_source_group_alias_writes_restore_unique_indexes() {
         vec![vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn projection_aliases_do_not_replace_nested_source_columns() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    q(&c, "CREATE TABLE labels(m INTEGER)");
+    q(&c, "INSERT INTO labels VALUES(1)");
+    for predicate in [
+        "EXISTS (SELECT 1 FROM labels WHERE m=1)",
+        "(SELECT m FROM labels)=1",
+        "n IN (SELECT m FROM labels)",
+        "m IN (SELECT m FROM labels)",
+        "m NOT IN (SELECT m FROM labels)",
+        "(m+1) IN (SELECT m FROM labels)",
+        "(m IN (SELECT m FROM labels)) IN (SELECT m FROM labels)",
+    ] {
+        let sql = format!("SELECT n,0 AS m FROM (SELECT n FROM docs) WHERE {predicate} ORDER BY n");
+        let expected = q(&c, &sql.replace("FROM docs", "FROM baseline")).rows;
+        assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected,
+            "{sql}"
+        );
+    }
+}

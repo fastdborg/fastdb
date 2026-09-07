@@ -3797,7 +3797,7 @@ impl Connection {
             .flat_map(|s| s.consumed.iter().cloned())
             .chain(cte_consumed)
             .collect();
-        let scope = Scope {
+        let mut scope = Scope {
             qualified_only: false,
             expression_subqueries,
             sources,
@@ -3932,7 +3932,13 @@ impl Connection {
         }
         if !scope.sources.is_empty() {
             if let Some(predicate) = where_clause {
-                expand_projection_aliases(predicate, &original_columns, false, &scope.sources)?;
+                expand_projection_aliases(
+                    predicate,
+                    &original_columns,
+                    false,
+                    &scope.sources,
+                    &mut scope.expression_subqueries,
+                )?;
             }
         }
         let candidates = scope
@@ -3978,7 +3984,13 @@ impl Connection {
                 if let Some(constraint) = &mut join.constraint {
                     match constraint {
                         JoinConstraint::On(e) => {
-                            expand_projection_aliases(e, &original_columns, false, &scope.sources)?;
+                            expand_projection_aliases(
+                                e,
+                                &original_columns,
+                                false,
+                                &scope.sources,
+                                &mut scope.expression_subqueries,
+                            )?;
                             scope.sql_argument(e)?;
                         }
                         JoinConstraint::Using(_) => return Err(unsupported("USING joins")),
@@ -3999,7 +4011,13 @@ impl Connection {
             for expr in &mut group.exprs {
                 let ordinal = expand_group_position(expr, &original_columns)?;
                 if !ordinal && !scope.sources.is_empty() {
-                    expand_projection_aliases(expr, &original_columns, true, &scope.sources)?;
+                    expand_projection_aliases(
+                        expr,
+                        &original_columns,
+                        true,
+                        &scope.sources,
+                        &mut scope.expression_subqueries,
+                    )?;
                 }
                 scope.lower(expr)?;
             }
@@ -4728,6 +4746,7 @@ fn expand_projection_aliases(
     columns: &[ResultColumn],
     protect_ordinals: bool,
     sources: &[Source],
+    subqueries: &mut ExpressionSubqueries,
 ) -> Result<()> {
     let mut aliases = std::collections::BTreeMap::new();
     for column in columns {
@@ -4755,7 +4774,25 @@ fn expand_projection_aliases(
                 .or_insert(value);
         }
     }
+    let mut failure = None;
     turso_core::walk_expr_mut(expr, &mut |expr| {
+        if matches!(expr, Expr::InSelect { .. }) {
+            let original = expr.to_string();
+            if let Expr::InSelect { lhs, .. } = expr {
+                if let Err(error) =
+                    expand_projection_aliases(lhs, columns, protect_ordinals, sources, subqueries)
+                {
+                    failure = Some(error);
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+            }
+            // Membership metadata describes the RHS, but its lookup key includes
+            // the LHS. Keep that metadata reachable after alias substitution.
+            if let Some(plan) = subqueries.get(&original).cloned() {
+                subqueries.insert(expr.to_string(), plan);
+            }
+            return Ok(turso_core::WalkControl::SkipChildren);
+        }
         if matches!(expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_path") {
             return Ok(turso_core::WalkControl::SkipChildren);
         }
@@ -4773,6 +4810,9 @@ fn expand_projection_aliases(
         }
         Ok(turso_core::WalkControl::Continue)
     })?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
     Ok(())
 }
 
