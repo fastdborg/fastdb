@@ -948,3 +948,7 @@ The HAVING workaround now uses private alternate names for the existing document
 ## Aggregate spelling and HAVING reuse (2026-09-07)
 
 Projected aggregate matching now compares the aggregate name case-insensitively, preventing extra aggregation when SELECT uses `SUM` and HAVING uses `sum`. Its argument AST remains unchanged: nested function spelling, literals and parameters are not normalized by this pass. This follows the pinned engine's distinction between aggregate-name matching and argument-expression equivalence. The callback-count regression includes mixed-case aggregate spelling across HAVING aliases/expressions, ordering and profiling.
+
+## Inner derived collection correlation (2026-09-07)
+
+Expression-subquery correlation now resolves aliased derived inner sources as well as direct tables. Qualified outer typed fields are translated before recursive lowering, fixing false record-identity non-matches through an inner derived collection query. Coverage includes direct/derived outer sources, inner filters and limits, COUNT, EXISTS, IN, array projections and execute/profile. This extends the earlier direct-inner-source restriction; local inner WITH, compounds and deeper scope qualification remain open.

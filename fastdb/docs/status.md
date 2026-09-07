@@ -1395,3 +1395,10 @@ The complete scoped check passed formatting, Clippy, 366 Rust tests, 44 Node/app
 
 
 Filtered aggregate evaluation qualification (2026-09-07): the runtime callback counter now covers bound FILTER predicates with partially included and all-excluded inputs. HAVING aliases/repeated filtered aggregates and aggregate ordering match native results and callback counts through execute/profile; excluded inputs do not evaluate the aggregate argument and reuse adds no calls. The expanded focused unit test, formatting and frontend lib/test Clippy pass. Latest full scoped evidence remains the recorded 366-Rust/44-Node run; broader volatile/grouping and full V1 gates remain open.
+
+
+## Inner derived collection correlation (2026-09-07)
+
+Aliased inner derived sources now participate in outer-field correlation resolution, fixing silent record non-matches in EXISTS and scalar COUNT. Regressions cover direct/derived outer sources, derived inner filters and limits, COUNT, EXISTS, IN, typed array projections and execute/profile. Local alias handling uses the existing source metadata. Local inner WITH, compounds and deeper scope qualification remain open.
+
+The complete scoped check passed formatting, Clippy, 367 Rust tests, 44 Node/application tests and strict TypeScript. One known trigger-cancellation gate remains ignored. No upstream files changed; full V1 remains incomplete.

@@ -3202,3 +3202,48 @@ fn correlated_collection_having_retains_unprojected_record_keys() {
     q(&c, "ROLLBACK");
     assert_eq!(q(&c, "SELECT id,n FROM docs ORDER BY n").rows, before);
 }
+
+#[test]
+fn inner_derived_collection_sources_correlate_outer_typed_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE links",
+        "INSERT INTO docs {id:docs:a,n:1,v:[1]}",
+        "INSERT INTO docs {id:docs:b,n:2}",
+        "INSERT INTO links {owner:docs:a,n:3}",
+    ] {
+        q(&c, sql);
+    }
+    for outer in ["docs d", "(SELECT id,n,v FROM docs) d"] {
+        for inner in [
+            "(SELECT owner,n FROM links) l",
+            "(SELECT owner,n FROM links WHERE n>0 LIMIT 2) l",
+        ] {
+            let sql = format!("SELECT n,(SELECT count(*) FROM {inner} WHERE l.owner=d.id) FROM {outer} ORDER BY n");
+            let expected = vec![
+                vec![Value::Integer(1), Value::Integer(1)],
+                vec![Value::Integer(2), Value::Integer(0)],
+            ];
+            assert_eq!(q(&c, &sql).rows, expected);
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected
+            );
+            for predicate in [
+                format!("EXISTS(SELECT 1 FROM {inner} WHERE l.owner=d.id)"),
+                format!("d.id IN(SELECT l.owner FROM {inner} WHERE l.n>d.n)"),
+            ] {
+                assert_eq!(
+                    q(&c, &format!("SELECT n FROM {outer} WHERE {predicate}")).rows,
+                    vec![vec![Value::Integer(1)]]
+                );
+            }
+            assert_eq!(q(&c,&format!("SELECT (SELECT d.v FROM {inner} WHERE l.owner=d.id) FROM {outer} WHERE d.n=1")).rows,q(&c,"SELECT v FROM docs WHERE n=1").rows);
+        }
+    }
+}

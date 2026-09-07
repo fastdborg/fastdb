@@ -2819,7 +2819,10 @@ impl Connection {
                                 .chain(from.joins.iter().map(|j| &j.table));
                             let mut local = Vec::new();
                             for table in tables {
-                                if matches!(table.as_ref(), SelectTable::Table(..)) {
+                                if matches!(
+                                    table.as_ref(),
+                                    SelectTable::Table(..) | SelectTable::Select(_, Some(_))
+                                ) {
                                     local.push(source(self, table, params, &ctes, None)?);
                                 }
                             }
