@@ -1664,3 +1664,6 @@ The complete scoped check passed formatting, Clippy, 403 Rust tests, 44 Node/app
 
 
 Nested native derived collation qualification (2026-09-08): expanded the mixed comparison regression to a second derived-source layer and an inner COLLATE BINARY projection, in addition to the declared NOCASE source. Equality, IS, ranges, membership/NULL cases and explicit outer overrides match native literal references through execute/profile. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; broader projection/collation/scope/resource and full V1 gates remain open.
+
+
+Materialized native derived collation qualification (2026-09-08): expanded the mixed comparison matrix to a MATERIALIZED native CTE and an ordered, limited native derived source. Equality, IS, ranges, membership/NULL cases and explicit overrides match native literal references through execute/profile. The expanded focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 403 Rust/44 Node tests; broader projection/collation/scope/resource and full V1 gates remain open.

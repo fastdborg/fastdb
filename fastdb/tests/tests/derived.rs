@@ -272,6 +272,8 @@ fn mixed_derived_comparisons_preserve_native_affinity_and_collation() {
         "(SELECT m,label FROM labels)",
         "(SELECT m,label FROM (SELECT m,label FROM labels))",
         "(SELECT m,label COLLATE BINARY AS label FROM labels)",
+        "(WITH l AS MATERIALIZED (SELECT m,label FROM labels) SELECT m,label FROM l)",
+        "(SELECT m,label FROM labels ORDER BY m LIMIT 3)",
     ] {
         for predicate in [
             "v=label",
