@@ -316,10 +316,7 @@ impl Connection {
             ..
         } = &mut statement
         {
-            if with.is_some()
-                && select.with.is_none()
-                && !matches!(select.body.select, OneSelect::Values(_))
-            {
+            if with.is_some() && select.with.is_none() {
                 select.with = with.take();
                 true
             } else {
@@ -389,9 +386,10 @@ impl Connection {
                 if upsert.is_some() {
                     return Err(unsupported("collection ON CONFLICT; use document UPSERT"));
                 }
-                let values = if let OneSelect::Values(rows) = &select.body.select {
-                    if select.with.is_some()
-                        || !select.body.compounds.is_empty()
+                let values = if let (OneSelect::Values(rows), None) =
+                    (&select.body.select, &select.with)
+                {
+                    if !select.body.compounds.is_empty()
                         || !select.order_by.is_empty()
                         || select.limit.is_some()
                     {

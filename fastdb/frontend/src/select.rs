@@ -1928,6 +1928,75 @@ impl Connection {
             }
             select.with = Some(with);
         }
+        if let OneSelect::Values(rows) = &mut select.body.select {
+            let mut logical = cte_logical || (trusted && positional && native_insert.is_none());
+            for row in rows.iter_mut() {
+                for value in row {
+                    turso_core::walk_expr_mut(value, &mut |expr| {
+                        match expr {
+                            Expr::FunctionCall { name, .. }
+                                if name.as_str().starts_with("__fastdb_") =>
+                            {
+                                logical = true
+                            }
+                            Expr::Variable(var) => {
+                                let name = var
+                                    .name
+                                    .as_ref()
+                                    .map_or_else(|| format!("?{}", var.index), |n| n.to_string());
+                                logical |= params.get(&name).is_some_and(|value| {
+                                    matches!(
+                                        value,
+                                        Value::Boolean(_)
+                                            | Value::Record(_)
+                                            | Value::Object(_)
+                                            | Value::Array(_)
+                                            | Value::Vector(_)
+                                    )
+                                });
+                            }
+                            _ => {}
+                        }
+                        Ok(turso_core::WalkControl::Continue)
+                    })?;
+                }
+            }
+            if !logical || native_insert.is_some() {
+                return Ok(None);
+            }
+            if !select.body.compounds.is_empty()
+                || !select.order_by.is_empty()
+                || select.limit.is_some()
+            {
+                return Err(unsupported("compound or modified typed VALUES"));
+            }
+            let width = rows.first().map_or(0, Vec::len);
+            let scope = Scope {
+                sources: Vec::new(),
+                params: params.clone(),
+                consumed: std::cell::RefCell::new(cte_consumed),
+                fetched_aliases: Default::default(),
+                standalone_aliases: Default::default(),
+            };
+            for row in rows {
+                if row.len() != width {
+                    return Err(Error::Validation("VALUES row width mismatch".into()));
+                }
+                for value in row {
+                    scope.typed(value)?;
+                }
+            }
+            return Ok(Some(LoweredSelect {
+                command: cmd,
+                typed: vec![true; width],
+                fetched: vec![false; width],
+                names: (1..=width).map(|i| format!("column{i}")).collect(),
+                consumed: scope.consumed.into_inner(),
+                ignore_unused,
+                explain,
+                native_insert: false,
+            }));
+        }
         let OneSelect::Select {
             columns,
             from,

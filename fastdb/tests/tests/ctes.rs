@@ -202,3 +202,115 @@ fn leading_with_insert_preserves_validation_conflicts_and_scope_boundaries() {
         ]
     );
 }
+
+#[test]
+fn values_ctes_preserve_records_binary_composites_and_vectors() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let id = Value::Record(fastdb::Record {
+        table: "docs".into(),
+        key: fastdb::Key::String("a".into()),
+    });
+    let data = Value::Binary(vec![0, 255]);
+    let payload = Value::Object(std::collections::BTreeMap::from([(
+        "n".into(),
+        Value::Integer(7),
+    )]));
+    let vector = Value::vector64(&[1.0, 2.0, 3.0]).unwrap();
+    let params = Parameters::from([
+        ("$id".into(), id.clone()),
+        ("$flag".into(), Value::Boolean(true)),
+        ("$data".into(), data.clone()),
+        ("$payload".into(), payload.clone()),
+        ("$vector".into(), vector.clone()),
+    ]);
+    let sql = "WITH input(id,flag,data,payload,embedding) AS (VALUES ($id,$flag,$data,$payload,$vector)) SELECT * FROM input";
+    assert_eq!(
+        c.execute(sql, &params).unwrap().rows,
+        vec![vec![
+            id.clone(),
+            Value::Boolean(true),
+            data.clone(),
+            payload,
+            vector
+        ]]
+    );
+    assert_eq!(c.execute("WITH input(id,flag,data,payload,embedding) AS (VALUES ($id,$flag,$data,$payload,$vector)) SELECT record::id(id),input.payload.n FROM input", &params).unwrap().rows, vec![vec![Value::String("a".into()),Value::Integer(7)]]);
+    assert_eq!(q(&c, "WITH input AS (VALUES (docs:a,1),(docs:b,2)) SELECT column1,column2 FROM input ORDER BY column2").rows[0], vec![id,Value::Integer(1)]);
+    assert_eq!(
+        q(&c, "SELECT v.column1 FROM (VALUES (docs:a)) v").rows,
+        vec![vec![Value::Record(fastdb::Record {
+            table: "docs".into(),
+            key: fastdb::Key::String("a".into())
+        })]]
+    );
+    let direct = c
+        .execute(
+            "VALUES ($flag,$data)",
+            &Parameters::from([
+                ("$flag".into(), Value::Boolean(true)),
+                ("$data".into(), data.clone()),
+            ]),
+        )
+        .unwrap();
+    assert_eq!(direct.columns, vec!["column1", "column2"]);
+    assert_eq!(direct.rows, vec![vec![Value::Boolean(true), data]]);
+    assert_eq!(q(&c,"WITH input AS (VALUES (X'ff',1),(X'00',2)) SELECT hex(column1),column2 FROM input ORDER BY column2").rows,vec![vec![Value::String("FF".into()),Value::Integer(1)],vec![Value::String("00".into()),Value::Integer(2)]]);
+}
+
+#[test]
+fn values_ctes_and_leading_with_values_insert_atomically() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "DEFINE FIELD n ON docs TYPE integer REQUIRED CHECK(n>0)",
+    );
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    let inserted=q(&c,"WITH input(id,n) AS (VALUES (docs:a,1),(docs:b,2)) INSERT INTO docs(id,n) SELECT id,n FROM input RETURNING id,n");
+    assert_eq!(inserted.affected, 2);
+    assert!(matches!(inserted.rows[0][0], Value::Record(_)));
+    q(&c, "BEGIN");
+    q(
+        &c,
+        "WITH unused AS (SELECT 1) INSERT INTO docs(id,n) VALUES (docs:c,3) RETURNING id,n",
+    );
+    let error=c.execute("WITH input(id,n) AS (VALUES (docs:d,4),(docs:e,2)) INSERT INTO docs(id,n) SELECT id,n FROM input",&Parameters::new()).unwrap_err();
+    assert_eq!(error.code(), "FDB_CONSTRAINT");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)]
+        ]
+    );
+    let error = c
+        .execute(
+            "WITH unused AS (SELECT 1) INSERT INTO docs(id,n) VALUES (docs:d,4),(docs:e,0)",
+            &Parameters::new(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_VALIDATION");
+    assert!(c
+        .lookup_index("docs", "docs_n", &Value::Integer(4))
+        .unwrap()
+        .is_empty());
+    q(&c, "ROLLBACK");
+    q(&c, "CREATE TABLE copied(n INTEGER,data BLOB)");
+    q(&c,"WITH input(id,n,data) AS (VALUES (docs:a,1,X'00ff')) INSERT INTO copied SELECT n,data FROM input");
+    assert_eq!(
+        q(&c, "SELECT n,hex(data) FROM copied").rows,
+        vec![vec![Value::Integer(1), Value::String("00FF".into())]]
+    );
+    q(
+        &c,
+        "WITH unused AS (SELECT 1) INSERT INTO copied VALUES (2,X'01')",
+    );
+    assert_eq!(
+        q(&c, "SELECT count(*) FROM copied").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}
