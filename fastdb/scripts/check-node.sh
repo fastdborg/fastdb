@@ -8,5 +8,5 @@ case "$(uname -s)" in
   *) echo 'Native build script currently supports Linux and macOS only' >&2; exit 1 ;;
 esac
 cp "${CARGO_TARGET_DIR:-target}/debug/$native_library" fastdb/bindings/node/fastdb.node
-node --test fastdb/bindings/node/test.cjs
+node --test fastdb/bindings/node/test.cjs fastdb/examples/node-task-tracker/test.cjs
 npm run typecheck --prefix fastdb/bindings/node

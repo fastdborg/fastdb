@@ -14,7 +14,7 @@ This is a navigation and prioritization aid, not a replacement for the parent Fa
 | Recovery, backup and upgrades | Process-kill tests, offline restore rehearsal, legacy catalog fixtures | Interrupted I/O/commit/checkpoint matrix, previous released-binary upgrade/restore and advertised-platform evidence |
 | CLI and developer tools | Script/terminal/inspection/migration/transfer tests | Row streaming, total resource accounting, terminal/platform and complete tool qualification |
 | Rust and Node distribution | Offline Rust consumer; offline Node tarball consumer and declarations | Release artifacts/notices, platform/Node matrix, prebuild selection, registry readiness; no publishing has occurred |
-| Application validation | Master-plan requirement | External developer/pilot evidence, application templates and tested agent-facing guidance are not proven by package tests |
+| Application validation | Master-plan requirement | An initial task-tracker template is tested under examples/node-task-tracker; external developer/pilot evidence and broader tested agent-facing guidance remain missing |
 
 Cloud beta requirements remain deferred until after embedded V1. They do not block embedded implementation. V2 inverse links, indexed ANN/FTS/spatial and user scripts are not substitutes for unfinished V1 work.
 
