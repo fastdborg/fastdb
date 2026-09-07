@@ -33,7 +33,7 @@ try {
 `isFastDBError(error)` narrows a caught `unknown` value to the exported `FastDBError` interface. It recognizes Error instances with an `FDB_*` code and validates transaction observations when present. `transaction` is optional: closed-handle, worker and queue errors can occur before execution. Constructor and argument errors can fail this guard.
 
 
-`Database` methods are synchronous and block the calling JavaScript thread. Each instance owns one frontend connection and its database lifetime. Close is idempotent; calls after close fail. Closing an active transaction uses the engine's normal connection-drop behavior. Do not share native handles across workers; use AsyncDatabase to own a separate native connection on a dedicated worker. AsyncDatabase exposes cooperative connection interruption and initial AbortSignal cancellation for execute/all/first/exactlyOne/profileSelect/checkCollectionIntegrity/executeBatch.
+`Database` methods are synchronous and block the calling JavaScript thread. Each instance owns one frontend connection and its database lifetime. Close is idempotent; calls after close fail. Closing an active transaction uses the engine's normal connection-drop behavior. Do not share native handles across workers; use AsyncDatabase to own a separate native connection on a dedicated worker. AsyncDatabase exposes cooperative connection interruption and AbortSignal cancellation for queries, profiling, integrity audits, batches, document transfers and migrations. See [operation cancellation](#operation-abortsignal-cancellation) for signatures and outcome handling.
 
 Values use the transfer-v1 tagged encoding internally. Integer results are always bigint. Safe integer Number inputs become int64; unsafe integer Numbers are rejected, requiring bigint. Fractional Numbers and negative zero retain their binary64 bits. Booleans/nulls/strings, arrays and plain objects map explicitly. Buffer/Uint8Array map to binary; Record takes a table plus string/bigint key, and Vector takes validated native-format bytes. References are never inferred from strings. Unsupported JavaScript types, non-finite numbers, out-of-range int64 values and excessive nesting fail. The bridge uses own object entries and safe object construction, preserving prototype-looking string fields as data.
 
@@ -62,7 +62,7 @@ AsyncDatabase provides Promise-returning execute/all/first/exactlyOne, migrate, 
 
 The initial queue permits 256 outstanding operations and 128 MiB of encoded argument strings, including the active operation. Excess requests reject with FDB_LIMIT before submission. These are queue limits, not total-memory or query-time guarantees. Close stops new submissions, drains previously accepted operations, closes the native connection and waits for worker exit. Repeated close calls share the same Promise. Closing an active transaction uses native rollback-on-drop behavior, covered by reopen tests. Applications must await close to release the worker; no automatic idle shutdown or force-termination API is provided.
 
-Query errors reject their own promises without stopping later queued requests. An explicit transaction belongs to the whole connection, not to an individual caller or Promise chain. Applications must coordinate transaction ownership and await/check steps before submitting dependent work. The current API does not provide transaction callback isolation. Unexpected worker errors/exits reject outstanding requests; deterministic worker-crash recovery, native-memory accounting, cancellation for the remaining operation types and long-running lifecycle stress remain release gates.
+Query errors reject their own promises without stopping later queued requests. An explicit transaction belongs to the whole connection, not to an individual caller or Promise chain. Applications must coordinate transaction ownership and await/check steps before submitting dependent work. The current API does not provide transaction callback isolation. Unexpected worker errors/exits reject outstanding requests; deterministic worker-crash recovery, native-memory accounting, broader cancellation qualification and long-running lifecycle stress remain release gates.
 
 
 `asyncDb.interrupt()` synchronously requests interruption of the active engine statement without entering the blocked worker queue. It returns false after native close, and otherwise true to indicate a live connection; true does not confirm interruption. The addon uses a process-local registry of weak interrupt handles and removes entries on native close/drop. No raw engine pointer crosses the JavaScript boundary. A cancelled execute rejects with FDB_CANCELLED and observed transaction state, and the worker can run subsequent operations. This is connection-wide, best-effort interruption: it neither targets a particular Promise nor removes queued requests. Coordinate submissions and stop repeated interrupt requests before reusing the connection. Parsing, frontend-only work and a running bundled function are outside direct engine interruption; no hard deadline is promised.
@@ -149,7 +149,21 @@ The installed-package smoke exercises all five dense-input factories and the spa
 
 Factory precision tests cover float32 halfway rounding, subnormal underflow and signed zero with known IEEE-754 bits. float64 preserves the smallest positive/negative subnormal, an adjacent-to-one value and the largest finite binary64 value. Sparse/quantized/bit factories operate on the narrowed float32 values. Quantized conversion can fail even for finite inputs: the pinned scale calculation overflows for a range spanning negative to positive float32 maximum. Such constructor errors occur locally and do not change an existing database transaction.
 
-## Query AbortSignal cancellation
+## Operation AbortSignal cancellation
+
+Pass `{ signal: controller.signal }` in the options position below. Supply `undefined` for an earlier optional argument when using its default.
+
+| Async method | Call with cancellation options |
+|---|---|
+| Query and row helpers | `execute(sql, parameters, options)`, `all(sql, parameters, options)`, `first(sql, parameters, options)`, `exactlyOne(sql, parameters, options)` |
+| Query profiling | `profileSelect(sql, parameters, options)` |
+| Collection integrity | `checkCollectionIntegrity(table, limits, options)` |
+| Script batch | `executeBatch(script, options)` |
+| Document export | `exportDocuments(table, format, options)` |
+| Document import | `importDocuments(table, input, format, options)` |
+| Migrations | `migrate(plan, options)` |
+
+For example, `await db.exportDocuments('posts', undefined, { signal: controller.signal })` uses the default JSON format. Opening and closing do not accept a signal; close drains accepted work. Batch cancellation can be returned as an error entry in a resolved array, as described below.
 
 `execute(sql, parameters?, { signal }?)`, `all`, `first`, `exactlyOne` and `profileSelect` on AsyncDatabase accept an AbortSignal. Each signalled query receives a separate native cancellation token. An aborted queued request executes no SQL when its turn arrives; accepted requests keep their original queue order and their queue slot until the worker responds. Cancellation does not close the database or cancel neighboring requests.
 
