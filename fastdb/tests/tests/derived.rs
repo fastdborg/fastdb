@@ -1127,3 +1127,62 @@ fn native_duplicate_derived_stars_preserve_write_positions() {
         assert!(q(&c, "SELECT * FROM actual").rows.is_empty());
     }
 }
+
+#[test]
+fn duplicate_derived_star_writes_preserve_native_conflict_policies() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE baseline(n INTEGER)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2)");
+    for target in ["expected", "actual"] {
+        q(
+            &c,
+            &format!("CREATE TABLE {target}(a INTEGER UNIQUE,b INTEGER CHECK(b<>a))"),
+        );
+    }
+    let params = Parameters::from([
+        ("$first".into(), Value::Integer(10)),
+        ("$second".into(), Value::Integer(20)),
+    ]);
+    for policy in ["ABORT", "FAIL", "IGNORE", "REPLACE"] {
+        q(&c, "BEGIN");
+        for target in ["expected", "actual"] {
+            q(&c, &format!("INSERT INTO {target} VALUES(99,100)"));
+        }
+        let insert = |target: &str, source: &str| {
+            format!(
+            "WITH seed AS (SELECT $first AS x,$second AS X) INSERT OR {policy} INTO {target} SELECT q.* FROM {source} d JOIN (SELECT * FROM seed) q ON 1 ORDER BY d.n"
+        )
+        };
+        let native = c.execute(&insert("expected", "baseline"), &params);
+        let logical = c.execute(&insert("actual", "docs"), &params);
+        assert_eq!(
+            native.is_ok(),
+            matches!(policy, "IGNORE" | "REPLACE"),
+            "{policy}: {native:?}"
+        );
+        let mut expected_rows = vec![vec![Value::Integer(99), Value::Integer(100)]];
+        if policy != "ABORT" {
+            expected_rows.insert(0, vec![Value::Integer(10), Value::Integer(20)]);
+        }
+        assert_eq!(
+            q(&c, "SELECT * FROM expected ORDER BY a").rows,
+            expected_rows,
+            "{policy}"
+        );
+        assert_eq!(
+            logical.is_ok(),
+            native.is_ok(),
+            "{policy}: {logical:?}, {native:?}"
+        );
+        assert_eq!(
+            q(&c, "SELECT * FROM actual ORDER BY a").rows,
+            q(&c, "SELECT * FROM expected ORDER BY a").rows,
+            "{policy}"
+        );
+        // The transaction remains usable after either conflict disposition.
+        q(&c, "INSERT INTO actual VALUES(30,40)");
+        q(&c, "ROLLBACK");
+        assert!(q(&c, "SELECT * FROM actual").rows.is_empty());
+        assert!(q(&c, "SELECT * FROM expected").rows.is_empty());
+    }
+}
