@@ -120,3 +120,6 @@ Integral real pagination binds now follow the integer-literal correlation path w
 
 
 Async startup failure coverage now includes pre-ready transport error/exit/messageerror and repeated real failed-open/retry/reopen behavior. All 35 Node binding tests pass; broader lifecycle/platform and release gates remain open.
+
+
+Public Node closed/closing operations now expose FDB_CLOSED without transaction observations, with FDB_WORKER precedence for established worker failures. All 37 Node/application tests, strict TypeScript and the offline installed-package smoke pass. Broader cross-client error and release qualification remain open.

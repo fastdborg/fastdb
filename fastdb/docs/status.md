@@ -1165,3 +1165,12 @@ The isolated transport fixture now covers error, early exit and message-decoding
 
 
 Worker close-failure qualification (2026-09-07): the isolated transport fixture now covers a failed close send and exit before close acknowledgement with pending cancellable work. Both operation and close reject with the same FDB_WORKER error, cancellation tokens/listeners are released, subsequent requests retain that failure, and close remains promise-idempotent. The fixture and its timeout/completion-marker wrapper pass. This establishes transport lifecycle behavior, not native interrupted-close durability. Full V1 remains incomplete.
+
+
+## Public Node closed-handle errors (2026-09-07)
+
+Public Database and AsyncDatabase operations now report FDB_CLOSED after close; worker submissions during closing use the same code. The error has no transaction field because no statement was submitted. Synchronous access checks the wrapper's closed state before invoking the native handle. Close remains idempotent, and an established worker failure retains FDB_WORKER precedence. JavaScript argument validation and constructor failures retain their existing contract.
+
+Regression coverage exercises execute, row helpers, profiling, batches, integrity inspection, transfers and migrations across both closed clients, plus submissions while closing. All 37 Node binding/application tests and strict TypeScript pass. Native interrupted-close durability and broader release qualification remain open; full V1 is incomplete.
+
+The offline installed Node package smoke also passed FDB_CLOSED assertions for both clients on Linux x64 / Node 24.19.0: eight runtime files and 59,805,368 packed bytes. No publishing occurred.

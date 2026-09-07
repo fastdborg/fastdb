@@ -892,3 +892,10 @@ Atomic operations now use distinct reserved savepoint identities, so cleanup of 
 Cancellation after a SAVEPOINT opened could leave an unintended active transaction even though the operation callback never ran. Atomic opening errors now clean up their unique frame, accepting only the pinned engine's exact missing-frame error when it never opened. Other cleanup failures remain FDB_ROLLBACK. A boundary sweep checks autocommit and active outer transactions, absence of orphan savepoints, prior rows and successful retry. See atomic-savepoints.md for remaining I/O and RELEASE/commit qualification.
 
 The covered RELEASE interruption boundary can report FDB_ROLLBACK while the complete operation write set remains pending in an active outer transaction. This code is not confirmation of rollback and must not trigger blind retry. The caller can explicitly roll back the outer transaction; see atomic-savepoints.md for exact evidence and remaining qualification limits.
+
+
+## Public Node closed-handle errors (2026-09-07)
+
+Public Database and AsyncDatabase operations now report FDB_CLOSED after close; worker submissions during closing use the same code. The error has no transaction field because no statement was submitted. Synchronous access checks the wrapper's closed state before invoking the native handle. Close remains idempotent, and an established worker failure retains FDB_WORKER precedence. JavaScript argument validation and constructor failures retain their existing contract.
+
+Regression coverage exercises execute, row helpers, profiling, batches, integrity inspection, transfers and migrations across both closed clients, plus submissions while closing. All 37 Node binding/application tests and strict TypeScript pass. Native interrupted-close durability and broader release qualification remain open; full V1 is incomplete.

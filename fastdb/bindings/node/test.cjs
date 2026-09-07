@@ -113,7 +113,7 @@ test('async worker preserves submission order, typed values and graceful close',
   const queued = db.execute('INSERT INTO docs {id:docs:p2}');
   const close = db.close();
   assert.equal(db.close(), close);
-  await assert.rejects(db.all('SELECT * FROM docs'), /closing or closed/);
+  await assert.rejects(db.all('SELECT * FROM docs'), error => error.code === 'FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   await queued; await close;
 });
 test('async worker leaves event loop responsive and rejects excess queued requests', async () => {
@@ -946,4 +946,24 @@ test('async startup failure permits repeated opens and a healthy retry', {timeou
     try { assert.deepEqual(await reopened.exactlyOne('SELECT n FROM docs'),[7n]); }
     finally { await reopened.close(); }
   } finally { fs.rmSync(directory,{recursive:true,force:true}); }
+});
+
+
+test('closed sync and worker handles expose FDB_CLOSED across operations', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const operations = [
+    db=>db.execute('SELECT 1'), db=>db.all('SELECT 1'), db=>db.first('SELECT 1'), db=>db.exactlyOne('SELECT 1'),
+    db=>db.profileSelect('SELECT 1'), db=>db.executeBatch('SELECT 1;'),
+    db=>db.checkCollectionIntegrity('docs'), db=>db.exportDocuments('docs'),
+    db=>db.importDocuments('docs','{}'), db=>db.migrate([]),
+  ];
+  const closed = error => error.code === 'FDB_CLOSED' && !Object.hasOwn(error,'transaction');
+  const sync = new Database();
+  sync.close(); sync.close();
+  for (const operation of operations) assert.throws(()=>operation(sync),closed);
+  const worker = await AsyncDatabase.open();
+  const closing=worker.close();
+  assert.equal(worker.close(),closing);
+  await closing;
+  for (const operation of operations) await assert.rejects(operation(worker),closed);
 });

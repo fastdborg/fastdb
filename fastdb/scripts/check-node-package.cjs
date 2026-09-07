@@ -172,6 +172,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await withVectorFields(db);
     await withWrites(db);
   } finally { db.close(); }
+  assert.throws(()=>db.all('SELECT 1'), error=>error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   const worker = await AsyncDatabase.open(file);
   try {
     for (const make of [Vector.float32, Vector.float64, Vector.sparse32, Vector.quantized8, Vector.bit1, () => Vector.sparse32Entries(3, [[0,1],[2,-1]])]) {
@@ -250,6 +251,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal((await worker.checkCollectionIntegrity('docs')).documents, 1n);
     await withWrites(worker);
   } finally { await worker.close(); }
+  await assert.rejects(worker.all('SELECT 1'), error=>error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   const reopened = new Database(file);
   try {
     assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n);

@@ -143,10 +143,19 @@ function decodeProfile(raw) {
     affected: BigInt(result.affected), transaction: report.transaction },
     metrics: Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, BigInt(value)])) };
 }
+function closedError(message = 'database is closed') {
+  const error = new Error(message);
+  error.code = 'FDB_CLOSED';
+  return error;
+}
 class Database {
-  #native;
-  constructor(path = ':memory:') { this.#native = new NativeDatabase(path); }
-  close() { this.#native.close(); }
+  #handle; #closed = false;
+  constructor(path = ':memory:') { this.#handle = new NativeDatabase(path); }
+  get #native() {
+    if (this.#closed) throw closedError();
+    return this.#handle;
+  }
+  close() { this.#handle.close(); this.#closed = true; }
   execute(sql, parameters = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     const report = unwrap(this.#native.execute(sql, JSON.stringify(params)));
@@ -238,7 +247,7 @@ class AsyncDatabase {
   }
   #request(method, args, closing = false, signal) {
     if (this.#failure) return Promise.reject(this.#failure);
-    if (this.#closing && !closing) return Promise.reject(new Error('database is closing or closed'));
+    if (this.#closing && !closing) return Promise.reject(closedError('database is closing or closed'));
     const bytes = args.reduce((size, arg) => size + Buffer.byteLength(arg), 0);
     if (!closing && (this.#pending.size >= 256 || this.#bytes + bytes > 128 * 1024 * 1024)) {
       const error = new RangeError('database worker queue limit exceeded'); error.code = 'FDB_LIMIT';
