@@ -118,6 +118,24 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await client.execute('ROLLBACK');
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0],9223372036854775807n);
 
+    await client.execute('BEGIN');
+    try {
+      await client.execute('CREATE TABLE sort_inputs(n)');
+      await client.execute('INSERT INTO sort_inputs VALUES(1),(1.0),(2),(10)');
+      const sorted = await client.execute('UPDATE docs AS d SET value=(SELECT CASE WHEN d.value>0 THEN n ELSE d.value END AS x FROM sort_inputs ORDER BY x+0 DESC LIMIT 1) RETURNING value');
+      assert.deepEqual(sorted.rows,[[10n]]);
+      assert.equal(sorted.affected,1n);
+      const distinct = 'SELECT (SELECT DISTINCT CASE WHEN d.value>0 THEN n ELSE d.value END AS x FROM sort_inputs ORDER BY x,n LIMIT $limit OFFSET $offset) FROM docs d';
+      assert.deepEqual((await client.profileSelect(distinct,{$limit:1n,$offset:1n})).result.rows,[[2n]]);
+      assert.deepEqual(await client.all(distinct,{$limit:0n,$offset:0n}),[[null]]);
+      const empty = 'SELECT (SELECT DISTINCT d.id AS x FROM sort_inputs ORDER BY x,n LIMIT 1 OFFSET 1),d.id IN(SELECT DISTINCT d.id AS x FROM sort_inputs ORDER BY x,n LIMIT 1 OFFSET 1) FROM docs d';
+      assert.deepEqual((await client.profileSelect(empty)).result.rows,[[null,0n]]);
+      assert.equal((await client.checkCollectionIntegrity('docs')).indexEntries,1n);
+    } finally {
+      await client.execute('ROLLBACK');
+    }
+    assert.deepEqual(await client.all('SELECT value FROM docs WHERE value=9223372036854775807'),[[9223372036854775807n]]);
+
     const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
     assert.deepEqual(await client.all(cte),[[2n]]);
   }

@@ -108,3 +108,6 @@ Mixed DISTINCT ordering of a single correlated typed projection now deduplicates
 
 
 Sorted correlated typed DISTINCT now compares logical SQL values and retains a typed representative, correcting integer/real duplicate pagination. Native scalar/membership execute/profile tests cover insertion order and NULLs; the complete scoped check passed 323 Rust and 35 Node tests. Unsorted correlated DISTINCT, broader collation/type semantics and full V1 remain open.
+
+
+A derived pagination boundary now preserves bound LIMIT/OFFSET in the covered sorted correlated typed projections despite the pinned scalar compiler replacing non-literal limits. Literal-native differential tests and both installed Node clients pass; full scoped checks passed 325 Rust and 35 Node tests. Other pagination forms and broader release qualification remain open.

@@ -1112,3 +1112,12 @@ Verification: the complete scoped suite passed formatting, Clippy, 323 Rust test
 ## Explicit correlated DISTINCT collation probes (2026-09-07)
 
 A native differential regression now covers BINARY/NOCASE on the outer CASE projection and within its selected branch, together with alias sorting, an explicit BINARY descending sort override, mixed source keys and offsets across the result set. Inputs include `a`, `A` and `b`. Execute and profile_select match the pinned native results for all covered combinations; no production change was needed. This records explicit-expression collation evidence, not general implicit-column or deeper-scope collation qualification. Full V1 remains incomplete.
+
+
+## Bound pagination in sorted correlated projections (2026-09-07)
+
+The installed-package smoke exposed bound LIMIT 0 returning a row in a sorted correlated DISTINCT projection. The pinned engine's row-value subquery lowering replaces non-literal limits with an implicit LIMIT 1 (`core/translate/subquery.rs`); native preparation can consequently discard the limit bind. FastDB now keeps the covered sorted typed projection's pagination inside a derived relation, leaving scalar cardinality outside that relation. No upstream files changed.
+
+A parameter matrix compares bound limits 0, 1, 2 and -1 and offsets 0, 1 and 4 with literal native pagination through scalar, IN and EXISTS execute/profile consumers. The installed Node smoke additionally exercises alias-expression UPDATE/RETURNING, integer/real DISTINCT pagination, an empty record DISTINCT page, integrity and rollback through synchronous and worker clients. Other native/correlated pagination forms and full V1 remain open.
+
+Verification: the complete scoped check passed formatting, Clippy, 325 Rust tests, 35 Node tests and strict TypeScript, with one known trigger-interruption gate ignored. The rebuilt offline installed-package smoke passed on Linux x64 / Node 24.19.0: eight runtime files and 59,695,955 packed bytes. Broader platform/release qualification remains open.

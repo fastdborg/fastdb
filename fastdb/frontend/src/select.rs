@@ -300,6 +300,19 @@ fn native_correlated_predicate(
         }
         wrapped.order_by = ordering;
         wrapped.limit = limit;
+        // Keep pagination on a relation: the pinned scalar-subquery compiler
+        // otherwise replaces a bound LIMIT with its implicit one-row limit.
+        if wrapped.limit.is_some() {
+            let sql = Cmd::Stmt(Stmt::Select(wrapped)).to_string();
+            let Expr::Subquery(paginated) = expression(&format!(
+                "(SELECT v FROM ({}) LIMIT -1 OFFSET 0)",
+                sql.trim().trim_end_matches(';')
+            ))?
+            else {
+                unreachable!()
+            };
+            wrapped = paginated;
+        }
         inner = wrapped;
     }
     Ok((inner, typed_projection))

@@ -2411,3 +2411,51 @@ fn correlated_distinct_projection_collation_matches_native() {
         }
     }
 }
+
+#[test]
+fn correlated_distinct_bound_pagination_matches_literal_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(n)",
+        "CREATE TABLE lookup(n)",
+        "INSERT INTO docs(n) VALUES(1)",
+        "INSERT INTO native VALUES(1)",
+        "INSERT INTO lookup VALUES(1),(1.0),(2)",
+    ] {
+        q(&c, sql);
+    }
+    for limit in [0, 1, 2, -1] {
+        for offset in [0, 1, 4] {
+            let params = Parameters::from([
+                ("$limit".into(), Value::Integer(limit)),
+                ("$offset".into(), Value::Integer(offset)),
+            ]);
+            let source="SELECT DISTINCT CASE WHEN d.n>0 THEN n ELSE d.n END AS x FROM lookup ORDER BY x,n LIMIT $limit OFFSET $offset";
+            for expr in [
+                format!("({source})"),
+                format!("d.n IN ({source})"),
+                format!("EXISTS({source})"),
+            ] {
+                // The pinned native scalar compiler discards a bound LIMIT.
+                // Literal native pagination is the reference for bound values.
+                let literal = expr
+                    .replace("$limit", &limit.to_string())
+                    .replace("$offset", &offset.to_string());
+                let expected = q(&c, &format!("SELECT {literal} FROM native d")).rows;
+                let sql = format!("SELECT {expr} FROM docs d");
+                assert_eq!(
+                    c.execute(&sql, &params).unwrap().rows,
+                    expected,
+                    "{sql}: {params:?}"
+                );
+                assert_eq!(
+                    c.profile_select(&sql, &params).unwrap().result.rows,
+                    expected,
+                    "profile {sql}: {params:?}"
+                );
+            }
+        }
+    }
+}
