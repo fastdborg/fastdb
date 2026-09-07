@@ -236,3 +236,44 @@ fn migration_plan_limits_reject_before_mutation_and_allow_boundary_retry() {
     assert_eq!(c.migrate(&[boundary]).unwrap().already_applied, 1);
     assert!(q(&c, "SELECT * FROM docs").rows.is_empty());
 }
+
+#[test]
+fn maximum_aggregate_utf8_history_survives_reopen_and_exact_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("boundary.db");
+    let plan = (1..=4)
+        .map(|version| {
+            let mut sql = format!("CREATE TABLE docs{version}; --");
+            let remaining = 4 * 1024 * 1024 - sql.len();
+            sql.push_str(&"é".repeat(remaining / 2));
+            if remaining % 2 != 0 {
+                sql.push(' ');
+            }
+            assert_eq!(sql.len(), 4 * 1024 * 1024);
+            m(version, &sql)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        plan.iter().map(|entry| entry.sql.len()).sum::<usize>(),
+        16 * 1024 * 1024
+    );
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        assert_eq!(c.migrate(&plan).unwrap().applied, vec![1, 2, 3, 4]);
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+    }
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        let report = c.migrate(&plan).unwrap();
+        assert_eq!(report.already_applied, 4);
+        assert!(report.applied.is_empty());
+        for version in 1..=4 {
+            assert!(q(&c, &format!("SELECT * FROM docs{version}"))
+                .rows
+                .is_empty());
+        }
+        assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+    }
+}
