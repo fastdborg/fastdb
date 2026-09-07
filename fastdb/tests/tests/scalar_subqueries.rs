@@ -4574,19 +4574,21 @@ fn collection_distinct_scalar_pagination_matches_native() {
         q(&c, sql);
     }
     for offset in [0, 1, 2, 3] {
-        let native = format!("SELECT n,(SELECT DISTINCT i.n FROM lookup i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}) FROM baseline d ORDER BY n");
-        let expected = q(&c, &native).rows;
-        for source in ["docs d", "(SELECT n FROM docs) d"] {
-            let sql = format!("SELECT n,(SELECT DISTINCT i.n FROM items i WHERE i.n>=d.n ORDER BY i.n LIMIT 1 OFFSET {offset}+0) FROM {source} ORDER BY n");
-            assert_eq!(q(&c, &sql).rows, expected, "{sql}");
-            assert_eq!(
-                c.profile_select(&sql, &Parameters::new())
-                    .unwrap()
-                    .result
-                    .rows,
-                expected,
-                "{sql}"
-            );
+        for (distinct, group) in [("DISTINCT ", ""), ("", " GROUP BY i.n HAVING count(*)>1")] {
+            let native = format!("SELECT n,(SELECT {distinct}i.n FROM lookup i WHERE i.n>=d.n{group} ORDER BY i.n LIMIT 1 OFFSET {offset}) FROM baseline d ORDER BY n");
+            let expected = q(&c, &native).rows;
+            for source in ["docs d", "(SELECT n FROM docs) d"] {
+                let sql = format!("SELECT n,(SELECT {distinct}i.n FROM items i WHERE i.n>=d.n{group} ORDER BY i.n LIMIT 1 OFFSET {offset}+0) FROM {source} ORDER BY n");
+                assert_eq!(q(&c, &sql).rows, expected, "{sql}");
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected,
+                    "{sql}"
+                );
+            }
         }
     }
 }

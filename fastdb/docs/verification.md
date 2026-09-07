@@ -1886,3 +1886,6 @@ Native-inner pagination evaluation qualification (2026-09-08): the callback regr
 
 
 Distinct scalar pagination qualification (2026-09-08): a new native differential regression verifies computed OFFSET applies after duplicate removal in correlated DISTINCT scalar queries, including offsets beyond the final distinct value. Direct/derived collection sources match literal native results through execute/profile. The focused regression, formatting and focused Clippy pass. Latest complete scoped evidence remains 396 Rust/44 Node tests; this additional test has not received a new combined run. Broader type/evaluation/resource and full V1 gates remain open.
+
+
+Grouped scalar pagination qualification (2026-09-08): expanded the correlated scalar pagination regression with GROUP BY/HAVING, verifying computed OFFSET follows group filtering. Direct/derived collection sources match literal native results, including empty scalar outputs, through execute/profile. The expanded focused test, formatting and focused Clippy pass. Latest combined evidence remains 396 Rust/44 Node tests; broader grouping/evaluation/resource and full V1 gates remain open.
