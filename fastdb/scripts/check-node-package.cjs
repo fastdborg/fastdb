@@ -426,6 +426,14 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal(row[1], 9223372036854775807n);
     await worker.execute('BEGIN');
     await worker.execute('UPDATE docs SET value=7');
+    await assert.rejects(worker.execute('DELETE FROM docs',{}, {timeoutMs:0}), error => {
+      assert.equal(error.code,'FDB_CANCELLED');
+      assert.deepEqual(error.transaction,{before:'active',after:'active'});
+      return true;
+    });
+    assert.deepEqual(await worker.all('SELECT value FROM docs',{}, {timeoutMs:60000}),[[7n]]);
+    await assert.rejects(worker.execute('DELETE FROM docs',{}, {timeoutMs:-1}), /timeoutMs/);
+
     const cancelled = new AbortController(); cancelled.abort();
     const options = {signal:cancelled.signal};
     for (const operation of [
@@ -570,7 +578,7 @@ void counts;
 db.close();
 async function open() {
   const db = await AsyncDatabase.open();
-  const options: import('@fastdb/node').ExecuteOptions = {signal:new AbortController().signal};
+  const options: import('@fastdb/node').ExecuteOptions = {signal:new AbortController().signal,timeoutMs:1000};
   await db.selectWithLimits('SELECT 1',resultBudget,{},options);
   await db.profileSelectWithLimits('SELECT 1',resultBudget,{},options);
   await db.writeWithResultLimits('DELETE FROM docs',resultBudget,{},options);

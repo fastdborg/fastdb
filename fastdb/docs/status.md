@@ -3131,3 +3131,18 @@ The focused Node test passed against the current rebuilt addon; log:
 `/tmp/fastdb-node-zero-timeouts.log`. Diff checks passed. No production code changed
 and no broader suite was repeated. Remaining deadline/resource/platform and V1
 gates remain open.
+
+### Installed Node timeout qualification
+
+The offline installed-package worker consumer now rejects an immediate-timeout
+DELETE while preserving prior active-transaction data, reads successfully with a
+fresh timeout and rejects an invalid timeout locally. Installed declaration checks
+use timeoutMs alongside AbortSignal throughout the existing async operation calls.
+
+Package smoke passed on Linux x64 with Node 22.0.0 and 24.19.0 using the current
+debug addon: 10 files, 60,676,915 packed bytes. Logs:
+`/tmp/fastdb-timeout-package22.log` and `/tmp/fastdb-timeout-package24.log`.
+Both runs installed a local tarball into an isolated temporary consumer offline;
+no publication occurred. No production code changed or broader suite was repeated.
+Active-timeout installed coverage, sustained cleanup, release artifacts, other
+platforms and broader V1 gates remain open.
