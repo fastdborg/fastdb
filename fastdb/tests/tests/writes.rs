@@ -1375,3 +1375,38 @@ fn filtered_tuple_parameters_validate_before_mutation() {
     q(&c, "ROLLBACK");
     assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
 }
+
+#[test]
+fn tuple_aggregate_filter_subqueries_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a,b)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER)",
+        "INSERT INTO lookup VALUES(1,6),(1,11)",
+        "CREATE TABLE allowed(n INTEGER,a INTEGER)",
+        "INSERT INTO allowed VALUES(1,11)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(n,a) SELECT n,a FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        for filter in [
+            "x.a>(SELECT 7)",
+            "x.a IN (SELECT a FROM allowed)",
+            "EXISTS(SELECT 1 FROM allowed y WHERE y.a=x.a AND y.n=TARGET.n)",
+        ] {
+            q(&c, "BEGIN");
+            let native_filter = filter.replace("TARGET", "native");
+            let expected=q(&c,&format!("UPDATE native SET (a,b)=(SELECT sum(x.a) FILTER(WHERE {native_filter}),count(*) FILTER(WHERE {native_filter}) FROM lookup x WHERE x.n=native.n) RETURNING n,a,b"));
+            let filter = filter.replace("TARGET", "docs");
+            let sql=format!("UPDATE docs SET (a,b)=(SELECT sum(x.a) FILTER(WHERE {filter}),count(*) FILTER(WHERE {filter}) FROM {source} x WHERE x.n=docs.n) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
+    }
+}

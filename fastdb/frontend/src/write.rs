@@ -147,7 +147,7 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
                 validate_value_expression(e, aggregates)?;
             }
             if let Some(predicate) = &filter_over.filter_clause {
-                validate_value_expression(predicate, false)?;
+                safe_candidate_assignment(predicate)?;
             }
             Ok(())
         }
@@ -157,7 +157,7 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
                 && filter_over.over_clause.is_none() =>
         {
             if let Some(predicate) = &filter_over.filter_clause {
-                validate_value_expression(predicate, false)?;
+                safe_candidate_assignment(predicate)?;
             }
             Ok(())
         }

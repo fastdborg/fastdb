@@ -4043,3 +4043,25 @@ write tests passed, with formatting and all-target fastdb-tests Clippy with
 warnings denied. Logs `/tmp/fastdb-filter-tuple-params.log` and
 `/tmp/fastdb-filter-tuple-params-clippy.log`. Only tests/docs changed from
 `35a954166`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## Tuple aggregate FILTER subqueries — 2026-09-09
+
+Aggregate FILTER validation now delegates nested SELECT validation to the
+candidate SELECT path while retaining scalar checks around those subqueries.
+A nested EXISTS referring to both lookup and target rows exposed missing logical
+parent propagation; the correlation pass now carries that context into nested
+queries. Differential tests cover scalar, IN and correlated EXISTS FILTERs in
+SUM/COUNT(*) over relational and collection lookup sources.
+
+Local native probes also confirmed that the pinned engine rejects ORDER BY
+inside GROUP_CONCAT and SUM aggregate calls with an unsupported-clause parse
+error. Ordered aggregate arguments remain an upstream limitation.
+
+The full scoped check passed on `7aa7b3e7e` plus this change: 604 Rust passes,
+zero failures, one existing ignored trigger-interruption gate; 87 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-filter-subquery-check.log`; addon rebuilt. The
+initial nested-correlation failure was fixed and the final full run exited 0.
+No upstream source, dependency or storage-format changes; no publication.
+Broader query qualification and full V1 release gates remain open.

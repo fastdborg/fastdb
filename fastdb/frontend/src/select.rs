@@ -4423,7 +4423,12 @@ impl Connection {
                         {
                             let before = query.to_string();
                             if let Err(error) = self.correlate_collection_inner(
-                                query, &visible, params, ctes, exists, false,
+                                query,
+                                &visible,
+                                params,
+                                ctes,
+                                exists,
+                                logical_parent || tuple_projection,
                             ) {
                                 failure = Some(error);
                             }

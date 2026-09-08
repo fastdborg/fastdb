@@ -75,7 +75,7 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 
 ## Verification
 
-The latest complete scoped check on 2026-09-09 passed on `4f1ee1d26` plus aggregate tuple support: 602 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-aggregate-tuples-check.log`.
+The latest complete scoped check on 2026-09-09 passed on `7aa7b3e7e` plus FILTER-subquery support: 604 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-filter-subquery-check.log`.
 
 This is local Linux evidence; hosted CI has not run. The ignored trigger-interruption gate remains unresolved. Package installation across advertised platforms, interrupted checkpoints, previous-release upgrade/restore and the other V1 gates below still require qualification. Historical focused and full-run evidence follows in the dated entries and [verification record](verification.md).
 
@@ -103,7 +103,7 @@ The current result metadata distinguishes direct typed field projections from or
 
 Direct typed parameters and copied document fields retain their logical types. Ordinary SQL scalar expressions retain engine scalar types: SQL TRUE/FALSE become integer 1/0, so boolean validators require typed Boolean parameters or document literals rather than implicit coercion. The Rust map uses `?1`, `?2`, etc. to bind numbered or anonymous statement slots. Pinned Turso v0.7.2 rejects `$name::suffix`; a differential test preserves that exact engine error instead of reinterpreting it.
 
-Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Scalar DISTINCT tuple SELECTs retain deduplication before ordering/pagination. Initial aggregate/GROUP BY/HAVING tuples use the existing SELECT subset; correlated SUM/COUNT lookups and empty/group-filtered results are verified. Scalar aggregate FILTER predicates are also supported in tuple projections. Compounds, windows, aggregate argument ordering and recursive local CTEs remain unsupported; broader grouping/type and FILTER-subquery qualification is open. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
+Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Scalar DISTINCT tuple SELECTs retain deduplication before ordering/pagination. Initial aggregate/GROUP BY/HAVING tuples use the existing SELECT subset; correlated SUM/COUNT lookups and empty/group-filtered results are verified. Aggregate FILTER predicates in tuple projections also support the current scalar/IN/EXISTS subquery subset. Compounds, windows, aggregate argument ordering and recursive local CTEs remain unsupported; broader grouping/type and subquery qualification is open. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
 
 ## Catalog lifecycle notes
 
@@ -5059,3 +5059,25 @@ write tests passed, with formatting and all-target fastdb-tests Clippy with
 warnings denied. Logs `/tmp/fastdb-filter-tuple-params.log` and
 `/tmp/fastdb-filter-tuple-params-clippy.log`. Only tests/docs changed from
 `35a954166`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## Tuple aggregate FILTER subqueries — 2026-09-09
+
+Aggregate FILTER validation now delegates nested SELECT validation to the
+candidate SELECT path while retaining scalar checks around those subqueries.
+A nested EXISTS referring to both lookup and target rows exposed missing logical
+parent propagation; the correlation pass now carries that context into nested
+queries. Differential tests cover scalar, IN and correlated EXISTS FILTERs in
+SUM/COUNT(*) over relational and collection lookup sources.
+
+Local native probes also confirmed that the pinned engine rejects ORDER BY
+inside GROUP_CONCAT and SUM aggregate calls with an unsupported-clause parse
+error. Ordered aggregate arguments remain an upstream limitation.
+
+The full scoped check passed on `7aa7b3e7e` plus this change: 604 Rust passes,
+zero failures, one existing ignored trigger-interruption gate; 87 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-filter-subquery-check.log`; addon rebuilt. The
+initial nested-correlation failure was fixed and the final full run exited 0.
+No upstream source, dependency or storage-format changes; no publication.
+Broader query qualification and full V1 release gates remain open.
