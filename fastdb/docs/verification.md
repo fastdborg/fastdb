@@ -4297,3 +4297,18 @@ formatting and all-target fastdb-tests Clippy with warnings denied passed.
 Logs: `/tmp/fastdb-values-tuple-recovery.log` and
 `/tmp/fastdb-values-tuple-recovery-clippy.log`. Only tests/docs changed from
 `10c811740`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## Tuple rewrites under process failure — 2026-09-09
+
+The mixed document/relational crash workload now alternates typed VALUES tuple
+rewrites with patch API rewrites, updating unique indexed names and binary
+payloads. All nine rewrite/commit/checkpoint kill windows passed, each reopened
+twice with the existing exact document, relational, audit and index checks.
+Both crash_stress tests passed (13.30 seconds); formatting and all-target
+fastdb-tests Clippy with warnings denied passed. Logs:
+`/tmp/fastdb-tuple-crash.log` and `/tmp/fastdb-tuple-crash-clippy.log`.
+Only tests/docs changed from `7f464fa37`. Markers identify call windows rather
+than deterministic engine instructions; this is process-failure evidence, not
+power-loss or mid-I/O certification. No new full-suite run is claimed.
+Full V1 remains open; no publication occurred.

@@ -70,7 +70,24 @@ fn crash_writer_child() {
                 if slot % 2 == 0 {
                     let mut patch = archived(previous, slot);
                     patch.remove("id");
-                    assert!(c.patch(id, patch).unwrap().is_some());
+                    if slot % 4 == 0 {
+                        let params = Parameters::from([
+                            ("$id".into(), Value::Record(id.clone())),
+                            ("$name".into(), patch["name"].clone()),
+                            ("$payload".into(), patch["payload"].clone()),
+                        ]);
+                        assert_eq!(
+                            c.execute(
+                                "UPDATE items SET (name,payload)=(VALUES($name,$payload)) WHERE id=$id",
+                                &params,
+                            )
+                            .unwrap()
+                            .affected,
+                            1
+                        );
+                    } else {
+                        assert!(c.patch(id, patch).unwrap().is_some());
+                    }
                     query(&c,&format!("UPDATE live SET name='archived_b{previous}s{slot}' WHERE batch={previous} AND slot={slot}"));
                 } else {
                     assert!(c.delete(id).unwrap().is_some());
