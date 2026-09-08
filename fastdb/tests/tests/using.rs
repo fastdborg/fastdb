@@ -2567,12 +2567,6 @@ fn correlated_compound_expression_labels_preserve_native_order_resolution() {
                         format!("SELECT k,(SELECT sum(CASE WHEN x.n IN({rhs}) THEN 1 WHEN x.n NOT IN({rhs}) THEN 10 ELSE 100 END) FROM nums x WHERE k IS k) AS v FROM {source} d {join} b USING(k) ORDER BY k")
                     };
                     let expected = query(&sql("native"));
-                    // The native-only retained side of RIGHT JOIN still loses
-                    // inferred expression labels during nested preparation.
-                    // Keep its native oracle while the lowering fix remains open.
-                    if join == "RIGHT JOIN" {
-                        continue;
-                    }
                     let actual = query(&sql("docs"));
                     assert_eq!(actual.columns, expected.columns);
                     assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));

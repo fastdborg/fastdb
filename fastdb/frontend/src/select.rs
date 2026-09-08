@@ -118,6 +118,55 @@ fn unordered_compound_pagination(select: &Select) -> bool {
     select.limit.is_some() && select.order_by.is_empty()
 }
 
+fn resolve_compound_expression_order_names(select: &mut Select) {
+    if select.body.compounds.is_empty() {
+        return;
+    }
+    for sorted in &mut select.order_by {
+        let (Expr::Id(name) | Expr::Name(name)) = order_base(&sorted.expr) else {
+            continue;
+        };
+        let Ok(normalized) = expression(name.as_str()) else {
+            continue;
+        };
+        let position = std::iter::once(&select.body.select)
+            .chain(select.body.compounds.iter().map(|arm| &arm.select))
+            .find_map(|arm| {
+                let OneSelect::Select { columns, .. } = arm else {
+                    return None;
+                };
+                if columns
+                    .iter()
+                    .any(|column| !matches!(column, ResultColumn::Expr(_, _)))
+                {
+                    return None;
+                }
+                // The pinned resolver checks aliases before inferred names in
+                // each arm, then advances to the next arm.
+                columns
+                    .iter()
+                    .position(|column| {
+                        matches!(column,
+                    ResultColumn::Expr(_, Some(alias))
+                        if alias.name().as_str().eq_ignore_ascii_case(name.as_str()))
+                    })
+                    .or_else(|| {
+                        columns.iter().position(|column| {
+                            matches!(column,
+                        ResultColumn::Expr(value, Some(As::ImplicitColumnName(_)))
+                            if value.to_string() == normalized.to_string())
+                        })
+                    })
+            });
+        if let Some(position) = position {
+            replace_order_base(
+                &mut sorted.expr,
+                Expr::Literal(Literal::Numeric((position + 1).to_string())),
+            );
+        }
+    }
+}
+
 fn preserve_compound_column_names(select: &mut Select) {
     // ImplicitColumnName is parser metadata and is omitted when serializing.
     // Make it explicit before correlation replaces the original expression.
@@ -147,6 +196,7 @@ fn native_correlated_predicate(
         return Ok((inner, false));
     }
     if !inner.body.compounds.is_empty() {
+        resolve_compound_expression_order_names(&mut inner);
         if unordered_compound_pagination(&inner) {
             return Ok((inner, false));
         }
@@ -816,6 +866,7 @@ fn qualify_correlated_using(
         return Ok(());
     }
     if !inner.body.compounds.is_empty() {
+        resolve_compound_expression_order_names(inner);
         if unordered_compound_pagination(inner) {
             return Ok(());
         }
