@@ -3430,3 +3430,13 @@ and diff checks passed. Logs: `/tmp/fastdb-node-string-reuse.log` and
 `/tmp/fastdb-node-string-reuse-clippy.log`. Measurement follows separately; no
 improvement is inferred from implementation alone. Broader Rust/package suites
 were not repeated, and full V1 remains incomplete.
+
+### Response-buffer reuse measurement
+
+All 12 repeated nonzero-byte benchmark samples passed at `a54277854`. Median
+process peaks ranged from 137–184 MiB, with mixed timing/RSS changes versus the
+preceding run. No uniform improvement is claimed; benchmarks.md records each
+median and comparison limitations. Raw evidence:
+`benchmark-results/2026-09-08-linux-debug-node-reuse255-1000.json`.
+The diagnostic remains local debug, whole-process evidence rather than a release
+performance or resource-cap guarantee. Full V1 gates remain open.

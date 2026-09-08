@@ -227,3 +227,12 @@ content-dependent text size. Nonzero fill uses a hex SQL literal while zero fill
 retains zeroblob, so this is broader workload evidence rather than a controlled
 attribution of the timing/RSS difference. Logical payload limits are not process
 memory limits. The harness hash identifies this extension.
+
+Response-buffer reuse at `a54277854` passed the same 12 nonzero-byte samples:
+[raw results](benchmark-results/2026-09-08-linux-debug-node-reuse255-1000.json).
+Median ms / peak RSS MiB were sync execute 1171.4 / 137.4, sync profile
+1085.3 / 138.8, worker execute 1268.4 / 184.2 and worker profile 1201.9 / 183.4.
+Compared with the preceding nonzero run, memory and timing results are mixed;
+sync execute and worker profile peaks are lower, but no uniform latency or memory
+improvement is established by three samples. Both runs use the same harness and
+payload expression. Whole-process RSS and debug-run limitations still apply.
