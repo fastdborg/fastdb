@@ -3515,3 +3515,17 @@ Valid 64-level logical values now survive binding JSON framing and stored-value 
 
 
 The installed Node package now qualifies the nesting fix across synchronous-to-worker-to-synchronous reopen, RETURNING, profiling, transfer and over-limit rejection. Offline checks pass on Linux x64 Node 22.0.0 and 24.19.0 with the current debug addon. See verification.md for artifact identity and scope. Full V1 and final distribution/platform gates remain open.
+
+
+### Maximum-depth result-budget qualification
+
+A new Rust regression verifies exact logical-byte budgets for a maximum-depth
+stored value with an integer record key. Bounded execute/profile reads accept
+exact budgets and reject one-byte-short budgets for both parameters and stored
+fields. A rejected UPDATE RETURNING restores its changed field and index entry
+while retaining the outer transaction; corrected retry succeeds and final
+rollback restores the original committed document. Integrity checks pass before
+and after rollback. All seven result-limit tests pass
+(`/tmp/fastdb-deep-result-limits.log`). This test-only change adds evidence after
+the complete 549-Rust/78-Node run; it does not establish total-memory bounds or
+close full V1.

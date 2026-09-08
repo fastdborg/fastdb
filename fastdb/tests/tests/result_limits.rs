@@ -465,3 +465,125 @@ fn collection_returning_star_uses_document_payload_budget() {
         assert_eq!(c.execute("SELECT * FROM docs", &p).unwrap().rows, before);
     }
 }
+
+#[test]
+fn maximum_depth_payload_limits_preserve_atomic_returning_and_indexes() {
+    use fastdb::{IntegrityLimits, Key, Record, TransactionState, Value};
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    let mut value = Value::Record(Record {
+        table: "docs".into(),
+        key: Key::Integer(i64::MAX),
+    });
+    // Record table (4) + integer key (8); arrays add no logical payload bytes.
+    let mut bytes = 12;
+    for depth in 0..63 {
+        value = if depth % 2 == 0 {
+            Value::Array(vec![value])
+        } else {
+            bytes += "nested".len();
+            Value::Object([("nested".into(), value)].into())
+        };
+    }
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+        "INSERT INTO docs {id:docs:saved,n:1}",
+        "BEGIN",
+        "INSERT INTO docs {id:docs:pending,n:2}",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    let params = Parameters::from([("$v".into(), value.clone())]);
+    let exact = ResultLimits {
+        max_rows: 1,
+        max_payload_bytes: bytes + 1,
+    };
+    let short = ResultLimits {
+        max_payload_bytes: exact.max_payload_bytes - 1,
+        ..exact
+    };
+    let write = "UPDATE docs SET payload=$v,n=3 WHERE id=docs:saved RETURNING payload AS v";
+    assert_eq!(
+        c.write_with_result_limits(write, &params, short)
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(c.transaction_state(), TransactionState::Active);
+    assert_eq!(
+        c.lookup_index("docs", "docs_n", &Value::Integer(1))
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(c
+        .lookup_index("docs", "docs_n", &Value::Integer(3))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        c.execute("SELECT payload FROM docs WHERE id=docs:saved", &empty)
+            .unwrap()
+            .rows,
+        vec![vec![Value::Null]]
+    );
+    assert_eq!(
+        c.write_with_result_limits(write, &params, exact)
+            .unwrap()
+            .rows,
+        vec![vec![value.clone()]]
+    );
+    for (sql, params) in [
+        ("SELECT $v AS v", &params),
+        ("SELECT payload AS v FROM docs WHERE id=docs:saved", &empty),
+    ] {
+        assert_eq!(
+            c.select_with_limits(sql, params, exact).unwrap().rows,
+            vec![vec![value.clone()]]
+        );
+        assert_eq!(
+            c.profile_select_with_limits(sql, params, exact)
+                .unwrap()
+                .result
+                .rows,
+            vec![vec![value.clone()]]
+        );
+        assert_eq!(
+            c.select_with_limits(sql, params, short).unwrap_err().code(),
+            "FDB_LIMIT"
+        );
+        assert_eq!(
+            c.profile_select_with_limits(sql, params, short)
+                .unwrap_err()
+                .code(),
+            "FDB_LIMIT"
+        );
+        assert_eq!(c.transaction_state(), TransactionState::Active);
+    }
+    assert_eq!(
+        c.check_collection_integrity("docs", IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        2
+    );
+    assert_eq!(
+        c.lookup_index("docs", "docs_n", &Value::Integer(3))
+            .unwrap()
+            .len(),
+        1
+    );
+    c.execute("ROLLBACK", &empty).unwrap();
+    assert_eq!(
+        c.execute("SELECT n,payload FROM docs", &empty)
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(1), Value::Null]]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        1
+    );
+}
