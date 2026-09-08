@@ -3460,3 +3460,21 @@ prior transaction work, then checks successful retry/RETURNING and rollback.
 All five window tests pass (`/tmp/fastdb-grouped-windows.log`). These are test-only
 changes after the complete 543-Rust/77-Node run; no newer full-suite total is
 claimed. General window/type/resource semantics and full V1 remain open.
+
+
+### Direct portable JSON sink and Node cell serialization
+
+`Value::write_portable_json` consumes a value and writes its transfer-v1 encoding
+to a caller-provided `std::io::Write` sink. It validates before output, preserves
+I/O failures as FDB_STORAGE, and leaves flushing/partial-output recovery to the
+caller. Node execute/profile/batch result construction now writes each cell into
+the response byte buffer, removing the per-cell JSON String and append copy.
+Final UTF-8 conversion reuses that buffer. Portable conversion and complete
+results/transport remain materialized; this does not establish a memory cap.
+
+All six transfer tests and 77 Node/application tests pass, including lossless
+encodings, short writes, failed sinks, validation-before-output and existing
+sync/worker results. Scoped Clippy, formatting, strict TypeScript and the offline
+standalone Rust consumer pass; all 244 dependency identities are retained. Logs:
+`/tmp/fastdb-json-writer-{transfer,node,clippy,consumer}.log`. Broader full-suite,
+release/platform and resource qualification retain their separate evidence.

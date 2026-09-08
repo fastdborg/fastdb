@@ -50,6 +50,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Value::String("quoted\" key\nไทย".into()),
     ]);
     let encoded = portable.clone().into_portable_json()?.parse()?;
+    let mut written = Vec::new();
+    portable.clone().write_portable_json(&mut written)?;
+    assert_eq!(written, portable.clone().into_portable_json()?.as_bytes());
     assert_eq!(portable, Value::from_portable_value(encoded)?);
     assert_eq!(Value::Number(f64::NAN).into_portable_json().unwrap_err().code(), "FDB_VALIDATION");
     {

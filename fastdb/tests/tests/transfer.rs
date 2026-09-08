@@ -140,6 +140,9 @@ fn consuming_portable_values_preserve_lossless_wire_contract() {
         .into(),
     );
     let text = value.clone().into_portable_json().unwrap();
+    let mut written = Vec::new();
+    value.clone().write_portable_json(&mut written).unwrap();
+    assert_eq!(written, text.as_bytes());
     assert_eq!(text, value.to_portable_value().unwrap().to_string());
     let encoded = value.clone().into_portable_value().unwrap();
     assert_eq!(encoded["value"]["integer"]["type"], "Integer");
@@ -163,6 +166,12 @@ fn consuming_portable_values_preserve_lossless_wire_contract() {
         Value::vector8(&[1.0, 0.0, -1.0]).unwrap(),
         Value::vector1bit(&[1.0, 0.0, -1.0]).unwrap(),
     ] {
+        let mut written = Vec::new();
+        value.clone().write_portable_json(&mut written).unwrap();
+        assert_eq!(
+            written,
+            value.clone().into_portable_json().unwrap().as_bytes()
+        );
         assert_eq!(
             value.clone().into_portable_json().unwrap(),
             value.to_portable_value().unwrap().to_string()
@@ -184,4 +193,72 @@ fn consuming_portable_values_preserve_lossless_wire_contract() {
         deep = Value::Array(vec![deep]);
     }
     assert_eq!(deep.into_portable_value().unwrap_err().code(), "FDB_LIMIT");
+}
+
+#[test]
+fn portable_json_writer_validates_before_output_and_propagates_sink_failure() {
+    struct Sink {
+        bytes: Vec<u8>,
+        remaining: usize,
+    }
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Err(std::io::Error::other("test sink exhausted"));
+            }
+            let count = bytes.len().min(self.remaining).min(3);
+            self.bytes.extend_from_slice(&bytes[..count]);
+            self.remaining -= count;
+            Ok(count)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            panic!("the value writer must leave flushing to its caller")
+        }
+    }
+    let value = Value::Array(vec![
+        Value::String("quoted\"\nไทย".into()),
+        Value::Record(fastdb::Record {
+            table: "docs".into(),
+            key: fastdb::Key::Integer(i64::MIN),
+        }),
+        Value::Binary(vec![255; 4096]),
+    ]);
+    let expected = value.clone().into_portable_json().unwrap();
+    let mut sink = Sink {
+        bytes: b"prefix:".to_vec(),
+        remaining: usize::MAX,
+    };
+    value.clone().write_portable_json(&mut sink).unwrap();
+    assert_eq!(&sink.bytes[7..], expected.as_bytes());
+    for limit in [0, 1, 19, expected.len() - 1] {
+        let mut sink = Sink {
+            bytes: Vec::new(),
+            remaining: limit,
+        };
+        let error = value.clone().write_portable_json(&mut sink).unwrap_err();
+        assert_eq!(error.code(), "FDB_STORAGE");
+        let fastdb::Error::Encoding(error) = error else {
+            panic!("lost sink error")
+        };
+        assert!(error.is_io());
+        assert_eq!(sink.bytes, expected.as_bytes()[..limit]);
+    }
+    let mut deep = Value::Null;
+    for _ in 0..65 {
+        deep = Value::Array(vec![deep]);
+    }
+    for (invalid, code) in [
+        (
+            Value::Array(vec![Value::Integer(1), Value::Number(f64::INFINITY)]),
+            "FDB_VALIDATION",
+        ),
+        (deep, "FDB_LIMIT"),
+    ] {
+        let mut output = b"unchanged".to_vec();
+        assert_eq!(
+            invalid.write_portable_json(&mut output).unwrap_err().code(),
+            code
+        );
+        assert_eq!(output, b"unchanged");
+    }
 }

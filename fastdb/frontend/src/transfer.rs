@@ -459,6 +459,14 @@ impl Value {
         self.validate()?;
         Ok(serde_json::to_string(&Portable::from(self))?)
     }
+    /// Consume and write a transfer-v1 value to a JSON sink without an
+    /// intermediate JSON string. Validation completes before writing any bytes.
+    /// An I/O failure can leave a partial value in the sink; this does not flush
+    /// the writer or make its output atomic.
+    pub fn write_portable_json(self, writer: impl std::io::Write) -> Result<()> {
+        self.validate()?;
+        Ok(serde_json::to_writer(writer, &Portable::from(self))?)
+    }
     /// Decode a tagged transfer v1 value and validate its logical type.
     pub fn from_portable_value(value: serde_json::Value) -> Result<Self> {
         let value = Self::from(serde_json::from_value::<Portable>(value)?);

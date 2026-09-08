@@ -145,3 +145,11 @@ this is not a hard wall-clock execution bound. Use a fresh token for retry.
 text directly, avoiding an intermediate `serde_json::Value` tree. It validates the
 same value contract and preserves lossless numeric representations. JSON object
 member ordering is not part of the portable value contract.
+
+`Value::write_portable_json(self, writer: impl std::io::Write)` writes the same
+encoding directly into a caller-owned sink. Validation completes before output;
+invalid values leave the sink unchanged. I/O failures return `FDB_STORAGE` and
+can leave a partial JSON value in the sink. The method does not flush the writer
+or make output atomic. Use a buffered writer for files or sockets. It consumes
+the value but still constructs the portable value representation; this is not
+a database row-streaming API or a total-memory limit.

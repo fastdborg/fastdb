@@ -557,22 +557,25 @@ fn query_value(result: fastdb::QueryResult) -> fastdb::Result<JsonText> {
         "{{\"columns\":{},\"affected\":{},\"rows\":[",
         serde_json::to_string(&result.columns)?,
         serde_json::to_string(&result.affected.to_string())?
-    );
+    )
+    .into_bytes();
     for (row_index, row) in result.rows.into_iter().enumerate() {
         if row_index > 0 {
-            json.push(',');
+            json.push(b',');
         }
-        json.push('[');
+        json.push(b'[');
         for (column_index, value) in row.into_iter().enumerate() {
             if column_index > 0 {
-                json.push(',');
+                json.push(b',');
             }
-            json.push_str(&value.into_portable_json()?);
+            value.write_portable_json(&mut json)?;
         }
-        json.push(']');
+        json.push(b']');
     }
-    json.push_str("]}");
-    Ok(JsonText(json))
+    json.extend_from_slice(b"]}");
+    Ok(JsonText(String::from_utf8(json).map_err(|error| {
+        fastdb::Error::Storage(format!("invalid serialized result UTF-8: {error}"))
+    })?))
 }
 
 fn profile_value(profile: fastdb::ProfiledQuery) -> fastdb::Result<JsonText> {
