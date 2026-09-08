@@ -321,3 +321,55 @@ fn migration_execution_reports_failure_and_allows_corrected_retry() {
     assert_eq!(report["applied"], serde_json::json!([]));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn migration_file_limit_precedes_utf8_decoding_and_allows_exact_limit_retry() {
+    let root = std::env::temp_dir().join(format!(
+        "fastdb-migration-byte-boundary-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let dir = root.join("migrations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = root.join("database.db");
+    let source = dir.join("001_create.sql");
+    let limit = 4 * 1024 * 1024;
+    let mut oversized = vec![b' '; limit - 1];
+    oversized.extend_from_slice("ไทย".as_bytes());
+    std::fs::write(&source, &oversized).unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+            .arg("--migrate")
+            .arg(&dir)
+            .arg(&file)
+            .output()
+            .unwrap()
+    };
+    let failed = run();
+    assert!(!failed.status.success());
+    assert!(failed.stdout.is_empty());
+    let message = String::from_utf8(failed.stderr).unwrap();
+    assert!(
+        message.contains("migration files exceed runner limits"),
+        "{message}"
+    );
+    assert!(message.contains("001_create.sql"));
+    // An exactly-sized UTF-8 source ending in a multibyte scalar is valid.
+    let mut exact = b"CREATE TABLE docs; --".to_vec();
+    exact.resize(limit - "ไทย".len(), b' ');
+    exact.extend_from_slice("ไทย".as_bytes());
+    assert_eq!(exact.len(), limit);
+    std::fs::write(&source, &exact).unwrap();
+    let retry = run();
+    assert!(retry.status.success(), "{retry:?}");
+    let report: serde_json::Value = serde_json::from_slice(&retry.stdout).unwrap();
+    assert_eq!(report["applied"], serde_json::json!([1]));
+    let again = run();
+    assert!(again.status.success(), "{again:?}");
+    let report: serde_json::Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(report["already_applied"], 1);
+    std::fs::remove_dir_all(root).unwrap();
+}

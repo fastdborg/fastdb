@@ -3637,3 +3637,17 @@ integrity checks. A pre-cancelled request separately verifies absent statement
 metadata and successful isFastDBError narrowing. The focused regression passes
 (`/tmp/fastdb-migration-cancel-metadata.log`); this test-only change does not add a
 new complete-suite count or close broader cancellation/platform/V1 gates.
+
+
+### Migration source byte-limit handling
+
+The CLI migration loader now checks byte limits before UTF-8 decoding, avoiding
+misleading encoding errors when an oversized read splits a multibyte character.
+Reads stop at the smaller per-file/remaining-plan budget plus one sentinel byte;
+the entry-count limit is checked before opening another source.
+
+All 35 CLI tests pass (`/tmp/fastdb-migration-loader-check.log`). New regressions
+verify oversized UTF-8 boundary diagnostics, execution/reuse of an exactly 4 MiB
+source, and loader rejection/acceptance just above/at the 16 MiB aggregate limit.
+The aggregate test qualifies loading rather than execution of a maximum-sized
+history. Full V1 and broader resource/platform qualification remain open.

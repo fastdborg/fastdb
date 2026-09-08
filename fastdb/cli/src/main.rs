@@ -683,6 +683,13 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
         if path.extension().is_none_or(|e| e != "sql") {
             continue;
         }
+        if plan.len() >= 1000 {
+            return Err(format!(
+                "migration files exceed runner limits while loading {}",
+                path.display()
+            )
+            .into());
+        }
         if !std::fs::metadata(&path)
             .map_err(|error| format!("cannot inspect migration {}: {error}", path.display()))?
             .is_file()
@@ -707,20 +714,23 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
         let version = version
             .parse::<i64>()
             .map_err(|error| format!("invalid migration version in {}: {error}", path.display()))?;
-        let mut sql = String::new();
+        let limit = (4 * 1024 * 1024).min(16 * 1024 * 1024 - bytes);
+        let mut input = Vec::new();
         std::fs::File::open(&path)
             .map_err(|error| format!("cannot open migration {}: {error}", path.display()))?
-            .take(4 * 1024 * 1024 + 1)
-            .read_to_string(&mut sql)
+            .take((limit + 1) as u64)
+            .read_to_end(&mut input)
             .map_err(|error| format!("cannot read migration {}: {error}", path.display()))?;
-        bytes += sql.len();
-        if sql.len() > 4 * 1024 * 1024 || bytes > 16 * 1024 * 1024 || plan.len() >= 1000 {
+        if input.len() > limit {
             return Err(format!(
                 "migration files exceed runner limits while loading {}",
                 path.display()
             )
             .into());
         }
+        let sql = String::from_utf8(input)
+            .map_err(|error| format!("cannot read migration {}: {error}", path.display()))?;
+        bytes += sql.len();
         plan.push(fastdb::Migration { version, name, sql });
     }
     plan.sort_by_key(|m| m.version);
@@ -760,6 +770,43 @@ fn operation_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_loader_enforces_aggregate_bytes_before_utf8_decoding() {
+        let root = std::env::temp_dir().join(format!(
+            "fastdb-migration-aggregate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let mut sql = b"--".to_vec();
+        sql.resize(4 * 1024 * 1024 - "ไทย".len(), b' ');
+        sql.extend_from_slice("ไทย".as_bytes());
+        for version in 1..=4 {
+            std::fs::write(root.join(format!("{version}_source.sql")), &sql).unwrap();
+        }
+        let excess = root.join("5_source.sql");
+        std::fs::write(&excess, b" ").unwrap();
+        let error = migration_plan(root.to_str().unwrap()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("migration files exceed runner limits"),
+            "{error}"
+        );
+        std::fs::remove_file(excess).unwrap();
+        let plan = migration_plan(root.to_str().unwrap()).unwrap();
+        assert_eq!(plan.len(), 4);
+        assert_eq!(
+            plan.iter().map(|entry| entry.sql.len()).sum::<usize>(),
+            16 * 1024 * 1024
+        );
+        assert!(plan.iter().all(|entry| entry.sql.ends_with("ไทย")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn direct_report_output_preserves_json_contract() {

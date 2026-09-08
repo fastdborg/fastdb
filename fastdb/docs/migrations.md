@@ -18,3 +18,6 @@ Execution errors include `FDB_MIGRATION`, the migration version, UTF-8 byte offs
 
 
 CLI output failures are reported as errors with a nonzero exit, including final stdout flush failures. Migration/import work can commit before writing its success report; an output error does not undo that work. Inspect database state (or rerun an unchanged migration plan to inspect its applied prefix) before retrying writes.
+
+
+The CLI loader checks the 1000-entry limit before opening an additional source. Each read is bounded by the smaller of the 4 MiB per-file limit and the remaining 16 MiB plan budget, plus one sentinel byte. Byte limits are checked before UTF-8 decoding, so a cutoff inside a multibyte character is reported as an oversized source. These are input bounds, not peak-memory guarantees.
