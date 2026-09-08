@@ -2369,3 +2369,60 @@ fn deeper_native_queries_inherit_cte_metadata_scope() {
         }
     }
 }
+
+#[test]
+fn deeper_cte_shadowing_matches_pinned_scope_and_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2),('a')",
+        "CREATE TABLE native(k INTEGER)",
+        "INSERT INTO native VALUES(1),(2),('a')",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3),('a')",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2)",
+    ] {
+        query(sql);
+    }
+    assert_eq!(
+        query("WITH q(v) AS(SELECT 'z') SELECT * FROM(WITH q(v) AS(SELECT 'A') SELECT v FROM q)")
+            .rows,
+        vec![vec![Value::String("A".into())]]
+    );
+    assert_eq!(query("WITH q(v) AS(SELECT 'z') SELECT * FROM(WITH q(v) AS(SELECT 'A') SELECT (SELECT v FROM q))").rows, vec![vec![Value::String("z".into())]]);
+    for (outer, inner) in [
+        ("SELECT 'z'", "SELECT 'A' COLLATE NOCASE"),
+        ("SELECT 'A' COLLATE NOCASE", "SELECT 'z'"),
+    ] {
+        for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for join in ["LEFT JOIN", "RIGHT JOIN"] {
+                for predicate in [
+                    "(SELECT v FROM q)=k",
+                    "x.n IN(SELECT v FROM q)",
+                    "x.n NOT IN(SELECT v FROM q)",
+                ] {
+                    let sql = |source: &str| {
+                        format!("WITH q(v) AS({outer}) SELECT * FROM(WITH q(v) AS {hint} ({inner}) SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND {predicate}) AS v FROM {source} d {join} b USING(k) ORDER BY k)")
+                    };
+                    let expected = query(&sql("native"));
+                    let actual = query(&sql("docs"));
+                    assert_eq!(actual.columns, expected.columns);
+                    assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
+                    assert_eq!(
+                        c.profile_select(&sql("docs"), &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected.rows
+                    );
+                }
+            }
+        }
+    }
+}
