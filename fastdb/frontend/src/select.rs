@@ -388,13 +388,29 @@ fn qualify_source_free_using(
     else {
         return Ok(());
     };
-    for value in columns
+    let aliases: std::collections::BTreeSet<_> = columns
+        .iter()
+        .filter_map(|column| match column {
+            ResultColumn::Expr(_, Some(alias)) if alias.is_explicit() => {
+                Some(alias.name().as_str().to_ascii_lowercase())
+            }
+            _ => None,
+        })
+        .collect();
+    for (value, ordering) in columns
         .iter_mut()
         .filter_map(|column| match column {
             ResultColumn::Expr(value, _) => Some(value),
             _ => None,
         })
         .chain(where_clause.iter_mut())
+        .map(|value| (value, false))
+        .chain(
+            inner
+                .order_by
+                .iter_mut()
+                .map(|sorted| (&mut sorted.expr, true)),
+        )
     {
         turso_core::walk_expr_mut(value, &mut |expr| {
             if matches!(
@@ -404,6 +420,9 @@ fn qualify_source_free_using(
                 return Ok(turso_core::WalkControl::SkipChildren);
             }
             if let Expr::Id(name) | Expr::Name(name) = expr {
+                if ordering && aliases.contains(&name.as_str().to_ascii_lowercase()) {
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
                 if let Some((index, column)) =
                     using.bindings.get(&name.as_str().to_ascii_lowercase())
                 {

@@ -497,6 +497,13 @@ fn source_free_subqueries_resolve_outer_using_keys_without_local_capture() {
             "(SELECT k+10 WHERE k=2)",
             "EXISTS(SELECT k WHERE k=2)",
             "(SELECT k FROM local_values)",
+            "(SELECT 99 AS k WHERE k=1)",
+            "(SELECT 99 AS k WHERE k=99)",
+            "(SELECT k AS v ORDER BY v)",
+            "(SELECT k ORDER BY k)",
+            "(SELECT 99 AS k ORDER BY k)",
+            "(SELECT k WHERE EXISTS(SELECT 1))",
+            "(SELECT k LIMIT 0)",
         ] {
             let sql = |source: &str| {
                 format!(
