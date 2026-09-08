@@ -608,6 +608,52 @@ mod between_tests {
             c.engine._free_extension_ctx(api);
             assert_eq!(code, ResultCode::OK);
         }
+        for sql in [
+            "CREATE TABLE collated_inputs",
+            "CREATE TABLE collated_baseline(lo,hi)",
+            "INSERT INTO collated_inputs(lo,hi) VALUES(1,10),(2,10)",
+            "INSERT INTO collated_baseline VALUES(1,10),(2,10)",
+        ] {
+            c.execute(sql, &crate::Parameters::new()).unwrap();
+        }
+        for negate in ["", "NOT "] {
+            for collation in ["BINARY", "NOCASE", "RTRIM"] {
+                for tail in ["", " LIMIT 0"] {
+                    let predicate = format!("coalesce(NULL,between_tick()+d.lo) {negate}BETWEEN d.lo COLLATE {collation} AND d.hi");
+                    let native =
+                        format!("SELECT {predicate} AS value FROM collated_baseline d{tail}");
+                    let sql = format!("SELECT (SELECT {predicate} UNION ALL SELECT NULL LIMIT 1) AS value FROM collated_inputs d{tail}");
+                    CALLS.store(0, Ordering::SeqCst);
+                    let expected = c.execute(&native, &crate::Parameters::new()).unwrap().rows;
+                    let calls = CALLS.load(Ordering::SeqCst);
+                    assert_eq!(calls, if tail.is_empty() { 2 } else { 0 }, "{native}");
+                    CALLS.store(0, Ordering::SeqCst);
+                    assert_eq!(
+                        c.execute(&sql, &crate::Parameters::new()).unwrap().rows,
+                        expected,
+                        "{sql}"
+                    );
+                    assert_eq!(CALLS.load(Ordering::SeqCst), calls, "{sql}");
+                    CALLS.store(0, Ordering::SeqCst);
+                    assert_eq!(
+                        c.profile_select(&sql, &crate::Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected,
+                        "{sql}"
+                    );
+                    assert_eq!(CALLS.load(Ordering::SeqCst), calls, "profile: {sql}");
+                    CALLS.store(0, Ordering::SeqCst);
+                    c.execute(
+                        &format!("EXPLAIN QUERY PLAN {sql}"),
+                        &crate::Parameters::new(),
+                    )
+                    .unwrap();
+                    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "plan: {sql}");
+                }
+            }
+        }
         for negate in ["", "NOT "] {
             CALLS.store(0, Ordering::SeqCst);
             let rows=c.execute(&format!("SELECT type::record('docs',between_tick()) {negate}BETWEEN docs:2 AND docs:10 AS value"), &crate::Parameters::new()).unwrap().rows;
