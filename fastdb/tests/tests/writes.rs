@@ -946,3 +946,31 @@ fn ordered_tuple_lookup_reuses_bound_projection_and_pagination_values() {
         vec![vec![Value::Null, Value::Null]]
     );
 }
+
+#[test]
+fn tuple_join_sources_preserve_outer_join_nulls() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0),(3,0,0)",
+        "CREATE TABLE lhs(n INTEGER,a INTEGER)",
+        "INSERT INTO lhs VALUES(1,10),(2,20)",
+        "CREATE TABLE rhs(n INTEGER,b INTEGER)",
+        "INSERT INTO rhs VALUES(1,11)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lhs_docs",
+        "INSERT INTO lhs_docs(n,a) SELECT n,a FROM lhs",
+    ] {
+        q(&c, sql);
+    }
+    for join in ["JOIN", "LEFT JOIN"] {
+        for source in ["lhs", "lhs_docs"] {
+            q(&c, "BEGIN");
+            let expected=q(&c,&format!("UPDATE native SET (a,b)=(SELECT x.a,y.b FROM lhs x {join} rhs y ON y.n=x.n WHERE x.n=native.n) RETURNING n,a,b"));
+            assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(SELECT x.a,y.b FROM {source} x {join} rhs y ON y.n=x.n WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows,"{source}: {join}");
+            q(&c, "ROLLBACK");
+        }
+    }
+}

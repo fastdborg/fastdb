@@ -4631,3 +4631,14 @@ tests passed, plus formatting and all-target fastdb-tests Clippy with warnings
 denied. Logs `/tmp/fastdb-ordered-tuple-params.log` and
 `/tmp/fastdb-ordered-tuple-params-clippy.log`. Only tests/documentation changed
 from `000928b89`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Tuple lookup join sources — 2026-09-09
+
+A four-case native differential matrix covers inner/left joins in tuple lookup
+sources, using relational or collection left inputs. Matched tuples, missing
+right-side values and missing entire lookup rows retain native NULL behavior.
+All twenty-two write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-joins.log` and
+`/tmp/fastdb-tuple-joins-clippy.log`. Only tests/documentation changed from
+`a89fe8f93`; no new full-suite/client run is claimed. Full V1 gates remain open.
