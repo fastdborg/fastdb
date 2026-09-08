@@ -1660,3 +1660,54 @@ fn natural_grouped_keys_and_having_aliases_match_native() {
         }
     }
 }
+
+#[test]
+fn natural_window_partitions_match_native_merged_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,n:10}",
+        "INSERT INTO docs {k:1,n:20}",
+        "INSERT INTO docs {k:2,n:30}",
+        "CREATE TABLE baseline(k INTEGER,n INTEGER)",
+        "INSERT INTO baseline VALUES(1,10),(1,20),(2,30)",
+        "CREATE TABLE b(k INTEGER,m INTEGER)",
+        "INSERT INTO b VALUES(1,100),(3,300)",
+    ] {
+        query(sql);
+    }
+    for join in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+        for (projection, window) in [
+            (
+                "row_number() OVER (PARTITION BY k ORDER BY a.n) AS position",
+                "",
+            ),
+            (
+                "sum(a.n) OVER w AS total",
+                " WINDOW w AS (PARTITION BY k ORDER BY a.n)",
+            ),
+        ] {
+            let sql = |source: &str| {
+                format!("SELECT k,a.n,b.m,{projection} FROM (SELECT k,n FROM {source}) a {join} b{window} ORDER BY k,a.n,b.m")
+            };
+            let expected = query(&sql("baseline"));
+            let logical = sql("docs");
+            let actual = query(&logical);
+            assert_eq!(actual.columns, expected.columns, "{logical}");
+            assert_eq!(actual.rows, expected.rows, "{logical}");
+            assert_eq!(
+                c.profile_select(&logical, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows,
+                "{logical}"
+            );
+        }
+    }
+}

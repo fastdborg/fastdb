@@ -2457,3 +2457,6 @@ NATURAL correlation qualification (2026-09-08): 12 execute/profile equivalence c
 
 
 Grouped NATURAL qualification (2026-09-08): nine native differential execute/profile cases pass for merged-key counts, ordinal grouping with SUM/HAVING aliases and shifted same-name key projections across INNER/LEFT/RIGHT joins. Result names and rows agree, including unmatched outer groups. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-grouping.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader query and full V1 qualification remain open.
+
+
+NATURAL window qualification (2026-09-08): six native differential execute/profile cases pass for inline ROW_NUMBER and named-window SUM partitioned by merged keys under INNER/LEFT/RIGHT NATURAL joins. Result names and rows match, including NULL-extended outer rows. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-windows.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader windows and full V1 qualification remain open.

@@ -95,3 +95,6 @@ NATURAL-to-USING correlation equivalence now covers 12 execute/profile cases for
 
 
 Grouped NATURAL joins have nine native execute/profile cases for merged keys, GROUP BY ordinals, HAVING aliases and same-name shifted projections.
+
+
+NATURAL merged-key window partitions have six execute/profile native comparisons for inline ROW_NUMBER and named SUM windows across INNER/LEFT/RIGHT joins.
