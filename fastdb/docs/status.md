@@ -3678,3 +3678,8 @@ All five CLI transfer tests pass in 6.76 seconds
 (`/tmp/fastdb-real-import-cap.log`). This verifies input framing and limit
 handling, not maximum-document payload throughput or peak-memory guarantees.
 Full V1 and broader resource/release qualification remain open.
+
+
+### Combined tools and clients verification
+
+The latest complete scoped run at clean `4e79128bc` passes 559 Rust tests (one existing ignored trigger gate), 79 Node/application tests, formatting, Clippy and strict TypeScript. Pinned upstream source boundaries and all 34 archived workflow copies were rechecked. See verification.md for exact scope and logs; installed artifacts and full V1 release gates retain their separate evidence and unfinished requirements.

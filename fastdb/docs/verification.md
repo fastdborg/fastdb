@@ -2634,3 +2634,24 @@ Implementation: `f661246c3`. Logs: `/tmp/fastdb-migration-package22.log` and
 `/tmp/fastdb-migration-package24.log`. Existing notices, loader, persistence and
 deep-value checks pass as part of the same consumers. No registry access or
 publication occurred. Final release artifacts/platforms and full V1 remain open.
+
+
+## Combined tool/client verification — 2026-09-08
+
+At clean commit `4e79128bc27ebeae57bf8bc684f03f1d76d4799f`, the complete scoped
+`fastdb/scripts/check.sh` passed: 559 Rust tests, zero failed, one existing ignored
+trigger-cancellation gate; all 79 Node/application tests, formatting, Clippy with
+warnings denied, and strict TypeScript passed. Log:
+`/tmp/fastdb-tools-combined-check.log`. No tracked changes occurred during the run.
+This combines the deep-value budget tests, direct CLI report output, migration
+and transfer diagnostics, Node migration metadata, source-loader byte checks and
+actual 64 MiB import-boundary regression with the existing engine suites.
+
+Boundary verification against pinned `046e9cbf67d22491e8ecc941ec2891b02a9f3cad`
+confirmed unchanged core/parser/bindings/CLI source and byte-identical copies of
+all 34 archived inherited workflows. Remaining changes outside fastdb are the
+recorded workspace/lockfile and workflow wiring. No workspace-wide/all-features
+run or hosted CI result is claimed. Installed-package evidence remains separately
+identified by addon hashes and runtime versions. General SQL/type, resource,
+interrupted-I/O/recovery, release/platform and external application gates still
+prevent full V1 completion.
