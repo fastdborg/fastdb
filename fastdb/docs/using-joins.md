@@ -113,3 +113,6 @@ HAVING in table-backed scalar queries now resolves outer merged USING/NATURAL ke
 
 
 Inner JOIN ON predicates in table-backed scalar queries now resolve outer merged USING/NATURAL keys. The added 54 native execute/profile cases cover inner JOIN and LEFT JOIN, local-column shadowing, direct/nested scalars and all three supported outer join directions. This uses the same closed-local-schema boundary as scalar WHERE resolution.
+
+
+Correlated EXISTS/NOT EXISTS and IN/NOT IN now have 72 native execute/profile comparisons covering NULL outer keys, NULL-containing RHS sets, empty filters/LIMIT 0 and aggregate HAVING across USING/NATURAL join directions.

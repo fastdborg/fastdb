@@ -1969,3 +1969,62 @@ fn using_sourceful_scalar_keys_resolve_outer_scope_and_local_shadowing() {
         }
     }
 }
+
+#[test]
+fn using_correlated_membership_and_exists_preserve_null_and_empty_sets() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "INSERT INTO docs {k:2}",
+        "INSERT INTO docs {k:null}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2),(NULL)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3),(NULL)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2),(NULL)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for (source, prefix, constraint) in [
+            ("docs", "", " USING(k)"),
+            ("(SELECT k FROM docs)", "", " USING(k)"),
+            ("(SELECT k FROM docs)", "NATURAL ", ""),
+        ] {
+            for expr in [
+                "EXISTS(SELECT 1 FROM nums WHERE n=k)",
+                "NOT EXISTS(SELECT 1 FROM nums WHERE n=k)",
+                "k IN (SELECT n FROM nums WHERE n<=k)",
+                "k NOT IN (SELECT n FROM nums WHERE n<=k)",
+                "k IN (SELECT n FROM nums WHERE n<k OR n IS NULL)",
+                "k NOT IN (SELECT n FROM nums WHERE n<k OR n IS NULL)",
+                "EXISTS(SELECT count(*) FROM nums HAVING max(n)<k)",
+                "k IN (SELECT n FROM nums WHERE n=k LIMIT 0)",
+            ] {
+                let sql = |source: &str| {
+                    format!("SELECT k,{expr} AS v FROM {source} a {prefix}{join} b{constraint} ORDER BY k")
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql(source);
+                let result = query(&logical);
+                assert_eq!(result.columns, expected.columns, "{logical}");
+                assert_eq!(result.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}
