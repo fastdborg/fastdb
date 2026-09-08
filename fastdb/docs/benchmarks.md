@@ -170,3 +170,20 @@ Warmup and all measured results passed count, ordering, uniqueness, cutoff membe
 Vector primary VM steps fell from 1,200,080 to 1,100,080, consistent with one removed scalar-function call per document. Vector rows read remain 100,000 with 99,999 full-scan steps and one sort. Filter counters remain unchanged. Median top-10 time is 30.6% lower in these sequential runs; unchanged filter timings also vary, so avoid treating the comparison as a universal speedup. The query still takes over 32 seconds on this synthetic workload.
 
 VmHWM observations are 2,622,386,176 then 2,620,030,976 bytes, retaining the earlier platform-accounting decrease. No memory improvement is established. Three warm samples, one machine, synthetic vectors and a single process do not establish stable p95, real-workload performance, cold/concurrent behavior or complete resource qualification. Whole-document decoding and broader V1 gates remain open.
+
+## Node result transport memory diagnostic
+
+Run `node fastdb/scripts/bench-results.cjs 1000 4096` after building the local addon.
+The Linux-only harness records three fresh processes per sync/worker and
+execute/profile combination, baseline RSS, process peak RSS, wall time and source,
+addon and harness hashes. It validates every returned integer and binary byte after
+measurement. Parameters cap the diagnostic at 32 MiB of binary payload.
+
+The recorded debug run at `47252916f` returned 1,000 rows containing an integer and
+4,096-byte binary value each (4,104,000 logical cell bytes). Twelve samples took
+1,007–1,319 ms; peak process RSS ranged from about 216 to 232 MiB. Raw evidence:
+[Node results diagnostic](benchmark-results/2026-09-08-linux-debug-node-results-1000.json).
+These peaks include process startup, setup, addon and worker memory; they are not
+query-exclusive allocation measurements. There is no baseline-build comparison,
+release performance guarantee or inferred memory cap. The large observed footprint
+keeps client/transport peak memory an explicit remaining resource requirement.

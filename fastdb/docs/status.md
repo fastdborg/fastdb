@@ -3303,3 +3303,19 @@ Clippy, formatting and diff checks. Logs:
 `/tmp/fastdb-node-profile-ownership-clippy.log`. Broader Rust and installed-package
 checks were not repeated for this binding-only refactor. Resource/platform and
 full V1 gates remain open.
+
+### Isolated Node result-memory baseline
+
+Added `scripts/bench-results.cjs`, a Linux diagnostic running three isolated
+process samples for sync/worker execute/profile result transport. Each sample
+records baseline/current RSS and process peak RSS, query/transport/decode wall
+time, optional engine counters and full integer/binary correctness. Source/addon/
+harness hashes identify the local debug build. Diagnostic input is capped at
+32 MiB binary payload.
+
+All 12 samples at 1,000 rows x 4,096 binary bytes passed. Wall times were
+1,007–1,319 ms and whole-process peak RSS approximately 216–232 MiB. Raw results:
+`benchmark-results/2026-09-08-linux-debug-node-results-1000.json`. This is a baseline,
+not before/after attribution; peaks include startup/setup/runtime/worker memory.
+No production code changed or correctness suite was repeated. The measured
+footprint supports further transport-memory work; full V1 remains incomplete.
