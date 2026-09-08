@@ -4120,3 +4120,23 @@ and all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-nested-tuple-recovery.log` and `/tmp/fastdb-nested-tuple-recovery-clippy.log`.
 Only tests/docs changed from `e821d1696`; no new full-suite or client run is
 claimed. Full V1 remains open; no publication occurred.
+
+
+## Windowed tuple SELECT projections — 2026-09-09
+
+Tuple SELECT projection validation now permits window calls and named window
+clauses while retaining direct VALUES/RETURNING restrictions. The original
+SELECT computes window outputs before final tuple ordering and pagination;
+existing SELECT lowering and the pinned engine govern supported window forms.
+Differential tests cover inline ROW_NUMBER/SUM and named ROW_NUMBER/COUNT windows
+over relational and collection lookups, descending final ordering, offsets and
+unmatched rows. A windowed aggregate recovery case checks later-row CHECK failure,
+index restoration, retained prior transaction work, valid retry and rollback.
+
+The complete scoped check passed on `6eb9bb81d` plus this change: 606 Rust passes,
+zero failures, one existing ignored trigger-interruption gate; 87 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-window-tuples-check-final.log`; addon rebuilt.
+Pinned custom-frame/function limitations and broader window qualification remain
+open. No upstream source, dependency or storage-format changes; no publication.
+Full V1 release gates remain open.

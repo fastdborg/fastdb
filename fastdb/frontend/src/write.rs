@@ -54,7 +54,7 @@ fn aggregate_function(function: &str, arity: usize) -> bool {
 fn safe_value_expression(expr: &Expr) -> Result<()> {
     validate_value_expression(expr, false)
 }
-fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
+fn validate_value_expression(expr: &Expr, select_projection: bool) -> Result<()> {
     match expr {
         Expr::Literal(_)
         | Expr::Variable(_)
@@ -66,32 +66,32 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
         | Expr::Cast { expr: e, .. }
         | Expr::Collate(e, _)
         | Expr::IsNull(e)
-        | Expr::NotNull(e) => validate_value_expression(e, aggregates),
+        | Expr::NotNull(e) => validate_value_expression(e, select_projection),
         Expr::Binary(a, _, b) => {
-            validate_value_expression(a, aggregates)?;
-            validate_value_expression(b, aggregates)
+            validate_value_expression(a, select_projection)?;
+            validate_value_expression(b, select_projection)
         }
         Expr::Between {
             lhs, start, end, ..
         } => {
-            validate_value_expression(lhs, aggregates)?;
-            validate_value_expression(start, aggregates)?;
-            validate_value_expression(end, aggregates)
+            validate_value_expression(lhs, select_projection)?;
+            validate_value_expression(start, select_projection)?;
+            validate_value_expression(end, select_projection)
         }
         Expr::InList { lhs, rhs, .. } => {
-            validate_value_expression(lhs, aggregates)?;
+            validate_value_expression(lhs, select_projection)?;
             for e in rhs {
-                validate_value_expression(e, aggregates)?;
+                validate_value_expression(e, select_projection)?;
             }
             Ok(())
         }
         Expr::Like {
             lhs, rhs, escape, ..
         } => {
-            validate_value_expression(lhs, aggregates)?;
-            validate_value_expression(rhs, aggregates)?;
+            validate_value_expression(lhs, select_projection)?;
+            validate_value_expression(rhs, select_projection)?;
             if let Some(e) = escape {
-                validate_value_expression(e, aggregates)?;
+                validate_value_expression(e, select_projection)?;
             }
             Ok(())
         }
@@ -101,20 +101,20 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
             else_expr,
         } => {
             if let Some(base) = base {
-                validate_value_expression(base, aggregates)?;
+                validate_value_expression(base, select_projection)?;
             }
             for (condition, value) in when_then_pairs {
-                validate_value_expression(condition, aggregates)?;
-                validate_value_expression(value, aggregates)?;
+                validate_value_expression(condition, select_projection)?;
+                validate_value_expression(value, select_projection)?;
             }
             if let Some(value) = else_expr {
-                validate_value_expression(value, aggregates)?;
+                validate_value_expression(value, select_projection)?;
             }
             Ok(())
         }
         Expr::Parenthesized(es) => {
             for e in es {
-                validate_value_expression(e, aggregates)?;
+                validate_value_expression(e, select_projection)?;
             }
             Ok(())
         }
@@ -126,8 +126,8 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
             within_group,
             ..
         } => {
-            if (!aggregates && filter_over.filter_clause.is_some())
-                || filter_over.over_clause.is_some()
+            if (!select_projection
+                && (filter_over.filter_clause.is_some() || filter_over.over_clause.is_some()))
                 || !order_by.is_empty()
                 || !within_group.is_empty()
             {
@@ -137,14 +137,14 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
             if function == "__fastdb_fetch" {
                 return Err(unsupported("record::fetch in document write expression"));
             }
-            if !aggregates && aggregate_function(&function, args.len()) {
+            if !select_projection && aggregate_function(&function, args.len()) {
                 return Err(unsupported("aggregate document write expressions"));
             }
             if name.as_str().eq_ignore_ascii_case("load_extension") {
                 return Err(unsupported("extension loading in document writes"));
             }
             for e in args {
-                validate_value_expression(e, aggregates)?;
+                validate_value_expression(e, select_projection)?;
             }
             if let Some(predicate) = &filter_over.filter_clause {
                 safe_candidate_assignment(predicate)?;
@@ -152,9 +152,7 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
             Ok(())
         }
         Expr::FunctionCallStar { name, filter_over }
-            if aggregates
-                && name.as_str().eq_ignore_ascii_case("count")
-                && filter_over.over_clause.is_none() =>
+            if select_projection && name.as_str().eq_ignore_ascii_case("count") =>
         {
             if let Some(predicate) = &filter_over.filter_clause {
                 safe_candidate_assignment(predicate)?;
@@ -654,19 +652,19 @@ impl Connection {
                         else {
                             return Err(unsupported("this tuple SELECT assignment"));
                         };
-                        if !window_clause.is_empty() || columns.len() != set.col_names.len() {
+                        if columns.len() != set.col_names.len() {
                             return Err(unsupported("tuple SELECT assignment shape or arity"));
                         }
                         let explicit_aliases = columns.iter().any(|column| {
                             matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
                         });
-                        let mut complex_projection = false;
+                        let mut complex_projection = !window_clause.is_empty();
                         for column in columns.iter() {
                             if let ResultColumn::Expr(value, _) = column {
                                 validate_candidate_expression(value, true)?;
                                 turso_core::walk_expr_mut(&mut value.clone(), &mut |expr| {
                                     complex_projection |= match expr {
-                                        Expr::FunctionCall { name, args, .. } => aggregate_function(&name.as_str().to_ascii_lowercase(), args.len()),
+                                        Expr::FunctionCall { name, args, filter_over, .. } => filter_over.over_clause.is_some() || aggregate_function(&name.as_str().to_ascii_lowercase(), args.len()),
                                         Expr::FunctionCallStar { .. } | Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. } => true,
                                         _ => false,
                                     };
