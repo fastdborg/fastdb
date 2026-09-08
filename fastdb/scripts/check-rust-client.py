@@ -88,9 +88,35 @@ fn iterator_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(c.check_collection_integrity("iterator_output",IntegrityLimits::default())?.index_entries,0);
     Ok(())
 }
+fn tuple_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let empty=Parameters::new();
+    let record=Value::Record(Record {table:"tuples".into(),key:Key::Integer(i64::MAX)});
+    let payload=Value::Array(vec![Value::Boolean(true),Value::Binary(vec![0,255]),Value::Integer(i64::MIN)]);
+    {
+        let db=Database::open(file)?;
+        let c=db.connect()?;
+        c.execute("CREATE TABLE tuples",&empty)?;
+        c.execute("INSERT INTO tuples(a,b) VALUES($a,$b)",&Parameters::from([("$a".into(),record.clone()),("$b".into(),payload.clone())]))?;
+        c.execute("BEGIN",&empty)?;
+        assert_eq!(c.execute("UPDATE tuples SET (a,b)=(VALUES(b,a)) RETURNING a,b",&empty)?.rows,vec![vec![payload.clone(),record.clone()]]);
+        assert_eq!(c.execute("UPDATE tuples SET (a,b)=(VALUES(1,2),(3,4))",&empty).unwrap_err().code(),"FDB_UNSUPPORTED");
+        assert_eq!(c.transaction_state(),fastdb::TransactionState::Active);
+        c.execute("ROLLBACK",&empty)?;
+        assert_eq!(c.execute("SELECT a,b FROM tuples",&empty)?.rows,vec![vec![record.clone(),payload.clone()]]);
+        c.execute("BEGIN",&empty)?;
+        assert_eq!(c.execute("UPDATE tuples SET (a,b)=(SELECT b,a UNION ALL SELECT b,a LIMIT 1) RETURNING a,b",&empty)?.rows,vec![vec![payload.clone(),record.clone()]]);
+        c.execute("COMMIT",&empty)?;
+    }
+    let db=Database::open(file)?;
+    let c=db.connect()?;
+    assert_eq!(c.execute("SELECT a,b FROM tuples",&empty)?.rows,vec![vec![payload,record]]);
+    assert_eq!(c.check_collection_integrity("tuples",IntegrityLimits::default())?.documents,1);
+    Ok(())
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
     iterator_consumer(&format!("{file}.iterators"))?;
+    tuple_consumer(&format!("{file}.tuples"))?;
     let id = Record { table: "docs".into(), key: Key::String("saved".into()) };
     let portable = Value::Array(vec![
         Value::Integer(i64::MAX), Value::Number(-0.0),

@@ -5287,3 +5287,17 @@ Logs: `/tmp/fastdb-tuple-package22-final.log` and
 scoped check; only smoke/docs changed from `0f7b88ef8`. Installation used offline
 local tarballs outside the workspace, with no publication or registry access.
 This does not qualify other platforms or close the remaining V1 release gates.
+
+
+## Standalone Rust tuple qualification — 2026-09-09
+
+The outside-workspace Rust consumer now exercises typed VALUES tuple swaps,
+unsupported multi-row rejection with an active transaction, rollback restoration,
+and a committed compound tuple swap. Reopening preserves record/int64 keys,
+arrays, booleans, binary values and int64 boundaries; the collection integrity
+audit passes. The full standalone consumer passed offline with Rust 1.88.0,
+without checkout-injected RUSTFLAGS, and verified all 244 resolved registry/git
+package identities against the pinned workspace lockfile. Log:
+`/tmp/fastdb-tuple-rust-consumer.log`. Only consumer/docs changed from `12deabd4a`;
+this is a local path-dependent consumer, not published crate verification.
+No new full scoped check is claimed. Full V1 remains open; no publication occurred.
