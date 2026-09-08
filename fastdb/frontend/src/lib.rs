@@ -178,6 +178,7 @@ impl Database {
         let connection = Connection {
             engine: self.engine.connect()?,
             next_atomic_id: std::sync::atomic::AtomicU64::new(0),
+            next_subquery_id: std::sync::atomic::AtomicU64::new(0),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -188,6 +189,7 @@ impl Database {
 pub struct Connection {
     engine: Arc<EngineConnection>,
     next_atomic_id: std::sync::atomic::AtomicU64,
+    next_subquery_id: std::sync::atomic::AtomicU64,
 }
 fn text(value: &str) -> EngineValue {
     EngineValue::Text(value.to_owned().into())

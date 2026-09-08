@@ -1263,6 +1263,29 @@ impl Scope {
                 if self.comparison_key(&mut value)? {
                     *expr = expression(&format!("{value} {negate}IN {query}"))?;
                 } else if native_column_reference(&value) {
+                    // The generated scalar wrapper introduces a new scope. Keep
+                    // a resolved native derived column attached to its source.
+                    if let Expr::Id(name) | Expr::Name(name) = &value {
+                        let mut matches = self.sources.iter().filter_map(|source| {
+                            let columns = source.derived.as_ref()?;
+                            let position = columns.iter().position(|(column, _)| {
+                                column.eq_ignore_ascii_case(name.as_str())
+                            })?;
+                            Some((source, position))
+                        });
+                        if let Some((source, position)) = matches.next() {
+                            if matches.next().is_none() {
+                                let column = source.derived_physical.as_ref().map_or_else(
+                                    || source.derived.as_ref().unwrap()[position].0.clone(),
+                                    |columns| columns[position].clone(),
+                                );
+                                value = Expr::Qualified(
+                                    Name::exact(source.alias.clone()),
+                                    Name::exact(column),
+                                );
+                            }
+                        }
+                    }
                     // Preserve native LHS affinity for scalar values; encode its
                     // BLOB values into the same collision-resistant RHS keys. Share
                     // one materialized source across both IN branches.
@@ -3807,9 +3830,23 @@ impl Connection {
                                 // planning while retaining native EXISTS rules.
                                 expression(&format!("(SELECT EXISTS({body}))"))?
                             } else if membership {
-                                let values = format!(
-                                    "SELECT __fastdb_unwrap({output}) AS v FROM __fastdb_members"
-                                );
+                                // Reusing this CTE name across nested membership
+                                // plans can make the pinned planner recurse/crash.
+                                let id = self
+                                    .next_subquery_id
+                                    .fetch_update(
+                                        std::sync::atomic::Ordering::Relaxed,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                        |id| id.checked_add(1),
+                                    )
+                                    .map_err(|_| {
+                                        Error::Limit(
+                                            "internal subquery identifiers exhausted".into(),
+                                        )
+                                    })?;
+                                let members = format!("__fastdb_members_{id}");
+                                let values =
+                                    format!("SELECT __fastdb_unwrap({output}) AS v FROM {members}");
                                 // A field has typeless column affinity, which differs
                                 // from a function expression with no affinity. Restore
                                 // a column boundary after decoding its comparison key.
@@ -3819,7 +3856,7 @@ impl Connection {
                                     values
                                 };
                                 expression(&format!(
-                                    "(WITH __fastdb_members(v) AS ({}) {values})",
+                                    "(WITH {members}(v) AS ({}) {values})",
                                     sql.trim().trim_end_matches(';')
                                 ))?
                             } else {

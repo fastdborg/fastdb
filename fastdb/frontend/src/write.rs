@@ -587,45 +587,127 @@ impl Connection {
                 .iter()
                 .any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(exposed.as_str()))
             {
-                fn bind_target(select: &mut Select, table: &QualifiedName, exposed: &Name) {
+                fn bind_expression(
+                    value: &mut Expr,
+                    table: &QualifiedName,
+                    exposed: &Name,
+                ) -> turso_core::Result<()> {
+                    turso_core::walk_expr_mut(value, &mut |expr| {
+                        match expr {
+                            Expr::Subquery(inner) | Expr::Exists(inner) => {
+                                bind_target(inner, table, exposed)?;
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                            Expr::InSelect { lhs, rhs, .. } => {
+                                bind_expression(lhs, table, exposed)?;
+                                bind_target(rhs, table, exposed)?;
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                            _ => {}
+                        }
+                        Ok(turso_core::WalkControl::Continue)
+                    })
+                    .map(|_| ())
+                }
+                fn bind_target(
+                    select: &mut Select,
+                    table: &QualifiedName,
+                    exposed: &Name,
+                ) -> turso_core::Result<()> {
                     if select.with.is_some() {
-                        return;
+                        return Ok(());
                     }
                     for body in std::iter::once(&mut select.body.select)
                         .chain(select.body.compounds.iter_mut().map(|arm| &mut arm.select))
                     {
-                        if let OneSelect::Select {
-                            from: Some(from), ..
-                        } = body
-                        {
-                            for source in std::iter::once(&mut from.select)
-                                .chain(from.joins.iter_mut().map(|join| &mut join.table))
-                            {
-                                match source.as_mut() {
-                                    SelectTable::Select(inner, _) => {
-                                        bind_target(inner, table, exposed)
+                        match body {
+                            OneSelect::Select {
+                                columns,
+                                from,
+                                where_clause,
+                                group_by,
+                                window_clause,
+                                ..
+                            } => {
+                                for column in columns {
+                                    if let ResultColumn::Expr(value, _) = column {
+                                        bind_expression(value, table, exposed)?;
                                     }
-                                    SelectTable::Table(name, alias, _)
-                                        if name.db_name.is_none()
-                                            && name
-                                                .name
-                                                .as_str()
-                                                .eq_ignore_ascii_case(exposed.as_str()) =>
+                                }
+                                if let Some(from) = from {
+                                    for source in std::iter::once(&mut from.select)
+                                        .chain(from.joins.iter_mut().map(|join| &mut join.table))
                                     {
-                                        name.db_name = Some(Name::exact("main".into()));
-                                        name.name = table.name.clone();
-                                        if alias.is_none() {
-                                            *alias = Some(As::As(exposed.clone()));
+                                        match source.as_mut() {
+                                            SelectTable::Select(inner, _) => {
+                                                bind_target(inner, table, exposed)?
+                                            }
+                                            SelectTable::Table(name, alias, _)
+                                                if name.db_name.is_none()
+                                                    && name
+                                                        .name
+                                                        .as_str()
+                                                        .eq_ignore_ascii_case(exposed.as_str()) =>
+                                            {
+                                                name.db_name = Some(Name::exact("main".into()));
+                                                name.name = table.name.clone();
+                                                if alias.is_none() {
+                                                    *alias = Some(As::As(exposed.clone()));
+                                                }
+                                            }
+                                            _ => {}
                                         }
                                     }
-                                    _ => {}
+                                    for join in &mut from.joins {
+                                        if let Some(JoinConstraint::On(value)) =
+                                            &mut join.constraint
+                                        {
+                                            bind_expression(value, table, exposed)?;
+                                        }
+                                    }
+                                }
+                                if let Some(value) = where_clause {
+                                    bind_expression(value, table, exposed)?;
+                                }
+                                if let Some(group) = group_by {
+                                    for value in &mut group.exprs {
+                                        bind_expression(value, table, exposed)?;
+                                    }
+                                    if let Some(value) = &mut group.having {
+                                        bind_expression(value, table, exposed)?;
+                                    }
+                                }
+                                for definition in window_clause {
+                                    for value in &mut definition.window.partition_by {
+                                        bind_expression(value, table, exposed)?;
+                                    }
+                                    for sorted in &mut definition.window.order_by {
+                                        bind_expression(&mut sorted.expr, table, exposed)?;
+                                    }
+                                }
+                            }
+                            OneSelect::Values(rows) => {
+                                for row in rows {
+                                    for value in row {
+                                        bind_expression(value, table, exposed)?;
+                                    }
                                 }
                             }
                         }
                     }
+                    for sorted in &mut select.order_by {
+                        bind_expression(&mut sorted.expr, table, exposed)?;
+                    }
+                    if let Some(limit) = &mut select.limit {
+                        bind_expression(&mut limit.expr, table, exposed)?;
+                        if let Some(offset) = &mut limit.offset {
+                            bind_expression(offset, table, exposed)?;
+                        }
+                    }
+                    Ok(())
                 }
                 for cte in &mut with.ctes {
-                    bind_target(&mut cte.select, table, exposed);
+                    bind_target(&mut cte.select, table, exposed)?;
                 }
             }
         }

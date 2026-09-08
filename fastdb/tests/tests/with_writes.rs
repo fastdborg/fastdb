@@ -462,6 +462,8 @@ fn target_named_cte_writes_preserve_native_table_binding() {
         "union",
         "intersect",
         "except",
+        "exists",
+        "membership",
     ] {
         for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
             for (aliased, alias_cte) in [(false, false), (true, false), (true, true)] {
@@ -482,6 +484,8 @@ fn target_named_cte_writes_preserve_native_table_binding() {
                                 "union" => format!("{body} UNION SELECT 2"),
                                 "intersect" => format!("{body} INTERSECT SELECT 2"),
                                 "except" => format!("{body} EXCEPT SELECT 2"),
+                                "exists" => format!("SELECT n FROM ({body}) q WHERE EXISTS(SELECT 1 FROM {name} x WHERE x.n=2)"),
+                                "membership" => format!("SELECT n FROM ({body}) q WHERE n IN (SELECT x.n FROM {name} x)"),
                                 _ => body,
                             };
                             format!("WITH {name} AS (SELECT 2 AS n), chosen AS {hint} ({body}) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
