@@ -571,6 +571,12 @@ fn correlated_using_preserves_typed_keys_and_atomic_writes() {
                     (" AS v FROM nums ORDER BY v,n LIMIT 1", false),
                     (" FROM nums WHERE n=2", true),
                     (" FROM nums LIMIT 0", true),
+                    (" FROM (SELECT k AS n FROM other) q WHERE n=k", false),
+                    (" FROM (SELECT k AS n FROM other) q WHERE n=k LIMIT 0", true),
+                    (
+                        " FROM (SELECT k AS n FROM other) q WHERE n=k LIMIT 1 OFFSET 1",
+                        true,
+                    ),
                     (" AS v ORDER BY v LIMIT 1 OFFSET 1", true),
                 ] {
                     for nested in [false, true] {

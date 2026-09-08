@@ -122,3 +122,6 @@ Closed derived SELECT sources are now included in inner correlated-key lookup. N
 
 
 Inner native derived scalar affinity/collation coverage includes 72 execute/profile comparisons for TEXT/NOCASE, unary plus, numeric CAST and RTRIM through ordered/paginated direct and nested scalars.
+
+
+Collection-backed inner derived sources now have 108 typed execute/profile cases: local-to-outer merged-key equality for records, booleans and binary values, direct/nested scalars, all USING join directions and empty LIMIT/OFFSET results. Broader logical derived scope qualification remains open.
