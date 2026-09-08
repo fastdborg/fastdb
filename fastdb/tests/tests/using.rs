@@ -2998,3 +2998,60 @@ fn local_cte_parameters_preserve_typed_projections() {
         }
     }
 }
+
+#[test]
+fn ordered_local_cte_scalar_preserves_empty_outer_matches() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(n INTEGER)",
+        "CREATE TABLE keys(n INTEGER)",
+        "INSERT INTO docs(n) VALUES(1),(2),(3)",
+        "INSERT INTO baseline VALUES(1),(2),(3)",
+        "INSERT INTO keys VALUES(1),(4)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+        for direction in ["ASC", "DESC"] {
+            for (take, skip) in [(0, 0), (1, 0), (1, 1), (1, 3), (-1, 1)] {
+                let query = |source: &str, projection: &str, limit: &str| {
+                    format!("SELECT n,(WITH chosen AS {materialization} (SELECT n AS m FROM baseline) SELECT {projection} FROM chosen WHERE m<n ORDER BY m {direction} {limit}) AS value FROM {source} a RIGHT JOIN keys b USING(n) ORDER BY n")
+                };
+                let limit = format!("LIMIT {take} OFFSET {skip}");
+                let expected = c.execute(&query("baseline", "1", &limit), &params).unwrap();
+                assert_eq!(
+                    c.execute(&query("docs", "1", &limit), &params)
+                        .unwrap()
+                        .rows,
+                    expected.rows
+                );
+                let bound = Parameters::from([
+                    ("$take".into(), Value::Integer(take)),
+                    ("$skip".into(), Value::Integer(skip)),
+                    ("$value".into(), Value::Boolean(true)),
+                ]);
+                let sql = query("docs", "$value", "LIMIT $take OFFSET $skip");
+                let expected_rows: Vec<Vec<Value>> = expected
+                    .rows
+                    .into_iter()
+                    .map(|mut row| {
+                        if row[1] != Value::Null {
+                            row[1] = Value::Boolean(true);
+                        }
+                        row
+                    })
+                    .collect();
+                assert_eq!(
+                    c.execute(&sql, &bound)
+                        .unwrap_or_else(|error| panic!("{sql}: {error}"))
+                        .rows,
+                    expected_rows,
+                    "{sql}"
+                );
+            }
+        }
+    }
+}

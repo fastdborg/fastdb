@@ -220,7 +220,48 @@ enum NativeCorrelationMode {
     CompoundArm,
 }
 
+// Keep direct scalar pagination when its values can be represented literally.
+// Other value types and expressions retain the existing validation path.
+fn literal_pagination(value: &mut Expr, params: &Parameters) -> Result<bool> {
+    match value {
+        Expr::Literal(Literal::Numeric(_)) => Ok(true),
+        Expr::Unary(_, value) => literal_pagination(value, params),
+        Expr::Variable(var) => {
+            let name = var
+                .name
+                .as_ref()
+                .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
+            if let Some(Value::Integer(number)) = params.get(&name) {
+                *value = expression(&number.to_string())?;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+        _ => Ok(false),
+    }
+}
+
 fn native_correlated_predicate(
+    connection: &Connection,
+    metadata_scopes: &[With],
+    inner: &Select,
+    sources: &[Source],
+    metadata: bool,
+    params: &Parameters,
+    mode: NativeCorrelationMode,
+) -> Result<(Select, bool)> {
+    let mut scopes = metadata_scopes.to_vec();
+    if let Some(with) = &inner.with {
+        if with.recursive {
+            return Ok((inner.clone(), false));
+        }
+        scopes.push(with.clone());
+    }
+    native_correlated_body(connection, &scopes, inner, sources, metadata, params, mode)
+}
+
+fn native_correlated_body(
     connection: &Connection,
     metadata_scopes: &[With],
     inner: &Select,
@@ -237,19 +278,6 @@ fn native_correlated_predicate(
     };
     let scalar_pagination = mode == NativeCorrelationMode::ScalarPagination;
     let mut inner = inner.clone();
-    if let Some(with) = inner.with.take() {
-        if with.recursive {
-            inner.with = Some(with);
-            return Ok((inner, false));
-        }
-        let mut scopes = metadata_scopes.to_vec();
-        scopes.push(with.clone());
-        let (mut prepared, typed) = native_correlated_predicate(
-            connection, &scopes, &inner, sources, metadata, params, mode,
-        )?;
-        prepared.with = Some(with);
-        return Ok((prepared, typed));
-    }
     if !inner.body.compounds.is_empty() {
         resolve_compound_expression_order_names(&mut inner);
         let direct_membership = mode == NativeCorrelationMode::Membership
@@ -747,7 +775,26 @@ fn native_correlated_predicate(
         wrapped.limit = limit;
         inner = wrapped;
     }
-    if correlated_query && !metadata {
+    // A derived pagination wrapper changes ordered local-CTE correlation on
+    // the pinned engine. Preserve direct integer pagination for this scope.
+    let direct_local_pagination = if inner.with.is_some() && !metadata {
+        if let Some(mut limit) = inner.limit.clone() {
+            let direct = literal_pagination(&mut limit.expr, params)?
+                && match &mut limit.offset {
+                    Some(offset) => literal_pagination(offset, params)?,
+                    None => true,
+                };
+            if direct {
+                inner.limit = Some(limit);
+            }
+            direct
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if correlated_query && !metadata && !direct_local_pagination {
         if let Some(limit) = &mut inner.limit {
             for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
                 **value = expression(&format!("__fastdb_pagination_value({value})"))?;
@@ -758,6 +805,7 @@ fn native_correlated_predicate(
     // otherwise replaces a bound LIMIT with its implicit one-row limit.
     if correlated_query
         && !metadata
+        && !direct_local_pagination
         && inner.limit.is_some()
         && (scalar_pagination || selected_sorts > 0)
     {
@@ -4744,7 +4792,39 @@ impl Connection {
                                 },
                             )?
                         };
-                        if let Some(plan) = plan {
+                        if let Some(mut plan) = plan {
+                            let mut direct_local_scalar = false;
+                            if !exists
+                                && !membership
+                                && inner.with.is_some()
+                                && plan.typed == [true]
+                            {
+                                if let (Some(mut limit), Cmd::Stmt(Stmt::Select(prepared))) =
+                                    (inner.limit.clone(), &mut plan.command)
+                                {
+                                    direct_local_scalar =
+                                        literal_pagination(&mut limit.expr, params)?
+                                            && match &mut limit.offset {
+                                                Some(offset) => literal_pagination(offset, params)?,
+                                                None => true,
+                                            };
+                                    if direct_local_scalar {
+                                        for value in
+                                            std::iter::once(&inner.limit.as_ref().unwrap().expr)
+                                                .chain(inner.limit.as_ref().unwrap().offset.iter())
+                                        {
+                                            for token in
+                                                fastql_parser::tokenize(&value.to_string())?
+                                            {
+                                                if token.kind == fastql_parser::Kind::Parameter {
+                                                    plan.consumed.insert(token.text);
+                                                }
+                                            }
+                                        }
+                                        prepared.limit = Some(limit);
+                                    }
+                                }
+                            }
                             if (!exists && plan.typed.len() != 1) || plan.fetched.iter().any(|f| *f)
                             {
                                 return Err(unsupported(
@@ -4796,6 +4876,8 @@ impl Connection {
                                     "(WITH {members}(v) AS ({}) {values})",
                                     sql.trim().trim_end_matches(';')
                                 ))?
+                            } else if direct_local_scalar {
+                                expression(&format!("({})", sql.trim().trim_end_matches(';')))?
                             } else {
                                 expression(&format!(
                             "(WITH __fastdb_scalar_result(v) AS ({}) SELECT {output} FROM __fastdb_scalar_result)",
