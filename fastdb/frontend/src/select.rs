@@ -126,6 +126,16 @@ fn direct_compound_pagination(select: &Select) -> bool {
     })
 }
 
+fn direct_source_free_membership(select: &Select) -> bool {
+    select.with.is_none()
+        && !select.body.compounds.is_empty()
+        && select.order_by.is_empty()
+        && direct_compound_pagination(select)
+        && std::iter::once(&select.body.select)
+            .chain(select.body.compounds.iter().map(|arm| &arm.select))
+            .all(|arm| matches!(arm, OneSelect::Select { from: None, .. }))
+}
+
 fn unordered_compound_pagination(select: &Select) -> bool {
     select.limit.is_some()
         && select.order_by.is_empty()
@@ -483,6 +493,24 @@ fn native_correlated_predicate(
             }
             if matches!(expr, Expr::Subquery(_) | Expr::InSelect { .. }) {
                 return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            if typed {
+                if let Expr::Variable(var) = expr {
+                    let name = var
+                        .name
+                        .as_ref()
+                        .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
+                    correlated |= params.get(&name).is_some_and(|value| {
+                        matches!(
+                            value,
+                            Value::Boolean(_)
+                                | Value::Record(_)
+                                | Value::Array(_)
+                                | Value::Object(_)
+                                | Value::Vector(_)
+                        )
+                    });
+                }
             }
             if let Some(alias) = qualifier(expr) {
                 if !local.contains(&alias.to_ascii_lowercase())
@@ -4550,21 +4578,103 @@ impl Connection {
                             false,
                         )?;
                         let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
-                        if let Some(plan) = self.lower_collection_select(
-                            &sql,
-                            &sql,
-                            params,
-                            SelectOptions {
-                                trusted: true,
-                                nested: true,
-                                positional: exists,
-                                expression_subquery: true,
-                                outer_scope: (!correlation_using.bindings.is_empty())
-                                    .then_some((correlation_sources, &correlation_using)),
-                                ctes: Some(&ctes),
-                                ..Default::default()
-                            },
-                        )? {
+                        // Typed RHS parameters must not select an isolated compound
+                        // plan before the native correlation scope binds outer fields.
+                        let mut direct_membership =
+                            membership && direct_source_free_membership(&inner);
+                        let mut distinct_membership = direct_membership
+                            && inner
+                                .body
+                                .compounds
+                                .iter()
+                                .any(|arm| arm.operator != CompoundOperator::UnionAll);
+                        if inner.with.is_none() && inner.body.compounds.is_empty() {
+                            if let OneSelect::Select {
+                                columns,
+                                where_clause,
+                                ..
+                            } = &inner.body.select
+                            {
+                                for value in columns
+                                    .iter()
+                                    .filter_map(|column| match column {
+                                        ResultColumn::Expr(value, _) => Some(value.as_ref()),
+                                        _ => None,
+                                    })
+                                    .chain(where_clause.iter().map(|value| value.as_ref()))
+                                {
+                                    let mut value = value.clone();
+                                    turso_core::walk_expr_mut(&mut value, &mut |expr| {
+                                        if let Expr::InSelect { rhs, .. } = expr {
+                                            direct_membership |= direct_source_free_membership(rhs);
+                                            distinct_membership |=
+                                                direct_source_free_membership(rhs)
+                                                    && rhs.body.compounds.iter().any(|arm| {
+                                                        arm.operator != CompoundOperator::UnionAll
+                                                    });
+                                        }
+                                        Ok(turso_core::WalkControl::Continue)
+                                    })?;
+                                }
+                            }
+                        }
+                        direct_membership &= correlation_sources.iter().any(Source::logical);
+                        direct_membership &= distinct_membership
+                            || fastql_parser::tokenize(&sql)?.iter().any(|token| {
+                                token.kind == fastql_parser::Kind::Parameter
+                                    && params.get(&token.text).is_some_and(|value| {
+                                        matches!(
+                                            value,
+                                            Value::Boolean(_)
+                                                | Value::Record(_)
+                                                | Value::Array(_)
+                                                | Value::Object(_)
+                                                | Value::Vector(_)
+                                        )
+                                    })
+                            });
+                        if let OneSelect::Select {
+                            from: Some(from), ..
+                        } = &inner.body.select
+                        {
+                            for (position, table) in std::iter::once(&from.select)
+                                .chain(from.joins.iter().map(|join| &join.table))
+                                .enumerate()
+                            {
+                                if direct_membership {
+                                    direct_membership &= !source(
+                                        self,
+                                        table,
+                                        params,
+                                        &ctes,
+                                        select.with.as_ref().or(native_with),
+                                        anonymous_source_alias(from, position),
+                                        true,
+                                    )?
+                                    .logical();
+                                }
+                            }
+                        }
+                        let plan = if direct_membership {
+                            None
+                        } else {
+                            self.lower_collection_select(
+                                &sql,
+                                &sql,
+                                params,
+                                SelectOptions {
+                                    trusted: true,
+                                    nested: true,
+                                    positional: exists,
+                                    expression_subquery: true,
+                                    outer_scope: (!correlation_using.bindings.is_empty())
+                                        .then_some((correlation_sources, &correlation_using)),
+                                    ctes: Some(&ctes),
+                                    ..Default::default()
+                                },
+                            )?
+                        };
+                        if let Some(plan) = plan {
                             if (!exists && plan.typed.len() != 1) || plan.fetched.iter().any(|f| *f)
                             {
                                 return Err(unsupported(

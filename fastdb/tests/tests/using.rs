@@ -2641,13 +2641,20 @@ fn unordered_compound_membership_preserves_logical_value_identity() {
             .unwrap();
         for (operator, right, expected) in [
             ("INTERSECT", "d.k", 1),
-            ("INTERSECT", "'different'", 0),
             ("EXCEPT", "d.k", 0),
+            ("INTERSECT", "$same", 1),
+            ("INTERSECT", "'different'", 0),
+            ("EXCEPT", "$same", 0),
             ("EXCEPT", "'different'", 1),
         ] {
             let sql = format!("SELECT d.k,(SELECT count(*) FROM probe WHERE d.k IN(SELECT d.k {operator} SELECT {right} LIMIT 1)) AS found FROM docs d");
+            let query_params = if right == "$same" {
+                params.clone()
+            } else {
+                Parameters::new()
+            };
             let actual = c
-                .execute(&sql, &Parameters::new())
+                .execute(&sql, &query_params)
                 .unwrap_or_else(|error| panic!("{sql}: {error}"));
             assert_eq!(
                 actual.rows,
@@ -2655,6 +2662,8 @@ fn unordered_compound_membership_preserves_logical_value_identity() {
                 "{sql}"
             );
         }
+        let projected = c.execute("SELECT (SELECT $same FROM probe WHERE d.k IN(SELECT d.k INTERSECT SELECT $same LIMIT 1)) AS kept FROM docs d", &params).unwrap();
+        assert_eq!(projected.rows, vec![vec![value.clone()]]);
         c.execute("DELETE FROM docs", &Parameters::new()).unwrap();
     }
 }
