@@ -356,6 +356,27 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     const cte='WITH docs AS (SELECT 2 AS n) SELECT d.n FROM docs AS d';
     assert.deepEqual(await client.all(cte),[[2n]]);
   }
+  const bufferOptions = {writeBufferLimits:{maxRows:1n,maxPayloadBytes:1000n}};
+  for (const client of [new Database(':memory:',bufferOptions),await AsyncDatabase.open(':memory:',bufferOptions)]) {
+    try {
+      await client.execute('CREATE TABLE buffered');
+      await client.execute('CREATE UNIQUE INDEX buffered_n ON buffered(n)');
+      await client.execute('INSERT INTO buffered {id:buffered:a,n:1}');
+      await client.execute('BEGIN');
+      await client.execute('INSERT INTO buffered {id:buffered:b,n:2}');
+      await assert.rejects(async () => client.execute('UPDATE buffered SET n=n+10'), error => {
+        assert.equal(error.code,'FDB_LIMIT');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      assert.deepEqual(await client.all('SELECT n FROM buffered ORDER BY n'),[[1n],[2n]]);
+      await client.execute('UPDATE buffered SET n=3 WHERE n=2');
+      assert.deepEqual(await client.all('SELECT n FROM buffered ORDER BY n'),[[1n],[3n]]);
+      await client.execute('ROLLBACK');
+      assert.deepEqual(await client.all('SELECT n FROM buffered'),[[1n]]);
+      assert.equal((await client.checkCollectionIntegrity('buffered')).indexEntries,1n);
+    } finally { await client.close(); }
+  }
   const file = path.join(__dirname, 'database.db');
   const db = new Database(file);
   try {
@@ -530,6 +551,13 @@ const limits: IntegrityLimits = {maxDocuments: 1n};
 const audit: IntegrityReport = db.checkCollectionIntegrity('docs', limits);
 const profile: ProfiledQuery = db.profileSelect('SELECT 1');
 const resultBudget: import('@fastdb/node').ResultLimits = {maxRows:1n,maxPayloadBytes:100n};
+const connectionOptions: import('@fastdb/node').DatabaseOptions = {writeBufferLimits:resultBudget};
+new Database(':memory:',connectionOptions).close();
+void AsyncDatabase.open(':memory:',connectionOptions);
+// @ts-expect-error buffer budgets require bigint
+new Database(':memory:',{writeBufferLimits:{maxRows:1,maxPayloadBytes:100n}});
+// @ts-expect-error unknown connection option
+AsyncDatabase.open(':memory:',{unknown:true});
 db.selectWithLimits('SELECT 1',resultBudget);
 db.profileSelectWithLimits('SELECT 1',resultBudget);
 db.writeWithResultLimits('DELETE FROM docs',resultBudget);

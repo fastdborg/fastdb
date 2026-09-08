@@ -2867,3 +2867,20 @@ Logs: `/tmp/fastdb-node-write-buffers.log` and
 `/tmp/fastdb-node-write-buffers-clippy.log`. Frontend implementation did not change;
 the preceding 528-test Rust run remains its evidence. Installed-package/platform
 qualification was not repeated, and broader resource and V1 gates remain open.
+
+### Installed Node write buffer qualification
+
+The offline installed-package consumer now opens both synchronous and worker
+clients with `DatabaseOptions.writeBufferLimits`, rejects an oversized collection
+UPDATE, verifies preservation of prior pending rows, retries a smaller write,
+rolls back and checks the restored unique index. The installed declaration check
+uses the exported options type and rejects numeric budgets and unknown options.
+
+Package smoke passed on Linux x64 with Node 22.0.0 and 24.19.0, using the current
+debug addon: 10 files, 60,645,981 packed bytes. Logs:
+`/tmp/fastdb-buffer-package-node22.log` and
+`/tmp/fastdb-buffer-package-node24.log`. Both runs installed a local tarball into
+a temporary consumer without publishing or registry access. These checks add
+installed-client evidence; production release artifacts, other platforms and
+broader V1 resource/release gates remain open. No production code changed and no
+broader frontend suite was repeated.
