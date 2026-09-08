@@ -32,3 +32,6 @@ A 27-case multi-key implementation matrix now matches native output names and ro
 Closed-source grouping/alias qualification now includes eight normal/profiled native comparisons for source-column precedence, HAVING aliases, ordinal grouping and ordering. Open-schema alias nuances and broader window/correlated scopes remain open.
 
 Inline/named window merged-key partitions and windowed checked writes now have initial read/profile/failure/retry/rollback coverage. Direct source-free scalar/EXISTS subqueries now resolve an outer merged key in their projection and WHERE expressions. The 24-case differential matrix covers INNER/LEFT/RIGHT joins, direct and closed collection sources, scalar arithmetic/filters, EXISTS and a local FROM column that must shadow the outer key. Nested scalar scopes (including `(SELECT (SELECT k))` with RIGHT JOIN), sourceful outer-name fallback, WITH/compound scopes and inner grouping/ordering remain unqualified; this change does not claim general correlated USING support.
+
+
+Typed direct correlation now has 18 read/profile shapes for record, boolean and binary keys across INNER/LEFT/RIGHT joins and direct/closed collection sources, plus correlated collection insertion, unique-index failure, rollback and retry. Nested/sourceful scopes remain unfinished.

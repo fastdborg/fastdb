@@ -520,3 +520,75 @@ fn source_free_subqueries_resolve_outer_using_keys_without_local_capture() {
         }
     }
 }
+
+#[test]
+fn correlated_using_preserves_typed_keys_and_atomic_writes() {
+    for (first, second) in [
+        ("docs:a", "docs:b"),
+        ("true", "false"),
+        ("x'00ff'", "x'0100'"),
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let query = |sql: &str| {
+            c.execute(sql, &Parameters::new())
+                .unwrap_or_else(|error| panic!("{sql}: {error}"))
+        };
+        query("CREATE TABLE docs");
+        query("CREATE TABLE other");
+        for (table, value) in [("docs", first), ("other", first), ("other", second)] {
+            if value.starts_with("x'") {
+                query(&format!("INSERT INTO {table}(k) VALUES({value})"));
+            } else {
+                query(&format!("INSERT INTO {table} {{k:{value}}}"));
+            }
+        }
+        let stored = query("SELECT k FROM docs");
+        assert!(match &stored.rows[0][0] {
+            Value::Record(record) => first == "docs:a" && record.table == "docs",
+            Value::Boolean(value) => first == "true" && *value,
+            Value::Binary(value) => first == "x'00ff'" && value == &[0, 255],
+            _ => false,
+        });
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for source in ["docs", "(SELECT k FROM docs)"] {
+                let sql = format!("SELECT k,(SELECT k) AS correlated FROM {source} a {join} other b USING(k) ORDER BY k");
+                let result = query(&sql);
+                let expected = query(if join == "RIGHT JOIN" {
+                    "SELECT k FROM other ORDER BY k"
+                } else {
+                    "SELECT k FROM docs ORDER BY k"
+                });
+                assert_eq!(result.rows.len(), expected.rows.len(), "{sql}");
+                for (row, expected) in result.rows.iter().zip(&expected.rows) {
+                    assert_eq!(
+                        row,
+                        &vec![expected[0].clone(), expected[0].clone()],
+                        "{sql}"
+                    );
+                }
+                assert_eq!(
+                    c.profile_select(&sql, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    result.rows
+                );
+            }
+        }
+        query("CREATE TABLE copied");
+        query("CREATE UNIQUE INDEX copied_k ON copied(k)");
+        let insert =
+            "INSERT INTO copied(k) SELECT (SELECT k) FROM docs a RIGHT JOIN other b USING(k)";
+        query("BEGIN");
+        query(insert);
+        let expected = query("SELECT k FROM other ORDER BY k");
+        assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
+        assert!(c.execute(insert, &Parameters::new()).is_err());
+        assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
+        query("ROLLBACK");
+        assert!(query("SELECT * FROM copied").rows.is_empty());
+        query(insert);
+        assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
+    }
+}
