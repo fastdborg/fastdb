@@ -16,6 +16,22 @@ fn closed_json_table_functions_match_native_mixed_joins() {
     for (iterator, params) in [
         ("json_each('[1,2,null]') AS j", empty.clone()),
         (
+            "json_each(json_array(1+0,CAST('2' AS INTEGER),NULL)) AS j",
+            empty.clone(),
+        ),
+        (
+            "json_tree(json_object('a',json_array(1,2))) AS j",
+            empty.clone(),
+        ),
+        (
+            "json_each(CASE WHEN 1 THEN '[1,2]' ELSE 'invalid' END) AS j",
+            empty.clone(),
+        ),
+        (
+            "json_each('[' || $values || ']') AS j",
+            Parameters::from([("$values".into(), Value::String("1,2,null".into()))]),
+        ),
+        (
             "json_each($json) AS j",
             Parameters::from([("$json".into(), Value::String("[1,2,null]".into()))]),
         ),
@@ -74,7 +90,7 @@ fn json_table_function_sources_preserve_write_failure_and_retry() {
     ] {
         c.execute(sql, &empty).unwrap();
     }
-    let query="SELECT d.n+json_each.value AS n FROM json_each($json) CROSS JOIN docs d ORDER BY json_each.key";
+    let query="SELECT d.n+json_each.value AS n FROM json_each(coalesce($json,'[0]')) CROSS JOIN docs d ORDER BY json_each.key";
     assert_eq!(
         c.execute(query, &empty).unwrap_err().code(),
         "FDB_PARAMETER"

@@ -1090,7 +1090,9 @@ Tagged-value nesting: binding input, stored values and document transfer decodin
 ## Direct JSON iterator sources
 
 Collection and mixed SELECTs accept unqualified `json_each` and `json_tree`
-sources whose arguments are SQL literals or bound parameters. For example:
+sources whose arguments are closed native scalar expressions: literals, bound
+parameters, scalar function calls, arithmetic, casts and CASE can be composed
+without references to query sources or subqueries. For example:
 
 ```sql
 SELECT d.n, j.value
@@ -1102,6 +1104,9 @@ Qualified stars, aliases, CROSS/LEFT joins and validated collection INSERT SELEC
 have initial regression coverage. Missing iterator bindings return FDB_PARAMETER.
 A failed collection insert restores its document and index changes while keeping
 prior transaction work; a corrected retry can run in the same transaction.
-Computed or correlated iterator arguments in collection queries and general
-table-function support remain unqualified. Ordinary SQL continues to use native
+Correlated iterator arguments, argument subqueries, FastQL typed helper
+lowering inside arguments and general table-function support remain unqualified.
+Aggregate/window argument forms retain native rejection or the frontend scope
+guard. Closed expressions remain in the executed SQL, preserving native lazy
+evaluation; metadata inspection does not evaluate them. Ordinary SQL continues to use native
 delegation for supported forms outside collection lowering.

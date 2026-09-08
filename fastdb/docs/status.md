@@ -3705,3 +3705,25 @@ based on `848374cd0`, with this feature's source and tests present. Computed or
 correlated iterator arguments in collection queries and broader table-function
 qualification remain open. No upstream source changes or publication occurred;
 full V1 release gates remain unfinished.
+
+
+## Closed computed JSON iterator arguments — 2026-09-08
+
+Direct json_each/json_tree collection sources now retain closed native scalar
+expressions in their arguments, including functions, arithmetic, concatenation,
+casts and CASE. An AST walk collects nested parameter bindings and rejects source
+references, subqueries and unsupported argument scopes before native metadata
+inspection. Arguments are not pre-evaluated. The original runtime expression
+preserves native evaluation and errors. Typed FastQL helper lowering and
+correlated iterator arguments remain unfinished.
+
+The native/collection comparison matrix now covers 30 cases through execute and
+profile. INSERT SELECT recovery uses a nested coalesce parameter and verifies
+missing bindings, validation failure, document/index rollback and corrected retry.
+Both Node clients cover computed argument results, profiles and missing bindings.
+The complete scoped `fastdb/scripts/check.sh` exited zero: 561 Rust tests passed,
+one existing trigger-cancellation gate remained ignored, and 80 Node/application
+tests, formatting, Clippy and strict TypeScript passed. Log:
+`/tmp/fastdb-computed-iterators-check.log`; checked implementation tree is based on
+`492b38aa2` with this change. No upstream files, dependencies or publication were
+changed. Broader SQL and full embedded V1 release gates remain open.

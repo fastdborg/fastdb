@@ -2799,33 +2799,62 @@ fn source(
     inspect_native: bool,
 ) -> Result<Source> {
     if let SelectTable::TableCall(name, args, alias) = table {
-        // Closed JSON iterators can expose native columns without executing the
-        // source. Correlated/computed arguments still need expression lowering.
+        // Inspect closed iterator expressions without evaluating them. Source
+        // references and subqueries need separate scope-aware lowering.
         if name.db_name.is_some()
             || !matches!(
                 name.name.as_str().to_ascii_lowercase().as_str(),
                 "json_each" | "json_tree"
             )
-            || !args
-                .iter()
-                .all(|arg| matches!(arg.as_ref(), Expr::Literal(_) | Expr::Variable(_)))
         {
             return Err(unsupported("this table-function source"));
         }
-        let consumed = args
-            .iter()
-            .filter_map(|arg| {
-                if let Expr::Variable(var) = arg.as_ref() {
-                    Some(
-                        var.name
-                            .as_ref()
-                            .map_or_else(|| format!("?{}", var.index), |name| name.to_string()),
-                    )
-                } else {
-                    None
+        let mut consumed = std::collections::BTreeSet::new();
+        let mut closed = true;
+        for arg in args {
+            turso_core::walk_expr_mut(&mut arg.as_ref().clone(), &mut |expr| {
+                match expr {
+                    Expr::Variable(var) => {
+                        consumed.insert(
+                            var.name
+                                .as_ref()
+                                .map_or_else(|| format!("?{}", var.index), |name| name.to_string()),
+                        );
+                    }
+                    Expr::Literal(_)
+                    | Expr::Binary(..)
+                    | Expr::Unary(..)
+                    | Expr::Parenthesized(_)
+                    | Expr::Cast { .. }
+                    | Expr::Collate(..)
+                    | Expr::Case { .. }
+                    | Expr::Between { .. }
+                    | Expr::InList { .. }
+                    | Expr::IsNull(_)
+                    | Expr::NotNull(_)
+                    | Expr::Like { .. } => {}
+                    Expr::FunctionCall {
+                        distinctness,
+                        order_by,
+                        within_group,
+                        filter_over,
+                        ..
+                    } if distinctness.is_none()
+                        && order_by.is_empty()
+                        && within_group.is_empty()
+                        && filter_over.filter_clause.is_none()
+                        && filter_over.over_clause.is_none() => {}
+                    _ => {
+                        closed = false;
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
                 }
-            })
-            .collect::<std::collections::BTreeSet<_>>();
+                Ok(turso_core::WalkControl::Continue)
+            })?;
+        }
+        if !closed {
+            return Err(unsupported("this table-function argument scope"));
+        }
         for name in &consumed {
             if !params.contains_key(name) {
                 return Err(Error::Parameter(name.clone()));
