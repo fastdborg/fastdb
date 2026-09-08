@@ -1,6 +1,6 @@
-# Embedded V1 gate review — 2026-09-08
+# Embedded V1 gate review — 2026-09-09
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 572 passing Rust tests with one ignored trigger-cancellation gate, 82 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-native-cte-projections-check.log`, implementation tree based on `8db691800` with native CTE projections and compound iterator binding). Later focused runs are recorded in status.md with their exact scope. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 618 passing Rust tests with one ignored trigger-cancellation gate, 89 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-update-from-inner-check.log`, implementation committed as `c88d12098`). The later Node-only run at `7c662359a` also passed 89 tests and adds typed inner-join UPDATE FROM coverage. These totals do not prove the gates below. Installed-package evidence is separate and predates UPDATE FROM. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -18,7 +18,32 @@ This is a navigation and prioritization aid, not a replacement for the parent Fa
 
 Cloud beta requirements remain deferred until after embedded V1. They do not block embedded implementation. V2 inverse links, indexed ANN/FTS/spatial and user scripts are not substitutes for unfinished V1 work.
 
-## Current SQL priorities — rechecked 2026-09-08
+## Current implementation priorities — 2026-09-09
+
+The active SQL write gaps are now UPDATE FROM with pagination after duplicate
+resolution, source USING/NATURAL/outer joins, and broader scope/planner
+qualification. See [the implementation design](update-from.md). Initial
+single-source, derived/CTE and inner-join sources execute; repeated encoded typed
+record IDs collapse before mutation. The deduplication loop has cooperative
+progress checks. It still needs complete workspace accounting and broader
+cancellation/recovery coverage.
+
+Ordinary collection UPDATE/DELETE LIMIT/OFFSET now execute, with missing-binding
+validation, native coercion/error comparisons, RETURNING and rollback/index
+coverage. This does not imply FROM pagination support. Tuple writes now include
+explicit values, single-row VALUES and the qualified SELECT subset, including
+SELECT-arm compounds. Multi-row VALUES and compound VALUES arms remain rejected;
+pinned native multi-row tuple behavior includes a correlated compiler panic.
+See [contracts.md](contracts.md) for current supported behavior and alias limits.
+
+Choose the next implementation against these remaining requirements; do not treat
+the historical failures below as current reproductions. SQL progress does not
+close the independent total-resource, deterministic interrupted-I/O, previous-
+release upgrade/restore, platform/distribution or external-application gates.
+The unresolved trigger-interruption core proposal remains separately reviewable;
+no upstream patch has been applied.
+
+## Historical SQL priority review — 2026-09-08
 
 Rechecked the current debug Node addon built by the complete scoped run at `e7d7dc863`; subsequent commits contain test/documentation changes. Fixture: `docs` and `native(n INTEGER)` contain 1,2,3; `keys(n INTEGER)` contains 1,4. The two local-WITH/alias-collision SELECT probes were rerun in a disposable in-memory database; raw output: `/tmp/fastdb-gate-recheck.log`. Other rows retain their earlier evidence and are labeled accordingly.
 
