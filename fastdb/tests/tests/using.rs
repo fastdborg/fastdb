@@ -2483,6 +2483,8 @@ fn pinned_paginated_compound_membership_preserves_outer_key_qualification() {
             .unwrap_or_else(|e| panic!("{sql}: {e}"))
     };
     for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2),(NULL)",
         "CREATE TABLE a(k INTEGER)",
         "INSERT INTO a VALUES(1),(2),(NULL)",
         "CREATE TABLE b(k INTEGER)",
@@ -2492,13 +2494,14 @@ fn pinned_paginated_compound_membership_preserves_outer_key_qualification() {
     ] {
         query(sql);
     }
-    // Establish the pinned engine oracle before extending logical correlation.
+    // Compare logical correlation against the pinned engine for supported pagination.
     // CASE distinguishes false from unknown; count alone would hide null errors.
     for (join, retained) in [("JOIN", "a"), ("LEFT JOIN", "a"), ("RIGHT JOIN", "b")] {
         for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
             for tail in [
                 "ORDER BY 1 LIMIT 1",
                 "ORDER BY 1 DESC LIMIT 1",
+                "ORDER BY 1 LIMIT 1 OFFSET 1",
                 "LIMIT 0",
                 "LIMIT 1 OFFSET 1",
             ] {
@@ -2514,6 +2517,15 @@ fn pinned_paginated_compound_membership_preserves_outer_key_qualification() {
                         let qualified = query(&sql(&format!("{retained}.k")));
                         assert_eq!(qualified.columns, original.columns);
                         assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
+                        // Unordered pagination retains native-only oracle coverage:
+                        // row selection and skipped-arm evaluation remain open.
+                        if !tail.starts_with("ORDER BY") {
+                            continue;
+                        }
+                        let mixed_sql = sql("k").replace("FROM a ", "FROM docs a ");
+                        let mixed = query(&mixed_sql);
+                        assert_eq!(mixed.columns, original.columns);
+                        assert_eq!(mixed.rows, original.rows, "{mixed_sql}");
                     }
                 }
             }

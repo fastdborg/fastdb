@@ -111,6 +111,13 @@ fn native_scalar_collation(
     }
     Ok(explicit.or(implicit).unwrap_or_else(|| "BINARY".into()))
 }
+// Unordered pagination needs separate lowering: grouping can change the row
+// selected from a distinct set, and UNION ALL wrappers can evaluate skipped
+// arms. Preserve the existing guard until both boundaries are qualified.
+fn unordered_compound_pagination(select: &Select) -> bool {
+    select.limit.is_some() && select.order_by.is_empty()
+}
+
 // Predicate-only correlation leaves the native projection intact.
 // The probe substitutes NULL solely for metadata preparation; the executable
 // query retains its outer references and is evaluated by the engine per row.
@@ -128,7 +135,7 @@ fn native_correlated_predicate(
         return Ok((inner, false));
     }
     if !inner.body.compounds.is_empty() {
-        if !inner.order_by.is_empty() || inner.limit.is_some() {
+        if unordered_compound_pagination(&inner) {
             return Ok((inner, false));
         }
         for arm in std::iter::once(&mut inner.body.select)
@@ -659,7 +666,7 @@ fn rename_correlated_local_alias(select: &mut Select, old: &str, new: &str) -> R
             return Ok(false);
         }
         if !select.body.compounds.is_empty() {
-            if root || !select.order_by.is_empty() || select.limit.is_some() {
+            if root || unordered_compound_pagination(select) {
                 return Ok(false);
             }
             for arm in std::iter::once(&mut select.body.select)
@@ -796,7 +803,7 @@ fn qualify_correlated_using(
         return Ok(());
     }
     if !inner.body.compounds.is_empty() {
-        if !inner.order_by.is_empty() || inner.limit.is_some() {
+        if unordered_compound_pagination(inner) {
             return Ok(());
         }
         for arm in std::iter::once(&mut inner.body.select)
@@ -3680,8 +3687,7 @@ impl Connection {
         }
         if inner.with.is_none()
             && !inner.body.compounds.is_empty()
-            && inner.order_by.is_empty()
-            && inner.limit.is_none()
+            && !unordered_compound_pagination(inner)
         {
             for arm in std::iter::once(&mut inner.body.select)
                 .chain(inner.body.compounds.iter_mut().map(|arm| &mut arm.select))
