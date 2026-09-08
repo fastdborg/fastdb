@@ -2119,6 +2119,9 @@ fn pinned_inner_alias_renaming_preserves_outer_merged_keys() {
         "SELECT ALIAS.n FROM nums ALIAS WHERE ALIAS.n<k ORDER BY ALIAS.n DESC LIMIT 1",
         "SELECT (SELECT max(ALIAS.n)) FROM nums ALIAS WHERE ALIAS.n<k LIMIT 1",
         "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k AND EXISTS(SELECT 1 WHERE ALIAS.n>=0)",
+        "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k AND EXISTS(SELECT 1 WHERE ALIAS.n>1)",
+        "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k AND NOT EXISTS(SELECT 1 WHERE ALIAS.n>1)",
+        "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k AND EXISTS(SELECT 1 WHERE EXISTS(SELECT 1 WHERE ALIAS.n>1))",
     ];
     for local_alias in ["a", "b"] {
         for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
@@ -2133,16 +2136,48 @@ fn pinned_inner_alias_renaming_preserves_outer_merged_keys() {
                 let renamed = query(&sql("local_nums"));
                 assert_eq!(renamed.columns, original.columns);
                 assert_eq!(renamed.rows, original.rows, "{}", sql(local_alias));
-                // Nested EXISTS is still outside the mixed-query subset, even
-                // with distinct aliases. Retain its native rename oracle only.
-                if body.contains("EXISTS") {
-                    continue;
-                }
                 let mixed_sql = sql(local_alias).replace("FROM a ", "FROM docs a ");
                 let mixed = query(&mixed_sql);
                 assert_eq!(mixed.columns, original.columns, "{mixed_sql}");
                 assert_eq!(mixed.rows, original.rows, "{mixed_sql}");
             }
+        }
+    }
+}
+
+#[test]
+fn nested_native_exists_resolves_qualified_outer_collection_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2)",
+        "CREATE TABLE native(k INTEGER)",
+        "INSERT INTO native VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for predicate in [
+            "EXISTS(SELECT 1 WHERE d.k>1)",
+            "NOT EXISTS(SELECT 1 WHERE d.k>1)",
+            "EXISTS(SELECT 1 WHERE EXISTS(SELECT 1 WHERE d.k>1))",
+        ] {
+            let sql = |source: &str| {
+                format!("SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND {predicate}) AS v FROM {source} d {join} b USING(k) ORDER BY k")
+            };
+            let expected = query(&sql("native"));
+            let actual = query(&sql("docs"));
+            assert_eq!(actual.columns, expected.columns);
+            assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
         }
     }
 }

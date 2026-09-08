@@ -99,20 +99,11 @@ fn native_correlated_predicate(
             }
         }
     }
-    let scope = Scope {
-        using: UsingColumns::default(),
-        qualified_only: true,
-        expression_subqueries: Default::default(),
-        sources: sources
-            .iter()
-            .filter(|source| !local.contains(&source.alias.to_ascii_lowercase()))
-            .cloned()
-            .collect(),
-        params: params.clone(),
-        consumed: Default::default(),
-        fetched_aliases: Default::default(),
-        standalone_aliases: Default::default(),
-    };
+    let outer_sources: Vec<_> = sources
+        .iter()
+        .filter(|source| !local.contains(&source.alias.to_ascii_lowercase()))
+        .cloned()
+        .collect();
     fn qualifier(expr: &Expr) -> Option<&str> {
         match expr {
             Expr::Qualified(alias, _) | Expr::DoublyQualified(alias, _, _) => Some(alias.as_str()),
@@ -128,11 +119,42 @@ fn native_correlated_predicate(
     }
     let rewrite = |value: &mut Expr, typed: bool| -> Result<bool> {
         let mut correlated = false;
+        // Lowering the enclosing predicate must preserve nested native queries,
+        // while recursively binding any qualified outer references they contain.
+        let mut nested_exists = ExpressionSubqueries::new();
+        let mut nested_error = None;
         turso_core::walk_expr_mut(value, &mut |expr| {
-            if matches!(
-                expr,
-                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
-            ) {
+            if matches!(expr, Expr::Exists(_)) {
+                let original = expr.to_string();
+                let Expr::Exists(inner) = expr else {
+                    unreachable!()
+                };
+                let prepared = match native_correlated_predicate(
+                    inner,
+                    &outer_sources,
+                    metadata,
+                    params,
+                    false,
+                ) {
+                    Ok((prepared, _)) => prepared,
+                    Err(error) => {
+                        nested_error = Some(error);
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
+                };
+                let prepared = Expr::Exists(prepared);
+                correlated |= prepared.to_string() != original;
+                if metadata {
+                    *expr = prepared;
+                } else {
+                    nested_exists.insert(
+                        original,
+                        (prepared, Default::default(), SubqueryAffinity::None),
+                    );
+                }
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            if matches!(expr, Expr::Subquery(_) | Expr::InSelect { .. }) {
                 return Ok(turso_core::WalkControl::SkipChildren);
             }
             if let Some(alias) = qualifier(expr) {
@@ -147,7 +169,20 @@ fn native_correlated_predicate(
             }
             Ok(turso_core::WalkControl::Continue)
         })?;
+        if let Some(error) = nested_error {
+            return Err(error);
+        }
         if correlated && !metadata {
+            let scope = Scope {
+                expression_subqueries: nested_exists,
+                using: UsingColumns::default(),
+                qualified_only: true,
+                sources: outer_sources.clone(),
+                params: params.clone(),
+                consumed: Default::default(),
+                fetched_aliases: Default::default(),
+                standalone_aliases: Default::default(),
+            };
             if typed {
                 scope.typed(value)?;
             } else {
