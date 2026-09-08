@@ -2517,10 +2517,6 @@ fn pinned_paginated_compound_membership_preserves_outer_key_qualification() {
                         let qualified = query(&sql(&format!("{retained}.k")));
                         assert_eq!(qualified.columns, original.columns);
                         assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
-                        // Deduplicating unordered sets retain native-only evidence.
-                        if !tail.starts_with("ORDER BY") && operator != "UNION ALL" {
-                            continue;
-                        }
                         let mixed_sql = sql("k").replace("FROM a ", "FROM docs a ");
                         let mixed = query(&mixed_sql);
                         assert_eq!(mixed.columns, original.columns);

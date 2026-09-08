@@ -1704,3 +1704,59 @@ test('unordered UNION ALL pagination preserves parameters and client recovery', 
     } finally { await db.close(); }
   }
 });
+
+test('unordered UNION pagination preserves parameters and client recovery', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of [
+        'CREATE TABLE docs', 'INSERT INTO docs(k) VALUES(1),(2)',
+        'CREATE TABLE native(k INTEGER)', 'INSERT INTO native VALUES(1),(2)',
+        'CREATE TABLE b(k INTEGER)', 'INSERT INTO b VALUES(1),(3)',
+        'CREATE TABLE nums(n INTEGER)', 'INSERT INTO nums VALUES(0),(1),(2),(NULL)',
+        'CREATE TABLE sink', 'CREATE UNIQUE INDEX sink_k ON sink(k)',
+        'INSERT INTO sink(k) VALUES(2)',
+      ]) await db.execute(sql);
+      const query = source => {
+        const rhs = 'SELECT NULL UNION SELECT k LIMIT $take OFFSET $skip';
+        return `SELECT k,(SELECT sum(CASE WHEN x.n IN(${rhs}) THEN 1 WHEN x.n NOT IN(${rhs}) THEN 10 ELSE 100 END) FROM nums x WHERE k IS k) AS v FROM ${source} d LEFT JOIN b USING(k) ORDER BY k`;
+      };
+      for (const params of [
+        {$take:1n,$skip:0n}, {$take:1n,$skip:1n},
+        {$take:0n,$skip:0n}, {$take:-1n,$skip:1n},
+      ]) {
+        const expected = await db.execute(query('native'),params);
+        const actual = await db.execute(query('docs'),params);
+        assert.deepEqual(actual.columns,expected.columns);
+        assert.deepEqual(actual.rows,expected.rows);
+        assert.deepEqual((await db.profileSelect(query('docs'),params)).result.rows,expected.rows);
+      }
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO sink(k) VALUES(9)');
+      const insert = `INSERT INTO sink(k,v) ${query('docs')} RETURNING k,v`;
+      await assert.rejects(async () => db.execute(insert, { $take: 1n }), error => {
+        assert.equal(error.code, 'FDB_PARAMETER');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      const params = { $take: 1n, $skip: 1n };
+      const expectedRows = await db.all(query('native'), params);
+      await assert.rejects(async () => db.execute(insert, params), error => {
+        assert.equal(error.code, 'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT k FROM sink ORDER BY k'), [[2n], [9n]]);
+      await db.execute('DELETE FROM sink WHERE k=2');
+      const retry = await db.execute(insert, params);
+      assert.equal(retry.affected, 2n);
+      assert.deepEqual(retry.rows, expectedRows);
+      const audit = await db.checkCollectionIntegrity('sink');
+      assert.equal(audit.documents, 3n);
+      assert.equal(audit.indexEntries, 3n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT k FROM sink'), [[2n]]);
+    } finally { await db.close(); }
+  }
+});

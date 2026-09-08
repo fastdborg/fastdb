@@ -201,6 +201,15 @@ fn preserve_compound_column_names(select: &mut Select) {
 // Predicate-only correlation leaves the native projection intact.
 // The probe substitutes NULL solely for metadata preparation; the executable
 // query retains its outer references and is evaluated by the engine per row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeCorrelationMode {
+    Native,
+    ScalarPagination,
+    Membership,
+    // Membership compares native values inside each arm before set operations.
+    CompoundArm,
+}
+
 fn native_correlated_predicate(
     connection: &Connection,
     metadata_scopes: &[With],
@@ -208,15 +217,19 @@ fn native_correlated_predicate(
     sources: &[Source],
     metadata: bool,
     params: &Parameters,
-    scalar_pagination: bool,
+    mode: NativeCorrelationMode,
 ) -> Result<(Select, bool)> {
+    let scalar_pagination = mode == NativeCorrelationMode::ScalarPagination;
     let mut inner = inner.clone();
     if inner.with.is_some() {
         return Ok((inner, false));
     }
     if !inner.body.compounds.is_empty() {
         resolve_compound_expression_order_names(&mut inner);
-        if unordered_compound_pagination(&inner) {
+        let direct_membership = mode == NativeCorrelationMode::Membership
+            && direct_compound_pagination(&inner)
+            && inner.order_by.is_empty();
+        if unordered_compound_pagination(&inner) && !direct_membership {
             return Ok((inner, false));
         }
         for arm in std::iter::once(&mut inner.body.select)
@@ -239,7 +252,11 @@ fn native_correlated_predicate(
                 sources,
                 metadata,
                 params,
-                false,
+                if direct_membership {
+                    NativeCorrelationMode::CompoundArm
+                } else {
+                    NativeCorrelationMode::Native
+                },
             )?;
             if logical && !metadata {
                 return Err(unsupported("correlated logical compound projection"));
@@ -326,7 +343,7 @@ fn native_correlated_predicate(
                         &outer_sources,
                         metadata,
                         params,
-                        false,
+                        NativeCorrelationMode::Membership,
                     )?;
                     let changed = prepared.to_string() != rhs.to_string();
                     if metadata {
@@ -404,7 +421,11 @@ fn native_correlated_predicate(
                     &outer_sources,
                     metadata,
                     params,
-                    scalar,
+                    if scalar {
+                        NativeCorrelationMode::ScalarPagination
+                    } else {
+                        NativeCorrelationMode::Native
+                    },
                 ) {
                     Ok(prepared) => prepared,
                     Err(error) => {
@@ -519,7 +540,7 @@ fn native_correlated_predicate(
         if let ResultColumn::Expr(value, alias) = column {
             // Explicit casts produce native scalars whose affinity must remain
             // attached to the subquery result in outer comparisons.
-            let mut typed = !has_cast_affinity(value);
+            let mut typed = mode != NativeCorrelationMode::CompoundArm && !has_cast_affinity(value);
             let correlated = rewrite(value, typed)?;
             correlated_query |= correlated;
             if correlated && typed && !metadata {
@@ -748,7 +769,9 @@ fn rename_correlated_local_alias(select: &mut Select, old: &str, new: &str) -> R
             return Ok(false);
         }
         if !select.body.compounds.is_empty() {
-            if root || unordered_compound_pagination(select) {
+            if root
+                || (unordered_compound_pagination(select) && !direct_compound_pagination(select))
+            {
                 return Ok(false);
             }
             for arm in std::iter::once(&mut select.body.select)
@@ -886,9 +909,6 @@ fn qualify_correlated_using(
     }
     if !inner.body.compounds.is_empty() {
         resolve_compound_expression_order_names(inner);
-        if unordered_compound_pagination(inner) {
-            return Ok(());
-        }
         for arm in std::iter::once(&mut inner.body.select)
             .chain(inner.body.compounds.iter_mut().map(|arm| &mut arm.select))
         {
@@ -1832,6 +1852,40 @@ impl Scope {
                     // Keep native IN execution so its uncorrelated source can
                     // be cached across outer rows. Only BLOB comparison keys
                     // require encoding of the source values.
+                    if shared.is_empty() {
+                        if let Expr::Subquery(inner) = query {
+                            if !inner.body.compounds.is_empty()
+                                && inner.order_by.is_empty()
+                                && direct_compound_pagination(inner)
+                            {
+                                // Keep one native RHS. Materialization changes unordered
+                                // pagination, while two CASE RHSs can both be evaluated.
+                                let mut blob_query = inner.clone();
+                                for arm in std::iter::once(&mut blob_query.body.select).chain(
+                                    blob_query
+                                        .body
+                                        .compounds
+                                        .iter_mut()
+                                        .map(|arm| &mut arm.select),
+                                ) {
+                                    let OneSelect::Select { columns, .. } = arm else {
+                                        return Err(unsupported("compound membership values"));
+                                    };
+                                    for column in columns {
+                                        let ResultColumn::Expr(value, _) = column else {
+                                            return Err(unsupported("compound membership stars"));
+                                        };
+                                        *value = Box::new(expression(&format!(
+                                            "CASE WHEN typeof(__fastdb_member_lhs.k)='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) ELSE {value} END"
+                                        ))?);
+                                    }
+                                }
+                                let blob_query = Expr::Subquery(blob_query);
+                                *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}) SELECT {key} {negate}IN {blob_query} FROM __fastdb_member_lhs)"))?;
+                                return Ok(());
+                            }
+                        }
+                    }
                     let local = if shared.is_empty() {
                         format!(", __fastdb_correlated_members(v) AS MATERIALIZED {query}")
                     } else {
@@ -4864,7 +4918,7 @@ impl Connection {
                         &sources,
                         false,
                         params,
-                        true,
+                        NativeCorrelationMode::ScalarPagination,
                     )?
                     .0,
                 );
@@ -4890,7 +4944,11 @@ impl Connection {
                     &sources,
                     true,
                     params,
-                    false,
+                    if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
+                        NativeCorrelationMode::Membership
+                    } else {
+                        NativeCorrelationMode::Native
+                    },
                 )?;
                 let correlated = Cmd::Stmt(Stmt::Select(probe.clone())).to_string()
                     != Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
@@ -4948,7 +5006,11 @@ impl Connection {
                 &sources,
                 false,
                 params,
-                matches!(affinity, SubqueryAffinity::NativeScalar(_)),
+                if matches!(affinity, SubqueryAffinity::NativeScalar(_)) {
+                    NativeCorrelationMode::ScalarPagination
+                } else {
+                    NativeCorrelationMode::Membership
+                },
             )?;
             if typed_projection {
                 let runtime_sql = Cmd::Stmt(Stmt::Select(runtime)).to_string();
@@ -4987,7 +5049,7 @@ impl Connection {
                         &sources,
                         false,
                         params,
-                        false,
+                        NativeCorrelationMode::Membership,
                     )?
                     .0,
                 );
@@ -5027,7 +5089,7 @@ impl Connection {
                     &sources,
                     false,
                     params,
-                    true,
+                    NativeCorrelationMode::ScalarPagination,
                 )?;
                 *lowered = expression(&format!(
                     "__fastdb_pack(({}))",
