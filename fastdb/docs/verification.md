@@ -4312,3 +4312,23 @@ Only tests/docs changed from `7f464fa37`. Markers identify call windows rather
 than deterministic engine instructions; this is process-failure evidence, not
 power-loss or mid-I/O certification. No new full-suite run is claimed.
 Full V1 remains open; no publication occurred.
+
+
+## Collection UPDATE LIMIT — 2026-09-09
+
+UPDATE LIMIT now passes its LIMIT/OFFSET clause into candidate selection before
+assignment materialization and atomic mutation. Initial native differential
+cases cover zero, positive and negative limits, nonzero offsets and an offset
+past the rowset, checking affected counts, final values and rollback.
+No ordering guarantee is introduced for an unordered UPDATE. UPDATE ORDER BY
+remains rejected by the pinned engine; collection UPDATE FROM and DELETE LIMIT
+remain separate implementation gaps. Local write-clause probes are recorded in
+`/tmp/fastdb-write-clause-gates.log`. Broader bound-expression, index-plan,
+validation and cancellation qualification remains open.
+
+The complete scoped check passed on `09b2ac5f6` plus this change: 610 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+87 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-update-limit-check.log`. No upstream source, dependency or storage
+format changes; no publication occurred. Full V1 remains open.

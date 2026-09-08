@@ -624,7 +624,6 @@ impl Connection {
                     || update.from.is_some()
                     || update.indexed.is_some()
                     || !update.order_by.is_empty()
-                    || update.limit.is_some()
                 {
                     return Err(unsupported("this collection UPDATE clause"));
                 }
@@ -826,6 +825,7 @@ impl Connection {
                     &update.tbl_name,
                     update.with,
                     update.where_clause,
+                    update.limit,
                     &exprs,
                     params,
                 )?;
@@ -893,7 +893,7 @@ impl Connection {
                     return Err(unsupported("this collection DELETE clause"));
                 }
                 validate_returning(&returning)?;
-                let rows = self.write_candidates(&tbl_name, with, where_clause, &[], params)?;
+                let rows = self.write_candidates(&tbl_name, with, where_clause, None, &[], params)?;
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {
@@ -933,6 +933,7 @@ impl Connection {
         table: &QualifiedName,
         with: Option<With>,
         predicate: Option<Box<Expr>>,
+        limit: Option<Limit>,
         assignments: &[Expr],
         params: &Parameters,
     ) -> Result<Vec<Vec<Value>>> {
@@ -1180,7 +1181,7 @@ impl Connection {
                 compounds: Vec::new(),
             },
             order_by: Vec::new(),
-            limit: None,
+            limit,
         };
         let mut result = self
             .write_candidate_select(&Stmt::Select(select).to_string(), params, true)?

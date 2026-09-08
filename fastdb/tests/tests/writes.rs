@@ -1617,3 +1617,28 @@ fn values_tuple_assignments_match_native() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn update_limit_matches_native_candidates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER)",
+        "INSERT INTO native VALUES(1),(2),(3)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n) SELECT n FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for limit in ["0", "1", "2 OFFSET 1", "-1", "1 OFFSET 9"] {
+        q(&c, "BEGIN");
+        let expected = q(&c, &format!("UPDATE native SET n=n+10 LIMIT {limit}"));
+        let actual = q(&c, &format!("UPDATE docs SET n=n+10 LIMIT {limit}"));
+        assert_eq!(actual.affected, expected.affected);
+        assert_eq!(
+            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+            q(&c, "SELECT n FROM native ORDER BY n").rows
+        );
+        q(&c, "ROLLBACK");
+    }
+}
