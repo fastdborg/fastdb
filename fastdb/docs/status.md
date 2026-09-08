@@ -2928,3 +2928,21 @@ All four CLI migration tests passed; log:
 `/tmp/fastdb-cli-buffer-migration.log`. Scoped formatting passed. No production code
 changed and no broader suite was repeated. This adds clean process-exit/reopen
 evidence, not abrupt-crash or interrupted-I/O qualification; V1 gates remain open.
+
+### UPDATE snapshot budget before storage work
+
+SQL UPDATE now checks each completed document snapshot against its buffer budget
+before field validation and storage mutation. Previously the same check ran after
+replacement and relied on rollback even for the rejected row. Earlier rows remain
+covered by the operation savepoint. The regression uses a long destination field
+name to exceed snapshot bytes while its candidate fits, verifies FDB_LIMIT precedes
+field validation, then raises the policy to verify normal validation, valid retry
+and preservation/rollback of prior pending work.
+
+Seven write-buffer tests and 30 write/CTE-write/RETURNING tests passed, together
+with frontend Clippy and scoped formatting. Logs:
+`/tmp/fastdb-update-snapshot-preflight.log`,
+`/tmp/fastdb-update-snapshot-writes.log`, and
+`/tmp/fastdb-update-snapshot-clippy.log`. Node/installed-package and broader suites
+were not repeated for this check-order change. Other snapshot routes retain their
+documented timing; total-memory and broader V1 qualification remain open.

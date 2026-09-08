@@ -26,8 +26,8 @@ usage, the temporary decoded row, engine working memory, or execution time.
 
 Node clients expose `selectWithLimits` and `profileSelectWithLimits` with
 required bigint `maxRows` and `maxPayloadBytes`; worker calls accept AbortSignal.
-RETURNING, INSERT SELECT candidates and transfer remain separate integration
-work. This does not close the V1 resource gate.
+RETURNING and collection write candidates have separate policies described below;
+transfer retains its own limits. This does not close the V1 resource gate.
 
 CLI `.select-limit ROWS BYTES SQL`, `.profile-limit ROWS BYTES SQL` and
 `.write-limit ROWS BYTES SQL` expose the same policies for one statement. Limits
@@ -50,7 +50,9 @@ SELECT rowsets include column-name bytes, including after bound assignment value
 replace preparation placeholders. VALUES buffers count evaluated cell payloads.
 Object-patch candidates count patch object keys/values and the target record.
 Document snapshot buffers count document keys/values before retaining the next
-snapshot; object single-record SQL writes check their snapshot within the operation
+snapshot. SQL UPDATE checks its completed next snapshot before field validation
+and storage mutation; earlier updated rows still rely on the operation savepoint.
+Object single-record SQL writes check their snapshot within the operation
 savepoint. Overflow returns `FDB_LIMIT`, discards the buffer, and uses existing
 write rollback. Candidate queries stop at the first rejected row. Ordinary reads
 and explicit returned-result budgets keep their separate policies.
@@ -111,7 +113,7 @@ prior-work preservation and fresh-token retry have initial Rust coverage.
 Completed-result accounting has no fixed cancellation latency. Both Node
 clients expose `writeWithResultLimits(sql, limits, parameters?)`; workers accept
 a fourth `{ signal }` argument. Broader cancellation/I/O qualification and
-candidate/snapshot limits and engine working-memory qualification remain unfinished.
+broader candidate/snapshot and engine working-memory qualification remain unfinished.
 
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.

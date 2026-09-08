@@ -259,3 +259,43 @@ fn migration_buffer_rejection_restores_pending_schema_data_and_history() {
         2
     );
 }
+
+#[test]
+fn update_snapshot_rejects_before_validating_oversized_new_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let p = Parameters::new();
+    let field = "long_field_name_".repeat(8);
+    c.execute("CREATE TABLE docs", &p).unwrap();
+    c.execute(&format!("DEFINE FIELD {field} ON docs TYPE integer"), &p)
+        .unwrap();
+    c.execute("INSERT INTO docs {id:docs:a,n:1}", &p).unwrap();
+    c.execute("BEGIN", &p).unwrap();
+    c.execute("INSERT INTO docs {id:docs:b,n:2}", &p).unwrap();
+    // The candidate holds a short scalar assignment; the resulting snapshot
+    // also owns the long destination field name, which exceeds this budget.
+    let c = c.with_write_buffer_limits(ResultLimits {
+        max_rows: 2,
+        max_payload_bytes: 100,
+    });
+    let sql = format!("UPDATE docs SET {field}='bad' WHERE n=2");
+    assert_eq!(c.execute(&sql, &p).unwrap_err().code(), "FDB_LIMIT");
+    assert_eq!(c.transaction_state(), TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    // A larger snapshot budget reaches the actual field validator.
+    let c = c.with_write_buffer_limits(ResultLimits {
+        max_rows: 2,
+        max_payload_bytes: 1000,
+    });
+    assert_eq!(c.execute(&sql, &p).unwrap_err().code(), "FDB_VALIDATION");
+    c.execute(&format!("UPDATE docs SET {field}=3 WHERE n=2"), &p)
+        .unwrap();
+    c.execute("ROLLBACK", &p).unwrap();
+    assert_eq!(
+        c.execute("SELECT n FROM docs", &p).unwrap().rows,
+        vec![vec![Value::Integer(1)]]
+    );
+}

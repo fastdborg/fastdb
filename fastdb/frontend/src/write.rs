@@ -581,10 +581,13 @@ impl Connection {
                             if unset { None } else { Some(value) },
                         )?;
                     }
+                    // Reject the next snapshot before validation and storage work.
+                    // Earlier rows still belong to the operation savepoint.
+                    snapshot_budget.document(&document)?;
                     // validate_targets forbids changing the record identity.
                     let collection = self.catalog(&id(&document)?.table)?;
                     self.replace_document(&collection, &document)?;
-                    crate::retain_write_document(&mut snapshot_budget, &mut documents, document)?;
+                    documents.push(document);
                 }
                 Ok(Some(self.returning_rows(
                     &update.tbl_name,
