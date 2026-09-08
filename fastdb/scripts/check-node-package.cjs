@@ -63,6 +63,12 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const result = await client.execute(typed, {$flag:true,$bytes:bytes});
       assert.deepEqual(result.columns, ['x','x']);
       assert.deepEqual(result.rows, [[true,bytes]]);
+      const folded = await client.execute('WITH q(x,X) AS (SELECT $flag,$bytes FROM docs) SELECT q.* FROM q', {$flag:true,$bytes:bytes});
+      assert.deepEqual(folded.columns, ['x','x']);
+      assert.deepEqual(folded.rows, result.rows);
+      const using = await client.execute('WITH q("Key") AS (SELECT value FROM docs), r("Key") AS (SELECT 9223372036854775807) SELECT "Key",(SELECT "Key" ORDER BY "Key") AS correlated FROM q a RIGHT JOIN r b USING("Key")');
+      assert.deepEqual(using.columns, ['key','correlated']);
+      assert.deepEqual(using.rows, [[9223372036854775807n,9223372036854775807n]]);
       assert.deepEqual((await client.profileSelect(typed, {$flag:true,$bytes:bytes})).result.rows, result.rows);
       const native = 'WITH q(x,x) AS NOT MATERIALIZED (SELECT 10,20) SELECT v.* FROM docs d JOIN q v ON 1';
       assert.deepEqual((await client.execute(native)).rows, [[10n,20n]]);
