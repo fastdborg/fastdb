@@ -2566,3 +2566,32 @@ test('worker iterator deadlines preserve queued recovery and indexed work', asyn
     assert.equal((await db.checkCollectionIntegrity('output')).documents,0n);
   } finally {await db.close();}
 });
+
+test('malformed iterator input reports whole transaction rollback in both clients', async () => {
+  const {AsyncDatabase}=require('./index.cjs');
+  for(const db of [new Database(),await AsyncDatabase.open()]) {
+    try {
+      for(const sql of ['CREATE TABLE docs',"INSERT INTO docs(n,j) VALUES(1,'[1]'),(2,'invalid')",
+        'CREATE TABLE output','CREATE UNIQUE INDEX output_n ON output(n)','INSERT INTO output(n) VALUES(-1)']) await db.execute(sql);
+      for(const iterator of ['json_each','json_tree']) {
+        const query="SELECT x.value AS n FROM docs d CROSS JOIN "+iterator+"(d.j) x WHERE x.type='integer' ORDER BY d.n,x.id";
+        const insert='INSERT INTO output(n) '+query+' RETURNING n';
+        for(const operation of [()=>db.execute(query),()=>db.profileSelect(query),()=>db.execute(insert)]) {
+          await db.execute('BEGIN');
+          await db.execute('INSERT INTO output(n) VALUES(0)');
+          await assert.rejects(async()=>operation(),error=>{
+            assert.equal(error.code,'FDB_ENGINE');
+            assert.deepEqual(error.transaction,{before:'active',after:'autocommit'});
+            return true;
+          });
+          assert.deepEqual((await db.execute('SELECT n FROM output')).rows,[[-1n]]);
+          assert.equal((await db.checkCollectionIntegrity('output')).indexEntries,1n);
+        }
+        await db.execute("UPDATE docs SET j='[2]' WHERE n=2");
+        assert.deepEqual((await db.execute(insert)).rows,[[1n],[2n]]);
+        await db.execute('DELETE FROM output WHERE n>0');
+        await db.execute("UPDATE docs SET j='invalid' WHERE n=2");
+      }
+    } finally {await db.close();}
+  }
+});

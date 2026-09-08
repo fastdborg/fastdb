@@ -4026,3 +4026,17 @@ fastdb-tests all-target Clippy with warnings denied. Logs:
 `c2fd7feb2`; no new complete-suite or client run is claimed. The full scoped
 baseline remains 570 Rust and 81 Node/application passes with one ignored trigger
 gate. Full V1 release gates remain open; no publication occurred.
+
+
+## Client reports for malformed iterator rollback — 2026-09-08
+
+Sync and worker client tests now require FDB_ENGINE and an active-to-autocommit
+transaction report when malformed per-row JSON aborts SELECT, profile or INSERT
+SELECT through json_each/json_tree. They verify rollback of prior uncommitted
+work, preservation of committed rows/indexes and corrected input retry.
+
+The focused test and all 82 Node/application tests passed against the existing
+addon; logs `/tmp/fastdb-malformed-iterator-clients-focused.log` and
+`/tmp/fastdb-malformed-iterator-clients.log`. Only tests/documentation changed from
+`28ce7af5e`; no native rebuild, new Rust-suite or packaging run is claimed. Full
+V1 release gates remain open; no publication occurred.
