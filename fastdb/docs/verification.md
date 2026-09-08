@@ -3432,3 +3432,15 @@ tests passed against the last full-check addon. Logs
 `/tmp/fastdb-tuple-lookup-node-focused.log` and `/tmp/fastdb-tuple-lookup-node.log`.
 Only tests/documentation changed from `3e7a62be8`; no native rebuild or full Rust
 rerun is claimed. Full V1 gates remain open; no publication occurred.
+
+
+## Tuple self-lookup snapshot qualification — 2026-09-09
+
+A cyclic self-lookup regression confirms all tuple candidates read original
+collection values before mutation. Later candidates do not observe earlier
+updates; RETURNING and stored rows agree, the unique index audits cleanly,
+and outer rollback restores original values. All seventeen write tests passed,
+plus formatting and all-target fastdb-tests Clippy with warnings denied.
+Logs `/tmp/fastdb-tuple-self-lookup.log` and
+`/tmp/fastdb-tuple-self-lookup-clippy.log`. Only tests/documentation changed from
+`2a21820a6`; no new full-suite/client run is claimed. Full V1 gates remain open.

@@ -737,3 +737,39 @@ fn tuple_lookup_validation_restores_indexes_and_allows_retry() {
         );
     }
 }
+
+#[test]
+fn tuple_self_lookups_materialize_before_any_update() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(
+        &c,
+        "INSERT INTO docs(n,a,b) VALUES(1,10,11),(2,20,21),(3,30,31)",
+    );
+    q(&c, "CREATE UNIQUE INDEX docs_a ON docs(a)");
+    q(&c, "BEGIN");
+    let result=q(&c,"UPDATE docs SET (a,b)=(SELECT x.a+100,x.b+100 FROM docs x WHERE x.n=CASE docs.n WHEN 1 THEN 3 ELSE docs.n-1 END) RETURNING n,a,b");
+    let expected = vec![
+        vec![Value::Integer(1), Value::Integer(130), Value::Integer(131)],
+        vec![Value::Integer(2), Value::Integer(110), Value::Integer(111)],
+        vec![Value::Integer(3), Value::Integer(120), Value::Integer(121)],
+    ];
+    assert_eq!(result.rows, expected);
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, expected);
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        3
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT a FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(10)],
+            vec![Value::Integer(20)],
+            vec![Value::Integer(30)]
+        ]
+    );
+}
