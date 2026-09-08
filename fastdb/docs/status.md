@@ -3381,3 +3381,16 @@ packed bytes from the current debug addon. Logs:
 No publication or registry access occurred. Diff checks passed. No production code
 changed or broader suite was repeated. Release artifacts, additional platforms and
 remaining V1 gates stay open.
+
+### In-place private Node row decoding
+
+Shared result decoding now replaces cells in the private parsed wire rows instead
+of allocating a second rowset with map. Ordinary/bounded-write results, profiles
+and batch results use the same helper. Replaced wire cells can become collectible
+as conversion proceeds; callers still receive the same decoded value shapes.
+
+All 77 Node/application tests passed against the current addon; log:
+`/tmp/fastdb-node-inplace-decoding.log`. Diff checks passed. No native code or
+declarations changed; Rust/TypeScript checks were not repeated. Memory measurement
+follows separately; no peak-memory improvement is inferred solely from the code.
+Full V1 gates remain open.

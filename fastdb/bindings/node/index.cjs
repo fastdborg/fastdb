@@ -104,10 +104,18 @@ function unwrap(raw) {
   }
   return report;
 }
+// Parsed wire rows are private to this response. Replacing cells releases their
+// wire representation as decoding proceeds instead of retaining a second rowset.
+function decodeRows(rows) {
+  for (const row of rows) {
+    for (let i = 0; i < row.length; i++) row[i] = decode(row[i]);
+  }
+  return rows;
+}
 function decodeBatch(raw) {
   return unwrap(raw).execution.result.map(entry => {
     if (entry.result) entry.result = { ...entry.result,
-      rows: entry.result.rows.map(row => row.map(decode)), affected: BigInt(entry.result.affected) };
+      rows: decodeRows(entry.result.rows), affected: BigInt(entry.result.affected) };
     return entry;
   });
 }
@@ -158,7 +166,7 @@ function decodeIntegrity(raw) {
 function decodeProfile(raw) {
   const report = unwrap(raw);
   const { result, metrics } = report.execution.result;
-  return { result: { columns: result.columns, rows: result.rows.map(row => row.map(decode)),
+  return { result: { columns: result.columns, rows: decodeRows(result.rows),
     affected: BigInt(result.affected), transaction: report.transaction },
     metrics: Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, BigInt(value)])) };
 }
@@ -193,7 +201,7 @@ class Database {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     const report = unwrap(this.#native.execute(sql, JSON.stringify(params)));
     const result = report.execution.result;
-    return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+    return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };
   }
   profileSelect(sql, parameters = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
@@ -212,7 +220,7 @@ class Database {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     const report = unwrap(this.#native.writeWithResultLimits(sql, JSON.stringify(params), ...args));
     const result = report.execution.result;
-    return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+    return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };
   }
   checkCollectionIntegrity(table, limits = {}) {
     return decodeIntegrity(this.#native.checkCollectionIntegrity(table, ...integrityLimits(limits)));
@@ -343,7 +351,7 @@ class AsyncDatabase {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)], false, options.signal, options.timeoutMs));
     const result = report.execution.result;
-    return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+    return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };
   }
   async profileSelect(sql, parameters = {}, options = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
@@ -362,7 +370,7 @@ class AsyncDatabase {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     const report = unwrap(await this.#request('writeWithResultLimits', [sql, JSON.stringify(params), ...args], false, options.signal, options.timeoutMs));
     const result = report.execution.result;
-    return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+    return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };
   }
   async checkCollectionIntegrity(table, limits = {}, options = {}) {
     return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal, options.timeoutMs));
