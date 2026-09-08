@@ -3478,3 +3478,10 @@ sync/worker results. Scoped Clippy, formatting, strict TypeScript and the offlin
 standalone Rust consumer pass; all 244 dependency identities are retained. Logs:
 `/tmp/fastdb-json-writer-{transfer,node,clippy,consumer}.log`. Broader full-suite,
 release/platform and resource qualification retain their separate evidence.
+
+
+Direct-cell-writing measurement at `ee79e6789` passed all 12 nonzero binary
+samples. Whole-process peaks and timings remain mixed compared with the prior
+response-buffer run, so no consistent improvement is claimed. See benchmarks.md
+and the raw `2026-09-08-linux-debug-node-writer255-1000.json` report for medians,
+identities and limitations. Full V1 resource/release gates remain open.

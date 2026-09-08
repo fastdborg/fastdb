@@ -1,0 +1,312 @@
+{
+  "platform": "linux",
+  "arch": "x64",
+  "node": "24.19.0",
+  "sourceCommit": "ee79e6789d11696d201666c0f1801f20b0a8aabe",
+  "implementationChanges": "",
+  "addonSha256": "f1d46b03184131120cfb816994ee6b26b5c33cc6e9cb46af16a845a85ef4ef0a",
+  "harnessSha256": "9decbb359cc5bcf4fbece8e7f1371f7419fccc7c781d65cc9b80c03c2e96dc4d",
+  "notes": "Local debug addon. Three fresh processes per client/operation. Setup precedes baseline; GC requested before measurement. maxRSS includes process startup/setup and worker memory. Timing includes query, portable JSON transport and decoding; assertions follow measurement. No before/after comparison, release guarantee or memory cap.",
+  "samples": [
+    {
+      "sample": 0,
+      "client": "sync",
+      "operation": "execute",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1284.8218080000001,
+      "before": {
+        "rssBytes": 86691840,
+        "processPeakRssKiB": 84660
+      },
+      "after": {
+        "rssBytes": 146501632,
+        "processPeakRssKiB": 143068
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 1,
+      "client": "sync",
+      "operation": "execute",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1223.7167869999998,
+      "before": {
+        "rssBytes": 85995520,
+        "processPeakRssKiB": 83980
+      },
+      "after": {
+        "rssBytes": 144388096,
+        "processPeakRssKiB": 141004
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 2,
+      "client": "sync",
+      "operation": "execute",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1156.648499,
+      "before": {
+        "rssBytes": 83021824,
+        "processPeakRssKiB": 81076
+      },
+      "after": {
+        "rssBytes": 143351808,
+        "processPeakRssKiB": 139992
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 0,
+      "client": "sync",
+      "operation": "profile",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1117.398494,
+      "before": {
+        "rssBytes": 85991424,
+        "processPeakRssKiB": 83976
+      },
+      "after": {
+        "rssBytes": 146776064,
+        "processPeakRssKiB": 143336
+      },
+      "metrics": {
+        "btreeSeeks": "0",
+        "fetchBatches": "0",
+        "fetchRowsRead": "0",
+        "fetchVmSteps": "0",
+        "fullscanSteps": "999",
+        "indexSteps": "0",
+        "rowsRead": "1000",
+        "rowsWritten": "0",
+        "sortOperations": "0",
+        "vmSteps": "3007"
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 1,
+      "client": "sync",
+      "operation": "profile",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1211.528895,
+      "before": {
+        "rssBytes": 84639744,
+        "processPeakRssKiB": 82656
+      },
+      "after": {
+        "rssBytes": 145637376,
+        "processPeakRssKiB": 142224
+      },
+      "metrics": {
+        "btreeSeeks": "0",
+        "fetchBatches": "0",
+        "fetchRowsRead": "0",
+        "fetchVmSteps": "0",
+        "fullscanSteps": "999",
+        "indexSteps": "0",
+        "rowsRead": "1000",
+        "rowsWritten": "0",
+        "sortOperations": "0",
+        "vmSteps": "3007"
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 2,
+      "client": "sync",
+      "operation": "profile",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1213.9879170000002,
+      "before": {
+        "rssBytes": 86003712,
+        "processPeakRssKiB": 83988
+      },
+      "after": {
+        "rssBytes": 146939904,
+        "processPeakRssKiB": 143496
+      },
+      "metrics": {
+        "btreeSeeks": "0",
+        "fetchBatches": "0",
+        "fetchRowsRead": "0",
+        "fetchVmSteps": "0",
+        "fullscanSteps": "999",
+        "indexSteps": "0",
+        "rowsRead": "1000",
+        "rowsWritten": "0",
+        "sortOperations": "0",
+        "vmSteps": "3007"
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 0,
+      "client": "worker",
+      "operation": "execute",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1245.508016,
+      "before": {
+        "rssBytes": 99688448,
+        "processPeakRssKiB": 97352
+      },
+      "after": {
+        "rssBytes": 191545344,
+        "processPeakRssKiB": 187056
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 1,
+      "client": "worker",
+      "operation": "execute",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1158.326666,
+      "before": {
+        "rssBytes": 98705408,
+        "processPeakRssKiB": 96392
+      },
+      "after": {
+        "rssBytes": 190791680,
+        "processPeakRssKiB": 186320
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 2,
+      "client": "worker",
+      "operation": "execute",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1205.62727,
+      "before": {
+        "rssBytes": 98050048,
+        "processPeakRssKiB": 95752
+      },
+      "after": {
+        "rssBytes": 189374464,
+        "processPeakRssKiB": 184936
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 0,
+      "client": "worker",
+      "operation": "profile",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1099.060734,
+      "before": {
+        "rssBytes": 100491264,
+        "processPeakRssKiB": 98136
+      },
+      "after": {
+        "rssBytes": 193306624,
+        "processPeakRssKiB": 188776
+      },
+      "metrics": {
+        "btreeSeeks": "0",
+        "fetchBatches": "0",
+        "fetchRowsRead": "0",
+        "fetchVmSteps": "0",
+        "fullscanSteps": "999",
+        "indexSteps": "0",
+        "rowsRead": "1000",
+        "rowsWritten": "0",
+        "sortOperations": "0",
+        "vmSteps": "3007"
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 1,
+      "client": "worker",
+      "operation": "profile",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1105.35749,
+      "before": {
+        "rssBytes": 99684352,
+        "processPeakRssKiB": 97348
+      },
+      "after": {
+        "rssBytes": 191922176,
+        "processPeakRssKiB": 187424
+      },
+      "metrics": {
+        "btreeSeeks": "0",
+        "fetchBatches": "0",
+        "fetchRowsRead": "0",
+        "fetchVmSteps": "0",
+        "fullscanSteps": "999",
+        "indexSteps": "0",
+        "rowsRead": "1000",
+        "rowsWritten": "0",
+        "sortOperations": "0",
+        "vmSteps": "3007"
+      },
+      "correctness": "passed"
+    },
+    {
+      "sample": 2,
+      "client": "worker",
+      "operation": "profile",
+      "count": 1000,
+      "width": 4096,
+      "fill": 255,
+      "logicalCellBytes": 4104000,
+      "elapsedMs": 1239.583508,
+      "before": {
+        "rssBytes": 99516416,
+        "processPeakRssKiB": 97184
+      },
+      "after": {
+        "rssBytes": 191381504,
+        "processPeakRssKiB": 186896
+      },
+      "metrics": {
+        "btreeSeeks": "0",
+        "fetchBatches": "0",
+        "fetchRowsRead": "0",
+        "fetchVmSteps": "0",
+        "fullscanSteps": "999",
+        "indexSteps": "0",
+        "rowsRead": "1000",
+        "rowsWritten": "0",
+        "sortOperations": "0",
+        "vmSteps": "3007"
+      },
+      "correctness": "passed"
+    }
+  ]
+}

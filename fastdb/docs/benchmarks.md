@@ -236,3 +236,15 @@ Compared with the preceding nonzero run, memory and timing results are mixed;
 sync execute and worker profile peaks are lower, but no uniform latency or memory
 improvement is established by three samples. Both runs use the same harness and
 payload expression. Whole-process RSS and debug-run limitations still apply.
+
+
+Direct cell writing at `ee79e6789` passed all 12 samples of
+`node fastdb/scripts/bench-results.cjs 1000 4096 255`:
+[raw results](benchmark-results/2026-09-08-linux-debug-node-writer255-1000.json).
+Median ms / peak RSS MiB were sync execute 1223.7 / 137.7, sync profile
+1211.5 / 140.0, worker execute 1205.6 / 182.0 and worker profile 1105.4 / 183.0.
+The per-cell JSON String and append copy are removed, but this run does not show
+a consistent whole-process memory or latency improvement versus response-buffer
+reuse alone. Both use the same harness and workload; three sequential debug
+samples per operation, runtime/setup memory and allocator variance limit the
+comparison. This does not establish a release performance guarantee or memory cap.
