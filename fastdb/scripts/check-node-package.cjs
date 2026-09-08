@@ -55,6 +55,25 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await assert.rejects(async () => client.all('SELECT vector_extract(embedding) FROM docs'));
     assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
   }
+  async function withDuplicateColumns(client) {
+    await client.execute('BEGIN');
+    try {
+      const bytes = Buffer.from([0,255,49]);
+      const typed = 'WITH q(x,x) AS (SELECT $flag,$bytes FROM docs), r AS (SELECT q.* FROM q) SELECT r.* FROM r';
+      const result = await client.execute(typed, {$flag:true,$bytes:bytes});
+      assert.deepEqual(result.columns, ['x','x']);
+      assert.deepEqual(result.rows, [[true,bytes]]);
+      assert.deepEqual((await client.profileSelect(typed, {$flag:true,$bytes:bytes})).result.rows, result.rows);
+      const native = 'WITH q(x,x) AS NOT MATERIALIZED (SELECT 10,20) SELECT v.* FROM docs d JOIN q v ON 1';
+      assert.deepEqual((await client.execute(native)).rows, [[10n,20n]]);
+      const named = await client.execute('WITH q(x,x) AS (SELECT 10,20) SELECT v.X FROM docs d JOIN q v ON 1');
+      assert.deepEqual(named.columns, ['x']);
+      assert.deepEqual(named.rows, [[10n]]);
+      await client.execute('CREATE TABLE duplicate_copy(a,b CHECK(b<>a))');
+      await client.execute('WITH q(x,x) AS (SELECT 10,20) INSERT INTO duplicate_copy SELECT v.* FROM docs d JOIN q v ON 1');
+      assert.deepEqual(await client.all('SELECT * FROM duplicate_copy'), [[10n,20n]]);
+    } finally { await client.execute('ROLLBACK'); }
+  }
   async function withCompositeCounts(client) {
     await client.execute('BEGIN');
     try {
@@ -190,6 +209,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     }
     await withVectorFields(db);
     await withCompositeCounts(db);
+    await withDuplicateColumns(db);
     await withWrites(db);
   } finally { db.close(); }
   assert.throws(()=>db.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
@@ -270,6 +290,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal((await worker.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
     assert.equal((await worker.checkCollectionIntegrity('docs')).documents, 1n);
     await withCompositeCounts(worker);
+    await withDuplicateColumns(worker);
     await withWrites(worker);
   } finally { await worker.close(); }
   await assert.rejects(worker.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
