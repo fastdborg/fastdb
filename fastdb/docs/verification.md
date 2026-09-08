@@ -3675,3 +3675,14 @@ passes; formatting, Clippy with warnings denied and strict TypeScript. Logs
 `/tmp/fastdb-tuple-local-cte-check.log` and `/tmp/fastdb-tuple-local-cte.log`.
 No upstream files or dependencies changed. Full V1 gates remain open; no
 publication occurred.
+
+
+## Chained tuple-local CTE columns — 2026-09-09
+
+The local tuple CTE regression now covers chained definitions with declared
+column names and renamed projections. Relational and collection sources retain
+expected correlated matches and NULL tuples. All twenty-three write tests
+passed, plus formatting and all-target fastdb-tests Clippy with warnings denied.
+Logs `/tmp/fastdb-tuple-local-chain.log` and
+`/tmp/fastdb-tuple-local-chain-clippy.log`. Only tests/documentation changed from
+`65f921980`; no new full-suite/client run is claimed. Full V1 gates remain open.

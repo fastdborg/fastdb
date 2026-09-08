@@ -999,9 +999,15 @@ fn tuple_local_ctes_supply_correlated_lookup_rows() {
         q(&c, sql);
     }
     for source in ["lookup", "lookup_docs"] {
+        for definition in [
+            "chosen AS (SELECT n,a,b FROM SOURCE)",
+            "base(k,v,w) AS (SELECT n,a,b FROM SOURCE), chosen AS (SELECT k AS n,v AS a,w AS b FROM base)",
+        ] {
         q(&c, "BEGIN");
         let expected=q(&c,"UPDATE native SET (a,b)=(WITH chosen AS (SELECT n,a,b FROM lookup) SELECT x.a,x.b FROM chosen x WHERE x.n=native.n) RETURNING n,a,b");
-        assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(WITH chosen AS (SELECT n,a,b FROM {source}) SELECT x.a,x.b FROM chosen x WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows);
+        let definition=definition.replace("SOURCE",source);
+        assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(WITH {definition} SELECT x.a,x.b FROM chosen x WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows);
         q(&c, "ROLLBACK");
+        }
     }
 }
