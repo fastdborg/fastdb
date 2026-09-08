@@ -5,7 +5,15 @@ Rust `Connection::select_with_limits(sql, params, ResultLimits)` and
 `max_payload_bytes` on native and typed SELECT results. Existing APIs retain
 unbounded result behavior. Overflow returns `FDB_LIMIT`, discards the result,
 and stops collection at the first rejected row. Column metadata is charged even
-for empty results. Non-SELECT statements and FETCH are rejected by these APIs.
+for empty results. Non-SELECT statements are rejected by these APIs.
+
+One-hop FETCH shares the final payload budget. Primary collection charges row
+counts and non-FETCH columns; reference placeholders are excluded. The resolver
+charges each resolved output value, including duplicate occurrences and nulls
+for missing targets, before cloning expanded output documents. Its independent
+16,384-reference and 64 MiB tagged-JSON workspace/output limits still apply.
+Temporary references and the deduplicated target cache are not covered by the
+final payload budget. Fetch queries retain their atomic snapshot scope.
 
 Payload accounting uses UTF-8 byte lengths for column names, strings, object
 keys and record table/string keys; null and booleans cost one byte; numbers and
@@ -16,8 +24,8 @@ usage, the temporary decoded row, engine working memory, or execution time.
 
 Node clients expose `selectWithLimits` and `profileSelectWithLimits` with
 required bigint `maxRows` and `maxPayloadBytes`; worker calls accept AbortSignal.
-FETCH expansion, RETURNING, INSERT SELECT candidates and transfer remain separate
-integration work. This does not close the V1 resource gate.
+RETURNING, INSERT SELECT candidates and transfer remain separate integration
+work. This does not close the V1 resource gate.
 
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.

@@ -61,23 +61,32 @@ impl Connection {
         &self,
         references: &[Value],
     ) -> Result<(Vec<Value>, FetchMetrics)> {
+        self.fetch_records_profiled_with_budget(references, None)
+    }
+    pub(crate) fn fetch_records_profiled_with_budget(
+        &self,
+        references: &[Value],
+        result_budget: Option<&mut crate::budget::ResultBudget>,
+    ) -> Result<(Vec<Value>, FetchMetrics)> {
         if references.len() > MAX_FETCH_REFERENCES {
             return Err(Error::Limit("fetch reference count exceeds 16384".into()));
         }
         let mut metrics = FetchMetrics::default();
-        let values =
-            self.atomic(|| self.fetch_records_measured(references, MAX_FETCH_BYTES, &mut metrics))?;
+        let values = self.atomic(|| {
+            self.fetch_records_measured(references, MAX_FETCH_BYTES, &mut metrics, result_budget)
+        })?;
         Ok((values, metrics))
     }
     #[cfg(test)]
     fn fetch_records_inner(&self, references: &[Value], max_bytes: usize) -> Result<Vec<Value>> {
-        self.fetch_records_measured(references, max_bytes, &mut FetchMetrics::default())
+        self.fetch_records_measured(references, max_bytes, &mut FetchMetrics::default(), None)
     }
     fn fetch_records_measured(
         &self,
         references: &[Value],
         max_bytes: usize,
         metrics: &mut FetchMetrics,
+        mut result_budget: Option<&mut crate::budget::ResultBudget>,
     ) -> Result<Vec<Value>> {
         let mut budget = FetchBudget {
             used: 0,
@@ -255,6 +264,14 @@ impl Connection {
                 return Err(Error::Limit("fetch byte limit exceeded".into()));
             }
             output_bytes += bytes;
+            if let Some(budget) = result_budget.as_deref_mut() {
+                let value = id
+                    .as_ref()
+                    .and_then(|id| found.get(id))
+                    .map(|(value, _)| value)
+                    .unwrap_or(&Value::Null);
+                budget.value(value)?;
+            }
         }
         Ok(identities
             .into_iter()

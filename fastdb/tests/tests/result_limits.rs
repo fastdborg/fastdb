@@ -84,3 +84,90 @@ fn result_limits_cover_native_and_typed_rows_and_preserve_pending_writes() {
     c.execute("ROLLBACK", &p).unwrap();
     assert_eq!(c.execute("SELECT n FROM native", &p).unwrap().rows.len(), 2);
 }
+
+#[test]
+fn fetch_limits_charge_expanded_duplicates_missing_targets_and_other_columns() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let p = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {id:docs:a,n:7}",
+        "CREATE TABLE native(id INTEGER PRIMARY KEY,n TEXT)",
+        "INSERT INTO native VALUES(1,'猫')",
+        "CREATE TABLE positions(n INTEGER)",
+        "INSERT INTO positions VALUES(1),(2)",
+        "BEGIN",
+        "INSERT INTO docs {id:docs:pending,n:9}",
+    ] {
+        c.execute(sql, &p).unwrap();
+    }
+    for (sql, bytes) in [
+        // v + {id: docs:a, n:7} = 1 + 2+5+1+8.
+        ("SELECT record::fetch(docs:a) AS v", 17),
+        ("SELECT record::fetch(docs:a) AS v FROM positions", 33),
+        // Two fetched columns plus a native integer column.
+        (
+            "SELECT record::fetch(docs:a) AS v,record::fetch(docs:a) AS w,1 AS n",
+            43,
+        ),
+        // Native target object: id key+integer, n key+UTF-8 value.
+        ("SELECT record::fetch(native:1) AS v", 15),
+        ("SELECT record::fetch(docs:absent) AS v", 2),
+        ("SELECT record::fetch(unknown:absent) AS v", 2),
+        ("SELECT record::fetch(NULL) AS v", 2),
+        // Reference length must not count when its resolved value is null.
+        (
+            "SELECT record::fetch(docs:averylongmissingkey) AS v FROM positions",
+            3,
+        ),
+    ] {
+        let expected = c.profile_select(sql, &p).unwrap();
+        let limits = ResultLimits {
+            max_rows: expected.result.rows.len(),
+            max_payload_bytes: bytes,
+        };
+        let actual = c.profile_select_with_limits(sql, &p, limits).unwrap();
+        assert_eq!(actual.result.rows, expected.result.rows, "{sql}");
+        assert_eq!(
+            actual.metrics.fetch_batches, expected.metrics.fetch_batches,
+            "{sql}"
+        );
+        assert!(
+            matches!(
+                c.select_with_limits(
+                    sql,
+                    &p,
+                    ResultLimits {
+                        max_payload_bytes: bytes - 1,
+                        ..limits
+                    }
+                ),
+                Err(Error::Limit(_))
+            ),
+            "{sql}"
+        );
+        assert!(
+            matches!(
+                c.select_with_limits(
+                    sql,
+                    &p,
+                    ResultLimits {
+                        max_rows: limits.max_rows - 1,
+                        ..limits
+                    }
+                ),
+                Err(Error::Limit(_))
+            ),
+            "{sql}"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            c.select_with_limits(sql, &p, limits).unwrap().rows,
+            expected.result.rows
+        );
+    }
+    assert_eq!(c.execute("SELECT n FROM docs", &p).unwrap().rows.len(), 2);
+    c.execute("ROLLBACK", &p).unwrap();
+    assert_eq!(c.execute("SELECT n FROM docs", &p).unwrap().rows.len(), 1);
+}

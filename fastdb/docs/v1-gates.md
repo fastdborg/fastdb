@@ -177,4 +177,4 @@ The local-WITH merged-key reproducer now returns `(1,NULL),(4,3)` through the co
 
 ## Result-budget implementation inventory
 
-[result-budgets.md](result-budgets.md) records the current public/internal collection paths and the next bounded-SELECT implementation step. No bounded-result API has been added yet. The inventory explicitly retains FETCH expansion, write-candidate/RETURNING atomicity and engine working memory as unfinished requirements rather than treating one row collector as the complete resource gate.
+[result-budgets.md](result-budgets.md) records the public/internal collection paths and implemented explicit bounded SELECT APIs in Rust and both Node clients, including cooperative worker cancellation. One-hop FETCH now shares the final payload budget before duplicate output cloning. Write-candidate/RETURNING atomicity, engine working memory, temporary decoding/transport/fetch workspace peaks and deadlines remain unfinished resource requirements. These APIs do not close the V1 resource gate.

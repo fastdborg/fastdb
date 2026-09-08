@@ -37,7 +37,10 @@ impl ResultBudget {
         }
         Ok(())
     }
-    fn value(&mut self, value: &Value) -> Result<()> {
+    pub(crate) fn value(&mut self, value: &Value) -> Result<()> {
+        if self.limits.is_none() {
+            return Ok(());
+        }
         match value {
             Value::Null | Value::Boolean(_) => self.add(1),
             Value::Integer(_) | Value::Number(_) => self.add(8),
@@ -66,6 +69,10 @@ impl ResultBudget {
         }
     }
     pub(crate) fn row(&mut self, row: &[Value]) -> Result<()> {
+        self.row_with_fetches(row, &[])
+    }
+    // FETCH slots are charged when resolved, before duplicate expansion.
+    pub(crate) fn row_with_fetches(&mut self, row: &[Value], fetched: &[bool]) -> Result<()> {
         let Some(limits) = self.limits else {
             return Ok(());
         };
@@ -73,8 +80,10 @@ impl ResultBudget {
             return Err(Error::Limit("SELECT result row limit exceeded".into()));
         }
         self.rows += 1;
-        for value in row {
-            self.value(value)?;
+        for (i, value) in row.iter().enumerate() {
+            if !fetched.get(i).copied().unwrap_or(false) {
+                self.value(value)?;
+            }
         }
         Ok(())
     }
@@ -136,5 +145,101 @@ mod tests {
         .unwrap();
         budget.bytes = usize::MAX;
         assert!(matches!(budget.row(&[Value::Null]), Err(Error::Limit(_))));
+    }
+}
+
+#[cfg(test)]
+mod evaluation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use turso_ext::{scalar, ResultCode, Value as ExtValue};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    #[scalar(name = "result_budget_tick")]
+    fn result_budget_tick(args: &[ExtValue]) -> ExtValue {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        ExtValue::from_integer(args[0].to_integer().unwrap())
+    }
+    #[test]
+    fn result_budget_stops_at_rejected_row_without_planning_callbacks() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        unsafe {
+            let api = c.engine._build_turso_ext();
+            let code = (api.register_scalar_function)(
+                api.ctx,
+                c"result_budget_tick".as_ptr(),
+                1,
+                false,
+                0,
+                result_budget_tick,
+                None,
+                None,
+            );
+            c.engine._free_extension_ctx(api);
+            assert_eq!(code, ResultCode::OK);
+        }
+        let p = crate::Parameters::new();
+        for sql in [
+            "CREATE TABLE native(n INTEGER)",
+            "INSERT INTO native VALUES(1),(2),(3)",
+            "CREATE TABLE docs",
+            "INSERT INTO docs {n:1}",
+            "INSERT INTO docs {n:2}",
+            "INSERT INTO docs {n:3}",
+            "BEGIN",
+            "INSERT INTO native VALUES(4)",
+        ] {
+            c.execute(sql, &p).unwrap();
+        }
+        for source in ["native", "docs"] {
+            for fetch in [false, true] {
+                let sql = format!(
+                    "SELECT result_budget_tick(n) AS n{} FROM {source}",
+                    if fetch {
+                        ",record::fetch(missing:a) AS f"
+                    } else {
+                        ""
+                    }
+                );
+                CALLS.store(0, Ordering::SeqCst);
+                c.execute(&format!("EXPLAIN {sql}"), &p).unwrap();
+                assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+                for accepted in [0, 1, 2] {
+                    for rows in [true, false] {
+                        let limits = ResultLimits {
+                            max_rows: if rows { accepted } else { 100 },
+                            max_payload_bytes: if rows {
+                                1000
+                            } else {
+                                1 + usize::from(fetch) + 8 * accepted
+                            },
+                        };
+                        CALLS.store(0, Ordering::SeqCst);
+                        let error = c.profile_select_with_limits(&sql, &p, limits).unwrap_err();
+                        assert_eq!(error.code(), "FDB_LIMIT");
+                        assert_eq!(
+                            CALLS.load(Ordering::SeqCst),
+                            accepted + 1,
+                            "{sql}, {limits:?}"
+                        );
+                        assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+                    }
+                }
+                CALLS.store(0, Ordering::SeqCst);
+                let result = c
+                    .select_with_limits(
+                        &sql,
+                        &p,
+                        ResultLimits {
+                            max_rows: 4,
+                            max_payload_bytes: 1000,
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(CALLS.load(Ordering::SeqCst), result.rows.len());
+            }
+        }
+        c.execute("ROLLBACK", &p).unwrap();
+        assert_eq!(c.execute("SELECT n FROM native", &p).unwrap().rows.len(), 3);
     }
 }

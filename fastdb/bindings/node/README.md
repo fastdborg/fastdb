@@ -274,7 +274,9 @@ const result = await asyncDb.selectWithLimits(
 
 Overflow throws/rejects with `FDB_LIMIT` and transaction observations, without
 partial rows or metrics. Empty results still charge column names. These APIs
-accept one SQL SELECT; FETCH is currently unsupported. Existing execute/profile
+accept one SQL SELECT, including supported one-hop FETCH. Resolved documents
+and duplicate occurrences count toward the final payload budget; missing targets
+count as nulls. Reference placeholders are excluded. Existing execute/profile
 methods keep their current result policy.
 
 Payload bytes count UTF-8 column names, strings, object keys, record table names
@@ -282,4 +284,6 @@ and string keys; integer keys and numbers cost eight bytes, null and booleans on
 byte, and binary/encoded vectors their byte length. Objects and arrays sum their
 contents. These are logical result budgets, excluding container/allocator
 costs, temporary decoding, Node transport copies and engine working memory.
-They are not process memory limits or deadlines.
+FETCH retains its independent reference and tagged-JSON limits; temporary
+references and the target cache are not covered by the final payload budget.
+These limits are not process memory limits or deadlines.

@@ -2083,3 +2083,40 @@ test('bounded worker SELECT cancellation cleans up and allows retry', async () =
     assert.deepEqual((await db.selectWithLimits('SELECT count(*) AS n FROM nums',limits)).rows, [[1000n]]);
   } finally { await db.close(); }
 });
+
+test('bounded FETCH shares final payload limits across duplicates and scalar columns', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {id:docs:a,n:7}');
+      await db.execute('CREATE TABLE positions(n INTEGER)');
+      await db.execute('INSERT INTO positions VALUES(1),(2)');
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:pending,n:9}');
+      for (const [sql, bytes, rows] of [
+        ['SELECT record::fetch(docs:a) AS v',17n,1n],
+        ['SELECT record::fetch(docs:a) AS v FROM positions',33n,2n],
+        ['SELECT record::fetch(docs:a) AS v,record::fetch(docs:a) AS w,1 AS n',43n,1n],
+        ['SELECT record::fetch(docs:verylongmissingkey) AS v FROM positions',3n,2n],
+        ['SELECT record::fetch(NULL) AS v',2n,1n],
+      ]) {
+        const limits = {maxRows:rows,maxPayloadBytes:bytes};
+        const expected = await db.profileSelect(sql);
+        const actual = await db.profileSelectWithLimits(sql,limits);
+        assert.deepEqual(actual.result,expected.result);
+        assert.equal(actual.metrics.fetchBatches,expected.metrics.fetchBatches);
+        for (const rejected of [{...limits,maxPayloadBytes:bytes-1n},{...limits,maxRows:rows-1n}]) {
+          await assert.rejects(Promise.resolve().then(() => db.selectWithLimits(sql,rejected)), e => {
+            assert.equal(e.code,'FDB_LIMIT');
+            assert.deepEqual(e.transaction,{before:'active',after:'active'});
+            return true;
+          });
+        }
+        assert.deepEqual((await db.selectWithLimits(sql,limits)).rows,expected.result.rows);
+      }
+      await db.execute('ROLLBACK');
+      assert.equal((await db.all('SELECT n FROM docs')).length,1);
+    } finally { await db.close(); }
+  }
+});

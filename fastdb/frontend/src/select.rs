@@ -3706,7 +3706,7 @@ impl Connection {
         crate::parser_stack(|| self.profile_select_inner(sql, params, None))
     }
     /// Execute one SELECT with limits on retained result rows and logical payload.
-    /// FETCH is currently unsupported. Limits do not bound engine working memory.
+    /// FETCH expansion shares the payload budget. Engine working memory is excluded.
     pub fn select_with_limits(
         &self,
         sql: &str,
@@ -3745,11 +3745,6 @@ impl Connection {
         let has_fetch = fastql_parser::tokenize(&expanded)?
             .iter()
             .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch");
-        if has_fetch && limits.is_some() {
-            return Err(Error::Unsupported(
-                "bounded SELECT does not yet support FETCH".into(),
-            ));
-        }
         let execute = || match self.lower_collection_select(
             &sql,
             &expanded,
@@ -6434,7 +6429,14 @@ impl Connection {
                             output.push(crate::from_engine(value.clone()));
                         }
                     }
-                    budget.row(&output)?;
+                    budget.row_with_fetches(
+                        &output,
+                        if native_insert || explain {
+                            &[]
+                        } else {
+                            &fetched
+                        },
+                    )?;
                     rows.push(output);
                     Ok(())
                 })();
@@ -6460,7 +6462,8 @@ impl Connection {
                         .map(|(value, _)| value.clone())
                 })
                 .collect::<Vec<_>>();
-            let (values, fetch_metrics) = self.fetch_records_profiled(&refs)?;
+            let (values, fetch_metrics) =
+                self.fetch_records_profiled_with_budget(&refs, Some(&mut budget))?;
             metrics.fetch_batches = fetch_metrics.batches;
             metrics.fetch_rows_read = fetch_metrics.rows_read;
             metrics.fetch_vm_steps = fetch_metrics.vm_steps;

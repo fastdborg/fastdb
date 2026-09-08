@@ -2523,3 +2523,29 @@ five vector encodings in both clients and installed TypeScript consumers.
 FETCH accounting, callback-count qualification, engine working-memory budgets,
 transport peaks and the remaining V1 release gates remain open. No package was
 published and no Git remote was pushed.
+
+### Bounded SELECT includes one-hop FETCH
+
+Bounded Rust and Node SELECT/profile APIs now accept supported one-hop FETCH.
+The primary collector charges row counts and non-fetch columns; reference
+placeholders do not consume the final payload budget. The resolver charges every
+resolved output value, including duplicates and missing-target nulls, before
+cloning expanded output documents. Existing snapshot/savepoint behavior and
+independent 16,384-reference and 64 MiB tagged-JSON fetch limits remain intact.
+The final payload budget excludes temporary references and the target cache.
+
+Rust and both Node clients pass exact/one-over budget cases for fetched values,
+duplicates, multiple fetched columns, mixed scalar projections, and missing/null
+targets, with pending-write preservation and retry. Rust also covers native table
+targets. A volatile-callback unit test proves native/typed primary collection
+stops at the first rejected row for row and scalar-payload budgets, including
+FETCH queries, while EXPLAIN planning invokes no callbacks. It does not claim
+that final expansion overflow stops earlier target-cache reads.
+
+The complete scoped check passed 516 Rust tests (one existing ignored gate),
+68 Node/application tests, formatting, Clippy and strict TypeScript. Installed
+package smokes passed on Linux x64 Node 22.0.0 and 24.19.0 with the debug addon
+(10 files, 60,545,008 packed bytes), including duplicate native-target FETCH exact
+and overflow cases, retry through both clients and installed consumer types.
+The write-candidate/RETURNING, engine memory, temporary workspace/transport,
+deadline, interrupted I/O and broader V1 release gates remain unfinished.

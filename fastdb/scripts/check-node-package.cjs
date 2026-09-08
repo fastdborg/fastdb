@@ -66,6 +66,18 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
   async function withDuplicateColumns(client) {
     await client.execute('BEGIN');
     try {
+      await client.execute('CREATE TABLE budget_targets(id INTEGER PRIMARY KEY,n TEXT)');
+      await client.execute("INSERT INTO budget_targets VALUES(1,'猫')");
+      const fetchSql = 'SELECT record::fetch(budget_targets:1) AS v,record::fetch(budget_targets:1) AS w';
+      const fetchBudget = {maxRows:1n,maxPayloadBytes:30n};
+      const fetched = await client.profileSelect(fetchSql);
+      assert.deepEqual((await client.selectWithLimits(fetchSql,fetchBudget)).rows,fetched.result.rows);
+      assert.deepEqual((await client.profileSelectWithLimits(fetchSql,fetchBudget)).result,fetched.result);
+      await assert.rejects(async () => client.selectWithLimits(fetchSql,{...fetchBudget,maxPayloadBytes:29n}), error => {
+        assert.equal(error.code,'FDB_LIMIT');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
       const bytes = Buffer.from([0,255,49]);
       const typed = 'WITH q(x,x) AS (SELECT $flag,$bytes FROM docs), r AS (SELECT q.* FROM q) SELECT r.* FROM r';
       const result = await client.execute(typed, {$flag:true,$bytes:bytes});
