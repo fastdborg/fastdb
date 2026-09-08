@@ -1186,6 +1186,15 @@ test('duplicate projection names preserve positional values in both clients', as
       const cte = await db.execute('WITH q(x,x) AS (SELECT flag,data FROM docs), r AS (SELECT q.* FROM q) SELECT r.* FROM r');
       assert.deepEqual(cte.columns, result.columns);
       assert.deepEqual(cte.rows, result.rows);
+      const foldedCte = await db.execute('WITH q(x,X) AS (SELECT flag,data FROM docs), r AS (SELECT q.* FROM q) SELECT r.* FROM r');
+      assert.deepEqual(foldedCte.columns, ['x', 'x']);
+      assert.deepEqual(foldedCte.rows, result.rows);
+      const inheritedNames = await db.execute('WITH q AS (SELECT flag AS x,data AS X FROM docs) SELECT q.* FROM q');
+      assert.deepEqual(inheritedNames.columns, ['x', 'X']);
+      assert.deepEqual(inheritedNames.rows, result.rows);
+      const declaredName = await db.execute('WITH q("Flag") AS (SELECT flag FROM docs) SELECT q."FLAG",q."Flag" AS "Public Name" FROM q');
+      assert.deepEqual(declaredName.columns, ['flag', 'Public Name']);
+      assert.deepEqual(declaredName.rows, [[true, true]]);
       const star = await db.execute('SELECT q.* FROM docs d JOIN (SELECT 10 AS x,20 AS x) q ON 1');
       assert.deepEqual(star.columns, ['x', 'x']);
       assert.deepEqual(star.rows, [[10n, 20n]]);
