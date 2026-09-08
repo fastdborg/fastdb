@@ -889,11 +889,11 @@ impl Connection {
                 order_by,
                 limit,
             } => {
-                if indexed.is_some() || !order_by.is_empty() || limit.is_some() {
+                if indexed.is_some() || !order_by.is_empty() {
                     return Err(unsupported("this collection DELETE clause"));
                 }
                 validate_returning(&returning)?;
-                let rows = self.write_candidates(&tbl_name, with, where_clause, None, &[], params)?;
+                let rows = self.write_candidates(&tbl_name, with, where_clause, limit, &[], params)?;
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {

@@ -4332,3 +4332,22 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-update-limit-check.log`. No upstream source, dependency or storage
 format changes; no publication occurred. Full V1 remains open.
+
+
+## Collection DELETE LIMIT — 2026-09-09
+
+Collection DELETE now passes LIMIT/OFFSET into the existing candidate SELECT
+before atomic deletion. Differential cases cover zero, positive and negative
+limits, nonzero offsets and a page past the rowset. They verify native affected
+counts and remaining rows, exact managed-index lookup presence/absence,
+integrity and index restoration on rollback. All 38 write tests passed in the
+focused run (`/tmp/fastdb-delete-limit.log`). Unordered DELETE introduces no
+row-selection order guarantee. Bound expressions, planner variations and
+cancellation qualification remain open, as does full V1.
+
+The complete scoped check passed on `14ea10b31` plus this change: 611 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+87 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-delete-limit-check.log`. No upstream source, dependency or storage
+format changes; no publication occurred. Full V1 remains open.

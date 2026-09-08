@@ -1642,3 +1642,48 @@ fn update_limit_matches_native_candidates() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn delete_limit_matches_native_and_restores_indexes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER)",
+        "INSERT INTO native VALUES(1),(2),(3)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n) SELECT n FROM native",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+    ] {
+        q(&c, sql);
+    }
+    for limit in ["0", "1", "2 OFFSET 1", "-1", "1 OFFSET 9"] {
+        q(&c, "BEGIN");
+        let expected = q(&c, &format!("DELETE FROM native LIMIT {limit}"));
+        let actual = q(&c, &format!("DELETE FROM docs LIMIT {limit}"));
+        assert_eq!(actual.affected, expected.affected);
+        let remaining = q(&c, "SELECT n FROM native ORDER BY n").rows;
+        assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, remaining);
+        for n in 1..=3 {
+            let exists = remaining.contains(&vec![Value::Integer(n)]);
+            assert_eq!(
+                c.lookup_index("docs", "docs_n", &Value::Integer(n))
+                    .unwrap()
+                    .len(),
+                usize::from(exists)
+            );
+        }
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            remaining.len() as u64
+        );
+        q(&c, "ROLLBACK");
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            3
+        );
+    }
+}
