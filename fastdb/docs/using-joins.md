@@ -56,3 +56,6 @@ Renamed and chained CTE keys now have 27 execute/profile differential shapes acr
 
 
 Quoted-key metadata now has 27 execute/profile native comparisons for mixed case, spaces, keywords and explicit aliases. Explicit CTE names follow pinned ASCII lowercase normalization; qualified typed projections retain declared names.
+
+
+Mixed numeric/text affinity now has 18 execute/profile cases against native ON predicates with unary plus on the document-side operand. Documents have no declared SQL affinity; a typeless native column is not an equivalent TEXT-affinity oracle. RIGHT joins retain normalized operand order.

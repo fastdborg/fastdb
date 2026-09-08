@@ -881,3 +881,55 @@ fn using_quoted_key_labels_and_explicit_aliases_match_native() {
         }
     }
 }
+
+#[test]
+fn using_mixed_scalar_keys_match_native_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {n:1,k:1}",
+        "INSERT INTO docs {n:2,k:'1'}",
+        "INSERT INTO docs {n:3,k:'01'}",
+        "INSERT INTO docs {n:4,k:null}",
+        "CREATE TABLE baseline(n INTEGER,k)",
+        "INSERT INTO baseline VALUES(1,1),(2,'1'),(3,'01'),(4,NULL)",
+    ] {
+        query(sql);
+    }
+    for affinity in ["", "INTEGER", "TEXT"] {
+        query(&format!("CREATE TABLE b(m INTEGER,k {affinity})"));
+        query("INSERT INTO b VALUES(10,1),(20,'1'),(30,'01'),(40,NULL)");
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for source in ["docs", "(SELECT n,k FROM docs)"] {
+                let sql = |source: &str| {
+                    format!("SELECT a.n,b.m,k FROM {source} a {join} b USING(k) ORDER BY a.n,b.m")
+                };
+                // Document values have no declared SQL affinity. Apply unary
+                // plus at the comparison, not behind another column boundary.
+                let retained = if join == "RIGHT JOIN" { "b.k" } else { "a.k" };
+                let predicate = if join == "RIGHT JOIN" {
+                    "b.k=+a.k"
+                } else {
+                    "+a.k=b.k"
+                };
+                let expected = query(&format!("SELECT a.n,b.m,{retained} FROM baseline a {join} b ON {predicate} ORDER BY a.n,b.m"));
+                let logical = sql(source);
+                assert_eq!(query(&logical).rows, expected.rows, "{affinity}: {logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{affinity}: {logical}"
+                );
+            }
+        }
+        query("DROP TABLE b");
+    }
+}
