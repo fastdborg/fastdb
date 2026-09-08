@@ -579,3 +579,67 @@ fn iterator_predicate_subqueries_preserve_native_nulls() {
         0
     );
 }
+
+#[test]
+fn grouped_and_windowed_iterators_match_native_and_preserve_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::from([("$json".into(), Value::String("[1,2,2,null]".into()))]);
+    let empty = Parameters::new();
+    for sql in [
+        "CREATE TABLE native(n INTEGER)",
+        "INSERT INTO native VALUES(1),(2)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n) SELECT n FROM native",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    for template in [
+        "SELECT x.value,count(*) AS total FROM SOURCE d CROSS JOIN json_each($json) x GROUP BY x.value HAVING count(*)>1 ORDER BY x.value",
+        "SELECT DISTINCT x.value FROM SOURCE d CROSS JOIN json_each($json) x ORDER BY x.value",
+        "SELECT d.n,x.value,row_number() OVER(PARTITION BY d.n ORDER BY x.key) AS r FROM SOURCE d CROSS JOIN json_each($json) x ORDER BY d.n,x.key",
+        "SELECT d.n,x.value,sum(x.value) OVER w AS total FROM SOURCE d CROSS JOIN json_each($json) x WINDOW w AS(PARTITION BY d.n ORDER BY x.key) ORDER BY d.n,x.key",
+    ] {
+        let expected=c.execute(&template.replace("SOURCE","native"),&params).unwrap();
+        let sql=template.replace("SOURCE","docs");
+        for actual in [c.execute(&sql,&params).unwrap(),c.profile_select(&sql,&params).unwrap().result] {
+            assert_eq!(actual.columns,expected.columns,"{sql}");
+            assert_eq!(actual.rows,expected.rows,"{sql}");
+        }
+    }
+    for sql in [
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<3)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(0)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    let sql="INSERT INTO output(n) SELECT row_number() OVER(ORDER BY x.key) FROM docs d CROSS JOIN json_each($json) x WHERE d.n=1 RETURNING n";
+    assert_eq!(
+        c.execute(sql, &params).unwrap_err().code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM output", &empty).unwrap().rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    assert!(c
+        .lookup_index("output", "output_n", &Value::Integer(1))
+        .unwrap()
+        .is_empty());
+    let small = Parameters::from([("$json".into(), Value::String("[1,2]".into()))]);
+    assert_eq!(
+        c.execute(sql, &small).unwrap().rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    c.execute("ROLLBACK", &empty).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

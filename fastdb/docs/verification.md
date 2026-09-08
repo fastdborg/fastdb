@@ -2908,3 +2908,23 @@ recent Rust/worker iterator deadline regressions with the source suite. Installe
 consumer evidence remains separately recorded. No upstream implementation or
 dependencies changed; general table functions, broader query/type qualification
 and full V1 release gates remain open. No publication occurred.
+
+
+## Grouped and windowed JSON iterators — 2026-09-08
+
+Native differential coverage now combines collection JSON iterator sources with
+GROUP BY/HAVING, DISTINCT, row_number and named sum windows, including repeated
+values and NULLs. Execute and profile results/columns agree with ordinary native
+tables. A windowed INSERT SELECT RETURNING regression verifies that a later field
+validation failure restores prior document/index state, preserves the active
+transaction and permits a smaller retry; outer rollback leaves no output rows.
+
+All nine table_functions tests passed, together with fastdb-tests formatting and
+all-target Clippy with warnings denied. Logs:
+`/tmp/fastdb-iterator-group-window.log` and
+`/tmp/fastdb-iterator-group-window-clippy.log`. Only tests/documentation changed
+from `a07d9698b`; no full-suite or client rerun is claimed. The latest complete
+scoped check remains 567 Rust and 81 Node/application passes with one existing
+ignored trigger gate. This adds integration evidence, not general window/frame
+or grouping completeness. Full V1 release gates remain open; no publication
+occurred.
