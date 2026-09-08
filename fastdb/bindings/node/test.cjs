@@ -2760,6 +2760,11 @@ test('aggregate tuples preserve empty groups and rollback in both clients', asyn
       const filtered = await db.execute('UPDATE docs SET (a,b)=(SELECT sum(x.a) FILTER(WHERE x.a>docs.n*7),count(*) FILTER(WHERE x.a>docs.n*7) FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
       assert.deepEqual(filtered.rows, [[1n,11n,1n],[2n,null,0n]]);
       assert.deepEqual(filtered.transaction, { before: 'active', after: 'active' });
+      await db.execute('CREATE TABLE allowed(n INTEGER,a INTEGER)');
+      await db.execute('INSERT INTO allowed VALUES(1,11)');
+      const nested = await db.execute('UPDATE docs SET (a,b)=(SELECT sum(x.a) FILTER(WHERE EXISTS(SELECT 1 FROM allowed y WHERE y.a=x.a AND y.n=docs.n)),count(*) FILTER(WHERE EXISTS(SELECT 1 FROM allowed y WHERE y.a=x.a AND y.n=docs.n)) FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
+      assert.deepEqual(nested.rows, [[1n,11n,1n],[2n,null,0n]]);
+      assert.deepEqual(nested.transaction, { before: 'active', after: 'active' });
       await db.execute('ROLLBACK');
       assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,0n,0n],[2n,0n,0n]]);
     } finally { await db.close(); }

@@ -4065,3 +4065,13 @@ TypeScript. Log `/tmp/fastdb-filter-subquery-check.log`; addon rebuilt. The
 initial nested-correlation failure was fixed and the final full run exited 0.
 No upstream source, dependency or storage-format changes; no publication.
 Broader query qualification and full V1 release gates remain open.
+
+
+## Node aggregate FILTER subqueries — 2026-09-09
+
+Both clients now verify nested EXISTS inside SUM/COUNT FILTER predicates with
+references to both the lookup row and outer document. Selected/empty aggregate
+results, active transaction reports and rollback pass. All 87 Node/application
+tests passed against the addon from the preceding full check. Log
+`/tmp/fastdb-filter-subquery-node.log`. Only tests/docs changed from `7d67360e6`;
+no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
