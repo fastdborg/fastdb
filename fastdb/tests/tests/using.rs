@@ -901,35 +901,46 @@ fn using_mixed_scalar_keys_match_native_affinity() {
     ] {
         query(sql);
     }
-    for affinity in ["", "INTEGER", "TEXT"] {
-        query(&format!("CREATE TABLE b(m INTEGER,k {affinity})"));
-        query("INSERT INTO b VALUES(10,1),(20,'1'),(30,'01'),(40,NULL)");
-        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
-            for source in ["docs", "(SELECT n,k FROM docs)"] {
-                let sql = |source: &str| {
-                    format!("SELECT a.n,b.m,k FROM {source} a {join} b USING(k) ORDER BY a.n,b.m")
-                };
-                // Document values have no declared SQL affinity. Apply unary
-                // plus at the comparison, not behind another column boundary.
-                let retained = if join == "RIGHT JOIN" { "b.k" } else { "a.k" };
-                let predicate = if join == "RIGHT JOIN" {
-                    "b.k=+a.k"
-                } else {
-                    "+a.k=b.k"
-                };
-                let expected = query(&format!("SELECT a.n,b.m,{retained} FROM baseline a {join} b ON {predicate} ORDER BY a.n,b.m"));
-                let logical = sql(source);
-                assert_eq!(query(&logical).rows, expected.rows, "{affinity}: {logical}");
-                assert_eq!(
-                    c.profile_select(&logical, &Parameters::new())
-                        .unwrap()
-                        .result
-                        .rows,
-                    expected.rows,
-                    "{affinity}: {logical}"
-                );
-            }
+    for indexed in [false, true] {
+        if indexed {
+            query("CREATE INDEX docs_k ON docs(k)");
         }
-        query("DROP TABLE b");
+        for affinity in ["", "INTEGER", "TEXT"] {
+            query(&format!("CREATE TABLE b(m INTEGER,k {affinity})"));
+            query("INSERT INTO b VALUES(10,1),(20,'1'),(30,'01'),(40,NULL)");
+            for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+                for source in ["docs", "(SELECT n,k FROM docs)"] {
+                    for filter in ["", " WHERE a.k=1", " WHERE a.k='1'"] {
+                        let sql = |source: &str| {
+                            format!("SELECT a.n,b.m,k FROM {source} a {join} b USING(k){filter} ORDER BY a.n,b.m")
+                        };
+                        // Document values have no declared SQL affinity. Apply unary
+                        // plus at the comparison, not behind another column boundary.
+                        let retained = if join == "RIGHT JOIN" { "b.k" } else { "a.k" };
+                        let predicate = if join == "RIGHT JOIN" {
+                            "b.k=+a.k"
+                        } else {
+                            "+a.k=b.k"
+                        };
+                        let expected = query(&format!("SELECT a.n,b.m,{retained} FROM baseline a {join} b ON {predicate}{filter} ORDER BY a.n,b.m"));
+                        let logical = sql(source);
+                        if indexed && source == "docs" && join == "JOIN" && !filter.is_empty() {
+                            let plan = query(&format!("EXPLAIN QUERY PLAN {logical}"));
+                            assert!(plan.rows.iter().flatten().any(|value| matches!(value, Value::String(detail) if detail.contains("USING INDEX docs_k"))), "{logical}: {:?}", plan.rows);
+                        }
+                        assert_eq!(query(&logical).rows, expected.rows, "{affinity}: {logical}");
+                        assert_eq!(
+                            c.profile_select(&logical, &Parameters::new())
+                                .unwrap()
+                                .result
+                                .rows,
+                            expected.rows,
+                            "{affinity}: {logical}"
+                        );
+                    }
+                }
+            }
+            query("DROP TABLE b");
+        }
     }
 }

@@ -59,3 +59,6 @@ Quoted-key metadata now has 27 execute/profile native comparisons for mixed case
 
 
 Mixed numeric/text affinity now has 18 execute/profile cases against native ON predicates with unary plus on the document-side operand. Documents have no declared SQL affinity; a typeless native column is not an equivalent TEXT-affinity oracle. RIGHT joins retain normalized operand order.
+
+
+Mixed-affinity coverage now includes 108 execute/profile shapes before/after managed-index creation and numeric/text post-join filtering. EXPLAIN confirms docs_k for filtered direct-source inner joins; this does not claim indexed join lookup.
