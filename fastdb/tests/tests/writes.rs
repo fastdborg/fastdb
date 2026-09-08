@@ -1497,5 +1497,12 @@ fn window_tuple_projections_match_native() {
                 q(&c, "ROLLBACK");
             }
         }
+        for offset in [0, 1] {
+            q(&c, "BEGIN");
+            let expected=q(&c,&format!("UPDATE native SET (a,b)=(SELECT DISTINCT sum(x.a) OVER(),count(*) OVER() FROM lookup x WHERE x.n=native.n ORDER BY 1 LIMIT 1 OFFSET {offset}) RETURNING n,a,b"));
+            let sql=format!("UPDATE docs SET (a,b)=(SELECT DISTINCT sum(x.a) OVER(),count(*) OVER() FROM {source} x WHERE x.n=docs.n ORDER BY 1 LIMIT 1 OFFSET {offset}) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
     }
 }

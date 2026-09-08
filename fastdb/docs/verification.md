@@ -4150,3 +4150,15 @@ NULL tuples, active transaction reports and rollback. All 87 Node/application
 tests passed against the addon from the preceding full check. Log
 `/tmp/fastdb-window-tuple-node.log`. Only tests/docs changed from `86649c888`;
 no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
+
+
+## DISTINCT window tuple pagination — 2026-09-09
+
+A differential regression verifies DISTINCT over repeated window SUM/COUNT tuple
+outputs, ordering by output position and applying OFFSET after deduplication.
+Relational/collection lookups match native results, including a page past the
+single distinct tuple and unmatched documents. All 33 write tests passed, with
+formatting and all-target fastdb-tests Clippy with warnings denied. Logs
+`/tmp/fastdb-distinct-window-tuples.log` and `/tmp/fastdb-distinct-window-tuples-clippy.log`.
+Only tests/docs changed from `07b614b6c`; no new full-suite or client run is
+claimed. Full V1 remains open; no publication occurred.
