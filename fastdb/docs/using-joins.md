@@ -62,3 +62,6 @@ Mixed numeric/text affinity now has 18 execute/profile cases against native ON p
 
 
 Mixed-affinity coverage now includes 108 execute/profile shapes before/after managed-index creation and numeric/text post-join filtering. EXPLAIN confirms docs_k for filtered direct-source inner joins; this does not claim indexed join lookup.
+
+
+Nested scalar gap is broader than merged-key lookup: current direct/closed logical sources fail nested k, a.k and b.k references under all three supported join kinds. Nine pinned native cases pass with exact retained/NULL-extended results. Outer-source propagation through nested planning needs implementation; simply qualifying merged names does not address qualified native-side references.

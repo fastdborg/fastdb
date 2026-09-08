@@ -944,3 +944,37 @@ fn using_mixed_scalar_keys_match_native_affinity() {
         }
     }
 }
+
+#[test]
+fn pinned_nested_using_correlation_retains_merged_and_qualified_outer_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+    for sql in [
+        "CREATE TABLE a(k INTEGER)",
+        "INSERT INTO a VALUES(1)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for key in ["k", "a.k", "b.k"] {
+            let sql = format!(
+                "SELECT k,(SELECT (SELECT {key})) AS v FROM a {join} b USING(k) ORDER BY k"
+            );
+            let mut expected = vec![vec![Value::Integer(1), Value::Integer(1)]];
+            if join == "RIGHT JOIN" {
+                expected.push(vec![
+                    Value::Integer(2),
+                    if key == "a.k" {
+                        Value::Null
+                    } else {
+                        Value::Integer(2)
+                    },
+                ]);
+            }
+            assert_eq!(query(&sql).rows, expected, "{sql}");
+        }
+    }
+}
