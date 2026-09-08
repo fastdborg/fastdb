@@ -24,6 +24,40 @@ UPSERT requires a typed id and either inserts or shallow-patches that id atomica
 
 Field CHECK evaluates a side-effect-free SQL expression against bound final-candidate fields. False and SQL NULL fail; missing optional and permitted-null fields skip their attached check. New/overwritten definitions validate existing data before publication. User parameters, database reads, aggregates, windows, current-time expressions and non-eligible functions are rejected even on an empty collection. The approved function/operator set is listed in status.md; ordinary relational SQL CHECK constraints retain engine behavior. New CHECK metadata requires catalog version 2 to avoid silently weakening validation in version-aware older builds.
 
+## Tuple updates
+
+Collection UPDATE supports simultaneous top-level assignments such as
+`SET (a,b)=(b,a+1)`, single-row `SET (a,b)=(VALUES(b,a+1))`, and
+`SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n)`.
+The right side reads the original document snapshot. All candidate assignments
+are evaluated before mutation; evaluated-value validation and managed index
+updates remain atomic. Typed records, objects, arrays and binary values survive
+direct copies and supported query projections. Collection IDs remain immutable,
+and duplicate or overlapping targets are rejected.
+
+Tuple SELECTs support the qualified SELECT subset, including local nonrecursive
+CTEs, DISTINCT, scalar grouping/HAVING, supported native windows, nested scalar
+queries, and SELECT-arm UNION ALL/UNION/INTERSECT/EXCEPT. Ordering and pagination
+apply to the query outputs before tuple packing. An empty result assigns NULL
+to every target. Use ORDER BY and LIMIT to make row selection explicit. Output
+aliases and positional ordering are supported; tuple width must match the target
+count. These forms do not enable custom window frames or other operations that
+the pinned engine rejects.
+
+For source-free SELECT tuples, explicit output aliases resolve locally in WHERE
+and ORDER BY. When an alias has the same name as a document field, qualify the
+outer field (for example, `docs.a`) to request the document value. This differs
+from native relational same-name precedence; ordinary relational SQL continues
+to use the pinned engine behavior.
+
+Multi-row VALUES tuples, compound VALUES arms, recursive tuple CTEs and nested
+paths in tuple target lists remain unsupported. In particular, the pinned native
+multi-row VALUES tuple form has observed last-row selection for constants and a
+compiler panic for correlated fields. FastDB's collection path rejects it with
+FDB_UNSUPPORTED. The detailed probes and scoped test evidence are recorded in
+[verification.md](verification.md); this is an implemented subset, not complete
+SQLite compatibility or a completed V1 SQL release gate.
+
 ## Object-write expression subset
 
 Object bodies evaluate nested scalar calls/operators and typed record, array and document-path helpers described in status.md. UPDATE bodies read the pre-update document; predicate patches evaluate all candidates before mutation and roll back the statement on validation/index failure. UPSERT evaluates its explicit ID once, then evaluates patch fields against the existing document or an empty document on insertion. Missing field reads are null; coalesce/ifnull evaluate lazily and retain the chosen value's type. Scalar calculated comparisons use engine integer 0/1, while literal booleans and doc::has retain Boolean values. Composite operands are rejected by generic scalar functions/operators; record comparison uses logical identity. Expression depth is limited to 64. SQL SELECT/SET/VALUES now support the helper subset below; broader expression propagation remains incomplete.
