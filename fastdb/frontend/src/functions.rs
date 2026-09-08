@@ -1651,5 +1651,35 @@ mod cte_evaluation_tests {
                 }
             }
         }
+        for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for predicate in ["(SELECT v FROM q)<=n", "n IN(SELECT v FROM q)"] {
+                for limit in ["", " LIMIT 0"] {
+                    let query = |source: &str| {
+                        format!("WITH q(v) AS {hint} (SELECT cte_tick()) SELECT n,(SELECT max(r.m)+cte_tick() FROM (SELECT n AS m FROM baseline) r WHERE r.m<n AND {predicate}) AS v FROM {source} d RIGHT JOIN evaluation_rhs r USING(n) ORDER BY n{limit}")
+                    };
+                    CALLS.store(0, Ordering::SeqCst);
+                    c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
+                        .unwrap();
+                    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "inherited CTE metadata");
+                    let expected = c.execute(&query("baseline"), &params).unwrap().rows;
+                    let calls = CALLS.load(Ordering::SeqCst);
+                    for profile in [false, true] {
+                        CALLS.store(0, Ordering::SeqCst);
+                        let sql = query("docs");
+                        let actual = if profile {
+                            c.profile_select(&sql, &params).unwrap().result.rows
+                        } else {
+                            c.execute(&sql, &params).unwrap().rows
+                        };
+                        assert_eq!(actual, expected, "{sql}");
+                        assert_eq!(
+                            CALLS.load(Ordering::SeqCst),
+                            calls,
+                            "profile={profile}: {sql}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

@@ -58,10 +58,18 @@ enum SubqueryAffinity {
 // outer column denotes a correlated scalar register, whose collation is BINARY.
 fn native_scalar_collation(
     connection: &Connection,
+    metadata_scopes: &[With],
     inner: &Select,
     local: &std::collections::BTreeSet<String>,
 ) -> Result<String> {
-    let statement = match connection.prepare(Cmd::Stmt(Stmt::Select(inner.clone())).to_string()) {
+    let mut sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
+    for scope in metadata_scopes.iter().rev() {
+        sql = format!(
+            "{scope} SELECT * FROM ({})",
+            sql.trim().trim_end_matches(';')
+        );
+    }
+    let statement = match connection.prepare(sql) {
         Ok(statement) => statement,
         Err(error) if error.to_string().contains("no such column:") => return Ok("BINARY".into()),
         Err(error)
@@ -108,6 +116,7 @@ fn native_scalar_collation(
 // query retains its outer references and is evaluated by the engine per row.
 fn native_correlated_predicate(
     connection: &Connection,
+    metadata_scopes: &[With],
     inner: &Select,
     sources: &[Source],
     metadata: bool,
@@ -191,6 +200,7 @@ fn native_correlated_predicate(
                 let result = (|| -> Result<_> {
                     let (prepared, logical) = native_correlated_predicate(
                         connection,
+                        metadata_scopes,
                         rhs,
                         &outer_sources,
                         metadata,
@@ -227,8 +237,12 @@ fn native_correlated_predicate(
                             },
                         )
                     } else {
-                        let collation =
-                            native_scalar_collation(connection, rhs, &correlation_aliases)?;
+                        let collation = native_scalar_collation(
+                            connection,
+                            metadata_scopes,
+                            rhs,
+                            &correlation_aliases,
+                        )?;
                         (
                             Expr::Subquery(prepared.clone()),
                             SubqueryAffinity::NativeMembership(collation, String::new()),
@@ -264,6 +278,7 @@ fn native_correlated_predicate(
                 };
                 let (prepared, typed_projection) = match native_correlated_predicate(
                     connection,
+                    metadata_scopes,
                     inner,
                     &outer_sources,
                     metadata,
@@ -277,7 +292,12 @@ fn native_correlated_predicate(
                     }
                 };
                 let scalar_collation = if scalar && !metadata && !typed_projection {
-                    match native_scalar_collation(connection, inner, &correlation_aliases) {
+                    match native_scalar_collation(
+                        connection,
+                        metadata_scopes,
+                        inner,
+                        &correlation_aliases,
+                    ) {
                         Ok(collation) => collation,
                         Err(error) => {
                             nested_error = Some(error);
@@ -4557,11 +4577,25 @@ impl Connection {
         }
         // Native expression queries do not opt an ordinary SQL statement into
         // logical lowering; preserve their values only once that route is chosen.
+        let metadata_scopes: Vec<_> = native_with
+            .into_iter()
+            .chain(select.with.as_ref())
+            .cloned()
+            .collect();
         for (sql, (lowered, _, affinity)) in &mut native_expression_subqueries {
             if let Expr::Exists(mut inner) = expression(sql)? {
                 qualify_correlated_using(self, params, &ctes, &mut inner, &sources, &using)?;
                 *lowered = Expr::Exists(
-                    native_correlated_predicate(self, &inner, &sources, false, params, true)?.0,
+                    native_correlated_predicate(
+                        self,
+                        &metadata_scopes,
+                        &inner,
+                        &sources,
+                        false,
+                        params,
+                        true,
+                    )?
+                    .0,
                 );
                 continue;
             }
@@ -4578,8 +4612,15 @@ impl Connection {
             qualify_correlated_using(self, params, &ctes, &mut inner, &sources, &using)?;
             let mut collation = "BINARY".to_owned();
             let correlated = {
-                let (mut probe, _) =
-                    native_correlated_predicate(self, &inner, &sources, true, params, false)?;
+                let (mut probe, _) = native_correlated_predicate(
+                    self,
+                    &metadata_scopes,
+                    &inner,
+                    &sources,
+                    true,
+                    params,
+                    false,
+                )?;
                 let correlated = Cmd::Stmt(Stmt::Select(probe.clone())).to_string()
                     != Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                 if probe.with.is_none() {
@@ -4631,6 +4672,7 @@ impl Connection {
             };
             let (runtime, typed_projection) = native_correlated_predicate(
                 self,
+                &metadata_scopes,
                 &inner,
                 &sources,
                 false,
@@ -4667,7 +4709,16 @@ impl Connection {
                 && matches!(affinity, SubqueryAffinity::NativeMembership(_, _))
             {
                 *lowered = Expr::Subquery(
-                    native_correlated_predicate(self, &inner, &sources, false, params, false)?.0,
+                    native_correlated_predicate(
+                        self,
+                        &metadata_scopes,
+                        &inner,
+                        &sources,
+                        false,
+                        params,
+                        false,
+                    )?
+                    .0,
                 );
                 *affinity = SubqueryAffinity::NativeMembership(collation, String::new());
                 continue;
@@ -4698,8 +4749,15 @@ impl Connection {
                 }
                 SubqueryAffinity::NativeMembership(collation, name)
             } else {
-                let (runtime, _) =
-                    native_correlated_predicate(self, &inner, &sources, false, params, true)?;
+                let (runtime, _) = native_correlated_predicate(
+                    self,
+                    &metadata_scopes,
+                    &inner,
+                    &sources,
+                    false,
+                    params,
+                    true,
+                )?;
                 *lowered = expression(&format!(
                     "__fastdb_pack(({}))",
                     Cmd::Stmt(Stmt::Select(runtime))

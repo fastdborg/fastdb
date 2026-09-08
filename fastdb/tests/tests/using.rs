@@ -2327,3 +2327,45 @@ fn deeper_membership_preserves_null_and_empty_set_results() {
         }
     }
 }
+
+#[test]
+fn deeper_native_queries_inherit_cte_metadata_scope() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2),('a')",
+        "CREATE TABLE native(k INTEGER)",
+        "INSERT INTO native VALUES(1),(2),('a')",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3),('a')",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2)",
+    ] {
+        query(sql);
+    }
+    for definition in ["SELECT 3 AS v", "SELECT 'A' COLLATE NOCASE AS v"] {
+        for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+                for predicate in [
+                    "(SELECT v FROM q)=k",
+                    "x.n IN(SELECT v FROM q)",
+                    "x.n NOT IN(SELECT v FROM q)",
+                    "EXISTS(SELECT 1 FROM q WHERE v>1)",
+                ] {
+                    let sql = |source: &str| {
+                        format!("WITH q(v) AS {hint} ({definition}) SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND {predicate}) AS v FROM {source} d {join} b USING(k) ORDER BY k")
+                    };
+                    let expected = query(&sql("native"));
+                    let actual = query(&sql("docs"));
+                    assert_eq!(actual.columns, expected.columns);
+                    assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
+                }
+            }
+        }
+    }
+}
