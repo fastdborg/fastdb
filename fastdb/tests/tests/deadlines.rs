@@ -123,3 +123,77 @@ fn deadline_interrupts_engine_work_and_allows_fresh_retry() {
     c.execute("ROLLBACK", &p).unwrap();
     assert!(c.execute("SELECT * FROM docs", &p).unwrap().rows.is_empty());
 }
+
+#[test]
+fn deadline_batch_and_migration_boundaries_preserve_state_and_history() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let p = Parameters::new();
+    c.execute("CREATE TABLE input(n)", &p).unwrap();
+    for n in 0..100 {
+        c.execute(&format!("INSERT INTO input VALUES({n})"), &p)
+            .unwrap();
+    }
+    let plan = vec![
+        fastdb::Migration {version:1,name:"initial".into(),sql:"CREATE TABLE docs; CREATE UNIQUE INDEX docs_n ON docs(n); INSERT INTO docs {n:1};".into()},
+        fastdb::Migration {version:2,name:"pending".into(),sql:"CREATE TABLE audit(n); INSERT INTO docs {n:2}; SELECT count(*) FROM input a,input b,input c,input d,input e;".into()},
+    ];
+    c.migrate(&plan[..1]).unwrap();
+    c.execute("BEGIN", &p).unwrap();
+    c.execute("INSERT INTO docs {n:3}", &p).unwrap();
+    let token = CancellationToken::with_deadline(Instant::now() + Duration::from_millis(20));
+    let reports = c
+        .execute_batch_cancellable(
+            "SELECT count(*) FROM input a,input b,input c,input d,input e; COMMIT;",
+            &token,
+        )
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(
+        reports[0].execution.result.as_ref().unwrap_err().code(),
+        "FDB_CANCELLED"
+    );
+    assert_eq!(c.transaction_state(), TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(3)]]
+    );
+    c.execute("ROLLBACK", &p).unwrap();
+    let token = CancellationToken::with_deadline(Instant::now() + Duration::from_millis(20));
+    assert_eq!(
+        c.migrate_cancellable(&plan, &token).unwrap_err().code(),
+        "FDB_CANCELLED"
+    );
+    assert_eq!(c.transaction_state(), TransactionState::Autocommit);
+    assert!(c.execute("SELECT * FROM audit", &p).is_err());
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        1
+    );
+    assert_eq!(c.migrate(&plan[..1]).unwrap().already_applied, 1);
+    // Empty the external source so the identical pending script completes on retry.
+    c.execute("DELETE FROM input", &p).unwrap();
+    let fresh = CancellationToken::with_deadline(Instant::now() + Duration::from_secs(60));
+    assert_eq!(
+        c.migrate_cancellable(&plan, &fresh).unwrap().applied,
+        vec![2]
+    );
+    assert_eq!(
+        c.migrate_cancellable(&plan, &fresh)
+            .unwrap()
+            .already_applied,
+        2
+    );
+    assert_eq!(
+        c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .documents,
+        2
+    );
+}

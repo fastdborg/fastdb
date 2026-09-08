@@ -3083,3 +3083,18 @@ Both deadline integration tests passed with the expanded matrix; log:
 No production code changed and no broader suite was repeated. This checks selected
 cooperative execution paths, not fixed latency, partial-mutation deadline points,
 all operations or platform-wide deadline qualification. V1 gates remain open.
+
+### Deadline batch and migration recovery
+
+The deadline suite now checks batch expiry before a later COMMIT, preserving prior
+active-transaction work until caller rollback. Migration expiry restores pending
+schema/documents/history and retains previously applied history. After emptying the
+external expensive query source, the identical pending migration script applies
+with a fresh token, repeated execution skips history, and index integrity remains
+valid. This is selected expiry-path evidence; the test does not assert an exact
+partial-mutation interruption point or a fixed timing bound.
+
+All three deadline integration tests passed; log:
+`/tmp/fastdb-deadline-workflows.log`. Scoped formatting and diff checks passed. No
+production code changed or broader suite was repeated. Node/CLI deadline options,
+additional operations, platform/timing qualification and full V1 remain open.
