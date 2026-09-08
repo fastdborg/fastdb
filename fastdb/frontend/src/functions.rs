@@ -1278,30 +1278,40 @@ mod cte_evaluation_tests {
                 }
             }
         }
-        for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
-            for delete in [false, true] {
-                let query = |table: &str| {
-                    let write = if delete {
-                        format!("DELETE FROM {table}")
-                    } else {
-                        format!("UPDATE {table} SET n=n+10")
+        for nested in [false, true] {
+            for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+                for delete in [false, true] {
+                    let query = |table: &str| {
+                        let write = if delete {
+                            format!("DELETE FROM {table}")
+                        } else {
+                            format!("UPDATE {table} SET n=n+10")
+                        };
+                        let body = format!("SELECT n+cte_tick()-1 AS n FROM {table}");
+                        let body = if nested {
+                            format!(
+                                "WITH local_q AS {materialization} ({body}) SELECT n FROM local_q"
+                            )
+                        } else {
+                            body
+                        };
+                        format!("WITH {table} AS (SELECT cte_tick() AS n), chosen AS {materialization} ({body}) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
                     };
-                    format!("WITH {table} AS (SELECT cte_tick() AS n), chosen AS {materialization} (SELECT n+cte_tick()-1 AS n FROM {table}) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
-                };
-                let mut expected = None;
-                for table in ["baseline", "docs"] {
-                    c.execute("BEGIN", &params).unwrap();
-                    CALLS.store(0, Ordering::SeqCst);
-                    let result = c.execute(&query(table), &params).unwrap();
-                    let calls = CALLS.load(Ordering::SeqCst);
-                    if let Some((rows, expected_calls)) = &expected {
-                        assert_eq!(&result.rows, rows, "{}", query(table));
-                        assert_eq!(calls, *expected_calls, "{}", query(table));
-                    } else {
-                        assert!(calls > 0);
-                        expected = Some((result.rows, calls));
+                    let mut expected = None;
+                    for table in ["baseline", "docs"] {
+                        c.execute("BEGIN", &params).unwrap();
+                        CALLS.store(0, Ordering::SeqCst);
+                        let result = c.execute(&query(table), &params).unwrap();
+                        let calls = CALLS.load(Ordering::SeqCst);
+                        if let Some((rows, expected_calls)) = &expected {
+                            assert_eq!(&result.rows, rows, "{}", query(table));
+                            assert_eq!(calls, *expected_calls, "{}", query(table));
+                        } else {
+                            assert!(calls > 0);
+                            expected = Some((result.rows, calls));
+                        }
+                        c.execute("ROLLBACK", &params).unwrap();
                     }
-                    c.execute("ROLLBACK", &params).unwrap();
                 }
             }
         }

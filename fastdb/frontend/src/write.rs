@@ -576,6 +576,134 @@ impl Connection {
                 Some(As::As(Name::exact(format!("__fastdb_set_{i}")))),
             ));
         }
+        fn bind_expression(
+            value: &mut Expr,
+            table: &QualifiedName,
+            exposed: &Name,
+        ) -> turso_core::Result<()> {
+            turso_core::walk_expr_mut(value, &mut |expr| {
+                match expr {
+                    Expr::Subquery(inner) | Expr::Exists(inner) => {
+                        bind_target(inner, table, exposed)?;
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
+                    Expr::InSelect { lhs, rhs, .. } => {
+                        bind_expression(lhs, table, exposed)?;
+                        bind_target(rhs, table, exposed)?;
+                        return Ok(turso_core::WalkControl::SkipChildren);
+                    }
+                    _ => {}
+                }
+                Ok(turso_core::WalkControl::Continue)
+            })
+            .map(|_| ())
+        }
+        fn bind_target(
+            select: &mut Select,
+            table: &QualifiedName,
+            exposed: &Name,
+        ) -> turso_core::Result<()> {
+            if let Some(with) = &mut select.with {
+                // A nested declaration establishes a new local binding.
+                if with.recursive
+                    || with
+                        .ctes
+                        .iter()
+                        .any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(exposed.as_str()))
+                {
+                    return Ok(());
+                }
+                for cte in &mut with.ctes {
+                    bind_target(&mut cte.select, table, exposed)?;
+                }
+            }
+            for body in std::iter::once(&mut select.body.select)
+                .chain(select.body.compounds.iter_mut().map(|arm| &mut arm.select))
+            {
+                match body {
+                    OneSelect::Select {
+                        columns,
+                        from,
+                        where_clause,
+                        group_by,
+                        window_clause,
+                        ..
+                    } => {
+                        for column in columns {
+                            if let ResultColumn::Expr(value, _) = column {
+                                bind_expression(value, table, exposed)?;
+                            }
+                        }
+                        if let Some(from) = from {
+                            for source in std::iter::once(&mut from.select)
+                                .chain(from.joins.iter_mut().map(|join| &mut join.table))
+                            {
+                                match source.as_mut() {
+                                    SelectTable::Select(inner, _) => {
+                                        bind_target(inner, table, exposed)?
+                                    }
+                                    SelectTable::Table(name, alias, _)
+                                        if name.db_name.is_none()
+                                            && name
+                                                .name
+                                                .as_str()
+                                                .eq_ignore_ascii_case(exposed.as_str()) =>
+                                    {
+                                        name.db_name = table.db_name.clone();
+                                        name.name = table.name.clone();
+                                        if alias.is_none() {
+                                            *alias = Some(As::As(exposed.clone()));
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            for join in &mut from.joins {
+                                if let Some(JoinConstraint::On(value)) = &mut join.constraint {
+                                    bind_expression(value, table, exposed)?;
+                                }
+                            }
+                        }
+                        if let Some(value) = where_clause {
+                            bind_expression(value, table, exposed)?;
+                        }
+                        if let Some(group) = group_by {
+                            for value in &mut group.exprs {
+                                bind_expression(value, table, exposed)?;
+                            }
+                            if let Some(value) = &mut group.having {
+                                bind_expression(value, table, exposed)?;
+                            }
+                        }
+                        for definition in window_clause {
+                            for value in &mut definition.window.partition_by {
+                                bind_expression(value, table, exposed)?;
+                            }
+                            for sorted in &mut definition.window.order_by {
+                                bind_expression(&mut sorted.expr, table, exposed)?;
+                            }
+                        }
+                    }
+                    OneSelect::Values(rows) => {
+                        for row in rows {
+                            for value in row {
+                                bind_expression(value, table, exposed)?;
+                            }
+                        }
+                    }
+                }
+            }
+            for sorted in &mut select.order_by {
+                bind_expression(&mut sorted.expr, table, exposed)?;
+            }
+            if let Some(limit) = &mut select.limit {
+                bind_expression(&mut limit.expr, table, exposed)?;
+                if let Some(offset) = &mut limit.offset {
+                    bind_expression(offset, table, exposed)?;
+                }
+            }
+            Ok(())
+        }
         let mut with = with;
         // The pinned write planner exposes its target table before replanning
         // CTE bodies. A same-named FROM there binds the physical target rather
@@ -587,129 +715,71 @@ impl Connection {
                 .iter()
                 .any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(exposed.as_str()))
             {
-                fn bind_expression(
-                    value: &mut Expr,
-                    table: &QualifiedName,
-                    exposed: &Name,
-                ) -> turso_core::Result<()> {
-                    turso_core::walk_expr_mut(value, &mut |expr| {
-                        match expr {
-                            Expr::Subquery(inner) | Expr::Exists(inner) => {
-                                bind_target(inner, table, exposed)?;
-                                return Ok(turso_core::WalkControl::SkipChildren);
-                            }
-                            Expr::InSelect { lhs, rhs, .. } => {
-                                bind_expression(lhs, table, exposed)?;
-                                bind_target(rhs, table, exposed)?;
-                                return Ok(turso_core::WalkControl::SkipChildren);
-                            }
-                            _ => {}
-                        }
-                        Ok(turso_core::WalkControl::Continue)
-                    })
-                    .map(|_| ())
-                }
-                fn bind_target(
-                    select: &mut Select,
-                    table: &QualifiedName,
-                    exposed: &Name,
-                ) -> turso_core::Result<()> {
-                    if select.with.is_some() {
-                        return Ok(());
-                    }
-                    for body in std::iter::once(&mut select.body.select)
-                        .chain(select.body.compounds.iter_mut().map(|arm| &mut arm.select))
-                    {
-                        match body {
-                            OneSelect::Select {
-                                columns,
-                                from,
-                                where_clause,
-                                group_by,
-                                window_clause,
-                                ..
-                            } => {
-                                for column in columns {
-                                    if let ResultColumn::Expr(value, _) = column {
-                                        bind_expression(value, table, exposed)?;
-                                    }
-                                }
-                                if let Some(from) = from {
-                                    for source in std::iter::once(&mut from.select)
-                                        .chain(from.joins.iter_mut().map(|join| &mut join.table))
-                                    {
-                                        match source.as_mut() {
-                                            SelectTable::Select(inner, _) => {
-                                                bind_target(inner, table, exposed)?
-                                            }
-                                            SelectTable::Table(name, alias, _)
-                                                if name.db_name.is_none()
-                                                    && name
-                                                        .name
-                                                        .as_str()
-                                                        .eq_ignore_ascii_case(exposed.as_str()) =>
-                                            {
-                                                name.db_name = Some(Name::exact("main".into()));
-                                                name.name = table.name.clone();
-                                                if alias.is_none() {
-                                                    *alias = Some(As::As(exposed.clone()));
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    for join in &mut from.joins {
-                                        if let Some(JoinConstraint::On(value)) =
-                                            &mut join.constraint
-                                        {
-                                            bind_expression(value, table, exposed)?;
-                                        }
-                                    }
-                                }
-                                if let Some(value) = where_clause {
-                                    bind_expression(value, table, exposed)?;
-                                }
-                                if let Some(group) = group_by {
-                                    for value in &mut group.exprs {
-                                        bind_expression(value, table, exposed)?;
-                                    }
-                                    if let Some(value) = &mut group.having {
-                                        bind_expression(value, table, exposed)?;
-                                    }
-                                }
-                                for definition in window_clause {
-                                    for value in &mut definition.window.partition_by {
-                                        bind_expression(value, table, exposed)?;
-                                    }
-                                    for sorted in &mut definition.window.order_by {
-                                        bind_expression(&mut sorted.expr, table, exposed)?;
-                                    }
-                                }
-                            }
-                            OneSelect::Values(rows) => {
-                                for row in rows {
-                                    for value in row {
-                                        bind_expression(value, table, exposed)?;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    for sorted in &mut select.order_by {
-                        bind_expression(&mut sorted.expr, table, exposed)?;
-                    }
-                    if let Some(limit) = &mut select.limit {
-                        bind_expression(&mut limit.expr, table, exposed)?;
-                        if let Some(offset) = &mut limit.offset {
-                            bind_expression(offset, table, exposed)?;
-                        }
-                    }
-                    Ok(())
-                }
+                let mut physical = table.clone();
+                physical.db_name = Some(Name::exact("main".into()));
                 for cte in &mut with.ctes {
-                    bind_target(&mut cte.select, table, exposed)?;
+                    bind_target(&mut cte.select, &physical, exposed)?;
                 }
             }
+        }
+        fn flatten(
+            connection: &Connection,
+            select: &mut Select,
+            lifted: &mut Vec<CommonTableExpr>,
+        ) -> Result<()> {
+            if select.with.as_ref().is_none_or(|with| with.recursive) {
+                return Ok(());
+            }
+            let mut nested = select.with.take().unwrap();
+            let mut names = std::collections::BTreeSet::new();
+            if nested
+                .ctes
+                .iter()
+                .any(|cte| !names.insert(cte.tbl_name.as_str().to_ascii_lowercase()))
+            {
+                select.with = Some(nested);
+                return Ok(());
+            }
+            let mut replacements = Vec::new();
+            for cte in &mut nested.ctes {
+                let old = cte.tbl_name.clone();
+                let id = connection
+                    .next_subquery_id
+                    .fetch_update(
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                        |id| id.checked_add(1),
+                    )
+                    .map_err(|_| Error::Limit("internal subquery identifiers exhausted".into()))?;
+                cte.tbl_name = Name::exact(format!("__fastdb_write_cte_{id}"));
+                replacements.push((
+                    old,
+                    QualifiedName {
+                        name: cte.tbl_name.clone(),
+                        db_name: None,
+                        alias: None,
+                    },
+                ));
+            }
+            for (old, renamed) in &replacements {
+                bind_target(select, renamed, old)?;
+                for cte in &mut nested.ctes {
+                    bind_target(&mut cte.select, renamed, old)?;
+                }
+            }
+            for mut cte in nested.ctes {
+                flatten(connection, &mut cte.select, lifted)?;
+                lifted.push(cte);
+            }
+            Ok(())
+        }
+        if let Some(with) = with.as_mut().filter(|with| !with.recursive) {
+            let mut lifted = Vec::new();
+            for mut cte in std::mem::take(&mut with.ctes) {
+                flatten(self, &mut cte.select, &mut lifted)?;
+                lifted.push(cte);
+            }
+            with.ctes = lifted;
         }
         let mut target = table.clone();
         // UPDATE/DELETE target names refer to actual tables, even if a CTE

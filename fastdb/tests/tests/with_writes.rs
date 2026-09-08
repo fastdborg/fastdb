@@ -464,6 +464,8 @@ fn target_named_cte_writes_preserve_native_table_binding() {
         "except",
         "exists",
         "membership",
+        "nested_with",
+        "shadowed_with",
     ] {
         for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
             for (aliased, alias_cte) in [(false, false), (true, false), (true, true)] {
@@ -481,6 +483,8 @@ fn target_named_cte_writes_preserve_native_table_binding() {
                             let body = match shape {
                                 "derived" => format!("SELECT n FROM ({body}) q"),
                                 "compound" => format!("{body} UNION ALL SELECT 2"),
+                                "nested_with" => format!("WITH inner_q AS ({body}) SELECT n FROM inner_q"),
+                                "shadowed_with" => format!("WITH {name} AS (SELECT 3 AS n), inner_q AS ({body}) SELECT n FROM inner_q"),
                                 "union" => format!("{body} UNION SELECT 2"),
                                 "intersect" => format!("{body} INTERSECT SELECT 2"),
                                 "except" => format!("{body} EXCEPT SELECT 2"),
@@ -491,7 +495,22 @@ fn target_named_cte_writes_preserve_native_table_binding() {
                             format!("WITH {name} AS (SELECT 2 AS n), chosen AS {hint} ({body}) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
                         };
                         q(&c, "BEGIN");
-                        let expected = q(&c, &sql("native"));
+                        let expected = match c.execute(&sql("native"), &Parameters::new()) {
+                            Ok(result) => result,
+                            Err(error) => {
+                                assert!(
+                                    shape == "nested_with"
+                                        && alias_cte
+                                        && error.to_string().contains("no such table: target"),
+                                    "{}: {error}",
+                                    sql("native")
+                                );
+                                // This shape is rejected by the pinned native write
+                                // planner and supplies no collection result oracle.
+                                q(&c, "ROLLBACK");
+                                continue;
+                            }
+                        };
                         let actual = q(&c, &sql("docs"));
                         assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
                         assert_eq!(actual.affected, expected.affected);
@@ -556,5 +575,57 @@ fn target_named_cte_constraint_failure_restores_rows_indexes_and_prior_work() {
         assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, original);
         c.check_collection_integrity("docs", Default::default())
             .unwrap();
+    }
+}
+
+#[test]
+fn pinned_nested_write_cte_flattening_preserves_closed_source_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    for alias in ["", " AS target"] {
+        for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for projection in ["n", "n+1 AS n", "sum(n) AS n", "count(*) AS n"] {
+                for shadow in [false, true] {
+                    for delete in [false, true] {
+                        let local = if shadow {
+                            "native AS (SELECT 3 AS n), "
+                        } else {
+                            ""
+                        };
+                        let nested = format!("WITH native AS (SELECT 2 AS n), chosen AS ({hint_placeholder}{local}inner_q AS {hint} (SELECT {projection} FROM native) SELECT n FROM inner_q)",hint_placeholder="WITH ");
+                        let (local, source) = if shadow {
+                            ("local_native AS (SELECT 3 AS n), ", "local_native")
+                        } else {
+                            ("", "native")
+                        };
+                        let flat = format!("WITH native AS (SELECT 2 AS n), {local}inner_q AS {hint} (SELECT {projection} FROM {source}), chosen AS (SELECT n FROM inner_q)");
+                        let write = if delete {
+                            format!("DELETE FROM native{alias}")
+                        } else {
+                            format!("UPDATE native{alias} SET n=n+10")
+                        };
+                        let mut expected = None;
+                        for prefix in [nested, flat] {
+                            q(&c, "BEGIN");
+                            let sql = format!(
+                                "{prefix} {write} WHERE n IN (SELECT n FROM chosen) RETURNING n"
+                            );
+                            let result = q(&c, &sql);
+                            let after = q(&c, "SELECT n FROM main.native ORDER BY n").rows;
+                            if let Some((rows, affected, stored)) = &expected {
+                                assert_eq!(&result.rows, rows, "{sql}");
+                                assert_eq!(result.affected, *affected, "{sql}");
+                                assert_eq!(&after, stored, "{sql}");
+                            } else {
+                                expected = Some((result.rows, result.affected, after));
+                            }
+                            q(&c, "ROLLBACK");
+                        }
+                    }
+                }
+            }
+        }
     }
 }
