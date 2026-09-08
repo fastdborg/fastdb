@@ -100,6 +100,30 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const nestedAudit = await client.checkCollectionIntegrity('docs');
       assert.equal(nestedAudit.documents, 1n);
       assert.equal(nestedAudit.indexEntries, 1n);
+      for (const sql of [
+        'CREATE TABLE package_keys', "INSERT INTO package_keys(k) VALUES(1),(2),('a')",
+        'CREATE TABLE package_rhs(k INTEGER)', "INSERT INTO package_rhs VALUES(1),(3),('a')",
+        'CREATE TABLE package_nums(n INTEGER)', 'INSERT INTO package_nums VALUES(0),(1),(2),(NULL)',
+        'CREATE TABLE package_sink', 'CREATE UNIQUE INDEX package_sink_k ON package_sink(k)',
+        'INSERT INTO package_sink(k) VALUES(3)',
+      ]) await client.execute(sql);
+      const scalarQuery = 'WITH q(v) AS MATERIALIZED(SELECT $needle COLLATE NOCASE) SELECT k,(SELECT max(b.n) FROM package_nums b WHERE b.n<k AND (SELECT v FROM q)=k) AS v FROM package_keys a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
+      const scalarRows = [[1n,null],[3n,null],['a',2n]];
+      assert.deepEqual((await client.execute(scalarQuery, {$needle:'A'})).rows, scalarRows);
+      assert.deepEqual((await client.profileSelect(scalarQuery, {$needle:'A'})).result.rows, scalarRows);
+      const memberQuery = 'SELECT k,(SELECT sum(CASE WHEN b.n IN(SELECT k) THEN 1 WHEN b.n NOT IN(SELECT k) THEN 10 ELSE 100 END) FROM package_nums b WHERE k IS k) AS v FROM package_keys a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
+      assert.deepEqual((await client.execute(memberQuery)).rows, [[1n,121n],[3n,130n],['a',130n]]);
+      const insertQuery = 'INSERT INTO package_sink(k,v) ' + scalarQuery + ' RETURNING k,v';
+      await assert.rejects(async () => client.execute(insertQuery, {$needle:'A'}), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
+      assert.deepEqual(await client.all('SELECT k FROM package_sink'), [[3n]]);
+      await client.execute('DELETE FROM package_sink WHERE k=3');
+      const scalarInsert = await client.execute(insertQuery, {$needle:'A'});
+      assert.equal(scalarInsert.affected, 3n);
+      assert.deepEqual(scalarInsert.rows, scalarRows);
+      const scalarAudit = await client.checkCollectionIntegrity('package_sink');
+      assert.equal(scalarAudit.documents, 3n);
+      assert.equal(scalarAudit.indexEntries, 3n);
+
     } finally { await client.execute('ROLLBACK'); }
   }
   async function withCompositeCounts(client) {
