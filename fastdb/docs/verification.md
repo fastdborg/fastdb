@@ -4463,3 +4463,23 @@ Log: `/tmp/fastdb-update-from-node.log`. Only tests/docs changed from `b47ee2a82
 no native rebuild or new Rust-suite run is claimed. This is the tested source
 plan's duplicate-selection behavior, not a general ordering guarantee.
 Source join trees, FROM pagination and broader V1 qualification remain open.
+
+
+## UPDATE FROM host-loop cancellation — 2026-09-09
+
+Duplicate-target resolution now polls the installed engine progress handler once
+per materialized candidate, allowing operation tokens/deadlines to interrupt this
+Rust-side loop. It uses the existing one-shot cancellation delivery mechanism so
+cleanup can proceed. A deterministic unit test cancels after installing the
+operation guard and before deduplication, verifies FDB_CANCELLED, then verifies
+fresh duplicate resolution and SQL execution. The focused regression passed
+(`/tmp/fastdb-dedup-cancel.log`). This adds cooperative boundaries; it does not
+bound individual value encoding, candidate destruction, compilation or all host
+work. Complete resource/deadline and V1 qualification remain open.
+
+The complete scoped check passed on `f4c33a858` plus this change: 616 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+89 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-dedup-cancel-check.log`. No upstream source, dependency or storage
+format changes; no publication occurred. Full V1 remains open.

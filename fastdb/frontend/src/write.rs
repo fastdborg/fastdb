@@ -1229,25 +1229,68 @@ impl Connection {
             budget.row(row)?;
         }
         if joined {
-            let mut positions = std::collections::BTreeMap::new();
-            let mut rows = Vec::new();
-            for row in result.rows {
-                let Some(Value::Object(document)) = row.first() else {
-                    return Err(Error::Storage("invalid joined update candidate".into()));
-                };
-                let Some(id @ Value::Record(_)) = document.get("id") else {
-                    return Err(Error::Storage("missing joined update target ID".into()));
-                };
-                let key = id.encode()?;
-                if let Some(position) = positions.get(&key) {
-                    rows[*position] = row;
-                } else {
-                    positions.insert(key, rows.len());
-                    rows.push(row);
-                }
-            }
-            return Ok(rows);
+            return self.coalesce_update_candidates(result.rows);
         }
         Ok(result.rows)
+    }
+    fn coalesce_update_candidates(&self, candidates: Vec<Vec<Value>>) -> Result<Vec<Vec<Value>>> {
+        let mut positions = std::collections::BTreeMap::new();
+        let mut rows = Vec::new();
+        for row in candidates {
+            if self.engine.should_interrupt_for_progress(1) {
+                return Err(Error::Engine(turso_core::LimboError::Interrupt));
+            }
+            let Some(Value::Object(document)) = row.first() else {
+                return Err(Error::Storage("invalid joined update candidate".into()));
+            };
+            let Some(id @ Value::Record(_)) = document.get("id") else {
+                return Err(Error::Storage("missing joined update target ID".into()));
+            };
+            let key = id.encode()?;
+            if let Some(position) = positions.get(&key) {
+                rows[*position] = row;
+            } else {
+                positions.insert(key, rows.len());
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod candidate_cancellation_tests {
+    use super::*;
+    #[test]
+    fn cancelled_duplicate_resolution_discards_candidates_and_allows_retry() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let token = crate::CancellationToken::new();
+        let row = vec![
+            Value::Object(Document::from([(
+                "id".into(),
+                Value::Record(crate::Record {
+                    table: "docs".into(),
+                    key: crate::Key::Integer(1),
+                }),
+            )])),
+            Value::Integer(7),
+        ];
+        let error = c
+            .with_cancellation(&token, || {
+                token.cancel();
+                c.coalesce_update_candidates(vec![row.clone(), row.clone()])
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_CANCELLED");
+        assert_eq!(
+            c.coalesce_update_candidates(vec![row.clone(), row.clone()])
+                .unwrap(),
+            vec![row]
+        );
+        assert_eq!(
+            c.execute("SELECT 1", &Parameters::new()).unwrap().rows,
+            vec![vec![Value::Integer(1)]]
+        );
     }
 }
