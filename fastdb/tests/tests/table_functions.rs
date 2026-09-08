@@ -602,7 +602,7 @@ fn grouped_and_windowed_iterators_match_native_and_preserve_writes() {
         "SELECT d.n,x.value,row_number() OVER(PARTITION BY d.n ORDER BY x.key) AS r FROM SOURCE d CROSS JOIN json_each($json) x ORDER BY d.n,x.key",
         "SELECT d.n,x.value,sum(x.value) OVER w AS total FROM SOURCE d CROSS JOIN json_each($json) x WINDOW w AS(PARTITION BY d.n ORDER BY x.key) ORDER BY d.n,x.key",
     ] {
-        let expected=c.execute(&template.replace("SOURCE","native"),&params).unwrap();
+        let expected=c.execute(&template.replace("SOURCE","native"),&params).unwrap_or_else(|error|panic!("native {template}: {error}"));
         let sql=template.replace("SOURCE","docs");
         for actual in [c.execute(&sql,&params).unwrap(),c.profile_select(&sql,&params).unwrap().result] {
             assert_eq!(actual.columns,expected.columns,"{sql}");
@@ -742,6 +742,11 @@ fn iterator_subqueries_resolve_outer_collection_fields() {
         "SELECT d.n,(SELECT count(*) FROM main.json_each(d.j) x) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT x.value AS n FROM temp.json_each(d.j) x) SELECT sum(n) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT d.n+x.value AS v FROM json_each(d.j) x) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v FROM json_each(d.j) x), b AS (SELECT v*2 AS v FROM a) SELECT sum(v) FROM b) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v,count(*) AS k FROM json_each(d.j) x GROUP BY x.value HAVING count(*)>0) SELECT sum(v*k) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v,row_number() OVER (ORDER BY x.key) AS k FROM json_each(d.j) x) SELECT sum(v*k) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value AS v,row_number() OVER (PARTITION BY d.n ORDER BY x.value+d.n DESC) AS k FROM json_each(d.j) x) SELECT sum(v*k) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT sum(x.value) AS v FROM json_each(d.j) x GROUP BY x.value HAVING d.n<3) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT d.value AS v FROM json_each('[4,5]') d) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v FROM json_each(d.j) x WHERE x.value>9) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
 
@@ -753,7 +758,7 @@ fn iterator_subqueries_resolve_outer_collection_fields() {
         "SELECT d.n,(SELECT count(*) FROM json_each(d.j) x WHERE EXISTS(SELECT 1 FROM json_each('[2]') x WHERE x.value=d.n)) AS total FROM SOURCE d ORDER BY d.n",
 
     ] {
-        let expected=c.execute(&template.replace("SOURCE","native"),&params).unwrap();
+        let expected=c.execute(&template.replace("SOURCE","native"),&params).unwrap_or_else(|error|panic!("native {template}: {error}"));
         let sql=template.replace("SOURCE","docs");
         for actual in [c.execute(&sql,&params).unwrap_or_else(|error|panic!("{sql}: {error}")),c.profile_select(&sql,&params).unwrap().result] {assert_eq!(actual.columns,expected.columns,"{sql}");assert_eq!(actual.rows,expected.rows,"{sql}");}
     }

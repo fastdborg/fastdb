@@ -3168,3 +3168,20 @@ Log: `/tmp/fastdb-cte-projections-rust-consumer.log`. This changes the consumer
 harness and documentation from `80be620ad`; no new full-suite run is claimed.
 Release artifacts, other platforms and full V1 qualification remain open.
 No publication occurred.
+
+
+## Correlated CTE grouping and windows — 2026-09-09
+
+Native differential fixtures now cover chained CTE scalar projections,
+GROUP BY with aggregate HAVING, HAVING referencing an outer field, and
+row_number windows whose partition and ordering expressions reference outer
+collection fields. Execute and profile columns/rows match ordinary tables,
+including empty iterator inputs. Native fixture failures now print their SQL.
+
+All thirteen iterator integration tests and fastdb-tests formatting passed.
+Log: `/tmp/fastdb-cte-group-window.log`. A separate exploratory query grouping
+by the outer `d.n` was rejected by the pinned engine on an ordinary table with
+`no such column: d.n`; it is not counted as supported behavior. Its diagnostic
+is recorded in `/tmp/fastdb-cte-group-window-probe.log`.
+This changes tests/documentation from `a14b1b6f8`; no new full-suite or client
+run is claimed. Broader SQL semantics and full V1 release gates remain open.
