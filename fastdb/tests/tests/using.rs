@@ -2473,3 +2473,50 @@ fn pinned_correlated_compound_membership_qualification_preserves_sets() {
         }
     }
 }
+
+#[test]
+fn pinned_paginated_compound_membership_preserves_outer_key_qualification() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE a(k INTEGER)",
+        "INSERT INTO a VALUES(1),(2),(NULL)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3),(NULL)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2),(NULL)",
+    ] {
+        query(sql);
+    }
+    // Establish the pinned engine oracle before extending logical correlation.
+    // CASE distinguishes false from unknown; count alone would hide null errors.
+    for (join, retained) in [("JOIN", "a"), ("LEFT JOIN", "a"), ("RIGHT JOIN", "b")] {
+        for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+            for tail in [
+                "ORDER BY 1 LIMIT 1",
+                "ORDER BY 1 DESC LIMIT 1",
+                "LIMIT 0",
+                "LIMIT 1 OFFSET 1",
+            ] {
+                for right in ["NULL", "CAST(KEY AS REAL)"] {
+                    for negate in ["", "NOT "] {
+                        let sql = |key: &str| {
+                            let rhs = format!("SELECT KEY {operator} SELECT {right} {tail}")
+                                .replace("KEY", key);
+                            let predicate = format!("x.n {negate}IN({rhs})");
+                            format!("SELECT k,(SELECT sum(CASE WHEN {predicate} THEN 1 WHEN NOT({predicate}) THEN 10 ELSE 100 END) FROM nums x WHERE k IS k) AS v FROM a {join} b USING(k) ORDER BY k")
+                        };
+                        let original = query(&sql("k"));
+                        let qualified = query(&sql(&format!("{retained}.k")));
+                        assert_eq!(qualified.columns, original.columns);
+                        assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
+                    }
+                }
+            }
+        }
+    }
+}
