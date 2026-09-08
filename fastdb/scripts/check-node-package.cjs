@@ -115,6 +115,28 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual((await client.execute(memberQuery)).rows, [[1n,121n],[3n,130n],['a',130n]]);
       await client.execute('CREATE TABLE package_native(k)');
       await client.execute("INSERT INTO package_native VALUES(1),(2),('a')");
+      const localCteQuery = (source, materialization) => 'SELECT k,(WITH first(m) AS (SELECT n+$shift FROM package_nums),chosen(x) AS ' + materialization + ' (SELECT m FROM first) SELECT max(x) FROM chosen b WHERE x<k) AS prior FROM ' + source + ' a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
+      for (const materialization of ['', 'MATERIALIZED', 'NOT MATERIALIZED']) {
+        const expected = await client.execute(localCteQuery('package_native',materialization),{$shift:0n});
+        const actual = await client.execute(localCteQuery('package_keys',materialization),{$shift:0n});
+        assert.deepEqual(actual.columns,expected.columns);
+        assert.deepEqual(actual.rows,expected.rows);
+        assert.deepEqual((await client.profileSelect(localCteQuery('package_keys',materialization),{$shift:0n})).result.rows,expected.rows);
+      }
+      await client.execute('CREATE TABLE package_cte_copy');
+      await client.execute('CREATE UNIQUE INDEX package_cte_k ON package_cte_copy(k)');
+      await client.execute('INSERT INTO package_cte_copy(k) VALUES(3),(9)');
+      const localCteInsert = 'INSERT INTO package_cte_copy(k,prior) ' + localCteQuery('package_keys','MATERIALIZED') + ' RETURNING k,prior';
+      await assert.rejects(async () => client.execute(localCteInsert),error => error.code === 'FDB_PARAMETER' && error.transaction.after === 'active');
+      await assert.rejects(async () => client.execute(localCteInsert,{$shift:0n}),error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
+      assert.deepEqual(await client.all('SELECT k FROM package_cte_copy ORDER BY k'),[[3n],[9n]]);
+      await client.execute('DELETE FROM package_cte_copy WHERE k=3');
+      const localCteRetry = await client.execute(localCteInsert,{$shift:0n});
+      assert.equal(localCteRetry.affected,3n);
+      assert.deepEqual(localCteRetry.rows,(await client.execute(localCteQuery('package_native','MATERIALIZED'),{$shift:0n})).rows);
+      const localCteAudit = await client.checkCollectionIntegrity('package_cte_copy');
+      assert.equal(localCteAudit.documents,4n);
+      assert.equal(localCteAudit.indexEntries,4n);
       const compoundQuery = (source, operator, direction) => {
         const rhs = 'SELECT k+1 ' + operator + ' SELECT NULL ORDER BY "k+1"' + direction + ' LIMIT $take OFFSET $skip';
         return 'SELECT k,(SELECT sum(CASE WHEN n IN(' + rhs + ') THEN 1 WHEN n NOT IN(' + rhs + ') THEN 10 ELSE 100 END) FROM package_nums x WHERE k IS k) AS v FROM ' + source + ' a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
