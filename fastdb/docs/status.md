@@ -4935,3 +4935,17 @@ tests; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Log `/tmp/fastdb-distinct-tuples-check.log`; Node addon rebuilt.
 No upstream source, dependency or storage-format changes; no publication.
 Broader tuple grouping/window/compound forms and full V1 qualification remain open.
+
+
+## Node DISTINCT tuple verification — 2026-09-09
+
+Both clients now verify DISTINCT over duplicate record/integer tuple results,
+ordering by the second output and applying OFFSET after deduplication. The next
+page preserves the selected typed record; a page beyond the distinct rowset and
+an unmatched outer document produce NULL tuples. Existing rollback assertions
+restore the original documents.
+
+All 86 Node/application tests passed against the addon from the previous full
+check. Log `/tmp/fastdb-distinct-tuple-node.log`. Only tests/documentation changed
+from `f2b5eaaf9`; no native rebuild or new Rust-suite run is claimed. Full V1
+remains open; no publication occurred.

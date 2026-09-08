@@ -2680,6 +2680,11 @@ test('tuple collection lookups preserve typed results in both clients', async ()
       assert.deepEqual(result.rows, [[1n,record,payload],[2n,null,null]]);
       assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
       assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, result.rows);
+      await db.execute('INSERT INTO lookup(n,a,rank) VALUES(1,$a,1)', { $a: record });
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT DISTINCT x.a,x.rank FROM lookup x WHERE x.n=docs.n ORDER BY 2 LIMIT 1 OFFSET 1) RETURNING n,a,b')).rows,
+        [[1n,new Record('docs', 'second'),2n],[2n,null,null]]);
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT DISTINCT x.a,x.rank FROM lookup x WHERE x.n=docs.n ORDER BY 2 LIMIT 1 OFFSET 2) RETURNING n,a,b')).rows,
+        [[1n,null,null],[2n,null,null]]);
       await db.execute('ROLLBACK');
       assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,null,null],[2n,null,null]]);
     } finally { await db.close(); }
