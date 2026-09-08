@@ -178,3 +178,25 @@ fn experimental_table_features_retain_pinned_default_rejection() {
         }
     }
 }
+
+#[test]
+fn pinned_tuple_pagination_parameter_metadata_gap() {
+    let baseline =
+        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let raw = baseline.connect().unwrap();
+    let mut create = raw
+        .prepare("CREATE TABLE native(a INTEGER,b INTEGER)")
+        .unwrap();
+    create.run_with_row_callback(|_| Ok(())).unwrap();
+    // Establish whether the missing binding originates before the FastDB adapter.
+    let tuple = raw
+        .prepare("UPDATE native SET (a,b)=(SELECT b,a LIMIT $limit OFFSET $offset) RETURNING a,b")
+        .unwrap();
+    assert!(tuple.parameter_index("$limit").is_none());
+    assert!(tuple.parameter_index("$offset").is_some());
+    let scalar = raw
+        .prepare("SELECT a FROM native LIMIT $limit OFFSET $offset")
+        .unwrap();
+    assert!(scalar.parameter_index("$limit").is_some());
+    assert!(scalar.parameter_index("$offset").is_some());
+}

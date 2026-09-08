@@ -3363,3 +3363,19 @@ All thirteen write tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-tuple-pagination.log` and
 `/tmp/fastdb-tuple-pagination-clippy.log`. Only tests/documentation changed from
 `232f45167`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Raw engine tuple LIMIT binding diagnosis — 2026-09-09
+
+A direct turso_core prepared-statement probe confirms that the tuple SELECT
+UPDATE shape omits $limit from parameter metadata while retaining $offset.
+An ordinary SELECT exposes both parameters. Thus the observed FDB_PARAMETER
+originates from missing pinned-engine metadata before FastDB binding, not from
+collection tuple rewriting. The regression records this exact pinned behavior
+for upgrade review; it is a known gap, not desired final semantics.
+
+All five sql_compat tests passed, plus scoped formatting and all-target Clippy
+with warnings denied. Logs `/tmp/fastdb-native-tuple-binding.log` and
+`/tmp/fastdb-native-tuple-binding-clippy.log`. Only tests/documentation changed
+from `2501471a7`; no upstream source changes or new full-suite run occurred.
+Full V1 gates remain open.
