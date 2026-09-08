@@ -4538,3 +4538,14 @@ formatting, Clippy with warnings denied and strict TypeScript. Logs
 `/tmp/fastdb-tuple-ordering-check.log` and `/tmp/fastdb-tuple-ordering.log`.
 No upstream files or dependencies changed. Positional/alias ordering and broader
 tuple forms remain open, along with full V1 release gates. No publication occurred.
+
+
+## Ordered collection tuple lookups — 2026-09-09
+
+Native differential fixtures now cover collection lookup ordering by a source
+field and an expression combining source and outer update-row fields. LIMIT 1
+selects the same tuple as the native relational equivalent. All nineteen write
+tests passed, plus formatting and all-target fastdb-tests Clippy with warnings
+denied. Logs `/tmp/fastdb-tuple-collection-order.log` and
+`/tmp/fastdb-tuple-collection-order-clippy.log`. Only tests/documentation changed
+from `dd9f20e81`; no new full-suite/client run is claimed. Full V1 gates remain open.

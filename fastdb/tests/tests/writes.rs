@@ -812,6 +812,18 @@ fn tuple_lookup_multiple_matches_keep_columns_from_one_row() {
         );
         q(&c, "ROLLBACK");
     }
+    q(&c, "CREATE TABLE lookup_docs");
+    q(
+        &c,
+        "INSERT INTO lookup_docs(n,a,b) SELECT n,a,b FROM lookup",
+    );
+    for ordering in ["x.a DESC", "x.a+docs.n DESC"] {
+        q(&c, "BEGIN");
+        let native_order = ordering.replace("docs.n", "native.n");
+        let expected=q(&c,&format!("UPDATE native SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=native.n ORDER BY {native_order} LIMIT 1) RETURNING n,a,b"));
+        assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup_docs x WHERE x.n=docs.n ORDER BY {ordering} LIMIT 1) RETURNING n,a,b")).rows,expected.rows);
+        q(&c, "ROLLBACK");
+    }
     for page in [
         "",
         " LIMIT 1",
