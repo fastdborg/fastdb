@@ -636,3 +636,40 @@ fn pinned_nested_write_cte_flattening_preserves_closed_source_results() {
         }
     }
 }
+
+#[test]
+fn nested_cte_declared_columns_preserve_write_candidates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+    q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+        for projection in ["n", "n+1", "sum(n)"] {
+            for delete in [false, true] {
+                let sql = |table: &str| {
+                    let write = if delete {
+                        format!("DELETE FROM {table}")
+                    } else {
+                        format!("UPDATE {table} SET n=n+10")
+                    };
+                    format!("WITH {table} AS (SELECT 2 AS n), chosen(n) AS (WITH local_q(\"Key\") AS {hint} (SELECT {projection} FROM {table}) SELECT q.\"KEY\" FROM local_q q) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
+                };
+                q(&c, "BEGIN");
+                let expected = q(&c, &sql("native"));
+                let actual = q(&c, &sql("docs"));
+                assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
+                assert_eq!(actual.affected, expected.affected);
+                assert_eq!(
+                    q(&c, "SELECT n FROM docs ORDER BY n").rows,
+                    q(&c, "SELECT n FROM native ORDER BY n").rows
+                );
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap();
+                q(&c, "ROLLBACK");
+            }
+        }
+    }
+}
