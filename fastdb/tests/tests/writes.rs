@@ -397,3 +397,51 @@ fn explicit_tuple_updates_preserve_snapshots_and_atomic_validation() {
         q(&c, "SELECT a,b FROM native ORDER BY a").rows
     );
 }
+
+#[test]
+fn tuple_updates_preserve_typed_values_and_mixed_assignment_snapshots() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(a,b,c) VALUES(1,2,3)");
+    let record = Value::Record(Record {
+        table: "docs".into(),
+        key: Key::String("target".into()),
+    });
+    let object = Value::Object(Document::from([(
+        "nested".into(),
+        Value::Array(vec![Value::Boolean(true), Value::Binary(vec![0, 255])]),
+    )]));
+    let params = Parameters::from([("?1".into(), record.clone()), ("?2".into(), object.clone())]);
+    let result = c
+        .execute("UPDATE docs SET (a,b)=(?1,?2),c=a RETURNING a,b,c", &params)
+        .unwrap();
+    assert_eq!(
+        result.rows,
+        vec![vec![record.clone(), object.clone(), Value::Integer(1)]]
+    );
+    assert_eq!(
+        q(&c, "UPDATE docs SET (a,b)=(b,a),c=b RETURNING a,b,c").rows,
+        vec![vec![object.clone(), record.clone(), object.clone()]]
+    );
+    let before = q(&c, "SELECT a,b,c FROM docs").rows;
+    assert_eq!(
+        c.execute(
+            "UPDATE docs SET (a,b)=(?1,?2)",
+            &Parameters::from([("?1".into(), Value::Null)])
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_PARAMETER"
+    );
+    assert_eq!(q(&c, "SELECT a,b,c FROM docs").rows, before);
+    let empty = c
+        .execute(
+            "UPDATE docs SET (a,b)=(?1,?2) WHERE 0 RETURNING a,b",
+            &params,
+        )
+        .unwrap();
+    assert_eq!(empty.columns, vec!["a", "b"]);
+    assert!(empty.rows.is_empty());
+    assert_eq!(empty.affected, 0);
+}

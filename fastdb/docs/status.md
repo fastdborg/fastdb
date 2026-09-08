@@ -4252,3 +4252,18 @@ denied and strict TypeScript checks. Log: `/tmp/fastdb-tuple-check.log`.
 The focused eight write tests also passed (`/tmp/fastdb-tuple-writes.log`).
 No upstream source or dependencies changed. Full V1 remains incomplete and no
 publication occurred.
+
+
+## Typed tuple assignment qualification — 2026-09-09
+
+A regression verifies tuple parameters and swaps retain record, object, array,
+boolean and binary values. Mixed tuple/scalar assignments use the pre-update
+snapshot. Missing numbered parameters leave data unchanged; a no-match UPDATE
+retains RETURNING column metadata with zero affected rows.
+
+All nine write integration tests passed, plus formatting and all-target
+fastdb-tests Clippy with warnings denied. Logs `/tmp/fastdb-tuple-types.log`
+and `/tmp/fastdb-tuple-types-clippy.log`. Only tests/documentation changed from
+`29ca055f2`; the previous full scoped baseline remains 575 Rust passes, one
+ignored trigger gate and 82 Node/application passes. No new full-suite run is
+claimed. Full V1 qualification remains open; no publication occurred.
