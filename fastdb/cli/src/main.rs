@@ -17,21 +17,38 @@ fn output_with_metrics(
     metrics: Option<fastdb::QueryMetrics>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let failed = report.result.is_err();
-    let mut output = match report.result {
-        Ok(result) => serde_json::to_value(result)?,
-        Err(error) => {
-            serde_json::json!({"error": {"code": error.code(), "message": error.to_string()}})
+    writer.write_all(b"{")?;
+    match report.result {
+        Ok(result) => {
+            writer.write_all(b"\"affected\":")?;
+            serde_json::to_writer(&mut *writer, &result.affected).map_err(io::Error::from)?;
+            writer.write_all(b",\"columns\":")?;
+            serde_json::to_writer(&mut *writer, &result.columns).map_err(io::Error::from)?;
+            writer.write_all(b",\"rows\":")?;
+            serde_json::to_writer(&mut *writer, &result.rows).map_err(io::Error::from)?;
         }
-    };
-    output["transaction"] =
-        serde_json::json!({"before": report.transaction_before, "after": report.transaction_after});
+        Err(error) => {
+            writer.write_all(b"\"error\":")?;
+            serde_json::to_writer(
+                &mut *writer,
+                &serde_json::json!({"code": error.code(), "message": error.to_string()}),
+            )
+            .map_err(io::Error::from)?;
+        }
+    }
+    writer.write_all(b",\"transaction\":")?;
+    serde_json::to_writer(&mut *writer,
+        &serde_json::json!({"before": report.transaction_before, "after": report.transaction_after}))
+        .map_err(io::Error::from)?;
     if let Some(metrics) = metrics {
-        output["profile"] = serde_json::to_value(metrics)?;
+        writer.write_all(b",\"profile\":")?;
+        serde_json::to_writer(&mut *writer, &metrics).map_err(io::Error::from)?;
     }
     if let Some(offset) = offset {
-        output["offset"] = offset.into();
+        writer.write_all(b",\"offset\":")?;
+        serde_json::to_writer(&mut *writer, &offset).map_err(io::Error::from)?;
     }
-    writeln!(writer, "{}", serde_json::to_string(&output)?)?;
+    writer.write_all(b"}\n")?;
     writer.flush()?;
     Ok(failed)
 }
@@ -686,6 +703,104 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_report_output_preserves_json_contract() {
+        let db = Database::open(":memory:").unwrap();
+        let conn = db.connect().unwrap();
+        let metrics = conn
+            .profile_select("SELECT 1", &Parameters::new())
+            .unwrap()
+            .metrics;
+        for failed in [false, true] {
+            for offset in [None, Some(17)] {
+                for profile in [None, Some(metrics)] {
+                    let report = ExecutionReport {
+                        result: if failed {
+                            Err(fastdb::Error::Validation("quoted\"\nไทย".into()))
+                        } else {
+                            Ok(fastdb::QueryResult {
+                                columns: vec!["quoted\"\nไทย".into()],
+                                rows: vec![vec![fastdb::Value::Array(vec![
+                                    fastdb::Value::Integer(i64::MAX),
+                                    fastdb::Value::Number(-0.0),
+                                    fastdb::Value::Binary(vec![0, 255]),
+                                    fastdb::Value::String("[\"\\ไทย".into()),
+                                ])]],
+                                affected: 0,
+                            })
+                        },
+                        transaction_before: fastdb::TransactionState::Active,
+                        transaction_after: fastdb::TransactionState::Active,
+                    };
+                    let mut expected = match &report.result {
+                        Ok(result) => serde_json::to_value(result).unwrap(),
+                        Err(error) => {
+                            serde_json::json!({"error":{"code":error.code(),"message":error.to_string()}})
+                        }
+                    };
+                    expected["transaction"] =
+                        serde_json::json!({"before":"active","after":"active"});
+                    if let Some(profile) = profile {
+                        expected["profile"] = serde_json::to_value(profile).unwrap();
+                    }
+                    if let Some(offset) = offset {
+                        expected["offset"] = offset.into();
+                    }
+                    let mut output = Vec::new();
+                    assert_eq!(
+                        output_with_metrics(&mut output, report, offset, profile).unwrap(),
+                        failed
+                    );
+                    assert_eq!(output.last(), Some(&b'\n'));
+                    assert_eq!(
+                        serde_json::from_slice::<serde_json::Value>(&output).unwrap(),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn failure_inside_serialized_rows_stops_later_script_writes() {
+        struct PartialOutput(Vec<u8>);
+        impl Write for PartialOutput {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let count = bytes.len().min(400 - self.0.len()).min(3);
+                if count == 0 {
+                    return Err(io::ErrorKind::BrokenPipe.into());
+                }
+                self.0.extend_from_slice(&bytes[..count]);
+                Ok(count)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let db = Database::open(":memory:").unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("CREATE TABLE samples(n INTEGER)", &Parameters::new())
+            .unwrap();
+        let mut writer = PartialOutput(Vec::new());
+        let error = run_script(
+            &conn,
+            "INSERT INTO samples VALUES(1); SELECT zeroblob(4096); INSERT INTO samples VALUES(2);",
+            &mut writer,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(String::from_utf8(writer.0).unwrap().contains("Binary"));
+        assert_eq!(
+            conn.execute("SELECT n FROM samples", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![fastdb::Value::Integer(1)]]
+        );
+    }
 
     struct FailingOutput {
         flushes: usize,

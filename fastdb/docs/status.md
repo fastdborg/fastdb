@@ -3529,3 +3529,21 @@ and after rollback. All seven result-limit tests pass
 (`/tmp/fastdb-deep-result-limits.log`). This test-only change adds evidence after
 the complete 549-Rust/78-Node run; it does not establish total-memory bounds or
 close full V1.
+
+
+### Direct CLI report serialization
+
+CLI query/script/profile reports now serialize result columns and rows directly
+to the output writer. They no longer construct an intermediate serde_json value
+tree or a complete JSON String for the report. Field values, transaction/error
+observations, optional offsets/profiles and newline/flush behavior are preserved;
+JSON member ordering is not a contract. Complete QueryResult rows remain
+materialized, so this is not engine row streaming or a total-memory bound.
+
+All 30 CLI tests pass (`/tmp/fastdb-cli-direct-json.log`). New regressions compare
+parsed reports with the previous representation across success/error, offsets,
+profiles and escaped/typed values, and inject short writes followed by BrokenPipe
+inside a binary row to verify I/O error identity and no later script writes.
+Existing output/flush failure, transaction, transfer, terminal and limit tests
+remain green. No Node or engine implementation changed. Full V1 and resource
+qualification remain open.
