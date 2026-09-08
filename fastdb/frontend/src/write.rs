@@ -218,6 +218,44 @@ fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
     Ok(found)
 }
 impl Connection {
+    /// Execute one data write and reject an oversized returned result atomically.
+    /// This checks the completed result before releasing the operation savepoint;
+    /// it does not limit candidate or RETURNING materialization memory. SQL DML
+    /// and supported object writes are accepted; transaction control and DDL are not.
+    pub fn write_with_result_limits(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: crate::ResultLimits,
+    ) -> Result<QueryResult> {
+        crate::parser_stack(|| {
+            use fastql_parser::Statement;
+            let valid = match fastql_parser::parse(sql)? {
+                Statement::Insert { .. }
+                | Statement::Upsert { .. }
+                | Statement::Patch { .. }
+                | Statement::PatchWhere { .. }
+                | Statement::Delete { .. } => true,
+                Statement::Sql(sql) => matches!(
+                    parsed(&expand_paths(&expand_records(&sql)?)?)?,
+                    Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. })
+                ),
+                _ => false,
+            };
+            if !valid {
+                return Err(unsupported("write result limits require one data write"));
+            }
+            self.atomic(|| {
+                let result = self.execute(sql, params)?;
+                let mut budget = crate::budget::ResultBudget::new(Some(limits), &result.columns)?;
+                for row in &result.rows {
+                    budget.row(row)?;
+                }
+                Ok(result)
+            })
+        })
+    }
+
     pub(crate) fn object_returning(
         &self,
         table: &str,

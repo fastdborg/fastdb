@@ -1,7 +1,8 @@
 use crate::{Error, Key, Result, Value};
 
-/// Explicit limits for a materialized SELECT result. This does not bound engine
-/// working memory, decoding allocations, or allocator overhead.
+/// Explicit row and payload limits for returned query results. Enforcement
+/// timing depends on the operation API. This does not bound engine working
+/// memory, decoding allocations, or allocator overhead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResultLimits {
     pub max_rows: usize,
@@ -77,7 +78,7 @@ impl ResultBudget {
             return Ok(());
         };
         if self.rows >= limits.max_rows {
-            return Err(Error::Limit("SELECT result row limit exceeded".into()));
+            return Err(Error::Limit("result row limit exceeded".into()));
         }
         self.rows += 1;
         for (i, value) in row.iter().enumerate() {
@@ -89,7 +90,7 @@ impl ResultBudget {
     }
 }
 fn payload_error() -> Error {
-    Error::Limit("SELECT result payload limit exceeded".into())
+    Error::Limit("result payload limit exceeded".into())
 }
 
 #[cfg(test)]

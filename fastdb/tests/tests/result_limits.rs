@@ -171,3 +171,234 @@ fn fetch_limits_charge_expanded_duplicates_missing_targets_and_other_columns() {
     c.execute("ROLLBACK", &p).unwrap();
     assert_eq!(c.execute("SELECT n FROM docs", &p).unwrap().rows.len(), 1);
 }
+
+#[test]
+fn write_result_limit_failure_restores_statement_and_prior_work() {
+    for outer in [false, true] {
+        for (setup, write, read) in [
+            (
+                "INSERT INTO native VALUES(1),(2)",
+                "UPDATE native SET n=n+10 RETURNING n",
+                "SELECT n FROM native ORDER BY n",
+            ),
+            (
+                "INSERT INTO native VALUES(1),(2)",
+                "DELETE FROM native RETURNING n",
+                "SELECT n FROM native ORDER BY n",
+            ),
+            (
+                "INSERT INTO native VALUES(1),(2)",
+                "INSERT INTO native SELECT n+10 FROM native RETURNING n",
+                "SELECT n FROM native ORDER BY n",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "UPDATE docs SET n=n+10 RETURNING n",
+                "SELECT n FROM docs",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "UPDATE docs {n:n+10} RETURNING n",
+                "SELECT n FROM docs",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "UPDATE docs:a {n:n+10} RETURNING n",
+                "SELECT n FROM docs",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "UPSERT docs:a {n:n+10} RETURNING n",
+                "SELECT n FROM docs",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "DELETE FROM docs:a RETURNING n",
+                "SELECT n FROM docs",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "INSERT INTO docs {id:docs:b,n:2} RETURNING n",
+                "SELECT n FROM docs ORDER BY n",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "INSERT INTO docs(n) SELECT n+10 FROM docs RETURNING n",
+                "SELECT n FROM docs ORDER BY n",
+            ),
+        ] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            let p = Parameters::new();
+            for sql in [
+                "CREATE TABLE native(n INTEGER)",
+                "CREATE TABLE docs",
+                "CREATE INDEX by_n ON docs(n)",
+                "CREATE TABLE prior(n INTEGER)",
+                setup,
+            ] {
+                c.execute(sql, &p).unwrap();
+            }
+            if outer {
+                c.execute("BEGIN", &p).unwrap();
+                c.execute("INSERT INTO prior VALUES(7)", &p).unwrap();
+            }
+            let before = c.execute(read, &p).unwrap().rows;
+            let state = c.transaction_state();
+            for limits in [
+                ResultLimits {
+                    max_rows: 0,
+                    max_payload_bytes: 100,
+                },
+                ResultLimits {
+                    max_rows: 100,
+                    max_payload_bytes: 1,
+                },
+            ] {
+                assert!(
+                    matches!(
+                        c.write_with_result_limits(write, &p, limits),
+                        Err(Error::Limit(_))
+                    ),
+                    "{write}"
+                );
+                assert_eq!(c.transaction_state(), state, "{write}");
+                assert_eq!(c.execute(read, &p).unwrap().rows, before, "{write}");
+                c.check_collection_integrity("docs", fastdb::IntegrityLimits::default())
+                    .unwrap();
+            }
+            let result = c
+                .write_with_result_limits(
+                    write,
+                    &p,
+                    ResultLimits {
+                        max_rows: 2,
+                        max_payload_bytes: 17,
+                    },
+                )
+                .unwrap();
+            assert!(!result.rows.is_empty());
+            if outer {
+                assert_eq!(c.execute("SELECT n FROM prior", &p).unwrap().rows.len(), 1);
+                c.execute("ROLLBACK", &p).unwrap();
+                assert_eq!(c.execute(read, &p).unwrap().rows, before);
+            }
+        }
+    }
+}
+
+#[test]
+fn write_result_limits_reject_transaction_escape_and_charge_empty_metadata() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let p = Parameters::new();
+    c.execute("CREATE TABLE native(n INTEGER)", &p).unwrap();
+    c.execute("BEGIN", &p).unwrap();
+    let zero = ResultLimits {
+        max_rows: 0,
+        max_payload_bytes: 0,
+    };
+    for sql in [
+        "COMMIT",
+        "ROLLBACK",
+        "SAVEPOINT user_frame",
+        "CREATE TABLE forbidden_table(n)",
+        "SELECT 1",
+        "PRAGMA user_version=7",
+        "EXPLAIN DELETE FROM native",
+    ] {
+        assert!(
+            matches!(
+                c.write_with_result_limits(sql, &p, zero),
+                Err(Error::Unsupported(_))
+            ),
+            "{sql}"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    }
+    assert!(c
+        .write_with_result_limits("INSERT INTO native VALUES(1); COMMIT", &p, zero)
+        .is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert!(c
+        .execute("SELECT n FROM native", &p)
+        .unwrap()
+        .rows
+        .is_empty());
+    assert!(matches!(
+        c.write_with_result_limits("UPDATE native SET n=2 WHERE 0 RETURNING n", &p, zero),
+        Err(Error::Limit(_))
+    ));
+    let result = c
+        .write_with_result_limits("INSERT INTO native VALUES(1)", &p, zero)
+        .unwrap();
+    assert_eq!(result.affected, 1);
+    assert!(result.rows.is_empty());
+    c.execute("ROLLBACK", &p).unwrap();
+}
+
+#[test]
+fn rejected_write_result_rolls_back_trigger_effects_across_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("write-budget.db");
+    let p = Parameters::new();
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE items(n INTEGER UNIQUE)", "CREATE TABLE audit(n INTEGER)",
+            "CREATE TRIGGER audit_insert AFTER INSERT ON items BEGIN INSERT INTO audit VALUES(new.n); END",
+            "INSERT INTO items VALUES(7)", "BEGIN", "INSERT INTO items VALUES(8)",
+        ] { c.execute(sql, &p).unwrap(); }
+        let write = "INSERT INTO items VALUES(1),(2) RETURNING n";
+        let error = c
+            .write_with_result_limits(
+                write,
+                &p,
+                ResultLimits {
+                    max_rows: 1,
+                    max_payload_bytes: 100,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT");
+        for table in ["items", "audit"] {
+            assert_eq!(
+                c.execute(&format!("SELECT n FROM {table} ORDER BY n"), &p)
+                    .unwrap()
+                    .rows,
+                vec![
+                    vec![fastdb::Value::Integer(7)],
+                    vec![fastdb::Value::Integer(8)]
+                ]
+            );
+        }
+        let exact = ResultLimits {
+            max_rows: 2,
+            max_payload_bytes: 17,
+        };
+        assert_eq!(
+            c.write_with_result_limits(write, &p, exact)
+                .unwrap()
+                .affected,
+            2
+        );
+        assert!(c
+            .write_with_result_limits("INSERT INTO items VALUES(3),(7) RETURNING n", &p, exact)
+            .is_err());
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        c.execute("COMMIT", &p).unwrap();
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    for table in ["items", "audit"] {
+        assert_eq!(
+            c.execute(&format!("SELECT n FROM {table} ORDER BY n"), &p)
+                .unwrap()
+                .rows,
+            [1, 2, 7, 8]
+                .map(|n| vec![fastdb::Value::Integer(n)])
+                .to_vec()
+        );
+    }
+}

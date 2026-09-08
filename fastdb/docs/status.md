@@ -2572,3 +2572,26 @@ gate, 68 Node/application tests, formatting, Clippy and strict TypeScript. Log:
 collector change; prior installed-package results remain historical. Temporary
 reference/decoding allocations, engine working memory, deadlines, write-result
 atomic limits and the remaining V1 release gates are still incomplete.
+
+### Initial atomic Rust write-result policy
+
+Added `Connection::write_with_result_limits(sql, params, ResultLimits)` for one
+SQL INSERT/UPDATE/DELETE or supported object write. The operation runs inside a
+savepoint and checks the completed result before release. Returned row/payload
+overflow rolls back the operation, including managed indexes and native trigger
+effects, using existing savepoint recovery. This is a final-result acceptance
+policy, not a candidate/RETURNING materialization memory bound. It intentionally
+rejects reads, transaction control, DDL and multiple statements. No-RETURNING
+writes can succeed with zero budgets; empty RETURNING still charges metadata.
+
+Twenty autocommit/outer-transaction cases cover native and collection writes,
+object patch/upsert/delete, INSERT SELECT, index integrity and exact retry. A
+persistent native trigger case verifies rollback of rejected output and later
+uniqueness failure, prior pending work, successful retry, commit and reopen.
+Non-write rejection tests verify an active transaction cannot escape through the
+API. Shared budget errors now use operation-neutral result-limit wording.
+
+The complete scoped check passed 520 Rust tests (one existing ignored gate),
+68 Node/application tests, formatting, Clippy and strict TypeScript. Log:
+`/tmp/fastdb-write-result-check.log`. Node exposure, cancellation qualification,
+progressive write collection and the broader resource/release gates remain open.

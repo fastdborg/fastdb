@@ -29,6 +29,24 @@ required bigint `maxRows` and `maxPayloadBytes`; worker calls accept AbortSignal
 RETURNING, INSERT SELECT candidates and transfer remain separate integration
 work. This does not close the V1 resource gate.
 
+## Atomic write-result policy
+
+Rust `Connection::write_with_result_limits(sql, params, ResultLimits)` accepts
+one SQL INSERT/UPDATE/DELETE or supported object write. It runs inside an
+operation savepoint, checks the completed returned result with the same row and
+payload accounting, and releases only on success. A result limit failure rolls
+back that operation, including data and managed indexes, while preserving prior
+pending work when savepoint recovery succeeds. Existing engine/rollback errors
+retain their own error handling and transaction disposition.
+
+This is a final-result acceptance policy, **not a bound on write candidate or
+RETURNING materialization memory**. It must not be used as a process memory cap.
+Transaction control, schema operations, reads and multi-statement input are
+rejected. Writes without RETURNING can succeed with zero budgets; affected rows
+are not returned rows. Empty RETURNING results still charge column metadata.
+Node exposure, cancellation qualification and progressive write collection
+remain unfinished.
+
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.
 
