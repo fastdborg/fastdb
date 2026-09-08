@@ -83,3 +83,6 @@ NATURAL collation coverage now includes 18 execute/profile native comparisons wi
 
 
 Chained NATURAL joins now have 18 native execute/profile comparisons for INNER/LEFT/leading-RIGHT followed by INNER/LEFT, covering retained keys, qualified access and star positions.
+
+
+Typed NATURAL RIGHT JOIN insertion now has record/boolean/binary coverage, including unmatched retained keys, unique-index failure, rollback and retry.

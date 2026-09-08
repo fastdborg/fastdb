@@ -1522,3 +1522,42 @@ fn chained_natural_joins_preserve_merged_keys_and_star_order() {
         }
     }
 }
+
+#[test]
+fn natural_typed_keys_insert_atomically_and_retry_after_rollback() {
+    for (first, second) in [
+        ("docs:a", "docs:b"),
+        ("true", "false"),
+        ("X'00ff'", "X'0100'"),
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let query = |sql: &str| {
+            c.execute(sql, &Parameters::new())
+                .unwrap_or_else(|e| panic!("{sql}: {e}"))
+        };
+        query("CREATE TABLE docs");
+        query("CREATE TABLE other");
+        for (table, value) in [("docs", first), ("other", first), ("other", second)] {
+            if value.starts_with("X'") {
+                query(&format!("INSERT INTO {table}(k) VALUES({value})"));
+            } else {
+                query(&format!("INSERT INTO {table} {{k:{value}}}"));
+            }
+        }
+        query("CREATE TABLE copied");
+        query("CREATE UNIQUE INDEX copied_k ON copied(k)");
+        let insert = "INSERT INTO copied(k) SELECT k FROM (SELECT k FROM docs) a NATURAL RIGHT JOIN (SELECT k FROM other) b";
+        let expected = query("SELECT k FROM other ORDER BY k");
+        query("BEGIN");
+        query(insert);
+        assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
+        assert!(c.execute(insert, &Parameters::new()).is_err());
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
+        query("ROLLBACK");
+        assert!(query("SELECT * FROM copied").rows.is_empty());
+        query(insert);
+        assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
+    }
+}

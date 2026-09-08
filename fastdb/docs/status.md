@@ -2171,3 +2171,6 @@ NATURAL collation qualification (2026-09-08): an 18-case native differential exe
 
 
 Chained NATURAL qualification (2026-09-08): 18 native differential execute/profile cases pass for INNER/LEFT/leading-RIGHT followed by INNER/LEFT NATURAL joins. Unqualified stars, qualified stars and merged/qualified keys preserve pinned rows, NULL extension and column order, including leading-RIGHT source reordering. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-chained.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader NATURAL and full V1 qualification remain open.
+
+
+Typed NATURAL write qualification (2026-09-08): record, boolean and binary keys retain values through closed-source NATURAL RIGHT JOIN into a collection, including unmatched retained keys. Duplicate unique-index failure preserves prior inserted rows and an active transaction; rollback clears them and retry succeeds. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-typed-writes.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader NATURAL and full V1 qualification remain open.
