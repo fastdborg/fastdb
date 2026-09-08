@@ -6141,7 +6141,13 @@ impl Connection {
             } else if let Some((i, path)) = scope.field(&sorted.expr)? {
                 let mut e = scope.accessor(i, &path, true)?;
                 if let Expr::FunctionCall { name, .. } = &mut e {
-                    *name = Name::exact("__fastdb_sort".into());
+                    if name.as_str() == "__fastdb_value" {
+                        *name = Name::exact("__fastdb_sort".into());
+                    } else {
+                        e = expression(&format!("__fastdb_sort_encoded({e})"))?;
+                    }
+                } else {
+                    e = expression(&format!("__fastdb_sort_encoded({e})"))?;
                 }
                 sorted.expr = Box::new(e);
             } else if scope.preserved(&mut sorted.expr)? {

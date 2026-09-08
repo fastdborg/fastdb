@@ -1202,3 +1202,9 @@ candidate SELECT lowering. Initial correlated lookup tests cover CTEs backed
 by ordinary tables and collections, including zero-row NULL tuples. Recursive
 tuple CTEs remain rejected; broader CTE shadowing/type/resource qualification
 remains open. The WITH belongs to the tuple subquery's scope.
+
+
+ORDER BY on an unprojected typed CTE/derived column uses its logical sort key,
+not the stored tagged representation. Collection-document accessors use the
+direct sort accessor; encoded column/nested accessors use sort_encoded. This
+preserves numeric ordering when tuple-local CTE lookups choose a limited row.

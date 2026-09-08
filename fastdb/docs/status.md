@@ -4725,3 +4725,20 @@ full-check addon. Logs `/tmp/fastdb-local-tuple-node-focused.log` and
 `/tmp/fastdb-local-tuple-node.log`. Only tests/documentation changed from
 `c637019b6`; no native rebuild or full Rust rerun is claimed. Full V1 gates
 remain open; no publication occurred.
+
+
+## Logical ordering of unprojected typed CTE columns — 2026-09-09
+
+An expanded local tuple CTE validation test exposed incorrect numeric ordering:
+a collection-backed CTE sorted its encoded a column directly, selecting 6 over
+11 in descending order. ORDER BY field lowering now uses sort_encoded for
+encoded derived columns and nested accessors; direct document value accessors
+retain the direct sort function. The regression covers direct/local CTE and
+relational/collection lookups, atomic failure, index restoration and valid retry.
+
+Full scoped check passed from `c26c9fe89` plus this fix: 594 Rust passes, zero
+failures, one existing ignored trigger gate; 85 Node/application passes;
+formatting, Clippy with warnings denied and strict TypeScript. Logs
+`/tmp/fastdb-local-tuple-sort-check.log` and `/tmp/fastdb-local-tuple-recovery.log`.
+No upstream files, storage formats or dependencies changed. Full V1 gates remain
+open; no publication occurred.
