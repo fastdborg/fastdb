@@ -2091,3 +2091,37 @@ fn using_inner_derived_scalars_preserve_affinity_and_collation() {
         }
     }
 }
+
+#[test]
+fn pinned_inner_alias_renaming_preserves_outer_merged_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE a(k INTEGER)",
+        "INSERT INTO a VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for body in [
+            "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k",
+            "SELECT ALIAS.n FROM nums ALIAS WHERE ALIAS.n<k ORDER BY ALIAS.n DESC LIMIT 1",
+            "SELECT (SELECT max(ALIAS.n)) FROM nums ALIAS WHERE ALIAS.n<k LIMIT 1",
+            "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k AND EXISTS(SELECT 1 WHERE ALIAS.n>=0)",
+        ] {
+            let sql=|alias: &str|format!("SELECT k,({}) AS v FROM a {join} b USING(k) ORDER BY k",body.replace("ALIAS",alias));
+            let original=query(&sql("b"));
+            let renamed=query(&sql("local_nums"));
+            assert_eq!(renamed.columns,original.columns);
+            assert_eq!(renamed.rows,original.rows,"{}",sql("b"));
+        }
+    }
+}

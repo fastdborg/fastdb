@@ -125,3 +125,6 @@ Inner native derived scalar affinity/collation coverage includes 72 execute/prof
 
 
 Collection-backed inner derived sources now have 108 typed execute/profile cases: local-to-outer merged-key equality for records, booleans and binary values, direct/nested scalars, all USING join directions and empty LIMIT/OFFSET results. Broader logical derived scope qualification remains open.
+
+
+A 12-case native oracle verifies consistent inner alias renaming through direct and nested scalar/EXISTS references across join directions. The corresponding collection merged-key alias collision remains an implementation gap; a rewrite must respect deeper local alias shadowing.
