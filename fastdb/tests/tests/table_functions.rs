@@ -435,3 +435,79 @@ fn iterator_correlated_cte_arguments_match_native() {
         0
     );
 }
+
+#[test]
+fn iterator_deadlines_preserve_transaction_work_and_allow_retry() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n) VALUES(1)",
+        "CREATE TABLE output",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(0)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    let json = format!("[{}]", vec!["1"; 5000].join(","));
+    let params = Parameters::from([("$json".into(), Value::String(json))]);
+    let select = "SELECT count(*) AS n FROM docs d CROSS JOIN json_each($json) x CROSS JOIN json_each($json) y WHERE d.n=1";
+    let write = format!("INSERT INTO output(n) {select} RETURNING n");
+    for sql in [select, write.as_str()] {
+        let token = fastdb::CancellationToken::with_deadline(
+            std::time::Instant::now() + std::time::Duration::from_millis(20),
+        );
+        assert_eq!(
+            c.execute_cancellable(sql, &params, &token)
+                .unwrap_err()
+                .code(),
+            "FDB_CANCELLED"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            c.execute("SELECT n FROM output", &empty).unwrap().rows,
+            vec![vec![Value::Integer(0)]]
+        );
+        assert_eq!(
+            c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+                .unwrap()
+                .index_entries,
+            1
+        );
+    }
+    let small = Parameters::from([("$json".into(), Value::String("[1,2]".into()))]);
+    assert_eq!(
+        c.execute(&write, &small).unwrap().rows,
+        vec![vec![Value::Integer(4)]]
+    );
+    let rows = "SELECT x.value AS v FROM docs d CROSS JOIN json_each($json) x";
+    let limit = fastdb::ResultLimits {
+        max_rows: 1,
+        max_payload_bytes: 100,
+    };
+    assert_eq!(
+        c.select_with_limits(rows, &small, limit)
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(
+        c.profile_select_with_limits(rows, &small, limit)
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(
+        c.execute(rows, &small).unwrap().rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    c.execute("ROLLBACK", &empty).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

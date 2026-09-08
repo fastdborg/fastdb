@@ -2847,3 +2847,23 @@ changed. It does not establish registry packaging or other-platform release
 readiness. The full source-suite evidence remains 565 Rust and 80 Node/application
 passes with one existing ignored trigger gate. Full V1 remains unfinished; no
 publication occurred.
+
+
+## Iterator deadline and result-limit recovery — 2026-09-08
+
+A real-engine regression submits a 5,000 by 5,000 JSON iterator aggregate with a
+20 ms cooperative deadline through SELECT and collection INSERT SELECT RETURNING.
+Both return FDB_CANCELLED while preserving the active transaction, prior row and
+index integrity. A small two-by-two input retries successfully. Row-limited SELECT
+and profile reject a two-row iterator result at a one-row limit; an unlimited
+retry succeeds. Outer rollback leaves no output documents.
+
+All seven table_functions integration tests passed, along with fastdb-tests
+formatting and all-target Clippy with warnings denied. Logs:
+`/tmp/fastdb-iterator-deadlines.log` and
+`/tmp/fastdb-iterator-deadlines-clippy.log`. Only tests/documentation changed from
+`506676585`; no full-suite rerun or new client evidence is claimed. The latest
+complete source check remains 565 Rust and 80 Node/application passes with one
+existing ignored trigger gate. The timed workload qualifies cooperative failure
+and recovery, not an exact interruption point, hard preemption or total memory
+bounds. Full V1 release gates remain open; no publication occurred.
