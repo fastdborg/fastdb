@@ -3146,3 +3146,18 @@ Both runs installed a local tarball into an isolated temporary consumer offline;
 no publication occurred. No production code changed or broader suite was repeated.
 Active-timeout installed coverage, sustained cleanup, release artifacts, other
 platforms and broader V1 gates remain open.
+
+### Timeout token registry capacity recovery
+
+Added a native-capacity regression after 256 cycles of immediate timeout,
+invalid-signal setup with a timeout token, and successful timed execution (768
+requests). It fills all 16,384 private registry slots, verifies the next allocation
+is rejected, releases them and successfully executes another timed query. This
+proves no entries remain from the tested completed-request paths; it does not
+establish cleanup for every transport/crash scenario or an unbounded soak test.
+
+The focused probe and all 75 Node/application tests passed against the current
+addon. Logs: `/tmp/fastdb-timeout-token-capacity.log` and
+`/tmp/fastdb-timeout-cleanup-node.log`. Diff checks passed. No production code or
+declarations changed; Rust/TypeScript/package checks were not repeated. Broader
+lifecycle, timing, platform and V1 gates remain open.

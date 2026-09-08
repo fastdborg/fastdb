@@ -2325,3 +2325,26 @@ test('zero timeout rejects async operations before work and allows recovery', as
     assert.deepEqual(await db.all('SELECT n FROM docs'),[[2n]]);
   } finally { await db.close(); }
 });
+
+test('timeout completion and invalid signal paths release native token capacity', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const { createCancellationToken, releaseCancellationToken } = require('./native.cjs');
+  const db = await AsyncDatabase.open();
+  const held = [];
+  try {
+    for (let i=0; i<256; i++) {
+      await assert.rejects(db.execute('SELECT 1',{}, {timeoutMs:0}), {code:'FDB_CANCELLED'});
+      await assert.rejects(db.execute('SELECT 1',{}, {timeoutMs:60000,signal:null}), TypeError);
+      assert.deepEqual(await db.all('SELECT 1',{}, {timeoutMs:60000}), [[1n]]);
+    }
+    // The private native registry has a fixed 16,384-token cap. Filling all
+    // slots proves these completed requests retained no registry entries.
+    for (let i=0; i<16384; i++) held.push(createCancellationToken());
+    assert.throws(() => createCancellationToken(), /token limit/);
+    for (const key of held.splice(0)) releaseCancellationToken(key);
+    assert.deepEqual(await db.all('SELECT 2',{}, {timeoutMs:60000}), [[2n]]);
+  } finally {
+    for (const key of held) releaseCancellationToken(key);
+    await db.close();
+  }
+});
