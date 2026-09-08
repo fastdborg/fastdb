@@ -2828,12 +2828,10 @@ fn source(
     if let SelectTable::TableCall(name, args, alias) = table {
         // Inspect iterator expressions without evaluating them. Source references
         // use NULL only in the metadata probe and are lowered in runtime scope.
-        if name.db_name.is_some()
-            || !matches!(
-                name.name.as_str().to_ascii_lowercase().as_str(),
-                "json_each" | "json_tree"
-            )
-        {
+        if !matches!(
+            name.name.as_str().to_ascii_lowercase().as_str(),
+            "json_each" | "json_tree"
+        ) {
             return Err(unsupported("this table-function source"));
         }
         let mut consumed = std::collections::BTreeSet::new();
@@ -4904,7 +4902,7 @@ impl Connection {
                                         table.as_ref(),
                                         SelectTable::Table(..) | SelectTable::Select(..)
                                     ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _)
-                                        if name.db_name.is_none() && matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree"))
+                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree"))
                                     {
                                         resolved.push(source(
                                             self,

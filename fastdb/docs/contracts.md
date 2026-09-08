@@ -1089,8 +1089,9 @@ Tagged-value nesting: binding input, stored values and document transfer decodin
 
 ## Direct JSON iterator sources
 
-Collection and mixed SELECTs accept unqualified `json_each` and `json_tree`
-sources. Arguments support literals, bound parameters, native scalar functions,
+Collection and mixed SELECTs accept `json_each` and `json_tree` sources,
+including schema-qualified names such as `main.json_each`. The original
+qualification is retained for pinned-engine resolution. Arguments support literals, bound parameters, native scalar functions,
 arithmetic, casts, CASE and per-row source fields. For example:
 
 ```sql

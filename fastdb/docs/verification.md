@@ -3028,3 +3028,20 @@ warnings denied. Logs `/tmp/fastdb-cli-iterator-rollback.log` and
 `/tmp/fastdb-cli-iterator-rollback-clippy.log`. Only tests/documentation changed
 from `f3f8250a9`; no new full source-suite or client run is claimed. Full V1 release
 gates remain open; no publication occurred.
+
+
+## Schema-qualified JSON iterators — 2026-09-08
+
+Collection lowering now preserves schema-qualified json_each/json_tree names,
+removing a rejection for forms accepted by the pinned engine. Native comparisons
+cover main.json_each and temp.json_tree with projections, stars and CROSS/LEFT
+joins through execute/profile. Qualification remains in SQL for native resolution;
+general table-function support remains separate.
+
+The full scoped check exited zero: 572 Rust tests passed, zero failed, one existing
+trigger-cancellation gate ignored; 82 Node/application tests, formatting, Clippy
+and strict TypeScript passed. Log `/tmp/fastdb-qualified-iterators-check.log`,
+implementation tree based on `03614fd03` with this change. This combines recent
+malformed-input rollback and CLI/client recovery tests with the source suite.
+No upstream source or dependencies changed. Full V1 release gates remain open;
+no publication occurred.

@@ -15,6 +15,8 @@ fn closed_json_table_functions_match_native_mixed_joins() {
     }
     for (iterator, params) in [
         ("json_each('[1,2,null]') AS j", empty.clone()),
+        ("main.json_each('[1,2,null]') AS j", empty.clone()),
+        ("temp.json_tree('[1,2,null]') AS j", empty.clone()),
         (
             "json_each(json_array(1+0,CAST('2' AS INTEGER),NULL)) AS j",
             empty.clone(),
