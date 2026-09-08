@@ -3594,3 +3594,14 @@ and no reapplication on repetition. The resource-limit retry test now checks
 structured diagnostics instead of Rust debug text. Existing transfer/output and
 migration-history checks remain green. Full V1 and broader migration/platform
 qualification remain open.
+
+
+### CLI migration cause metadata
+
+Statement-failure diagnostics now expose `error.migration.version`, byte `offset`,
+and underlying `cause.code`/`cause.message` while retaining the existing outer
+code/message and transaction observations. Resource-limit and constraint retry
+tests assert exact metadata, including the second statement's source offset.
+All five migration and four transfer tests pass
+(`/tmp/fastdb-migration-causes.log`). Other CLI errors retain their existing shape.
+Full V1 and broader error-contract qualification remain open.

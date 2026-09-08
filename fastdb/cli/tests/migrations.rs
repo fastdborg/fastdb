@@ -169,6 +169,12 @@ fn migration_buffer_failure_persists_rollback_and_accepts_larger_policy_on_retry
     assert!(failed.stdout.is_empty());
     let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
     assert_eq!(diagnostic["error"]["code"], "FDB_MIGRATION");
+    assert_eq!(diagnostic["error"]["migration"]["version"], 3);
+    assert_eq!(diagnostic["error"]["migration"]["offset"], 0);
+    assert_eq!(
+        diagnostic["error"]["migration"]["cause"]["code"],
+        "FDB_LIMIT"
+    );
     assert!(diagnostic["error"]["message"]
         .as_str()
         .unwrap()
@@ -264,6 +270,15 @@ fn migration_execution_reports_failure_and_allows_corrected_retry() {
     assert!(failure.stdout.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&failure.stderr).unwrap();
     assert_eq!(report["error"]["code"], "FDB_MIGRATION");
+    assert_eq!(report["error"]["migration"]["version"], 2);
+    assert_eq!(
+        report["error"]["migration"]["offset"],
+        "INSERT INTO docs {id:docs:pending,n:2}; ".len()
+    );
+    assert_eq!(
+        report["error"]["migration"]["cause"]["code"],
+        "FDB_CONSTRAINT"
+    );
     assert!(report["error"]["message"]
         .as_str()
         .unwrap()

@@ -733,10 +733,22 @@ fn operation_error(
     before: fastdb::TransactionState,
     after: fastdb::TransactionState,
 ) -> io::Result<()> {
+    let mut diagnostic = serde_json::json!({"code":error.code(),"message":error.to_string()});
+    if let fastdb::Error::Migration {
+        version,
+        offset,
+        source,
+    } = error
+    {
+        diagnostic["migration"] = serde_json::json!({
+            "version":version,"offset":offset,
+            "cause":{"code":source.code(),"message":source.to_string()}
+        });
+    }
     serde_json::to_writer(
         &mut *writer,
         &serde_json::json!({
-            "error":{"code":error.code(),"message":error.to_string()},
+            "error":diagnostic,
             "transaction":{"before":before,"after":after}
         }),
     )
