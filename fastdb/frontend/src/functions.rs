@@ -1328,6 +1328,49 @@ mod cte_evaluation_tests {
         ] {
             c.execute(sql, &params).unwrap();
         }
+        c.execute("CREATE TABLE local_cte_keys(n)", &params)
+            .unwrap();
+        c.execute("INSERT INTO local_cte_keys VALUES(1),(5)", &params)
+            .unwrap();
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+                for tail in ["", " LIMIT 0"] {
+                    let query = |source| {
+                        format!("SELECT n,(WITH chosen AS {materialization} (SELECT n AS m,cte_tick() AS tick FROM baseline) SELECT max(m)+sum(tick) FROM chosen WHERE m<n) AS prior FROM {source} a {join} local_cte_keys b USING(n) ORDER BY n{tail}")
+                    };
+                    CALLS.store(0, Ordering::SeqCst);
+                    let expected = c.execute(&query("baseline"), &params).unwrap().rows;
+                    let calls = CALLS.load(Ordering::SeqCst);
+                    if !tail.is_empty() {
+                        assert_eq!(calls, 0);
+                    }
+                    for profile in [false, true] {
+                        CALLS.store(0, Ordering::SeqCst);
+                        let sql = query("docs");
+                        let actual = if profile {
+                            c.profile_select(&sql, &params).unwrap().result.rows
+                        } else {
+                            c.execute(&sql, &params).unwrap().rows
+                        };
+                        assert_eq!(actual, expected, "{sql}");
+                        assert_eq!(
+                            CALLS.load(Ordering::SeqCst),
+                            calls,
+                            "{sql}; profile={profile}"
+                        );
+                    }
+                    CALLS.store(0, Ordering::SeqCst);
+                    c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
+                        .unwrap();
+                    assert_eq!(
+                        CALLS.load(Ordering::SeqCst),
+                        0,
+                        "planning {}",
+                        query("docs")
+                    );
+                }
+            }
+        }
         for materialization in ["MATERIALIZED", "NOT MATERIALIZED"] {
             for joins in ["JOIN q v ON 1", "JOIN q v ON 1 JOIN q w ON 1"] {
                 for limit in ["", " LIMIT 0"] {
