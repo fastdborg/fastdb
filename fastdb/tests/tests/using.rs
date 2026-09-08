@@ -2927,16 +2927,20 @@ fn local_cte_merged_keys_match_native_shadowing() {
         for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
             for shadow in [false, true] {
                 let columns = if shadow { "n AS m,100 AS n" } else { "n AS m" };
-                let query = |source| {
-                    format!("SELECT n,(WITH chosen AS {materialization} (SELECT {columns} FROM baseline) SELECT max(m) FROM chosen WHERE m<n) AS prior FROM {source} a {join} keys b USING(n) ORDER BY n")
-                };
-                let expected = c.execute(&query("baseline"), &params).unwrap();
-                let sql = query("docs");
-                let actual = c
-                    .execute(&sql, &params)
-                    .unwrap_or_else(|error| panic!("{sql}: {error}"));
-                assert_eq!(actual.columns, expected.columns, "{sql}");
-                assert_eq!(actual.rows, expected.rows, "{sql}");
+                let declared = if shadow { "m,n" } else { "m" };
+                let output = if shadow { "x,100" } else { "x" };
+                for definitions in [
+                    format!("chosen AS {materialization} (SELECT {columns} FROM baseline)"),
+                    format!("first(x) AS (SELECT n FROM baseline),chosen({declared}) AS {materialization} (SELECT {output} FROM first)"),
+                    format!("chosen({declared}) AS {materialization} (WITH first(x) AS (SELECT n FROM baseline) SELECT {output} FROM first)"),
+                ] {
+                    let query = |source| format!("SELECT n,(WITH {definitions} SELECT max(m) FROM chosen WHERE m<n) AS prior FROM {source} a {join} keys b USING(n) ORDER BY n");
+                    let expected = c.execute(&query("baseline"), &params).unwrap();
+                    let sql = query("docs");
+                    let actual = c.execute(&sql, &params).unwrap_or_else(|error| panic!("{sql}: {error}"));
+                    assert_eq!(actual.columns, expected.columns, "{sql}");
+                    assert_eq!(actual.rows, expected.rows, "{sql}");
+                }
             }
         }
     }
