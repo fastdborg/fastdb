@@ -2770,3 +2770,36 @@ fn collated_correlated_compounds_preserve_typed_values() {
         c.execute("DELETE FROM docs", &empty).unwrap();
     }
 }
+
+#[test]
+fn correlated_union_scalar_ranges_honor_explicit_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in ["CREATE TABLE docs", "CREATE TABLE baseline(a,b)",
+        "INSERT INTO docs(a,b) VALUES('alpha','BETA'),('BETA','alpha'),('alpha','ALPHA'),('a ','a'),(NULL,'a')",
+        "INSERT INTO baseline VALUES('alpha','BETA'),('BETA','alpha'),('alpha','ALPHA'),('a ','a'),(NULL,'a')"] {
+        c.execute(sql,&params).unwrap();
+    }
+    for op in ["<", "<=", ">", ">="] {
+        for collation in ["BINARY", "NOCASE", "RTRIM"] {
+            for (left, right) in [
+                (format!("d.a COLLATE {collation}"), "d.b".into()),
+                ("d.a".into(), format!("d.b COLLATE {collation}")),
+            ] {
+                // The pinned engine rejects native compound scalar subqueries.
+                // Compare this supported logical projection to native scalar SQL.
+                let native = c
+                    .execute(
+                        &format!("SELECT {left} {op} {right} AS result FROM baseline d"),
+                        &params,
+                    )
+                    .unwrap();
+                let sql = format!("SELECT (SELECT {left} {op} {right} UNION ALL SELECT NULL LIMIT 1) AS result FROM docs d");
+                let actual = c.execute(&sql, &params).unwrap();
+                assert_eq!(actual.columns, native.columns, "{sql}");
+                assert_eq!(actual.rows, native.rows, "{sql}");
+            }
+        }
+    }
+}

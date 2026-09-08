@@ -2254,6 +2254,14 @@ impl Scope {
                     let left_typed = self.preserved(&mut left)?;
                     let right_typed = self.preserved(&mut right)?;
                     if left_typed && right_typed {
+                        if native_column_collation(a) || native_column_collation(b) {
+                            let (mut left, mut right) = (*a.clone(), *b.clone());
+                            if self.comparison_key(&mut left)? && self.comparison_key(&mut right)? {
+                                **a = left;
+                                **b = right;
+                                return Ok(());
+                            }
+                        }
                         *expr = expression(&format!("__fastdb_compare({left}, {right}) {op} 0"))?;
                         return Ok(());
                     }
