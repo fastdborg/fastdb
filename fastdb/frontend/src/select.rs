@@ -231,11 +231,15 @@ fn literal_pagination(value: &mut Expr, params: &Parameters) -> Result<bool> {
                 .name
                 .as_ref()
                 .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
-            if let Some(Value::Integer(number)) = params.get(&name) {
-                *value = expression(&number.to_string())?;
-                Ok(true)
-            } else {
-                Ok(false)
+            match params
+                .get(&name)
+                .ok_or_else(|| Error::Parameter(name.clone()))?
+            {
+                Value::Integer(number) => {
+                    *value = expression(&number.to_string())?;
+                    Ok(true)
+                }
+                _ => Ok(false),
             }
         }
         _ => Ok(false),

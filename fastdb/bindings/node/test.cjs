@@ -1957,3 +1957,55 @@ test('local CTE merged keys preserve parameters and client write recovery', asyn
     } finally { await db.close(); }
   }
 });
+
+test('ordered local CTE pagination preserves typed client recovery', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of [
+        'CREATE TABLE docs','CREATE TABLE baseline(n INTEGER)','CREATE TABLE keys(n INTEGER)',
+        'INSERT INTO docs(n) VALUES(1),(2),(3)','INSERT INTO baseline VALUES(1),(2),(3)',
+        'INSERT INTO keys VALUES(1),(4)',
+        'CREATE TABLE sink','CREATE UNIQUE INDEX sink_n ON sink(n)','INSERT INTO sink(n) VALUES(4)',
+      ]) await db.execute(sql);
+      const query = (materialization,direction) => `SELECT n,(WITH chosen AS ${materialization} (SELECT n AS m FROM baseline) SELECT $value FROM chosen WHERE m<n ORDER BY m ${direction} LIMIT $take OFFSET $skip) AS value FROM docs a RIGHT JOIN keys b USING(n) ORDER BY n`;
+      for (const materialization of ['','MATERIALIZED','NOT MATERIALIZED']) {
+        for (const direction of ['ASC','DESC']) {
+          for (const [take,skip] of [[0n,0n],[1n,0n],[1n,1n],[1n,3n],[-1n,1n]]) {
+            const params = {$take:take,$skip:skip,$value:true};
+            const expected = [[1n,null],[4n,take === 0n || skip === 3n ? null : true]];
+            const sql = query(materialization,direction);
+            assert.deepEqual((await db.execute(sql,params)).rows,expected);
+            assert.deepEqual((await db.profileSelect(sql,params)).result.rows,expected);
+          }
+        }
+      }
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO sink(n) VALUES(9)');
+      const insert = 'INSERT INTO sink(n,value) ' + query('MATERIALIZED','DESC') + ' RETURNING n,value';
+      const value = new Record('docs',7n);
+      const params = {$take:1n,$skip:1n,$value:value};
+      await assert.rejects(async () => db.execute(insert,{$take:1n,$value:value}), error => {
+        assert.equal(error.code,'FDB_PARAMETER');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      await assert.rejects(async () => db.execute(insert,params), error => {
+        assert.equal(error.code,'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT n FROM sink ORDER BY n'),[[4n],[9n]]);
+      await db.execute('DELETE FROM sink WHERE n=4');
+      const retry = await db.execute(insert,params);
+      assert.equal(retry.affected,2n);
+      assert.deepEqual(retry.rows,[[1n,null],[4n,value]]);
+      const audit = await db.checkCollectionIntegrity('sink');
+      assert.equal(audit.documents,3n);
+      assert.equal(audit.indexEntries,3n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM sink'),[[4n]]);
+    } finally { await db.close(); }
+  }
+});
