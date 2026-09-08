@@ -2837,6 +2837,15 @@ test('update from preserves typed candidates and unmatched targets in both clien
       await db.execute('INSERT INTO source(k,a,b) VALUES(1,$a,$b)', { $a: new Record('docs','old'), $b: { old: true } });
       await db.execute('INSERT INTO source(k,a,b) VALUES(1,$a,$b)', { $a: record, $b: payload });
       await db.execute('BEGIN');
+      await db.execute('CREATE TABLE keys(k INTEGER)');
+      await db.execute('INSERT INTO keys VALUES(1),(1)');
+      for (const join of ['JOIN','INNER JOIN','CROSS JOIN']) {
+        const joined = await db.execute('UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s ' + join + ' keys k ON k.k=s.k WHERE s.k=target.n RETURNING n,a,b');
+        assert.equal(joined.affected, 1n);
+        assert.deepEqual(joined.rows, [[1n,record,payload]]);
+        assert.deepEqual(joined.transaction, { before: 'active', after: 'active' });
+        await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
+      }
       const result = await db.execute('UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s WHERE s.k=target.n RETURNING n,a,b');
       assert.equal(result.affected, 1n);
       assert.deepEqual(result.rows, [[1n,record,payload]]);

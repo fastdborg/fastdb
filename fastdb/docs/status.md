@@ -5553,3 +5553,13 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-update-from-inner-check.log`. No upstream source, dependency or
 storage-format changes; no publication occurred. Full V1 remains open.
+
+
+## Typed inner-join UPDATE FROM clients — 2026-09-09
+
+Both Node clients now exercise JOIN/INNER JOIN/CROSS JOIN ON source trees with
+duplicates on both joined sources. The fixture checks typed record/object/binary
+values, one affected target and RETURNING row, active transaction reports and
+rollback. All 89 Node/application tests passed against the preceding full check's
+addon. Log: `/tmp/fastdb-inner-update-node.log`. Only tests/docs changed from
+`c88d12098`; no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
