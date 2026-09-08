@@ -4519,3 +4519,21 @@ Clippy with warnings denied passed. Logs:
 `/tmp/fastdb-update-from-source-matrix-clippy.log`. Only tests/docs changed from
 `ecdc0c38d`; no new full-suite/client run is claimed. Source join trees, FROM
 pagination, broader planner qualification and full V1 remain open.
+
+
+## Inner-join UPDATE FROM sources — 2026-09-09
+
+Collection UPDATE FROM now accepts inner source join trees by combining the
+target with the original inner join sequence. JOIN/INNER JOIN/CROSS JOIN ON
+fixtures compare table/collection source values, duplicate resolution, affected
+counts and RETURNING with native execution. All 44 write tests passed in the
+focused run. USING, NATURAL and outer source joins remain rejected; flattening
+those would change merged-column scope or unmatched-row behavior. FROM with
+LIMIT and broader alias/planner/resource qualification remain open.
+
+The complete scoped check passed on `97a2680a8` plus this change: 618 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+89 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-update-from-inner-check.log`. No upstream source, dependency or
+storage-format changes; no publication occurred. Full V1 remains open.

@@ -1946,3 +1946,44 @@ fn update_from_validation_restores_indexes_and_prior_work() {
         2
     );
 }
+
+#[test]
+fn update_from_inner_sources_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE source(k INTEGER,v INTEGER)",
+        "INSERT INTO source VALUES(1,7),(1,8),(2,9)",
+        "CREATE TABLE source_docs",
+        "INSERT INTO source_docs(k,v) SELECT k,v FROM source",
+        "CREATE TABLE keys(k INTEGER)",
+        "INSERT INTO keys VALUES(1),(2)",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["source", "source_docs"] {
+        for join in [
+            "JOIN keys k ON k.k=s.k",
+            "INNER JOIN keys k ON k.k=s.k",
+            "CROSS JOIN keys k ON k.k=s.k",
+        ] {
+            q(&c, "BEGIN");
+            let sql = format!(
+                "UPDATE TARGET SET v=s.v FROM {source} s {join} WHERE s.k=TARGET.n RETURNING n,v"
+            );
+            let expected = q(
+                &c,
+                &sql.replace("TARGET", "native")
+                    .replace("source_docs", "source"),
+            );
+            let actual = q(&c, &sql.replace("TARGET", "docs"));
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(actual.affected, expected.affected);
+            q(&c, "ROLLBACK");
+        }
+    }
+}

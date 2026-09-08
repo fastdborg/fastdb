@@ -627,7 +627,10 @@ impl Connection {
             Stmt::Update(update) => {
                 if update.or_conflict.is_some()
                     || (update.from.is_some() && update.limit.is_some())
-                    || update.from.as_ref().is_some_and(|from| !from.joins.is_empty())
+                    || update.from.as_ref().is_some_and(|from| from.joins.iter().any(|join| {
+                        matches!(join.constraint, Some(JoinConstraint::Using(_)))
+                            || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::LEFT | JoinType::RIGHT | JoinType::OUTER | JoinType::NATURAL))
+                    }))
                     || update.indexed.is_some()
                     || !update.order_by.is_empty()
                 {
@@ -1198,10 +1201,13 @@ impl Connection {
                         joins: source
                             .from
                             .into_iter()
-                            .map(|from| JoinedSelectTable {
-                                operator: JoinOperator::Comma,
-                                table: from.select,
-                                constraint: None,
+                            .flat_map(|from| {
+                                std::iter::once(JoinedSelectTable {
+                                    operator: JoinOperator::Comma,
+                                    table: from.select,
+                                    constraint: None,
+                                })
+                                .chain(from.joins)
                             })
                             .collect(),
                     }),
