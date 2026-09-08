@@ -505,9 +505,10 @@ impl NativeDatabase {
         let before = conn.transaction_state();
         let result = operation(conn).and_then(ResponseJson::into_json);
         let transaction = serde_json::json!({"before":before,"after":conn.transaction_state()});
-        Ok(format!(
-            "{{\"version\":1,\"execution\":{{{}}},\"transaction\":{transaction}}}",
-            execution_field(result)
+        Ok(wrap_json(
+            execution_field(result),
+            "{\"version\":1,\"execution\":{",
+            &format!("}},\"transaction\":{transaction}}}"),
         ))
     }
 }
@@ -536,9 +537,15 @@ impl ResponseJson for serde_json::Value {
         Ok(serde_json::to_string(&self)?)
     }
 }
+fn wrap_json(mut payload: String, prefix: &str, suffix: &str) -> String {
+    payload.reserve(prefix.len() + suffix.len());
+    payload.insert_str(0, prefix);
+    payload.push_str(suffix);
+    payload
+}
 fn execution_field(result: fastdb::Result<String>) -> String {
     match result {
-        Ok(value) => format!("\"result\":{value}"),
+        Ok(value) => wrap_json(value, "\"result\":", ""),
         Err(error) => format!(
             "\"error\":{}",
             serde_json::json!({"code":error.code(),"message":error.to_string()})
@@ -579,8 +586,9 @@ fn profile_value(profile: fastdb::ProfiledQuery) -> fastdb::Result<JsonText> {
         "fetchVmSteps":m.fetch_vm_steps.to_string()
     });
     let result = query_value(profile.result)?;
-    Ok(JsonText(format!(
-        "{{\"metrics\":{metrics},\"result\":{}}}",
-        result.0
+    Ok(JsonText(wrap_json(
+        result.0,
+        &format!("{{\"metrics\":{metrics},\"result\":"),
+        "}",
     )))
 }

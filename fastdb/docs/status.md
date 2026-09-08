@@ -3416,3 +3416,17 @@ Nonzero payloads use a hex SQL literal, so differences are not attributed solely
 to transport. Benchmarks.md records medians and limitations. No production code
 changed or correctness suite was repeated. Diff checks passed. Content-sensitive
 transport footprint and broader V1 resource qualification remain open.
+
+### Node response text buffer reuse
+
+Execution, profile and outer version/transaction wrappers now reserve framing
+space and reuse their owned JSON string buffer instead of allocating another full
+payload string at each layer. Only internally serialized text enters these wrappers;
+value/name escaping and result/error shapes remain unchanged. Buffer growth may
+still reallocate, and complete wire/decoded results remain in memory.
+
+All 77 rebuilt Node/application tests, strict TypeScript, Node Clippy, formatting
+and diff checks passed. Logs: `/tmp/fastdb-node-string-reuse.log` and
+`/tmp/fastdb-node-string-reuse-clippy.log`. Measurement follows separately; no
+improvement is inferred from implementation alone. Broader Rust/package suites
+were not repeated, and full V1 remains incomplete.
