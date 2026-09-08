@@ -4344,3 +4344,17 @@ Clippy with warnings denied. Logs `/tmp/fastdb-tuple-select-types.log` and
 `/tmp/fastdb-tuple-select-types-clippy.log`. Only tests/documentation changed
 from `74fcbb11f`; no new full-suite/client run is claimed. Broader tuple SELECT
 forms and full V1 gates remain open.
+
+
+## Node source-free tuple SELECT coverage — 2026-09-09
+
+Both clients now exercise source-free tuple SELECT validation failure with
+active-transaction preservation, conditional typed/NULL results, typed swaps,
+and outer rollback. The existing tuple test covers record, nested array/object,
+binary, boolean and int64 wire values through sync and worker clients.
+
+The focused test and all 83 Node/application tests passed against the addon
+from the last full source check. Logs `/tmp/fastdb-tuple-select-node-focused.log`
+and `/tmp/fastdb-tuple-select-node.log`. Only tests/documentation changed from
+`4026f536f`; no native rebuild or new full Rust-suite run is claimed. Full V1
+gates remain open; no publication occurred.
