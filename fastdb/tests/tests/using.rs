@@ -1184,3 +1184,50 @@ fn using_direct_and_nested_scalar_casts_preserve_native_affinity() {
         }
     }
 }
+
+#[test]
+fn nested_using_exists_preserves_empty_rows_and_local_shadowing() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+        "CREATE TABLE local_values(k INTEGER)",
+        "INSERT INTO local_values VALUES(99)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for expression in [
+            "(SELECT EXISTS(SELECT k WHERE k=2))",
+            "(SELECT NOT EXISTS(SELECT k WHERE k=2))",
+            "EXISTS(SELECT (SELECT k) WHERE k=2)",
+            "(SELECT EXISTS(SELECT k FROM local_values WHERE k=99))",
+        ] {
+            let sql = |source: &str| {
+                format!("SELECT k,{expression} AS v FROM {source} a {join} b USING(k) ORDER BY k")
+            };
+            let expected = query(&sql("baseline"));
+            for source in ["docs", "(SELECT k FROM docs)"] {
+                let logical = sql(source);
+                assert_eq!(query(&logical).rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}

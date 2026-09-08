@@ -2143,3 +2143,6 @@ The complete fastdb/scripts/check.sh run passed formatting, Clippy, 461 Rust tes
 
 
 Numeric USING scalar CAST qualification (2026-09-08): expanded the direct/nested cast regression to 144 native differential execute/profile shapes across TEXT/INTEGER/REAL/NUMERIC targets, integer/text comparisons, operand order, direct/closed sources and INNER/LEFT/RIGHT joins. All cases pass, retaining the direct/nested affinity distinction. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-using-numeric-casts.log. Latest complete scoped evidence remains 461 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains open.
+
+
+Nested USING EXISTS qualification (2026-09-08): 24 native differential execute/profile cases pass for scalar-wrapped EXISTS/NOT EXISTS, EXISTS containing a scalar projection, merged-key filters and local FROM shadowing across INNER/LEFT/RIGHT joins and direct/closed sources. Unmatched right rows retain the expected existence result. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-nested-using-exists.log. Latest complete scoped evidence remains 461 Rust tests with one ignored gate and 48 Node/application tests. General correlation and full V1 qualification remain open.
