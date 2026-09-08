@@ -124,7 +124,39 @@ fn native_correlated_predicate(
     scalar_pagination: bool,
 ) -> Result<(Select, bool)> {
     let mut inner = inner.clone();
-    if inner.with.is_some() || !inner.body.compounds.is_empty() {
+    if inner.with.is_some() {
+        return Ok((inner, false));
+    }
+    if !inner.body.compounds.is_empty() {
+        if !inner.order_by.is_empty() || inner.limit.is_some() {
+            return Ok((inner, false));
+        }
+        for arm in std::iter::once(&mut inner.body.select)
+            .chain(inner.body.compounds.iter_mut().map(|arm| &mut arm.select))
+        {
+            let single = Select {
+                with: None,
+                body: SelectBody {
+                    select: arm.clone(),
+                    compounds: Vec::new(),
+                },
+                order_by: Vec::new(),
+                limit: None,
+            };
+            let (prepared, logical) = native_correlated_predicate(
+                connection,
+                metadata_scopes,
+                &single,
+                sources,
+                metadata,
+                params,
+                false,
+            )?;
+            if logical && !metadata {
+                return Err(unsupported("correlated logical compound projection"));
+            }
+            *arm = prepared.body.select;
+        }
         return Ok((inner, false));
     }
     let OneSelect::Select {
@@ -623,8 +655,31 @@ fn rename_correlated_local_alias(select: &mut Select, old: &str, new: &str) -> R
         Ok(supported)
     }
     fn scope(select: &mut Select, old: &str, new: &str, root: bool) -> turso_core::Result<bool> {
-        if select.with.is_some() || !select.body.compounds.is_empty() {
+        if select.with.is_some() {
             return Ok(false);
+        }
+        if !select.body.compounds.is_empty() {
+            if root || !select.order_by.is_empty() || select.limit.is_some() {
+                return Ok(false);
+            }
+            for arm in std::iter::once(&mut select.body.select)
+                .chain(select.body.compounds.iter_mut().map(|arm| &mut arm.select))
+            {
+                let mut single = Select {
+                    with: None,
+                    body: SelectBody {
+                        select: arm.clone(),
+                        compounds: Vec::new(),
+                    },
+                    order_by: Vec::new(),
+                    limit: None,
+                };
+                if !scope(&mut single, old, new, false)? {
+                    return Ok(false);
+                }
+                *arm = single.body.select;
+            }
+            return Ok(true);
         }
         let OneSelect::Select {
             columns,
@@ -737,7 +792,28 @@ fn qualify_correlated_using(
     sources: &[Source],
     using: &UsingColumns,
 ) -> Result<()> {
-    if using.bindings.is_empty() || inner.with.is_some() || !inner.body.compounds.is_empty() {
+    if using.bindings.is_empty() || inner.with.is_some() {
+        return Ok(());
+    }
+    if !inner.body.compounds.is_empty() {
+        if !inner.order_by.is_empty() || inner.limit.is_some() {
+            return Ok(());
+        }
+        for arm in std::iter::once(&mut inner.body.select)
+            .chain(inner.body.compounds.iter_mut().map(|arm| &mut arm.select))
+        {
+            let mut single = Select {
+                with: None,
+                body: SelectBody {
+                    select: arm.clone(),
+                    compounds: Vec::new(),
+                },
+                order_by: Vec::new(),
+                limit: None,
+            };
+            qualify_correlated_using(connection, params, ctes, &mut single, sources, using)?;
+            *arm = single.body.select;
+        }
         return Ok(());
     }
     // Resolve only closed local source schemas here. Open collections and
@@ -3602,6 +3678,35 @@ impl Connection {
         if !correlation_sources.iter().any(Source::logical) {
             return Ok(());
         }
+        if inner.with.is_none()
+            && !inner.body.compounds.is_empty()
+            && inner.order_by.is_empty()
+            && inner.limit.is_none()
+        {
+            for arm in std::iter::once(&mut inner.body.select)
+                .chain(inner.body.compounds.iter_mut().map(|arm| &mut arm.select))
+            {
+                let mut single = Select {
+                    with: None,
+                    body: SelectBody {
+                        select: arm.clone(),
+                        compounds: Vec::new(),
+                    },
+                    order_by: Vec::new(),
+                    limit: None,
+                };
+                self.correlate_collection_inner(
+                    &mut single,
+                    correlation_sources,
+                    params,
+                    ctes,
+                    exists,
+                    true,
+                )?;
+                *arm = single.body.select;
+            }
+            return Ok(());
+        }
         if let Some(with) = &mut inner.with {
             if !with.recursive {
                 for cte in &mut with.ctes {
@@ -3709,6 +3814,81 @@ impl Connection {
                     )?);
                 }
             }
+            let local_count = 1 + from.joins.len();
+            let visible: Vec<_> = correlation_sources
+                .iter()
+                .filter(|outer| {
+                    !local
+                        .iter()
+                        .any(|source| source.alias.eq_ignore_ascii_case(&outer.alias))
+                })
+                .cloned()
+                .collect();
+            // A native parent can become logical when a nested compound binds
+            // outer document values. Bind the parent's outer operands as well.
+            let mut nested_logical = false;
+            if let OneSelect::Select {
+                columns,
+                where_clause,
+                group_by,
+                from,
+                window_clause,
+                ..
+            } = &mut inner.body.select
+            {
+                let mut values: Vec<_> = columns
+                    .iter_mut()
+                    .filter_map(|column| match column {
+                        ResultColumn::Expr(value, _) => Some(value),
+                        _ => None,
+                    })
+                    .collect();
+                values.extend(where_clause.iter_mut());
+                if let Some(group) = group_by {
+                    values.extend(group.exprs.iter_mut());
+                    values.extend(group.having.iter_mut());
+                }
+                if let Some(from) = from {
+                    for join in &mut from.joins {
+                        if let Some(JoinConstraint::On(value)) = &mut join.constraint {
+                            values.push(value);
+                        }
+                    }
+                }
+                for window in window_clause {
+                    values.extend(window.window.partition_by.iter_mut());
+                    values.extend(window.window.order_by.iter_mut().map(|sort| &mut sort.expr));
+                }
+                values.extend(inner.order_by.iter_mut().map(|sort| &mut sort.expr));
+                for value in values {
+                    let mut failure = None;
+                    turso_core::walk_expr_mut(value, &mut |expr| {
+                        let exists = matches!(expr, Expr::Exists(_));
+                        let membership = matches!(expr, Expr::InSelect { .. });
+                        if let Expr::Subquery(query)
+                        | Expr::Exists(query)
+                        | Expr::InSelect { rhs: query, .. } = expr
+                        {
+                            let before = query.to_string();
+                            if let Err(error) = self.correlate_collection_inner(
+                                query, &visible, params, ctes, exists, false,
+                            ) {
+                                failure = Some(error);
+                            }
+                            nested_logical |= query.to_string() != before;
+                            return Ok(if membership {
+                                turso_core::WalkControl::Continue
+                            } else {
+                                turso_core::WalkControl::SkipChildren
+                            });
+                        }
+                        Ok(turso_core::WalkControl::Continue)
+                    })?;
+                    if let Some(error) = failure {
+                        return Err(error);
+                    }
+                }
+            }
             // A local WITH may hide the logical source behind a
             // CTE name. Probe lowering only (never execution) to
             // distinguish it from a wholly native inner query.
@@ -3735,11 +3915,11 @@ impl Connection {
             };
             if inner.with.as_ref().is_none_or(|with| !with.recursive)
                 && inner.body.compounds.is_empty()
-                && local.len() == 1 + from.joins.len()
+                && local.len() == local_count
                 && if inner.with.is_some() {
                     local_cte_logical
                 } else {
-                    local.iter().any(Source::logical)
+                    logical_parent || nested_logical || local.iter().any(Source::logical)
                 }
             {
                 let scope = Scope {

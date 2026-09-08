@@ -2436,6 +2436,8 @@ fn pinned_correlated_compound_membership_qualification_preserves_sets() {
             .unwrap_or_else(|e| panic!("{sql}: {e}"))
     };
     for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2),(NULL)",
         "CREATE TABLE a(k INTEGER)",
         "INSERT INTO a VALUES(1),(2),(NULL)",
         "CREATE TABLE b(k INTEGER)",
@@ -2462,6 +2464,10 @@ fn pinned_correlated_compound_membership_qualification_preserves_sets() {
                     let qualified = query(&sql(&format!("{retained}.k")));
                     assert_eq!(qualified.columns, original.columns);
                     assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
+                    let mixed_sql = sql("k").replace("FROM a ", "FROM docs a ");
+                    let mixed = query(&mixed_sql);
+                    assert_eq!(mixed.columns, original.columns);
+                    assert_eq!(mixed.rows, original.rows, "{mixed_sql}");
                 }
             }
         }
