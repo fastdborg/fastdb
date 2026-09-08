@@ -4561,3 +4561,36 @@ warnings denied passed. Logs: `/tmp/fastdb-update-from-limit-evaluation.log`,
 `/tmp/fastdb-from-limit-evaluation-test.log` and
 `/tmp/fastdb-from-limit-evaluation-clippy.log`. Only tests/docs changed from
 `1f606bcd6`; collection FROM pagination is still unimplemented. Full V1 remains open.
+
+
+## UPDATE FROM pagination — 2026-09-09
+
+Joined updates now retain LIMIT/OFFSET for a separate selection step after
+assignment materialization and typed-ID deduplication. A generated JSON iterator
+of candidate positions runs through existing SELECT lowering with the original
+pagination AST and WITH scope; selected positions move owned candidates into
+the mutation batch. This reuses engine pagination coercion rather than parsing
+numeric bounds in Rust. Initial differential cases cover duplicate matches,
+zero/negative/arithmetic limits, offsets and empty pages with RETURNING/affected
+counts and rollback. The assignment-overflow oracle also compares collection
+behavior, preserving evaluation before LIMIT even at zero.
+
+The position selector adds O(candidate count) temporary input/workspace and is
+subject to existing input/result limits; complete memory accounting remains
+open. Bound and CTE expression evaluation, alternate source plans, failure and
+cancellation combinations need broader qualification. Outer/USING/NATURAL source
+joins and full V1 remain unfinished.
+
+Scoped verification on `ecdb46374` plus this change completed across runs:
+620 Rust passes with one existing ignored trigger-interruption gate, 89
+Node/application passes, formatting, all-target FastDB Clippy and strict
+TypeScript. The first full run stopped on a misplaced test setup (missing docs
+in the overflow fixture and duplicate creation in the pagination fixture).
+After correcting only that setup, all 46 write tests passed; doc tests, the six
+parser tests and rebuilt Node checks completed separately. No unresolved failure
+remains in these checks; a single uninterrupted full-run pass is not claimed.
+Logs: `/tmp/fastdb-from-pagination-check.log`,
+`/tmp/fastdb-from-pagination-final-writes.log`,
+`/tmp/fastdb-from-pagination-finish.log` and
+`/tmp/fastdb-from-pagination-parser.log`. No upstream source, dependency or
+storage-format changes; no publication. Full V1 remains open.

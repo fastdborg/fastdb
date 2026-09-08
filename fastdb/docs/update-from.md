@@ -1,8 +1,8 @@
 # Collection UPDATE FROM implementation design
 
 Status: initial single-source and inner-join collection UPDATE FROM is implemented,
-with encoded typed-ID duplicate resolution. USING/NATURAL/outer source joins and
-FROM combined with LIMIT remain explicitly rejected. Ordinary relational UPDATE FROM delegates to the
+with encoded typed-ID duplicate resolution and initial LIMIT/OFFSET support after
+deduplication. USING/NATURAL/outer source joins remain explicitly rejected. Ordinary relational UPDATE FROM delegates to the
 pinned engine. The remaining design below requires no engine changes or new
 storage format.
 

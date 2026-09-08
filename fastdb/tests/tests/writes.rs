@@ -2001,8 +2001,19 @@ fn native_update_from_evaluates_candidates_before_limit() {
         ] {
             q(&c, sql);
         }
+        q(&c, "CREATE TABLE docs");
+        q(&c, "INSERT INTO docs(n,v) SELECT n,v FROM target");
         let sql=format!("UPDATE target SET v=abs(s.v) FROM source s WHERE s.k=target.n RETURNING n,v LIMIT {limit}");
         let error = c.execute(&sql, &Parameters::new()).unwrap_err();
+        let collection_error = c
+            .execute(&sql.replace("target", "docs"), &Parameters::new())
+            .unwrap_err();
+        assert_eq!(collection_error.code(), error.code());
+        assert!(collection_error.to_string().contains("integer overflow"));
+        assert_eq!(
+            q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+            q(&c, "SELECT n,v FROM target ORDER BY n").rows
+        );
         assert_eq!(error.code(), "FDB_ENGINE");
         assert!(error.to_string().contains("integer overflow"));
         assert_eq!(
@@ -2012,5 +2023,32 @@ fn native_update_from_evaluates_candidates_before_limit() {
                 vec![Value::Integer(2), Value::Integer(0)]
             ]
         );
+    }
+}
+
+#[test]
+fn update_from_pagination_follows_duplicate_resolution() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER PRIMARY KEY,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE source(k INTEGER,v INTEGER)",
+        "INSERT INTO source VALUES(1,7),(1,8),(2,9)",
+    ] {
+        q(&c, sql);
+    }
+    for limit in ["0", "1", "1 OFFSET 1", "1 OFFSET 8", "-1", "1+1 OFFSET 0"] {
+        q(&c, "BEGIN");
+        let sql = format!(
+            "UPDATE TARGET SET v=s.v FROM source s WHERE s.k=TARGET.n RETURNING n,v LIMIT {limit}"
+        );
+        let expected = q(&c, &sql.replace("TARGET", "native"));
+        let actual = q(&c, &sql.replace("TARGET", "docs"));
+        assert_eq!(actual.rows, expected.rows, "{sql}");
+        assert_eq!(actual.affected, expected.affected);
+        q(&c, "ROLLBACK");
     }
 }

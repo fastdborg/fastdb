@@ -626,7 +626,6 @@ impl Connection {
             }
             Stmt::Update(update) => {
                 if update.or_conflict.is_some()
-                    || (update.from.is_some() && update.limit.is_some())
                     || update.from.as_ref().is_some_and(|from| from.joins.iter().any(|join| {
                         matches!(join.constraint, Some(JoinConstraint::Using(_)))
                             || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::LEFT | JoinType::RIGHT | JoinType::OUTER | JoinType::NATURAL))
@@ -964,6 +963,7 @@ impl Connection {
             safe_candidate_assignment(expr)?;
         }
         let joined = source.from.is_some();
+        let joined_limit = if joined { limit.take() } else { None };
         let mut columns = vec![ResultColumn::TableStar(
             table.alias.as_ref().unwrap_or(&table.name).clone(),
         )];
@@ -1220,6 +1220,7 @@ impl Connection {
             order_by: Vec::new(),
             limit,
         };
+        let pagination_with = select.with.clone();
         let mut result = self
             .write_candidate_select(&Stmt::Select(select).to_string(), params, true)?
             .ok_or_else(|| unsupported("this collection write candidate query"))?;
@@ -1235,9 +1236,57 @@ impl Connection {
             budget.row(row)?;
         }
         if joined {
-            return self.coalesce_update_candidates(result.rows);
+            let rows = self.coalesce_update_candidates(result.rows)?;
+            return if let Some(limit) = joined_limit {
+                self.paginate_update_candidates(rows, pagination_with, limit, params)
+            } else {
+                Ok(rows)
+            };
         }
         Ok(result.rows)
+    }
+    fn paginate_update_candidates(
+        &self,
+        rows: Vec<Vec<Value>>,
+        with: Option<With>,
+        limit: Limit,
+        params: &Parameters,
+    ) -> Result<Vec<Vec<Value>>> {
+        let mut indices = "0,".repeat(rows.len());
+        indices.pop();
+        let Cmd::Stmt(Stmt::Select(mut select)) = parsed(&format!(
+            "SELECT __fastdb_h_array_new(key) FROM json_each('[{indices}]')"
+        ))?
+        else {
+            unreachable!("generated candidate pagination")
+        };
+        select.with = with;
+        select.limit = Some(limit);
+        let selected = self
+            .write_candidate_select(&Stmt::Select(select).to_string(), params, true)?
+            .ok_or_else(|| unsupported("joined update pagination"))?;
+        let mut candidates = rows.into_iter();
+        let mut position = 0usize;
+        let mut output = Vec::new();
+        for row in selected.rows {
+            let Some(Value::Array(index)) = row.first() else {
+                return Err(Error::Storage("invalid candidate pagination row".into()));
+            };
+            let [Value::Integer(index)] = index.as_slice() else {
+                return Err(Error::Storage("invalid candidate pagination index".into()));
+            };
+            let index = usize::try_from(*index)
+                .map_err(|_| Error::Storage("negative candidate index".into()))?;
+            let skip = index
+                .checked_sub(position)
+                .ok_or_else(|| Error::Storage("unordered candidate pagination".into()))?;
+            let candidate = candidates
+                .nth(skip)
+                .ok_or_else(|| Error::Storage("candidate pagination exceeds rowset".into()))?;
+            output.push(candidate);
+            position = index + 1;
+        }
+        Ok(output)
     }
     fn coalesce_update_candidates(&self, candidates: Vec<Vec<Value>>) -> Result<Vec<Vec<Value>>> {
         let mut positions = std::collections::BTreeMap::new();
