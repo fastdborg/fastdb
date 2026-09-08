@@ -137,6 +137,29 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const localCteAudit = await client.checkCollectionIntegrity('package_cte_copy');
       assert.equal(localCteAudit.documents,4n);
       assert.equal(localCteAudit.indexEntries,4n);
+      const orderedCteQuery = 'SELECT k,(WITH chosen(x) AS MATERIALIZED (SELECT n FROM package_nums) SELECT $value FROM chosen b WHERE x<k ORDER BY x LIMIT $take OFFSET $skip) AS value FROM package_keys a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
+      for (const value of [true,new Record('package_keys',7n),Buffer.from([0,255])]) {
+        const params = {$value:value,$take:'1.0',$skip:'1e0'};
+        const expected = [[1n,null],[3n,value],['a',value]];
+        assert.deepEqual((await client.execute(orderedCteQuery,params)).rows,expected);
+        assert.deepEqual((await client.profileSelect(orderedCteQuery,params)).result.rows,expected);
+      }
+      assert.deepEqual((await client.execute(orderedCteQuery,{$value:true,$take:'.',$skip:'0'})).rows,[[1n,null],[3n,null],['a',null]]);
+      await client.execute('CREATE TABLE package_page_copy');
+      await client.execute('CREATE UNIQUE INDEX package_page_k ON package_page_copy(k)');
+      await client.execute('INSERT INTO package_page_copy(k) VALUES(3),(9)');
+      const orderedCteInsert = 'INSERT INTO package_page_copy(k,value) ' + orderedCteQuery + ' RETURNING k,value';
+      const pageParams = {$value:new Record('package_keys',7n),$take:'1.0',$skip:'1e0'};
+      await assert.rejects(async () => client.execute(orderedCteInsert,{$value:true,$take:'1.0'}),error => error.code === 'FDB_PARAMETER' && error.transaction.after === 'active');
+      await assert.rejects(async () => client.execute(orderedCteInsert,pageParams),error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
+      assert.deepEqual(await client.all('SELECT k FROM package_page_copy ORDER BY k'),[[3n],[9n]]);
+      await client.execute('DELETE FROM package_page_copy WHERE k=3');
+      const pageRetry = await client.execute(orderedCteInsert,pageParams);
+      assert.equal(pageRetry.affected,3n);
+      assert.deepEqual(pageRetry.rows,[[1n,null],[3n,pageParams.$value],['a',pageParams.$value]]);
+      const pageAudit = await client.checkCollectionIntegrity('package_page_copy');
+      assert.equal(pageAudit.documents,4n);
+      assert.equal(pageAudit.indexEntries,4n);
       const compoundQuery = (source, operator, direction) => {
         const rhs = 'SELECT k+1 ' + operator + ' SELECT NULL ORDER BY "k+1"' + direction + ' LIMIT $take OFFSET $skip';
         return 'SELECT k,(SELECT sum(CASE WHEN n IN(' + rhs + ') THEN 1 WHEN n NOT IN(' + rhs + ') THEN 10 ELSE 100 END) FROM package_nums x WHERE k IS k) AS v FROM ' + source + ' a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
