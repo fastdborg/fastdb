@@ -72,6 +72,18 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const natural = await client.execute('WITH q("Key") AS (SELECT value FROM docs), r("Key") AS (SELECT 9223372036854775807) SELECT "Key",(SELECT (SELECT "Key")) AS correlated FROM q a NATURAL RIGHT JOIN r b');
       assert.deepEqual(natural.columns, using.columns);
       assert.deepEqual(natural.rows, using.rows);
+      const derived = await client.execute('WITH q("Key") AS (SELECT value FROM docs), r("Key") AS (SELECT 9223372036854775807) SELECT "Key",(SELECT (SELECT "Key" FROM (SELECT 1 AS n) nums WHERE n=1)) AS correlated FROM q a NATURAL RIGHT JOIN r b');
+      assert.deepEqual(derived.columns, using.columns);
+      assert.deepEqual(derived.rows, using.rows);
+      for (const [projection, bindings, expected] of [
+        ['id', {}, new Record('docs','saved')],
+        ['$flag', {$flag:true}, true],
+        ['$bytes', {$bytes:bytes}, bytes],
+      ]) {
+        const typedDerived = 'SELECT k,(SELECT (SELECT k FROM (SELECT 1 AS n) nums WHERE n=1)) AS correlated FROM (SELECT '+projection+' AS k FROM docs) a JOIN (SELECT '+projection+' AS k FROM docs) b USING(k)';
+        assert.deepEqual((await client.execute(typedDerived, bindings)).rows, [[expected,expected]]);
+        assert.deepEqual((await client.profileSelect(typedDerived, bindings)).result.rows, [[expected,expected]]);
+      }
       assert.deepEqual((await client.profileSelect(typed, {$flag:true,$bytes:bytes})).result.rows, result.rows);
       const native = 'WITH q(x,x) AS NOT MATERIALIZED (SELECT 10,20) SELECT v.* FROM docs d JOIN q v ON 1';
       assert.deepEqual((await client.execute(native)).rows, [[10n,20n]]);
