@@ -1410,3 +1410,42 @@ fn tuple_aggregate_filter_subqueries_match_native() {
         }
     }
 }
+
+#[test]
+fn nested_tuple_projections_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a,b)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER)",
+        "INSERT INTO lookup VALUES(1,6),(1,11)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(n,a) SELECT n,a FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        for projection in [
+            "(SELECT max(x.a) FROM SOURCE x WHERE x.n=TARGET.n),TARGET.n+1",
+            "EXISTS(SELECT 1 FROM SOURCE x WHERE x.n=TARGET.n),TARGET.n IN (SELECT n FROM SOURCE)",
+        ] {
+            q(&c, "BEGIN");
+            let native_projection = projection
+                .replace("SOURCE", "lookup")
+                .replace("TARGET", "native");
+            let expected = q(
+                &c,
+                &format!("UPDATE native SET (a,b)=(SELECT {native_projection}) RETURNING n,a,b"),
+            );
+            let projection = projection
+                .replace("SOURCE", source)
+                .replace("TARGET", "docs");
+            let sql = format!("UPDATE docs SET (a,b)=(SELECT {projection}) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
+    }
+}

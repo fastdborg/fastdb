@@ -4075,3 +4075,25 @@ results, active transaction reports and rollback pass. All 87 Node/application
 tests passed against the addon from the preceding full check. Log
 `/tmp/fastdb-filter-subquery-node.log`. Only tests/docs changed from `7d67360e6`;
 no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
+
+
+## Nested tuple projection subqueries — 2026-09-09
+
+Tuple SELECT projections now delegate nested scalar/EXISTS/IN query validation
+to the existing candidate SELECT path, while validating surrounding expressions
+with the appropriate aggregate permission. These projections retain the original
+SELECT scope before tuple packing. A forced logical context propagates through
+source-free wrappers into nested expression planning; sourceful nested queries
+retain their existing route.
+
+Differential tests cover correlated scalar MAX queries, EXISTS and membership
+projections against relational/collection lookup sources. An initial broad
+context propagation regressed a correlated aggregate FILTER case; propagation
+was restricted to source-free wrappers, and all 32 write tests then passed.
+The final complete scoped check passed on `9fd597def` plus this change: 605 Rust
+passes, zero failures, one existing ignored trigger-interruption gate; 87
+Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Log `/tmp/fastdb-nested-tuple-check-final.log`.
+Diagnostic logging was removed; the Node addon was rebuilt. No upstream source,
+dependency or storage-format changes; no publication. Broader subquery/type
+qualification and full V1 release gates remain open.

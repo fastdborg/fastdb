@@ -5086,6 +5086,7 @@ impl Connection {
                                     nested: true,
                                     positional: exists,
                                     expression_subquery: true,
+                                    force_logical: force_logical && source_free,
                                     outer_scope: (!correlation_using.bindings.is_empty())
                                         .then_some((correlation_sources, &correlation_using)),
                                     ctes: Some(&ctes),

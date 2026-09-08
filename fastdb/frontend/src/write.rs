@@ -168,6 +168,9 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
 // Validate only the surrounding scalar assignment here; VALUES/RETURNING keep
 // their stricter validator. Never execute this validation-only expression.
 fn safe_candidate_assignment(expr: &Expr) -> Result<()> {
+    validate_candidate_expression(expr, false)
+}
+fn validate_candidate_expression(expr: &Expr, aggregates: bool) -> Result<()> {
     let mut outer = expr.clone();
     turso_core::walk_expr_mut(&mut outer, &mut |expr| {
         match expr {
@@ -182,7 +185,7 @@ fn safe_candidate_assignment(expr: &Expr) -> Result<()> {
         }
         Ok(turso_core::WalkControl::Continue)
     })?;
-    safe_value_expression(&outer)
+    validate_value_expression(&outer, aggregates)
 }
 
 // A source-free SELECT has no local columns. Nested SELECTs establish their own
@@ -657,21 +660,21 @@ impl Connection {
                         let explicit_aliases = columns.iter().any(|column| {
                             matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
                         });
-                        let mut aggregates = false;
+                        let mut complex_projection = false;
                         for column in columns.iter() {
                             if let ResultColumn::Expr(value, _) = column {
-                                validate_value_expression(value, true)?;
+                                validate_candidate_expression(value, true)?;
                                 turso_core::walk_expr_mut(&mut value.clone(), &mut |expr| {
-                                    aggregates |= match expr {
+                                    complex_projection |= match expr {
                                         Expr::FunctionCall { name, args, .. } => aggregate_function(&name.as_str().to_ascii_lowercase(), args.len()),
-                                        Expr::FunctionCallStar { .. } => true,
+                                        Expr::FunctionCallStar { .. } | Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. } => true,
                                         _ => false,
                                     };
                                     Ok(turso_core::WalkControl::Continue)
                                 })?;
                             }
                         }
-                        if positional_order || explicit_aliases || distinctness.is_some() || group_by.is_some() || aggregates {
+                        if positional_order || explicit_aliases || distinctness.is_some() || group_by.is_some() || complex_projection {
                             let aliases: Vec<_> = columns.iter().filter_map(|column| {
                                 match column {
                                     ResultColumn::Expr(_, Some(alias)) if alias.is_explicit() => Some(alias.name().as_str().to_owned()),
@@ -683,7 +686,7 @@ impl Connection {
                                 let ResultColumn::Expr(value, _) = column else {
                                     return Err(unsupported("tuple SELECT projection"));
                                 };
-                                validate_value_expression(value, true)?;
+                                validate_candidate_expression(value, true)?;
                                 if from.is_none() {
                                     bind_source_free_tuple_field(value, &update.tbl_name)?;
                                 }
