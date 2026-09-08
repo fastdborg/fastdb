@@ -681,3 +681,31 @@ fn duplicate_cte_outer_joins_preserve_null_extension_and_filters() {
         }
     }
 }
+
+#[test]
+fn explicit_cte_names_fold_ascii_without_merging_unicode_columns() {
+    let (_db, c) = setup();
+    for names in ["\"Ä\",\"ä\"", "\"ÉKey\",\"éKEY\"", "\"A name\",\"B name\""] {
+        for projection in [
+            "q.*".to_owned(),
+            names
+                .split(',')
+                .map(|name| format!("q.{name}"))
+                .collect::<Vec<_>>()
+                .join(","),
+        ] {
+            let native = q(
+                &c,
+                &format!("WITH q({names}) AS (SELECT 1,2) SELECT {projection} FROM q"),
+            );
+            let sql = format!("WITH q({names}) AS (SELECT flag,data FROM docs ORDER BY n) SELECT {projection} FROM q");
+            let actual = q(&c, &sql);
+            let expected = q(&c, "SELECT flag,data FROM docs ORDER BY n");
+            assert_eq!(actual.columns, native.columns, "{sql}");
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            let profiled = c.profile_select(&sql, &Parameters::new()).unwrap().result;
+            assert_eq!(profiled.columns, native.columns, "{sql}");
+            assert_eq!(profiled.rows, expected.rows, "{sql}");
+        }
+    }
+}
