@@ -4571,3 +4571,16 @@ All twenty write tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-tuple-collation.log` and
 `/tmp/fastdb-tuple-collation-clippy.log`. Only tests/documentation changed from
 `1d757cfb6`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Ordered tuple validation retry — 2026-09-09
+
+The tuple lookup recovery regression now selects a later invalid candidate
+with descending ordering, verifies atomic row/index restoration, then changes
+the ordering to select valid tuples and retries within the same transaction.
+Relational and collection lookup sources both pass, retaining prior work and
+outer rollback behavior. All twenty write tests passed, plus formatting and
+all-target fastdb-tests Clippy with warnings denied. Logs
+`/tmp/fastdb-ordered-tuple-recovery.log` and
+`/tmp/fastdb-ordered-tuple-recovery-clippy.log`. Only tests/documentation changed
+from `afb039079`; no new full-suite/client run is claimed. Full V1 gates remain open.

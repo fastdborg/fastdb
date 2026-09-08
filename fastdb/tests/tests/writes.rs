@@ -702,11 +702,13 @@ fn tuple_lookup_validation_restores_indexes_and_allows_retry() {
     ] {
         q(&c, sql);
     }
+    q(&c, "INSERT INTO lookup VALUES(2,6,9)");
+    q(&c, "INSERT INTO lookup_docs(n,a,b) VALUES(2,6,9)");
     for source in ["lookup", "lookup_docs"] {
         q(&c, "BEGIN");
         q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
         let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
-        let sql=format!("UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM {source} x WHERE x.n=docs.n) WHERE n>0 RETURNING a,b");
+        let sql=format!("UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM {source} x WHERE x.n=docs.n ORDER BY x.a DESC LIMIT 1) WHERE n>0 RETURNING a,b");
         assert_eq!(
             c.execute(&sql, &Parameters::new()).unwrap_err().code(),
             "FDB_VALIDATION"
@@ -717,6 +719,15 @@ fn tuple_lookup_validation_restores_indexes_and_allows_retry() {
             .lookup_index("docs", "docs_a", &Value::Integer(7))
             .unwrap()
             .is_empty());
+        let ordered_retry = sql.replace("ORDER BY x.a DESC", "ORDER BY x.a ASC");
+        assert_eq!(
+            q(&c, &ordered_retry).rows,
+            vec![
+                vec![Value::Integer(7), Value::Integer(8)],
+                vec![Value::Integer(6), Value::Integer(9)]
+            ]
+        );
+        q(&c, "UPDATE docs SET (a,b)=(n,0) WHERE n>0");
         let retry = sql.replace("WHERE n>0", "WHERE n=1");
         assert_eq!(
             q(&c, &retry).rows,
