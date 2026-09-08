@@ -4140,3 +4140,13 @@ TypeScript. Log `/tmp/fastdb-window-tuples-check-final.log`; addon rebuilt.
 Pinned custom-frame/function limitations and broader window qualification remain
 open. No upstream source, dependency or storage-format changes; no publication.
 Full V1 release gates remain open.
+
+
+## Node windowed tuple verification — 2026-09-09
+
+Both clients now verify named ROW_NUMBER/COUNT windows inside tuple assignments,
+final descending ordering, offsets across and beyond the rowset, unmatched-row
+NULL tuples, active transaction reports and rollback. All 87 Node/application
+tests passed against the addon from the preceding full check. Log
+`/tmp/fastdb-window-tuple-node.log`. Only tests/docs changed from `86649c888`;
+no native rebuild or new Rust-suite run is claimed. Full V1 remains open.

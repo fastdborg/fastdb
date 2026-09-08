@@ -2768,6 +2768,11 @@ test('aggregate tuples preserve empty groups and rollback in both clients', asyn
       const nested = await db.execute('UPDATE docs SET (a,b)=(SELECT sum(x.a) FILTER(WHERE EXISTS(SELECT 1 FROM allowed y WHERE y.a=x.a AND y.n=docs.n)),count(*) FILTER(WHERE EXISTS(SELECT 1 FROM allowed y WHERE y.a=x.a AND y.n=docs.n)) FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
       assert.deepEqual(nested.rows, [[1n,11n,1n],[2n,null,0n]]);
       assert.deepEqual(nested.transaction, { before: 'active', after: 'active' });
+      for (const [offset, expected] of [[0,[[1n,2n,2n],[2n,null,null]]],[1,[[1n,1n,1n],[2n,null,null]]],[2,[[1n,null,null],[2n,null,null]]]]) {
+        const windowed = await db.execute(`UPDATE docs SET (a,b)=(SELECT row_number() OVER w,count(*) OVER w FROM lookup x WHERE x.n=docs.n WINDOW w AS (ORDER BY x.a) ORDER BY x.a DESC LIMIT 1 OFFSET ${offset}) RETURNING n,a,b`);
+        assert.deepEqual(windowed.rows, expected);
+        assert.deepEqual(windowed.transaction, { before: 'active', after: 'active' });
+      }
       await db.execute('ROLLBACK');
       assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,0n,0n],[2n,0n,0n]]);
     } finally { await db.close(); }
