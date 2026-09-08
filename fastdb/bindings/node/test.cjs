@@ -1287,3 +1287,26 @@ test('nested membership CTE writes preserve recovery in both clients', async () 
     } finally { await db.close(); }
   }
 });
+
+test('unsupported correlated CTE writes report query errors in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs(n) VALUES(1),(2)');
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs(n) VALUES(9)');
+      const sql = 'WITH chosen AS(WITH local_q AS(SELECT d.n AS n) SELECT n FROM local_q) UPDATE docs AS d SET n=n+10 WHERE EXISTS(SELECT 1 FROM chosen) RETURNING n';
+      await assert.rejects(async () => db.execute(sql), error => {
+        assert.equal(error.code, 'FDB_UNSUPPORTED');
+        assert.deepEqual(error.transaction, {before:'active', after:'active'});
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[2n],[9n]]);
+      assert.equal((await db.execute('UPDATE docs SET n=n+10 WHERE n=1')).affected, 1n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[2n]]);
+    } finally { await db.close(); }
+  }
+});
