@@ -3185,3 +3185,23 @@ by the outer `d.n` was rejected by the pinned engine on an ordinary table with
 is recorded in `/tmp/fastdb-cte-group-window-probe.log`.
 This changes tests/documentation from `a14b1b6f8`; no new full-suite or client
 run is claimed. Broader SQL semantics and full V1 release gates remain open.
+
+
+## Correlated CTE ordering, pagination and lazy errors — 2026-09-09
+
+New native differential cases qualify alias/expression/ordinal ordering in
+correlated CTEs. A fifteen-case bound LIMIT/OFFSET matrix covers ordinary,
+DISTINCT and UNION ALL projections over repeated values, NULL and empty JSON
+iterators, including zero, unlimited and beyond-end pages. Execute/profile
+columns and rows match native tables; missing bindings reject.
+
+Malformed JSON is not evaluated by the tested CTE with bound LIMIT 0, for both
+ordinary tables and collections. LIMIT 1 reports FDB_ENGINE, and a subsequent
+LIMIT 0 query succeeds. This qualifies lazy evaluation for these shapes, not
+all optimizer paths or general error recovery.
+
+All fourteen iterator tests passed, plus scoped formatting and all-target
+fastdb-tests Clippy with warnings denied. Logs:
+`/tmp/fastdb-cte-pagination.log` and `/tmp/fastdb-cte-pagination-clippy.log`.
+Only tests/documentation changed from `8a1ab969d`; no new full-suite/client run
+is claimed. Full V1 release gates remain open; no publication occurred.

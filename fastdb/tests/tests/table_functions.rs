@@ -747,6 +747,9 @@ fn iterator_subqueries_resolve_outer_collection_fields() {
         "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v,row_number() OVER (ORDER BY x.key) AS k FROM json_each(d.j) x) SELECT sum(v*k) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT x.value AS v,row_number() OVER (PARTITION BY d.n ORDER BY x.value+d.n DESC) AS k FROM json_each(d.j) x) SELECT sum(v*k) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT sum(x.value) AS v FROM json_each(d.j) x GROUP BY x.value HAVING d.n<3) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v FROM json_each(d.j) x ORDER BY v DESC LIMIT 1) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value AS v FROM json_each(d.j) x ORDER BY x.value+d.n DESC LIMIT 1 OFFSET 1) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v FROM json_each(d.j) x UNION ALL SELECT d.n ORDER BY 1 DESC LIMIT 2 OFFSET 1) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT d.value AS v FROM json_each('[4,5]') d) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v FROM json_each(d.j) x WHERE x.value>9) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
 
@@ -888,5 +891,60 @@ fn correlated_cte_projection_writes_preserve_validation_and_retry() {
         assert_eq!(c.check_collection_integrity("output",fastdb::IntegrityLimits::default()).unwrap().index_entries,2);
         c.execute("ROLLBACK",&empty).unwrap();
         assert_eq!(c.check_collection_integrity("output",fastdb::IntegrityLimits::default()).unwrap().documents,0);
+    }
+}
+
+#[test]
+fn correlated_cte_pagination_preserves_bound_limits_and_lazy_errors() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT)",
+        "INSERT INTO native VALUES(1,'[1,2,2,null]'),(2,'[]')",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) SELECT n,j FROM native",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    for body in [
+        "SELECT x.value+d.n AS v FROM json_each(d.j) x ORDER BY v DESC",
+        "SELECT DISTINCT x.value+d.n AS v FROM json_each(d.j) x ORDER BY 1 DESC",
+        "SELECT x.value+d.n AS v FROM json_each(d.j) x UNION ALL SELECT d.n ORDER BY 1 DESC",
+    ] {
+        for (limit, offset) in [(0, 0), (1, 0), (2, 1), (-1, 1), (2, 9)] {
+            let params = Parameters::from([
+                ("$limit".into(), Value::Integer(limit)),
+                ("$offset".into(), Value::Integer(offset)),
+            ]);
+            let query = format!("SELECT d.n,(WITH a AS ({body} LIMIT $limit OFFSET $offset) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n");
+            let expected = c
+                .execute(&query.replace("SOURCE", "native"), &params)
+                .unwrap();
+            let sql = query.replace("SOURCE", "docs");
+            for actual in [
+                c.execute(&sql, &params).unwrap(),
+                c.profile_select(&sql, &params).unwrap().result,
+            ] {
+                assert_eq!(actual.columns, expected.columns, "{sql}: {limit}/{offset}");
+                assert_eq!(actual.rows, expected.rows, "{sql}: {limit}/{offset}");
+            }
+            assert_eq!(c.execute(&sql, &empty).unwrap_err().code(), "FDB_PARAMETER");
+        }
+    }
+    for source in ["native", "docs"] {
+        c.execute(&format!("UPDATE {source} SET j='malformed'"), &empty)
+            .unwrap();
+        let sql = format!("SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v FROM json_each(d.j) x LIMIT $limit) SELECT sum(v) FROM a) AS total FROM {source} d ORDER BY d.n");
+        let zero = Parameters::from([("$limit".into(), Value::Integer(0))]);
+        let rows = vec![
+            vec![Value::Integer(1), Value::Null],
+            vec![Value::Integer(2), Value::Null],
+        ];
+        assert_eq!(c.execute(&sql, &zero).unwrap().rows, rows);
+        assert_eq!(c.profile_select(&sql, &zero).unwrap().result.rows, rows);
+        let one = Parameters::from([("$limit".into(), Value::Integer(1))]);
+        assert_eq!(c.execute(&sql, &one).unwrap_err().code(), "FDB_ENGINE");
+        assert_eq!(c.execute(&sql, &zero).unwrap().rows, rows);
     }
 }
