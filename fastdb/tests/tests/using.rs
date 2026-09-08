@@ -1477,3 +1477,48 @@ fn natural_closed_joins_preserve_normalized_collation_order() {
         }
     }
 }
+
+#[test]
+fn chained_natural_joins_preserve_merged_keys_and_star_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,x:10}",
+        "INSERT INTO docs {k:2,x:20}",
+        "CREATE TABLE baseline(k INTEGER,x INTEGER)",
+        "INSERT INTO baseline VALUES(1,10),(2,20)",
+        "CREATE TABLE b(k INTEGER,y INTEGER)",
+        "INSERT INTO b VALUES(1,100),(3,300)",
+        "CREATE TABLE c(k INTEGER,z INTEGER)",
+        "INSERT INTO c VALUES(1,1000),(2,2000),(3,3000)",
+    ] {
+        query(sql);
+    }
+    for first in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+        for second in ["NATURAL JOIN", "NATURAL LEFT JOIN"] {
+            for projection in ["*", "a.*,b.*,c.*", "k,a.k,b.k,c.k"] {
+                let sql = |source: &str| {
+                    format!("SELECT {projection} FROM (SELECT k,x FROM {source}) a {first} b {second} c ORDER BY a.x,b.y,c.z")
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}

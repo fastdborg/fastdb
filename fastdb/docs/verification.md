@@ -2442,3 +2442,6 @@ The full fastdb/scripts/check.sh run passed formatting, Clippy, 466 Rust tests w
 
 
 NATURAL collation qualification (2026-09-08): an 18-case native differential execute/profile matrix passes for NOCASE/BINARY in both source orders, INNER/LEFT/RIGHT joins, stars and merged/qualified key projections. Rows, NULL extension and result labels match normalized native comparison order. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-collation.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader NATURAL and full V1 qualification remain open.
+
+
+Chained NATURAL qualification (2026-09-08): 18 native differential execute/profile cases pass for INNER/LEFT/leading-RIGHT followed by INNER/LEFT NATURAL joins. Unqualified stars, qualified stars and merged/qualified keys preserve pinned rows, NULL extension and column order, including leading-RIGHT source reordering. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-chained.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader NATURAL and full V1 qualification remain open.

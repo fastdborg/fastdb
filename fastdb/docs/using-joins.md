@@ -80,3 +80,6 @@ Initial closed-source NATURAL lowering derives shared keys from normalized join 
 
 
 NATURAL collation coverage now includes 18 execute/profile native comparisons with NOCASE/BINARY in both source orders and INNER/LEFT/RIGHT joins, retaining normalized operand precedence and outer-row behavior.
+
+
+Chained NATURAL joins now have 18 native execute/profile comparisons for INNER/LEFT/leading-RIGHT followed by INNER/LEFT, covering retained keys, qualified access and star positions.
