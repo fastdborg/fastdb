@@ -143,6 +143,29 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const compoundAudit = await client.checkCollectionIntegrity('package_compound_sink');
       assert.equal(compoundAudit.documents,4n);
       assert.equal(compoundAudit.indexEntries,4n);
+      await client.execute('CREATE TABLE package_typed');
+      const typedQuery = 'SELECT d.n,(SELECT $same FROM package_nums x WHERE x.n=0 AND d.k IN(SELECT d.k INTERSECT SELECT $same LIMIT 1)) AS value FROM package_typed d ORDER BY d.n';
+      for (const value of [true,1n,new Record('package_typed',7n),Buffer.from([0,255])]) {
+        await client.execute('INSERT INTO package_typed(n,k) VALUES(1,$same)',{$same:value});
+        assert.deepEqual((await client.execute(typedQuery,{$same:value})).rows,[[1n,value]]);
+        assert.deepEqual((await client.profileSelect(typedQuery,{$same:value})).result.rows,[[1n,value]]);
+        await client.execute('DELETE FROM package_typed');
+      }
+      const typedRecord = new Record('package_typed',7n);
+      await client.execute('INSERT INTO package_typed(n,k) VALUES(1,$same),(2,$same)',{$same:typedRecord});
+      await client.execute('CREATE TABLE package_typed_copy');
+      await client.execute('CREATE UNIQUE INDEX package_typed_n ON package_typed_copy(n)');
+      await client.execute('INSERT INTO package_typed_copy(n) VALUES(2),(9)');
+      const typedInsert = 'INSERT INTO package_typed_copy(n,value) ' + typedQuery + ' RETURNING n,value';
+      await assert.rejects(async () => client.execute(typedInsert,{$same:typedRecord}),error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
+      assert.deepEqual(await client.all('SELECT n FROM package_typed_copy ORDER BY n'),[[2n],[9n]]);
+      await client.execute('DELETE FROM package_typed_copy WHERE n=2');
+      const typedRetry = await client.execute(typedInsert,{$same:typedRecord});
+      assert.equal(typedRetry.affected,2n);
+      assert.deepEqual(typedRetry.rows,[[1n,typedRecord],[2n,typedRecord]]);
+      const typedAudit = await client.checkCollectionIntegrity('package_typed_copy');
+      assert.equal(typedAudit.documents,3n);
+      assert.equal(typedAudit.indexEntries,3n);
       const insertQuery = 'INSERT INTO package_sink(k,v) ' + scalarQuery + ' RETURNING k,v';
       await assert.rejects(async () => client.execute(insertQuery, {$needle:'A'}), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
       assert.deepEqual(await client.all('SELECT k FROM package_sink'), [[3n]]);
