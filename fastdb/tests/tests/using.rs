@@ -1282,3 +1282,62 @@ fn nested_using_projection_errors_roll_back_insert_prefixes_and_allow_retry() {
         vec![vec![Value::Integer(99)]]
     );
 }
+
+#[test]
+fn nested_using_runtime_rollback_preserves_persistent_rows_and_indexes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested.db");
+    let insert = "INSERT INTO copied(k,v) SELECT k,(SELECT (SELECT array::append(a.v,2))) FROM docs a JOIN b USING(k) ORDER BY k";
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "INSERT INTO docs {k:1,v:[]}",
+            "INSERT INTO docs {k:2,v:7}",
+            "CREATE TABLE b(k INTEGER)",
+            "INSERT INTO b VALUES(1),(2)",
+            "CREATE TABLE copied",
+            "CREATE UNIQUE INDEX copied_k ON copied(k)",
+            "INSERT INTO copied {k:99,v:[]}",
+            "BEGIN",
+            "INSERT INTO copied {k:98,v:[]}",
+        ] {
+            c.execute(sql, &Parameters::new()).unwrap();
+        }
+        assert!(c.execute(insert, &Parameters::new()).is_err());
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+    }
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        assert_eq!(
+            c.execute("SELECT k FROM copied ORDER BY k", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(99)]]
+        );
+        assert!(c
+            .execute("INSERT INTO copied {k:99,v:[]}", &Parameters::new())
+            .is_err());
+        c.execute(
+            "UPDATE docs SET v=array::new() WHERE k=2",
+            &Parameters::new(),
+        )
+        .unwrap();
+        c.execute(insert, &Parameters::new()).unwrap();
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        c.execute("SELECT k FROM copied ORDER BY k", &Parameters::new())
+            .unwrap()
+            .rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(99)]
+        ]
+    );
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+}
