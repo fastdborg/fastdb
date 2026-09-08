@@ -237,8 +237,18 @@ fn native_correlated_predicate(
     };
     let scalar_pagination = mode == NativeCorrelationMode::ScalarPagination;
     let mut inner = inner.clone();
-    if inner.with.is_some() {
-        return Ok((inner, false));
+    if let Some(with) = inner.with.take() {
+        if with.recursive {
+            inner.with = Some(with);
+            return Ok((inner, false));
+        }
+        let mut scopes = metadata_scopes.to_vec();
+        scopes.push(with.clone());
+        let (mut prepared, typed) = native_correlated_predicate(
+            connection, &scopes, &inner, sources, metadata, params, mode,
+        )?;
+        prepared.with = Some(with);
+        return Ok((prepared, typed));
     }
     if !inner.body.compounds.is_empty() {
         resolve_compound_expression_order_names(&mut inner);
@@ -946,8 +956,33 @@ fn qualify_correlated_using(
     sources: &[Source],
     using: &UsingColumns,
 ) -> Result<()> {
-    if using.bindings.is_empty() || inner.with.is_some() {
+    if using.bindings.is_empty() {
         return Ok(());
+    }
+    if let Some(with) = &inner.with {
+        if with.recursive {
+            return Ok(());
+        }
+        let mut local_ctes = ctes.clone();
+        for cte in &with.ctes {
+            let Cmd::Stmt(Stmt::Select(mut probe)) =
+                parsed(&format!("SELECT * FROM {}", quote(cte.tbl_name.as_str())))?
+            else {
+                unreachable!()
+            };
+            probe.with = Some(with.clone());
+            let table = SelectTable::Select(probe, Some(As::As(cte.tbl_name.clone())));
+            let local = source(connection, &table, params, ctes, None, String::new(), true)?;
+            if local.logical() {
+                return Ok(());
+            }
+            local_ctes.insert(cte.tbl_name.as_str().to_ascii_lowercase(), Some(local));
+        }
+        let with = inner.with.take();
+        let result =
+            qualify_correlated_using(connection, params, &local_ctes, inner, sources, using);
+        inner.with = with;
+        return result;
     }
     if !inner.body.compounds.is_empty() {
         resolve_compound_expression_order_names(inner);

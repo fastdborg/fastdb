@@ -2907,3 +2907,37 @@ fn pinned_local_cte_merged_keys_preserve_local_shadowing() {
         }
     }
 }
+
+#[test]
+fn local_cte_merged_keys_match_native_shadowing() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(n INTEGER)",
+        "CREATE TABLE keys(n INTEGER)",
+        "INSERT INTO docs(n) VALUES(1),(2),(3)",
+        "INSERT INTO baseline VALUES(1),(2),(3)",
+        "INSERT INTO keys VALUES(1),(4)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for shadow in [false, true] {
+                let columns = if shadow { "n AS m,100 AS n" } else { "n AS m" };
+                let query = |source| {
+                    format!("SELECT n,(WITH chosen AS {materialization} (SELECT {columns} FROM baseline) SELECT max(m) FROM chosen WHERE m<n) AS prior FROM {source} a {join} keys b USING(n) ORDER BY n")
+                };
+                let expected = c.execute(&query("baseline"), &params).unwrap();
+                let sql = query("docs");
+                let actual = c
+                    .execute(&sql, &params)
+                    .unwrap_or_else(|error| panic!("{sql}: {error}"));
+                assert_eq!(actual.columns, expected.columns, "{sql}");
+                assert_eq!(actual.rows, expected.rows, "{sql}");
+            }
+        }
+    }
+}
