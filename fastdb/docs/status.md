@@ -4091,3 +4091,14 @@ Clippy and strict TypeScript passed. Log
 `2372ec043` with this fix. No upstream source or dependencies changed. Broader CTE,
 compound and nested type propagation and full V1 release gates remain open; no
 publication occurred.
+
+
+## Client coverage for runtime CTE iterator binding — 2026-09-08
+
+Sync and worker clients now verify a correlated CTE using temp.json_each(d.j),
+including a bigint-bound addition to its aggregate, profile parity and a missing
+binding error. The focused case and all 82 Node/application tests passed against
+the current addon. Logs `/tmp/fastdb-runtime-cte-clients-focused.log` and
+`/tmp/fastdb-runtime-cte-clients.log`. Only tests/documentation changed from
+`a89ac921b`; no native rebuild or new full Rust/package run is claimed. Full V1
+release gates remain open; no publication occurred.

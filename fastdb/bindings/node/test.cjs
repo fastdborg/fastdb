@@ -2525,6 +2525,11 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       const inner='SELECT d.n,(SELECT count(*) FROM json_each(d.j) x) AS total FROM docs d WHERE EXISTS(SELECT 1 FROM json_each(d.j) x WHERE x.value=d.n)';
       assert.deepEqual((await db.execute(inner)).rows,[[1n,3n]]);
       assert.deepEqual((await db.profileSelect(inner)).result.rows,[[1n,3n]]);
+      const qualifiedCte='SELECT d.n,(WITH a AS (SELECT x.value AS n FROM temp.json_each(d.j) x) SELECT sum(n)+$delta FROM a) AS total FROM docs d';
+      assert.deepEqual((await db.execute(qualifiedCte,{$delta:1n})).rows,[[1n,4n]]);
+      assert.deepEqual((await db.profileSelect(qualifiedCte,{$delta:1n})).result.rows,[[1n,4n]]);
+      await assert.rejects(async()=>db.execute(qualifiedCte),error=>error.code==='FDB_PARAMETER');
+
 
 
 
