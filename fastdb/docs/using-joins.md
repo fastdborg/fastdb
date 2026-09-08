@@ -68,3 +68,6 @@ Nested scalar gap is broader than merged-key lookup: current direct/closed logic
 
 
 The previously reported nested source-free gap is now fixed by carrying USING scope metadata into recursive scalar lowering. A 54-case execute/profile matrix covers two/three levels, inner WHERE, merged/qualified keys and all three supported join kinds; local FROM shadowing and a typed wrapper also pass. Already-bound compiler accessors are not rebound. General sourceful/WITH/compound and aggregate/window correlation remain unqualified. Both Node clients verify nested RIGHT USING results.
+
+
+Typed direct/nested correlation now has 180 execute/profile cases for record/boolean/binary keys with ordering, LIMIT/OFFSET and unmatched right keys. Nested ordered insertion also retains unique-index failure/rollback/retry behavior.
