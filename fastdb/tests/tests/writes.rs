@@ -1023,3 +1023,63 @@ fn tuple_local_ctes_supply_correlated_lookup_rows() {
         }
     }
 }
+
+#[test]
+fn tuple_lookup_alias_baseline_and_current_collection_gate() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO lookup VALUES(1,6,9),(1,11,8),(2,4,7)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(n,a,b) SELECT n,a,b FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        for (projection, order, expected) in [
+            (
+                "x.a AS chosen,x.b AS other",
+                "chosen DESC",
+                [[1, 11, 8], [2, 4, 7]],
+            ),
+            ("-x.a AS a,x.b other", "a DESC", [[1, -6, 9], [2, -4, 7]]),
+            (
+                "x.a AS chosen,x.b",
+                "chosen + x.b DESC",
+                [[1, 11, 8], [2, 4, 7]],
+            ),
+        ] {
+            q(&c, "BEGIN");
+            let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT {projection} FROM lookup x WHERE x.n=native.n ORDER BY {order} LIMIT 1) RETURNING n,a,b"));
+            assert_eq!(
+                native.rows,
+                expected
+                    .into_iter()
+                    .map(|row| row.into_iter().map(Value::Integer).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            );
+            // This is an open V1 compatibility gate, not desired final behavior.
+            let sql = format!("UPDATE docs SET (a,b)=(SELECT {projection} FROM {source} x WHERE x.n=docs.n ORDER BY {order} LIMIT 1) RETURNING n,a,b");
+            assert!(
+                matches!(
+                    c.execute(&sql, &Parameters::new()),
+                    Err(fastdb::Error::Unsupported(_))
+                ),
+                "{sql}"
+            );
+            assert_eq!(
+                q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows,
+                vec![
+                    vec![Value::Integer(1), Value::Integer(0), Value::Integer(0)],
+                    vec![Value::Integer(2), Value::Integer(0), Value::Integer(0)]
+                ]
+            );
+            q(&c, "ROLLBACK");
+        }
+    }
+}

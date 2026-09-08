@@ -4789,3 +4789,23 @@ tests passed, plus formatting and all-target fastdb-tests Clippy with warnings
 denied. Logs `/tmp/fastdb-derived-record-sort.log` and
 `/tmp/fastdb-derived-record-sort-clippy.log`. Only tests/documentation changed
 from `a6306bfad`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Tuple projection alias compatibility gate — 2026-09-09
+
+The pinned native engine accepts correlated tuple SELECT projection aliases,
+including elided aliases, an alias colliding with an input column, and aliases
+inside computed ordering. A differential fixture records the native results
+and the current collection rejection without mutation for relational and
+collection lookups. This rejection is an open V1 gap, not the desired contract.
+
+An uncommitted wrapper prototype was removed: a derived wrapper fails metadata
+preparation with an unresolved outer collection reference; a CTE wrapper routes
+the native-only projection to an unresolved internal array helper. The next
+implementation needs scope-aware correlation/metadata support before wrapping,
+while retaining alias precedence and single evaluation of projected values.
+The prototype is not implemented or claimed as supported.
+
+All 24 write tests passed; log `/tmp/fastdb-tuple-alias-baseline.log`.
+Only tests/documentation changed from `9fbda7330`; no new full-suite or client
+run is claimed. Full V1 remains open.
