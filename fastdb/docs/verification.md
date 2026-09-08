@@ -3205,3 +3205,22 @@ fastdb-tests Clippy with warnings denied. Logs:
 `/tmp/fastdb-cte-pagination.log` and `/tmp/fastdb-cte-pagination-clippy.log`.
 Only tests/documentation changed from `8a1ab969d`; no new full-suite/client run
 is claimed. Full V1 release gates remain open; no publication occurred.
+
+
+## Explicit tuple UPDATE assignments — 2026-09-09
+
+Collection UPDATE now expands explicit tuple right-hand values into its existing
+candidate evaluation path. Swaps and arithmetic match native table results;
+parameterized tuples retain RETURNING behavior. The regression verifies a later
+candidate validation failure restores rows and managed indexes while preserving
+prior outer-transaction work, followed by successful retry and outer rollback.
+Overlapping targets, ID mutation and mismatched arity reject. Subquery-valued
+tuples and nested path tuple targets remain outside this implementation.
+
+The full scoped `fastdb/scripts/check.sh` passed from `a7f45f2b5` plus this change:
+575 Rust tests passed, zero failed, one existing ignored trigger-cancellation
+gate; all 82 Node/application tests passed, plus formatting, Clippy with warnings
+denied and strict TypeScript checks. Log: `/tmp/fastdb-tuple-check.log`.
+The focused eight write tests also passed (`/tmp/fastdb-tuple-writes.log`).
+No upstream source or dependencies changed. Full V1 remains incomplete and no
+publication occurred.

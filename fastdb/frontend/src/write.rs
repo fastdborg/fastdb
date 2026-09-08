@@ -545,12 +545,20 @@ impl Connection {
                 let mut fields = Vec::new();
                 let mut exprs = Vec::new();
                 for set in update.sets {
-                    if set.col_names.len() != 1 {
-                        return Err(unsupported("tuple collection assignments"));
+                    if set.col_names.len() == 1 {
+                        fields.push(set.col_names[0].as_str().to_owned());
+                        exprs.push(*set.expr);
+                    } else if let Expr::Parenthesized(values) = *set.expr {
+                        if values.len() != set.col_names.len() {
+                            return Err(unsupported("tuple assignment arity mismatch"));
+                        }
+                        fields.extend(set.col_names.iter().map(|name| name.as_str().to_owned()));
+                        exprs.extend(values.into_iter().map(|value| *value));
+                    } else {
+                        return Err(unsupported(
+                            "collection tuple assignment requires explicit values",
+                        ));
                     }
-                    let field = set.col_names[0].as_str().to_owned();
-                    fields.push(field);
-                    exprs.push(*set.expr);
                 }
                 let paths = normalized.as_ref().map_or_else(
                     || fields.iter().map(|f| vec![f.clone()]).collect(),

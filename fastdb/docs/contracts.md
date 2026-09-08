@@ -1156,3 +1156,13 @@ types. Compound-arm correlation also visits iterator arguments. A correlated CTE
 `temp.json_each(d.j)` has native execute/profile coverage, alongside a scalar
 query over `main.json_each(d.j)`. Broader CTE and nested type propagation remain
 under qualification.
+
+
+Collection UPDATE accepts explicit multi-column tuples such as
+`SET (a,b)=(b,a)` and `SET (a,b)=($a,$b)`. Tuple values are expanded into the
+existing candidate projection, so every right-hand expression reads the same
+pre-update document and all candidates are materialized before mutation.
+Validation and managed indexes share the statement savepoint. Duplicate or
+overlapping targets and ID changes remain rejected. Tuple arity must match;
+subquery-valued tuples remain unsupported. Tuple targets are ordinary column
+names; this does not extend nested-path assignment syntax inside tuples.

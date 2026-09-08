@@ -328,3 +328,72 @@ fn indexed_and_anonymous_parameters_keep_statement_numbering() {
         vec![vec![Value::String("Bob".into())]]
     );
 }
+
+#[test]
+fn explicit_tuple_updates_preserve_snapshots_and_atomic_validation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,2),(3,4)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(a,b) SELECT a,b FROM native",
+        "DEFINE FIELD a ON docs TYPE integer CHECK(a<10)",
+        "CREATE UNIQUE INDEX docs_a ON docs(a)",
+    ] {
+        q(&c, sql);
+    }
+    for assignment in ["(a,b)=(b,a)", "(a,b)=(a+1,b+2)"] {
+        for source in ["native", "docs"] {
+            q(&c, &format!("UPDATE {source} SET {assignment}"));
+        }
+        assert_eq!(
+            q(&c, "SELECT a,b FROM docs ORDER BY a").rows,
+            q(&c, "SELECT a,b FROM native ORDER BY a").rows
+        );
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(a,b) VALUES(0,0)");
+    let before = q(&c, "SELECT a,b FROM docs ORDER BY a").rows;
+    let error = c
+        .execute("UPDATE docs SET (a,b)=(a+6,b+1)", &Parameters::new())
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_VALIDATION");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(q(&c, "SELECT a,b FROM docs ORDER BY a").rows, before);
+    assert!(c
+        .lookup_index("docs", "docs_a", &Value::Integer(6))
+        .unwrap()
+        .is_empty());
+    let params = Parameters::from([
+        ("$a".into(), Value::Integer(7)),
+        ("$b".into(), Value::Integer(8)),
+    ]);
+    assert_eq!(
+        c.execute(
+            "UPDATE docs SET (a,b)=($a,$b) WHERE a=0 RETURNING a,b",
+            &params
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::Integer(7), Value::Integer(8)]]
+    );
+    for sql in [
+        "UPDATE docs SET (a,b)=(1,2),a=3",
+        "UPDATE docs SET (id,a)=(docs:other,1)",
+        "UPDATE docs SET (a,b)=(1,2,3)",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    assert_eq!(
+        c.check_collection_integrity("docs", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .index_entries,
+        3
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT a,b FROM docs ORDER BY a").rows,
+        q(&c, "SELECT a,b FROM native ORDER BY a").rows
+    );
+}

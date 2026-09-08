@@ -101,7 +101,7 @@ The current result metadata distinguishes direct typed field projections from or
 
 Direct typed parameters and copied document fields retain their logical types. Ordinary SQL scalar expressions retain engine scalar types: SQL TRUE/FALSE become integer 1/0, so boolean validators require typed Boolean parameters or document literals rather than implicit coercion. The Rust map uses `?1`, `?2`, etc. to bind numbered or anonymous statement slots. Pinned Turso v0.7.2 rejects `$name::suffix`; a differential test preserves that exact engine error instead of reinterpreting it.
 
-Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM/CTE/tuple assignments, and incomplete expression type propagation. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
+Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM or subquery-valued tuple assignments, and incomplete expression type propagation. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
 
 ## Catalog lifecycle notes
 
@@ -4233,3 +4233,22 @@ fastdb-tests Clippy with warnings denied. Logs:
 `/tmp/fastdb-cte-pagination.log` and `/tmp/fastdb-cte-pagination-clippy.log`.
 Only tests/documentation changed from `8a1ab969d`; no new full-suite/client run
 is claimed. Full V1 release gates remain open; no publication occurred.
+
+
+## Explicit tuple UPDATE assignments — 2026-09-09
+
+Collection UPDATE now expands explicit tuple right-hand values into its existing
+candidate evaluation path. Swaps and arithmetic match native table results;
+parameterized tuples retain RETURNING behavior. The regression verifies a later
+candidate validation failure restores rows and managed indexes while preserving
+prior outer-transaction work, followed by successful retry and outer rollback.
+Overlapping targets, ID mutation and mismatched arity reject. Subquery-valued
+tuples and nested path tuple targets remain outside this implementation.
+
+The full scoped `fastdb/scripts/check.sh` passed from `a7f45f2b5` plus this change:
+575 Rust tests passed, zero failed, one existing ignored trigger-cancellation
+gate; all 82 Node/application tests passed, plus formatting, Clippy with warnings
+denied and strict TypeScript checks. Log: `/tmp/fastdb-tuple-check.log`.
+The focused eight write tests also passed (`/tmp/fastdb-tuple-writes.log`).
+No upstream source or dependencies changed. Full V1 remains incomplete and no
+publication occurred.
