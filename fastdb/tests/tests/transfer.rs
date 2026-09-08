@@ -121,3 +121,61 @@ fn json_replay_preserves_constraint_errors_and_outer_work() {
     q(&c, "ROLLBACK");
     assert!(q(&c, "SELECT * FROM docs").rows.is_empty());
 }
+
+#[test]
+fn consuming_portable_values_preserve_lossless_wire_contract() {
+    let value = Value::Object(
+        [
+            ("integer".into(), Value::Integer(i64::MAX)),
+            ("number".into(), Value::Number(-0.0)),
+            (
+                "nested".into(),
+                Value::Array(vec![
+                    Value::Boolean(true),
+                    Value::Null,
+                    Value::Binary(vec![0, 255]),
+                ]),
+            ),
+        ]
+        .into(),
+    );
+    let encoded = value.clone().into_portable_value().unwrap();
+    assert_eq!(encoded["value"]["integer"]["type"], "Integer");
+    assert_eq!(encoded["value"]["integer"]["value"], "9223372036854775807");
+    assert_eq!(encoded["value"]["number"]["type"], "Number");
+    assert_eq!(encoded["value"]["number"]["value"], "8000000000000000");
+    assert_eq!(encoded, value.to_portable_value().unwrap());
+    let decoded = Value::from_portable_value(encoded).unwrap();
+    let Value::Object(fields) = &decoded else {
+        panic!("object type lost")
+    };
+    let Value::Number(number) = fields["number"] else {
+        panic!("number type lost")
+    };
+    assert_eq!(number.to_bits(), (-0.0f64).to_bits());
+    assert_eq!(decoded, value);
+    for value in [
+        Value::vector32(&[1.0, 0.0, -1.0]).unwrap(),
+        Value::vector64(&[1.0, 0.0, -1.0]).unwrap(),
+        Value::vector32_sparse(&[1.0, 0.0, -1.0]).unwrap(),
+        Value::vector8(&[1.0, 0.0, -1.0]).unwrap(),
+        Value::vector1bit(&[1.0, 0.0, -1.0]).unwrap(),
+    ] {
+        assert_eq!(
+            Value::from_portable_value(value.clone().into_portable_value().unwrap()).unwrap(),
+            value
+        );
+    }
+    assert_eq!(
+        Value::Number(f64::INFINITY)
+            .into_portable_value()
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    let mut deep = Value::Null;
+    for _ in 0..65 {
+        deep = Value::Array(vec![deep]);
+    }
+    assert_eq!(deep.into_portable_value().unwrap_err().code(), "FDB_LIMIT");
+}

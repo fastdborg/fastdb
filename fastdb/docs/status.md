@@ -3037,3 +3037,15 @@ Logs: `/tmp/fastdb-node-consumed-values.log` and
 `/tmp/fastdb-consumed-values-clippy.log`. Broader Rust and installed-package checks
 were not repeated. Output JSON still occupies memory; this reduces duplicate
 input ownership without claiming a total-memory bound or closing V1 gates.
+
+### Consuming portable-value public contract
+
+The public Rust transfer suite now checks exact int64 decimal and negative-zero
+binary64 bit-string output from `into_portable_value`, nested values, all five
+vector encodings, and non-finite/depth rejection. Decoding verifies typed values
+and negative-zero bits; borrowed/consuming outputs must agree.
+
+All five transfer integration tests passed, including existing database transfer
+and rollback cases. Scoped formatting and diff checks passed. Log:
+`/tmp/fastdb-consumed-portable-contract.log`. No production code changed and no
+broader suite was repeated. Resource, platform and remaining V1 gates remain open.
