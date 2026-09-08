@@ -1600,5 +1600,48 @@ mod cte_evaluation_tests {
                 );
             }
         }
+        c.execute("CREATE TABLE evaluation_rhs(n)", &params)
+            .unwrap();
+        c.execute("INSERT INTO evaluation_rhs VALUES(1),(3),(5)", &params)
+            .unwrap();
+        for join in ["LEFT JOIN", "RIGHT JOIN"] {
+            for predicate in [
+                "EXISTS(SELECT 1 WHERE n>=cte_tick())",
+                "NOT EXISTS(SELECT 1 WHERE n>=cte_tick())",
+                "EXISTS(SELECT 1 WHERE EXISTS(SELECT 1 WHERE n>=cte_tick()))",
+            ] {
+                for limit in ["", " LIMIT 0"] {
+                    let query = |source: &str| {
+                        format!(
+                        "SELECT n,(SELECT max(r.m)+cte_tick() FROM (SELECT n AS m FROM baseline) r WHERE r.m<n AND {predicate}) AS v FROM {source} d {join} evaluation_rhs r USING(n) ORDER BY n{limit}"
+                    )
+                    };
+                    CALLS.store(0, Ordering::SeqCst);
+                    c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
+                        .unwrap();
+                    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "nested EXISTS planning");
+                    let expected = c.execute(&query("baseline"), &params).unwrap().rows;
+                    let calls = CALLS.load(Ordering::SeqCst);
+                    if !limit.is_empty() {
+                        assert_eq!(calls, 0);
+                    }
+                    for profile in [false, true] {
+                        CALLS.store(0, Ordering::SeqCst);
+                        let sql = query("docs");
+                        let actual = if profile {
+                            c.profile_select(&sql, &params).unwrap().result.rows
+                        } else {
+                            c.execute(&sql, &params).unwrap().rows
+                        };
+                        assert_eq!(actual, expected, "{sql}");
+                        assert_eq!(
+                            CALLS.load(Ordering::SeqCst),
+                            calls,
+                            "profile={profile}: {sql}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
