@@ -3457,3 +3457,15 @@ All eighteen write tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-tuple-multiple-matches.log` and
 `/tmp/fastdb-tuple-multiple-matches-clippy.log`. Only tests/documentation changed
 from `c074eac0d`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Committed Node tuple lookup reopen — 2026-09-09
+
+Both clients now commit typed collection tuple lookup results to a file-backed
+database, close and reopen it, verify record/object/binary/int64 values and
+managed-index integrity, and execute a subsequent tuple swap successfully.
+The focused test and all 85 Node/application tests passed against the last
+full-check addon. Logs `/tmp/fastdb-tuple-reopen-node-focused.log` and
+`/tmp/fastdb-tuple-reopen-node.log`. Only tests/documentation changed from
+`f935dbddc`; no native rebuild or full Rust rerun is claimed. This is orderly
+close/reopen evidence, not crash or power-loss qualification. Full V1 remains open.

@@ -2671,3 +2671,29 @@ test('tuple collection lookups preserve typed results in both clients', async ()
     } finally { await db.close(); }
   }
 });
+
+test('committed tuple lookups survive reopening in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-tuple-reopen-'));
+  try {
+    for (const [name, open] of [['sync', file => new Database(file)], ['worker', file => AsyncDatabase.open(file)]]) {
+      const file = path.join(dir, name + '.db');
+      const record = new Record('docs', 9223372036854775807n);
+      const payload = { bytes: Buffer.from([0,255]), values: [true, -9223372036854775808n] };
+      let db = await open(file);
+      try {
+        for (const sql of ['CREATE TABLE docs', 'CREATE TABLE lookup', 'CREATE UNIQUE INDEX docs_n ON docs(n)', 'INSERT INTO docs(n) VALUES(1)']) await db.execute(sql);
+        await db.execute('INSERT INTO lookup(n,a,b) VALUES(1,$a,$b)', { $a: record, $b: payload });
+        await db.execute('BEGIN');
+        await db.execute('UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n)');
+        await db.execute('COMMIT');
+      } finally { await db.close(); }
+      db = await open(file);
+      try {
+        assert.deepEqual((await db.execute('SELECT n,a,b FROM docs')).rows, [[1n,record,payload]]);
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries, 1n);
+        assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT b,a) RETURNING a,b')).rows, [[payload,record]]);
+      } finally { await db.close(); }
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
