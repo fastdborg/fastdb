@@ -140,3 +140,11 @@ function writeResultTypes(sync: Database, worker: AsyncDatabase) {
   void result; void pending;
 }
 void writeResultTypes;
+
+const buffered = new Database(':memory:', { writeBufferLimits: { maxRows: 10n, maxPayloadBytes: 1000n } });
+void AsyncDatabase.open(':memory:', { writeBufferLimits: { maxRows: 10n, maxPayloadBytes: 1000n } });
+buffered.close();
+// @ts-expect-error buffer budgets require bigint
+new Database(':memory:', { writeBufferLimits: { maxRows: 10, maxPayloadBytes: 1000n } });
+// @ts-expect-error connection options reject unknown fields
+AsyncDatabase.open(':memory:', { unknown: true });

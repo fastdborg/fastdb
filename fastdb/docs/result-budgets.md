@@ -55,7 +55,8 @@ savepoint. Overflow returns `FDB_LIMIT`, discards the buffer, and uses existing
 write rollback. Candidate queries stop at the first rejected row. Ordinary reads
 and explicit returned-result budgets keep their separate policies.
 
-This setting is initially Rust-only. It does not cap native engine write buffers,
+Node clients accept the same policy at open time through `DatabaseOptions.writeBufferLimits`
+(`maxRows` and `maxPayloadBytes` are bigint). It does not cap native engine write buffers,
 direct single-document Rust methods (`insert`, `upsert`, `patch`, `delete`), parsing,
 the temporary row being decoded/evaluated, or total memory across overlapping
 buffers. Some snapshot checks occur after mutation and rely on operation rollback.

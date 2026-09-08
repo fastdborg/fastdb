@@ -136,9 +136,30 @@ pub struct NativeDatabase {
 #[napi]
 impl NativeDatabase {
     #[napi(constructor)]
-    pub fn new(path: String) -> napi::Result<Self> {
+    pub fn new(
+        path: String,
+        max_rows: Option<String>,
+        max_payload_bytes: Option<String>,
+    ) -> napi::Result<Self> {
+        let limits = match (max_rows, max_payload_bytes) {
+            (None, None) => None,
+            (Some(rows), Some(bytes)) => Some(fastdb::ResultLimits {
+                max_rows: rows
+                    .parse()
+                    .map_err(|_| error("invalid write buffer row limit"))?,
+                max_payload_bytes: bytes
+                    .parse()
+                    .map_err(|_| error("invalid write buffer payload limit"))?,
+            }),
+            _ => return Err(error("both write buffer limits are required")),
+        };
         let db = fastdb::Database::open(&path).map_err(error)?;
         let conn = db.connect().map_err(error)?;
+        let conn = if let Some(limits) = limits {
+            conn.with_write_buffer_limits(limits)
+        } else {
+            conn
+        };
         let interrupt_key = NEXT_INTERRUPT
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
             .map_err(|_| error("interrupt identifiers exhausted"))?;

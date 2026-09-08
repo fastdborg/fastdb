@@ -316,3 +316,26 @@ statements are rejected. A write without RETURNING can succeed with zero budgets
 affected rows do not count as returned rows. Empty RETURNING still charges column
 names. Cooperative cancellation uses the usual error/transaction envelope and
 savepoint recovery; completed-result accounting has no fixed cancellation latency.
+
+### Collection write buffer limits
+
+Both clients accept an optional second argument at open time:
+
+```js
+const options = { writeBufferLimits: { maxRows: 10_000n, maxPayloadBytes: 64n * 1024n * 1024n } };
+const db = new Database(':memory:', options);
+const workerDb = await AsyncDatabase.open(':memory:', options);
+```
+
+The policy limits each frontend collection-write candidate or document snapshot
+buffer separately. Exceeding a limit returns `FDB_LIMIT` and rolls back the
+operation while preserving prior transaction work. Ordinary reads and explicit
+returned-result limits retain their separate policies. Limits are fixed for the
+lifetime of a Node connection and disabled by default. Both fields are required
+nonnegative uint64 bigint values; unknown options and invalid values are rejected
+before opening the database or starting its worker.
+
+These are not total memory limits: native engine buffers, parsing, temporary
+values and overlapping buffers remain outside the policy. Transfer APIs also
+retain their existing separate limits. See the repository's
+`fastdb/docs/result-budgets.md` for accounting and remaining resource gates.

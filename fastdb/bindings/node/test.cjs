@@ -2214,3 +2214,46 @@ test('worker write result cancellation rolls back and permits queued retry', asy
     assert.deepEqual(await db.all('SELECT n FROM docs'),[]);
   } finally { await db.close(); }
 });
+
+test('connection write buffer limits preserve pending work in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const options = { writeBufferLimits: { maxRows: 1n, maxPayloadBytes: 1000n } };
+  for (const db of [new Database(':memory:', options), await AsyncDatabase.open(':memory:', options)]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await db.execute('INSERT INTO docs {id:docs:a,n:1}');
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:b,n:2}');
+      for (const sql of ['UPDATE docs SET n=n+10', 'UPDATE docs {n:n+10}', 'DELETE FROM docs', 'INSERT INTO docs(n) VALUES(3),(4)']) {
+        await assert.rejects(async () => db.execute(sql), error => {
+          assert.equal(error.code, 'FDB_LIMIT');
+          assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+          return true;
+        });
+        assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n], [2n]]);
+      }
+      await db.execute('UPDATE docs SET n=3 WHERE n=2');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n], [3n]]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM docs'), [[1n]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents, 1n);
+    } finally { await db.close(); }
+  }
+});
+
+test('connection options reject invalid limits before opening a database', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-options-'));
+  const file = path.join(dir, 'absent.db');
+  try {
+    for (const options of [null, [], { unknown: true }, { writeBufferLimits: {} },
+      { writeBufferLimits: { maxRows: 1, maxPayloadBytes: 2n } },
+      { writeBufferLimits: { maxRows: -1n, maxPayloadBytes: 2n } },
+      { writeBufferLimits: { maxRows: 1n, maxPayloadBytes: 2n ** 64n } }]) {
+      assert.throws(() => new Database(file, options), /options|option|limits/);
+      await assert.rejects(AsyncDatabase.open(file, options), /options|option|limits/);
+      assert.equal(fs.existsSync(file), false);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

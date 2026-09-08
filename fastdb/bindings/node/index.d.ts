@@ -19,6 +19,7 @@ export interface FastDBError extends Error { code: string; transaction?: Transac
 export function isFastDBError(value: unknown): value is FastDBError;
 export interface QueryResult { columns: string[]; rows: Value[][]; affected: bigint; transaction: Transaction; }
 /** Retained logical result limits; excludes engine working memory and temporary decoding. */
+export interface DatabaseOptions { writeBufferLimits?: ResultLimits; }
 export interface ResultLimits { maxRows: bigint; maxPayloadBytes: bigint; }
 export interface IntegrityLimits { maxDocuments?: bigint; maxEncodedBytes?: bigint; }
 export interface IntegrityReport {
@@ -39,7 +40,7 @@ export interface Migration { version: bigint; name: string; sql: string; }
 export interface MigrationReport { alreadyApplied: number; applied: bigint[]; transaction: Transaction; }
 export interface ImportReport { imported: number; transaction: Transaction; }
 export class Database {
-  constructor(path?: string);
+  constructor(path?: string, options?: DatabaseOptions);
   close(): void;
   migrate(migrations: Migration[]): MigrationReport;
   exportDocuments(table: string, format?: TransferFormat): string;
@@ -60,7 +61,7 @@ export class Database {
 export interface ExecuteOptions { signal?: AbortSignal; }
 export class AsyncDatabase {
   private constructor();
-  static open(path?: string): Promise<AsyncDatabase>;
+  static open(path?: string, options?: DatabaseOptions): Promise<AsyncDatabase>;
   interrupt(): boolean;
   close(): Promise<void>;
   migrate(migrations: Migration[], options?: ExecuteOptions): Promise<MigrationReport>;

@@ -2849,3 +2849,21 @@ tests; scoped formatting, Clippy and strict TypeScript checks. Log:
 `/tmp/fastdb-write-buffer-final-check.log`. Installed-package and standalone-consumer
 checks were not repeated for this change; platform and release qualification remain
 open.
+
+### Node connection write buffer policy
+
+Synchronous `Database` construction and `AsyncDatabase.open` now accept an optional
+`DatabaseOptions` argument with `writeBufferLimits: ResultLimits`. The wrapper
+validates both bigint fields and unknown options before opening a database or
+starting a worker; the native constructor parses limits before opening storage.
+The policy is fixed for the Node connection lifetime and remains disabled by
+default. This extends the preceding Rust-only coverage to both Node clients.
+
+Rebuilt-addon validation passed all 72 Node/application tests and strict TypeScript
+checks; Node-scoped Clippy passed. The new tests exercise candidate rejection,
+prior transaction preservation, smaller-write retry, rollback, index integrity,
+unaffected reads and invalid options leaving no database file in both clients.
+Logs: `/tmp/fastdb-node-write-buffers.log` and
+`/tmp/fastdb-node-write-buffers-clippy.log`. Frontend implementation did not change;
+the preceding 528-test Rust run remains its evidence. Installed-package/platform
+qualification was not repeated, and broader resource and V1 gates remain open.

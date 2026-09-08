@@ -132,6 +132,13 @@ function resultLimits(limits) {
     return value.toString();
   });
 }
+function connectionOptions(options) {
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('database options must be an object');
+  for (const key of Object.keys(options)) {
+    if (key !== 'writeBufferLimits') throw new TypeError(`unknown database option ${key}`);
+  }
+  return options.writeBufferLimits === undefined ? [] : resultLimits(options.writeBufferLimits);
+}
 function integrityLimits(limits) {
   if (limits === null || typeof limits !== 'object' || Array.isArray(limits)) throw new TypeError('integrity limits must be an object');
   const fields = { maxDocuments: '', maxEncodedBytes: '' };
@@ -176,7 +183,7 @@ function closedError(message = 'database is closed') {
 }
 class Database {
   #handle; #closed = false;
-  constructor(path = ':memory:') { this.#handle = new NativeDatabase(path); }
+  constructor(path = ':memory:', options = {}) { this.#handle = new NativeDatabase(path, ...connectionOptions(options)); }
   get #native() {
     if (this.#closed) throw closedError();
     return this.#handle;
@@ -243,11 +250,11 @@ class AsyncDatabase {
   #worker; #pending = new Map(); #next = 0; #bytes = 0;
   #ready; #readyResolve; #readyReject; #exited;
   #failure; #closing = false; #closePromise; #stopped = false; #shutdownRequested = false;
-  constructor(path, token) {
+  constructor(path, token, limits) {
     if (token !== asyncConstruction) throw new TypeError('use AsyncDatabase.open()');
     const { Worker } = require('node:worker_threads');
     this.#ready = new Promise((resolve, reject) => { this.#readyResolve = resolve; this.#readyReject = reject; });
-    this.#worker = new Worker(require.resolve('./worker.cjs'), { workerData: { path } });
+    this.#worker = new Worker(require.resolve('./worker.cjs'), { workerData: { path, limits } });
     this.#exited = new Promise(resolve => this.#worker.once('exit', code => {
       this.#stopped = true;
       if (!this.#closing || this.#pending.size) this.#fail(new Error(`database worker exited (${code})`));
@@ -265,8 +272,9 @@ class AsyncDatabase {
     });
   }
   interrupt() { return this.#interruptKey !== undefined && interruptConnection(this.#interruptKey); }
-  static async open(path = ':memory:') {
-    const db = new AsyncDatabase(path, asyncConstruction);
+  static async open(path = ':memory:', options = {}) {
+    const limits = connectionOptions(options);
+    const db = new AsyncDatabase(path, asyncConstruction, limits);
     try { await db.#ready; return db; }
     catch (error) { await db.#exited; throw error; }
   }
