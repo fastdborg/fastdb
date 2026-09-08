@@ -2914,3 +2914,17 @@ that prove storage was not opened. Scoped formatting and Clippy passed. Logs:
 `/tmp/fastdb-cli-write-buffers.log` and
 `/tmp/fastdb-cli-write-buffers-clippy.log`. No frontend implementation changed;
 broader suites were not repeated. Broader resource and V1 release gates remain open.
+
+### CLI migration buffer recovery across processes
+
+The CLI migration suite now verifies the write buffer policy with a persistent
+database across separate process invocations. Reopening after rejection confirms
+pending schema and document changes were rolled back and the existing unique
+index remains consistent. Retrying unchanged migration files with a larger policy
+applies only the pending versions, and a further run skips the complete history;
+reopening confirms final indexed document values.
+
+All four CLI migration tests passed; log:
+`/tmp/fastdb-cli-buffer-migration.log`. Scoped formatting passed. No production code
+changed and no broader suite was repeated. This adds clean process-exit/reopen
+evidence, not abrupt-crash or interrupted-I/O qualification; V1 gates remain open.

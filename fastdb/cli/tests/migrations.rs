@@ -141,3 +141,79 @@ fn migration_output_failure_reports_error_after_committed_apply() {
     assert_eq!(report["applied"], serde_json::json!([]));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn migration_buffer_failure_persists_rollback_and_accepts_larger_policy_on_retry() {
+    let root = std::env::temp_dir().join(format!("fastdb-migration-buffer-{}", std::process::id()));
+    let dir = root.join("migrations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = root.join("test.db");
+    std::fs::write(dir.join("001_initial.sql"), "CREATE TABLE docs; CREATE UNIQUE INDEX docs_n ON docs(n); INSERT INTO docs {id:docs:a,n:1};").unwrap();
+    let run = |rows: &str| {
+        Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+            .args(["--write-buffer-limits", rows, "1000", "--migrate"])
+            .arg(&dir)
+            .arg(&file)
+            .output()
+            .unwrap()
+    };
+    assert!(run("1").status.success());
+    std::fs::write(
+        dir.join("002_pending.sql"),
+        "CREATE TABLE audit(n); INSERT INTO audit VALUES(9); INSERT INTO docs {id:docs:b,n:2};",
+    )
+    .unwrap();
+    std::fs::write(dir.join("003_rewrite.sql"), "UPDATE docs SET n=n+10;").unwrap();
+    let failed = run("1");
+    assert!(!failed.status.success());
+    assert!(failed.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&failed.stderr).contains("Limit"),
+        "{failed:?}"
+    );
+    {
+        let db = fastdb::Database::open(file.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        let p = fastdb::Parameters::new();
+        assert!(c.execute("SELECT * FROM audit", &p).is_err());
+        assert_eq!(
+            c.execute("SELECT n FROM docs", &p).unwrap().rows,
+            vec![vec![fastdb::Value::Integer(1)]]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            1
+        );
+    }
+    let retried = run("2");
+    assert!(retried.status.success(), "{retried:?}");
+    let report: serde_json::Value = serde_json::from_slice(&retried.stdout).unwrap();
+    assert_eq!(report["already_applied"], 1);
+    assert_eq!(report["applied"], serde_json::json!([2, 3]));
+    let repeated = run("2");
+    assert!(repeated.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(report["already_applied"], 3);
+    {
+        let db = fastdb::Database::open(file.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        assert_eq!(
+            c.execute("SELECT n FROM docs ORDER BY n", &fastdb::Parameters::new())
+                .unwrap()
+                .rows,
+            vec![
+                vec![fastdb::Value::Integer(11)],
+                vec![fastdb::Value::Integer(12)]
+            ]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .documents,
+            2
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
