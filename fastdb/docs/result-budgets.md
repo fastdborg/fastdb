@@ -65,6 +65,15 @@ it by consuming the connection with the builder again allows a retry; this does
 not alter transaction state. This is initial buffer coverage, not a completed V1
 memory/resource guarantee.
 
+The policy also applies to collection writes executed by batches and migrations.
+A batch reports `FDB_LIMIT` for the rejected statement and stops before later
+statements; earlier successful statements keep their normal transaction state.
+The migration runner wraps a rejected statement as `FDB_MIGRATION` with an
+underlying `FDB_LIMIT` source and rolls back every pending script and history row.
+Previously applied migrations remain intact. Rust callers can increase the policy
+and retry the identical migration plan; Node callers must open a connection with
+the larger policy.
+
 ## Atomic write-result policy
 
 Rust `Connection::write_with_result_limits(sql, params, ResultLimits)` accepts

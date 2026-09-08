@@ -2884,3 +2884,18 @@ a temporary consumer without publishing or registry access. These checks add
 installed-client evidence; production release artifacts, other platforms and
 broader V1 resource/release gates remain open. No production code changed and no
 broader frontend suite was repeated.
+
+### Write buffer batch and migration boundaries
+
+Added real-engine regressions proving connection write buffer limits apply through
+batch and migration execution. A rejected batch UPDATE stops before COMMIT while
+preserving an earlier pending insert; explicit rollback restores committed data.
+A rejected migration UPDATE preserves the underlying FDB_LIMIT cause, rolls back
+pending relational DDL/data, collection changes and history, and leaves previously
+applied history intact. Increasing the Rust policy allows the identical plan to
+apply once, with correct final data and collection index integrity.
+
+All six write-buffer integration tests passed, including these two workflow cases;
+log: `/tmp/fastdb-buffer-workflows.log`. Scoped formatting passed. No production
+code changed, so broader Rust/Node suites were not repeated. Resource and V1 release
+gates remain open.
