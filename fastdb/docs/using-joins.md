@@ -38,3 +38,6 @@ Typed direct correlation now has 18 read/profile shapes for record, boolean and 
 
 
 Direct source-free correlation now also qualifies outer merged keys in inner ORDER BY, preserving explicit output aliases (including same-name aliases). Implicit column labels are not treated as explicit aliases during qualification. The expanded 66-shape execute/profile matrix covers bare and aliased ordering, WHERE source-before-alias behavior, independent nested EXISTS and LIMIT 0. General nested/sourceful correlation and grouped scopes remain unfinished.
+
+
+Typed correlation coverage now includes 90 execute/profile shapes with bare/aliased ordering, LIMIT 0 and OFFSET 1 scalar-NULL behavior, plus ordered correlated insertion and transaction failure/retry checks.

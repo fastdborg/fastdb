@@ -559,34 +559,49 @@ fn correlated_using_preserves_typed_keys_and_atomic_writes() {
         });
         for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
             for source in ["docs", "(SELECT k FROM docs)"] {
-                let sql = format!("SELECT k,(SELECT k) AS correlated FROM {source} a {join} other b USING(k) ORDER BY k");
-                let result = query(&sql);
-                let expected = query(if join == "RIGHT JOIN" {
-                    "SELECT k FROM other ORDER BY k"
-                } else {
-                    "SELECT k FROM docs ORDER BY k"
-                });
-                assert_eq!(result.rows.len(), expected.rows.len(), "{sql}");
-                for (row, expected) in result.rows.iter().zip(&expected.rows) {
+                for (suffix, empty) in [
+                    ("", false),
+                    (" ORDER BY k", false),
+                    (" AS v ORDER BY v LIMIT 1", false),
+                    (" ORDER BY k LIMIT 0", true),
+                    (" AS v ORDER BY v LIMIT 1 OFFSET 1", true),
+                ] {
+                    let sql = format!("SELECT k,(SELECT k{suffix}) AS correlated FROM {source} a {join} other b USING(k) ORDER BY k");
+                    let result = query(&sql);
+                    let expected = query(if join == "RIGHT JOIN" {
+                        "SELECT k FROM other ORDER BY k"
+                    } else {
+                        "SELECT k FROM docs ORDER BY k"
+                    });
+                    assert_eq!(result.rows.len(), expected.rows.len(), "{sql}");
+                    for (row, expected) in result.rows.iter().zip(&expected.rows) {
+                        assert_eq!(
+                            row,
+                            &vec![
+                                expected[0].clone(),
+                                if empty {
+                                    Value::Null
+                                } else {
+                                    expected[0].clone()
+                                }
+                            ],
+                            "{sql}"
+                        );
+                    }
                     assert_eq!(
-                        row,
-                        &vec![expected[0].clone(), expected[0].clone()],
-                        "{sql}"
+                        c.profile_select(&sql, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        result.rows
                     );
                 }
-                assert_eq!(
-                    c.profile_select(&sql, &Parameters::new())
-                        .unwrap()
-                        .result
-                        .rows,
-                    result.rows
-                );
             }
         }
         query("CREATE TABLE copied");
         query("CREATE UNIQUE INDEX copied_k ON copied(k)");
         let insert =
-            "INSERT INTO copied(k) SELECT (SELECT k) FROM docs a RIGHT JOIN other b USING(k)";
+            "INSERT INTO copied(k) SELECT (SELECT k ORDER BY k) FROM docs a RIGHT JOIN other b USING(k)";
         query("BEGIN");
         query(insert);
         let expected = query("SELECT k FROM other ORDER BY k");
