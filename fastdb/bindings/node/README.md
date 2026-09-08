@@ -276,7 +276,9 @@ Overflow throws/rejects with `FDB_LIMIT` and transaction observations, without
 partial rows or metrics. Empty results still charge column names. These APIs
 accept one SQL SELECT, including supported one-hop FETCH. Resolved documents
 and duplicate occurrences count toward the final payload budget; missing targets
-count as nulls. Reference placeholders are excluded. Existing execute/profile
+count as nulls. Found targets are charged with their output multiplicity before
+cache retention, allowing early rejection during target reads. Reference
+placeholders are excluded. Existing execute/profile
 methods keep their current result policy.
 
 Payload bytes count UTF-8 column names, strings, object keys, record table names

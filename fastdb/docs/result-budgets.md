@@ -9,8 +9,10 @@ for empty results. Non-SELECT statements are rejected by these APIs.
 
 One-hop FETCH shares the final payload budget. Primary collection charges row
 counts and non-FETCH columns; reference placeholders are excluded. The resolver
-charges each resolved output value, including duplicate occurrences and nulls
-for missing targets, before cloning expanded output documents. Its independent
+counts reference occurrences, then charges each found target with its output
+multiplicity before retaining it in the target cache. Repeated reads of the same
+stored identity are charged once. Missing targets and null references are charged
+after target resolution. All final payload checks precede output cloning. Its independent
 16,384-reference and 64 MiB tagged-JSON workspace/output limits still apply.
 Temporary references and the deduplicated target cache are not covered by the
 final payload budget. Fetch queries retain their atomic snapshot scope.

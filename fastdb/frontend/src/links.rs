@@ -117,6 +117,10 @@ impl Connection {
                 .insert(encoded.clone(), record);
             identities.push(Some(encoded));
         }
+        let mut occurrences = BTreeMap::<Vec<u8>, usize>::new();
+        for id in identities.iter().flatten() {
+            *occurrences.entry(id.clone()).or_default() += 1;
+        }
         let mut found = BTreeMap::new();
         for (table, records) in groups {
             let records = records.into_iter().collect::<Vec<_>>();
@@ -147,6 +151,13 @@ impl Connection {
                             };
                             let value = Value::Object(crate::decode_document(&row[1])?);
                             let bytes = budget.charge(&value)?;
+                            charge_result_target(
+                                &mut result_budget,
+                                &occurrences,
+                                found.contains_key(id),
+                                id,
+                                &value,
+                            )?;
                             found.insert(id.clone(), (value, bytes));
                             Ok(())
                         })?;
@@ -243,6 +254,13 @@ impl Connection {
                             .encode()?;
                             let value = Value::Object(doc);
                             let bytes = budget.charge(&value)?;
+                            charge_result_target(
+                                &mut result_budget,
+                                &occurrences,
+                                found.contains_key(&id),
+                                &id,
+                                &value,
+                            )?;
                             found.insert(id, (value, bytes));
                             Ok(())
                         })?;
@@ -264,13 +282,11 @@ impl Connection {
                 return Err(Error::Limit("fetch byte limit exceeded".into()));
             }
             output_bytes += bytes;
-            if let Some(budget) = result_budget.as_deref_mut() {
-                let value = id
-                    .as_ref()
-                    .and_then(|id| found.get(id))
-                    .map(|(value, _)| value)
-                    .unwrap_or(&Value::Null);
-                budget.value(value)?;
+            // Found targets were charged, with multiplicity, before retention.
+            if id.as_ref().and_then(|id| found.get(id)).is_none() {
+                if let Some(budget) = result_budget.as_deref_mut() {
+                    budget.value(&Value::Null)?;
+                }
             }
         }
         Ok(identities
@@ -281,6 +297,25 @@ impl Connection {
             })
             .collect())
     }
+}
+
+// Native collation can return the same stored identity in different chunks.
+// Charge its output occurrences once, using the resolver's exact identity map.
+fn charge_result_target(
+    budget: &mut Option<&mut crate::budget::ResultBudget>,
+    occurrences: &BTreeMap<Vec<u8>, usize>,
+    already_found: bool,
+    id: &[u8],
+    value: &Value,
+) -> Result<()> {
+    if !already_found {
+        if let Some(budget) = budget.as_deref_mut() {
+            for _ in 0..occurrences.get(id).copied().unwrap_or(0) {
+                budget.value(value)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 // Preserve frontend budget/decoding errors while interrupting engine iteration.
@@ -316,6 +351,147 @@ mod tests {
     fn target_tick(args: &[ExtValue]) -> ExtValue {
         TARGET_CALLS.fetch_add(1, Ordering::SeqCst);
         ExtValue::from_integer(args[0].to_integer().unwrap())
+    }
+
+    #[test]
+    fn bounded_fetch_rejects_before_completing_first_target_chunk() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let p = crate::Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE TABLE native(id INTEGER PRIMARY KEY,n INTEGER)",
+            "BEGIN",
+        ] {
+            c.execute(sql, &p).unwrap();
+        }
+        for n in 0..130 {
+            c.execute(
+                &format!("INSERT INTO docs {{id:type::record('docs',{n}),n:{n}}}"),
+                &p,
+            )
+            .unwrap();
+            c.execute(&format!("INSERT INTO native VALUES({n},{n})"), &p)
+                .unwrap();
+        }
+        for table in ["docs", "native"] {
+            let refs = (0..130)
+                .map(|n| {
+                    Value::Record(Record {
+                        table: table.into(),
+                        key: Key::Integer(n),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut metrics = FetchMetrics::default();
+            let mut budget = crate::budget::ResultBudget::new(
+                Some(crate::ResultLimits {
+                    max_rows: 130,
+                    max_payload_bytes: 0,
+                }),
+                &[],
+            )
+            .unwrap();
+            let error = c
+                .atomic(|| {
+                    c.fetch_records_measured(
+                        &refs,
+                        MAX_FETCH_BYTES,
+                        &mut metrics,
+                        Some(&mut budget),
+                    )
+                })
+                .unwrap_err();
+            assert_eq!(error.code(), "FDB_LIMIT");
+            assert_eq!(
+                metrics.batches, 0,
+                "{table}: failed before completing the first chunk"
+            );
+            assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+            let mut budget = crate::budget::ResultBudget::new(
+                Some(crate::ResultLimits {
+                    max_rows: 130,
+                    max_payload_bytes: 10000,
+                }),
+                &[],
+            )
+            .unwrap();
+            let (values, metrics) = c
+                .fetch_records_profiled_with_budget(&refs, Some(&mut budget))
+                .unwrap();
+            assert_eq!(values.len(), 130);
+            assert_eq!(metrics.batches, 2);
+            assert!(values.iter().all(|v| matches!(v, Value::Object(_))));
+        }
+        // Distinct reference spellings may return the same stored key in
+        // multiple native NOCASE chunks. Its exact output identity is charged once.
+        c.execute(
+            "CREATE TABLE collated(id TEXT PRIMARY KEY COLLATE NOCASE,n INTEGER)",
+            &p,
+        )
+        .unwrap();
+        c.execute("INSERT INTO collated VALUES('abcdefgh',7)", &p)
+            .unwrap();
+        let refs = (0..130)
+            .map(|mask| {
+                let key = "abcdefgh"
+                    .bytes()
+                    .enumerate()
+                    .map(|(bit, b)| {
+                        if mask & (1 << bit) == 0 {
+                            b as char
+                        } else {
+                            b.to_ascii_uppercase() as char
+                        }
+                    })
+                    .collect::<String>();
+                Value::Record(Record {
+                    table: "collated".into(),
+                    key: Key::String(key),
+                })
+            })
+            .collect::<Vec<_>>();
+        let expected = c.fetch_records(&refs).unwrap();
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|v| matches!(v, Value::Object(_)))
+                .count(),
+            1
+        );
+        // Object fields: id key 2 + string 8 + n key 1 + integer 8; 129 nulls.
+        let limits = crate::ResultLimits {
+            max_rows: 130,
+            max_payload_bytes: 148,
+        };
+        let mut budget = crate::budget::ResultBudget::new(Some(limits), &[]).unwrap();
+        let (actual, metrics) = c
+            .fetch_records_profiled_with_budget(&refs, Some(&mut budget))
+            .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(metrics.batches, 2);
+        let mut budget = crate::budget::ResultBudget::new(
+            Some(crate::ResultLimits {
+                max_payload_bytes: 147,
+                ..limits
+            }),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            c.fetch_records_profiled_with_budget(&refs, Some(&mut budget))
+                .err()
+                .unwrap()
+                .code(),
+            "FDB_LIMIT"
+        );
+        c.execute("ROLLBACK", &p).unwrap();
+        assert!(c.execute("SELECT n FROM docs", &p).unwrap().rows.is_empty());
+        assert!(c
+            .execute("SELECT n FROM native", &p)
+            .unwrap()
+            .rows
+            .is_empty());
     }
 
     #[test]
@@ -462,6 +638,46 @@ mod tests {
                 vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
             );
             assert_eq!(TARGET_CALLS.load(Ordering::SeqCst), 3);
+        }
+        // Every target occurs twice in the eventual output. Reject during
+        // target iteration, before retaining the first over-budget target.
+        let occurrences = [(vec![1], 2), (vec![2], 2), (vec![3], 2)].into();
+        for accepted in [0, 1, 2] {
+            let mut result_budget = crate::budget::ResultBudget::new(
+                Some(crate::ResultLimits {
+                    max_rows: 6,
+                    max_payload_bytes: accepted * 16,
+                }),
+                &[],
+            )
+            .unwrap();
+            let mut found = BTreeMap::new();
+            TARGET_CALLS.store(0, Ordering::SeqCst);
+            let error = c
+                .atomic(|| {
+                    let mut statement = c.prepare("SELECT fetch_target_tick(n) FROM targets")?;
+                    visit_target_rows(&mut statement, |row| {
+                        let value = from_engine(row[0].clone());
+                        let Value::Integer(n) = value else {
+                            panic!("integer fixture")
+                        };
+                        let id = vec![n as u8];
+                        charge_result_target(
+                            &mut Some(&mut result_budget),
+                            &occurrences,
+                            found.contains_key(&id),
+                            &id,
+                            &value,
+                        )?;
+                        found.insert(id, value);
+                        Ok(())
+                    })
+                })
+                .unwrap_err();
+            assert_eq!(error.code(), "FDB_LIMIT");
+            assert_eq!(TARGET_CALLS.load(Ordering::SeqCst), accepted + 1);
+            assert_eq!(found.len(), accepted);
+            assert_eq!(c.transaction_state(), crate::TransactionState::Active);
         }
         for _ in 0..13 {
             c.execute("INSERT INTO targets SELECT n FROM targets", &params)

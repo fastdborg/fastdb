@@ -2549,3 +2549,26 @@ package smokes passed on Linux x64 Node 22.0.0 and 24.19.0 with the debug addon
 and overflow cases, retry through both clients and installed consumer types.
 The write-candidate/RETURNING, engine memory, temporary workspace/transport,
 deadline, interrupted I/O and broader V1 release gates remain unfinished.
+
+### Early bounded FETCH target rejection
+
+The resolver now counts reference occurrences before target reads and charges a
+found target's final output multiplicity before retaining it in the target
+cache. This allows a result payload overflow to stop the current target statement
+and avoid later chunks. Stored identities already found are not charged again
+when native collation returns them from another chunk. Missing/null outputs are
+charged after target resolution, and legacy fetch workspace/output limits remain.
+
+A native/collection integration test proves a zero-payload budget rejects before
+completing the first target chunk, preserves the outer transaction, and allows
+a successful two-chunk retry. A 130-reference NOCASE case proves exact accounting
+when two native chunks return the same stored key. Volatile target callback tests
+with doubled output occurrences stop at the first rejected target and verify it
+was not retained. Existing Rust and Node exact/overflow FETCH regressions pass.
+
+The complete scoped check passed 517 Rust tests with the existing single ignored
+gate, 68 Node/application tests, formatting, Clippy and strict TypeScript. Log:
+`/tmp/fastdb-fetch-early-check.log`. No package smoke was rerun for this internal
+collector change; prior installed-package results remain historical. Temporary
+reference/decoding allocations, engine working memory, deadlines, write-result
+atomic limits and the remaining V1 release gates are still incomplete.
