@@ -2576,3 +2576,33 @@ The complete scoped `fastdb/scripts/check.sh` passed with the direct portable JS
 The offline standalone Rust consumer also passed with the new public `into_portable_json` API, checking nested int64/binary/record/string round trips and rejection of NaN alongside existing database/reopen checks. All 244 registry/git package identities match the workspace lockfile. Log: `/tmp/fastdb-json-rust-consumer.log`. This is a path-dependent Linux x64 consumer with checkout-specific compiler flags removed, not a published Rust artifact.
 
 Offline installed Node package checks passed on Linux x64 Node 22.0.0 and 24.19.0, including synchronous/worker typed JSON results, profiles, batches, existing persistence/lifecycle/limit checks, exact notice content and strict installed-consumer TypeScript. Each tarball contained ten files and 60,630,868 packed bytes. Debug addon SHA-256: `38f37c107a6b78fcb1e297a5e75283ebf692d27b35b32f4ef3bb8d4de326feb5`. Logs: `/tmp/fastdb-json-package22.log` and `/tmp/fastdb-json-package24.log`. No registry access or publication occurred. Release artifacts, other platforms, complete resource/recovery qualification and full V1 remain open.
+
+
+## Tagged JSON nesting boundary — 2026-09-08
+
+At `b7f4a8b97`, binding parameters, stored values and document transfers distinguish
+64 logical value levels from tagged JSON framing. A 136-container lexical
+preflight bounds parsing before disabling serde's smaller default recursion
+limit; decoding uses the existing auxiliary-stack helper. This fixes the
+reproduced Node rejection of valid 63/64-level parameters and permits valid
+maximum-depth stored documents to round-trip through JSON and NDJSON. Node record
+keys no longer consume an extra logical level for their wire-only wrapper.
+
+Tests cover quoted/escaped delimiters, malformed JSON, exact structural limits,
+maximum-depth storage/read/transfer, and rejection before import writes with
+transaction preservation. Both synchronous and worker clients check a record at
+the maximum depth, local over-limit rejection, stored reads and both transfers.
+The complete scoped check passed 549 Rust tests, zero failed, one existing ignored
+trigger-cancellation gate; 78 Node/application tests, formatting, Clippy and
+strict TypeScript passed. Log: `/tmp/fastdb-wire-depth-check.log`. The final
+NDJSON resource-error mapping and import-preflight assertions also passed the
+seven-test transfer rerun and scoped Clippy/formatting checks:
+`/tmp/fastdb-wire-depth-final-transfer.log` and
+`/tmp/fastdb-wire-depth-final-clippy.log`.
+
+The standalone Rust consumer passed with 244 dependency identities unchanged
+(`/tmp/fastdb-wire-depth-consumer.log`). Only the frontend enables serde_json's
+unbounded_depth capability; explicit preflight remains mandatory before disabling
+the default bound. No dependency version, lockfile or upstream source changed.
+Installed artifacts/platforms, complete resource/recovery qualification and full
+V1 remain open.
