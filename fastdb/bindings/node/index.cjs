@@ -294,7 +294,7 @@ class AsyncDatabase {
       catch { void this.#worker.terminate(); }
     }
   }
-  #request(method, args, closing = false, signal) {
+  #request(method, args, closing = false, signal, timeoutMs) {
     if (this.#failure) return Promise.reject(this.#failure);
     if (this.#closing && !closing) return Promise.reject(closedError('database is closing or closed'));
     const bytes = args.reduce((size, arg) => size + Buffer.byteLength(arg), 0);
@@ -310,8 +310,13 @@ class AsyncDatabase {
         if (cancellationKey !== undefined) releaseCancellationToken(cancellationKey);
       };
       try {
+        if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 4294967295)) {
+          throw new RangeError('timeoutMs must be an integer from 0 through 4294967295');
+        }
+        if (signal !== undefined || timeoutMs !== undefined) {
+          cancellationKey = createCancellationToken(timeoutMs === undefined ? undefined : String(timeoutMs));
+        }
         if (signal !== undefined) {
-          cancellationKey = createCancellationToken();
           listener = require('node:events').addAbortListener(signal, () => cancelOperation(cancellationKey));
           if (signal.aborted) cancelOperation(cancellationKey);
         }
@@ -336,13 +341,13 @@ class AsyncDatabase {
   }
   async execute(sql, parameters = {}, options = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
-    const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)], false, options.signal));
+    const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)], false, options.signal, options.timeoutMs));
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
   }
   async profileSelect(sql, parameters = {}, options = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
-    return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)], false, options.signal));
+    return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)], false, options.signal, options.timeoutMs));
   }
   async selectWithLimits(sql, limits, parameters = {}, options = {}) {
     return (await this.profileSelectWithLimits(sql, limits, parameters, options)).result;
@@ -350,28 +355,28 @@ class AsyncDatabase {
   async profileSelectWithLimits(sql, limits, parameters = {}, options = {}) {
     const args = resultLimits(limits);
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
-    return decodeProfile(await this.#request('profileSelectWithLimits', [sql, JSON.stringify(params), ...args], false, options.signal));
+    return decodeProfile(await this.#request('profileSelectWithLimits', [sql, JSON.stringify(params), ...args], false, options.signal, options.timeoutMs));
   }
   async writeWithResultLimits(sql, limits, parameters = {}, options = {}) {
     const args = resultLimits(limits);
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
-    const report = unwrap(await this.#request('writeWithResultLimits', [sql, JSON.stringify(params), ...args], false, options.signal));
+    const report = unwrap(await this.#request('writeWithResultLimits', [sql, JSON.stringify(params), ...args], false, options.signal, options.timeoutMs));
     const result = report.execution.result;
     return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
   }
   async checkCollectionIntegrity(table, limits = {}, options = {}) {
-    return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal));
+    return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal, options.timeoutMs));
   }
-  async executeBatch(script, options = {}) { return decodeBatch(await this.#request('executeBatch', [script], false, options.signal)); }
+  async executeBatch(script, options = {}) { return decodeBatch(await this.#request('executeBatch', [script], false, options.signal, options.timeoutMs)); }
   async exportDocuments(table, format = 'json', options = {}) {
-    return unwrap(await this.#request('exportDocuments', [table, format], false, options.signal)).execution.result;
+    return unwrap(await this.#request('exportDocuments', [table, format], false, options.signal, options.timeoutMs)).execution.result;
   }
   async importDocuments(table, input, format = 'json', options = {}) {
-    const report = unwrap(await this.#request('importDocuments', [table, input, format], false, options.signal));
+    const report = unwrap(await this.#request('importDocuments', [table, input, format], false, options.signal, options.timeoutMs));
     return { ...report.execution.result, transaction: report.transaction };
   }
   async migrate(migrations, options = {}) {
-    const report = unwrap(await this.#request('migrate', [JSON.stringify(migrationPlan(migrations))], false, options.signal));
+    const report = unwrap(await this.#request('migrate', [JSON.stringify(migrationPlan(migrations))], false, options.signal, options.timeoutMs));
     return { alreadyApplied: report.execution.result.alreadyApplied,
       applied: report.execution.result.applied.map(BigInt), transaction: report.transaction };
   }

@@ -339,3 +339,24 @@ These are not total memory limits: native engine buffers, parsing, temporary
 values and overlapping buffers remain outside the policy. Transfer APIs also
 retain their existing separate limits. See the repository's
 `fastdb/docs/result-budgets.md` for accounting and remaining resource gates.
+
+### Worker operation timeouts
+
+Async operations accepting `ExecuteOptions` also accept `timeoutMs`, an integer
+number from 0 through 4,294,967,295. For example:
+
+```js
+await workerDb.execute('SELECT * FROM docs', {}, { timeoutMs: 500 });
+```
+
+The native monotonic deadline starts when the request token is created, after
+local parameter encoding and before worker queue submission. Queue time counts;
+zero is immediately expired. It shares the existing cooperative cancellation
+path and returns `FDB_CANCELLED`, with normal operation rollback and transaction
+observations. `signal` can be supplied alongside it. No JavaScript timeout timer
+is needed; token cleanup follows request completion/failure. Timeout expiry does
+not cancel later requests. `close()` has no timeout option.
+
+This is not a hard promise-return deadline. Native progress checks observe expiry;
+parsing, non-engine work, cleanup and response transport can exceed the requested
+time, and completion can win a race. Synchronous clients do not expose this option.

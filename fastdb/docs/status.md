@@ -3098,3 +3098,22 @@ All three deadline integration tests passed; log:
 `/tmp/fastdb-deadline-workflows.log`. Scoped formatting and diff checks passed. No
 production code changed or broader suite was repeated. Node/CLI deadline options,
 additional operations, platform/timing qualification and full V1 remain open.
+
+### Async Node native operation deadlines
+
+`ExecuteOptions.timeoutMs` now creates a native deadline token before worker queue
+submission for existing cancellable async operations. It accepts integer number
+milliseconds from zero through uint32::MAX; zero is immediately expired. Queue
+time counts, local parameter conversion precedes the deadline, and AbortSignal
+can share the token. Native expiry requires no JS timer and token/listener cleanup
+uses existing completion/failure paths. Synchronous calls and close remain outside
+this option. Cancellation remains cooperative FDB_CANCELLED with existing result
+and transaction reporting, not a hard promise-return time bound.
+
+The rebuilt addon passed all 73 Node/application tests and strict TypeScript;
+Node-scoped Clippy, formatting and diff checks passed. New coverage checks active
+expiry, expired queued writes, following-request isolation, prior transaction
+preservation, invalid timeout values, combined AbortSignal and fresh retry/rollback.
+Logs: `/tmp/fastdb-node-timeout.log` and `/tmp/fastdb-node-timeout-clippy.log`.
+Installed-package, per-operation matrices, cleanup/latency/platform qualification
+and broader V1 gates remain open. Broader Rust suites were not repeated.

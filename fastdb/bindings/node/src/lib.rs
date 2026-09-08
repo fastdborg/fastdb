@@ -27,7 +27,18 @@ fn cancellations() -> &'static Mutex<BTreeMap<u64, fastdb::CancellationToken>> {
     CANCELLATIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 #[napi]
-pub fn create_cancellation_token() -> napi::Result<String> {
+pub fn create_cancellation_token(timeout_ms: Option<String>) -> napi::Result<String> {
+    let token = if let Some(timeout_ms) = timeout_ms {
+        let millis = timeout_ms
+            .parse::<u32>()
+            .map_err(|_| error("invalid operation timeout"))?;
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_millis(u64::from(millis)))
+            .ok_or_else(|| error("operation deadline overflow"))?;
+        fastdb::CancellationToken::with_deadline(deadline)
+    } else {
+        fastdb::CancellationToken::new()
+    };
     let mut tokens = cancellations().lock().unwrap_or_else(|e| e.into_inner());
     if tokens.len() >= 16384 {
         return Err(error("cancellation token limit exceeded"));
@@ -35,7 +46,7 @@ pub fn create_cancellation_token() -> napi::Result<String> {
     let id = NEXT_CANCELLATION
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
         .map_err(|_| error("cancellation identifiers exhausted"))?;
-    tokens.insert(id, fastdb::CancellationToken::new());
+    tokens.insert(id, token);
     Ok(id.to_string())
 }
 #[napi]

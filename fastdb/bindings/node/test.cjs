@@ -2257,3 +2257,35 @@ test('connection options reject invalid limits before opening a database', async
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('worker timeout uses native deadline and preserves queued request isolation', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  try {
+    await db.execute('CREATE TABLE input(n)');
+    await db.execute('INSERT INTO input VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)');
+    await db.execute('CREATE TABLE docs');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {n:1}');
+    const sql = 'SELECT count(*) FROM input a,input b,input c,input d,input e,input f,input g,input h,input i,input j';
+    const active = db.execute(sql, {}, { timeoutMs: 20 });
+    const queued = db.execute('INSERT INTO docs {n:2}', {}, { timeoutMs: 0 });
+    const next = db.all('SELECT n FROM docs');
+    await Promise.all([active, queued].map(promise => assert.rejects(promise, error => {
+      assert.equal(error.code, 'FDB_CANCELLED');
+      assert.deepEqual(error.transaction, { before:'active', after:'active' });
+      return true;
+    })));
+    assert.deepEqual(await next, [[1n]]);
+    for (const timeoutMs of [-1, 0.5, NaN, Infinity, 4294967296, '1', 1n]) {
+      await assert.rejects(db.execute('INSERT INTO docs {n:9}', {}, { timeoutMs }), /timeoutMs/);
+    }
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(db.execute('INSERT INTO docs {n:9}', {}, { signal:controller.signal, timeoutMs:60000 }), {code:'FDB_CANCELLED'});
+    await db.execute('INSERT INTO docs {n:3}', {}, { timeoutMs:60000 });
+    assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[3n]]);
+    await db.execute('ROLLBACK');
+    assert.deepEqual(await db.all('SELECT * FROM docs'), []);
+  } finally { await db.close(); }
+});

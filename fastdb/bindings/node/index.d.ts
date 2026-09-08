@@ -58,7 +58,7 @@ export class Database {
   exactlyOne(sql: string, parameters?: Parameters): Value[];
 }
 
-export interface ExecuteOptions { signal?: AbortSignal; }
+export interface ExecuteOptions { signal?: AbortSignal; timeoutMs?: number; }
 export class AsyncDatabase {
   private constructor();
   static open(path?: string, options?: DatabaseOptions): Promise<AsyncDatabase>;

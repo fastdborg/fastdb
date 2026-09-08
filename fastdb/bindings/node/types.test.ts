@@ -148,3 +148,9 @@ buffered.close();
 new Database(':memory:', { writeBufferLimits: { maxRows: 10, maxPayloadBytes: 1000n } });
 // @ts-expect-error connection options reject unknown fields
 AsyncDatabase.open(':memory:', { unknown: true });
+void AsyncDatabase.open().then(async db => {
+  await db.execute('SELECT 1', {}, { timeoutMs: 100, signal: new AbortController().signal });
+  // @ts-expect-error timeout uses integer milliseconds as a number
+  await db.execute('SELECT 1', {}, { timeoutMs: 100n });
+  await db.close();
+});
