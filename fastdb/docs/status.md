@@ -4642,3 +4642,15 @@ All twenty-two write tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-tuple-joins.log` and
 `/tmp/fastdb-tuple-joins-clippy.log`. Only tests/documentation changed from
 `a89fe8f93`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Computed tuple join projections — 2026-09-09
+
+The tuple join matrix now includes arithmetic and coalesce projections across
+relational/mixed collection inner and left joins. Results match native SQL,
+including fallback values for missing right-side rows and NULL tuples when
+no lookup row exists. All twenty-two write tests passed, plus formatting and
+all-target fastdb-tests Clippy with warnings denied. Logs
+`/tmp/fastdb-tuple-join-expressions.log` and
+`/tmp/fastdb-tuple-join-expressions-clippy.log`. Only tests/documentation changed
+from `664bb6c18`; no new full-suite/client run is claimed. Full V1 gates remain open.

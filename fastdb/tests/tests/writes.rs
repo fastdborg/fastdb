@@ -967,10 +967,12 @@ fn tuple_join_sources_preserve_outer_join_nulls() {
     }
     for join in ["JOIN", "LEFT JOIN"] {
         for source in ["lhs", "lhs_docs"] {
-            q(&c, "BEGIN");
-            let expected=q(&c,&format!("UPDATE native SET (a,b)=(SELECT x.a,y.b FROM lhs x {join} rhs y ON y.n=x.n WHERE x.n=native.n) RETURNING n,a,b"));
-            assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(SELECT x.a,y.b FROM {source} x {join} rhs y ON y.n=x.n WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows,"{source}: {join}");
-            q(&c, "ROLLBACK");
+            for projection in ["x.a,y.b", "x.a+1,coalesce(y.b,-1)"] {
+                q(&c, "BEGIN");
+                let expected=q(&c,&format!("UPDATE native SET (a,b)=(SELECT {projection} FROM lhs x {join} rhs y ON y.n=x.n WHERE x.n=native.n) RETURNING n,a,b"));
+                assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(SELECT {projection} FROM {source} x {join} rhs y ON y.n=x.n WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows,"{source}: {join}");
+                q(&c, "ROLLBACK");
+            }
         }
     }
 }
