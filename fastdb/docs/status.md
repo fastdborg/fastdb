@@ -4267,3 +4267,17 @@ and `/tmp/fastdb-tuple-types-clippy.log`. Only tests/documentation changed from
 `29ca055f2`; the previous full scoped baseline remains 575 Rust passes, one
 ignored trigger gate and 82 Node/application passes. No new full-suite run is
 claimed. Full V1 qualification remains open; no publication occurred.
+
+
+## Node tuple update transaction and type coverage — 2026-09-09
+
+Both Node clients now verify explicit tuple updates across the native binding:
+validation and unique-index failures retain the active transaction and prior
+rows, followed by successful retry, typed swaps and outer rollback. Record,
+nested object/array, boolean, binary and maximum int64 values round-trip.
+
+The focused test and all 83 Node/application tests passed against the addon
+built by the preceding full source check. Logs
+`/tmp/fastdb-tuple-node-focused.log` and `/tmp/fastdb-tuple-node.log`.
+Only tests/documentation changed from `2f1da6cfb`; no native rebuild or new full
+Rust-suite run is claimed. Full V1 gates remain open; no publication occurred.

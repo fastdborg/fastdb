@@ -2609,3 +2609,34 @@ test('malformed iterator input reports whole transaction rollback in both client
     } finally {await db.close();}
   }
 });
+
+test('tuple updates preserve typed snapshots and atomic failure in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of ['CREATE TABLE docs', 'DEFINE FIELD n ON docs TYPE integer CHECK(n<10)',
+        'CREATE UNIQUE INDEX docs_n ON docs(n)', 'INSERT INTO docs(n,a,b) VALUES(1,2,3),(3,4,5)',
+        'BEGIN', 'INSERT INTO docs(n,a,b) VALUES(0,0,0)']) await db.execute(sql);
+      const before = (await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows;
+      await assert.rejects(async () => db.execute('UPDATE docs SET (n,a)=(n+8,a+1)'), error => {
+        assert.equal(error.code, 'FDB_VALIDATION');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, before);
+      const record = new Record('docs', 'target');
+      const object = { nested: [true, Buffer.from([0,255]), 9223372036854775807n] };
+      await assert.rejects(async () => db.execute('UPDATE docs SET (a,b)=($a,$b),n=n+1 WHERE n=0 RETURNING a,b', { $a: record, $b: object }), error => {
+        assert.equal(error.code, 'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, before);
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=($a,$b),n=7 WHERE n=0 RETURNING a,b', { $a: record, $b: object })).rows, [[record, object]]);
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(b,a) WHERE n=7 RETURNING a,b')).rows, [[object, record]]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,2n,3n],[3n,4n,5n]]);
+    } finally { await db.close(); }
+  }
+});
