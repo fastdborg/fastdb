@@ -4765,3 +4765,14 @@ two derived-query tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-derived-nested-sort.log` and
 `/tmp/fastdb-derived-nested-sort-clippy.log`. Only tests/documentation changed
 from `278c6e294`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Node logical derived-field ordering — 2026-09-09
+
+Both clients now verify execute/profile ordering on unprojected numeric fields
+through CTEs, derived tables and nested derived fields, ascending and descending.
+The focused test and all 86 Node/application tests passed against the last
+full-check addon. Logs `/tmp/fastdb-derived-sort-node-focused.log` and
+`/tmp/fastdb-derived-sort-node.log`. Only tests/documentation changed from
+`acbe86cce`; no native rebuild or full Rust rerun is claimed. Full V1 gates
+remain open; no publication occurred.

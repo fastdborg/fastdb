@@ -2705,3 +2705,26 @@ test('committed tuple lookups survive reopening in both clients', async () => {
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('hidden derived and CTE fields sort logically in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute("INSERT INTO docs(label,n) VALUES('six',6),('eleven',11),('negative',-2)");
+      await db.execute('UPDATE docs SET payload.n=n');
+      for (const [prefix, source, key] of [
+        ['', '(SELECT label,n FROM docs) x', 'x.n'],
+        ['WITH chosen AS (SELECT label,n FROM docs) ', 'chosen x', 'x.n'],
+        ['', '(SELECT label,payload FROM docs) x', 'x.payload.n']
+      ]) {
+        for (const [direction, rows] of [['ASC', [['negative'],['six'],['eleven']]], ['DESC', [['eleven'],['six'],['negative']]]]) {
+          const sql = `${prefix}SELECT x.label FROM ${source} ORDER BY ${key} ${direction}`;
+          assert.deepEqual((await db.execute(sql)).rows, rows);
+          assert.deepEqual((await db.profileSelect(sql)).result.rows, rows);
+        }
+      }
+    } finally { await db.close(); }
+  }
+});
