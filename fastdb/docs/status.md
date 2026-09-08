@@ -5441,3 +5441,28 @@ warnings denied passed. Logs: `/tmp/fastdb-update-from-oracle.log`,
 `/tmp/fastdb-update-from-oracle-test-final.log` and
 `/tmp/fastdb-update-from-oracle-clippy.log`. Only tests/docs changed from
 `f37138783`; no new full-suite/client run is claimed. Full V1 remains open.
+
+
+## Initial collection UPDATE FROM — 2026-09-09
+
+Single-source collection UPDATE FROM now builds an explicit target-document
+projection and assignment candidates through existing SELECT lowering. Raw
+candidate row/byte budgets apply before duplicate resolution. Encoded typed
+record IDs identify repeated targets; the last materialized matching candidate
+replaces prior assignments, and the existing atomic loop mutates each target
+once. A source descriptor carries WITH/FROM without adding positional options.
+The native duplicate fixture matches both source insertion orders and affected
+counts; all 42 write tests passed in the focused run.
+
+Source join trees and FROM combined with LIMIT remain explicitly rejected:
+grouped FROM lowering and pagination after deduplication still need implementation.
+Broader source/planner/type/CTE/alias and failure/cancellation qualification,
+plus complete deduplication workspace accounting, remain open. See update-from.md.
+This is initial support, not completion of UPDATE FROM or full V1.
+
+The complete scoped check passed on `c70b7c05c` plus this change: 615 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+88 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-update-from-check.log`. No upstream source, dependency or storage
+format changes; no publication occurred. Full V1 remains open.

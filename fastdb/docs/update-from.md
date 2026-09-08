@@ -1,8 +1,10 @@
 # Collection UPDATE FROM implementation design
 
-Status: not implemented. Ordinary relational UPDATE FROM delegates to the pinned
-engine. Collection UPDATE FROM remains rejected. This design is local frontend
-work and requires no engine changes or new storage format.
+Status: initial single-source collection UPDATE FROM is implemented, with encoded
+typed-ID duplicate resolution. Source join trees and FROM combined with LIMIT
+remain explicitly rejected. Ordinary relational UPDATE FROM delegates to the
+pinned engine. The remaining design below requires no engine changes or new
+storage format.
 
 The native oracle in `tests/tests/writes.rs` exercises a primary-key target and
 an unindexed source with duplicate matches. Reversing source insertion order

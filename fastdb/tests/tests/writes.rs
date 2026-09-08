@@ -1848,3 +1848,33 @@ fn native_update_from_resolves_duplicates_before_limit() {
         }
     }
 }
+
+#[test]
+fn collection_update_from_resolves_duplicate_candidates() {
+    for input in ["(1,10),(1,20),(2,30)", "(1,20),(1,10),(2,30)"] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE native(n INTEGER PRIMARY KEY,v INTEGER)",
+            "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+            "CREATE TABLE docs",
+            "INSERT INTO docs(n,v) SELECT n,v FROM native",
+            "CREATE TABLE source(k INTEGER,v INTEGER)",
+        ] {
+            q(&c, sql);
+        }
+        q(&c, &format!("INSERT INTO source VALUES {input}"));
+        q(&c, "BEGIN");
+        let expected = q(
+            &c,
+            "UPDATE native SET v=source.v FROM source WHERE source.k=native.n RETURNING n,v",
+        );
+        let actual = q(
+            &c,
+            "UPDATE docs SET v=source.v FROM source WHERE source.k=docs.n RETURNING n,v",
+        );
+        assert_eq!(actual.rows, expected.rows);
+        assert_eq!(actual.affected, expected.affected);
+        q(&c, "ROLLBACK");
+    }
+}

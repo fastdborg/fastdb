@@ -5,6 +5,11 @@ use crate::{
 };
 use turso_parser::ast::*;
 
+struct WriteSource {
+    with: Option<With>,
+    from: Option<FromClause>,
+}
+
 fn unsupported(message: &str) -> Error {
     Error::Unsupported(message.into())
 }
@@ -621,7 +626,8 @@ impl Connection {
             }
             Stmt::Update(update) => {
                 if update.or_conflict.is_some()
-                    || update.from.is_some()
+                    || (update.from.is_some() && update.limit.is_some())
+                    || update.from.as_ref().is_some_and(|from| !from.joins.is_empty())
                     || update.indexed.is_some()
                     || !update.order_by.is_empty()
                 {
@@ -823,7 +829,7 @@ impl Connection {
                 let unset = normalized.as_ref().is_some_and(|n| n.unset);
                 let rows = self.write_candidates(
                     &update.tbl_name,
-                    update.with,
+                    WriteSource { with: update.with, from: update.from },
                     update.where_clause,
                     update.limit,
                     &exprs,
@@ -893,7 +899,7 @@ impl Connection {
                     return Err(unsupported("this collection DELETE clause"));
                 }
                 validate_returning(&returning)?;
-                let rows = self.write_candidates(&tbl_name, with, where_clause, limit, &[], params)?;
+                let rows = self.write_candidates(&tbl_name, WriteSource { with, from: None }, where_clause, limit, &[], params)?;
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {
@@ -931,7 +937,7 @@ impl Connection {
     fn write_candidates(
         &self,
         table: &QualifiedName,
-        with: Option<With>,
+        source: WriteSource,
         predicate: Option<Box<Expr>>,
         mut limit: Option<Limit>,
         assignments: &[Expr],
@@ -954,7 +960,10 @@ impl Connection {
         for expr in assignments {
             safe_candidate_assignment(expr)?;
         }
-        let mut columns = vec![ResultColumn::Star];
+        let joined = source.from.is_some();
+        let mut columns = vec![ResultColumn::TableStar(
+            table.alias.as_ref().unwrap_or(&table.name).clone(),
+        )];
         for (i, expr) in assignments.iter().enumerate() {
             let expr = if parameter(expr, params)?.is_some() {
                 Expr::Literal(Literal::Null)
@@ -1094,7 +1103,7 @@ impl Connection {
             }
             Ok(())
         }
-        let mut with = with;
+        let mut with = source.with;
         // The pinned write planner exposes its target table before replanning
         // CTE bodies. A same-named FROM there binds the physical target rather
         // than the CTE. Preserve that binding in the candidate SELECT.
@@ -1186,7 +1195,15 @@ impl Connection {
                     columns,
                     from: Some(FromClause {
                         select: Box::new(SelectTable::Table(target, alias, None)),
-                        joins: Vec::new(),
+                        joins: source
+                            .from
+                            .into_iter()
+                            .map(|from| JoinedSelectTable {
+                                operator: JoinOperator::Comma,
+                                table: from.select,
+                                constraint: None,
+                            })
+                            .collect(),
                     }),
                     where_clause: predicate,
                     group_by: None,
@@ -1210,6 +1227,26 @@ impl Connection {
                 }
             }
             budget.row(row)?;
+        }
+        if joined {
+            let mut positions = std::collections::BTreeMap::new();
+            let mut rows = Vec::new();
+            for row in result.rows {
+                let Some(Value::Object(document)) = row.first() else {
+                    return Err(Error::Storage("invalid joined update candidate".into()));
+                };
+                let Some(id @ Value::Record(_)) = document.get("id") else {
+                    return Err(Error::Storage("missing joined update target ID".into()));
+                };
+                let key = id.encode()?;
+                if let Some(position) = positions.get(&key) {
+                    rows[*position] = row;
+                } else {
+                    positions.insert(key, rows.len());
+                    rows.push(row);
+                }
+            }
+            return Ok(rows);
         }
         Ok(result.rows)
     }
