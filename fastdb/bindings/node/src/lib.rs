@@ -380,7 +380,7 @@ impl NativeDatabase {
                 let result=execution.result.and_then(query_value);
                 let proceed=result.is_ok();
                 let mut value=match result {
-                    Ok(result)=>serde_json::json!({"result":result}),
+                    Ok(result)=>serde_json::Value::Object(serde_json::Map::from_iter([("result".into(),result)])),
                     Err(error)=>serde_json::json!({"error":{"code":error.code(),"message":error.to_string()}}),
                 };
                 value["offset"]=entry.offset.into();
@@ -508,10 +508,14 @@ impl NativeDatabase {
         let before = conn.transaction_state();
         let result = operation(conn);
         let result = match result {
-            Ok(value) => serde_json::json!({"result":value}),
+            Ok(value) => {
+                serde_json::Value::Object(serde_json::Map::from_iter([("result".into(), value)]))
+            }
             Err(e) => serde_json::json!({"error":{"code":e.code(),"message":e.to_string()}}),
         };
-        Ok(serde_json::json!({"version":1,"execution":result,"transaction":{"before":before,"after":conn.transaction_state()}}).to_string())
+        let mut envelope = serde_json::json!({"version":1,"transaction":{"before":before,"after":conn.transaction_state()}});
+        envelope["execution"] = result;
+        Ok(envelope.to_string())
     }
 }
 

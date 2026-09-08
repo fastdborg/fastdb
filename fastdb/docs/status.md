@@ -3273,3 +3273,19 @@ formatting and diff checks passed. Logs:
 `/tmp/fastdb-node-owned-envelope-clippy.log`. Broader Rust and installed-package
 checks were not repeated for this binding-only ownership change. V1 gates remain
 open.
+
+### Node response wrappers consume completed results
+
+Successful operation results now move into the execution wrapper, and the complete
+execution object moves into the versioned transaction envelope before string
+serialization. Successful batch entries likewise move their converted query value
+into the result wrapper. This avoids repeated serde_json tree construction at
+these stages while retaining error fields, version, transaction observations and
+wire structure. Other profiling/batch/transport allocations remain.
+
+All 76 rebuilt Node/application tests and strict TypeScript passed, together with
+Node Clippy, formatting and diff checks. Logs:
+`/tmp/fastdb-node-response-ownership.log` and
+`/tmp/fastdb-node-response-clippy.log`. Broader Rust and installed-package checks
+were not repeated for this binding-only change. No total-memory or full V1
+completion claim follows.
