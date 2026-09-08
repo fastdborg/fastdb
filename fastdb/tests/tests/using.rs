@@ -2146,7 +2146,7 @@ fn pinned_inner_alias_renaming_preserves_outer_merged_keys() {
 }
 
 #[test]
-fn nested_native_exists_resolves_qualified_outer_collection_fields() {
+fn nested_native_exists_resolves_merged_keys_and_qualified_outer_fields() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     let query = |sql: &str| {
@@ -2170,6 +2170,14 @@ fn nested_native_exists_resolves_qualified_outer_collection_fields() {
             "EXISTS(SELECT 1 WHERE d.k>1)",
             "NOT EXISTS(SELECT 1 WHERE d.k>1)",
             "EXISTS(SELECT 1 WHERE EXISTS(SELECT 1 WHERE d.k>1))",
+            "EXISTS(SELECT 1 WHERE k>1)",
+            "NOT EXISTS(SELECT 1 WHERE k>1)",
+            "EXISTS(SELECT 1 WHERE EXISTS(SELECT 1 WHERE k>1))",
+            "EXISTS(SELECT 1 FROM (SELECT 0 AS k) q WHERE k>1)",
+            "EXISTS(SELECT 1 FROM (SELECT 2 AS k) q WHERE EXISTS(SELECT 1 WHERE k>1))",
+            "EXISTS(SELECT 1 FROM (SELECT 0 AS k) q WHERE EXISTS(SELECT 1 WHERE k>1))",
+            "EXISTS(SELECT 1 FROM (SELECT 2 AS k) q WHERE EXISTS(SELECT 1 WHERE q.k>1))",
+            "EXISTS(SELECT 1 FROM (SELECT 2 AS k) d WHERE EXISTS(SELECT 1 WHERE k>1))",
         ] {
             let sql = |source: &str| {
                 format!("SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND {predicate}) AS v FROM {source} d {join} b USING(k) ORDER BY k")

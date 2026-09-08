@@ -563,6 +563,10 @@ fn qualify_correlated_using(
     }
     // Resolve only closed local source schemas here. Open collections and
     // other source forms need their own lexical scope resolution.
+    // The pinned planner keeps outer merged keys available to deeper EXISTS
+    // scopes even when this SELECT has a same-named local column. Local columns
+    // still take precedence in this SELECT's own expressions.
+    let mut inherited_using = using.clone();
     let mut using = using.clone();
     let mut local_aliases = Vec::new();
     if let OneSelect::Select {
@@ -593,7 +597,7 @@ fn qualify_correlated_using(
         }
     }
     for alias in local_aliases {
-        if using
+        if inherited_using
             .bindings
             .values()
             .any(|(index, _)| sources[*index].alias.eq_ignore_ascii_case(&alias))
@@ -608,6 +612,9 @@ fn qualify_correlated_using(
                 .map_err(|_| Error::Limit("internal subquery identifiers exhausted".into()))?;
             if !rename_correlated_local_alias(inner, &alias, &format!("__fastdb_local_{id}"))? {
                 using
+                    .bindings
+                    .retain(|_, (index, _)| !sources[*index].alias.eq_ignore_ascii_case(&alias));
+                inherited_using
                     .bindings
                     .retain(|_, (index, _)| !sources[*index].alias.eq_ignore_ascii_case(&alias));
             }
@@ -661,7 +668,21 @@ fn qualify_correlated_using(
                 .map(|sorted| (&mut sorted.expr, true)),
         )
     {
+        let mut nested_error = None;
         turso_core::walk_expr_mut(value, &mut |expr| {
+            if let Expr::Exists(inner) = expr {
+                if let Err(error) = qualify_correlated_using(
+                    connection,
+                    params,
+                    ctes,
+                    inner,
+                    sources,
+                    &inherited_using,
+                ) {
+                    nested_error = Some(error);
+                }
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
             if matches!(
                 expr,
                 Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
@@ -683,6 +704,9 @@ fn qualify_correlated_using(
             }
             Ok(turso_core::WalkControl::Continue)
         })?;
+        if let Some(error) = nested_error {
+            return Err(error);
+        }
     }
     Ok(())
 }
