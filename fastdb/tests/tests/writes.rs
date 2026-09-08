@@ -445,3 +445,42 @@ fn tuple_updates_preserve_typed_values_and_mixed_assignment_snapshots() {
     assert!(empty.rows.is_empty());
     assert_eq!(empty.affected, 0);
 }
+
+#[test]
+fn pinned_tuple_subqueries_define_snapshot_and_empty_row_behavior() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE native(a INTEGER,b INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1,2),(3,4)");
+    for (rhs, expected) in [
+        (
+            "(SELECT b,a)",
+            vec![
+                vec![Value::Integer(2), Value::Integer(1)],
+                vec![Value::Integer(4), Value::Integer(3)],
+            ],
+        ),
+        (
+            "(SELECT 8,9 WHERE 0)",
+            vec![
+                vec![Value::Null, Value::Null],
+                vec![Value::Null, Value::Null],
+            ],
+        ),
+    ] {
+        q(&c, "BEGIN");
+        assert_eq!(
+            q(&c, &format!("UPDATE native SET (a,b)={rhs} RETURNING a,b")).rows,
+            expected
+        );
+        q(&c, "ROLLBACK");
+    }
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(a,b) SELECT a,b FROM native");
+    let before = q(&c, "SELECT a,b FROM docs ORDER BY a").rows;
+    let error = c
+        .execute("UPDATE docs SET (a,b)=(SELECT b,a)", &Parameters::new())
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_UNSUPPORTED");
+    assert_eq!(q(&c, "SELECT a,b FROM docs ORDER BY a").rows, before);
+}

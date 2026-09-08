@@ -3264,3 +3264,19 @@ All sixteen with_writes tests passed, plus formatting and all-target fastdb-test
 Clippy with warnings denied. Logs `/tmp/fastdb-with-tuples.log` and
 `/tmp/fastdb-with-tuples-clippy.log`. Only tests/documentation changed from
 `772bcea0b`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Tuple SELECT assignment gap — 2026-09-09
+
+A pinned-engine baseline confirms `SET (a,b)=(SELECT b,a)` reads pre-update
+values and a zero-row tuple SELECT assigns NULL to both columns. Collections
+still reject the first form with FDB_UNSUPPORTED and preserve their data.
+The new regression records this implementation gap, not a final compatibility
+contract; replace its rejection assertion with native parity when implemented.
+Tuple SELECT lowering must retain one evaluation per candidate and shared row
+cardinality, rather than duplicate the SELECT for each target column.
+
+All ten write tests and scoped formatting/Clippy passed. Logs
+`/tmp/fastdb-tuple-subquery-baseline.log` and
+`/tmp/fastdb-tuple-subquery-clippy.log`. Only tests/documentation changed from
+`9cf3f5184`; no new full-suite/client run is claimed. Full V1 remains incomplete.
