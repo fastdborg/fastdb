@@ -1602,6 +1602,11 @@ fn anonymous_source_alias(from: &FromClause, position: usize) -> String {
     }
 }
 fn derived_physical_names(names: &[String]) -> Vec<String> {
+    // Build once: scanning all source names for every duplicate is quadratic.
+    let public_names = names
+        .iter()
+        .map(|name| name.to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
     let mut seen = std::collections::BTreeSet::new();
     names
         .iter()
@@ -1611,7 +1616,7 @@ fn derived_physical_names(names: &[String]) -> Vec<String> {
                 name.clone()
             } else {
                 let mut private = format!("__fastdb_derived_column_{i}");
-                while names.iter().any(|name| name.eq_ignore_ascii_case(&private))
+                while public_names.contains(&private.to_ascii_lowercase())
                     || !seen.insert(private.to_ascii_lowercase())
                 {
                     private.push('_');
@@ -5052,6 +5057,28 @@ fn vector_input_expression(arg: &Expr) -> Result<Expr> {
 #[cfg(test)]
 mod lowering_tests {
     use super::*;
+    #[test]
+    fn wide_duplicate_names_preserve_public_names_and_avoid_collisions() {
+        let mut names = vec![
+            "X".to_owned(),
+            "x".to_owned(),
+            "__fastdb_derived_column_1".to_owned(),
+            "__FASTDB_DERIVED_COLUMN_1_".to_owned(),
+        ];
+        names.extend(std::iter::repeat_n("x".to_owned(), 16_384));
+        let physical = derived_physical_names(&names);
+        assert_eq!(physical.len(), names.len());
+        assert_eq!(physical[0], "X");
+        assert_eq!(physical[1], "__fastdb_derived_column_1__");
+        assert_eq!(physical[2], names[2]);
+        assert_eq!(physical[3], names[3]);
+        let unique = physical
+            .iter()
+            .map(|name| name.to_ascii_lowercase())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), physical.len());
+    }
+
     #[test]
     fn lowering_preserves_typed_outputs_and_defers_native_insert_execution() {
         let db = crate::Database::open(":memory:").unwrap();
