@@ -93,6 +93,13 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       await client.execute('CREATE TABLE duplicate_copy(a,b CHECK(b<>a))');
       await client.execute('WITH q(x,x) AS (SELECT 10,20) INSERT INTO duplicate_copy SELECT v.* FROM docs d JOIN q v ON 1');
       assert.deepEqual(await client.all('SELECT * FROM duplicate_copy'), [[10n,20n]]);
+      const nestedWrite = await client.execute('WITH docs AS (SELECT 2 AS value), chosen AS (WITH docs AS (SELECT value FROM main.docs), local_q("Key") AS MATERIALIZED (SELECT value FROM docs) SELECT q."KEY" AS value FROM local_q q) UPDATE docs SET value=$next WHERE value IN (SELECT value FROM chosen) RETURNING value', {$next:8n});
+      assert.deepEqual(nestedWrite.rows, [[8n]]);
+      assert.equal(nestedWrite.affected, 1n);
+      assert.equal(nestedWrite.transaction.after, 'active');
+      const nestedAudit = await client.checkCollectionIntegrity('docs');
+      assert.equal(nestedAudit.documents, 1n);
+      assert.equal(nestedAudit.indexEntries, 1n);
     } finally { await client.execute('ROLLBACK'); }
   }
   async function withCompositeCounts(client) {
