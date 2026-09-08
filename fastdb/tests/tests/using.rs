@@ -2245,3 +2245,48 @@ fn pinned_deeper_scalar_merged_key_qualification_preserves_results() {
         }
     }
 }
+
+#[test]
+fn deeper_scalar_cast_parameters_preserve_native_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2)",
+        "CREATE TABLE native(k INTEGER)",
+        "INSERT INTO native VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2)",
+    ] {
+        c.execute(sql, &Parameters::new()).unwrap();
+    }
+    for cast in ["TEXT", "INTEGER"] {
+        for value in [
+            Value::Integer(3),
+            Value::Number(3.0),
+            Value::String("3".into()),
+            Value::Null,
+        ] {
+            let params = Parameters::from([("$value".into(), value)]);
+            for join in ["LEFT JOIN", "RIGHT JOIN"] {
+                for reversed in [false, true] {
+                    let scalar = format!("(SELECT CAST(k AS {cast}))");
+                    let comparison = if reversed {
+                        format!("$value={scalar}")
+                    } else {
+                        format!("{scalar}=$value")
+                    };
+                    let sql = |source: &str| {
+                        format!("SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND {comparison}) AS v FROM {source} d {join} b USING(k) ORDER BY k")
+                    };
+                    let expected = c.execute(&sql("native"), &params).unwrap();
+                    let actual = c.execute(&sql("docs"), &params).unwrap();
+                    assert_eq!(actual.columns, expected.columns);
+                    assert_eq!(actual.rows, expected.rows, "{} {params:?}", sql("docs"));
+                }
+            }
+        }
+    }
+}

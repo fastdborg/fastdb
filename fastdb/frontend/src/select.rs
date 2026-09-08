@@ -1712,7 +1712,26 @@ impl Scope {
                             **b = self.native_scalar_query(b);
                             return Ok(());
                         }
-                        if !self.preserved(&mut logical)? {
+                        let native_parameter = if let Expr::Variable(var) = &logical {
+                            let name = var
+                                .name
+                                .as_ref()
+                                .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
+                            self.params.get(&name).is_some_and(|value| {
+                                matches!(
+                                    value,
+                                    Value::Null
+                                        | Value::Integer(_)
+                                        | Value::Number(_)
+                                        | Value::String(_)
+                                )
+                            })
+                        } else {
+                            false
+                        };
+                        // Ordinary scalar parameters must retain the native
+                        // comparison boundary so a scalar CAST applies affinity.
+                        if native_parameter || !self.preserved(&mut logical)? {
                             let mut lowered = value.clone();
                             self.lower(&mut lowered)?;
                             if on_left {

@@ -1401,3 +1401,51 @@ test('deeper EXISTS merged keys preserve parameters and write recovery in both c
     } finally { await db.close(); }
   }
 });
+
+test('deeper scalar collation and casts preserve client results and atomic writes', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of [
+        'CREATE TABLE docs', "INSERT INTO docs(k) VALUES(1),(2),('a')",
+        'CREATE TABLE native(k INTEGER)', "INSERT INTO native VALUES(1),(2),('a')",
+        'CREATE TABLE b(k INTEGER)', "INSERT INTO b VALUES(1),(3),('a')",
+        'CREATE TABLE nums(n INTEGER)', 'INSERT INTO nums VALUES(0),(1),(2)',
+        'CREATE TABLE labels(v TEXT COLLATE NOCASE)', "INSERT INTO labels VALUES('A')",
+        'CREATE TABLE sink', 'CREATE UNIQUE INDEX sink_k ON sink(k)',
+        "INSERT INTO sink(k) VALUES('a')",
+      ]) await db.execute(sql);
+      for (const predicate of [
+        '(SELECT CAST(k AS TEXT))=$value',
+        '(SELECT v FROM labels LIMIT 1)=k',
+        '(SELECT $value COLLATE NOCASE)=k',
+      ]) {
+        const params = predicate.includes('$value') ? { $value: predicate.includes('CAST') ? 3n : 'A' } : {};
+        const query = source => `SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND ${predicate}) AS v FROM ${source} d RIGHT JOIN b USING(k) ORDER BY k`;
+        const expected = await db.execute(query('native'), params);
+        const actual = await db.execute(query('docs'), params);
+        assert.deepEqual(actual.columns, expected.columns);
+        assert.deepEqual(actual.rows, expected.rows);
+      }
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO sink(k) VALUES(9)');
+      const insert = 'INSERT INTO sink(k,v) SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND (SELECT v FROM labels LIMIT 1)=k) FROM docs d RIGHT JOIN b USING(k) ORDER BY k RETURNING k,v';
+      await assert.rejects(async () => db.execute(insert), error => {
+        assert.equal(error.code, 'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT k FROM sink ORDER BY k'), [[9n], ['a']]);
+      await db.execute("DELETE FROM sink WHERE k='a'");
+      const retry = await db.execute(insert);
+      assert.equal(retry.affected, 3n);
+      assert.deepEqual(retry.rows, [[1n, null], [3n, null], ['a', 2n]]);
+      const audit = await db.checkCollectionIntegrity('sink');
+      assert.equal(audit.documents, 4n);
+      assert.equal(audit.indexEntries, 4n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT k FROM sink'), [['a']]);
+    } finally { await db.close(); }
+  }
+});
