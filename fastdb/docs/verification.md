@@ -2567,3 +2567,12 @@ cooperative deadlines across Rust, Node and CLI, with their selected rollback an
 lifecycle regressions. It supersedes earlier complete scoped counts; installed
 packages and standalone consumers retain separately recorded evidence. No release,
 platform-wide timing, total-memory or full V1 completion claim follows.
+
+
+## Combined JSON transport qualification — 2026-09-08
+
+The complete scoped `fastdb/scripts/check.sh` passed with the direct portable JSON, in-place Node row decoding and response-buffer reuse changes: 543 Rust tests passed, zero failed, one existing trigger-cancellation gate ignored; all 77 Node/application tests, formatting, Clippy and strict TypeScript passed. Implementation checked: `ab5ca6ac9`; log: `/tmp/fastdb-json-combined-check.log`. The only concurrent tracked change was the standalone-consumer script extension committed as `3d257e37d`. No upstream core changes or workspace-wide/all-features test run was needed.
+
+The offline standalone Rust consumer also passed with the new public `into_portable_json` API, checking nested int64/binary/record/string round trips and rejection of NaN alongside existing database/reopen checks. All 244 registry/git package identities match the workspace lockfile. Log: `/tmp/fastdb-json-rust-consumer.log`. This is a path-dependent Linux x64 consumer with checkout-specific compiler flags removed, not a published Rust artifact.
+
+Offline installed Node package checks passed on Linux x64 Node 22.0.0 and 24.19.0, including synchronous/worker typed JSON results, profiles, batches, existing persistence/lifecycle/limit checks, exact notice content and strict installed-consumer TypeScript. Each tarball contained ten files and 60,630,868 packed bytes. Debug addon SHA-256: `38f37c107a6b78fcb1e297a5e75283ebf692d27b35b32f4ef3bb8d4de326feb5`. Logs: `/tmp/fastdb-json-package22.log` and `/tmp/fastdb-json-package24.log`. No registry access or publication occurred. Release artifacts, other platforms, complete resource/recovery qualification and full V1 remain open.

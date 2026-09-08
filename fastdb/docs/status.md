@@ -3440,3 +3440,8 @@ median and comparison limitations. Raw evidence:
 `benchmark-results/2026-09-08-linux-debug-node-reuse255-1000.json`.
 The diagnostic remains local debug, whole-process evidence rather than a release
 performance or resource-cap guarantee. Full V1 gates remain open.
+
+
+### Combined JSON transport and consumer verification
+
+The complete scoped check now passes 543 Rust tests (one existing ignored trigger gate), 77 Node/application tests, formatting, Clippy and strict TypeScript with the recent direct JSON and buffer reuse changes. The standalone Rust consumer exercises the public portable JSON API and passes with all 244 dependency identities retained. Offline installed synchronous/worker Node consumers pass on Linux x64 Node 22.0.0 and 24.19.0 using the rebuilt debug addon. See verification.md for checked revisions, artifact identity and logs. This advances combined-build and consumer evidence; final release artifacts, other platforms, resource/recovery gates and full V1 remain unfinished.
