@@ -219,6 +219,12 @@ fn native_correlated_predicate(
     params: &Parameters,
     mode: NativeCorrelationMode,
 ) -> Result<(Select, bool)> {
+    let mode = if mode == NativeCorrelationMode::CompoundArm && !sources.iter().any(Source::logical)
+    {
+        NativeCorrelationMode::Native
+    } else {
+        mode
+    };
     let scalar_pagination = mode == NativeCorrelationMode::ScalarPagination;
     let mut inner = inner.clone();
     if inner.with.is_some() {
@@ -493,7 +499,7 @@ fn native_correlated_predicate(
         if let Some(error) = nested_error {
             return Err(error);
         }
-        if correlated && !metadata {
+        if (correlated || mode == NativeCorrelationMode::CompoundArm) && !metadata {
             let scope = Scope {
                 expression_subqueries: nested_queries,
                 using: UsingColumns::default(),
@@ -504,7 +510,12 @@ fn native_correlated_predicate(
                 fetched_aliases: Default::default(),
                 standalone_aliases: Default::default(),
             };
-            if typed {
+            if typed && mode == NativeCorrelationMode::CompoundArm {
+                if !scope.comparison_key(value)? {
+                    scope.lower(value)?;
+                    *value = expression(&format!("__fastdb_unwrap(__fastdb_pack({value}))"))?;
+                }
+            } else if typed {
                 scope.typed(value)?;
             } else {
                 scope.lower(value)?;
@@ -540,7 +551,7 @@ fn native_correlated_predicate(
         if let ResultColumn::Expr(value, alias) = column {
             // Explicit casts produce native scalars whose affinity must remain
             // attached to the subquery result in outer comparisons.
-            let mut typed = mode != NativeCorrelationMode::CompoundArm && !has_cast_affinity(value);
+            let mut typed = mode == NativeCorrelationMode::CompoundArm || !has_cast_affinity(value);
             let correlated = rewrite(value, typed)?;
             correlated_query |= correlated;
             if correlated && typed && !metadata {
@@ -722,7 +733,10 @@ fn native_correlated_predicate(
         };
         inner = paginated;
     }
-    Ok((inner, typed_projection))
+    Ok((
+        inner,
+        typed_projection && mode != NativeCorrelationMode::CompoundArm,
+    ))
 }
 // Each entry stores lowered SQL, consumed binds, and affinity provenance.
 type ExpressionSubqueries = std::collections::BTreeMap<
@@ -1802,19 +1816,27 @@ impl Scope {
                 }
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
                 if let SubqueryAffinity::NativeMembership(collation, shared) = column {
+                    let direct_keys = shared.is_empty()
+                        && self.sources.iter().any(Source::logical)
+                        && matches!(query, Expr::Subquery(inner) if !inner.body.compounds.is_empty() && inner.order_by.is_empty() && direct_compound_pagination(inner));
                     let mut value = *lhs.clone();
                     let is_column = membership_column(&value)
                         || matches!(order_base(&value), Expr::Cast { .. });
                     if !self.comparison_key(&mut value)? {
                         self.lower(&mut value)?;
-                        **lhs = value;
-                        if shared.is_empty() {
-                            let Expr::Subquery(inner) = query else {
-                                unreachable!()
-                            };
-                            *rhs = inner.clone();
+                        if direct_keys {
+                            value =
+                                expression(&format!("__fastdb_unwrap(__fastdb_pack({value}))"))?;
+                        } else {
+                            **lhs = value;
+                            if shared.is_empty() {
+                                let Expr::Subquery(inner) = query else {
+                                    unreachable!()
+                                };
+                                *rhs = inner.clone();
+                            }
+                            return Ok(());
                         }
-                        return Ok(());
                     }
                     let key = match order_base(lhs) {
                         Expr::Cast { type_name, .. } => Expr::Cast {
@@ -1852,39 +1874,10 @@ impl Scope {
                     // Keep native IN execution so its uncorrelated source can
                     // be cached across outer rows. Only BLOB comparison keys
                     // require encoding of the source values.
-                    if shared.is_empty() {
-                        if let Expr::Subquery(inner) = query {
-                            if !inner.body.compounds.is_empty()
-                                && inner.order_by.is_empty()
-                                && direct_compound_pagination(inner)
-                            {
-                                // Keep one native RHS. Materialization changes unordered
-                                // pagination, while two CASE RHSs can both be evaluated.
-                                let mut blob_query = inner.clone();
-                                for arm in std::iter::once(&mut blob_query.body.select).chain(
-                                    blob_query
-                                        .body
-                                        .compounds
-                                        .iter_mut()
-                                        .map(|arm| &mut arm.select),
-                                ) {
-                                    let OneSelect::Select { columns, .. } = arm else {
-                                        return Err(unsupported("compound membership values"));
-                                    };
-                                    for column in columns {
-                                        let ResultColumn::Expr(value, _) = column else {
-                                            return Err(unsupported("compound membership stars"));
-                                        };
-                                        *value = Box::new(expression(&format!(
-                                            "CASE WHEN typeof(__fastdb_member_lhs.k)='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) ELSE {value} END"
-                                        ))?);
-                                    }
-                                }
-                                let blob_query = Expr::Subquery(blob_query);
-                                *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}) SELECT {key} {negate}IN {blob_query} FROM __fastdb_member_lhs)"))?;
-                                return Ok(());
-                            }
-                        }
+                    if direct_keys {
+                        // Both sides use comparison keys; retain one native RHS.
+                        *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}) SELECT {key} {negate}IN {query} FROM __fastdb_member_lhs)"))?;
+                        return Ok(());
                     }
                     let local = if shared.is_empty() {
                         format!(", __fastdb_correlated_members(v) AS MATERIALIZED {query}")

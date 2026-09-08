@@ -2570,3 +2570,49 @@ fn correlated_compound_expression_labels_preserve_native_order_resolution() {
         }
     }
 }
+
+#[test]
+fn unordered_compound_binary_membership_matches_native_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE native(k BLOB)",
+        "CREATE TABLE b(k BLOB)",
+    ] {
+        c.execute(sql, &Parameters::new()).unwrap();
+    }
+    let values = [
+        Value::Binary(vec![0, 255]),
+        Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec()),
+    ];
+    for value in &values {
+        let params = Parameters::from([("$value".into(), value.clone())]);
+        for sql in [
+            "INSERT INTO docs(k) VALUES($value)",
+            "INSERT INTO native VALUES($value)",
+            "INSERT INTO b VALUES($value)",
+        ] {
+            c.execute(sql, &params).unwrap();
+        }
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+            for tail in ["LIMIT 1", "LIMIT 1 OFFSET 1", "LIMIT 0"] {
+                for value in &values {
+                    let params = Parameters::from([("$value".into(), value.clone())]);
+                    let query = |source: &str| {
+                        format!("SELECT k,(SELECT k IN(SELECT k {operator} SELECT $value {tail})) AS found,(SELECT k NOT IN(SELECT k {operator} SELECT $value {tail})) AS absent FROM {source} a {join} b USING(k) ORDER BY k")
+                    };
+                    let expected = c.execute(&query("native"), &params).unwrap();
+                    let sql = query("docs");
+                    let actual = c
+                        .execute(&sql, &params)
+                        .unwrap_or_else(|error| panic!("{sql}: {error}"));
+                    assert_eq!(actual.columns, expected.columns);
+                    assert_eq!(actual.rows, expected.rows, "{sql}");
+                }
+            }
+        }
+    }
+}
