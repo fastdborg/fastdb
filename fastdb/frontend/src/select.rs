@@ -3950,7 +3950,9 @@ impl Connection {
                                 ) || (expression_subquery && matches!(value, Value::Binary(_)))
                             }))
                 });
-        if from.is_none() {
+        if from.is_none()
+            && (!expression_subqueries.is_empty() || !native_expression_subqueries.is_empty())
+        {
             if let Some((outer_sources, _)) = inherited_scope {
                 sources.extend_from_slice(outer_sources);
             }

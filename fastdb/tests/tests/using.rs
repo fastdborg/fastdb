@@ -1131,3 +1131,54 @@ fn nested_using_parameters_are_shared_and_unused_bindings_reject() {
     assert!(c.execute(sql, &invalid).is_err());
     assert_eq!(c.execute(sql, &params).unwrap().rows, expected);
 }
+
+#[test]
+fn using_direct_and_nested_scalar_casts_preserve_native_affinity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for value in [
+            "(SELECT CAST(k AS TEXT))",
+            "(SELECT (SELECT CAST(k AS TEXT)))",
+        ] {
+            for comparison in [
+                format!("{value}=1"),
+                format!("1={value}"),
+                format!("{value}='1'"),
+            ] {
+                let sql = |source: &str| {
+                    format!(
+                        "SELECT k,{comparison} AS v FROM {source} a {join} b USING(k) ORDER BY k"
+                    )
+                };
+                let expected = query(&sql("baseline"));
+                for source in ["docs", "(SELECT k FROM docs)"] {
+                    let logical = sql(source);
+                    assert_eq!(query(&logical).rows, expected.rows, "{logical}");
+                    assert_eq!(
+                        c.profile_select(&logical, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected.rows,
+                        "{logical}"
+                    );
+                }
+            }
+        }
+    }
+}

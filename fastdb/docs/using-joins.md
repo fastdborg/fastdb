@@ -71,3 +71,6 @@ The previously reported nested source-free gap is now fixed by carrying USING sc
 
 
 Typed direct/nested correlation now has 180 execute/profile cases for record/boolean/binary keys with ordering, LIMIT/OFFSET and unmatched right keys. Nested ordered insertion also retains unique-index failure/rollback/retry behavior.
+
+
+Direct scalar CAST routing retains native affinity; outer-source propagation is applied when nested expression plans require it. A 36-case execute/profile matrix verifies the pinned distinction between direct and nested TEXT-cast comparisons.

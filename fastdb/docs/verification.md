@@ -2409,3 +2409,8 @@ Nested USING lazy projection qualification (2026-09-08): a regression checks an 
 
 
 Nested USING parameter qualification (2026-09-08): a focused regression verifies parameters across nested projection, inner WHERE/LIMIT and outer filtering with unmatched RIGHT JOIN rows. Execute/profile produce explicit expected rows; repeated references share a binding. Missing and unused parameters reject, and valid retry succeeds on the same connection. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-nested-using-params.log. Latest complete scoped evidence remains 458 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains open.
+
+
+USING scalar CAST routing (2026-09-08): corrected a regression from nested scope propagation that routed direct CAST scalars through logical packing and lost native comparison affinity. Outer sources now join the source-free lowering scope only when expression subqueries are actually present. Direct scalar routing retains native affinity, while nested queries still receive required source metadata. A 36-case execute/profile native differential matrix covers direct/nested TEXT casts, comparisons in both operand orders and text literals, direct/closed sources and INNER/LEFT/RIGHT joins. All 22 USING tests, including nested typed/pagination/lazy cases, pass.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 461 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-using-cast-check.log. General correlation, resource/platform and full V1 release qualification remain open.
