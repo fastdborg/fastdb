@@ -3444,3 +3444,16 @@ plus formatting and all-target fastdb-tests Clippy with warnings denied.
 Logs `/tmp/fastdb-tuple-self-lookup.log` and
 `/tmp/fastdb-tuple-self-lookup-clippy.log`. Only tests/documentation changed from
 `2a21820a6`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Multiple-match tuple lookup qualification — 2026-09-09
+
+A native differential regression covers multiple matching lookup rows with no
+pagination, LIMIT 1, OFFSET 1 and an exhausted offset. Tuple values and affected
+counts match the pinned engine. This qualifies the observed scan behavior;
+it does not establish a stable order without ORDER BY.
+
+All eighteen write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-multiple-matches.log` and
+`/tmp/fastdb-tuple-multiple-matches-clippy.log`. Only tests/documentation changed
+from `c074eac0d`; no new full-suite/client run is claimed. Full V1 gates remain open.

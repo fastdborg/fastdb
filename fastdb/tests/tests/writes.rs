@@ -773,3 +773,30 @@ fn tuple_self_lookups_materialize_before_any_update() {
         ]
     );
 }
+
+#[test]
+fn tuple_lookup_multiple_matches_keep_columns_from_one_row() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO lookup VALUES(1,10,11),(1,20,21),(2,30,31)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for page in ["", " LIMIT 1", " LIMIT 1 OFFSET 1", " LIMIT 1 OFFSET 3"] {
+        q(&c, "BEGIN");
+        let query = |target| {
+            format!("UPDATE {target} SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n={target}.n{page}) RETURNING n,a,b")
+        };
+        let expected = q(&c, &query("native"));
+        let actual = q(&c, &query("docs"));
+        assert_eq!(actual.rows, expected.rows, "{page}");
+        assert_eq!(actual.affected, expected.affected);
+        q(&c, "ROLLBACK");
+    }
+}
