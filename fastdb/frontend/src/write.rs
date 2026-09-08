@@ -219,8 +219,9 @@ fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
 }
 impl Connection {
     /// Execute one data write and reject an oversized returned result atomically.
-    /// This checks the completed result before releasing the operation savepoint;
-    /// it does not limit candidate or RETURNING materialization memory. SQL DML
+    /// Native SQL rows are checked during frontend collection; logical writes
+    /// currently check the completed result before releasing the savepoint.
+    /// This does not bound engine or candidate materialization memory. SQL DML
     /// and supported object writes are accepted; transaction control and DDL are not.
     pub fn write_with_result_limits(
         &self,
@@ -230,23 +231,40 @@ impl Connection {
     ) -> Result<QueryResult> {
         crate::parser_stack(|| {
             use fastql_parser::Statement;
+            let mut native_sql = None;
             let valid = match fastql_parser::parse(sql)? {
                 Statement::Insert { .. }
                 | Statement::Upsert { .. }
                 | Statement::Patch { .. }
                 | Statement::PatchWhere { .. }
                 | Statement::Delete { .. } => true,
-                Statement::Sql(sql) => matches!(
-                    parsed(&expand_paths(&expand_records(&sql)?)?)?,
-                    Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. })
-                ),
+                Statement::Sql(sql) => {
+                    let valid = matches!(
+                        parsed(&expand_paths(&expand_records(&sql)?)?)?,
+                        Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. })
+                    );
+                    native_sql = Some(sql);
+                    valid
+                }
                 _ => false,
             };
             if !valid {
                 return Err(unsupported("write result limits require one data write"));
             }
             self.atomic(|| {
-                let result = self.execute(sql, params)?;
+                let result = if let Some(sql) = &native_sql {
+                    if let Some(result) = self.collection_write(sql, params)? {
+                        result
+                    } else if let Some(result) = self.collection_select(sql, params)? {
+                        result
+                    } else {
+                        return self
+                            .native_profiled_with_limits(sql, params, Some(limits))
+                            .map(|profile| profile.result);
+                    }
+                } else {
+                    self.execute(sql, params)?
+                };
                 let mut budget = crate::budget::ResultBudget::new(Some(limits), &result.columns)?;
                 for row in &result.rows {
                     budget.row(row)?;

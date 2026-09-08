@@ -240,6 +240,51 @@ mod evaluation_tests {
                 assert_eq!(CALLS.load(Ordering::SeqCst), result.rows.len());
             }
         }
+        let write = "INSERT INTO native VALUES(5),(6) RETURNING result_budget_tick(n) AS n";
+        CALLS.store(0, Ordering::SeqCst);
+        let error = c
+            .write_with_result_limits(
+                write,
+                &p,
+                ResultLimits {
+                    max_rows: 2,
+                    max_payload_bytes: 0,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT");
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            0,
+            "native metadata overflow rejects before mutation or RETURNING evaluation"
+        );
+        assert_eq!(c.execute("SELECT n FROM native", &p).unwrap().rows.len(), 4);
+        let error = c
+            .write_with_result_limits(
+                write,
+                &p,
+                ResultLimits {
+                    max_rows: 1,
+                    max_payload_bytes: 17,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT");
+        assert_eq!(c.execute("SELECT n FROM native", &p).unwrap().rows.len(), 4);
+        assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+        assert_eq!(
+            c.write_with_result_limits(
+                write,
+                &p,
+                ResultLimits {
+                    max_rows: 2,
+                    max_payload_bytes: 17
+                }
+            )
+            .unwrap()
+            .rows,
+            vec![vec![Value::Integer(5)], vec![Value::Integer(6)]]
+        );
         c.execute("ROLLBACK", &p).unwrap();
         assert_eq!(c.execute("SELECT n FROM native", &p).unwrap().rows.len(), 3);
     }

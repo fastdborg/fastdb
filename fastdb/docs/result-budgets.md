@@ -33,13 +33,16 @@ work. This does not close the V1 resource gate.
 
 Rust `Connection::write_with_result_limits(sql, params, ResultLimits)` accepts
 one SQL INSERT/UPDATE/DELETE or supported object write. It runs inside an
-operation savepoint, checks the completed returned result with the same row and
-payload accounting, and releases only on success. A result limit failure rolls
+operation savepoint and releases only on success. Native SQL checks metadata
+before execution and each decoded row before frontend retention. Logical writes
+currently check the completed returned result with the same row and payload
+accounting. A result limit failure rolls
 back that operation, including data and managed indexes, while preserving prior
 pending work when savepoint recovery succeeds. Existing engine/rollback errors
 retain their own error handling and transaction disposition.
 
-This is a final-result acceptance policy, **not a bound on write candidate or
+This is a result acceptance policy with progressive native frontend collection,
+**not a bound on engine RETURNING buffers, logical write candidates or logical
 RETURNING materialization memory**. It must not be used as a process memory cap.
 Transaction control, schema operations, reads and multi-statement input are
 rejected. Writes without RETURNING can succeed with zero budgets; affected rows

@@ -177,6 +177,11 @@ fn write_result_limit_failure_restores_statement_and_prior_work() {
     for outer in [false, true] {
         for (setup, write, read) in [
             (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "INSERT INTO native(n) SELECT n FROM docs RETURNING n",
+                "SELECT n FROM native ORDER BY n",
+            ),
+            (
                 "INSERT INTO native VALUES(1),(2)",
                 "UPDATE native SET n=n+10 RETURNING n",
                 "SELECT n FROM native ORDER BY n",

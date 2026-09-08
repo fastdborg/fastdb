@@ -2641,3 +2641,24 @@ The Rust suite was not rerun for this binding-only change; previous Rust results
 remain historical. Progressive candidates/RETURNING collection, general engine
 memory and deadline controls, broader interrupted I/O/commit/checkpoint outcomes,
 and the remaining V1 release gates remain open. Nothing was published or pushed.
+
+### Progressive native write-result collection
+
+The explicit write-result API now routes native-only SQL through the limited
+native row collector inside its outer operation savepoint. It checks metadata
+before stepping the statement and each decoded row before frontend retention.
+Collection writes and native destinations requiring logical source lowering keep
+their existing final-result acceptance path. Object writes retain that path too.
+This does not bound engine RETURNING buffers or logical candidate/result memory.
+
+The volatile callback regression proves native RETURNING metadata overflow
+rejects without executing callbacks, and row overflow restores pending work and
+permits exact retry. The autocommit/outer-transaction write matrix now also covers
+a native INSERT SELECT reading a collection, retaining correct routing, rollback
+and retry. Native trigger rollback and persistent reopen checks continue to pass.
+
+The complete scoped check passed 520 Rust tests (one existing ignored gate),
+70 Node/application tests, formatting, Clippy and strict TypeScript. Log:
+`/tmp/fastdb-native-write-check.log`. Installed-package checks were not rerun for
+this internal collector change. Progressive logical writes, engine working
+memory, deadlines and broader V1 release qualification remain unfinished.
