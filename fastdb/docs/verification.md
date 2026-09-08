@@ -4242,3 +4242,17 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. The addon was rebuilt. Log:
 `/tmp/fastdb-values-tuples-check.log`. No upstream source, dependency or
 storage-format changes; no publication occurred.
+
+
+## Node VALUES tuple verification — 2026-09-09
+
+Both clients now verify single-row VALUES tuple parameters containing a record
+with an int64 boundary key and an object containing binary, boolean and int64
+boundary values. A correlated swap preserves both typed values. Unsupported
+multi-row input reports FDB_UNSUPPORTED and retains prior pending values;
+the enclosing test also verifies rollback. All 87 Node/application tests passed
+against the preceding full check's addon. Log:
+`/tmp/fastdb-values-tuple-node-final.log`. The initial test expected the wrong
+error code; correcting it required no implementation change. Only tests/docs
+changed from `f86a50c32`; no new Rust-suite run or native rebuild is claimed.
+Full V1 remains open; no publication occurred.

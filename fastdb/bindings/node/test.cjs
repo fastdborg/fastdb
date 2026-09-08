@@ -2676,6 +2676,12 @@ test('tuple collection lookups preserve typed results in both clients', async ()
         [[1n,new Record('docs', 'second'),{ selected: true }],[2n,null,null]]);
       assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT x.a AS chosen,x.b AS chosen FROM lookup x WHERE x.n=docs.n ORDER BY x.rank DESC LIMIT 1 OFFSET 1) RETURNING n,a,b')).rows,
         [[1n,record,payload],[2n,null,null]]);
+      const values = await db.execute('UPDATE docs SET (a,b)=(VALUES($record,$payload)) WHERE n=1 RETURNING a,b', { $record: record, $payload: payload });
+      assert.deepEqual(values.rows, [[record,payload]]);
+      assert.deepEqual(values.transaction, { before: 'active', after: 'active' });
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(VALUES(b,a)) WHERE n=1 RETURNING a,b')).rows, [[payload,record]]);
+      await assert.rejects(async () => db.execute('UPDATE docs SET (a,b)=(VALUES(1,2),(3,4))'), error => error.code === 'FDB_UNSUPPORTED');
+      assert.deepEqual((await db.execute('SELECT a,b FROM docs WHERE n=1')).rows, [[payload,record]]);
       const nested = await db.execute('UPDATE docs SET (a,b)=(SELECT (SELECT x.a FROM lookup x WHERE x.n=docs.n ORDER BY x.rank LIMIT 1),(SELECT x.b FROM lookup x WHERE x.n=docs.n ORDER BY x.rank LIMIT 1)) RETURNING n,a,b');
       assert.deepEqual(nested.rows, [[1n,record,payload],[2n,null,null]]);
       assert.deepEqual(nested.transaction, { before: 'active', after: 'active' });
