@@ -2934,12 +2934,14 @@ fn local_cte_merged_keys_match_native_shadowing() {
                     format!("first(x) AS (SELECT n FROM baseline),chosen({declared}) AS {materialization} (SELECT {output} FROM first)"),
                     format!("chosen({declared}) AS {materialization} (WITH first(x) AS (SELECT n FROM baseline) SELECT {output} FROM first)"),
                 ] {
-                    let query = |source| format!("SELECT n,(WITH {definitions} SELECT max(m) FROM chosen WHERE m<n) AS prior FROM {source} a {join} keys b USING(n) ORDER BY n");
+                    for alias in ["chosen", "a", "b"] {
+                    let query = |source| format!("SELECT n,(WITH {definitions} SELECT max(m) FROM chosen {alias} WHERE m<n) AS prior FROM {source} a {join} keys b USING(n) ORDER BY n");
                     let expected = c.execute(&query("baseline"), &params).unwrap();
                     let sql = query("docs");
                     let actual = c.execute(&sql, &params).unwrap_or_else(|error| panic!("{sql}: {error}"));
                     assert_eq!(actual.columns, expected.columns, "{sql}");
                     assert_eq!(actual.rows, expected.rows, "{sql}");
+                    }
                 }
             }
         }
