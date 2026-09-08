@@ -2289,3 +2289,39 @@ test('worker timeout uses native deadline and preserves queued request isolation
     assert.deepEqual(await db.all('SELECT * FROM docs'), []);
   } finally { await db.close(); }
 });
+
+test('zero timeout rejects async operations before work and allows recovery', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  const limits = {maxRows:10n,maxPayloadBytes:1000n};
+  const expired = {timeoutMs:0};
+  const plan = [{version:1n,name:'initial',sql:'CREATE TABLE docs;'}];
+  try {
+    await db.migrate(plan);
+    await db.execute('INSERT INTO docs {id:docs:a,n:1}');
+    const payload = await db.exportDocuments('docs');
+    for (const operation of [
+      () => db.execute('DELETE FROM docs',{},expired),
+      () => db.profileSelect('SELECT * FROM docs',{},expired),
+      () => db.selectWithLimits('SELECT * FROM docs',limits,{},expired),
+      () => db.profileSelectWithLimits('SELECT * FROM docs',limits,{},expired),
+      () => db.writeWithResultLimits('DELETE FROM docs RETURNING n',limits,{},expired),
+      () => db.checkCollectionIntegrity('docs',{},expired),
+      () => db.executeBatch('DELETE FROM docs; SELECT 1;',expired),
+      () => db.exportDocuments('docs','json',expired),
+      () => db.importDocuments('docs',payload,'json',expired),
+      () => db.migrate([...plan,{version:2n,name:'delete',sql:'DELETE FROM docs;'}],expired),
+    ]) {
+      await assert.rejects(operation(), error => {
+        assert.equal(error.code,'FDB_CANCELLED');
+        assert.deepEqual(error.transaction,{before:'autocommit',after:'autocommit'});
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT n FROM docs'),[[1n]]);
+    }
+    assert.equal((await db.migrate(plan)).alreadyApplied,1);
+    assert.equal((await db.checkCollectionIntegrity('docs')).documents,1n);
+    await db.execute('UPDATE docs SET n=2',{}, {timeoutMs:60000});
+    assert.deepEqual(await db.all('SELECT n FROM docs'),[[2n]]);
+  } finally { await db.close(); }
+});

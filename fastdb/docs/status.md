@@ -3117,3 +3117,17 @@ preservation, invalid timeout values, combined AbortSignal and fresh retry/rollb
 Logs: `/tmp/fastdb-node-timeout.log` and `/tmp/fastdb-node-timeout-clippy.log`.
 Installed-package, per-operation matrices, cleanup/latency/platform qualification
 and broader V1 gates remain open. Broader Rust suites were not repeated.
+
+### Async zero-timeout operation matrix
+
+A focused Node regression now checks immediate native deadline rejection across
+execute, profile, bounded SELECT/profile/write, integrity audit, batch, export,
+import and migration. All ten paths report FDB_CANCELLED with unchanged autocommit
+observations, retain the document and applied migration history, and permit later
+reads and a valid timed update. This checks pre-execution rejection/recovery;
+it does not establish sustained token cleanup or mid-operation expiry coverage.
+
+The focused Node test passed against the current rebuilt addon; log:
+`/tmp/fastdb-node-zero-timeouts.log`. Diff checks passed. No production code changed
+and no broader suite was repeated. Remaining deadline/resource/platform and V1
+gates remain open.
