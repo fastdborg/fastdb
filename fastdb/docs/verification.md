@@ -3638,3 +3638,14 @@ Logs `/tmp/fastdb-tuple-leading-cte.log` and
 `/tmp/fastdb-tuple-leading-cte-clippy.log`. Only tests/documentation changed from
 `ba36b8446`; no new full-suite/client run is claimed. Tuple-local WITH remains
 separate open work. Full V1 gates remain open.
+
+
+## Declared CTE columns in tuple lookups — 2026-09-09
+
+The leading-CTE tuple lookup matrix now includes explicit column declarations
+renaming the lookup key and both assigned values. Relational and collection
+CTE definitions produce the expected matched/NULL tuple results. All seventeen
+CTE write tests passed, plus formatting and all-target fastdb-tests Clippy with
+warnings denied. Logs `/tmp/fastdb-tuple-cte-columns.log` and
+`/tmp/fastdb-tuple-cte-columns-clippy.log`. Only tests/documentation changed from
+`52c8f5834`; no new full-suite/client run is claimed. Full V1 gates remain open.

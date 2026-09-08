@@ -823,9 +823,19 @@ fn leading_ctes_supply_tuple_lookup_sources() {
         q(&c, sql);
     }
     for source in ["lookup", "lookup_docs"] {
-        q(&c, "BEGIN");
-        let expected=q(&c,"WITH chosen AS (SELECT n,a,b FROM lookup) UPDATE native SET (a,b)=(SELECT x.a,x.b FROM chosen x WHERE x.n=native.n) RETURNING n,a,b");
-        assert_eq!(q(&c,&format!("WITH chosen AS (SELECT n,a,b FROM {source}) UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM chosen x WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows);
-        q(&c, "ROLLBACK");
+        for (definition, projection, predicate) in [
+            ("chosen AS (SELECT n,a,b FROM SOURCE)", "x.a,x.b", "x.n"),
+            (
+                "chosen(k,left_value,right_value) AS (SELECT n,a,b FROM SOURCE)",
+                "x.left_value,x.right_value",
+                "x.k",
+            ),
+        ] {
+            q(&c, "BEGIN");
+            let expected=q(&c,"WITH chosen AS (SELECT n,a,b FROM lookup) UPDATE native SET (a,b)=(SELECT x.a,x.b FROM chosen x WHERE x.n=native.n) RETURNING n,a,b");
+            let definition = definition.replace("SOURCE", source);
+            assert_eq!(q(&c,&format!("WITH {definition} UPDATE docs SET (a,b)=(SELECT {projection} FROM chosen x WHERE {predicate}=docs.n) RETURNING n,a,b")).rows,expected.rows);
+            q(&c, "ROLLBACK");
+        }
     }
 }
