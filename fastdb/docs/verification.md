@@ -3714,3 +3714,15 @@ formatting, Clippy with warnings denied and strict TypeScript. Logs
 `/tmp/fastdb-local-tuple-sort-check.log` and `/tmp/fastdb-local-tuple-recovery.log`.
 No upstream files, storage formats or dependencies changed. Full V1 gates remain
 open; no publication occurred.
+
+
+## Direct derived/CTE numeric sort regression — 2026-09-09
+
+Direct SELECT and profile tests now cover unprojected numeric sort fields in
+derived tables and CTEs, ascending and descending, using negative and different-
+width positive integers. This independently protects the logical-order fix
+outside tuple writes. All thirty-two derived-query tests passed, plus formatting
+and all-target fastdb-tests Clippy with warnings denied. Logs
+`/tmp/fastdb-derived-sort.log` and `/tmp/fastdb-derived-sort-clippy.log`.
+Only tests/documentation changed from `9628a9552`; no new full-suite/client run
+is claimed. Full V1 gates remain open.

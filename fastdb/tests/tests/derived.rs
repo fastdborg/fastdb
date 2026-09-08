@@ -1342,3 +1342,35 @@ fn duplicate_derived_composites_keep_paths_records_and_indexed_writes() {
         expected.rows
     );
 }
+
+#[test]
+fn unprojected_derived_sort_keys_use_logical_numeric_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let p = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(label,n) VALUES('six',6),('eleven',11),('negative',-2)",
+    ] {
+        c.execute(sql, &p).unwrap();
+    }
+    for source in ["(SELECT label,n FROM docs) x", "chosen x"] {
+        let prefix = if source == "chosen x" {
+            "WITH chosen AS (SELECT label,n FROM docs) "
+        } else {
+            ""
+        };
+        for (direction, labels) in [
+            ("ASC", vec!["negative", "six", "eleven"]),
+            ("DESC", vec!["eleven", "six", "negative"]),
+        ] {
+            let sql = format!("{prefix}SELECT x.label FROM {source} ORDER BY x.n {direction}");
+            let expected = labels
+                .into_iter()
+                .map(|s| vec![Value::String(s.into())])
+                .collect::<Vec<_>>();
+            assert_eq!(c.execute(&sql, &p).unwrap().rows, expected);
+            assert_eq!(c.profile_select(&sql, &p).unwrap().result.rows, expected);
+        }
+    }
+}
