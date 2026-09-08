@@ -4179,3 +4179,20 @@ Logs `/tmp/fastdb-cte-projections-package22.log` and
 consumer harness and documentation changed from `4e813991c`; no native rebuild
 or new source-suite run is claimed. No registry access or publication occurred.
 Final artifacts, other platforms and full V1 release qualification remain open.
+
+
+## Standalone Rust CTE projection consumer — 2026-09-09
+
+The isolated Rust consumer now checks arithmetic and UNION ALL native CTE
+projections after reopening persisted documents, using deep field paths,
+main/temp-qualified JSON iterators and a bound parameter. Both bounded SELECT
+and profile return the expected integer rows at a 38-byte result payload limit.
+Missing parameters and a one-row limit reject correctly; a subsequent query
+succeeds. The existing index integrity check remains green.
+
+`check-rust-client.py` passed offline outside the workspace with injected Rust
+flags removed, verifying 244 registry/git package identities against Cargo.lock.
+Log: `/tmp/fastdb-cte-projections-rust-consumer.log`. This changes the consumer
+harness and documentation from `80be620ad`; no new full-suite run is claimed.
+Release artifacts, other platforms and full V1 qualification remain open.
+No publication occurred.

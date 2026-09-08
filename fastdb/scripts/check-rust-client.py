@@ -72,6 +72,19 @@ fn iterator_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     let db=Database::open(file)?;
     let c=db.connect()?;
     assert_eq!(c.execute(query,&params)?.rows,expected);
+    for (projection,totals) in [
+        ("(WITH a AS (SELECT d.n+x.value+$delta AS v FROM main.json_each(d.payload.inner.j) x) SELECT sum(v) FROM a)",[7,6]),
+        ("(WITH a AS (SELECT x.value AS v FROM temp.json_each(d.payload.inner.j) x UNION ALL SELECT d.n+$delta) SELECT sum(v) FROM a)",[5,6]),
+    ] {
+        let sql=format!("SELECT d.n AS n,{projection} AS total FROM iterator_docs d ORDER BY d.n");
+        let rows=vec![vec![Value::Integer(1),Value::Integer(totals[0])],vec![Value::Integer(2),Value::Integer(totals[1])]];
+        let limits=ResultLimits {max_rows:2,max_payload_bytes:38};
+        assert_eq!(c.select_with_limits(&sql,&params,limits)?.rows,rows);
+        assert_eq!(c.profile_select_with_limits(&sql,&params,limits)?.result.rows,rows);
+        assert_eq!(c.execute(&sql,&empty).unwrap_err().code(),"FDB_PARAMETER");
+        assert_eq!(c.select_with_limits(&sql,&params,ResultLimits {max_rows:1,..limits}).unwrap_err().code(),"FDB_LIMIT");
+        assert_eq!(c.execute(&sql,&params)?.rows,rows);
+    }
     assert_eq!(c.check_collection_integrity("iterator_output",IntegrityLimits::default())?.index_entries,0);
     Ok(())
 }
