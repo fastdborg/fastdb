@@ -2101,6 +2101,8 @@ fn pinned_inner_alias_renaming_preserves_outer_merged_keys() {
             .unwrap_or_else(|e| panic!("{sql}: {e}"))
     };
     for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2)",
         "CREATE TABLE a(k INTEGER)",
         "INSERT INTO a VALUES(1),(2)",
         "CREATE TABLE b(k INTEGER)",
@@ -2110,18 +2112,37 @@ fn pinned_inner_alias_renaming_preserves_outer_merged_keys() {
     ] {
         query(sql);
     }
-    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
-        for body in [
-            "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k",
-            "SELECT ALIAS.n FROM nums ALIAS WHERE ALIAS.n<k ORDER BY ALIAS.n DESC LIMIT 1",
-            "SELECT (SELECT max(ALIAS.n)) FROM nums ALIAS WHERE ALIAS.n<k LIMIT 1",
-            "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k AND EXISTS(SELECT 1 WHERE ALIAS.n>=0)",
-        ] {
-            let sql=|alias: &str|format!("SELECT k,({}) AS v FROM a {join} b USING(k) ORDER BY k",body.replace("ALIAS",alias));
-            let original=query(&sql("b"));
-            let renamed=query(&sql("local_nums"));
-            assert_eq!(renamed.columns,original.columns);
-            assert_eq!(renamed.rows,original.rows,"{}",sql("b"));
+    let bodies = [
+        "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k",
+        "SELECT max(ALIAS.n)+(SELECT max(b.n) FROM nums b WHERE b.n=2) FROM nums ALIAS WHERE ALIAS.n<k",
+        "SELECT ALIAS.* FROM nums ALIAS WHERE ALIAS.n<k ORDER BY ALIAS.n DESC LIMIT 1",
+        "SELECT ALIAS.n FROM nums ALIAS WHERE ALIAS.n<k ORDER BY ALIAS.n DESC LIMIT 1",
+        "SELECT (SELECT max(ALIAS.n)) FROM nums ALIAS WHERE ALIAS.n<k LIMIT 1",
+        "SELECT max(ALIAS.n) FROM nums ALIAS WHERE ALIAS.n<k AND EXISTS(SELECT 1 WHERE ALIAS.n>=0)",
+    ];
+    for local_alias in ["a", "b"] {
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for body in bodies {
+                let sql = |alias: &str| {
+                    format!(
+                        "SELECT k,({}) AS v FROM a {join} b USING(k) ORDER BY k",
+                        body.replace("ALIAS", alias)
+                    )
+                };
+                let original = query(&sql(local_alias));
+                let renamed = query(&sql("local_nums"));
+                assert_eq!(renamed.columns, original.columns);
+                assert_eq!(renamed.rows, original.rows, "{}", sql(local_alias));
+                // Nested EXISTS is still outside the mixed-query subset, even
+                // with distinct aliases. Retain its native rename oracle only.
+                if body.contains("EXISTS") {
+                    continue;
+                }
+                let mixed_sql = sql(local_alias).replace("FROM a ", "FROM docs a ");
+                let mixed = query(&mixed_sql);
+                assert_eq!(mixed.columns, original.columns, "{mixed_sql}");
+                assert_eq!(mixed.rows, original.rows, "{mixed_sql}");
+            }
         }
     }
 }

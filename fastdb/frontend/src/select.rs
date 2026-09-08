@@ -378,6 +378,143 @@ struct UsingColumns {
     bindings: std::collections::BTreeMap<String, (usize, String)>,
     hidden: std::collections::BTreeSet<(usize, String)>,
 }
+// Rename one local source and the qualified references bound to it. Work on a
+// clone: unsupported scopes must leave the original query intact. Quote new
+// names so internal aliases cannot be mistaken for logical function markers.
+fn rename_correlated_local_alias(select: &mut Select, old: &str, new: &str) -> Result<bool> {
+    fn expression(value: &mut Expr, old: &str, new: &str) -> turso_core::Result<bool> {
+        let mut supported = true;
+        turso_core::walk_expr_mut(value, &mut |expr| {
+            match expr {
+                Expr::Subquery(inner) | Expr::Exists(inner) => {
+                    supported &= scope(inner, old, new, false)?;
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+                Expr::InSelect { lhs, rhs, .. } => {
+                    supported &= expression(lhs, old, new)?;
+                    supported &= scope(rhs, old, new, false)?;
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+                Expr::Qualified(alias, _) if alias.as_str().eq_ignore_ascii_case(old) => {
+                    *alias = Name::from_string(quote(new));
+                }
+                Expr::DoublyQualified(..) => supported = false,
+                Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path" => {
+                    supported = false;
+                }
+                _ => {}
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+        Ok(supported)
+    }
+    fn scope(select: &mut Select, old: &str, new: &str, root: bool) -> turso_core::Result<bool> {
+        if select.with.is_some() || !select.body.compounds.is_empty() {
+            return Ok(false);
+        }
+        let OneSelect::Select {
+            columns,
+            from,
+            where_clause,
+            group_by,
+            window_clause,
+            ..
+        } = &mut select.body.select
+        else {
+            return Ok(false);
+        };
+        if !window_clause.is_empty() {
+            return Ok(false);
+        }
+        if let Some(from) = from {
+            for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
+                let alias = match table.as_ref() {
+                    SelectTable::Table(name, alias, _) => {
+                        Some(alias.as_ref().map_or(&name.name, As::name))
+                    }
+                    SelectTable::Select(_, alias) => alias.as_ref().map(As::name),
+                    _ => return Ok(false),
+                };
+                if !root && alias.is_some_and(|alias| alias.as_str().eq_ignore_ascii_case(old)) {
+                    // This entire SELECT body resolves the name locally.
+                    return Ok(true);
+                }
+            }
+        }
+        let mut supported = true;
+        for column in columns {
+            match column {
+                ResultColumn::Expr(value, _) => supported &= expression(value, old, new)?,
+                ResultColumn::TableStar(alias) if alias.as_str().eq_ignore_ascii_case(old) => {
+                    *alias = Name::from_string(quote(new));
+                }
+                _ => {}
+            }
+        }
+        if let Some(from) = from {
+            for table in
+                std::iter::once(&mut from.select).chain(from.joins.iter_mut().map(|j| &mut j.table))
+            {
+                match table.as_mut() {
+                    SelectTable::Table(name, alias, _) => {
+                        if root
+                            && alias
+                                .as_ref()
+                                .map_or(&name.name, As::name)
+                                .as_str()
+                                .eq_ignore_ascii_case(old)
+                        {
+                            *alias = Some(As::As(Name::from_string(quote(new))));
+                        }
+                    }
+                    SelectTable::Select(inner, alias) => {
+                        supported &= scope(inner, old, new, false)?;
+                        if root
+                            && alias
+                                .as_ref()
+                                .is_some_and(|a| a.name().as_str().eq_ignore_ascii_case(old))
+                        {
+                            *alias = Some(As::As(Name::from_string(quote(new))));
+                        }
+                    }
+                    _ => return Ok(false),
+                }
+            }
+            for join in &mut from.joins {
+                if let Some(JoinConstraint::On(value)) = &mut join.constraint {
+                    supported &= expression(value, old, new)?;
+                }
+            }
+        }
+        if let Some(value) = where_clause {
+            supported &= expression(value, old, new)?;
+        }
+        if let Some(group) = group_by {
+            for value in &mut group.exprs {
+                supported &= expression(value, old, new)?;
+            }
+            if let Some(value) = &mut group.having {
+                supported &= expression(value, old, new)?;
+            }
+        }
+        for sorted in &mut select.order_by {
+            supported &= expression(&mut sorted.expr, old, new)?;
+        }
+        if let Some(limit) = &mut select.limit {
+            supported &= expression(&mut limit.expr, old, new)?;
+            if let Some(offset) = &mut limit.offset {
+                supported &= expression(offset, old, new)?;
+            }
+        }
+        Ok(supported)
+    }
+    let mut renamed = select.clone();
+    if !scope(&mut renamed, old, new, true)? {
+        return Ok(false);
+    }
+    *select = renamed;
+    Ok(true)
+}
 fn qualify_correlated_using(
     connection: &Connection,
     params: &Parameters,
@@ -392,6 +529,7 @@ fn qualify_correlated_using(
     // Resolve only closed local source schemas here. Open collections and
     // other source forms need their own lexical scope resolution.
     let mut using = using.clone();
+    let mut local_aliases = Vec::new();
     if let OneSelect::Select {
         from: Some(from), ..
     } = &inner.body.select
@@ -411,12 +549,33 @@ fn qualify_correlated_using(
             else {
                 return Ok(());
             };
-            using.bindings.retain(|name, (index, _)| {
-                !sources[*index].alias.eq_ignore_ascii_case(&local.alias)
-                    && !columns
-                        .iter()
-                        .any(|(column, _)| column.eq_ignore_ascii_case(name))
+            local_aliases.push(local.alias.clone());
+            using.bindings.retain(|name, _| {
+                !columns
+                    .iter()
+                    .any(|(column, _)| column.eq_ignore_ascii_case(name))
             });
+        }
+    }
+    for alias in local_aliases {
+        if using
+            .bindings
+            .values()
+            .any(|(index, _)| sources[*index].alias.eq_ignore_ascii_case(&alias))
+        {
+            let id = connection
+                .next_subquery_id
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |id| id.checked_add(1),
+                )
+                .map_err(|_| Error::Limit("internal subquery identifiers exhausted".into()))?;
+            if !rename_correlated_local_alias(inner, &alias, &format!("__fastdb_local_{id}"))? {
+                using
+                    .bindings
+                    .retain(|_, (index, _)| !sources[*index].alias.eq_ignore_ascii_case(&alias));
+            }
         }
     }
     let OneSelect::Select {
