@@ -3228,3 +3228,17 @@ registry/git package identities matched the pinned workspace lockfile subset.
 Log: `/tmp/fastdb-consumer-deadlines.log`. No production code changed or broader
 suite was repeated. This adds public dependent-application API evidence, not
 active-expiry timing, all-platform or complete V1 qualification.
+
+### Timeout transport-failure cleanup
+
+Extended the isolated worker transport fixture with eight timed-request cases:
+send failure, exit, error and messageerror, each with and without AbortSignal.
+Every case rejects, releases its real native deadline token, removes any abort
+listener, and closes the worker. Transport failures carry no transaction outcome;
+late abort is harmless after cleanup. The fixture substitutes only Worker transport
+and does not execute SQL or claim native crash/write recovery.
+
+The complete worker fault fixture passed; log:
+`/tmp/fastdb-timeout-transport-faults.log`. Diff checks passed. No production code
+changed or broader suite was repeated. Native interrupted-I/O, timeout timing,
+platform and remaining V1 gates remain open.

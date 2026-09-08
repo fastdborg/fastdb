@@ -205,5 +205,34 @@ const { getEventListeners } = require('node:events');
     assert.equal(getEventListeners(controller.signal,'abort').length,0);
     assert.equal(worker.messages.length,before);
   }
+  for (const signalEnabled of [false,true]) {
+    for (const failure of ['send','exit','error','messageerror']) {
+      const db = await AsyncDatabase.open();
+      const worker = latest;
+      const controller = new AbortController();
+      const options = {timeoutMs:60000, ...(signalEnabled ? {signal:controller.signal} : {})};
+      worker.rejectRequest = failure === 'send';
+      const operation = db.execute('DELETE FROM docs',{},options);
+      const settled = Promise.allSettled([operation]);
+      const token = worker.messages[0].cancellationKey;
+      assert.equal(typeof token,'string');
+      if (failure === 'exit') { worker.stopped=true; worker.emit('exit',7); }
+      if (failure === 'error') {
+        worker.emit('error',new Error('timed worker failure'));
+        worker.stopped=true; worker.emit('exit',1);
+      }
+      if (failure === 'messageerror') worker.emit('messageerror',new Error('timed response failure'));
+      const [outcome] = await settled;
+      assert.equal(outcome.status,'rejected');
+      if (failure === 'send') assert.match(outcome.reason.message,/injected send failure/);
+      else assert.equal(outcome.reason.code,'FDB_WORKER');
+      assert.equal(outcome.reason.transaction,undefined);
+      assert.equal(cancelOperation(token),false);
+      assert.equal(getEventListeners(controller.signal,'abort').length,0);
+      controller.abort();
+      await db.close();
+      assert.equal(worker.stopped,true);
+    }
+  }
   process.stdout.write('worker-faults-complete\n');
 })().catch(error => { console.error(error); process.exitCode = 1; });
