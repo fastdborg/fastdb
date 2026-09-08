@@ -34,16 +34,17 @@ work. This does not close the V1 resource gate.
 Rust `Connection::write_with_result_limits(sql, params, ResultLimits)` accepts
 one SQL INSERT/UPDATE/DELETE or supported object write. It runs inside an
 operation savepoint and releases only on success. Native SQL checks metadata
-before execution and each decoded row before frontend retention. Logical writes
-currently check the completed returned result with the same row and payload
-accounting. A result limit failure rolls
+before execution and each decoded row before frontend retention. Collection SQL and object RETURNING projections check each evaluated row
+before retaining it, including document-star output. Native destinations with
+logical sources currently retain the completed-result check. All routes share
+the same payload accounting. A result limit failure rolls
 back that operation, including data and managed indexes, while preserving prior
 pending work when savepoint recovery succeeds. Existing engine/rollback errors
 retain their own error handling and transaction disposition.
 
 This is a result acceptance policy with progressive native frontend collection,
-**not a bound on engine RETURNING buffers, logical write candidates or logical
-RETURNING materialization memory**. It must not be used as a process memory cap.
+**not a bound on engine RETURNING buffers, write candidates, document snapshots
+or individual projection working memory**. It must not be used as a process memory cap.
 Transaction control, schema operations, reads and multi-statement input are
 rejected. Writes without RETURNING can succeed with zero budgets; affected rows
 are not returned rows. Empty RETURNING results still charge column metadata.
@@ -54,7 +55,7 @@ prior-work preservation and fresh-token retry have initial Rust coverage.
 Completed-result accounting has no fixed cancellation latency. Both Node
 clients expose `writeWithResultLimits(sql, limits, parameters?)`; workers accept
 a fourth `{ signal }` argument. Broader cancellation/I/O qualification and
-progressive write collection remain unfinished.
+candidate/snapshot limits and remaining write collection paths remain unfinished.
 
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.

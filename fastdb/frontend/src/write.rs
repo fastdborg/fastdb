@@ -219,8 +219,8 @@ fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
 }
 impl Connection {
     /// Execute one data write and reject an oversized returned result atomically.
-    /// Native SQL rows are checked during frontend collection; logical writes
-    /// currently check the completed result before releasing the savepoint.
+    /// Native SQL and collection RETURNING rows are checked during frontend
+    /// collection. Native destinations with logical sources retain a final check.
     /// This does not bound engine or candidate materialization memory. SQL DML
     /// and supported object writes are accepted; transaction control and DDL are not.
     pub fn write_with_result_limits(
@@ -253,7 +253,9 @@ impl Connection {
             }
             self.atomic(|| {
                 let result = if let Some(sql) = &native_sql {
-                    if let Some(result) = self.collection_write(sql, params)? {
+                    if let Some(result) =
+                        self.collection_write_with_limits(sql, params, Some(limits))?
+                    {
                         result
                     } else if let Some(result) = self.collection_select(sql, params)? {
                         result
@@ -263,7 +265,7 @@ impl Connection {
                             .map(|profile| profile.result);
                     }
                 } else {
-                    self.execute(sql, params)?
+                    self.execute_inner_with_result_limits(sql, params, Some(limits))?
                 };
                 let mut budget = crate::budget::ResultBudget::new(Some(limits), &result.columns)?;
                 for row in &result.rows {
@@ -280,6 +282,7 @@ impl Connection {
         projection: Option<String>,
         documents: Vec<Document>,
         params: &Parameters,
+        limits: Option<crate::ResultLimits>,
     ) -> Result<QueryResult> {
         let Some(projection) = projection else {
             return Ok(QueryResult::command(documents.len() as i64));
@@ -318,6 +321,7 @@ impl Connection {
             &columns,
             documents,
             params,
+            limits,
         )
     }
     fn relational_insert_select(
@@ -379,6 +383,14 @@ impl Connection {
         &self,
         sql: &str,
         params: &Parameters,
+    ) -> Result<Option<QueryResult>> {
+        self.collection_write_with_limits(sql, params, None)
+    }
+    fn collection_write_with_limits(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: Option<crate::ResultLimits>,
     ) -> Result<Option<QueryResult>> {
         let normalized = crate::update::normalize(sql)?;
         let expanded = expand_paths(&expand_records(
@@ -502,7 +514,7 @@ impl Connection {
                     documents.push(self.insert(tbl_name.name.as_str(), doc)?);
                 }
                 Ok(Some(self.returning_rows(
-                    &tbl_name, &returning, documents, params,
+                    &tbl_name, &returning, documents, params, limits,
                 )?))
             }
             Stmt::Update(update) => {
@@ -560,6 +572,7 @@ impl Connection {
                     &update.returning,
                     documents,
                     params,
+                    limits,
                 )?))
             }
             Stmt::Delete {
@@ -587,7 +600,7 @@ impl Connection {
                         })?);
                 }
                 Ok(Some(self.returning_rows(
-                    &tbl_name, &returning, documents, params,
+                    &tbl_name, &returning, documents, params, limits,
                 )?))
             }
             _ => unreachable!("write statement dispatched above"),

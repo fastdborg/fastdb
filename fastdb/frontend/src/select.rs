@@ -3837,13 +3837,26 @@ impl Connection {
         columns: &[ResultColumn],
         documents: Vec<crate::Document>,
         params: &Parameters,
+        limits: Option<crate::ResultLimits>,
     ) -> Result<QueryResult> {
         let affected = documents.len() as i64;
         if columns.is_empty() {
             return Ok(QueryResult::command(affected));
         }
         if matches!(columns, [ResultColumn::Star]) {
-            return Ok(QueryResult::documents(documents, affected));
+            let columns = vec!["document".into()];
+            let mut budget = crate::budget::ResultBudget::new(limits, &columns)?;
+            let mut rows = Vec::new();
+            for document in documents {
+                let row = vec![Value::Object(document)];
+                budget.row(&row)?;
+                rows.push(row);
+            }
+            return Ok(QueryResult {
+                columns,
+                rows,
+                affected,
+            });
         }
         let projections = columns
             .iter()
@@ -3860,6 +3873,7 @@ impl Connection {
             quote(alias)
         );
         let mut result = None;
+        let mut budget = None;
         let inputs = if documents.is_empty() {
             vec![None]
         } else {
@@ -3878,12 +3892,18 @@ impl Connection {
                     },
                 )?
                 .ok_or_else(|| unsupported("RETURNING projection"))?;
+            if budget.is_none() {
+                budget = Some(crate::budget::ResultBudget::new(limits, &row.columns)?);
+            }
             let output = result.get_or_insert_with(|| QueryResult {
                 columns: row.columns.clone(),
                 rows: Vec::new(),
                 affected,
             });
-            output.rows.extend(row.rows);
+            for row in row.rows {
+                budget.as_mut().expect("projection budget").row(&row)?;
+                output.rows.push(row);
+            }
         }
         Ok(result.expect("at least metadata projection"))
     }

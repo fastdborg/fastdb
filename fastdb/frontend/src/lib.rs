@@ -567,6 +567,14 @@ impl Connection {
         parser_stack(|| self.execute_inner(sql, params))
     }
     fn execute_inner(&self, sql: &str, params: &Parameters) -> Result<QueryResult> {
+        self.execute_inner_with_result_limits(sql, params, None)
+    }
+    fn execute_inner_with_result_limits(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: Option<ResultLimits>,
+    ) -> Result<QueryResult> {
         use fastql_parser::Statement;
         let object = |expr| match self.evaluate(expr, params, None)? {
             Value::Object(doc) => Ok(doc),
@@ -605,7 +613,7 @@ impl Connection {
                 };
                 doc.insert("id".into(), Value::Record(record));
                 let doc = self.upsert(&table, doc)?;
-                self.object_returning(&table, returning, vec![doc], params)
+                self.object_returning(&table, returning, vec![doc], params, limits)
             }),
             Statement::PatchWhere {
                 table,
@@ -641,7 +649,7 @@ impl Connection {
                             .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
                     );
                 }
-                self.object_returning(&table, returning, docs, params)
+                self.object_returning(&table, returning, docs, params, limits)
             }),
             Statement::RemoveField { table, path } => {
                 self.remove_field(&table, &path)?;
@@ -715,7 +723,7 @@ impl Connection {
                 returning,
             } => self.atomic(|| {
                 let doc = self.insert(&table, object(value)?)?;
-                self.object_returning(&table, returning, vec![doc], params)
+                self.object_returning(&table, returning, vec![doc], params, limits)
             }),
             Statement::SelectRecord(record) => Ok(QueryResult::documents(
                 self.get(&record)?.into_iter().collect(),
@@ -727,17 +735,35 @@ impl Connection {
                 returning,
             } => self.atomic(|| {
                 let Some(before) = self.get(&target)? else {
-                    return self.object_returning(&target.table, returning, Vec::new(), params);
+                    return self.object_returning(
+                        &target.table,
+                        returning,
+                        Vec::new(),
+                        params,
+                        limits,
+                    );
                 };
                 let Value::Object(patch) = self.evaluate(value, params, Some(&before))? else {
                     return Err(Error::Validation("expected object patch".into()));
                 };
                 let doc = self.patch(&target, patch)?;
-                self.object_returning(&target.table, returning, doc.into_iter().collect(), params)
+                self.object_returning(
+                    &target.table,
+                    returning,
+                    doc.into_iter().collect(),
+                    params,
+                    limits,
+                )
             }),
             Statement::Delete { target, returning } => self.atomic(|| {
                 let doc = self.delete(&target)?;
-                self.object_returning(&target.table, returning, doc.into_iter().collect(), params)
+                self.object_returning(
+                    &target.table,
+                    returning,
+                    doc.into_iter().collect(),
+                    params,
+                    limits,
+                )
             }),
             Statement::Sql(sql) => self.sql(&sql, params),
         }

@@ -240,6 +240,39 @@ mod evaluation_tests {
                 assert_eq!(CALLS.load(Ordering::SeqCst), result.rows.len());
             }
         }
+        for write in [
+            "UPDATE docs SET n=n+10 RETURNING result_budget_tick(n) AS n",
+            "UPDATE docs {n:n+10} RETURNING result_budget_tick(n) AS n",
+            "INSERT INTO docs(n) VALUES(4),(5),(6) RETURNING result_budget_tick(n) AS n",
+            "DELETE FROM docs RETURNING result_budget_tick(n) AS n",
+        ] {
+            let before = c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows;
+            for accepted in [0, 1, 2] {
+                for row_limit in [false, true] {
+                    let limits = ResultLimits {
+                        max_rows: if row_limit { accepted } else { 3 },
+                        max_payload_bytes: if row_limit { 100 } else { 1 + 8 * accepted },
+                    };
+                    CALLS.store(0, Ordering::SeqCst);
+                    assert_eq!(
+                        c.write_with_result_limits(write, &p, limits)
+                            .unwrap_err()
+                            .code(),
+                        "FDB_LIMIT"
+                    );
+                    assert_eq!(
+                        CALLS.load(Ordering::SeqCst),
+                        accepted + 1,
+                        "{write}: {limits:?}"
+                    );
+                    assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+                    assert_eq!(
+                        c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows,
+                        before
+                    );
+                }
+            }
+        }
         let write = "INSERT INTO native VALUES(5),(6) RETURNING result_budget_tick(n) AS n";
         CALLS.store(0, Ordering::SeqCst);
         let error = c

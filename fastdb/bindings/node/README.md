@@ -297,8 +297,9 @@ Both clients expose `writeWithResultLimits(sql, limits, parameters?)`; the worke
 version accepts a fourth `{ signal }` argument. Use the same required bigint
 `maxRows` and `maxPayloadBytes` fields as bounded SELECT. Supported SQL data
 writes and object writes run in an operation savepoint. Native SQL checks each
-result row before frontend retention; logical writes check completed results
-before release; overflow returns `FDB_LIMIT` and rolls back that write,
+result row before frontend retention; collection SQL and object RETURNING check
+each projected row before retention. Native destinations with logical sources
+retain a completed-result check. In all cases, overflow returns `FDB_LIMIT` and rolls back that write,
 including index and trigger effects, using the existing recovery path.
 
 ```js
@@ -309,8 +310,8 @@ const result = await asyncDb.writeWithResultLimits(
 ```
 
 This is a result acceptance policy with progressive native frontend collection.
-**It does not bound engine RETURNING buffers, logical candidates or logical
-RETURNING materialization memory.** Transaction control, DDL, reads and multiple
+**It does not bound engine RETURNING buffers, write candidates, document
+snapshots or individual projection working memory.** Transaction control, DDL, reads and multiple
 statements are rejected. A write without RETURNING can succeed with zero budgets;
 affected rows do not count as returned rows. Empty RETURNING still charges column
 names. Cooperative cancellation uses the usual error/transaction envelope and

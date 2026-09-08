@@ -2662,3 +2662,27 @@ The complete scoped check passed 520 Rust tests (one existing ignored gate),
 `/tmp/fastdb-native-write-check.log`. Installed-package checks were not rerun for
 this internal collector change. Progressive logical writes, engine working
 memory, deadlines and broader V1 release qualification remain unfinished.
+
+### Progressive collection RETURNING result checks
+
+SQL collection writes and supported object writes now pass per-operation result
+limits into RETURNING evaluation. Each projected row is charged before retention,
+and document-star results use the same logical payload accounting. Overflow stops
+later RETURNING projection evaluation and rolls back the operation through its
+existing savepoints. Ordinary execution passes no explicit result limit. Candidate
+and document snapshot vectors are still materialized before projection; native
+destinations with logical sources retain the completed-result check.
+
+The volatile callback matrix adds 24 rejection cases across SQL insert/update/
+delete and object patch, proving only accepted rows plus the first rejected row
+execute their projection callback, with transaction/data restoration. Document-star
+boundary tests cover SQL update, object patch, upsert and record deletion, including
+index integrity and rollback after retry. Existing native, mixed-source, trigger,
+parameter, cancellation and Node typed RETURNING regressions continue to pass.
+
+The complete scoped check passed 521 Rust tests (one existing ignored gate),
+70 Node/application tests, formatting, Clippy and strict TypeScript. Log:
+`/tmp/fastdb-logical-returning-check.log`. No installed-package smoke was rerun for
+this internal collection change. Candidate/snapshot budgets, remaining mixed native
+result paths, engine working memory, deadlines and the broader V1 release gates
+remain unfinished.

@@ -407,3 +407,61 @@ fn rejected_write_result_rolls_back_trigger_effects_across_reopen() {
         );
     }
 }
+
+#[test]
+fn collection_returning_star_uses_document_payload_budget() {
+    for write in [
+        "UPDATE docs SET n=2 RETURNING *",
+        "UPDATE docs {n:2} RETURNING *",
+        "UPSERT docs:a {n:2} RETURNING *",
+        "DELETE FROM docs:a RETURNING *",
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let p = Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE INDEX docs_n ON docs(n)",
+            "INSERT INTO docs {id:docs:a,n:1}",
+            "BEGIN",
+        ] {
+            c.execute(sql, &p).unwrap();
+        }
+        let before = c.execute("SELECT * FROM docs", &p).unwrap().rows;
+        for limits in [
+            ResultLimits {
+                max_rows: 0,
+                max_payload_bytes: 24,
+            },
+            ResultLimits {
+                max_rows: 1,
+                max_payload_bytes: 23,
+            },
+        ] {
+            assert_eq!(
+                c.write_with_result_limits(write, &p, limits)
+                    .unwrap_err()
+                    .code(),
+                "FDB_LIMIT"
+            );
+            assert_eq!(c.execute("SELECT * FROM docs", &p).unwrap().rows, before);
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap();
+        }
+        let result = c
+            .write_with_result_limits(
+                write,
+                &p,
+                ResultLimits {
+                    max_rows: 1,
+                    max_payload_bytes: 24,
+                },
+            )
+            .unwrap();
+        assert_eq!(result.columns, vec!["document"]);
+        assert_eq!(result.rows.len(), 1);
+        c.execute("ROLLBACK", &p).unwrap();
+        assert_eq!(c.execute("SELECT * FROM docs", &p).unwrap().rows, before);
+    }
+}
