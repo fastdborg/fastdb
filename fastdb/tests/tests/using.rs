@@ -2947,3 +2947,54 @@ fn local_cte_merged_keys_match_native_shadowing() {
         }
     }
 }
+
+#[test]
+fn local_cte_parameters_preserve_typed_projections() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(n INTEGER)",
+        "CREATE TABLE keys(n INTEGER)",
+        "INSERT INTO docs(n) VALUES(1),(2),(3)",
+        "INSERT INTO baseline VALUES(1),(2),(3)",
+        "INSERT INTO keys VALUES(1),(4)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    for value in [
+        Value::Null,
+        Value::Boolean(true),
+        Value::Integer(i64::MAX),
+        Value::String("A ".into()),
+        Value::Record(fastdb::Record {
+            table: "docs".into(),
+            key: fastdb::Key::Integer(7),
+        }),
+        Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec()),
+        Value::Array(vec![Value::Integer(1)]),
+    ] {
+        let params = Parameters::from([("$value".into(), value.clone())]);
+        for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for (definition, projection) in [
+                ("n AS m", "$value"),
+                ("n AS m,$value AS payload", "payload"),
+            ] {
+                let sql = format!("SELECT n,(WITH chosen AS {materialization} (SELECT {definition} FROM baseline) SELECT {projection} FROM chosen WHERE m<n LIMIT 1) AS value FROM docs a RIGHT JOIN keys b USING(n) ORDER BY n");
+                let actual = c
+                    .execute(&sql, &params)
+                    .unwrap_or_else(|error| panic!("{sql}: {error}"));
+                assert_eq!(actual.columns, vec!["n", "value"], "{sql}");
+                assert_eq!(
+                    actual.rows,
+                    vec![
+                        vec![Value::Integer(1), Value::Null],
+                        vec![Value::Integer(4), value.clone()]
+                    ],
+                    "{sql}"
+                );
+            }
+        }
+    }
+}
