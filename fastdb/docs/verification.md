@@ -3132,3 +3132,22 @@ and rows match native tables. All thirteen iterator tests and formatting passed;
 log `/tmp/fastdb-cte-projection-scope.log`. This extends SQL fixtures only from
 `f4497c984`; no implementation change or full-suite/client rerun is claimed.
 Full V1 release gates remain open; no publication occurred.
+
+
+## Installed native CTE projection consumers — 2026-09-09
+
+The offline Node package consumer now combines the native CTE projection fixes
+with deep document paths and main/temp-qualified JSON iterators. Both sync and
+worker clients verify execute/profile results for arithmetic and UNION ALL CTE
+projections against persisted source documents. Existing consumer checks retain
+transaction recovery, reopen, notices, incompatible-addon diagnostics and strict
+TypeScript coverage.
+
+Package checks passed on Linux x64 with Node 22.0.0 and 24.19.0, using the same
+debug addon: ten files, 60,678,389 packed bytes, SHA-256
+`b968f819cda7ebbf6f9d0b7337b05738fb9c112c3cd94da401b5e6c214fb88eb`.
+Logs `/tmp/fastdb-cte-projections-package22.log` and
+`/tmp/fastdb-cte-projections-package24.log`. Both commands exited zero. Only the
+consumer harness and documentation changed from `4e813991c`; no native rebuild
+or new source-suite run is claimed. No registry access or publication occurred.
+Final artifacts, other platforms and full V1 release qualification remain open.

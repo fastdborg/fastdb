@@ -335,6 +335,15 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     const sql='SELECT d.n,x.value,y.value'+from+' ORDER BY d.n,x.key';
     const params={$delta:1n};
     const rows=[[1n,1n,2n],[1n,2n,3n],[2n,3n,4n]];
+    for(const [projection,expected] of [
+      ['(WITH a AS (SELECT d.n+x.value AS v FROM main.json_each(d.payload.inner.j) x) SELECT sum(v) FROM a)',[[1n,5n],[2n,5n]]],
+      ['(WITH a AS (SELECT x.value AS v FROM temp.json_each(d.payload.inner.j) x UNION ALL SELECT d.n) SELECT sum(v) FROM a)',[[1n,4n],[2n,5n]]]
+    ]) {
+      const projected='SELECT d.n,'+projection+' AS total FROM '+docs+' d ORDER BY d.n';
+      assert.deepEqual((await client.execute(projected)).rows,expected);
+      assert.deepEqual((await client.profileSelect(projected)).result.rows,expected);
+    }
+
     assert.deepEqual((await client.execute(sql,params)).rows,rows);
     assert.deepEqual((await client.profileSelect(sql,params)).result.rows,rows);
     await assert.rejects(async()=>client.execute(sql),error=>isFastDBError(error) && error.code==='FDB_PARAMETER');
