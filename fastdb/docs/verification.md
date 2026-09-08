@@ -3093,3 +3093,19 @@ The full scoped check continued through the turn interruption and exited zero:
 `8db691800` with this fix. No source edits occurred during the run. No upstream
 source or dependencies changed. Broader CTE/type propagation and full V1 release
 gates remain open; no publication occurred.
+
+
+## Correlated CTE projection write recovery — 2026-09-09
+
+A regression now writes results from both native CTE projection fixes: arithmetic
+combining an outer collection field with iterator values, and UNION ALL combining
+iterator rows with an outer scalar. In both cases a later candidate fails field
+validation. Tests verify active transaction preservation, prior rows, removal of
+failed index entries, successful filtered retry and outer rollback.
+
+All thirteen iterator integration tests passed, plus fastdb-tests formatting and
+all-target Clippy with warnings denied. Logs `/tmp/fastdb-cte-projection-writes.log`
+and `/tmp/fastdb-cte-projection-writes-clippy.log`. Only tests/documentation changed
+from `3184c18ad`; no new full-suite or client run is claimed. The full scoped
+baseline remains 572 Rust and 82 Node/application passes with one ignored trigger
+gate. Full V1 release gates remain open; no publication occurred.

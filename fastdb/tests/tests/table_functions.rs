@@ -852,3 +852,33 @@ fn malformed_iterator_input_reports_native_rollback_and_allows_retry() {
         }
     }
 }
+
+#[test]
+fn correlated_cte_projection_writes_preserve_validation_and_retry() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) VALUES(1,'[1]'),(2,'[2]')",
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<4)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    for expression in ["(WITH a AS (SELECT d.n+x.value AS v FROM json_each(d.j) x) SELECT sum(v) FROM a)","(WITH a AS (SELECT x.value AS v FROM json_each(d.j) x UNION ALL SELECT d.n) SELECT sum(v) FROM a)"] {
+        c.execute("BEGIN",&empty).unwrap();
+        c.execute("INSERT INTO output(n) VALUES(0)",&empty).unwrap();
+        let sql=format!("INSERT INTO output(n) SELECT {expression} FROM docs d ORDER BY d.n RETURNING n");
+        assert_eq!(c.execute(&sql,&empty).unwrap_err().code(),"FDB_VALIDATION");
+        assert_eq!(c.transaction_state(),fastdb::TransactionState::Active);
+        assert_eq!(c.execute("SELECT n FROM output",&empty).unwrap().rows,vec![vec![Value::Integer(0)]]);
+        assert!(c.lookup_index("output","output_n",&Value::Integer(2)).unwrap().is_empty());
+        let retry=sql.replace("FROM docs d ORDER","FROM docs d WHERE d.n=1 ORDER");
+        assert_eq!(c.execute(&retry,&empty).unwrap().rows,vec![vec![Value::Integer(2)]]);
+        assert_eq!(c.check_collection_integrity("output",fastdb::IntegrityLimits::default()).unwrap().index_entries,2);
+        c.execute("ROLLBACK",&empty).unwrap();
+        assert_eq!(c.check_collection_integrity("output",fastdb::IntegrityLimits::default()).unwrap().documents,0);
+    }
+}
