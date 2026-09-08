@@ -4596,3 +4596,15 @@ tests and scoped formatting passed. Log `/tmp/fastdb-tuple-buffer.log`.
 Only SQL fixtures/documentation changed from `6f838c4dd`; no full-suite/client
 or new Clippy run is claimed. These are candidate-buffer limits, not a total
 engine-memory bound. Full V1 gates remain open.
+
+
+## Tuple RETURNING result limits — 2026-09-09
+
+The write-result-limit matrix now covers source-free tuple SELECTs and tuple
+self-lookups, with and without an outer transaction. Output-limit rejection
+restores complete document snapshots, including newly assigned fields, while
+retaining prior work under the existing test's transaction checks.
+All seven result-limit tests and scoped formatting passed. Log
+`/tmp/fastdb-tuple-returning-limits.log`. Only SQL fixtures/documentation changed
+from `e0e9303e0`; no new full-suite/client or Clippy run is claimed. Full V1 gates
+remain open.

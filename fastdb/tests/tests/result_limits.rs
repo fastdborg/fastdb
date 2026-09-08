@@ -203,6 +203,16 @@ fn write_result_limit_failure_restores_statement_and_prior_work() {
             ),
             (
                 "INSERT INTO docs {id:docs:a,n:1}",
+                "UPDATE docs SET (n,a)=(SELECT n+10,n) RETURNING n",
+                "SELECT * FROM docs",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
+                "UPDATE docs SET (n,a)=(SELECT x.n+10,x.n FROM docs x WHERE x.id=docs.id) RETURNING n",
+                "SELECT * FROM docs",
+            ),
+            (
+                "INSERT INTO docs {id:docs:a,n:1}",
                 "UPDATE docs {n:n+10} RETURNING n",
                 "SELECT n FROM docs",
             ),
