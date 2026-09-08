@@ -4395,3 +4395,15 @@ formatting and all-target fastdb-tests Clippy with warnings denied. Logs:
 `/tmp/fastdb-limit-validation.log` and `/tmp/fastdb-limit-validation-clippy.log`.
 Only tests/docs changed from `fb3d2870b`; no new full-suite/client run is claimed.
 Full V1 remains open.
+
+
+## Limited write RETURNING comparison — 2026-09-09
+
+The UPDATE/DELETE pagination differential matrix now verifies RETURNING column
+names and values as well as affected counts, final rows and rollback. Coverage
+includes empty pages, negative limits, offsets, arithmetic, integral real and
+numeric string limits. All 40 write tests passed; formatting and all-target
+fastdb-tests Clippy with warnings denied passed. Logs:
+`/tmp/fastdb-limit-returning.log` and `/tmp/fastdb-limit-returning-clippy.log`.
+Only tests/docs changed from `22339a705`; no new full-suite/client run is claimed.
+Full V1 remains open.

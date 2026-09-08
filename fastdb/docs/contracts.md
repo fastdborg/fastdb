@@ -24,6 +24,16 @@ UPSERT requires a typed id and either inserts or shallow-patches that id atomica
 
 Field CHECK evaluates a side-effect-free SQL expression against bound final-candidate fields. False and SQL NULL fail; missing optional and permitted-null fields skip their attached check. New/overwritten definitions validate existing data before publication. User parameters, database reads, aggregates, windows, current-time expressions and non-eligible functions are rejected even on an empty collection. The approved function/operator set is listed in status.md; ordinary relational SQL CHECK constraints retain engine behavior. New CHECK metadata requires catalog version 2 to avoid silently weakening validation in version-aware older builds.
 
+## Limited writes
+
+Collection UPDATE and DELETE accept LIMIT/OFFSET, including bound parameters.
+The limit applies to candidate selection before mutation and RETURNING reports
+only changed rows. LIMIT 0 changes no rows; a negative limit removes the count
+bound. Unordered writes do not guarantee which qualifying rows are selected.
+Missing pagination bindings report FDB_PARAMETER before candidate execution.
+The existing statement rollback and managed-index guarantees apply. Broader
+planner, expression and cancellation qualification remains open.
+
 ## Tuple updates
 
 Collection UPDATE supports simultaneous top-level assignments such as

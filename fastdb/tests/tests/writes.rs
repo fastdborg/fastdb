@@ -1641,9 +1641,17 @@ fn update_limit_matches_native_candidates() {
         "'1' OFFSET '1'",
     ] {
         q(&c, "BEGIN");
-        let expected = q(&c, &format!("UPDATE native SET n=n+10 LIMIT {limit}"));
-        let actual = q(&c, &format!("UPDATE docs SET n=n+10 LIMIT {limit}"));
+        let expected = q(
+            &c,
+            &format!("UPDATE native SET n=n+10 RETURNING n LIMIT {limit}"),
+        );
+        let actual = q(
+            &c,
+            &format!("UPDATE docs SET n=n+10 RETURNING n LIMIT {limit}"),
+        );
         assert_eq!(actual.affected, expected.affected);
+        assert_eq!(actual.columns, expected.columns);
+        assert_eq!(actual.rows, expected.rows);
         assert_eq!(
             q(&c, "SELECT n FROM docs ORDER BY n").rows,
             q(&c, "SELECT n FROM native ORDER BY n").rows
@@ -1676,9 +1684,11 @@ fn delete_limit_matches_native_and_restores_indexes() {
         "'1' OFFSET '1'",
     ] {
         q(&c, "BEGIN");
-        let expected = q(&c, &format!("DELETE FROM native LIMIT {limit}"));
-        let actual = q(&c, &format!("DELETE FROM docs LIMIT {limit}"));
+        let expected = q(&c, &format!("DELETE FROM native RETURNING n LIMIT {limit}"));
+        let actual = q(&c, &format!("DELETE FROM docs RETURNING n LIMIT {limit}"));
         assert_eq!(actual.affected, expected.affected);
+        assert_eq!(actual.columns, expected.columns);
+        assert_eq!(actual.rows, expected.rows);
         let remaining = q(&c, "SELECT n FROM native ORDER BY n").rows;
         assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, remaining);
         for n in 1..=3 {
