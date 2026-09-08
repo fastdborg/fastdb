@@ -1214,3 +1214,27 @@ test('duplicate projection names preserve positional values in both clients', as
     } finally { await db.close(); }
   }
 });
+
+test('nested USING runtime errors report outer rollback in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of ['CREATE TABLE docs', 'INSERT INTO docs {k:1,v:[]}', 'INSERT INTO docs {k:2,v:7}', 'CREATE TABLE b(k INTEGER)', 'INSERT INTO b VALUES(1),(2)', 'CREATE TABLE copied', 'INSERT INTO copied {k:99,v:[]}']) await db.execute(sql);
+      const insert = 'INSERT INTO copied(k,v) SELECT k,(SELECT (SELECT array::append(a.v,2))) FROM docs a JOIN b USING(k) ORDER BY k';
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO copied {k:98,v:[]}');
+      await assert.rejects(async () => db.execute(insert), error => {
+        assert.deepEqual(error.transaction, { before: 'active', after: 'autocommit' });
+        return true;
+      });
+      assert.deepEqual((await db.execute('SELECT k FROM copied ORDER BY k')).rows, [[99n]]);
+      await db.execute('BEGIN');
+      await db.execute('UPDATE docs SET v=array::new() WHERE k=2');
+      await db.execute(insert);
+      assert.deepEqual((await db.execute('SELECT k,v FROM copied WHERE k<>99 ORDER BY k')).rows, [[1n,[2n]],[2n,[2n]]]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual((await db.execute('SELECT k FROM copied ORDER BY k')).rows, [[99n]]);
+    } finally { await db.close(); }
+  }
+});
