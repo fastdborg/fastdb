@@ -3007,3 +3007,17 @@ document. The focused regression passed, including its existing invalid-value an
 nesting checks; log: `/tmp/fastdb-borrowed-vector-format.log`. Scoped formatting and
 diff checks passed. No production code changed or broader suite was repeated;
 this extends format evidence without closing platform or broader V1 gates.
+
+### UPSERT consumes its input document
+
+Both direct UPSERT branches now consume the owned input document instead of
+cloning it: existing records merge its fields into the loaded document, and new
+records pass it into INSERT. Transaction, shallow-merge, validation and returned
+snapshot behavior remain unchanged.
+
+All 27 catalog/RETURNING/write-buffer integration tests passed, covering insertion,
+existing-record merge, uniqueness/validation failures, rollback and snapshot-limit
+rejection. Frontend Clippy and formatting passed. Logs:
+`/tmp/fastdb-upsert-ownership.log` and
+`/tmp/fastdb-upsert-ownership-clippy.log`. No broader or installed-client checks
+were repeated for this ownership change. Broader V1 gates remain open.

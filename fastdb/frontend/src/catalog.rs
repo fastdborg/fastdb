@@ -281,11 +281,11 @@ impl Connection {
                 unreachable!("normalized id");
             };
             if let Some(mut existing) = self.get_in(&c, id)? {
-                existing.extend(doc.clone());
+                existing.extend(doc);
                 self.replace_document(&c, &existing)?;
                 Ok(existing)
             } else {
-                self.insert(&c.name, doc.clone())
+                self.insert(&c.name, doc)
             }
         })
     }
