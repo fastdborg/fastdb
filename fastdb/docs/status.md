@@ -2037,3 +2037,12 @@ The complete fastdb/scripts/check.sh run passed formatting, Clippy, 440 Rust tes
 
 
 USING operand-order qualification (2026-09-08): all four USING/oracle tests pass. A new NOCASE/BINARY fixture confirms that the pinned RIGHT JOIN source swap also reverses USING equality operand order, changing matches relative to explicit ON a.k=b.k. Reversed-source controls pass. Corrected using-joins.md to require normalized, not original written, operand order. Collection USING remains unimplemented; this prevents an incorrect predicate rewrite in the planned implementation. Formatting and the focused suite pass; latest full scoped evidence remains 440 Rust/48 Node with one ignored Rust gate.
+
+
+## Initial collection USING join lowering (2026-09-08)
+
+Added merged-key bindings and per-source star suppression before projection lowering. USING becomes normalized-order equality predicates using the existing typed comparison path; unqualified merged keys resolve to the retained source while qualified columns and whole-document stars retain source identity. Closed/native missing keys reject during resolution; optional collection fields use ordinary missing-value semantics. Initial INNER/LEFT/leading-RIGHT and chained joins match native read oracles. RIGHT star order and collation operand order remain pinned behavior.
+
+Tests cover 24 closed-source projection/join shapes, direct collection keys, profiling, NOCASE/BINARY controls, typed record-key INSERT SELECT, unique-index failure/rollback/reuse, and both Node clients. NATURAL/FULL USING remain unsupported. Multi-key implementation cases, correlated/name scopes, grouping/windows, duplicate-key columns and broader affinity/resource qualification remain open; using-joins.md records the work.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 443 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-using-check.log. Full V1 qualification remains incomplete.

@@ -1,6 +1,6 @@
 # USING join implementation work
 
-Collection SELECT lowering still rejects USING and NATURAL joins. This note records the pinned native oracle and required lowering work; it does not claim collection support.
+Initial collection USING lowering now supports INNER/LEFT/leading-RIGHT joins, chained merged keys, qualified key references and closed-source star suppression. The implementation builds comparison predicates in normalized operand order and keeps merged-key bindings separate from source columns. Collection stars remain whole documents. NATURAL and FULL USING remain rejected; this is not complete join release qualification.
 
 `tests/tests/using.rs` verifies ordinary native tables `a(k,left_value)` and `b(k,right_value)`, with matching key 1 and unmatched keys 2/3:
 
@@ -10,16 +10,19 @@ Collection SELECT lowering still rejects USING and NATURAL joins. This note reco
 - Unqualified `k` resolves to the retained side, including the unmatched right row.
 - The tested FULL JOIN USING(k) form rejects with the pinned equality-condition error. Do not silently implement a different native behavior.
 
-Implementation needs a shared merged-column representation before projection/star expansion, field resolution and join-predicate lowering. Replacing USING with ON alone loses unqualified-name resolution and star suppression. Preserve the pinned planner's normalized equality operand order for affinity/collation, source-specific qualified access, left/right NULL extension and post-join filtering. Chained joins need the previously merged left input, not an arbitrary physical source.
+The implementation now builds merged-column metadata before projection/star expansion, field resolution and join-predicate lowering. Replacing USING with ON alone loses unqualified-name resolution and star suppression. Preserve the pinned planner's normalized equality operand order for affinity/collation, source-specific qualified access, left/right NULL extension and post-join filtering. Chained joins need the previously merged left input, not an arbitrary physical source.
 
 Collection stars still represent whole documents under the existing result contract. Do not turn them into variable-schema field expansion while adding join keys. Closed derived/native stars need the pinned suppression/order rules. Explicit USING names must resolve consistently without discovering optional collection fields by executing queries.
 
-Before enabling the syntax, extend the oracle for multiple keys, chained joins, case/quoted names, duplicate outputs, missing keys, NULLs, native affinity/collation and typed record/binary keys. Cover GROUP/ORDER aliases, execute/profile/EXPLAIN, INSERT SELECT constraints and rollback. NATURAL joins require a separate known-column intersection policy and must not be enabled incidentally.
+Remaining qualification must extend the implementation tests for multiple keys, chained joins, case/quoted names, duplicate outputs, missing keys, NULLs, native affinity/collation and typed record/binary keys. Cover GROUP/ORDER aliases, execute/profile/EXPLAIN, INSERT SELECT constraints and rollback. NATURAL joins require a separate known-column intersection policy and must not be enabled incidentally.
 
 
 The multiple-key/chained oracle now also verifies that USING(t,k) does not reorder the retained table columns. A LEFT JOIN on (k,t) followed by JOIN c USING(k) retains the left key when the earlier right row is unmatched. The pinned `a RIGHT JOIN b USING(k,t) JOIN c USING(k)` star expands to `c,a,k,t,b` for the fixture, reflecting engine join reordering. Do not assume written FROM order when implementing RIGHT-join stars; inspect the pinned planner's join normalization and preserve qualified-star behavior separately.
 
-Mixed ON-query unqualified star ordering now mirrors the pinned leading-RIGHT swap/reverse behavior, with differential read/write tests. This does not yet add merged USING keys or enable collection USING syntax.
+Mixed ON-query unqualified star ordering now mirrors the pinned leading-RIGHT swap/reverse behavior, with differential read/write tests. Merged USING keys and collection USING syntax now have initial support, as described above.
 
 
 The collation oracle verifies that RIGHT JOIN USING compares the written right-side key first after normalization. With left NOCASE 'A' and right BINARY 'a', INNER/LEFT USING match while RIGHT USING does not; explicit ON a.k=b.k still matches. Reversing the written sources reverses these USING comparison outcomes. A textual USING-to-ON rewrite with unchanged written operand order is therefore incorrect.
+
+
+Initial implementation verification covers 24 closed-source read shapes (inner/left/right, optional following USING join, unqualified/qualified stars, merged/qualified keys and arithmetic), direct collection key lookup, normal/profiled results, normalized NOCASE/BINARY comparison order, typed record-key writes with uniqueness failure/rollback/reuse, and both Node clients. Multi-key implementation cases, aliases/grouping/window scopes, correlated references, duplicate-key columns, missing/native virtual columns and complete resource/evaluation qualification remain open.

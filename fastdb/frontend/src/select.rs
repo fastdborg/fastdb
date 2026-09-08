@@ -93,6 +93,7 @@ fn native_correlated_predicate(
         }
     }
     let scope = Scope {
+        using: UsingColumns::default(),
         qualified_only: true,
         expression_subqueries: Default::default(),
         sources: sources
@@ -365,7 +366,107 @@ type ExpressionSubqueries = std::collections::BTreeMap<
     String,
     (Expr, std::collections::BTreeSet<String>, SubqueryAffinity),
 >;
+#[derive(Default)]
+struct UsingColumns {
+    bindings: std::collections::BTreeMap<String, (usize, String)>,
+    hidden: std::collections::BTreeSet<(usize, String)>,
+}
+fn prepare_using(from: Option<&mut FromClause>, sources: &[Source]) -> Result<UsingColumns> {
+    let mut merged = UsingColumns::default();
+    let Some(from) = from else { return Ok(merged) };
+    if !from
+        .joins
+        .iter()
+        .any(|join| matches!(join.constraint, Some(JoinConstraint::Using(_))))
+    {
+        return Ok(merged);
+    }
+    let column = |index: usize, name: &str| -> Option<String> {
+        let source = &sources[index];
+        if source.collection.is_some() {
+            return Some(name.into());
+        }
+        source.derived.as_ref().and_then(|columns| {
+            columns
+                .iter()
+                .position(|(column, _)| column.eq_ignore_ascii_case(name))
+                .map(|position| {
+                    source.derived_physical.as_ref().map_or_else(
+                        || columns[position].0.clone(),
+                        |names| names[position].clone(),
+                    )
+                })
+        })
+    };
+    let mut order = vec![0];
+    for (position, join) in from.joins.iter_mut().enumerate() {
+        order.push(position + 1);
+        let kind = match join.operator {
+            JoinOperator::TypedJoin(Some(kind)) => Some(kind),
+            _ => None,
+        };
+        let right = kind
+            .is_some_and(|kind| kind.contains(JoinType::RIGHT) && !kind.contains(JoinType::LEFT));
+        if right {
+            if position != 0 {
+                return Err(unsupported("RIGHT JOIN following another join"));
+            }
+            order.swap(0, 1);
+        }
+        let Some(JoinConstraint::Using(names)) = &join.constraint else {
+            continue;
+        };
+        if kind.is_some_and(|kind| {
+            (kind.contains(JoinType::LEFT) && kind.contains(JoinType::RIGHT))
+                || (kind.contains(JoinType::OUTER)
+                    && !kind.contains(JoinType::LEFT)
+                    && !kind.contains(JoinType::RIGHT))
+        }) {
+            return Err(unsupported("FULL JOIN USING"));
+        }
+        let right_index = *order.last().unwrap();
+        let mut predicate = None;
+        for name in names {
+            let key = name.as_str().to_ascii_lowercase();
+            let left = order[..order.len() - 1]
+                .iter()
+                .find_map(|index| column(*index, name.as_str()).map(|name| (*index, name)))
+                .ok_or_else(|| {
+                    Error::Validation(format!(
+                        "USING column {} is absent from the left source",
+                        name.as_str()
+                    ))
+                })?;
+            let right_column = column(right_index, name.as_str()).ok_or_else(|| {
+                Error::Validation(format!(
+                    "USING column {} is absent from the right source",
+                    name.as_str()
+                ))
+            })?;
+            let equality = expression(&format!(
+                "{}.{} = {}.{}",
+                quote(&sources[left.0].alias),
+                quote(&left.1),
+                quote(&sources[right_index].alias),
+                quote(&right_column)
+            ))?;
+            predicate = Some(match predicate {
+                None => equality,
+                Some(previous) => {
+                    Expr::Binary(Box::new(previous), Operator::And, Box::new(equality))
+                }
+            });
+            merged.bindings.insert(key.clone(), left);
+            merged.hidden.insert((right_index, key));
+        }
+        join.constraint = Some(JoinConstraint::On(Box::new(
+            predicate.unwrap_or(expression("1")?),
+        )));
+    }
+    Ok(merged)
+}
 struct Scope {
+    using: UsingColumns,
     qualified_only: bool,
     expression_subqueries: ExpressionSubqueries,
     sources: Vec<Source>,
@@ -375,7 +476,32 @@ struct Scope {
     standalone_aliases: std::cell::RefCell<std::collections::BTreeMap<String, (Expr, bool)>>,
 }
 impl Scope {
+    fn qualify_using(&self, expr: &mut Expr) {
+        if self.using.bindings.is_empty() {
+            return;
+        }
+        if let Expr::Id(name) | Expr::Name(name) = expr {
+            let key = name.as_str().to_ascii_lowercase();
+            if !self.standalone_aliases.borrow().contains_key(&key) {
+                if let Some((index, column)) = self.using.bindings.get(&key) {
+                    *expr = Expr::Qualified(
+                        Name::exact(self.sources[*index].alias.clone()),
+                        Name::exact(column.clone()),
+                    );
+                }
+            }
+        }
+    }
     fn field(&self, expr: &Expr) -> Result<Option<(usize, Vec<String>)>> {
+        let mut qualified;
+        let expr = if matches!(expr, Expr::Id(_) | Expr::Name(_)) && !self.using.bindings.is_empty()
+        {
+            qualified = expr.clone();
+            self.qualify_using(&mut qualified);
+            &qualified
+        } else {
+            expr
+        };
         let parts = match expr {
             Expr::Id(n) | Expr::Name(n) => vec![n.as_str().to_owned()],
             Expr::Qualified(a, b) => vec![a.as_str().into(), b.as_str().into()],
@@ -520,6 +646,7 @@ impl Scope {
         runtime
     }
     fn preserved(&self, expr: &mut Expr) -> Result<bool> {
+        self.qualify_using(expr);
         // This compiler-only marker carries a derived column's logical type
         // across recursive lowering without adding a runtime conversion.
         if let Expr::FunctionCall { name, args, .. } = expr {
@@ -899,6 +1026,7 @@ impl Scope {
         Ok(())
     }
     fn lower(&self, expr: &mut Expr) -> Result<()> {
+        self.qualify_using(expr);
         if matches!(expr, Expr::InSelect { .. }) {
             if let Some((query, consumed, column)) =
                 self.expression_subqueries.get(&expr.to_string())
@@ -2890,6 +3018,7 @@ impl Connection {
                             }))
                 });
             let outer_scope = Scope {
+                using: UsingColumns::default(),
                 qualified_only: true,
                 expression_subqueries: Default::default(),
                 sources: correlation_sources.to_vec(),
@@ -2990,6 +3119,7 @@ impl Connection {
                 }
             {
                 let scope = Scope {
+                    using: UsingColumns::default(),
                     qualified_only: true,
                     expression_subqueries: Default::default(),
                     sources: correlation_sources
@@ -3610,6 +3740,7 @@ impl Connection {
             }
             let width = rows.first().map_or(0, Vec::len);
             let scope = Scope {
+                using: UsingColumns::default(),
                 qualified_only: false,
                 expression_subqueries,
                 sources: Vec::new(),
@@ -3928,7 +4059,9 @@ impl Connection {
             .flat_map(|s| s.consumed.iter().cloned())
             .chain(cte_consumed)
             .collect();
+        let using = prepare_using(from.as_mut(), &sources)?;
         let mut scope = Scope {
+            using,
             qualified_only: false,
             expression_subqueries,
             sources,
@@ -4344,6 +4477,7 @@ impl Connection {
         if let Some(limit) = &mut select.limit {
             // Pagination has no access to outer fields or projection aliases.
             let pagination = Scope {
+                using: UsingColumns::default(),
                 qualified_only: false,
                 expression_subqueries: scope.expression_subqueries.clone(),
                 sources: Vec::new(),
@@ -4989,8 +5123,23 @@ fn expand_stars(
             return Err(Error::Validation("star requires a source".into()));
         }
         for source in sources {
+            let source_index = scope
+                .sources
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, source))
+                .unwrap();
+            let hidden = |name: &str| {
+                matches!(column, ResultColumn::Star)
+                    && scope
+                        .using
+                        .hidden
+                        .contains(&(source_index, name.to_ascii_lowercase()))
+            };
             if let Some(columns) = &source.derived {
                 for (position, (name, _)) in columns.iter().enumerate() {
+                    if hidden(name) {
+                        continue;
+                    }
                     let physical = source
                         .derived_physical
                         .as_ref()
@@ -5025,6 +5174,9 @@ fn expand_stars(
             let statement = connection.prepare(Cmd::Stmt(Stmt::Select(probe)).to_string())?;
             for i in 0..statement.num_columns() {
                 let name = statement.get_column_name(i).into_owned();
+                if hidden(&name) {
+                    continue;
+                }
                 expanded.push(ResultColumn::Expr(
                     Box::new(expression(&format!(
                         "{}.{}",

@@ -1195,6 +1195,9 @@ test('duplicate projection names preserve positional values in both clients', as
       const named = await db.execute('WITH q(x,x) AS (SELECT 10,20) SELECT v.X FROM docs d JOIN q v ON 1');
       assert.deepEqual(named.columns, ['x']);
       assert.deepEqual(named.rows, [[10n]]);
+      const using = await db.execute('SELECT * FROM (SELECT n FROM docs) a JOIN (SELECT 1 AS n,2 AS extra) b USING(n)');
+      assert.deepEqual(using.columns, ['n','extra']);
+      assert.deepEqual(using.rows, [[1n,2n]]);
     } finally { await db.close(); }
   }
 });
