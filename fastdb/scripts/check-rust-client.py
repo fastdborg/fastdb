@@ -41,8 +41,43 @@ def main():
         shutil.copyfile(ROOT / "Cargo.lock", consumer / "Cargo.lock")
         (consumer / "src" / "main.rs").write_text(r'''
 use fastdb::{Database, Parameters, Record, Key, Value, IntegrityLimits, IntegrityReport, ProfiledQuery, ResultLimits, CancellationToken};
+fn iterator_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let empty=Parameters::new();
+    let params=Parameters::from([("$delta".into(),Value::Integer(1))]);
+    let query="SELECT d.n AS n,y.value AS v FROM iterator_docs d CROSS JOIN json_each(d.payload.inner.j) x CROSS JOIN json_each((WITH a AS (SELECT x.value+$delta AS n) SELECT json_array(n) FROM a)) y ORDER BY d.n,x.key";
+    let expected=vec![vec![Value::Integer(1),Value::Integer(2)],vec![Value::Integer(1),Value::Integer(3)],vec![Value::Integer(2),Value::Integer(4)]];
+    {
+        let db=Database::open(file)?;
+        let c=db.connect()?;
+        c.execute("CREATE TABLE iterator_docs",&empty)?;
+        for (n,json) in [(1,"[1,2]"),(2,"[3]")] {
+            let payload=Value::Object(std::collections::BTreeMap::from([("inner".into(),Value::Object(std::collections::BTreeMap::from([("j".into(),Value::String(json.into()))])))]));
+            c.execute("INSERT INTO iterator_docs(n,payload) VALUES($n,$p)",&Parameters::from([("$n".into(),Value::Integer(n)),("$p".into(),payload)]))?;
+        }
+        let limits=ResultLimits {max_rows:3,max_payload_bytes:50};
+        assert_eq!(c.select_with_limits(query,&params,limits)?.rows,expected);
+        assert_eq!(c.profile_select_with_limits(query,&params,limits)?.result.rows,expected);
+        assert_eq!(c.select_with_limits(query,&params,ResultLimits {max_payload_bytes:49,..limits}).unwrap_err().code(),"FDB_LIMIT");
+        assert_eq!(c.execute(query,&empty).unwrap_err().code(),"FDB_PARAMETER");
+        for sql in ["CREATE TABLE iterator_output","DEFINE FIELD n ON iterator_output TYPE integer CHECK(n<4)","CREATE UNIQUE INDEX iterator_n ON iterator_output(n)","BEGIN","INSERT INTO iterator_output(n) VALUES(0)"] {c.execute(sql,&empty)?;}
+        let insert=format!("INSERT INTO iterator_output(n) SELECT v FROM ({query}) RETURNING n");
+        assert_eq!(c.execute(&insert,&params).unwrap_err().code(),"FDB_VALIDATION");
+        assert_eq!(c.transaction_state(),fastdb::TransactionState::Active);
+        assert_eq!(c.execute("SELECT n FROM iterator_output",&empty)?.rows,vec![vec![Value::Integer(0)]]);
+        assert!(c.lookup_index("iterator_output","iterator_n",&Value::Integer(2))?.is_empty());
+        let retry=format!("INSERT INTO iterator_output(n) SELECT v FROM ({query}) WHERE v<4 RETURNING n");
+        assert_eq!(c.execute(&retry,&params)?.rows,vec![vec![Value::Integer(2)],vec![Value::Integer(3)]]);
+        c.execute("ROLLBACK",&empty)?;
+    }
+    let db=Database::open(file)?;
+    let c=db.connect()?;
+    assert_eq!(c.execute(query,&params)?.rows,expected);
+    assert_eq!(c.check_collection_integrity("iterator_output",IntegrityLimits::default())?.index_entries,0);
+    Ok(())
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
+    iterator_consumer(&format!("{file}.iterators"))?;
     let id = Record { table: "docs".into(), key: Key::String("saved".into()) };
     let portable = Value::Array(vec![
         Value::Integer(i64::MAX), Value::Number(-0.0),
@@ -141,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     c.execute("ROLLBACK", &empty)?;
     assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(),1);
     assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
-    println!("Standalone Rust client smoke passed: typed values, portable JSON, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines and reopen");
+    println!("Standalone Rust client smoke passed: typed values, portable JSON, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines, iterator CTEs and reopen");
     Ok(())
 }
 ''')

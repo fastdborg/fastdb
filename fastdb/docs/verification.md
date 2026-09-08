@@ -2826,3 +2826,24 @@ zero. This change adds consumer qualification only; the latest full source suite
 remains 565 Rust and 80 Node/application passes with one existing ignored gate.
 No registry access or publication occurred. These local debug artifacts do not
 qualify final release packaging or other platforms; full V1 gates remain open.
+
+
+## Standalone Rust iterator consumer — 2026-09-08
+
+The private path-dependent Rust consumer now exercises deep document iterator
+arguments and a parameterized CTE referencing the preceding iterator. Public
+select/profile APIs accept the exact 50-byte result budget and reject 49 bytes;
+missing bindings return FDB_PARAMETER. A derived query drives validated INSERT
+SELECT, verifying failure rollback, active transaction preservation, absence of
+failed index entries, corrected retry and outer rollback. Reopening the file
+preserves source documents and confirms empty output indexes.
+
+`python3 fastdb/scripts/check-rust-client.py` exited zero with Rust 1.88.0 on local
+Linux, compiling outside the Turso workspace without injected checkout Rust flags.
+The offline consumer retained 244 registry/git package identities from the pinned
+lockfile. Log: `/tmp/fastdb-iterators-rust-consumer.log`. This qualifies the current
+public path dependency based on `757918a99`; no library code or dependencies
+changed. It does not establish registry packaging or other-platform release
+readiness. The full source-suite evidence remains 565 Rust and 80 Node/application
+passes with one existing ignored trigger gate. Full V1 remains unfinished; no
+publication occurred.
