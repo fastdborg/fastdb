@@ -1795,3 +1795,43 @@ fn invalid_natural_constraints_preserve_transaction_and_allow_valid_retry() {
     query("ROLLBACK");
     assert!(query("SELECT * FROM audit").rows.is_empty());
 }
+
+#[test]
+fn natural_unicode_column_intersections_match_native_ascii_rules() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+    ] {
+        query(sql);
+    }
+    for (left, right) in [("Ä", "ä"), ("ÉKey", "ÉKEY"), ("odd key", "ODD KEY")] {
+        for join in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+            let sql = |source: &str| {
+                format!("SELECT * FROM (SELECT k AS \"{left}\" FROM {source}) a {join} (SELECT k AS \"{right}\" FROM b) b ORDER BY b.\"{right}\"")
+            };
+            let expected = query(&sql("baseline"));
+            let logical = sql("docs");
+            let actual = query(&logical);
+            assert_eq!(actual.columns, expected.columns, "{logical}");
+            assert_eq!(actual.rows, expected.rows, "{logical}");
+            assert_eq!(
+                c.profile_select(&logical, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows,
+                "{logical}"
+            );
+        }
+    }
+}
