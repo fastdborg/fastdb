@@ -587,30 +587,45 @@ impl Connection {
                 .iter()
                 .any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(exposed.as_str()))
             {
-                for cte in &mut with.ctes {
-                    if cte.select.with.is_some() || !cte.select.body.compounds.is_empty() {
-                        continue;
+                fn bind_target(select: &mut Select, table: &QualifiedName, exposed: &Name) {
+                    if select.with.is_some() {
+                        return;
                     }
-                    if let OneSelect::Select {
-                        from: Some(from), ..
-                    } = &mut cte.select.body.select
+                    for body in std::iter::once(&mut select.body.select)
+                        .chain(select.body.compounds.iter_mut().map(|arm| &mut arm.select))
                     {
-                        for source in std::iter::once(&mut from.select)
-                            .chain(from.joins.iter_mut().map(|join| &mut join.table))
+                        if let OneSelect::Select {
+                            from: Some(from), ..
+                        } = body
                         {
-                            if let SelectTable::Table(name, alias, _) = source.as_mut() {
-                                if name.db_name.is_none()
-                                    && name.name.as_str().eq_ignore_ascii_case(exposed.as_str())
-                                {
-                                    name.db_name = Some(Name::exact("main".into()));
-                                    name.name = table.name.clone();
-                                    if alias.is_none() {
-                                        *alias = Some(As::As(exposed.clone()));
+                            for source in std::iter::once(&mut from.select)
+                                .chain(from.joins.iter_mut().map(|join| &mut join.table))
+                            {
+                                match source.as_mut() {
+                                    SelectTable::Select(inner, _) => {
+                                        bind_target(inner, table, exposed)
                                     }
+                                    SelectTable::Table(name, alias, _)
+                                        if name.db_name.is_none()
+                                            && name
+                                                .name
+                                                .as_str()
+                                                .eq_ignore_ascii_case(exposed.as_str()) =>
+                                    {
+                                        name.db_name = Some(Name::exact("main".into()));
+                                        name.name = table.name.clone();
+                                        if alias.is_none() {
+                                            *alias = Some(As::As(exposed.clone()));
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
                     }
+                }
+                for cte in &mut with.ctes {
+                    bind_target(&mut cte.select, table, exposed);
                 }
             }
         }

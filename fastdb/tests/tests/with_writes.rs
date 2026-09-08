@@ -455,38 +455,46 @@ fn target_named_cte_writes_preserve_native_table_binding() {
     q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
     q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
     q(&c, "INSERT INTO native VALUES(1),(2),(3)");
-    for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
-        for (aliased, alias_cte) in [(false, false), (true, false), (true, true)] {
-            for projection in ["n", "sum(n) AS n", "n+1 AS n", "count(*) AS n"] {
-                for delete in [false, true] {
-                    let sql = |table: &str| {
-                        let name = if alias_cte { "target" } else { table };
-                        let alias = if aliased { " AS target" } else { "" };
-                        let write = if delete {
-                            format!("DELETE FROM {table}{alias}")
-                        } else {
-                            format!("UPDATE {table}{alias} SET n=n+10")
+    for shape in ["direct", "derived", "compound"] {
+        for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for (aliased, alias_cte) in [(false, false), (true, false), (true, true)] {
+                for projection in ["n", "sum(n) AS n", "n+1 AS n", "count(*) AS n"] {
+                    for delete in [false, true] {
+                        let sql = |table: &str| {
+                            let name = if alias_cte { "target" } else { table };
+                            let alias = if aliased { " AS target" } else { "" };
+                            let write = if delete {
+                                format!("DELETE FROM {table}{alias}")
+                            } else {
+                                format!("UPDATE {table}{alias} SET n=n+10")
+                            };
+                            let body = format!("SELECT {projection} FROM {name}");
+                            let body = match shape {
+                                "derived" => format!("SELECT n FROM ({body}) q"),
+                                "compound" => format!("{body} UNION ALL SELECT 2"),
+                                _ => body,
+                            };
+                            format!("WITH {name} AS (SELECT 2 AS n), chosen AS {hint} ({body}) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
                         };
-                        format!("WITH {name} AS (SELECT 2 AS n), chosen AS {hint} (SELECT {projection} FROM {name}) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
-                    };
-                    q(&c, "BEGIN");
-                    let expected = q(&c, &sql("native"));
-                    let actual = q(&c, &sql("docs"));
-                    assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
-                    assert_eq!(actual.affected, expected.affected);
-                    assert_eq!(
-                        q(&c, "SELECT n FROM docs ORDER BY n").rows,
-                        q(&c, "SELECT n FROM native ORDER BY n").rows
-                    );
-                    q(&c, "ROLLBACK");
-                    assert_eq!(
-                        q(&c, "SELECT n FROM docs ORDER BY n").rows,
-                        vec![
-                            vec![Value::Integer(1)],
-                            vec![Value::Integer(2)],
-                            vec![Value::Integer(3)]
-                        ]
-                    );
+                        q(&c, "BEGIN");
+                        let expected = q(&c, &sql("native"));
+                        let actual = q(&c, &sql("docs"));
+                        assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
+                        assert_eq!(actual.affected, expected.affected);
+                        assert_eq!(
+                            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+                            q(&c, "SELECT n FROM native ORDER BY n").rows
+                        );
+                        q(&c, "ROLLBACK");
+                        assert_eq!(
+                            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+                            vec![
+                                vec![Value::Integer(1)],
+                                vec![Value::Integer(2)],
+                                vec![Value::Integer(3)]
+                            ]
+                        );
+                    }
                 }
             }
         }
