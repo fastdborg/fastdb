@@ -34,6 +34,28 @@ const path = require('node:path');
 const { Database, AsyncDatabase, Record, Vector, isFastDBError } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
+  let deepest = new Record('depth_docs','leaf');
+  for(let i=0;i<64;i++) deepest = i%2 ? {nested:deepest} : [deepest];
+  const deepPayload = deepest.nested;
+  async function withMaximumDepth(client, initialize = false) {
+    assert.deepEqual((await client.execute('SELECT $v AS v',{$v:deepest})).rows,[[deepest]]);
+    if(initialize) {
+      await client.execute('CREATE TABLE depth_docs');
+      const inserted = await client.execute('INSERT INTO depth_docs {id:depth_docs:one,payload:$v} RETURNING payload',{$v:deepPayload});
+      assert.deepEqual(inserted.rows,[[deepPayload]]);
+    }
+    assert.deepEqual((await client.profileSelect('SELECT payload FROM depth_docs')).result.rows,[[deepPayload]]);
+    for(const format of ['json','ndjson']) {
+      const data = await client.exportDocuments('depth_docs',format);
+      await client.execute('BEGIN');
+      try {
+        await client.execute('DELETE FROM depth_docs');
+        await client.importDocuments('depth_docs',data,format);
+        assert.deepEqual((await client.execute('SELECT payload FROM depth_docs')).rows,[[deepPayload]]);
+      } finally { await client.execute('ROLLBACK'); }
+    }
+    await assert.rejects(async()=>client.execute('SELECT $v',{$v:[deepest]}),/nesting exceeds 64/);
+  }
   async function withDirectJson(client) {
     const value = {nested:[Buffer.alloc(4096,255),new Record('docs','quoted"key'),-0,'Thai ไทย']};
     const result = await client.execute('SELECT $value AS payload',{$value:value});
@@ -419,6 +441,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     }
     await withVectorFields(db);
     await withDirectJson(db);
+    await withMaximumDepth(db,true);
     await withCompositeCounts(db);
     await withDuplicateColumns(db);
     await withWrites(db);
@@ -432,6 +455,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     }
     await withVectorFields(worker);
     await withDirectJson(worker);
+    await withMaximumDepth(worker);
     const row = await worker.exactlyOne('SELECT id,value FROM docs');
     assert(row[0] instanceof Record);
     assert.equal(row[0].key, 'saved');
@@ -518,6 +542,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
   try {
     assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n);
     assert.equal(reopened.checkCollectionIntegrity('docs').indexEntries, 1n);
+    assert.deepEqual(reopened.execute('SELECT payload FROM depth_docs').rows,[[deepPayload]]);
   }
   finally { reopened.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

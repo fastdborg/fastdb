@@ -2606,3 +2606,18 @@ unbounded_depth capability; explicit preflight remains mandatory before disablin
 the default bound. No dependency version, lockfile or upstream source changed.
 Installed artifacts/platforms, complete resource/recovery qualification and full
 V1 remain open.
+
+
+Installed nesting-boundary qualification (2026-09-08): the offline Node consumer
+now exercises maximum logical depth in parameters, INSERT RETURNING, profiles,
+JSON/NDJSON replay and over-limit rejection. A deeply nested document is committed
+by the synchronous client, read after worker reopen and checked again after final
+synchronous reopen. Installed-package checks pass on Linux x64 Node 22.0.0 and
+24.19.0, including the existing notice/loader checks and strict consumer
+TypeScript. Both tarballs contain ten files and 60,635,281 packed bytes using the
+current debug addon, SHA-256
+`b75c1ed5cb4e5a69c74c559e3fdfd90c7452a947cd0237edc7059a2371804ef6`.
+Logs: `/tmp/fastdb-depth-package22.log` and `/tmp/fastdb-depth-package24.log`.
+Implementation remains `b7f4a8b97`; this extends the package smoke only. No
+publication occurred. Final release artifacts, other platforms and full V1
+qualification remain open.

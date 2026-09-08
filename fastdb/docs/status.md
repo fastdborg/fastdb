@@ -3512,3 +3512,6 @@ The rebuilt addon passes all 77 Node/application tests and strict TypeScript; sc
 ### Tagged JSON depth correction
 
 Valid 64-level logical values now survive binding JSON framing and stored-value decoding; maximum-depth documents round-trip through JSON and NDJSON transfer. A separate 136-container wire preflight bounds the deeper parser, with string/escape-aware counting and logical validation retained. Node record-key wrappers no longer count as an extra logical level. Complete scoped checks pass 549 Rust tests (one existing ignored gate), 78 Node/application tests, formatting, Clippy and strict TypeScript; final transfer and standalone-consumer checks also pass. See verification.md for exact scope and logs. Full V1 remains incomplete.
+
+
+The installed Node package now qualifies the nesting fix across synchronous-to-worker-to-synchronous reopen, RETURNING, profiling, transfer and over-limit rejection. Offline checks pass on Linux x64 Node 22.0.0 and 24.19.0 with the current debug addon. See verification.md for artifact identity and scope. Full V1 and final distribution/platform gates remain open.
