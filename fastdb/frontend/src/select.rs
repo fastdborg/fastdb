@@ -4204,6 +4204,14 @@ impl Connection {
                         alias.name().as_str().to_owned()
                     } else if let Some((_, path)) = &field {
                         path.last().expect("nonempty path").clone()
+                    } else if let Some((_, column)) = match &expr {
+                        Expr::Id(name) | Expr::Name(name) => scope
+                            .using
+                            .bindings
+                            .get(&name.as_str().to_ascii_lowercase()),
+                        _ => None,
+                    } {
+                        column.clone()
                     } else if let Expr::Qualified(qualifier, column) = &expr {
                         scope
                             .sources

@@ -50,3 +50,6 @@ Optional and explicit-null keys now match a native NULL baseline in 18 execute/p
 
 
 Managed-index coverage compares nine join/filter shapes before/after index creation and after updates/deletes with index removal. Rollback restores data and index catalog entries. EXPLAIN confirms docs_k for the filtered inner join; this does not establish indexed lookup for the join predicate itself.
+
+
+Renamed and chained CTE keys now have 27 execute/profile differential shapes across default/MATERIALIZED/NOT MATERIALIZED sources and INNER/LEFT/RIGHT joins. A merged native key uses its resolved public name instead of an SQL-quoted expression label. Materialization evaluation counts remain separate qualification.

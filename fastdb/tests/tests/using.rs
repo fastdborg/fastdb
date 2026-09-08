@@ -790,3 +790,48 @@ fn using_managed_indexes_preserve_join_results_through_updates_and_rollback() {
     query("DROP INDEX docs_k");
     query("DROP INDEX other_k");
 }
+
+#[test]
+fn using_cte_renamed_keys_preserve_materialized_and_chained_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {n:1,k:1}",
+        "INSERT INTO docs {n:2,k:2}",
+        "CREATE TABLE baseline(n INTEGER,k INTEGER)",
+        "INSERT INTO baseline VALUES(1,1),(2,2)",
+        "CREATE TABLE b(m INTEGER,k INTEGER)",
+        "INSERT INTO b VALUES(10,1),(30,3)",
+    ] {
+        query(sql);
+    }
+    for materialized in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for projection in ["*", "a.*,b.*", "key,a.key,b.key"] {
+                let sql = |source: &str| {
+                    format!(
+                    "WITH q(n,key) AS {materialized} (SELECT n,k FROM {source}), r AS (SELECT * FROM q), s(m,key) AS (SELECT m,k FROM b) SELECT {projection} FROM r a {join} s b USING(key) ORDER BY a.n,b.m"
+                )
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}
