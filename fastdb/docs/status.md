@@ -5423,3 +5423,21 @@ fastdb-tests Clippy with warnings denied passed. Logs:
 `/tmp/fastdb-limit-returning.log` and `/tmp/fastdb-limit-returning-clippy.log`.
 Only tests/docs changed from `22339a705`; no new full-suite/client run is claimed.
 Full V1 remains open.
+
+
+## UPDATE FROM duplicate oracle — 2026-09-09
+
+A pinned ordinary-table regression verifies two reversed source insertion orders,
+duplicate source matches, RETURNING, affected counts, LIMIT 1 and rollback.
+In this unindexed source/primary-key target plan, the last matching source row
+supplies the assignment, each target changes once, and LIMIT applies after
+source duplicates are resolved. This is measured plan-specific behavior, not a
+general deterministic winner guarantee. A collection implementation must not
+apply LIMIT to raw joined rows or mutate once per matching source row.
+Collection UPDATE FROM remains unsupported pending that implementation.
+
+All 41 write tests passed; formatting and all-target fastdb-tests Clippy with
+warnings denied passed. Logs: `/tmp/fastdb-update-from-oracle.log`,
+`/tmp/fastdb-update-from-oracle-test-final.log` and
+`/tmp/fastdb-update-from-oracle-clippy.log`. Only tests/docs changed from
+`f37138783`; no new full-suite/client run is claimed. Full V1 remains open.

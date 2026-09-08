@@ -1812,3 +1812,39 @@ fn update_limit_bounds_validation_and_restores_failed_candidates() {
         3
     );
 }
+
+#[test]
+fn native_update_from_resolves_duplicates_before_limit() {
+    for (input, chosen) in [("(1,10),(1,20),(2,30)", 20), ("(1,20),(1,10),(2,30)", 10)] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE target(n INTEGER PRIMARY KEY,v INTEGER)",
+            "INSERT INTO target VALUES(1,0),(2,0),(3,0)",
+            "CREATE TABLE source(k INTEGER,v INTEGER)",
+        ] {
+            q(&c, sql);
+        }
+        q(&c, &format!("INSERT INTO source VALUES {input}"));
+        for limited in [false, true] {
+            q(&c, "BEGIN");
+            let suffix = if limited { " LIMIT 1" } else { "" };
+            let result=q(&c,&format!("UPDATE target SET v=source.v FROM source WHERE source.k=target.n RETURNING n,v{suffix}"));
+            let mut expected = vec![vec![Value::Integer(1), Value::Integer(chosen)]];
+            if !limited {
+                expected.push(vec![Value::Integer(2), Value::Integer(30)]);
+            }
+            assert_eq!(result.affected, expected.len() as i64);
+            assert_eq!(result.rows, expected);
+            q(&c, "ROLLBACK");
+            assert_eq!(
+                q(&c, "SELECT n,v FROM target ORDER BY n").rows,
+                vec![
+                    vec![Value::Integer(1), Value::Integer(0)],
+                    vec![Value::Integer(2), Value::Integer(0)],
+                    vec![Value::Integer(3), Value::Integer(0)]
+                ]
+            );
+        }
+    }
+}
