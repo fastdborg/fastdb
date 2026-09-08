@@ -3703,9 +3703,34 @@ impl Connection {
     /// Catalog/lowering queries and Rust decoding are excluded. Forward-fetch
     /// target counters are separate; errors do not return partial metrics.
     pub fn profile_select(&self, sql: &str, params: &Parameters) -> Result<crate::ProfiledQuery> {
-        crate::parser_stack(|| self.profile_select_inner(sql, params))
+        crate::parser_stack(|| self.profile_select_inner(sql, params, None))
     }
-    fn profile_select_inner(&self, sql: &str, params: &Parameters) -> Result<crate::ProfiledQuery> {
+    /// Execute one SELECT with limits on retained result rows and logical payload.
+    /// FETCH is currently unsupported. Limits do not bound engine working memory.
+    pub fn select_with_limits(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: crate::ResultLimits,
+    ) -> Result<QueryResult> {
+        self.profile_select_with_limits(sql, params, limits)
+            .map(|profile| profile.result)
+    }
+    /// Profile a SELECT using the same result limits as `select_with_limits`.
+    pub fn profile_select_with_limits(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: crate::ResultLimits,
+    ) -> Result<crate::ProfiledQuery> {
+        crate::parser_stack(|| self.profile_select_inner(sql, params, Some(limits)))
+    }
+    fn profile_select_inner(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: Option<crate::ResultLimits>,
+    ) -> Result<crate::ProfiledQuery> {
         let fastql_parser::Statement::Sql(sql) = fastql_parser::parse(sql)? else {
             return Err(Error::Unsupported(
                 "profiling requires one SQL SELECT".into(),
@@ -3720,14 +3745,19 @@ impl Connection {
         let has_fetch = fastql_parser::tokenize(&expanded)?
             .iter()
             .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch");
+        if has_fetch && limits.is_some() {
+            return Err(Error::Unsupported(
+                "bounded SELECT does not yet support FETCH".into(),
+            ));
+        }
         let execute = || match self.lower_collection_select(
             &sql,
             &expanded,
             params,
             SelectOptions::default(),
         )? {
-            Some(plan) => self.execute_lowered_profiled(plan, params),
-            None => self.native_profiled(&sql, params),
+            Some(plan) => self.execute_lowered_profiled_with_limits(plan, params, limits),
+            None => self.native_profiled_with_limits(&sql, params, limits),
         };
         if has_fetch {
             self.atomic(execute)
@@ -6332,6 +6362,14 @@ impl Connection {
         plan: LoweredSelect,
         params: &Parameters,
     ) -> Result<crate::ProfiledQuery> {
+        self.execute_lowered_profiled_with_limits(plan, params, None)
+    }
+    fn execute_lowered_profiled_with_limits(
+        &self,
+        plan: LoweredSelect,
+        params: &Parameters,
+        limits: Option<crate::ResultLimits>,
+    ) -> Result<crate::ProfiledQuery> {
         let LoweredSelect {
             command: cmd,
             typed,
@@ -6356,10 +6394,18 @@ impl Connection {
             // raw scalar bindings, including unwrapped BLOB bytes.
             statement.bind_at(index, crate::scalar(value)?)?;
         }
-        let engine_names = (0..statement.num_columns())
+        let engine_names: Vec<String> = (0..statement.num_columns())
             .map(|i| statement.get_column_name(i).into_owned())
             .collect();
         let mut rows = Vec::new();
+        let mut budget = crate::budget::ResultBudget::new(
+            limits,
+            if explain || native_insert {
+                &engine_names
+            } else {
+                &names
+            },
+        )?;
         let fetches_per_row = if native_insert || explain {
             0
         } else {
@@ -6388,6 +6434,7 @@ impl Connection {
                             output.push(crate::from_engine(value.clone()));
                         }
                     }
+                    budget.row(&output)?;
                     rows.push(output);
                     Ok(())
                 })();

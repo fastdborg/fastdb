@@ -2480,3 +2480,22 @@ Exact pagination text-conversion evidence (2026-09-08): the 378-input corpus now
 
 
 Installed coerced CTE pagination recovery (2026-09-08): offline tarball/install smoke now verifies ordered correlated local CTE pagination with decimal/exponent text limits through both installed clients, preserving exact boolean/record/binary results, empty matches and profiling. Dot-as-zero pagination returns empty scalar matches. Missing offsets and later uniqueness failures preserve Active state and pending rows; corrected Record-valued INSERT SELECT retry passes exact RETURNING and document/index integrity checks inside the rolled-back smoke transaction. Linux x64 runs pass on Node 22.0.0 and 24.19.0, including ten-file inventory, notices, loader checks and strict installed-consumer TypeScript. Both tarballs contain 60,508,572 packed bytes from the current debug addon, not final release artifacts. Logs: /tmp/fastdb-installed-coercion-node22.log and /tmp/fastdb-installed-coercion-node24.log. Nothing was published. Cross-platform/final-release qualification and full V1 remain incomplete.
+
+### Initial bounded Rust SELECT results
+
+Added `ResultLimits`, `Connection::select_with_limits`, and
+`profile_select_with_limits`. Native and typed collectors share checked row and
+logical payload accounting, including empty-result column metadata. Overflow
+returns `FDB_LIMIT` without a partial result. Existing entry points retain their
+result policy. The native collector now converts rows as they arrive instead of
+first retaining a second complete engine-value result.
+
+Boundary and transaction integration checks cover exact budgets, row/payload
+rejection, empty metadata, non-SELECT rejection, pending-write preservation and
+rollback. A unit test covers recursive UTF-8/object/array/record/binary/vector
+payload accounting and arithmetic overflow. Full scoped checks passed: 514 Rust
+tests, one existing ignored gate, 65 Node/application tests, formatting, Clippy
+and strict TypeScript. See `result-budgets.md` for the precise accounting policy.
+FETCH, Node limit APIs, callback-count qualification and broader resource gates
+remain open; these limits do not bound engine working memory or temporary row
+decoding allocations.

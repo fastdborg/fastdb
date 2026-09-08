@@ -1,5 +1,7 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
+mod budget;
 mod bundled;
+pub use budget::ResultLimits;
 mod catalog;
 mod check;
 mod expression;
@@ -781,6 +783,14 @@ impl Connection {
             .map(|profile| profile.result)
     }
     fn native_profiled(&self, sql: &str, params: &Parameters) -> Result<ProfiledQuery> {
+        self.native_profiled_with_limits(sql, params, None)
+    }
+    fn native_profiled_with_limits(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: Option<ResultLimits>,
+    ) -> Result<ProfiledQuery> {
         self.guard_native_sql(sql)?;
         let mut stmt = self.prepare(sql)?;
         if !fastql_parser::tokenize(&sql[stmt.tail_offset()..])?.is_empty() {
@@ -790,13 +800,27 @@ impl Connection {
             let index = bind_index(&stmt, name).ok_or_else(|| Error::Parameter(name.clone()))?;
             stmt.bind_at(index, scalar(value)?)?;
         }
-        let columns = (0..stmt.num_columns())
+        let columns: Vec<String> = (0..stmt.num_columns())
             .map(|i| stmt.get_column_name(i).into_owned())
             .collect();
-        let rows = collect_rows(&mut stmt)?
-            .into_iter()
-            .map(|row| row.into_iter().map(from_engine).collect())
-            .collect();
+        let mut budget = budget::ResultBudget::new(limits, &columns)?;
+        let mut rows = Vec::new();
+        let mut failure = None;
+        let execution = parser_stack(|| {
+            stmt.run_with_row_callback(|row| {
+                let output: Vec<_> = row.get_values().cloned().map(from_engine).collect();
+                if let Err(error) = budget.row(&output) {
+                    failure = Some(error);
+                    return Err(turso_core::LimboError::Interrupt);
+                }
+                rows.push(output);
+                Ok(())
+            })
+        });
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        execution?;
         Ok(ProfiledQuery {
             result: QueryResult {
                 columns,

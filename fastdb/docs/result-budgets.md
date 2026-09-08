@@ -1,6 +1,28 @@
-# Result budgets — implementation design
+# Bounded SELECT results
 
-Status: proposed implementation work, not an available API or a completed V1 resource gate. The master plan still requires broader execution/resource qualification. Existing query results materialize in memory.
+Rust `Connection::select_with_limits(sql, params, ResultLimits)` and
+`profile_select_with_limits` now enforce explicit `max_rows` and
+`max_payload_bytes` on native and typed SELECT results. Existing APIs retain
+unbounded result behavior. Overflow returns `FDB_LIMIT`, discards the result,
+and stops collection at the first rejected row. Column metadata is charged even
+for empty results. Non-SELECT statements and FETCH are rejected by these APIs.
+
+Payload accounting uses UTF-8 byte lengths for column names, strings, object
+keys and record table/string keys; null and booleans cost one byte; numbers and
+integer record keys cost eight bytes. Binary and encoded vector bytes count
+verbatim. Arrays and objects sum their contents, with no container overhead.
+Arithmetic is checked. This bounds retained logical payload, not allocator
+usage, the temporary decoded row, engine working memory, or execution time.
+
+Node bindings, FETCH expansion, RETURNING, INSERT SELECT candidates and transfer
+remain separate integration work. This does not close the V1 resource gate.
+
+The original integration inventory follows; its next-step language describes
+the design preceding the initial Rust implementation.
+
+## Result budgets — implementation design
+
+Status of the inventory below: design notes retained for remaining integration work; the Rust SELECT subset above is implemented.
 
 ## Current execution paths
 
