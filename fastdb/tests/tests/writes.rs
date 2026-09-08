@@ -981,3 +981,27 @@ fn tuple_join_sources_preserve_outer_join_nulls() {
         }
     }
 }
+
+#[test]
+fn tuple_local_ctes_supply_correlated_lookup_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO lookup VALUES(1,4,5)",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(n,a,b) SELECT n,a,b FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        q(&c, "BEGIN");
+        let expected=q(&c,"UPDATE native SET (a,b)=(WITH chosen AS (SELECT n,a,b FROM lookup) SELECT x.a,x.b FROM chosen x WHERE x.n=native.n) RETURNING n,a,b");
+        assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(WITH chosen AS (SELECT n,a,b FROM {source}) SELECT x.a,x.b FROM chosen x WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows);
+        q(&c, "ROLLBACK");
+    }
+}

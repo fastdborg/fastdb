@@ -1195,3 +1195,10 @@ fields bind to the update target. Positional ORDER BY remains rejected because
 packing the tuple changes projection positions. Initial native comparisons
 cover descending field and arithmetic ordering; broader alias, collation and
 volatile-expression qualification remains open.
+
+
+Tuple SELECTs may contain nonrecursive local WITH definitions supported by
+candidate SELECT lowering. Initial correlated lookup tests cover CTEs backed
+by ordinary tables and collections, including zero-row NULL tuples. Recursive
+tuple CTEs remain rejected; broader CTE shadowing/type/resource qualification
+remains open. The WITH belongs to the tuple subquery's scope.

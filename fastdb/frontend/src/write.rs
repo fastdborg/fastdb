@@ -591,7 +591,9 @@ impl Connection {
                         widths.extend(std::iter::repeat_n(1, values.len()));
                         exprs.extend(values.into_iter().map(|value| *value));
                     } else if let Expr::Subquery(mut select) = *set.expr {
-                        if select.with.is_some() || !select.body.compounds.is_empty() {
+                        if select.with.as_ref().is_some_and(|with| with.recursive)
+                            || !select.body.compounds.is_empty()
+                        {
                             return Err(unsupported("this tuple SELECT assignment"));
                         }
                         fn ordinal(value: &Expr) -> bool {

@@ -3659,3 +3659,19 @@ native parity across the extra source boundary. All twenty-two write tests and
 scoped formatting passed. Log `/tmp/fastdb-tuple-derived.log`. Only source SQL
 fixtures/documentation changed from `a35fced71`; no new full-suite/client or
 Clippy run is claimed. Full V1 gates remain open.
+
+
+## Nonrecursive tuple-local WITH — 2026-09-09
+
+Tuple SELECT assignments now allow local nonrecursive WITH definitions through
+the existing candidate SELECT lowering. Native differential tests cover local
+CTEs backed by relational and collection sources with correlated lookups and
+unmatched NULL tuples. Recursive tuple CTEs remain rejected; broader local CTE
+scope/type/resource qualification remains open.
+
+Full scoped check passed from `658efaa2f` plus this implementation: 594 Rust
+passes, zero failures, one existing ignored trigger gate; 85 Node/application
+passes; formatting, Clippy with warnings denied and strict TypeScript. Logs
+`/tmp/fastdb-tuple-local-cte-check.log` and `/tmp/fastdb-tuple-local-cte.log`.
+No upstream files or dependencies changed. Full V1 gates remain open; no
+publication occurred.
