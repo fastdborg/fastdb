@@ -673,3 +673,35 @@ fn nested_cte_declared_columns_preserve_write_candidates() {
         }
     }
 }
+
+#[test]
+fn lifted_sibling_ctes_keep_local_shadowing_isolated() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+        for delete in [false, true] {
+            let sql = |table: &str| {
+                let write = if delete {
+                    format!("DELETE FROM {table}")
+                } else {
+                    format!("UPDATE {table} SET n=n+10")
+                };
+                format!("WITH shared AS (SELECT 1 AS n), first AS (WITH shared AS {hint} (SELECT 2 AS n) SELECT shared.n FROM shared), second AS (WITH shared AS {hint} (SELECT 3 AS n) SELECT shared.n FROM shared), third AS (SELECT shared.n FROM shared) {write} WHERE n IN (SELECT n FROM first UNION ALL SELECT n FROM second UNION ALL SELECT n FROM third) RETURNING n")
+            };
+            q(&c, "BEGIN");
+            let expected = q(&c, &sql("native"));
+            let actual = q(&c, &sql("docs"));
+            assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
+            assert_eq!(actual.affected, 3);
+            assert_eq!(
+                q(&c, "SELECT n FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n FROM native ORDER BY n").rows
+            );
+            q(&c, "ROLLBACK");
+        }
+    }
+}

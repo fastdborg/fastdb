@@ -2535,3 +2535,6 @@ Nested WITH shadowing recovery qualification (2026-09-08): extended target-CTE f
 
 
 Nested CTE declared-column qualification (2026-09-08): 18 native UPDATE/DELETE comparisons pass for explicit outer/nested CTE column lists, quoted mixed-case names, qualified references, scalar/arithmetic/aggregate projections and default/MATERIALIZED/NOT MATERIALIZED definitions. Returned rows, affected counts, final indexed data and integrity audits match. Formatting, the focused regression and diff checks pass; production code is unchanged. Log: /tmp/fastdb-nested-cte-columns.log. Latest complete scoped evidence remains 482 Rust tests with one ignored gate and 50 Node/application tests. Full V1 remains incomplete.
+
+
+Lifted sibling CTE shadowing qualification (2026-09-08): six native UPDATE/DELETE comparisons verify two sibling definitions each declaring a different local shared CTE while a third sibling reads the outer shared definition. Qualified column references, all three materialization modes, returned rows, affected counts, final data and rollback match native behavior. Formatting, the focused regression and diff checks pass; production code is unchanged. Log: /tmp/fastdb-sibling-cte-shadowing.log. Latest complete scoped evidence remains 482 Rust tests with one ignored gate and 50 Node/application tests. Full V1 remains incomplete.

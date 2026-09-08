@@ -18,3 +18,5 @@ This is initial qualification of these shapes. Correlated nested definitions, ne
 Nested local-shadowing recovery also covers missing parameters, uniqueness failures, prior pending writes, corrected retry, integrity audits and rollback for collection-name and explicit-target-alias forms.
 
 Explicit nested/outer CTE column lists have 18 native write comparisons covering quoted case-insensitive qualified lookup, projection forms, materialization modes and index integrity.
+
+Sibling-local shadowing is covered by six native write comparisons: two distinct nested definitions reuse a name while a third sibling retains the outer definition, across all materialization modes.
