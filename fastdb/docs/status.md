@@ -5026,3 +5026,13 @@ Clippy with warnings denied. Logs `/tmp/fastdb-filter-tuples.log` and
 plus the change; no new full-suite or Node run is claimed. FILTER subqueries,
 ordered aggregates and other V1 gates remain open. No upstream source,
 dependency or storage-format changes; no publication.
+
+
+## Node filtered aggregate tuple verification — 2026-09-09
+
+Both clients now verify SUM and COUNT(*) FILTER predicates correlated with the
+outer document, selected aggregate values, empty-input NULL/0, active transaction
+reports and rollback. `fastdb/scripts/check-node.sh` rebuilt the addon and passed
+all 87 Node/application tests plus strict TypeScript checks. Log
+`/tmp/fastdb-filter-tuple-node.log`. Only tests/documentation changed from
+`fb30b40aa`; no new Rust-suite run is claimed. Full V1 remains open; no publication.

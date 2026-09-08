@@ -2757,6 +2757,9 @@ test('aggregate tuples preserve empty groups and rollback in both clients', asyn
         assert.deepEqual(result.rows, expected);
         assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
       }
+      const filtered = await db.execute('UPDATE docs SET (a,b)=(SELECT sum(x.a) FILTER(WHERE x.a>docs.n*7),count(*) FILTER(WHERE x.a>docs.n*7) FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
+      assert.deepEqual(filtered.rows, [[1n,11n,1n],[2n,null,0n]]);
+      assert.deepEqual(filtered.transaction, { before: 'active', after: 'active' });
       await db.execute('ROLLBACK');
       assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,0n,0n],[2n,0n,0n]]);
     } finally { await db.close(); }
