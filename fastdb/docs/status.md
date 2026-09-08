@@ -3622,3 +3622,6 @@ New sync/worker tests check versions above 2^53, multibyte source offsets,
 constraint and buffer-limit causes, rollback/index integrity, corrected retry,
 and malformed-metadata guard rejection. Full V1, installed-artifact and broader
 error-contract/platform qualification retain their separate open gates.
+
+
+Installed Node migration metadata now passes offline package checks on Linux x64 Node 22.0.0 and 24.19.0, including both clients, lossless versions/UTF-8 offsets, rollback/retry, and consumer TypeScript narrowing. See verification.md for artifact identity and logs. Full V1 and final distribution/platform gates remain open.

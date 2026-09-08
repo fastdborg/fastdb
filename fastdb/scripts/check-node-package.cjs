@@ -34,6 +34,28 @@ const path = require('node:path');
 const { Database, AsyncDatabase, Record, Vector, isFastDBError } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
+  for(const client of [new Database(),await AsyncDatabase.open()]) {
+    try {
+      const base = {version:1n,name:'base',sql:'CREATE TABLE migration_docs; CREATE UNIQUE INDEX migration_n ON migration_docs(n); INSERT INTO migration_docs {n:1};'};
+      await client.migrate([base]);
+      const prefix = "-- café 日本語\\nINSERT INTO migration_docs {n:2}; ";
+      const pending = {version:9007199254740993n,name:'pending',sql:prefix+'INSERT INTO migration_docs {n:1};'};
+      await assert.rejects(async()=>client.migrate([base,pending]),error=>{
+        assert(isFastDBError(error));
+        assert.equal(error.code,'FDB_MIGRATION');
+        assert.equal(error.migration.version,pending.version);
+        assert.equal(error.migration.offset,BigInt(Buffer.byteLength(prefix)));
+        assert.equal(error.migration.cause.code,'FDB_CONSTRAINT');
+        assert.equal(typeof error.migration.cause.message,'string');
+        assert.deepEqual(error.transaction,{before:'autocommit',after:'autocommit'});
+        return true;
+      });
+      assert.deepEqual((await client.execute('SELECT n FROM migration_docs')).rows,[[1n]]);
+      pending.sql=prefix;
+      assert.deepEqual((await client.migrate([base,pending])).applied,[pending.version]);
+      assert.equal((await client.migrate([base,pending])).alreadyApplied,2);
+    } finally { await client.close(); }
+  }
   let deepest = new Record('depth_docs','leaf');
   for(let i=0;i<64;i++) deepest = i%2 ? {nested:deepest} : [deepest];
   const deepPayload = deepest.nested;
@@ -575,6 +597,15 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
 function inspectError(error: unknown): string | undefined {
   if (guard(error)) {
     const typed: import('@fastdb/node').FastDBError = error;
+    if (typed.migration) {
+      const details: import('@fastdb/node').MigrationFailure = typed.migration;
+      const version: bigint = details.version;
+      const offset: bigint = details.offset;
+      const code: string = details.cause.code;
+      // @ts-expect-error migration offsets are lossless bigints
+      const numericOffset: number = details.offset;
+      void version; void offset; void code; void numericOffset;
+    }
     return typed.transaction?.after ?? typed.code;
   }
   return undefined;

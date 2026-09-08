@@ -2621,3 +2621,16 @@ Logs: `/tmp/fastdb-depth-package22.log` and `/tmp/fastdb-depth-package24.log`.
 Implementation remains `b7f4a8b97`; this extends the package smoke only. No
 publication occurred. Final release artifacts, other platforms and full V1
 qualification remain open.
+
+
+Installed Node migration-cause qualification (2026-09-08): both offline-installed
+clients verify structured cause codes, exact versions above 2^53, multibyte source
+offsets, failed-run rollback and corrected retry/history reuse. Strict installed
+TypeScript checks resolve MigrationFailure and bigint fields after isFastDBError
+narrowing. Linux x64 Node 22.0.0 and 24.19.0 package checks pass; each tarball has
+ten files and 60,656,513 packed bytes. Debug addon SHA-256:
+`df0abd81e3b202744a31425ebb66cb844f98599edcc204a3b89ac3f97c0f2117`.
+Implementation: `f661246c3`. Logs: `/tmp/fastdb-migration-package22.log` and
+`/tmp/fastdb-migration-package24.log`. Existing notices, loader, persistence and
+deep-value checks pass as part of the same consumers. No registry access or
+publication occurred. Final release artifacts/platforms and full V1 remain open.
