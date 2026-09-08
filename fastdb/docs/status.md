@@ -5610,3 +5610,14 @@ Logs: `/tmp/fastdb-from-pagination-check.log`,
 `/tmp/fastdb-from-pagination-finish.log` and
 `/tmp/fastdb-from-pagination-parser.log`. No upstream source, dependency or
 storage-format changes; no publication. Full V1 remains open.
+
+
+## Bound UPDATE FROM client pagination — 2026-09-09
+
+Both Node clients now verify bound count/offset pagination after duplicate
+resolution, zero limits, an offset beyond the unique target rowset, typed
+RETURNING values, affected counts, missing-offset FDB_PARAMETER and active
+transaction reports. The enclosing fixture checks rollback. All 89
+Node/application tests passed against the preceding rebuilt addon. Log:
+`/tmp/fastdb-from-pagination-node.log`. Only tests/docs changed from `712ae6215`;
+no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
