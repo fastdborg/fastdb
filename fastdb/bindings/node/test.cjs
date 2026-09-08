@@ -1310,3 +1310,47 @@ test('unsupported correlated CTE writes report query errors in both clients', as
     } finally { await db.close(); }
   }
 });
+
+test('colliding scalar aliases preserve client values and atomic insert recovery', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of [
+        'CREATE TABLE docs', 'INSERT INTO docs(k) VALUES(1),(2)',
+        'CREATE TABLE b(k INTEGER)', 'INSERT INTO b VALUES(1),(3)',
+        'CREATE TABLE nums(n INTEGER)', 'INSERT INTO nums VALUES(0),(1),(2)',
+        'CREATE TABLE sink', 'CREATE UNIQUE INDEX sink_v ON sink(v)',
+        'INSERT INTO sink(v) VALUES(2)',
+      ]) await db.execute(sql);
+      const params = { $delta: 0n, $flag: true, $data: Buffer.from([0, 255]) };
+      for (const alias of ['a', 'b']) {
+        for (const join of ['LEFT JOIN', 'RIGHT JOIN']) {
+          const scalar = `(SELECT max(${alias}.n)+$delta FROM nums ${alias} WHERE ${alias}.n<k)`;
+          const result = await db.execute(`SELECT k,${scalar} AS v,$flag AS flag,$data AS data FROM docs a ${join} b USING(k) ORDER BY k`, params);
+          const keys = join === 'LEFT JOIN' ? [[1n, 0n], [2n, 1n]] : [[1n, 0n], [3n, 2n]];
+          assert.deepEqual(result.columns, ['k', 'v', 'flag', 'data']);
+          assert.deepEqual(result.rows, keys.map(row => [...row, true, params.$data]));
+        }
+      }
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO sink(v) VALUES(9)');
+      const insert = 'INSERT INTO sink(v) SELECT (SELECT max(b.n)+$delta FROM nums b WHERE b.n<k) FROM docs a RIGHT JOIN b USING(k) ORDER BY k RETURNING v';
+      await assert.rejects(async () => db.execute(insert, { $delta: 0n }), error => {
+        assert.equal(error.code, 'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT v FROM sink ORDER BY v'), [[2n], [9n]]);
+      await db.execute('DELETE FROM sink WHERE v=2');
+      const retry = await db.execute(insert, { $delta: 0n });
+      assert.equal(retry.affected, 2n);
+      assert.deepEqual(retry.rows, [[0n], [2n]]);
+      const audit = await db.checkCollectionIntegrity('sink');
+      assert.equal(audit.documents, 3n);
+      assert.equal(audit.indexEntries, 3n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT v FROM sink'), [[2n]]);
+    } finally { await db.close(); }
+  }
+});
