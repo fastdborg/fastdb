@@ -92,3 +92,6 @@ Duplicate-column coverage now compares 54 USING/NATURAL shapes with the pinned e
 
 
 NATURAL-to-USING correlation equivalence now covers 12 execute/profile cases for direct/nested scalars, EXISTS and CAST comparisons across INNER/LEFT/RIGHT.
+
+
+Grouped NATURAL joins have nine native execute/profile cases for merged keys, GROUP BY ordinals, HAVING aliases and same-name shifted projections.

@@ -2180,3 +2180,6 @@ Duplicate NATURAL key qualification (2026-09-08): expanded the duplicate-key mat
 
 
 NATURAL correlation qualification (2026-09-08): 12 execute/profile equivalence cases pass against explicit USING(k) for direct/nested scalar references, nested EXISTS and direct CAST comparison across INNER/LEFT/RIGHT joins. Result names, values and unmatched retained right keys agree. This is NATURAL-to-USING equivalence evidence, not a new independent native correlation oracle. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-correlation.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.
+
+
+Grouped NATURAL qualification (2026-09-08): nine native differential execute/profile cases pass for merged-key counts, ordinal grouping with SUM/HAVING aliases and shifted same-name key projections across INNER/LEFT/RIGHT joins. Result names and rows agree, including unmatched outer groups. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-grouping.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader query and full V1 qualification remain open.

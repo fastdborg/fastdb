@@ -1608,3 +1608,55 @@ fn natural_join_correlation_matches_equivalent_using_queries() {
         }
     }
 }
+
+#[test]
+fn natural_grouped_keys_and_having_aliases_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,n:10}",
+        "INSERT INTO docs {k:1,n:20}",
+        "INSERT INTO docs {k:2,n:30}",
+        "CREATE TABLE baseline(k INTEGER,n INTEGER)",
+        "INSERT INTO baseline VALUES(1,10),(1,20),(2,30)",
+        "CREATE TABLE b(k INTEGER,m INTEGER)",
+        "INSERT INTO b VALUES(1,100),(3,300)",
+    ] {
+        query(sql);
+    }
+    for join in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+        for (projection, grouping) in [
+            (
+                "k,count(*) AS total",
+                "GROUP BY k HAVING total>=1 ORDER BY k",
+            ),
+            (
+                "k,sum(a.n) AS total",
+                "GROUP BY 1 HAVING total>0 ORDER BY k",
+            ),
+            ("k+10 AS k,count(*) AS total", "GROUP BY k ORDER BY k"),
+        ] {
+            let sql = |source: &str| {
+                format!("SELECT {projection} FROM (SELECT k,n FROM {source}) a {join} b {grouping}")
+            };
+            let expected = query(&sql("baseline"));
+            let logical = sql("docs");
+            let actual = query(&logical);
+            assert_eq!(actual.columns, expected.columns, "{logical}");
+            assert_eq!(actual.rows, expected.rows, "{logical}");
+            assert_eq!(
+                c.profile_select(&logical, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows,
+                "{logical}"
+            );
+        }
+    }
+}
