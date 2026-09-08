@@ -4162,3 +4162,14 @@ formatting and all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-distinct-window-tuples.log` and `/tmp/fastdb-distinct-window-tuples-clippy.log`.
 Only tests/docs changed from `07b614b6c`; no new full-suite or client run is
 claimed. Full V1 remains open; no publication occurred.
+
+
+## Window tuple parameter recovery — 2026-09-09
+
+A regression reuses one parameter inside a window aggregate and a scalar
+expression around ROW_NUMBER, checking positive/negative/zero values, missing
+parameter rejection before mutation, unmatched rows and rollback after retries.
+All 34 write tests passed, with formatting and all-target fastdb-tests Clippy
+with warnings denied. Logs `/tmp/fastdb-window-tuple-params.log` and
+`/tmp/fastdb-window-tuple-params-clippy.log`. Only tests/docs changed from
+`6d8a4f8b0`; no new full-suite or client run is claimed. Full V1 remains open.

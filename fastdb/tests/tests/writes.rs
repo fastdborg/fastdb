@@ -1506,3 +1506,41 @@ fn window_tuple_projections_match_native() {
         }
     }
 }
+
+#[test]
+fn window_tuple_parameters_preserve_binding_and_rollback() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup",
+        "INSERT INTO lookup(n,a) VALUES(1,6),(1,11)",
+    ] {
+        q(&c, sql);
+    }
+    let sql="UPDATE docs SET (a,b)=(SELECT row_number() OVER(ORDER BY x.a)+$delta,sum(x.a+$delta) OVER() FROM lookup x WHERE x.n=docs.n ORDER BY x.a DESC LIMIT 1) RETURNING n,a,b";
+    q(&c, "BEGIN");
+    let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
+    assert_eq!(
+        c.execute(sql, &Parameters::new()).unwrap_err().code(),
+        "FDB_PARAMETER"
+    );
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
+    for delta in [0, 3, -2] {
+        let params = Parameters::from([("$delta".into(), Value::Integer(delta))]);
+        assert_eq!(
+            c.execute(sql, &params).unwrap().rows,
+            vec![
+                vec![
+                    Value::Integer(1),
+                    Value::Integer(2 + delta),
+                    Value::Integer(17 + 2 * delta)
+                ],
+                vec![Value::Integer(2), Value::Null, Value::Null]
+            ]
+        );
+    }
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
+}
