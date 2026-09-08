@@ -183,6 +183,79 @@ fn native_correlated_predicate(
         let mut nested_queries = ExpressionSubqueries::new();
         let mut nested_error = None;
         turso_core::walk_expr_mut(value, &mut |expr| {
+            if matches!(expr, Expr::InSelect { .. }) {
+                let original = expr.to_string();
+                let Expr::InSelect { rhs, .. } = expr else {
+                    unreachable!()
+                };
+                let result = (|| -> Result<_> {
+                    let (prepared, logical) = native_correlated_predicate(
+                        connection,
+                        rhs,
+                        &outer_sources,
+                        metadata,
+                        params,
+                        false,
+                    )?;
+                    let changed = prepared.to_string() != rhs.to_string();
+                    if metadata {
+                        return Ok((prepared, None, changed));
+                    }
+                    let (query, affinity) = if logical {
+                        let column = matches!(&rhs.body.select, OneSelect::Select { columns, .. } if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
+                        let id = connection
+                            .next_subquery_id
+                            .fetch_update(
+                                std::sync::atomic::Ordering::Relaxed,
+                                std::sync::atomic::Ordering::Relaxed,
+                                |id| id.checked_add(1),
+                            )
+                            .map_err(|_| {
+                                Error::Limit("internal subquery identifiers exhausted".into())
+                            })?;
+                        let name = format!("__fastdb_nested_members_{id}");
+                        let sql = Cmd::Stmt(Stmt::Select(prepared.clone())).to_string();
+                        (
+                            expression(&format!(
+                                "(WITH {name}(v) AS ({}) SELECT __fastdb_unwrap(v) FROM {name})",
+                                sql.trim().trim_end_matches(';')
+                            ))?,
+                            if column {
+                                SubqueryAffinity::MembershipColumn
+                            } else {
+                                SubqueryAffinity::None
+                            },
+                        )
+                    } else {
+                        let collation =
+                            native_scalar_collation(connection, rhs, &correlation_aliases)?;
+                        (
+                            Expr::Subquery(prepared.clone()),
+                            SubqueryAffinity::NativeMembership(collation, String::new()),
+                        )
+                    };
+                    Ok((
+                        prepared,
+                        Some((query, Default::default(), affinity)),
+                        changed,
+                    ))
+                })();
+                match result {
+                    Ok((prepared, plan, changed)) => {
+                        correlated |= changed;
+                        if metadata {
+                            *rhs = prepared;
+                        }
+                        if let Some(plan) = plan {
+                            nested_queries.insert(original, plan);
+                        }
+                    }
+                    Err(error) => nested_error = Some(error),
+                }
+                // The core walker visits the LHS, but does not traverse SELECT RHSs.
+                return Ok(turso_core::WalkControl::Continue);
+            }
+
             if matches!(expr, Expr::Exists(_) | Expr::Subquery(_)) {
                 let original = expr.to_string();
                 let scalar = matches!(expr, Expr::Subquery(_));
@@ -757,6 +830,22 @@ fn qualify_correlated_using(
     {
         let mut nested_error = None;
         turso_core::walk_expr_mut(value, &mut |expr| {
+            if let Expr::InSelect { rhs, .. } = expr {
+                if sourceful || matches!(&rhs.body.select, OneSelect::Select { from: None, .. }) {
+                    if let Err(error) = qualify_correlated_using(
+                        connection,
+                        params,
+                        ctes,
+                        rhs,
+                        sources,
+                        &inherited_using,
+                    ) {
+                        nested_error = Some(error);
+                    }
+                }
+                return Ok(turso_core::WalkControl::Continue);
+            }
+
             // Source-free wrappers around sourceful scalars already use the
             // logical correlation pass, which preserves encoded outer values.
             let scalar = matches!(expr, Expr::Subquery(inner) if sourceful || matches!(&inner.body.select, OneSelect::Select { from: None, .. }));

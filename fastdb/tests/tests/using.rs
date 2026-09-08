@@ -2235,13 +2235,10 @@ fn pinned_deeper_scalar_merged_key_qualification_preserves_results() {
             let qualified = query(&sql(&format!("{retained}.k")));
             assert_eq!(qualified.columns, original.columns);
             assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
-            // Membership lowering needs a separate RHS plan.
-            if !predicate.contains("IN(") {
-                let mixed_sql = sql("k").replace("FROM a ", "FROM docs a ");
-                let mixed = query(&mixed_sql);
-                assert_eq!(mixed.columns, original.columns);
-                assert_eq!(mixed.rows, original.rows, "{mixed_sql}");
-            }
+            let mixed_sql = sql("k").replace("FROM a ", "FROM docs a ");
+            let mixed = query(&mixed_sql);
+            assert_eq!(mixed.columns, original.columns);
+            assert_eq!(mixed.rows, original.rows, "{mixed_sql}");
         }
     }
 }
@@ -2287,6 +2284,46 @@ fn deeper_scalar_cast_parameters_preserve_native_affinity() {
                     assert_eq!(actual.rows, expected.rows, "{} {params:?}", sql("docs"));
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn deeper_membership_preserves_null_and_empty_set_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2),(NULL)",
+        "CREATE TABLE native(k INTEGER)",
+        "INSERT INTO native VALUES(1),(2),(NULL)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3),(NULL)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2),(NULL)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for rhs in ["SELECT k", "SELECT k WHERE 0", "SELECT NULL", "SELECT x.n"] {
+            let sql = |source: &str| {
+                format!("SELECT k,(SELECT sum(CASE WHEN x.n IN({rhs}) THEN 1 WHEN x.n NOT IN({rhs}) THEN 10 ELSE 100 END) FROM nums x WHERE k IS k) AS v FROM {source} d {join} b USING(k) ORDER BY k")
+            };
+            let expected = query(&sql("native"));
+            let actual = query(&sql("docs"));
+            assert_eq!(actual.columns, expected.columns);
+            assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
+            assert_eq!(
+                c.profile_select(&sql("docs"), &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows
+            );
         }
     }
 }
