@@ -1296,34 +1296,44 @@ fn aggregate_tuple_validation_restores_indexes_and_allows_retry() {
     ] {
         q(&c, sql);
     }
-    q(&c, "BEGIN");
-    q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
-    let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
-    let sql="UPDATE docs SET (a,b)=(SELECT sum(x.a),count(*) FROM lookup x WHERE x.n=docs.n) WHERE n>0 RETURNING a,b";
-    assert_eq!(
-        c.execute(sql, &Parameters::new()).unwrap_err().code(),
-        "FDB_VALIDATION"
-    );
-    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
-    assert!(c
-        .lookup_index("docs", "docs_a", &Value::Integer(7))
-        .unwrap()
-        .is_empty());
-    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
-    let retry = sql.replace("x.n=docs.n", "x.n=docs.n AND x.a<6");
-    assert_eq!(
-        q(&c, &retry).rows,
-        vec![
-            vec![Value::Integer(7), Value::Integer(2)],
-            vec![Value::Integer(5), Value::Integer(1)]
-        ]
-    );
-    assert_eq!(
-        c.check_collection_integrity("docs", Default::default())
+    for filtered in [false, true] {
+        q(&c, "BEGIN");
+        q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
+        let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
+        let sql="UPDATE docs SET (a,b)=(SELECT sum(x.a),count(*) FROM lookup x WHERE x.n=docs.n) WHERE n>0 RETURNING a,b";
+        let sql = if filtered {
+            sql.replace(
+                "sum(x.a),count(*)",
+                "sum(x.a) FILTER(WHERE x.a>docs.n),count(*) FILTER(WHERE x.a>docs.n)",
+            )
+        } else {
+            sql.to_owned()
+        };
+        assert_eq!(
+            c.execute(&sql, &Parameters::new()).unwrap_err().code(),
+            "FDB_VALIDATION"
+        );
+        assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
+        assert!(c
+            .lookup_index("docs", "docs_a", &Value::Integer(7))
             .unwrap()
-            .index_entries,
-        3
-    );
-    q(&c, "ROLLBACK");
-    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before[1..]);
+            .is_empty());
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        let retry = sql.replace("x.n=docs.n", "x.n=docs.n AND x.a<6");
+        assert_eq!(
+            q(&c, &retry).rows,
+            vec![
+                vec![Value::Integer(7), Value::Integer(2)],
+                vec![Value::Integer(5), Value::Integer(1)]
+            ]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            3
+        );
+        q(&c, "ROLLBACK");
+        assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before[1..]);
+    }
 }

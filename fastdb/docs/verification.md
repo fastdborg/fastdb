@@ -4020,3 +4020,15 @@ reports and rollback. `fastdb/scripts/check-node.sh` rebuilt the addon and passe
 all 87 Node/application tests plus strict TypeScript checks. Log
 `/tmp/fastdb-filter-tuple-node.log`. Only tests/documentation changed from
 `fb30b40aa`; no new Rust-suite run is claimed. Full V1 remains open; no publication.
+
+
+## Filtered aggregate tuple recovery — 2026-09-09
+
+The indexed aggregate recovery regression now includes correlated FILTER
+predicates. A later candidate fails CHECK validation; documents and index entries
+are restored, prior outer-transaction work survives, and a valid filtered retry
+succeeds before rollback. All 29 write tests passed, with formatting and
+all-target fastdb-tests Clippy with warnings denied. Logs
+`/tmp/fastdb-filter-tuple-recovery.log` and `/tmp/fastdb-filter-tuple-recovery-clippy.log`.
+Only tests/docs changed from `79b9dd290`; no new full-suite or client run is
+claimed. Full V1 remains open; no publication occurred.
