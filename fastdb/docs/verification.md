@@ -2556,3 +2556,14 @@ Node unsupported-write error qualification (2026-09-08): rebuilt the debug addon
 
 
 Inner alias-collision implementation oracle (2026-09-08): the current collection query SELECT k,(SELECT max(b.n) FROM nums b WHERE b.n<k) FROM docs a RIGHT JOIN b USING(k) still fails to resolve k while its native counterpart succeeds. Inspection confirms qualify_correlated_using removes the merged binding when the retained outer alias is locally shadowed. A new 12-case native oracle verifies that consistently renaming the inner alias preserves results across INNER/LEFT/RIGHT joins, aggregate/paginated scalars and nested scalar/EXISTS references. Formatting, the focused oracle and diff checks pass. Log: /tmp/fastdb-inner-alias-oracle.log. This is evidence for a future lexical alias rewrite, not a collection fix. Latest complete scoped evidence remains 482 Rust tests with one ignored gate and 50 Node/application tests; rebuilt Node-only evidence is 51. Full V1 remains incomplete.
+
+Combined deadline/resource verification: `fastdb/scripts/check.sh` completed at
+`8624a1b0f` on Linux with Rust 1.88.0 and the pinned Turso base. All 542 Rust tests
+passed with one existing ignored trigger-cancellation gate; all 75 Node/application
+tests passed after rebuilding the addon. Scoped formatting, Clippy with warnings
+denied and strict TypeScript passed. Log: `/tmp/fastdb-deadline-combined-check.log`.
+This includes borrowed document/portable conversion, write-buffer policies and
+cooperative deadlines across Rust, Node and CLI, with their selected rollback and
+lifecycle regressions. It supersedes earlier complete scoped counts; installed
+packages and standalone consumers retain separately recorded evidence. No release,
+platform-wide timing, total-memory or full V1 completion claim follows.

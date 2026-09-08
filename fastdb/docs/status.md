@@ -3206,3 +3206,12 @@ Logs: `/tmp/fastdb-deadline-returning.log` and
 `/tmp/fastdb-deadline-returning-clippy.log`. No production code changed or broader
 suite was repeated. The callback deliberately waits at one selected point; this is
 not a production timing/latency bound, trigger-defect resolution or full V1 gate.
+
+### Combined scoped deadline verification
+
+The complete scoped check at `8624a1b0f` passed 542 Rust tests with one existing
+ignored trigger-cancellation gate and 75 rebuilt Node/application tests, together
+with formatting, Clippy and strict TypeScript. Log:
+`/tmp/fastdb-deadline-combined-check.log`. The gate overview and verification record
+now point to this combined evidence. No production changes were needed. Platform,
+interrupted-I/O/recovery, total-resource, packaging and remaining V1 gates stay open.
