@@ -371,6 +371,53 @@ struct UsingColumns {
     bindings: std::collections::BTreeMap<String, (usize, String)>,
     hidden: std::collections::BTreeSet<(usize, String)>,
 }
+fn qualify_source_free_using(
+    inner: &mut Select,
+    sources: &[Source],
+    using: &UsingColumns,
+) -> Result<()> {
+    if using.bindings.is_empty() || inner.with.is_some() || !inner.body.compounds.is_empty() {
+        return Ok(());
+    }
+    let OneSelect::Select {
+        from: None,
+        columns,
+        where_clause,
+        ..
+    } = &mut inner.body.select
+    else {
+        return Ok(());
+    };
+    for value in columns
+        .iter_mut()
+        .filter_map(|column| match column {
+            ResultColumn::Expr(value, _) => Some(value),
+            _ => None,
+        })
+        .chain(where_clause.iter_mut())
+    {
+        turso_core::walk_expr_mut(value, &mut |expr| {
+            if matches!(
+                expr,
+                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+            ) {
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
+            if let Expr::Id(name) | Expr::Name(name) = expr {
+                if let Some((index, column)) =
+                    using.bindings.get(&name.as_str().to_ascii_lowercase())
+                {
+                    *expr = Expr::Qualified(
+                        Name::exact(sources[*index].alias.clone()),
+                        Name::exact(column.clone()),
+                    );
+                }
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+    }
+    Ok(())
+}
 fn prepare_using(from: Option<&mut FromClause>, sources: &[Source]) -> Result<UsingColumns> {
     let mut merged = UsingColumns::default();
     let Some(from) = from else { return Ok(merged) };
@@ -3477,6 +3524,7 @@ impl Connection {
         // collection query. Otherwise its typed comparisons pack raw storage
         // IDs as strings, silently losing record identity.
         let mut correlation_sources: Option<Vec<Source>> = None;
+        let mut correlation_using = UsingColumns::default();
         // Prepare nested scalar plans without executing them. Cache by the
         // original AST spelling so aliases and repeated lowering probes retain
         // type/parameter metadata; each occurrence still belongs to the engine.
@@ -3561,15 +3609,36 @@ impl Connection {
                                             &ctes,
                                             select.with.as_ref().or(native_with),
                                             anonymous_source_alias(from, position),
-                                            false,
+                                            from.joins.iter().any(|join| {
+                                                matches!(
+                                                    join.constraint,
+                                                    Some(JoinConstraint::Using(_))
+                                                )
+                                            }),
                                         )?);
                                     }
+                                }
+                            }
+                            if let OneSelect::Select {
+                                from: Some(from), ..
+                            } = &select.body.select
+                            {
+                                // Partial correlation sources omit unsupported table
+                                // forms; their positions cannot represent USING sides.
+                                if resolved.len() == from.joins.len() + 1 {
+                                    let mut probe = from.clone();
+                                    correlation_using = prepare_using(Some(&mut probe), &resolved)?;
                                 }
                             }
                             correlation_sources = Some(resolved);
                         }
                         let correlation_sources = correlation_sources.as_ref().unwrap();
                         let mut inner = inner.clone();
+                        qualify_source_free_using(
+                            &mut inner,
+                            correlation_sources,
+                            &correlation_using,
+                        )?;
                         self.correlate_collection_inner(
                             &mut inner,
                             correlation_sources,
@@ -3878,6 +3947,7 @@ impl Connection {
         {
             return Ok(None);
         }
+        let using = prepare_using(from.as_mut(), &sources)?;
         // The pinned engine does not expose outer membership CTEs while
         // preparing JOIN ON subqueries. Keep these RHS queries in place.
         let mut join_memberships = std::collections::BTreeSet::new();
@@ -3897,7 +3967,8 @@ impl Connection {
         // Native expression queries do not opt an ordinary SQL statement into
         // logical lowering; preserve their values only once that route is chosen.
         for (sql, (lowered, _, affinity)) in &mut native_expression_subqueries {
-            if let Expr::Exists(inner) = expression(sql)? {
+            if let Expr::Exists(mut inner) = expression(sql)? {
+                qualify_source_free_using(&mut inner, &sources, &using)?;
                 *lowered = Expr::Exists(
                     native_correlated_predicate(&inner, &sources, false, params, true)?.0,
                 );
@@ -3909,10 +3980,11 @@ impl Connection {
             ) {
                 continue;
             }
-            let inner = match expression(sql)? {
+            let mut inner = match expression(sql)? {
                 Expr::Subquery(inner) | Expr::InSelect { rhs: inner, .. } => inner,
                 _ => unreachable!(),
             };
+            qualify_source_free_using(&mut inner, &sources, &using)?;
             let mut collation = "BINARY".to_owned();
             let correlated = {
                 let (mut probe, _) =
@@ -4059,7 +4131,6 @@ impl Connection {
             .flat_map(|s| s.consumed.iter().cloned())
             .chain(cte_consumed)
             .collect();
-        let using = prepare_using(from.as_mut(), &sources)?;
         let mut scope = Scope {
             using,
             qualified_only: false,

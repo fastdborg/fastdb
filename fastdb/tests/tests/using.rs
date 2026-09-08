@@ -469,3 +469,54 @@ fn using_window_keys_and_windowed_writes_preserve_native_results() {
         vec![vec![Value::Integer(99), Value::Integer(1)]]
     );
 }
+
+#[test]
+fn source_free_subqueries_resolve_outer_using_keys_without_local_capture() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "INSERT INTO docs {k:2}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2),(3)",
+        "CREATE TABLE local_values(k INTEGER)",
+        "INSERT INTO local_values VALUES(99)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for expression in [
+            "(SELECT k)",
+            "(SELECT k+10 WHERE k=2)",
+            "EXISTS(SELECT k WHERE k=2)",
+            "(SELECT k FROM local_values)",
+        ] {
+            let sql = |source: &str| {
+                format!(
+                    "SELECT k,{expression} AS value FROM {source} a {join} b USING(k) ORDER BY k"
+                )
+            };
+            let expected = query(&sql("baseline"));
+            for source in ["docs", "(SELECT k FROM docs)"] {
+                let logical = sql(source);
+                let actual = query(&logical);
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}

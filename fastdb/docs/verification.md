@@ -2331,3 +2331,10 @@ USING grouped-alias qualification (2026-09-08): an eight-case closed-source diff
 USING window/write qualification (2026-09-08): inline and named window partitions on merged keys match native results for direct collections and closed derived sources through execute/profile. A windowed native INSERT SELECT CHECK failure preserves prior rows; filtered retry succeeds and outer rollback retains only pre-existing data. Formatting and the focused regression pass; production code is unchanged.
 
 A current correlation probe remains open: SELECT k,(SELECT k) AS v FROM a JOIN b USING(k) returns (1,1) for native one-row tables, while a logical derived collection source fails with no such column: k. Merged bindings currently enter the final scope after expression-subquery planning; outer merged-key visibility needs implementation. Latest full scoped evidence remains 443 Rust/48 Node with one ignored Rust gate; full V1 qualification remains open.
+
+
+Direct USING correlation (2026-09-08): merged-key bindings now reach source-free scalar/EXISTS projection and WHERE planning, including native expression reconstruction. A 24-case differential regression covers direct/closed collection sources, INNER/LEFT/RIGHT joins, arithmetic and filtering, EXISTS, local FROM shadowing and execute/profile. Both Node clients also verify an unmatched RIGHT JOIN key through a scalar subquery. Early binding skips incomplete source lists rather than applying positional metadata to omitted table forms.
+
+Nested scalar correlation, notably `(SELECT (SELECT k))` with RIGHT JOIN, remains an observed gap. Sourceful outer-name fallback, WITH/compound and inner grouping/ordering scopes remain unqualified; this is initial direct correlation support, not complete V1 query qualification.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 447 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Formatting was rechecked after the source-list guard. Log: /tmp/fastdb-using-correlation-check.log. Full embedded V1 release qualification remains incomplete.
