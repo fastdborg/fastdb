@@ -44,6 +44,14 @@ use fastdb::{Database, Parameters, Record, Key, Value, IntegrityLimits, Integrit
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
     let id = Record { table: "docs".into(), key: Key::String("saved".into()) };
+    let portable = Value::Array(vec![
+        Value::Integer(i64::MAX), Value::Number(-0.0),
+        Value::Binary(vec![0, 127, 255]), Value::Record(id.clone()),
+        Value::String("quoted\" key\nไทย".into()),
+    ]);
+    let encoded = portable.clone().into_portable_json()?.parse()?;
+    assert_eq!(portable, Value::from_portable_value(encoded)?);
+    assert_eq!(Value::Number(f64::NAN).into_portable_json().unwrap_err().code(), "FDB_VALIDATION");
     {
         let db = Database::open(&file)?;
         let c = db.connect()?;
@@ -130,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     c.execute("ROLLBACK", &empty)?;
     assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(),1);
     assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
-    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines and reopen");
+    println!("Standalone Rust client smoke passed: typed values, portable JSON, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines and reopen");
     Ok(())
 }
 ''')
