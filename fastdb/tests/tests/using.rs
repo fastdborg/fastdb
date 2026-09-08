@@ -1084,3 +1084,50 @@ fn nested_using_filters_and_limits_skip_invalid_typed_projections() {
         vec![vec![Value::Array(vec![Value::Integer(2)])]]
     );
 }
+
+#[test]
+fn nested_using_parameters_are_shared_and_unused_bindings_reject() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+    ] {
+        c.execute(sql, &Parameters::new()).unwrap();
+    }
+    let sql = "SELECT k,(SELECT (SELECT k+$delta WHERE k>=$minimum LIMIT $limit)) AS v FROM docs a RIGHT JOIN b USING(k) WHERE k<=$maximum ORDER BY k";
+    let params = Parameters::from([
+        ("$delta".into(), Value::Integer(10)),
+        ("$minimum".into(), Value::Integer(2)),
+        ("$limit".into(), Value::Integer(1)),
+        ("$maximum".into(), Value::Integer(2)),
+    ]);
+    let expected = vec![
+        vec![Value::Integer(1), Value::Null],
+        vec![Value::Integer(2), Value::Integer(12)],
+    ];
+    assert_eq!(c.execute(sql, &params).unwrap().rows, expected);
+    assert_eq!(
+        c.profile_select(sql, &params).unwrap().result.rows,
+        expected
+    );
+    let repeated = "SELECT (SELECT (SELECT k+$value WHERE k=$value)) FROM docs a JOIN b USING(k)";
+    assert_eq!(
+        c.execute(
+            repeated,
+            &Parameters::from([("$value".into(), Value::Integer(1))])
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    let mut invalid = params.clone();
+    invalid.remove("$minimum");
+    assert!(c.execute(sql, &invalid).is_err());
+    invalid = params.clone();
+    invalid.insert("$unused".into(), Value::Integer(99));
+    assert!(c.execute(sql, &invalid).is_err());
+    assert_eq!(c.execute(sql, &params).unwrap().rows, expected);
+}
