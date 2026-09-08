@@ -2775,3 +2775,21 @@ Logs: `/tmp/fastdb-cli-multiline-limits.log` and
 `/tmp/fastdb-cli-multiline-clippy.log`. This supersedes the preceding single-line
 interactive restriction. No frontend-wide or Node/package checks were repeated
 for this CLI-only fix. The broader V1 resource and release gates remain open.
+
+### Terminal cancellation of result-limit commands
+
+The Unix controlling-terminal harness now exercises Ctrl-C during `.select-limit`,
+`.profile-limit`, native `.write-limit`, and collection `.write-limit` operations.
+It observes readline's restored canonical terminal mode before signalling, so the
+probe targets submitted work rather than merely clearing edited input. Each case
+checks `FDB_CANCELLED`, no partial rows/profile, active transaction preservation,
+unchanged pending native/collection rows, subsequent limited reads/profiling, a
+successful limited write retry and rollback.
+
+The focused terminal test passed on this Linux environment; log:
+`/tmp/fastdb-cli-limited-terminal.log`. The existing editing/history/prompt
+interruption and ordinary query cancellation probes run in the same harness and
+also passed. No production code changed, and no broader suite was repeated.
+This is initial terminal qualification, not a cancellation latency/deadline or
+all-platform guarantee. Candidate/snapshot budgets and broader interrupted
+I/O/commit/checkpoint and V1 release gates remain unfinished.

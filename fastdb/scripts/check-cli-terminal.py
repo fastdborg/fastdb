@@ -170,6 +170,48 @@ def main():
             terminal.close(expected_status=1)
         finally:
             terminal.cleanup()
+        terminal = Terminal(binary)
+        try:
+            values = ",".join(f"({n})" for n in range(1, 81))
+            terminal.send(("CREATE TABLE numbers(x INTEGER); INSERT INTO numbers VALUES " + values + "; CREATE TABLE sink(x INTEGER); CREATE TABLE docs;\n").encode(), rows=4, prompt=b"fastdb> ")
+            source = " FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c CROSS JOIN numbers d"
+            commands = [
+                ".select-limit 1 9 SELECT count(*) AS n" + source,
+                ".profile-limit 1 9 SELECT count(*) AS n" + source,
+                ".write-limit 1 9 INSERT INTO sink SELECT count(*)" + source + " RETURNING x",
+                ".write-limit 1 9 INSERT INTO docs(n) SELECT count(*)" + source + " RETURNING n",
+            ]
+            for command in commands:
+                terminal.send(b"BEGIN; INSERT INTO sink VALUES(123); INSERT INTO docs {id:docs:prior,n:123};\n", rows=len(terminal.rows)+3, prompt=b"fastdb(tx)> ")
+                before = len(terminal.rows)
+                assert not termios.tcgetattr(terminal.master)[3] & termios.ICANON
+                terminal.send((command + ";\n").encode())
+                # Rustyline restores canonical mode after accepting the command.
+                # This distinguishes engine/planning cancellation from clearing
+                # the still-edited input at the prompt.
+                terminal.wait(lambda: len(terminal.rows) > before or bool(termios.tcgetattr(terminal.master)[3] & termios.ICANON))
+                deadline = time.monotonic() + 10
+                while len(terminal.rows) == before:
+                    assert time.monotonic() < deadline, "limited command did not cancel"
+                    os.write(terminal.master, b"\x03")
+                    poll = time.monotonic() + 0.1
+                    terminal.wait(lambda: len(terminal.rows) > before or time.monotonic() >= poll)
+                terminal.wait(lambda: b"fastdb(tx)> " in terminal.text)
+                report = terminal.rows[-1]
+                assert report["error"]["code"] == "FDB_CANCELLED", report
+                assert report["transaction"] == {"before": "active", "after": "active"}, report
+                assert "rows" not in report and "profile" not in report
+                terminal.send(b".select-limit 1 9 SELECT x FROM sink;\n", rows=before+2, prompt=b"fastdb(tx)> ")
+                assert terminal.rows[-1]["rows"][0][0]["value"] == 123
+                terminal.send(b".profile-limit 1 9 SELECT n FROM docs;\n", rows=before+3, prompt=b"fastdb(tx)> ")
+                assert terminal.rows[-1]["rows"][0][0]["value"] == 123
+                assert "profile" in terminal.rows[-1]
+                terminal.send(b".write-limit 1 9 INSERT INTO sink VALUES(124) RETURNING x;\n", rows=before+4, prompt=b"fastdb(tx)> ")
+                assert terminal.rows[-1]["rows"][0][0]["value"] == 124
+                terminal.send(b"ROLLBACK;\n", rows=before+5, prompt=b"fastdb> ")
+            terminal.close(expected_status=1)
+        finally:
+            terminal.cleanup()
     print("CLI terminal editing, history, Ctrl-C cancellation and JSON isolation passed")
 
 
