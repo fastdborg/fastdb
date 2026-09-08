@@ -3532,3 +3532,14 @@ Node/application tests passed against the last full-check addon. Logs
 `/tmp/fastdb-ordered-tuple-node-focused.log` and `/tmp/fastdb-ordered-tuple-node.log`.
 Only tests/documentation changed from `cd35f4e40`; no native rebuild or full Rust
 rerun is claimed. Full V1 gates remain open; no publication occurred.
+
+
+## Tuple lookup collation and NULL ordering — 2026-09-09
+
+A ten-case native differential matrix covers relational and collection tuple
+lookup sources with BINARY/NOCASE collation, descending order and explicit
+NULLS FIRST/LAST. Limited row selection matches the pinned engine.
+All twenty write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-collation.log` and
+`/tmp/fastdb-tuple-collation-clippy.log`. Only tests/documentation changed from
+`1d757cfb6`; no new full-suite/client run is claimed. Full V1 gates remain open.

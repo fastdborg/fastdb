@@ -866,3 +866,35 @@ fn tuple_iterator_sources_match_native_values_and_empty_rows() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn ordered_tuple_lookup_collation_and_nulls_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a TEXT,b INTEGER)",
+        "INSERT INTO native VALUES(1,NULL,0)",
+        "CREATE TABLE lookup(a TEXT,b INTEGER)",
+        "INSERT INTO lookup VALUES('a',1),('B',2),(NULL,3)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(a,b) SELECT a,b FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        for order in [
+            "x.a COLLATE BINARY",
+            "x.a COLLATE NOCASE",
+            "x.a COLLATE NOCASE DESC",
+            "x.a NULLS LAST",
+            "x.a DESC NULLS FIRST",
+        ] {
+            q(&c, "BEGIN");
+            let expected=q(&c,&format!("UPDATE native SET (a,b)=(SELECT x.a,x.b FROM lookup x ORDER BY {order} LIMIT 1) RETURNING a,b"));
+            assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM {source} x ORDER BY {order} LIMIT 1) RETURNING a,b")).rows,expected.rows,"{source}: {order}");
+            q(&c, "ROLLBACK");
+        }
+    }
+}
