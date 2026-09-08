@@ -3759,3 +3759,17 @@ tests passed, plus formatting and all-target fastdb-tests Clippy with warnings
 denied. Logs `/tmp/fastdb-derived-record-sort.log` and
 `/tmp/fastdb-derived-record-sort-clippy.log`. Only tests/documentation changed
 from `a6306bfad`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Integrated tuple and logical sorting verification — 2026-09-09
+
+`fastdb/scripts/check.sh` completed with exit 0 on `6304ff8a2`, with only
+status-documentation edits during the run. It passed 596 Rust tests, zero
+failures and one existing ignored trigger-interruption gate; all 86
+Node/application tests; scoped formatting, all-target FastDB Clippy with
+warnings denied and strict TypeScript checks. The Node addon was rebuilt.
+Log: `/tmp/fastdb-integrated-sort-check.log`. The status overview now records
+this combined baseline and replaces the obsolete blanket tuple-subquery
+restriction with the implemented subset and remaining limits. No upstream
+source, dependency or persisted-format changes; no publication. Full V1
+release qualification remains open.
