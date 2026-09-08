@@ -113,6 +113,36 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual((await client.profileSelect(scalarQuery, {$needle:'A'})).result.rows, scalarRows);
       const memberQuery = 'SELECT k,(SELECT sum(CASE WHEN b.n IN(SELECT k) THEN 1 WHEN b.n NOT IN(SELECT k) THEN 10 ELSE 100 END) FROM package_nums b WHERE k IS k) AS v FROM package_keys a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
       assert.deepEqual((await client.execute(memberQuery)).rows, [[1n,121n],[3n,130n],['a',130n]]);
+      await client.execute('CREATE TABLE package_native(k)');
+      await client.execute("INSERT INTO package_native VALUES(1),(2),('a')");
+      const compoundQuery = (source, operator, direction) => {
+        const rhs = 'SELECT k+1 ' + operator + ' SELECT NULL ORDER BY "k+1"' + direction + ' LIMIT $take OFFSET $skip';
+        return 'SELECT k,(SELECT sum(CASE WHEN n IN(' + rhs + ') THEN 1 WHEN n NOT IN(' + rhs + ') THEN 10 ELSE 100 END) FROM package_nums x WHERE k IS k) AS v FROM ' + source + ' a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
+      };
+      const compoundParams = {$take:1n,$skip:0n};
+      for (const operator of ['UNION ALL','UNION','INTERSECT','EXCEPT']) {
+        for (const direction of ['', ' DESC']) {
+          const expected = await client.execute(compoundQuery('package_native',operator,direction),compoundParams);
+          const actual = await client.execute(compoundQuery('package_keys',operator,direction),compoundParams);
+          assert.deepEqual(actual.columns,expected.columns);
+          assert.deepEqual(actual.rows,expected.rows);
+          assert.deepEqual((await client.profileSelect(compoundQuery('package_keys',operator,direction),compoundParams)).result.rows,expected.rows);
+        }
+      }
+      await client.execute('CREATE TABLE package_compound_sink');
+      await client.execute('CREATE UNIQUE INDEX package_compound_k ON package_compound_sink(k)');
+      await client.execute('INSERT INTO package_compound_sink(k) VALUES(3),(9)');
+      const compoundInsert = 'INSERT INTO package_compound_sink(k,v) ' + compoundQuery('package_keys','UNION',' DESC') + ' RETURNING k,v';
+      await assert.rejects(async () => client.execute(compoundInsert,{$take:1n}), error => error.code === 'FDB_PARAMETER' && error.transaction.after === 'active');
+      await assert.rejects(async () => client.execute(compoundInsert,compoundParams), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
+      assert.deepEqual(await client.all('SELECT k FROM package_compound_sink ORDER BY k'),[[3n],[9n]]);
+      await client.execute('DELETE FROM package_compound_sink WHERE k=3');
+      const compoundRetry = await client.execute(compoundInsert,compoundParams);
+      assert.equal(compoundRetry.affected,3n);
+      assert.deepEqual(compoundRetry.rows,await client.all(compoundQuery('package_native','UNION',' DESC'),compoundParams));
+      const compoundAudit = await client.checkCollectionIntegrity('package_compound_sink');
+      assert.equal(compoundAudit.documents,4n);
+      assert.equal(compoundAudit.indexEntries,4n);
       const insertQuery = 'INSERT INTO package_sink(k,v) ' + scalarQuery + ' RETURNING k,v';
       await assert.rejects(async () => client.execute(insertQuery, {$needle:'A'}), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
       assert.deepEqual(await client.all('SELECT k FROM package_sink'), [[3n]]);
