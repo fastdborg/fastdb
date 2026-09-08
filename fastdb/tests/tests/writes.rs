@@ -1630,7 +1630,16 @@ fn update_limit_matches_native_candidates() {
     ] {
         q(&c, sql);
     }
-    for limit in ["0", "1", "2 OFFSET 1", "-1", "1 OFFSET 9"] {
+    for limit in [
+        "0",
+        "1",
+        "2 OFFSET 1",
+        "-1",
+        "1 OFFSET 9",
+        "1+1 OFFSET 2-1",
+        "1.0 OFFSET -2",
+        "'1' OFFSET '1'",
+    ] {
         q(&c, "BEGIN");
         let expected = q(&c, &format!("UPDATE native SET n=n+10 LIMIT {limit}"));
         let actual = q(&c, &format!("UPDATE docs SET n=n+10 LIMIT {limit}"));
@@ -1656,7 +1665,16 @@ fn delete_limit_matches_native_and_restores_indexes() {
     ] {
         q(&c, sql);
     }
-    for limit in ["0", "1", "2 OFFSET 1", "-1", "1 OFFSET 9"] {
+    for limit in [
+        "0",
+        "1",
+        "2 OFFSET 1",
+        "-1",
+        "1 OFFSET 9",
+        "1+1 OFFSET 2-1",
+        "1.0 OFFSET -2",
+        "'1' OFFSET '1'",
+    ] {
         q(&c, "BEGIN");
         let expected = q(&c, &format!("DELETE FROM native LIMIT {limit}"));
         let actual = q(&c, &format!("DELETE FROM docs LIMIT {limit}"));
@@ -1685,5 +1703,39 @@ fn delete_limit_matches_native_and_restores_indexes() {
                 .index_entries,
             3
         );
+    }
+}
+
+#[test]
+fn invalid_write_pagination_preserves_documents() {
+    for write in ["UPDATE TARGET SET n=n+10", "DELETE FROM TARGET"] {
+        for limit in ["NULL", "1.5", "'invalid'", "1 OFFSET NULL", "1 OFFSET 0.5"] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            for sql in [
+                "CREATE TABLE native(n INTEGER)",
+                "INSERT INTO native VALUES(1),(2),(3)",
+                "CREATE TABLE docs",
+                "INSERT INTO docs(n) SELECT n FROM native",
+                "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            ] {
+                q(&c, sql);
+            }
+            let native = format!("{} LIMIT {limit}", write.replace("TARGET", "native"));
+            let docs = format!("{} LIMIT {limit}", write.replace("TARGET", "docs"));
+            let expected = c.execute(&native, &Parameters::new()).unwrap_err();
+            let actual = c.execute(&docs, &Parameters::new()).unwrap_err();
+            assert_eq!(actual.code(), expected.code(), "{docs}");
+            assert_eq!(
+                q(&c, "SELECT n FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n FROM native ORDER BY n").rows
+            );
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .index_entries,
+                3
+            );
+        }
     }
 }

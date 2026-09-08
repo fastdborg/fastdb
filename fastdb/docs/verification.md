@@ -4370,3 +4370,16 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-limited-write-bind-check-verified.log`. No upstream source,
 dependency or storage-format changes. Full V1 remains open; no publication.
+
+
+## Write pagination coercion comparison — 2026-09-09
+
+UPDATE/DELETE differential fixtures now cover arithmetic LIMIT/OFFSET,
+integral real limits, numeric strings and negative offsets. Invalid NULL,
+fractional and nonnumeric text cases match native error codes and preserve
+rows plus managed index integrity. All 39 write tests passed; formatting and
+all-target fastdb-tests Clippy with warnings denied passed. Logs:
+`/tmp/fastdb-write-pagination-coercion.log` and
+`/tmp/fastdb-write-pagination-coercion-clippy.log`. Only tests/docs changed from
+`9b858da06`; no new full-suite/client run is claimed. These are literal/expression
+cases, not complete bound-value or planner qualification. Full V1 remains open.
