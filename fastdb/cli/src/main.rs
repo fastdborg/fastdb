@@ -235,10 +235,24 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     };
     if let Some(directory) = migrations {
         let plan = migration_plan(&directory)?;
+        let before = conn.transaction_state();
+        let report = match conn.migrate(&plan) {
+            Ok(report) => report,
+            Err(error) => {
+                operation_error(
+                    &mut io::stderr().lock(),
+                    &error,
+                    before,
+                    conn.transaction_state(),
+                )?;
+                return Ok(std::process::ExitCode::FAILURE);
+            }
+        };
         writeln!(
             io::stdout().lock(),
             "{}",
-            serde_json::to_string(&conn.migrate(&plan)?)?
+            serde_json::json!({"applied":report.applied,"already_applied":report.already_applied,
+                "transaction":{"before":before,"after":conn.transaction_state()}})
         )?;
         io::stdout().lock().flush()?;
         return Ok(std::process::ExitCode::SUCCESS);
@@ -263,16 +277,12 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
         let data = match result {
             Ok(data) => data,
             Err(error) => {
-                let mut diagnostics = io::stderr().lock();
-                writeln!(
-                    diagnostics,
-                    "{}",
-                    serde_json::json!({
-                        "error":{"code":error.code(),"message":error.to_string()},
-                        "transaction":{"before":before,"after":conn.transaction_state()}
-                    })
+                operation_error(
+                    &mut io::stderr().lock(),
+                    &error,
+                    before,
+                    conn.transaction_state(),
                 )?;
-                diagnostics.flush()?;
                 return Ok(std::process::ExitCode::FAILURE);
             }
         };
@@ -715,6 +725,24 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
     }
     plan.sort_by_key(|m| m.version);
     Ok(plan)
+}
+
+fn operation_error(
+    writer: &mut impl Write,
+    error: &fastdb::Error,
+    before: fastdb::TransactionState,
+    after: fastdb::TransactionState,
+) -> io::Result<()> {
+    serde_json::to_writer(
+        &mut *writer,
+        &serde_json::json!({
+            "error":{"code":error.code(),"message":error.to_string()},
+            "transaction":{"before":before,"after":after}
+        }),
+    )
+    .map_err(io::Error::from)?;
+    writer.write_all(b"\n")?;
+    writer.flush()
 }
 
 #[cfg(test)]

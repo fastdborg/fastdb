@@ -3576,3 +3576,21 @@ codes and transaction states, clean data output, successful retry, and unchanged
 persisted exports after failure in both formats. Existing output-failure tests
 still verify committed import preservation. Full V1 and broader tool/platform
 qualification remain open.
+
+
+### Structured CLI migration outcomes
+
+Migration-runner failures now share the CLI transfer JSON diagnostic path:
+FastDB code/message and transaction observations go to stderr with nonzero exit
+and empty stdout. Successful migration reports retain applied/already_applied
+fields and add transaction observations. Statement errors retain version/byte
+offset context. Source-loading, open and stream-I/O errors retain their existing
+diagnostics; reporting failures do not undo completed migrations.
+
+All 33 CLI tests pass (`/tmp/fastdb-migration-reports.log`). A new separate-process
+regression verifies constraint-failure rollback of documents/index entries,
+structured FDB_MIGRATION diagnostics, corrected retry against retained history,
+and no reapplication on repetition. The resource-limit retry test now checks
+structured diagnostics instead of Rust debug text. Existing transfer/output and
+migration-history checks remain green. Full V1 and broader migration/platform
+qualification remain open.

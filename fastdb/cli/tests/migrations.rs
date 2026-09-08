@@ -167,9 +167,15 @@ fn migration_buffer_failure_persists_rollback_and_accepts_larger_policy_on_retry
     let failed = run("1");
     assert!(!failed.status.success());
     assert!(failed.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&failed.stderr).contains("Limit"),
-        "{failed:?}"
+    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
+    assert_eq!(diagnostic["error"]["code"], "FDB_MIGRATION");
+    assert!(diagnostic["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("resource limit"));
+    assert_eq!(
+        diagnostic["transaction"],
+        serde_json::json!({"before":"autocommit","after":"autocommit"})
     );
     {
         let db = fastdb::Database::open(file.to_str().unwrap()).unwrap();
@@ -215,5 +221,88 @@ fn migration_buffer_failure_persists_rollback_and_accepts_larger_policy_on_retry
             2
         );
     }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn migration_execution_reports_failure_and_allows_corrected_retry() {
+    let root = std::env::temp_dir().join(format!(
+        "fastdb-cli-migration-report-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let dir = root.join("migrations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = root.join("database.db");
+    std::fs::write(dir.join("001_create.sql"),"CREATE TABLE docs; CREATE UNIQUE INDEX docs_n ON docs(n); INSERT INTO docs {id:docs:saved,n:1};").unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+            .arg("--migrate")
+            .arg(&dir)
+            .arg(&file)
+            .output()
+            .unwrap()
+    };
+    let first = run();
+    assert!(first.status.success(), "{first:?}");
+    let report: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(
+        report["transaction"],
+        serde_json::json!({"before":"autocommit","after":"autocommit"})
+    );
+    let pending = dir.join("002_insert.sql");
+    std::fs::write(
+        &pending,
+        "INSERT INTO docs {id:docs:pending,n:2}; INSERT INTO docs {id:docs:bad,n:1};",
+    )
+    .unwrap();
+    let failure = run();
+    assert!(!failure.status.success());
+    assert!(failure.stdout.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&failure.stderr).unwrap();
+    assert_eq!(report["error"]["code"], "FDB_MIGRATION");
+    assert!(report["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("migration 2 at byte"));
+    assert_eq!(
+        report["transaction"],
+        serde_json::json!({"before":"autocommit","after":"autocommit"})
+    );
+    {
+        let db = fastdb::Database::open(file.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        assert_eq!(
+            c.execute("SELECT n FROM docs", &fastdb::Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![fastdb::Value::Integer(1)]]
+        );
+        assert!(c
+            .lookup_index("docs", "docs_n", &fastdb::Value::Integer(2))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            c.check_collection_integrity("docs", fastdb::IntegrityLimits::default())
+                .unwrap()
+                .documents,
+            1
+        );
+    }
+    std::fs::write(&pending, "INSERT INTO docs {id:docs:pending,n:2};").unwrap();
+    let retried = run();
+    assert!(retried.status.success(), "{retried:?}");
+    assert!(retried.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&retried.stdout).unwrap();
+    assert_eq!(report["already_applied"], 1);
+    assert_eq!(report["applied"], serde_json::json!([2]));
+    let repeated = run();
+    assert!(repeated.status.success(), "{repeated:?}");
+    let report: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(report["already_applied"], 2);
+    assert_eq!(report["applied"], serde_json::json!([]));
     std::fs::remove_dir_all(root).unwrap();
 }
