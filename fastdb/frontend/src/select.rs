@@ -118,6 +118,18 @@ fn unordered_compound_pagination(select: &Select) -> bool {
     select.limit.is_some() && select.order_by.is_empty()
 }
 
+fn preserve_compound_column_names(select: &mut Select) {
+    // ImplicitColumnName is parser metadata and is omitted when serializing.
+    // Make it explicit before correlation replaces the original expression.
+    if let OneSelect::Select { columns, .. } = &mut select.body.select {
+        for column in columns {
+            if let ResultColumn::Expr(_, Some(alias @ As::ImplicitColumnName(_))) = column {
+                *alias = As::As(alias.name().clone());
+            }
+        }
+    }
+}
+
 // Predicate-only correlation leaves the native projection intact.
 // The probe substitutes NULL solely for metadata preparation; the executable
 // query retains its outer references and is evaluated by the engine per row.
@@ -141,7 +153,7 @@ fn native_correlated_predicate(
         for arm in std::iter::once(&mut inner.body.select)
             .chain(inner.body.compounds.iter_mut().map(|arm| &mut arm.select))
         {
-            let single = Select {
+            let mut single = Select {
                 with: None,
                 body: SelectBody {
                     select: arm.clone(),
@@ -150,6 +162,7 @@ fn native_correlated_predicate(
                 order_by: Vec::new(),
                 limit: None,
             };
+            preserve_compound_column_names(&mut single);
             let (prepared, logical) = native_correlated_predicate(
                 connection,
                 metadata_scopes,
@@ -818,6 +831,7 @@ fn qualify_correlated_using(
                 order_by: Vec::new(),
                 limit: None,
             };
+            preserve_compound_column_names(&mut single);
             qualify_correlated_using(connection, params, ctes, &mut single, sources, using)?;
             *arm = single.body.select;
         }
@@ -3701,6 +3715,7 @@ impl Connection {
                     order_by: Vec::new(),
                     limit: None,
                 };
+                preserve_compound_column_names(&mut single);
                 self.correlate_collection_inner(
                     &mut single,
                     correlation_sources,

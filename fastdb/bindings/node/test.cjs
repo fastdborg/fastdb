@@ -1551,11 +1551,12 @@ test('ordered compound pagination binds parameters and preserves write recovery 
         'INSERT INTO sink(k) VALUES(2)',
       ]) await db.execute(sql);
       const query = (source, operator, order) => {
-        const rhs = `SELECT k AS chosen ${operator} SELECT NULL ORDER BY ${order} LIMIT $take OFFSET $skip`;
+        const projection = order === 'k DESC' ? 'k' : 'k AS chosen';
+        const rhs = `SELECT ${projection} ${operator} SELECT NULL ORDER BY ${order} LIMIT $take OFFSET $skip`;
         return `SELECT k,(SELECT sum(CASE WHEN x.n IN(${rhs}) THEN 1 WHEN x.n NOT IN(${rhs}) THEN 10 ELSE 100 END) FROM nums x WHERE k IS k) AS v FROM ${source} d LEFT JOIN b USING(k) ORDER BY k`;
       };
       for (const operator of ['UNION ALL', 'UNION', 'INTERSECT', 'EXCEPT']) {
-        for (const order of ['1', 'chosen DESC']) {
+        for (const order of ['1', 'chosen DESC', 'k DESC']) {
           for (const params of [{ $take: 1n, $skip: 0n }, { $take: 1n, $skip: 1n }, { $take: 0n, $skip: 0n }]) {
             const expected = await db.execute(query('native', operator, order), params);
             const actual = await db.execute(query('docs', operator, order), params);
