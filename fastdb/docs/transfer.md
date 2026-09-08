@@ -45,3 +45,6 @@ Rust cancellable transfer methods accept CancellationToken; Node AsyncDatabase t
 
 
 CLI output failures are reported as errors with a nonzero exit, including final stdout flush failures. Migration/import work can commit before writing its success report; an output error does not undo that work. Inspect database state (or rerun an unchanged migration plan to inspect its applied prefix) before retrying writes.
+
+
+CLI import reads at most 64 MiB plus one sentinel byte, checks the byte limit before decoding text, and reports oversized input as FDB_LIMIT even when the sentinel splits a UTF-8 character. Invalid UTF-8 within the byte budget reports FDB_VALIDATION. Both use the structured transfer diagnostic and occur before import mutations; underlying stream-read errors retain I/O diagnostics.

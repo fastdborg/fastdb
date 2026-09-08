@@ -260,17 +260,17 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     if let Some((import, table)) = transfer {
         let before = conn.transaction_state();
         let result = if import {
-            let mut input = String::new();
-            io::stdin()
-                .take(64 * 1024 * 1024 + 1)
-                .read_to_string(&mut input)?;
-            conn.import_documents(&table, &input, format).map(|count| {
-                format!(
-                    "{}\n",
-                    serde_json::json!({"imported":count,
+            let limit = 64 * 1024 * 1024;
+            let input = read_input(&mut io::stdin().lock(), limit, false)?;
+            transfer_text(input, limit)
+                .and_then(|input| conn.import_documents(&table, &input, format))
+                .map(|count| {
+                    format!(
+                        "{}\n",
+                        serde_json::json!({"imported":count,
                     "transaction":{"before":before,"after":conn.transaction_state()}})
-                )
-            })
+                    )
+                })
         } else {
             conn.export_documents(&table, format)
         };
@@ -737,6 +737,17 @@ fn migration_plan(directory: &str) -> Result<Vec<fastdb::Migration>, Box<dyn std
     Ok(plan)
 }
 
+fn transfer_text(input: Vec<u8>, limit: usize) -> fastdb::Result<String> {
+    if input.len() > limit {
+        return Err(fastdb::Error::Limit(format!(
+            "transfer exceeds {limit} bytes"
+        )));
+    }
+    String::from_utf8(input).map_err(|error| {
+        fastdb::Error::Validation(format!("transfer input must be UTF-8: {error}"))
+    })
+}
+
 fn operation_error(
     writer: &mut impl Write,
     error: &fastdb::Error,
@@ -770,6 +781,18 @@ fn operation_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transfer_input_checks_bytes_before_decoding_split_utf8() {
+        let mut reader = io::Cursor::new("abcไทย".as_bytes());
+        let input = read_input(&mut reader, 4, false).unwrap();
+        assert_eq!(reader.position(), 5);
+        assert_eq!(transfer_text(input, 4).unwrap_err().code(), "FDB_LIMIT");
+        assert_eq!(transfer_text("aไ".as_bytes().to_vec(), 4).unwrap(), "aไ");
+        assert_eq!(
+            transfer_text(vec![0xff], 4).unwrap_err().code(),
+            "FDB_VALIDATION"
+        );
+    }
 
     #[test]
     fn migration_loader_enforces_aggregate_bytes_before_utf8_decoding() {

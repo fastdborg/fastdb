@@ -218,6 +218,7 @@ fn transfer_operation_failures_report_codes_without_polluting_data_output() {
         for (output, code) in [
             (run(&import, &original.stdout), "FDB_CONSTRAINT"),
             (run(&import, b"invalid input"), "FDB_VALIDATION"),
+            (run(&import, &[0xff]), "FDB_VALIDATION"),
             (run(&missing, b""), "FDB_NOT_FOUND"),
         ] {
             assert!(!output.status.success());

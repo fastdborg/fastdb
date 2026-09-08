@@ -3651,3 +3651,18 @@ verify oversized UTF-8 boundary diagnostics, execution/reuse of an exactly 4 MiB
 source, and loader rejection/acceptance just above/at the 16 MiB aggregate limit.
 The aggregate test qualifies loading rather than execution of a maximum-sized
 history. Full V1 and broader resource/platform qualification remain open.
+
+
+### CLI import byte/UTF-8 boundary
+
+Import now uses the bounded byte reader and checks its 64 MiB budget before
+UTF-8 conversion. An oversized prefix that cuts a multibyte scalar reports
+FDB_LIMIT; invalid text within budget reports FDB_VALIDATION through structured
+transfer diagnostics. Stream-read I/O failures retain their existing behavior.
+Both validation paths run before import mutations.
+
+All 36 CLI tests pass (`/tmp/fastdb-import-byte-limits.log`). A focused reader
+regression checks sentinel consumption, split-scalar rejection and an exact
+UTF-8 boundary using a small injected limit; process tests verify invalid UTF-8
+reports and unchanged data in both formats. This is not a maximum-size transfer
+benchmark or a complete resource/release qualification. Full V1 remains open.
