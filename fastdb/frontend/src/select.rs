@@ -2195,7 +2195,7 @@ impl Scope {
             ));
         }
         if (matches!(expr, Expr::Subquery(_))
-            || matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_correlated_value"))
+            || matches!(expr, Expr::FunctionCall { name, .. } if matches!(name.as_str(), "__fastdb_correlated_value" | "__fastdb_value")))
             && self.preserved(expr)?
         {
             *expr = expression(&format!("__fastdb_unwrap({expr})"))?;

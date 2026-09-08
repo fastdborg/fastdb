@@ -75,7 +75,7 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 
 ## Verification
 
-The latest complete scoped check on 2026-09-09 passed on `7423bd61b` plus the sourceful tuple-alias implementation: 597 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-tuple-alias-check-final.log`.
+The latest complete scoped check on 2026-09-09 passed on `b6e7ca293` plus the source-free tuple-alias implementation: 599 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-source-free-alias-check.log`.
 
 This is local Linux evidence; hosted CI has not run. The ignored trigger-interruption gate remains unresolved. Package installation across advertised platforms, interrupted checkpoints, previous-release upgrade/restore and the other V1 gates below still require qualification. Historical focused and full-run evidence follows in the dated entries and [verification record](verification.md).
 
@@ -103,7 +103,7 @@ The current result metadata distinguishes direct typed field projections from or
 
 Direct typed parameters and copied document fields retain their logical types. Ordinary SQL scalar expressions retain engine scalar types: SQL TRUE/FALSE become integer 1/0, so boolean validators require typed Boolean parameters or document literals rather than implicit coercion. The Rust map uses `?1`, `?2`, etc. to bind numbered or anonymous statement slots. Pinned Turso v0.7.2 rejects `$name::suffix`; a differential test preserves that exact engine error instead of reinterpreting it.
 
-Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering when projections have no explicit aliases. Source-free explicit projection aliases, compounds, DISTINCT, grouping, windows and recursive local CTEs remain unsupported. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
+Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Compounds, DISTINCT, grouping, windows and recursive local CTEs remain unsupported. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
 
 ## Catalog lifecycle notes
 
@@ -4874,3 +4874,31 @@ test Clippy with warnings denied. Logs `/tmp/fastdb-source-free-position-final.l
 and `/tmp/fastdb-source-free-position-clippy.log`. This is focused evidence from
 `56651b0c9` plus the change; no full-suite or client rerun is claimed. No upstream,
 dependency or storage format changes; no publication. Full V1 remains open.
+
+
+## Source-free tuple projection aliases — 2026-09-09
+
+Source-free tuple SELECTs now retain explicit aliases in predicate and ordering
+clauses while binding projection inputs and other names to pre-update document
+fields. Nested SELECT scopes remain separate; IN-subquery outer operands retain
+the same alias set. The positional CTE output list preserves duplicate aliases.
+
+Explicit aliases follow the existing source-free logical SELECT local-name
+rule. Thus `SELECT -a AS a WHERE a>0` filters on the alias; use `WHERE docs.a>0`
+to test the outer field. This differs from native SQL when an outer relational
+column has the same name, and is not claimed as native-equivalent scope behavior.
+Ordinary relational SQL remains delegated. Differential tests cover noncolliding
+aliases and qualified outer-field reads; a separate assertion fixes the logical
+collision behavior explicitly.
+
+A qualified-field regression exposed an encoded accessor reaching a numeric
+predicate without conversion. Scalar expression lowering now unwraps direct
+outer document accessors just as it unwraps correlated-value markers. Tests
+cover negative values, duplicate aliases, membership operands and ordering.
+
+The complete scoped check passed on `b6e7ca293` plus this change: 599 Rust tests,
+zero failures, one existing ignored trigger-interruption gate; 86 Node/application
+tests; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. The Node addon was rebuilt. Log `/tmp/fastdb-source-free-alias-check.log`.
+No upstream source, dependency or storage-format changes; no publication.
+Broader tuple forms and full V1 qualification remain open.

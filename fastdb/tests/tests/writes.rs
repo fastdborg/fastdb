@@ -1139,3 +1139,46 @@ fn source_free_tuple_positions_preserve_candidates_and_empty_rows() {
         }
     }
 }
+
+#[test]
+fn source_free_tuple_aliases_match_native_scope() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,6,11),(2,-8,9)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for (projection, predicate, order) in [
+        ("b AS chosen,a AS other", "chosen>0 AND n=1", "chosen"),
+        ("-a AS a,b AS b", "TARGET.a>0", "a DESC"),
+        ("b AS chosen,a AS chosen", "chosen>0", "2"),
+        ("b AS chosen,a", "chosen IN (11)", "chosen+a"),
+    ] {
+        q(&c, "BEGIN");
+        let native_predicate = predicate.replace("TARGET", "native");
+        let expected = q(&c, &format!("UPDATE native SET (a,b)=(SELECT {projection} WHERE {native_predicate} ORDER BY {order}) RETURNING n,a,b"));
+        let predicate = predicate.replace("TARGET", "docs");
+        let sql = format!("UPDATE docs SET (a,b)=(SELECT {projection} WHERE {predicate} ORDER BY {order}) RETURNING n,a,b");
+        assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
+        q(&c, "ROLLBACK");
+    }
+    // Source-free logical SELECTs bind explicit aliases locally. Qualify a
+    // document field when its name collides with an alias.
+    q(&c, "BEGIN");
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE docs SET (a,b)=(SELECT -a AS a,b AS b WHERE a>0 ORDER BY a) RETURNING n,a,b"
+        )
+        .rows,
+        vec![
+            vec![Value::Integer(1), Value::Null, Value::Null],
+            vec![Value::Integer(2), Value::Integer(8), Value::Integer(9)]
+        ]
+    );
+    q(&c, "ROLLBACK");
+}

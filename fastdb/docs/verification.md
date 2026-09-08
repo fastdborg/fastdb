@@ -3858,3 +3858,31 @@ test Clippy with warnings denied. Logs `/tmp/fastdb-source-free-position-final.l
 and `/tmp/fastdb-source-free-position-clippy.log`. This is focused evidence from
 `56651b0c9` plus the change; no full-suite or client rerun is claimed. No upstream,
 dependency or storage format changes; no publication. Full V1 remains open.
+
+
+## Source-free tuple projection aliases — 2026-09-09
+
+Source-free tuple SELECTs now retain explicit aliases in predicate and ordering
+clauses while binding projection inputs and other names to pre-update document
+fields. Nested SELECT scopes remain separate; IN-subquery outer operands retain
+the same alias set. The positional CTE output list preserves duplicate aliases.
+
+Explicit aliases follow the existing source-free logical SELECT local-name
+rule. Thus `SELECT -a AS a WHERE a>0` filters on the alias; use `WHERE docs.a>0`
+to test the outer field. This differs from native SQL when an outer relational
+column has the same name, and is not claimed as native-equivalent scope behavior.
+Ordinary relational SQL remains delegated. Differential tests cover noncolliding
+aliases and qualified outer-field reads; a separate assertion fixes the logical
+collision behavior explicitly.
+
+A qualified-field regression exposed an encoded accessor reaching a numeric
+predicate without conversion. Scalar expression lowering now unwraps direct
+outer document accessors just as it unwraps correlated-value markers. Tests
+cover negative values, duplicate aliases, membership operands and ordering.
+
+The complete scoped check passed on `b6e7ca293` plus this change: 599 Rust tests,
+zero failures, one existing ignored trigger-interruption gate; 86 Node/application
+tests; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. The Node addon was rebuilt. Log `/tmp/fastdb-source-free-alias-check.log`.
+No upstream source, dependency or storage-format changes; no publication.
+Broader tuple forms and full V1 qualification remain open.

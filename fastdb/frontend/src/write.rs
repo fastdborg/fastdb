@@ -173,6 +173,14 @@ fn bind_source_free_tuple_field(
     value: &mut Expr,
     target: &QualifiedName,
 ) -> turso_core::Result<()> {
+    bind_source_free_tuple_names(value, target, &[])
+}
+
+fn bind_source_free_tuple_names(
+    value: &mut Expr,
+    target: &QualifiedName,
+    aliases: &[String],
+) -> turso_core::Result<()> {
     turso_core::walk_expr_mut(value, &mut |expr| {
         if matches!(expr, Expr::Subquery(_) | Expr::Exists(_))
             || matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path")
@@ -181,10 +189,16 @@ fn bind_source_free_tuple_field(
         }
         if let Expr::InSelect { lhs, .. } = expr {
             // Bind the outer operand without visiting the RHS scope.
-            bind_source_free_tuple_field(lhs, target)?;
+            bind_source_free_tuple_names(lhs, target, aliases)?;
             return Ok(turso_core::WalkControl::SkipChildren);
         }
         if let Expr::Id(name) | Expr::Name(name) = expr {
+            if aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(name.as_str()))
+            {
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
             if name.quoted()
                 || (!name.as_str().eq_ignore_ascii_case("true")
                     && !name.as_str().eq_ignore_ascii_case("false"))
@@ -625,9 +639,13 @@ impl Connection {
                         let explicit_aliases = columns.iter().any(|column| {
                             matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
                         });
-                        if (positional_order || explicit_aliases)
-                            && (from.is_some() || !explicit_aliases)
-                        {
+                        if positional_order || explicit_aliases {
+                            let aliases: Vec<_> = columns.iter().filter_map(|column| {
+                                match column {
+                                    ResultColumn::Expr(_, Some(alias)) if alias.is_explicit() => Some(alias.name().as_str().to_owned()),
+                                    _ => None,
+                                }
+                            }).collect();
                             let mut packed = Vec::new();
                             for (position, column) in columns.iter_mut().enumerate() {
                                 let ResultColumn::Expr(value, _) = column else {
@@ -641,10 +659,10 @@ impl Connection {
                             }
                             if from.is_none() {
                                 if let Some(predicate) = where_clause {
-                                    bind_source_free_tuple_field(predicate, &update.tbl_name)?;
+                                    bind_source_free_tuple_names(predicate, &update.tbl_name, &aliases)?;
                                 }
                                 for sort in &mut select.order_by {
-                                    bind_source_free_tuple_field(&mut sort.expr, &update.tbl_name)?;
+                                    bind_source_free_tuple_names(&mut sort.expr, &update.tbl_name, &aliases)?;
                                 }
                             }
                             // Preserve the original alias scope and evaluate each
@@ -668,9 +686,6 @@ impl Connection {
                             widths.push(set.col_names.len());
                             exprs.push(Expr::Subquery(packed_select));
                             continue;
-                        }
-                        if positional_order {
-                            return Err(unsupported("source-free positional tuple SELECT ordering"));
                         }
                         if from.is_none() {
                             for sort in &mut select.order_by {
