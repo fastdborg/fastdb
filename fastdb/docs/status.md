@@ -3256,3 +3256,20 @@ The focused test passed against the current addon; log:
 changed or broader suite was repeated. This verifies cooperative cancellation plus
 orderly close/reopen, not forced process termination, interrupted commit or a hard
 close-latency guarantee. Full V1 gates remain open.
+
+### Node result envelope moves portable JSON rows
+
+The shared Node query-result envelope now takes ownership of converted JSON rows
+and column names instead of passing them through json! serialization again. The
+pinned serde_json macro serializes borrowed expressions; explicitly moving these
+arrays avoids constructing another copy of the converted row tree at this stage.
+Wire keys, portable values and affected-count strings remain unchanged. Other
+transport/envelope allocations still exist; this is not a total-memory guarantee.
+
+The rebuilt addon passed all 76 Node/application tests and strict TypeScript,
+including timeout cleanup and persistent worker-close recovery. Node Clippy,
+formatting and diff checks passed. Logs:
+`/tmp/fastdb-node-owned-envelope.log` and
+`/tmp/fastdb-node-owned-envelope-clippy.log`. Broader Rust and installed-package
+checks were not repeated for this binding-only ownership change. V1 gates remain
+open.

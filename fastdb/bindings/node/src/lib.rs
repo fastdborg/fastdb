@@ -531,9 +531,24 @@ fn query_value(result: fastdb::QueryResult) -> fastdb::Result<serde_json::Value>
             row.into_iter()
                 .map(fastdb::Value::into_portable_value)
                 .collect::<fastdb::Result<Vec<_>>>()
+                .map(serde_json::Value::Array)
         })
         .collect::<fastdb::Result<Vec<_>>>()?;
-    Ok(
-        serde_json::json!({"columns":result.columns,"rows":rows,"affected":result.affected.to_string()}),
-    )
+    Ok(serde_json::Value::Object(serde_json::Map::from_iter([
+        (
+            "columns".into(),
+            serde_json::Value::Array(
+                result
+                    .columns
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        ),
+        ("rows".into(), serde_json::Value::Array(rows)),
+        (
+            "affected".into(),
+            serde_json::Value::String(result.affected.to_string()),
+        ),
+    ])))
 }
