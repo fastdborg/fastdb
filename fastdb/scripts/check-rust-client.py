@@ -113,7 +113,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     c.execute("ROLLBACK", &empty)?;
     assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(), 1);
     assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents, 1);
-    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result limits, cancellation and reopen");
+    c.execute("BEGIN", &empty)?;
+    c.execute("INSERT INTO docs {id:docs:pending,value:2}", &empty)?;
+    let c = c.with_write_buffer_limits(ResultLimits { max_rows:1, max_payload_bytes:1000 });
+    assert_eq!(c.execute("DELETE FROM docs RETURNING value", &empty).unwrap_err().code(), "FDB_LIMIT");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(c.execute("SELECT value FROM docs ORDER BY value", &empty)?.rows,
+        vec![vec![Value::Integer(2)],vec![Value::Integer(i64::MAX)]]);
+    let c = c.with_write_buffer_limits(ResultLimits { max_rows:2, max_payload_bytes:1000 });
+    assert_eq!(c.execute("DELETE FROM docs RETURNING value", &empty)?.rows.len(),2);
+    assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,0);
+    c.execute("ROLLBACK", &empty)?;
+    assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(),1);
+    assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
+    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation and reopen");
     Ok(())
 }
 ''')

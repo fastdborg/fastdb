@@ -2964,3 +2964,18 @@ Logs: `/tmp/fastdb-delete-snapshot.log`,
 `/tmp/fastdb-delete-snapshot-clippy.log`. No broader or Node/package suite was
 repeated. This reduces duplicate work and transient document ownership; it does
 not establish total-memory or full V1 qualification.
+
+### Standalone Rust connection buffer qualification
+
+The out-of-workspace Rust consumer now exercises `with_write_buffer_limits` on an
+active transaction: a rejected DELETE preserves both existing and pending data,
+increasing the policy allows DELETE RETURNING, and rollback restores the original
+indexed document. Existing typed values, validation, QuickJS, vectors, result
+limits, cancellation, audits and reopen checks remain in the consumer.
+
+Offline build/execution passed without workspace-injected Rust flags. All 244
+resolved registry/git package identities matched the pinned workspace lockfile
+subset. Log: `/tmp/fastdb-consumer-write-buffers.log`. This qualifies the public
+builder and current DELETE implementation in a dependent application on this
+platform; broader resource, packaging/platform and V1 gates remain open. No
+production code changed and no broader suite was repeated.
