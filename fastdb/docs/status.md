@@ -3790,3 +3790,23 @@ Clippy and strict TypeScript passed. Log `/tmp/fastdb-deep-iterators-check.log`,
 implementation tree based on `d1c46e6eb` with this fix. No upstream implementation
 or dependencies changed. Argument subqueries, broader query correlation and full
 V1 release qualification remain open; no publication occurred.
+
+
+## Scalar subqueries in JSON iterator arguments — 2026-09-08
+
+Iterator arguments now participate in existing scalar-subquery analysis. Metadata
+inspection substitutes the complete scalar subquery in a disposable probe, while
+runtime lowering retains its local and outer scopes. Native comparisons cover
+constant and bound scalar SELECTs, a native inner source correlated to outer
+collection fields, and coalesce composition through execute/profile. Missing
+bindings return FDB_PARAMETER. A correlated iterator INSERT SELECT validation
+failure restores documents/indexes and preserves prior work; corrected retry and
+outer rollback succeed. Both Node clients cover bound and correlated arguments.
+
+The full scoped check exited zero: 564 Rust tests passed, zero failed, one existing
+trigger-cancellation gate ignored; all 80 Node/application tests, formatting,
+Clippy and strict TypeScript passed. Log `/tmp/fastdb-subquery-iterators-check.log`,
+implementation tree based on `bfdba52c5` with this change. No upstream engine or
+dependencies changed. Broader argument subquery forms, CTE/type propagation and
+correlation to iterator columns remain unqualified. Full V1 release gates remain
+active; no publication occurred.

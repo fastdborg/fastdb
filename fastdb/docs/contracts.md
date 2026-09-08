@@ -1090,37 +1090,37 @@ Tagged-value nesting: binding input, stored values and document transfer decodin
 ## Direct JSON iterator sources
 
 Collection and mixed SELECTs accept unqualified `json_each` and `json_tree`
-sources whose arguments are closed native scalar expressions: literals, bound
-parameters, scalar function calls, arithmetic, casts and CASE can be composed
-without references to query sources or subqueries. For example:
+sources. Arguments support literals, bound parameters, native scalar functions,
+arithmetic, casts, CASE and per-row source fields. For example:
 
 ```sql
 SELECT d.n, j.value
-FROM docs d CROSS JOIN json_each($json) AS j;
+FROM docs d CROSS JOIN json_each(d.payload.inner.j) AS j;
 ```
 
-The pinned engine evaluates the iterator and supplies its column metadata.
-Qualified stars, aliases, CROSS/LEFT joins and validated collection INSERT SELECT
+The pinned engine evaluates iterators and supplies their column metadata.
+Qualified stars, aliases, CROSS/LEFT joins, NULL/empty inputs, chained iterators
+referencing preceding iterator columns and validated collection INSERT SELECT
 have initial regression coverage. Missing iterator bindings return FDB_PARAMETER.
-A failed collection insert restores its document and index changes while keeping
+A failed collection insert restores document and index changes while preserving
 prior transaction work; a corrected retry can run in the same transaction.
-Qualified per-row source fields also work in iterator arguments, including
-composed scalar expressions and references to preceding iterator columns. The
-metadata-only probe substitutes NULL for source references; runtime arguments
-use normal SQL argument lowering and execute for each source row. CROSS/LEFT
-joins, NULL/empty inputs, chained iterators and atomic INSERT SELECT failure/retry
-have initial native differential coverage. Within iterator arguments, an
-unqualified field resolves when exactly one source can supply it: every other
-source must have closed column metadata that excludes the name. Collections
-remain open, so potentially colliding names still require qualification. This
-does not change unqualified-field resolution elsewhere in collection joins. Deep
-qualified document paths such as `d.payload.inner.j`, including quoted segments,
-are supported in iterator arguments and composed scalar expressions. Metadata
-inspection substitutes the complete path reference; runtime lowering retains its
-segments. Argument subqueries and deeper query correlation remain separate gaps. Argument subqueries, deeper correlation
-scopes, broader typed helper coverage and general table-function support remain
-unqualified.
-Aggregate/window argument forms retain native rejection or the frontend scope
-guard. Closed expressions remain in the executed SQL, preserving native lazy
-evaluation; metadata inspection does not evaluate them. Ordinary SQL continues to use native
-delegation for supported forms outside collection lowering.
+
+Within iterator arguments, an unqualified field resolves when exactly one source
+can supply it: every other source must have closed column metadata excluding the
+name. Collections remain open, so potentially colliding names require
+qualification. Resolution elsewhere in collection joins is unchanged. Deep
+qualified paths, including quoted segments and composed expressions, retain their
+segments for runtime lowering.
+
+Scalar subqueries now use the existing query lowering inside iterator arguments.
+Constant and bound scalar SELECTs, native inner sources correlated to the outer
+collection, and coalesce composition have native differential execute/profile
+coverage and atomic write-failure/retry tests. Broader subquery forms, CTE/type
+propagation and correlation to iterator columns remain unqualified.
+
+Metadata inspection substitutes NULL for complete source references and scalar
+subqueries in a disposable probe. Runtime expressions remain in SQL; they are not
+pre-evaluated during inspection. Aggregate/window argument forms retain native
+rejection or the frontend scope guard. Broader typed helper and general
+table-function support remain open. Ordinary SQL retains native delegation for
+supported forms outside collection lowering.

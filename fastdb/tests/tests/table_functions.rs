@@ -289,3 +289,88 @@ fn deep_path_iterator_arguments_preserve_rows_and_atomic_writes() {
         0
     );
 }
+
+#[test]
+fn scalar_subquery_iterator_arguments_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::from([("$json".into(), Value::String("[1,2]".into()))]);
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT)",
+        "INSERT INTO native VALUES(1,'[1,2]'),(2,'[3]')",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) SELECT n,j FROM native",
+    ] {
+        c.execute(sql, &Parameters::new()).unwrap();
+    }
+    for arg in [
+        "(SELECT '[1,2]')",
+        "(SELECT $json)",
+        "(SELECT j FROM native WHERE n=d.n)",
+        "coalesce((SELECT j FROM native WHERE n=d.n),'[]')",
+    ] {
+        let params = if arg.contains("$json") {
+            params.clone()
+        } else {
+            Parameters::new()
+        };
+        let query = |source| {
+            format!("SELECT d.n,x.key,x.value FROM {source} d CROSS JOIN json_each({arg}) x ORDER BY d.n,x.key")
+        };
+        let expected = c.execute(&query("native"), &params).unwrap();
+        let sql = query("docs");
+        for actual in [
+            c.execute(&sql, &params).unwrap(),
+            c.profile_select(&sql, &params).unwrap().result,
+        ] {
+            assert_eq!(actual.columns, expected.columns, "{sql}");
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+        }
+    }
+    let empty = Parameters::new();
+    assert_eq!(
+        c.execute(
+            "SELECT x.value FROM docs d CROSS JOIN json_each((SELECT $json)) x",
+            &empty
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_PARAMETER"
+    );
+    for sql in [
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<2)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(0)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    let sql="INSERT INTO output(n) SELECT x.value FROM docs d CROSS JOIN json_each((SELECT j FROM native WHERE n=d.n)) x WHERE x.value IS NOT NULL ORDER BY d.n,x.key RETURNING n";
+    assert_eq!(c.execute(sql, &empty).unwrap_err().code(), "FDB_VALIDATION");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM output", &empty).unwrap().rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    assert!(c
+        .lookup_index("output", "output_n", &Value::Integer(1))
+        .unwrap()
+        .is_empty());
+    c.execute(
+        "UPDATE native SET j=CASE n WHEN 1 THEN '[1]' ELSE '[]' END",
+        &empty,
+    )
+    .unwrap();
+    assert_eq!(
+        c.execute(sql, &empty).unwrap().rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    c.execute("ROLLBACK", &empty).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

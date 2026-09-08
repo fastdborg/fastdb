@@ -2504,6 +2504,16 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       const deep=correlated.replace('json_each(d.j)', 'json_each(d.payload.inner.j)');
       assert.deepEqual((await db.execute(deep)).rows,rows);
       assert.deepEqual((await db.profileSelect(deep)).result.rows,rows);
+      const scalar=sql.replace('json_each($json)','json_each((SELECT $json))');
+      assert.deepEqual((await db.execute(scalar,params)).rows,rows);
+      assert.deepEqual((await db.profileSelect(scalar,params)).result.rows,rows);
+      await assert.rejects(async()=>db.execute(scalar),error=>error.code==='FDB_PARAMETER');
+      await db.execute('CREATE TABLE native(n INTEGER,j TEXT)');
+      await db.execute('INSERT INTO native VALUES(1,$json)',params);
+      const nested=sql.replace('json_each($json)','json_each((SELECT j FROM native WHERE n=d.n))');
+      assert.deepEqual((await db.execute(nested)).rows,rows);
+      assert.deepEqual((await db.profileSelect(nested)).result.rows,rows);
+
 
 
 

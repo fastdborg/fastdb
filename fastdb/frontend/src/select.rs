@@ -2821,6 +2821,7 @@ fn source(
                                 .map_or_else(|| format!("?{}", var.index), |name| name.to_string()),
                         );
                     }
+                    Expr::Subquery(_) => return Ok(turso_core::WalkControl::SkipChildren),
                     Expr::Id(_) | Expr::Qualified(..) | Expr::DoublyQualified(..) => {}
                     Expr::Literal(_)
                     | Expr::Binary(..)
@@ -2867,7 +2868,10 @@ fn source(
                 turso_core::walk_expr_mut(arg, &mut |expr| {
                     if matches!(
                         expr,
-                        Expr::Id(_) | Expr::Qualified(..) | Expr::DoublyQualified(..)
+                        Expr::Id(_)
+                            | Expr::Qualified(..)
+                            | Expr::DoublyQualified(..)
+                            | Expr::Subquery(_)
                     ) || matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path")
                     {
                         *expr = Expr::Literal(Literal::Null);
@@ -4816,6 +4820,13 @@ impl Connection {
                     inputs.extend(group.having.iter().map(|e| *e.clone()));
                 }
                 if let Some(from) = from {
+                    for table in
+                        std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table))
+                    {
+                        if let SelectTable::TableCall(_, args, _) = table.as_ref() {
+                            inputs.extend(args.iter().map(|arg| *arg.clone()));
+                        }
+                    }
                     for join in &from.joins {
                         if let Some(JoinConstraint::On(expr)) = &join.constraint {
                             inputs.push(*expr.clone());
@@ -5827,6 +5838,10 @@ impl Connection {
                         // argument only when every other source has a closed
                         // column set that excludes that name.
                         turso_core::walk_expr_mut(arg, &mut |expr| {
+                            // Cached subquery lowering owns its local and outer scopes.
+                            if matches!(expr, Expr::Subquery(_)) {
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
                             // Path identifiers are segments of one field reference.
                             // Preserve them for the normal runtime path resolver.
                             if matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path")
