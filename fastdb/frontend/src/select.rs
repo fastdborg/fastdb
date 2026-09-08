@@ -6686,6 +6686,46 @@ fn vector_input_expression(arg: &Expr) -> Result<Expr> {
 
 #[cfg(test)]
 mod lowering_tests {
+    #[test]
+    fn pagination_text_adapter_matches_pinned_conversion() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let empty = crate::Parameters::new();
+        c.execute("CREATE TABLE pagination_probe(n INTEGER)", &empty)
+            .unwrap();
+        c.execute("INSERT INTO pagination_probe VALUES(1),(2),(3)", &empty)
+            .unwrap();
+        for sign in ["", "+", "-"] {
+            for mantissa in ["", ".", "0", "1", "1.", ".5", "1.5", "01", "1..0"] {
+                for exponent in ["", "e0", "E+1", "e-1", "e", "e+", "e1x"] {
+                    for whitespace in ["", " "] {
+                        let text = format!("{whitespace}{sign}{mantissa}{exponent}{whitespace}");
+                        let value = crate::Value::String(text.clone());
+                        let converted = super::pagination_integer(&value);
+                        let params = crate::Parameters::from([("$value".into(), value)]);
+                        let sql = "SELECT n FROM pagination_probe ORDER BY n LIMIT $value";
+                        match c.execute(sql, &params) {
+                            Ok(actual) => {
+                                let integer =
+                                    converted.unwrap_or_else(|| panic!("native accepted {text:?}"));
+                                let expected = c
+                                    .execute(&sql.replace("$value", &integer.to_string()), &empty)
+                                    .unwrap();
+                                assert_eq!(actual.rows, expected.rows, "{text:?}: {integer}");
+                            }
+                            Err(error) => {
+                                assert!(
+                                    error.to_string().contains("datatype mismatch"),
+                                    "{text:?}: {error}"
+                                );
+                                assert_eq!(converted, None, "native rejected {text:?}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     use super::*;
     #[test]
     fn wide_duplicate_names_preserve_public_names_and_avoid_collisions() {
