@@ -3810,6 +3810,9 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
 }
 #[derive(Default)]
 struct SelectOptions<'a> {
+    // Tuple CTEs need logical preparation even when only their predicates
+    // reference outer documents; native metadata probes cannot bind them.
+    force_logical: bool,
     outer_scope: Option<(&'a [Source], &'a UsingColumns)>,
     membership_namespace: usize,
     native_with: Option<&'a With>,
@@ -4245,6 +4248,10 @@ impl Connection {
             }
             return Ok(());
         }
+        let tuple_projection = matches!(&inner.body.select, OneSelect::Select { columns, .. }
+            if columns.iter().any(|column| matches!(column,
+                ResultColumn::Expr(value, _) if matches!(value.as_ref(),
+                    Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_h_array_new"))));
         if let Some(with) = &mut inner.with {
             if !with.recursive {
                 for cte in &mut with.ctes {
@@ -4254,7 +4261,7 @@ impl Connection {
                         params,
                         ctes,
                         false,
-                        false,
+                        logical_parent || tuple_projection,
                     )?;
                 }
             }
@@ -4462,7 +4469,7 @@ impl Connection {
                 && inner.body.compounds.is_empty()
                 && local.len() == local_count
                 && if inner.with.is_some() {
-                    local_cte_logical
+                    logical_parent || tuple_projection || local_cte_logical
                 } else {
                     logical_parent
                         || nested_logical
@@ -4548,6 +4555,7 @@ impl Connection {
         options: SelectOptions<'_>,
     ) -> Result<Option<LoweredSelect>> {
         let SelectOptions {
+            force_logical,
             outer_scope,
             membership_namespace,
             native_with,
@@ -4578,6 +4586,10 @@ impl Connection {
             | Cmd::ExplainQueryPlan(Stmt::Select(s)) => s,
             _ => return Ok(None),
         };
+        let tuple_projection = matches!(&select.body.select, OneSelect::Select { columns, .. }
+            if columns.iter().any(|column| matches!(column,
+                ResultColumn::Expr(value, _) if matches!(value.as_ref(),
+                    Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_h_array_new"))));
         let mut ctes = inherited_ctes.cloned().unwrap_or_default();
         let mut cte_consumed = std::collections::BTreeSet::new();
         let mut cte_logical = false;
@@ -4628,6 +4640,7 @@ impl Connection {
                         ctes: Some(&ctes),
                         native_with: Some(&preceding),
                         membership_namespace: index + 1,
+                        force_logical: force_logical || tuple_projection,
                         ..Default::default()
                     },
                 ) {
@@ -5388,6 +5401,7 @@ impl Connection {
             }
         }
         if (native_insert.is_some() || nested)
+            && !force_logical
             && !cte_logical
             && expression_subqueries.is_empty()
             && !explicit_logical_expression

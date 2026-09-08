@@ -710,7 +710,7 @@ fn tuple_lookup_validation_restores_indexes_and_allows_retry() {
     q(&c, "INSERT INTO lookup VALUES(2,6,9)");
     q(&c, "INSERT INTO lookup_docs(n,a,b) VALUES(2,6,9)");
     for source in ["lookup", "lookup_docs"] {
-        for local in [false, true] {
+        for (local, aliases) in [(false, false), (true, false), (false, true), (true, true)] {
             q(&c, "BEGIN");
             q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
             let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
@@ -725,10 +725,16 @@ fn tuple_lookup_validation_restores_indexes_and_allows_retry() {
             } else {
                 sql
             };
-            assert_eq!(
-                c.execute(&sql, &Parameters::new()).unwrap_err().code(),
-                "FDB_VALIDATION"
-            );
+            let sql = if aliases {
+                sql.replace(
+                    "SELECT x.a,x.b",
+                    "SELECT x.a AS first_value,x.b AS second_value",
+                )
+            } else {
+                sql
+            };
+            let error = c.execute(&sql, &Parameters::new()).unwrap_err();
+            assert_eq!(error.code(), "FDB_VALIDATION", "{sql}: {error:?}");
             assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
             assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
             assert!(c
@@ -1025,7 +1031,7 @@ fn tuple_local_ctes_supply_correlated_lookup_rows() {
 }
 
 #[test]
-fn tuple_lookup_alias_baseline_and_current_collection_gate() {
+fn tuple_lookup_aliases_match_native() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     for sql in [
@@ -1053,6 +1059,16 @@ fn tuple_lookup_alias_baseline_and_current_collection_gate() {
                 "chosen + x.b DESC",
                 [[1, 11, 8], [2, 4, 7]],
             ),
+            (
+                "x.a AS chosen,x.b AS chosen",
+                "chosen DESC",
+                [[1, 11, 8], [2, 4, 7]],
+            ),
+            (
+                "x.a AS fastdb_tuple_values_0,x.b AS other",
+                "fastdb_tuple_values_0 DESC",
+                [[1, 11, 8], [2, 4, 7]],
+            ),
         ] {
             q(&c, "BEGIN");
             let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT {projection} FROM lookup x WHERE x.n=native.n ORDER BY {order} LIMIT 1) RETURNING n,a,b"));
@@ -1063,22 +1079,8 @@ fn tuple_lookup_alias_baseline_and_current_collection_gate() {
                     .map(|row| row.into_iter().map(Value::Integer).collect::<Vec<_>>())
                     .collect::<Vec<_>>()
             );
-            // This is an open V1 compatibility gate, not desired final behavior.
             let sql = format!("UPDATE docs SET (a,b)=(SELECT {projection} FROM {source} x WHERE x.n=docs.n ORDER BY {order} LIMIT 1) RETURNING n,a,b");
-            assert!(
-                matches!(
-                    c.execute(&sql, &Parameters::new()),
-                    Err(fastdb::Error::Unsupported(_))
-                ),
-                "{sql}"
-            );
-            assert_eq!(
-                q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows,
-                vec![
-                    vec![Value::Integer(1), Value::Integer(0), Value::Integer(0)],
-                    vec![Value::Integer(2), Value::Integer(0), Value::Integer(0)]
-                ]
-            );
+            assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
             q(&c, "ROLLBACK");
         }
     }

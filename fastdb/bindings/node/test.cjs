@@ -2670,6 +2670,8 @@ test('tuple collection lookups preserve typed results in both clients', async ()
         [[1n,record,payload],[2n,null,null]]);
       assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(WITH base(k,v,w,r) AS (SELECT n,a,b,rank FROM lookup), chosen AS (SELECT k,v,w,r FROM base) SELECT x.v,x.w FROM chosen x WHERE x.k=docs.n ORDER BY x.r DESC LIMIT 1) RETURNING n,a,b')).rows,
         [[1n,new Record('docs', 'second'),{ selected: true }],[2n,null,null]]);
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT x.a AS chosen,x.b AS chosen FROM lookup x WHERE x.n=docs.n ORDER BY x.rank DESC LIMIT 1 OFFSET 1) RETURNING n,a,b')).rows,
+        [[1n,record,payload],[2n,null,null]]);
       const result = await db.execute('UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
       assert.deepEqual(result.rows, [[1n,record,payload],[2n,null,null]]);
       assert.deepEqual(result.transaction, { before: 'active', after: 'active' });

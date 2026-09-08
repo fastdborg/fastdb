@@ -624,6 +624,40 @@ impl Connection {
                         if !window_clause.is_empty() || columns.len() != set.col_names.len() {
                             return Err(unsupported("tuple SELECT assignment shape or arity"));
                         }
+                        if columns.iter().any(|column| {
+                            matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
+                        }) && from.is_some()
+                        {
+                            let mut packed = Vec::new();
+                            for (position, column) in columns.iter().enumerate() {
+                                let ResultColumn::Expr(value, _) = column else {
+                                    return Err(unsupported("tuple SELECT projection"));
+                                };
+                                safe_value_expression(value)?;
+                                packed.push(format!("tuple_column_{position}"));
+                            }
+                            // Preserve the original alias scope and evaluate each
+                            // selected row before packing its tuple result.
+                            let input = select.to_string();
+                            let mut suffix = 0_u64;
+                            let name = loop {
+                                let name = format!("fastdb_tuple_values_{suffix}");
+                                if !input.to_ascii_lowercase().contains(&name) {
+                                    break name;
+                                }
+                                suffix += 1;
+                            };
+                            let Cmd::Stmt(Stmt::Select(packed_select)) = parsed(&format!(
+                                "WITH {name}({columns}) AS ({input}) SELECT __fastdb_h_array_new({columns}) FROM {name}",
+                                columns = packed.join(",")
+                            ))? else {
+                                unreachable!("generated tuple SELECT")
+                            };
+                            fields.extend(set.col_names.iter().map(|name| name.as_str().to_owned()));
+                            widths.push(set.col_names.len());
+                            exprs.push(Expr::Subquery(packed_select));
+                            continue;
+                        }
                         if from.is_none() {
                             for sort in &mut select.order_by {
                                 bind_source_free_tuple_field(&mut sort.expr, &update.tbl_name)?;

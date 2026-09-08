@@ -3793,3 +3793,34 @@ The prototype is not implemented or claimed as supported.
 All 24 write tests passed; log `/tmp/fastdb-tuple-alias-baseline.log`.
 Only tests/documentation changed from `9fbda7330`; no new full-suite or client
 run is claimed. Full V1 remains open.
+
+
+## Sourceful tuple SELECT projection aliases — 2026-09-09
+
+Tuple SELECT assignments with FROM sources now accept explicit and elided
+projection aliases. A CTE with positional output names retains the original
+SELECT alias scope, including duplicate aliases and source-name collisions,
+then packs the chosen row into one typed tuple. Generated CTE names avoid
+names appearing in the input. Correlation carries the logical parent through
+local CTEs, and tuple CTE metadata uses logical preparation even for native
+projection columns whose predicates reference outer documents.
+
+The prior tuple-alias rejection fixture now asserts native-equivalent results.
+Coverage includes relational/collection sources, alias precedence, computed
+ordering, duplicate aliases and generated-name collisions. The indexed
+validation recovery matrix includes aliases with and without tuple-local CTEs,
+failed updates, prior transaction work, valid retry and rollback. Both Node
+clients preserve record/object/binary values and unmatched NULL tuples through
+aliased outputs. This supersedes the sourceful alias gate recorded above;
+source-free aliases, positional ordering and the other documented tuple
+restrictions remain open.
+
+The final full scoped check passed on `7423bd61b` plus these changes: 597 Rust
+passes, zero failures, one existing ignored trigger-interruption gate; 86
+Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Log `/tmp/fastdb-tuple-alias-check-final.log`.
+The initial full run exposed a nested CTE correlation failure; its focused
+recovery regression passed after the fix (`/tmp/fastdb-tuple-alias-recovery.log`),
+and the final full run above completed with exit 0. Diagnostic logging was
+removed. No upstream source, dependency or persisted-format changes; no
+publication. Full V1 release gates remain open.
