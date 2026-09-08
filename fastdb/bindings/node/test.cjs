@@ -1262,22 +1262,27 @@ test('nested membership CTE writes preserve recovery in both clients', async () 
       await db.execute('CREATE TABLE docs');
       await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
       await db.execute('INSERT INTO docs(n) VALUES(1),(2),(3)');
-      const prefix = 'WITH docs AS (SELECT 2 AS n), chosen AS (SELECT n FROM (SELECT n FROM docs) q WHERE n IN (SELECT x.n FROM docs x)) ';
-      for (let attempt = 0; attempt < 2; attempt++) {
-        await db.execute('BEGIN');
-        await db.execute('CREATE TABLE pending(n INTEGER)');
-        await db.execute('INSERT INTO pending VALUES(9)');
-        await assert.rejects(async () => db.execute(prefix + 'UPDATE docs SET n=1 WHERE n IN (SELECT n FROM chosen) RETURNING n'), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
-        assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[2n],[3n]]);
-        assert.deepEqual(await db.all('SELECT n FROM pending'), [[9n]]);
-        const result = await db.execute(prefix + 'UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n');
-        assert.equal(result.affected, 3n);
-        assert.deepEqual(result.rows, [[11n],[12n],[13n]]);
-        const audit = await db.checkCollectionIntegrity('docs');
-        assert.equal(audit.documents, 3n);
-        assert.equal(audit.indexEntries, 3n);
-        await db.execute('ROLLBACK');
-        assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[2n],[3n]]);
+      for (const prefix of [
+        'WITH docs AS (SELECT 2 AS n), chosen AS (SELECT n FROM (SELECT n FROM docs) q WHERE n IN (SELECT x.n FROM docs x)) ',
+        'WITH docs AS (SELECT 2 AS n), chosen AS (WITH local_q AS MATERIALIZED (SELECT n FROM docs) SELECT n FROM local_q) ',
+        'WITH docs AS (SELECT 2 AS n), chosen AS (WITH docs AS (SELECT n FROM main.docs), local_q AS NOT MATERIALIZED (SELECT n FROM docs) SELECT n FROM local_q) ',
+      ]) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          await db.execute('BEGIN');
+          await db.execute('CREATE TABLE pending(n INTEGER)');
+          await db.execute('INSERT INTO pending VALUES(9)');
+          await assert.rejects(async () => db.execute(prefix + 'UPDATE docs SET n=1 WHERE n IN (SELECT n FROM chosen) RETURNING n'), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
+          assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[2n],[3n]]);
+          assert.deepEqual(await db.all('SELECT n FROM pending'), [[9n]]);
+          const result = await db.execute(prefix + 'UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n');
+          assert.equal(result.affected, 3n);
+          assert.deepEqual(result.rows, [[11n],[12n],[13n]]);
+          const audit = await db.checkCollectionIntegrity('docs');
+          assert.equal(audit.documents, 3n);
+          assert.equal(audit.indexEntries, 3n);
+          await db.execute('ROLLBACK');
+          assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[2n],[3n]]);
+        }
       }
     } finally { await db.close(); }
   }
