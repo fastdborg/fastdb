@@ -3215,3 +3215,16 @@ with formatting, Clippy and strict TypeScript. Log:
 `/tmp/fastdb-deadline-combined-check.log`. The gate overview and verification record
 now point to this combined evidence. No production changes were needed. Platform,
 interrupted-I/O/recovery, total-resource, packaging and remaining V1 gates stay open.
+
+### Standalone Rust deadline API qualification
+
+The offline out-of-workspace consumer now constructs an expired monotonic deadline,
+verifies rejected DELETE preserves pending data and Active state, then uses a fresh
+deadline with the existing bounded read/profile/write retry checks. The consumer
+continues to verify rollback, indexes, typed values, vectors, QuickJS and reopen.
+
+Build/execution passed without workspace-injected Rust flags; all 244 resolved
+registry/git package identities matched the pinned workspace lockfile subset.
+Log: `/tmp/fastdb-consumer-deadlines.log`. No production code changed or broader
+suite was repeated. This adds public dependent-application API evidence, not
+active-expiry timing, all-platform or complete V1 qualification.

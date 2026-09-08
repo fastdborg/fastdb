@@ -106,7 +106,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cancelled = CancellationToken::new();
     cancelled.cancel();
     assert_eq!(c.write_with_result_limits_cancellable("DELETE FROM docs", &empty, one, &cancelled).unwrap_err().code(), "FDB_CANCELLED");
-    let fresh = CancellationToken::new();
+    let expired = CancellationToken::with_deadline(std::time::Instant::now());
+    assert_eq!(c.execute_cancellable("DELETE FROM docs", &empty, &expired).unwrap_err().code(), "FDB_CANCELLED");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(c.execute("SELECT value FROM docs", &empty)?.rows, vec![vec![Value::Integer(8)]]);
+    let fresh = CancellationToken::with_deadline(std::time::Instant::now() + std::time::Duration::from_secs(60));
     assert_eq!(c.write_with_result_limits_cancellable("UPDATE docs SET value=9 RETURNING value AS v", &empty, one, &fresh)?.rows, vec![vec![Value::Integer(9)]]);
     assert_eq!(c.select_with_limits_cancellable("SELECT value AS v FROM docs", &empty, one, &fresh)?.rows, vec![vec![Value::Integer(9)]]);
     assert_eq!(c.profile_select_with_limits_cancellable("SELECT value AS v FROM docs", &empty, one, &fresh)?.result.rows, vec![vec![Value::Integer(9)]]);
@@ -126,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     c.execute("ROLLBACK", &empty)?;
     assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(),1);
     assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
-    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation and reopen");
+    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines and reopen");
     Ok(())
 }
 ''')
