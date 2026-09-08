@@ -1151,32 +1151,34 @@ fn using_direct_and_nested_scalar_casts_preserve_native_affinity() {
         query(sql);
     }
     for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
-        for value in [
-            "(SELECT CAST(k AS TEXT))",
-            "(SELECT (SELECT CAST(k AS TEXT)))",
-        ] {
-            for comparison in [
-                format!("{value}=1"),
-                format!("1={value}"),
-                format!("{value}='1'"),
+        for cast in ["TEXT", "INTEGER", "REAL", "NUMERIC"] {
+            for value in [
+                format!("(SELECT CAST(k AS {cast}))"),
+                format!("(SELECT (SELECT CAST(k AS {cast})))"),
             ] {
-                let sql = |source: &str| {
-                    format!(
+                for comparison in [
+                    format!("{value}=1"),
+                    format!("1={value}"),
+                    format!("{value}='1'"),
+                ] {
+                    let sql = |source: &str| {
+                        format!(
                         "SELECT k,{comparison} AS v FROM {source} a {join} b USING(k) ORDER BY k"
                     )
-                };
-                let expected = query(&sql("baseline"));
-                for source in ["docs", "(SELECT k FROM docs)"] {
-                    let logical = sql(source);
-                    assert_eq!(query(&logical).rows, expected.rows, "{logical}");
-                    assert_eq!(
-                        c.profile_select(&logical, &Parameters::new())
-                            .unwrap()
-                            .result
-                            .rows,
-                        expected.rows,
-                        "{logical}"
-                    );
+                    };
+                    let expected = query(&sql("baseline"));
+                    for source in ["docs", "(SELECT k FROM docs)"] {
+                        let logical = sql(source);
+                        assert_eq!(query(&logical).rows, expected.rows, "{logical}");
+                        assert_eq!(
+                            c.profile_select(&logical, &Parameters::new())
+                                .unwrap()
+                                .result
+                                .rows,
+                            expected.rows,
+                            "{logical}"
+                        );
+                    }
                 }
             }
         }
