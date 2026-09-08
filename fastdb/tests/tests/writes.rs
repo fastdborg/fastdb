@@ -1864,18 +1864,32 @@ fn collection_update_from_resolves_duplicate_candidates() {
             q(&c, sql);
         }
         q(&c, &format!("INSERT INTO source VALUES {input}"));
-        q(&c, "BEGIN");
-        let expected = q(
-            &c,
-            "UPDATE native SET v=source.v FROM source WHERE source.k=native.n RETURNING n,v",
-        );
-        let actual = q(
-            &c,
-            "UPDATE docs SET v=source.v FROM source WHERE source.k=docs.n RETURNING n,v",
-        );
-        assert_eq!(actual.rows, expected.rows);
-        assert_eq!(actual.affected, expected.affected);
-        q(&c, "ROLLBACK");
+        q(&c, "CREATE TABLE source_docs");
+        q(&c, "INSERT INTO source_docs(k,v) SELECT k,v FROM source");
+        for source in ["source", "source_docs"] {
+            for (prefix, from) in [
+                (String::new(), format!("{source} AS s")),
+                (String::new(), format!("(SELECT k,v FROM {source}) AS s")),
+                (
+                    format!("WITH chosen AS (SELECT k,v FROM {source}) "),
+                    "chosen AS s".to_owned(),
+                ),
+            ] {
+                q(&c, "BEGIN");
+                let sql = format!(
+                    "{prefix}UPDATE TARGET SET v=s.v FROM {from} WHERE s.k=TARGET.n RETURNING n,v"
+                );
+                let expected = q(
+                    &c,
+                    &sql.replace("TARGET", "native")
+                        .replace("source_docs", "source"),
+                );
+                let actual = q(&c, &sql.replace("TARGET", "docs"));
+                assert_eq!(actual.rows, expected.rows, "{sql}");
+                assert_eq!(actual.affected, expected.affected);
+                q(&c, "ROLLBACK");
+            }
+        }
     }
 }
 

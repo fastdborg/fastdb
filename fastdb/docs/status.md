@@ -5522,3 +5522,16 @@ rollback. All 43 write tests passed; formatting and all-target fastdb-tests
 Clippy with warnings denied passed. Logs: `/tmp/fastdb-update-from-recovery.log`
 and `/tmp/fastdb-update-from-recovery-clippy.log`. Only tests/docs changed from
 `57893e9ee`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## UPDATE FROM source matrix — 2026-09-09
+
+The duplicate-match comparison now includes table/collection sources through
+direct aliases, derived SELECTs and nonrecursive CTEs, in both source insertion
+orders. RETURNING and affected counts match the native oracle, with rollback
+between cases. All 43 write tests passed; formatting and all-target fastdb-tests
+Clippy with warnings denied passed. Logs:
+`/tmp/fastdb-update-from-source-matrix.log` and
+`/tmp/fastdb-update-from-source-matrix-clippy.log`. Only tests/docs changed from
+`ecdc0c38d`; no new full-suite/client run is claimed. Source join trees, FROM
+pagination, broader planner qualification and full V1 remain open.
