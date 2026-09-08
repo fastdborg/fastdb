@@ -233,6 +233,27 @@ fn bind_source_free_tuple_names(
     Ok(())
 }
 
+fn pack_tuple_select(select: &Select, width: usize) -> Result<Select> {
+    let packed: Vec<_> = (0..width).map(|i| format!("tuple_column_{i}")).collect();
+    let input = select.to_string();
+    let mut suffix = 0_u64;
+    let name = loop {
+        let name = format!("fastdb_tuple_values_{suffix}");
+        if !input.to_ascii_lowercase().contains(&name) {
+            break name;
+        }
+        suffix += 1;
+    };
+    let Cmd::Stmt(Stmt::Select(packed_select)) = parsed(&format!(
+        "WITH {name}({columns}) AS ({input}) SELECT __fastdb_h_array_new({columns}) FROM {name}",
+        columns = packed.join(",")
+    ))?
+    else {
+        unreachable!("generated tuple SELECT")
+    };
+    Ok(packed_select)
+}
+
 fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
     let Stmt::Insert {
         body: InsertBody::Select(_, upsert),
@@ -624,10 +645,34 @@ impl Connection {
                         widths.extend(std::iter::repeat_n(1, values.len()));
                         exprs.extend(values.into_iter().map(|value| *value));
                     } else if let Expr::Subquery(mut select) = *set.expr {
-                        if select.with.as_ref().is_some_and(|with| with.recursive)
-                            || !select.body.compounds.is_empty()
-                        {
+                        if select.with.as_ref().is_some_and(|with| with.recursive) {
                             return Err(unsupported("this tuple SELECT assignment"));
+                        }
+                        if !select.body.compounds.is_empty() {
+                            for arm in std::iter::once(&mut select.body.select).chain(select.body.compounds.iter_mut().map(|arm| &mut arm.select)) {
+                                let OneSelect::Select { columns, from, where_clause, .. } = arm else {
+                                    return Err(unsupported("tuple compound VALUES arm"));
+                                };
+                                if columns.len() != set.col_names.len() {
+                                    return Err(unsupported("tuple compound projection arity"));
+                                }
+                                let aliases: Vec<_> = columns.iter().filter_map(|column| match column {
+                                    ResultColumn::Expr(_, Some(alias)) if alias.is_explicit() => Some(alias.name().as_str().to_owned()),
+                                    _ => None,
+                                }).collect();
+                                for column in columns {
+                                    let ResultColumn::Expr(value, _) = column else { return Err(unsupported("tuple compound projection")); };
+                                    validate_candidate_expression(value, true)?;
+                                    if from.is_none() { bind_source_free_tuple_field(value, &update.tbl_name)?; }
+                                }
+                                if from.is_none() {
+                                    if let Some(predicate) = where_clause { bind_source_free_tuple_names(predicate, &update.tbl_name, &aliases)?; }
+                                }
+                            }
+                            exprs.push(Expr::Subquery(pack_tuple_select(&select, set.col_names.len())?));
+                            fields.extend(set.col_names.iter().map(|name| name.as_str().to_owned()));
+                            widths.push(set.col_names.len());
+                            continue;
                         }
                         fn ordinal(value: &Expr) -> bool {
                             match value {
@@ -700,21 +745,7 @@ impl Connection {
                             }
                             // Preserve the original alias scope and evaluate each
                             // selected row before packing its tuple result.
-                            let input = select.to_string();
-                            let mut suffix = 0_u64;
-                            let name = loop {
-                                let name = format!("fastdb_tuple_values_{suffix}");
-                                if !input.to_ascii_lowercase().contains(&name) {
-                                    break name;
-                                }
-                                suffix += 1;
-                            };
-                            let Cmd::Stmt(Stmt::Select(packed_select)) = parsed(&format!(
-                                "WITH {name}({columns}) AS ({input}) SELECT __fastdb_h_array_new({columns}) FROM {name}",
-                                columns = packed.join(",")
-                            ))? else {
-                                unreachable!("generated tuple SELECT")
-                            };
+                            let packed_select = pack_tuple_select(&select, packed.len())?;
                             fields.extend(set.col_names.iter().map(|name| name.as_str().to_owned()));
                             widths.push(set.col_names.len());
                             exprs.push(Expr::Subquery(packed_select));

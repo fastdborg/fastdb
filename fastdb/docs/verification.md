@@ -4183,3 +4183,25 @@ and collection lookups. All 34 write tests passed, with formatting and all-targe
 fastdb-tests Clippy with warnings denied. Logs `/tmp/fastdb-filtered-window-tuples.log`
 and `/tmp/fastdb-filtered-window-tuples-clippy.log`. Only tests/docs changed from
 `3960f677b`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## Compound tuple SELECT assignments — 2026-09-09
+
+Tuple SELECT assignments now accept UNION ALL, UNION, INTERSECT and EXCEPT
+with SELECT arms. Each arm is checked for projection width and expression
+eligibility, and source-free projection inputs retain target binding. A shared
+packing helper preserves compound ordering/limits before constructing the typed
+tuple. Tuple compound lowering retains its forced logical context.
+
+Differential cases cover relational/collection lookups, outer-target correlation,
+all four operators, positional ordering and LIMIT. The pinned native engine
+rejects the direct compound tuple-subquery position; the comparison uses its
+supported equivalent CTE wrapper. This is not a claim that the native direct
+form executes. Compound VALUES arms and broader typed/alias/correlation cases
+remain qualification work.
+
+The complete scoped check passed on `dfee60937` plus this change: 608 Rust passes,
+zero failures, one existing ignored trigger-interruption gate; 87 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-compound-tuples-check.log`; addon rebuilt. No upstream
+source, dependency or storage-format changes; no publication. Full V1 remains open.

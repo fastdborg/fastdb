@@ -1548,3 +1548,36 @@ fn window_tuple_parameters_preserve_binding_and_rollback() {
     q(&c, "ROLLBACK");
     assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
 }
+
+#[test]
+fn compound_tuple_selects_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a,b)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER)",
+        "INSERT INTO lookup VALUES(1,6),(1,11)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(n,a) SELECT n,a FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+            q(&c, "BEGIN");
+            let body=format!("SELECT x.a,x.n FROM SOURCE x WHERE x.n=TARGET.n {operator} SELECT y.a,y.n FROM SOURCE y WHERE y.n=TARGET.n AND y.a=6 ORDER BY 1 DESC LIMIT 1");
+            let native = body.replace("SOURCE", "lookup").replace("TARGET", "native");
+            let expected = q(
+                &c,
+                &format!("UPDATE native SET (a,b)=(WITH selected(a,b) AS ({native}) SELECT a,b FROM selected) RETURNING n,a,b"),
+            );
+            let body = body.replace("SOURCE", source).replace("TARGET", "docs");
+            let sql = format!("UPDATE docs SET (a,b)=({body}) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
+    }
+}

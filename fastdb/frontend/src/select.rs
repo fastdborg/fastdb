@@ -4834,7 +4834,9 @@ impl Connection {
                     select,
                     params,
                     cte_consumed,
-                    cte_logical || (trusted && positional && native_insert.is_none()),
+                    force_logical
+                        || cte_logical
+                        || (trusted && positional && native_insert.is_none()),
                     SelectOptions {
                         ctes: Some(&ctes),
                         ignore_unused,
