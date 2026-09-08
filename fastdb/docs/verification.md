@@ -2867,3 +2867,22 @@ complete source check remains 565 Rust and 80 Node/application passes with one
 existing ignored trigger gate. The timed workload qualifies cooperative failure
 and recovery, not an exact interruption point, hard preemption or total memory
 bounds. Full V1 release gates remain open; no publication occurred.
+
+
+## Worker iterator deadlines and queued recovery — 2026-09-08
+
+A worker-client regression submits the 5,000 by 5,000 iterator aggregate through
+execute, profileSelect and INSERT SELECT RETURNING with 20 ms timeouts. A recovery
+read is queued behind each operation. Each timeout returns FDB_CANCELLED with
+active-to-active transaction state; the queued read sees only prior work and the
+index audit remains intact. A small write retry succeeds, and outer rollback
+leaves no output documents. The test qualifies cooperative timeout recovery,
+not an exact interruption point or hard preemption.
+
+The focused test and all 81 Node/application tests passed against the existing
+addon (no native implementation change/rebuild). Logs:
+`/tmp/fastdb-worker-iterator-deadlines.log` and
+`/tmp/fastdb-worker-iterator-clients.log`. Source base `a80b15023`; only tests and
+documentation changed. The latest complete Rust/source-suite and installed-package
+runs retain their separately recorded scope. No publication occurred; full V1
+release qualification remains open.

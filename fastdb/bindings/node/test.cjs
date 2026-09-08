@@ -2526,3 +2526,34 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
     } finally {await db.close();}
   }
 });
+
+test('worker iterator deadlines preserve queued recovery and indexed work', async () => {
+  const {AsyncDatabase}=require('./index.cjs');
+  const db=await AsyncDatabase.open();
+  try {
+    for(const sql of ['CREATE TABLE docs','INSERT INTO docs(n) VALUES(1)',
+      'CREATE TABLE output','CREATE UNIQUE INDEX output_n ON output(n)',
+      'BEGIN','INSERT INTO output(n) VALUES(0)']) await db.execute(sql);
+    const params={$json:JSON.stringify(Array(5000).fill(1))};
+    const query='SELECT count(*) AS n FROM docs d CROSS JOIN json_each($json) x CROSS JOIN json_each($json) y WHERE d.n=1';
+    const write='INSERT INTO output(n) '+query+' RETURNING n';
+    for(const operation of [
+      ()=>db.execute(query,params,{timeoutMs:20}),
+      ()=>db.profileSelect(query,params,{timeoutMs:20}),
+      ()=>db.execute(write,params,{timeoutMs:20})
+    ]) {
+      const pending=operation();
+      const recovery=db.execute('SELECT n FROM output');
+      await assert.rejects(pending,error=>{
+        assert.equal(error.code,'FDB_CANCELLED');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      assert.deepEqual((await recovery).rows,[[0n]]);
+      assert.equal((await db.checkCollectionIntegrity('output')).indexEntries,1n);
+    }
+    assert.deepEqual((await db.execute(write,{$json:'[1,2]'})).rows,[[4n]]);
+    await db.execute('ROLLBACK');
+    assert.equal((await db.checkCollectionIntegrity('output')).documents,0n);
+  } finally {await db.close();}
+});
