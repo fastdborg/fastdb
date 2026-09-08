@@ -1879,3 +1879,79 @@ fn natural_empty_sources_preserve_outer_rows_with_and_without_shared_keys() {
         }
     }
 }
+
+#[test]
+fn using_sourceful_scalar_keys_resolve_outer_scope_and_local_shadowing() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "INSERT INTO docs {k:2}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2)",
+        "CREATE TABLE shadow(k INTEGER,n INTEGER)",
+        "INSERT INTO shadow VALUES(2,1),(1,2)",
+    ] {
+        query(sql);
+    }
+    for join in [
+        "JOIN",
+        "LEFT JOIN",
+        "RIGHT JOIN",
+        "NATURAL JOIN",
+        "NATURAL LEFT JOIN",
+        "NATURAL RIGHT JOIN",
+    ] {
+        for body in [
+            "SELECT max(n) FROM nums WHERE n<k",
+            "SELECT k FROM nums WHERE n<k ORDER BY n DESC LIMIT 1",
+            "SELECT max(n) FROM shadow WHERE n<k",
+            "SELECT max(n) FROM nums WHERE n<a.k",
+        ] {
+            for nested in [false, true] {
+                let expr = if nested {
+                    format!("(SELECT ({body}))")
+                } else {
+                    format!("({body})")
+                };
+                for source in ["docs", "(SELECT k FROM docs)"] {
+                    if join.starts_with("NATURAL") && source == "docs" {
+                        continue;
+                    }
+                    let constraint = if join.starts_with("NATURAL") {
+                        ""
+                    } else {
+                        " USING(k)"
+                    };
+                    let sql = |source: &str| {
+                        format!(
+                            "SELECT k,{expr} AS v FROM {source} a {join} b{constraint} ORDER BY k"
+                        )
+                    };
+                    let expected = query(&sql("baseline"));
+                    let logical = sql(source);
+                    let actual = query(&logical);
+                    assert_eq!(actual.columns, expected.columns, "{logical}");
+                    assert_eq!(actual.rows, expected.rows, "{logical}");
+                    assert_eq!(
+                        c.profile_select(&logical, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected.rows,
+                        "{logical}"
+                    );
+                }
+            }
+        }
+    }
+}

@@ -371,7 +371,10 @@ struct UsingColumns {
     bindings: std::collections::BTreeMap<String, (usize, String)>,
     hidden: std::collections::BTreeSet<(usize, String)>,
 }
-fn qualify_source_free_using(
+fn qualify_correlated_using(
+    connection: &Connection,
+    params: &Parameters,
+    ctes: &CteSources,
     inner: &mut Select,
     sources: &[Source],
     using: &UsingColumns,
@@ -379,8 +382,34 @@ fn qualify_source_free_using(
     if using.bindings.is_empty() || inner.with.is_some() || !inner.body.compounds.is_empty() {
         return Ok(());
     }
+    // Resolve only closed local table schemas here. Open collections and
+    // other source forms need their own lexical scope resolution.
+    let mut using = using.clone();
+    if let OneSelect::Select {
+        from: Some(from), ..
+    } = &inner.body.select
+    {
+        for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
+            if !matches!(table.as_ref(), SelectTable::Table(..)) {
+                return Ok(());
+            }
+            let local = source(connection, table, params, ctes, None, String::new(), true)?;
+            let Some(columns) = local
+                .derived
+                .as_ref()
+                .filter(|_| local.collection.is_none())
+            else {
+                return Ok(());
+            };
+            using.bindings.retain(|name, (index, _)| {
+                !sources[*index].alias.eq_ignore_ascii_case(&local.alias)
+                    && !columns
+                        .iter()
+                        .any(|(column, _)| column.eq_ignore_ascii_case(name))
+            });
+        }
+    }
     let OneSelect::Select {
-        from: None,
         columns,
         where_clause,
         ..
@@ -3698,7 +3727,10 @@ impl Connection {
                         }
                         let correlation_sources = correlation_sources.as_ref().unwrap();
                         let mut inner = inner.clone();
-                        qualify_source_free_using(
+                        qualify_correlated_using(
+                            self,
+                            params,
+                            &ctes,
                             &mut inner,
                             correlation_sources,
                             &correlation_using,
@@ -4045,7 +4077,7 @@ impl Connection {
         // logical lowering; preserve their values only once that route is chosen.
         for (sql, (lowered, _, affinity)) in &mut native_expression_subqueries {
             if let Expr::Exists(mut inner) = expression(sql)? {
-                qualify_source_free_using(&mut inner, &sources, &using)?;
+                qualify_correlated_using(self, params, &ctes, &mut inner, &sources, &using)?;
                 *lowered = Expr::Exists(
                     native_correlated_predicate(&inner, &sources, false, params, true)?.0,
                 );
@@ -4061,7 +4093,7 @@ impl Connection {
                 Expr::Subquery(inner) | Expr::InSelect { rhs: inner, .. } => inner,
                 _ => unreachable!(),
             };
-            qualify_source_free_using(&mut inner, &sources, &using)?;
+            qualify_correlated_using(self, params, &ctes, &mut inner, &sources, &using)?;
             let mut collation = "BINARY".to_owned();
             let correlated = {
                 let (mut probe, _) =

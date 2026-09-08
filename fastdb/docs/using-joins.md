@@ -101,3 +101,6 @@ NATURAL merged-key window partitions have six execute/profile native comparisons
 
 
 Empty-source NATURAL joins have 18 execute/profile comparisons with the pinned engine: left, right or both inputs empty, with one shared key or no shared columns, across INNER/LEFT/RIGHT joins. NULL extension and result column labels match native behavior.
+
+
+Table-reading scalar subqueries now resolve unqualified outer USING/NATURAL keys in projections, WHERE and ORDER BY when local sources have closed table schemas. For example, `SELECT k,(SELECT max(n) FROM nums WHERE n<k) FROM docs a RIGHT JOIN b USING(k)` uses the retained right key for unmatched rows. A local table column named `k` takes precedence. Bindings whose retained outer alias is reused by an inner table are left unchanged; general unqualified fallback through alias collisions remains open. Source-free wrappers retain this behavior through nested scalar levels. The resolver inspects schema metadata without stepping the inner query. Open collection inner sources, derived inner sources, WITH/compound scopes and broader grouped/window scopes still need full lexical-resolution qualification.
