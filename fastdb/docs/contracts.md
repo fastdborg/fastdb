@@ -1113,7 +1113,11 @@ have initial native differential coverage. Within iterator arguments, an
 unqualified field resolves when exactly one source can supply it: every other
 source must have closed column metadata that excludes the name. Collections
 remain open, so potentially colliding names still require qualification. This
-does not change unqualified-field resolution elsewhere in collection joins. Argument subqueries, deeper correlation
+does not change unqualified-field resolution elsewhere in collection joins. Deep
+qualified document paths such as `d.payload.inner.j`, including quoted segments,
+are supported in iterator arguments and composed scalar expressions. Metadata
+inspection substitutes the complete path reference; runtime lowering retains its
+segments. Argument subqueries and deeper query correlation remain separate gaps. Argument subqueries, deeper correlation
 scopes, broader typed helper coverage and general table-function support remain
 unqualified.
 Aggregate/window argument forms retain native rejection or the frontend scope

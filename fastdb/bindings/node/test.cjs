@@ -2500,6 +2500,11 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       const unqualified=correlated.replace('json_each(d.j)',"json_each(coalesce(j,'[]'))");
       assert.deepEqual((await db.execute(unqualified)).rows,rows);
       assert.deepEqual((await db.profileSelect(unqualified)).result.rows,rows);
+      await db.execute('UPDATE docs SET payload=$p',{$p:{inner:{j:params.$json}}});
+      const deep=correlated.replace('json_each(d.j)', 'json_each(d.payload.inner.j)');
+      assert.deepEqual((await db.execute(deep)).rows,rows);
+      assert.deepEqual((await db.profileSelect(deep)).result.rows,rows);
+
 
 
     } finally {await db.close();}

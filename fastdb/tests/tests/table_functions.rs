@@ -216,3 +216,76 @@ fn correlated_json_iterators_match_native_rows() {
         vec![vec![Value::Integer(4)]]
     );
 }
+
+#[test]
+fn deep_path_iterator_arguments_preserve_rows_and_atomic_writes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    c.execute("CREATE TABLE docs", &empty).unwrap();
+    let payload = Value::Object(std::collections::BTreeMap::from([(
+        "inner".into(),
+        Value::Object(std::collections::BTreeMap::from([(
+            "j".into(),
+            Value::String("[1,2]".into()),
+        )])),
+    )]));
+    c.execute(
+        "INSERT INTO docs(payload) VALUES($p)",
+        &Parameters::from([("$p".into(), payload)]),
+    )
+    .unwrap();
+    for arg in [
+        "d.payload.inner.j",
+        "coalesce(d.payload.inner.j,'[]')",
+        r#"d."payload"."inner"."j""#,
+    ] {
+        for iterator in ["json_each", "json_tree"] {
+            let sql = format!(
+                "SELECT x.key,x.value FROM docs d CROSS JOIN {iterator}({arg}) x ORDER BY x.id"
+            );
+            let native = format!("SELECT x.key,x.value FROM {iterator}('[1,2]') x ORDER BY x.id");
+            let expected = c.execute(&native, &empty).unwrap();
+            for actual in [
+                c.execute(&sql, &empty).unwrap(),
+                c.profile_select(&sql, &empty).unwrap().result,
+            ] {
+                assert_eq!(actual.columns, expected.columns, "{sql}");
+                assert_eq!(actual.rows, expected.rows, "{sql}");
+            }
+        }
+    }
+    for sql in [
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<2)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(0)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    let sql="INSERT INTO output(n) SELECT x.value FROM docs d CROSS JOIN json_each(d.payload.inner.j) x ORDER BY x.key RETURNING n";
+    assert_eq!(c.execute(sql, &empty).unwrap_err().code(), "FDB_VALIDATION");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM output", &empty).unwrap().rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    assert!(c
+        .lookup_index("output", "output_n", &Value::Integer(1))
+        .unwrap()
+        .is_empty());
+    c.execute("UPDATE docs SET payload.inner.j='[1]'", &empty)
+        .unwrap();
+    assert_eq!(
+        c.execute(sql, &empty).unwrap().rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    c.execute("ROLLBACK", &empty).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

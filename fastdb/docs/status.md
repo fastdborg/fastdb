@@ -3771,3 +3771,22 @@ a nested object supplied through a bound insert parameter. The disposable probe
 must treat the complete internal path as a source reference, and unqualified-name
 walking must preserve its identifier segments for runtime path lowering. Full V1
 scope and remaining release gates remain active; no publication occurred.
+
+
+## Deep document paths in JSON iterators — 2026-09-08
+
+The previously recorded metadata failure for json_each(d.payload.inner.j) is
+fixed. Metadata inspection replaces a complete internal path with NULL in the
+disposable probe; unqualified-name walking skips path segments so normal runtime
+lowering resolves the original field. Tests compare json_each/json_tree results
+through execute/profile for direct, quoted and coalesce paths. Validated deep-path
+INSERT SELECT failure preserves prior work and removes document/index changes;
+corrected retry and outer rollback succeed. Both Node clients cover nested bound
+documents and deep-path execute/profile results.
+
+The complete scoped check exited zero: 563 Rust tests passed, zero failed, one
+existing trigger-cancellation gate ignored; 80 Node/application tests, formatting,
+Clippy and strict TypeScript passed. Log `/tmp/fastdb-deep-iterators-check.log`,
+implementation tree based on `d1c46e6eb` with this fix. No upstream implementation
+or dependencies changed. Argument subqueries, broader query correlation and full
+V1 release qualification remain open; no publication occurred.

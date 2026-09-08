@@ -2868,7 +2868,8 @@ fn source(
                     if matches!(
                         expr,
                         Expr::Id(_) | Expr::Qualified(..) | Expr::DoublyQualified(..)
-                    ) {
+                    ) || matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path")
+                    {
                         *expr = Expr::Literal(Literal::Null);
                     }
                     Ok(turso_core::WalkControl::Continue)
@@ -5826,6 +5827,12 @@ impl Connection {
                         // argument only when every other source has a closed
                         // column set that excludes that name.
                         turso_core::walk_expr_mut(arg, &mut |expr| {
+                            // Path identifiers are segments of one field reference.
+                            // Preserve them for the normal runtime path resolver.
+                            if matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path")
+                            {
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
                             if let Expr::Id(name) | Expr::Name(name) = expr {
                                 if !name.quoted()
                                     && (name.as_str().eq_ignore_ascii_case("true")
