@@ -1148,3 +1148,10 @@ collection sources have matching regression coverage. Committed data remains
 intact and corrected input can be retried after the rollback. Inspect the
 reported transaction state; statement-level validation recovery does not imply
 that native engine errors preserve the enclosing transaction.
+
+
+Nonrecursive CTE runtime traversal binds outer references in iterator arguments
+without retyping the CTE's projections. A correlated CTE over
+`temp.json_each(d.j)` has native execute/profile coverage, alongside a scalar
+query over `main.json_each(d.j)`. Broader CTE and nested type propagation remain
+under qualification.

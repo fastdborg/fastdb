@@ -214,6 +214,7 @@ fn preserve_compound_column_names(select: &mut Select) {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NativeCorrelationMode {
     Native,
+    IteratorArguments,
     ScalarPagination,
     Membership,
     // Membership compares native values inside each arm before set operations.
@@ -316,19 +317,22 @@ fn native_correlated_predicate(
         if with.recursive {
             return Ok((inner, false));
         }
-        if metadata {
-            // CTE definitions inherit the query's outer correlation scope too.
-            // Rewrite only the disposable probe; runtime definitions keep their
-            // original per-row references and local aliases.
+        {
+            // Inspect all correlated CTE expressions in metadata probes. At
+            // runtime, bind iterator arguments without changing projection types.
             for cte in &mut with.ctes {
                 cte.select = native_correlated_predicate(
                     connection,
                     &scopes,
                     &cte.select,
                     sources,
-                    true,
+                    metadata,
                     params,
-                    mode,
+                    if metadata {
+                        mode
+                    } else {
+                        NativeCorrelationMode::IteratorArguments
+                    },
                 )?
                 .0;
             }
@@ -383,7 +387,9 @@ fn native_correlated_body(
                 sources,
                 metadata,
                 params,
-                if direct_membership {
+                if mode == NativeCorrelationMode::IteratorArguments {
+                    mode
+                } else if direct_membership {
                     NativeCorrelationMode::CompoundArm
                 } else {
                     NativeCorrelationMode::Native
@@ -666,6 +672,20 @@ fn native_correlated_body(
         }
         Ok(correlated)
     };
+    if mode == NativeCorrelationMode::IteratorArguments {
+        if let Some(from) = from {
+            for table in
+                std::iter::once(&mut from.select).chain(from.joins.iter_mut().map(|j| &mut j.table))
+            {
+                if let SelectTable::TableCall(_, args, _) = table.as_mut() {
+                    for arg in args {
+                        rewrite(arg, false)?;
+                    }
+                }
+            }
+        }
+        return Ok((inner, false));
+    }
     let mut correlated_query = false;
     if let Some(value) = where_clause {
         correlated_query |= rewrite(value, false)?;

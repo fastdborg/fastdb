@@ -3045,3 +3045,21 @@ implementation tree based on `03614fd03` with this change. This combines recent
 malformed-input rollback and CLI/client recovery tests with the source suite.
 No upstream source or dependencies changed. Full V1 release gates remain open;
 no publication occurred.
+
+
+## Runtime iterator arguments inside correlated CTEs — 2026-09-08
+
+Qualification probes found a CTE over temp.json_each(d.j) retaining the raw outer
+field at runtime even though metadata preparation succeeded. Native CTE traversal
+now has an iterator-argument-only runtime mode: it binds per-row arguments without
+retyping CTE projections, including compound arms. Disposable metadata traversal
+retains its existing broader handling. Native comparisons cover the correlated
+CTE aggregate and a scalar count over main.json_each through execute/profile.
+
+The complete scoped check exited zero: 572 Rust tests passed, zero failed, one
+existing trigger-cancellation gate ignored; 82 Node/application tests, formatting,
+Clippy and strict TypeScript passed. Log
+`/tmp/fastdb-qualified-inner-iterators-check.log`, implementation tree based on
+`2372ec043` with this fix. No upstream source or dependencies changed. Broader CTE,
+compound and nested type propagation and full V1 release gates remain open; no
+publication occurred.
