@@ -3177,3 +3177,16 @@ rejection. CLI Clippy, formatting and diff checks passed. Logs:
 `/tmp/fastdb-cli-timeout.log` and `/tmp/fastdb-cli-timeout-clippy.log`.
 Active CLI expiry/terminal interaction, platform timing and broader V1 gates remain
 open. Frontend/Node implementation did not change; broader suites were not repeated.
+
+### Active CLI deadline recovery
+
+The CLI command-limit suite now submits expensive SELECT and collection INSERT
+SELECT operations with short positive deadlines. Both return FDB_CANCELLED without
+partial rows and preserve the active transaction. A fresh timed read sees prior
+work, a timed insert succeeds, and explicit rollback empties the collection.
+
+All five command-limit integration tests passed; log:
+`/tmp/fastdb-cli-active-deadlines.log`. Scoped formatting and diff checks passed.
+No production code changed or broader suite was repeated. This is selected
+line-mode execution/recovery evidence, not fixed-latency, terminal Ctrl-C/deadline
+interaction or all-platform qualification. Full V1 remains incomplete.

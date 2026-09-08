@@ -132,3 +132,23 @@ fn timeout_commands_preserve_pending_work_and_multiline_completion() {
     assert_eq!(rows.len(), 1);
     assert!(rows[0]["error"].is_object());
 }
+
+#[test]
+fn active_cli_deadlines_discard_results_and_preserve_write_recovery() {
+    let source = "input a,input b,input c,input d,input e,input f,input g,input h,input i,input j";
+    let script = format!("CREATE TABLE input(n)\nINSERT INTO input VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)\nCREATE TABLE docs\nCREATE UNIQUE INDEX docs_n ON docs(n)\nBEGIN\nINSERT INTO docs {{n:1}}\n.timeout 20 SELECT count(*) FROM {source}\n.timeout 20 INSERT INTO docs(n) SELECT count(*) FROM {source}\n.timeout 60000 SELECT n FROM docs\n.timeout 60000 INSERT INTO docs {{n:2}}\nSELECT n FROM docs ORDER BY n\nROLLBACK\nSELECT * FROM docs\n");
+    let (ok, rows) = run("--line", &script);
+    assert!(!ok);
+    assert_eq!(rows.len(), 13);
+    for report in &rows[6..8] {
+        assert_eq!(report["error"]["code"], "FDB_CANCELLED");
+        assert_eq!(report["transaction"]["before"], "active");
+        assert_eq!(report["transaction"]["after"], "active");
+        assert!(report.get("rows").is_none());
+    }
+    assert_eq!(rows[8]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(rows[8]["rows"][0][0]["value"], 1);
+    assert_eq!(rows[9]["affected"], 1);
+    assert_eq!(rows[10]["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(rows[12]["rows"].as_array().unwrap().len(), 0);
+}
