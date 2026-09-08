@@ -3161,3 +3161,19 @@ addon. Logs: `/tmp/fastdb-timeout-token-capacity.log` and
 `/tmp/fastdb-timeout-cleanup-node.log`. Diff checks passed. No production code or
 declarations changed; Rust/TypeScript/package checks were not repeated. Broader
 lifecycle, timing, platform and V1 gates remain open.
+
+### CLI single-statement cooperative deadline
+
+Added `.timeout MILLISECONDS SQL`, using the Rust monotonic deadline token and
+existing JSON result/error/transaction envelope. The command accepts uint32
+milliseconds, supports multiline interactive completion, and executes one statement
+in line/interactive mode or as the entire script input. It does not create a
+persistent policy or combine with other dot-command wrappers. Existing cancellation
+and transaction semantics apply; non-engine work and cleanup remain unbounded.
+
+All 27 CLI tests passed, including immediate expiry with prior active work,
+invalid arguments, fresh timed read, rollback, multiline input and multi-statement
+rejection. CLI Clippy, formatting and diff checks passed. Logs:
+`/tmp/fastdb-cli-timeout.log` and `/tmp/fastdb-cli-timeout-clippy.log`.
+Active CLI expiry/terminal interaction, platform timing and broader V1 gates remain
+open. Frontend/Node implementation did not change; broader suites were not repeated.

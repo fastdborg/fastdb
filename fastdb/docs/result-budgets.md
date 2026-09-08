@@ -173,3 +173,18 @@ and ownership changes are not a total-memory cap.
 
 
 Returned-result limits are only one part of the gate. Engine working memory, statement candidate buffers, deadlines, interrupted I/O and commit/checkpoint outcomes, transfer peak memory, and platform qualification remain required. A green bounded-SELECT test cannot establish a total-memory guarantee.
+
+## Cooperative statement deadlines
+
+Rust cancellable operations accept `CancellationToken::with_deadline(Instant)`.
+Async Node operations accept `ExecuteOptions.timeoutMs`; the native deadline starts
+before queue submission, after local parameter encoding, and includes queue time.
+The CLI exposes `.timeout MILLISECONDS SQL` for one statement in line/interactive
+mode or as the entire script input. Interactive SQL can span lines until complete.
+Node and CLI milliseconds are nonnegative uint32 values; zero is already expired.
+
+Expiry uses existing cancellation handling and `FDB_CANCELLED`, preserving each
+operation's transaction contract. Deadlines are cooperative: engine progress checks
+observe them, but parsing, non-engine evaluation, cleanup and response transport
+have no fixed time bound. Completion may win a race. The CLI command does not set
+a persistent connection policy or combine with other dot-command wrappers.

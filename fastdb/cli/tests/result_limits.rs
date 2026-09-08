@@ -112,3 +112,23 @@ fn interactive_limited_commands_accumulate_sql_and_clear_pending_input() {
     assert_eq!(reports[0]["error"]["code"], "FDB_VALIDATION");
     assert_eq!(reports[1]["rows"][0][0]["value"], 8);
 }
+
+#[test]
+fn timeout_commands_preserve_pending_work_and_multiline_completion() {
+    let (ok, rows) = run("--line", "CREATE TABLE docs\nBEGIN\nINSERT INTO docs {n:1}\n.timeout 0 DELETE FROM docs\n.timeout -1 DELETE FROM docs\n.timeout 60000 SELECT n FROM docs\nROLLBACK\nSELECT * FROM docs\n");
+    assert!(!ok);
+    assert_eq!(rows.len(), 8);
+    assert_eq!(rows[3]["error"]["code"], "FDB_CANCELLED");
+    assert_eq!(rows[3]["transaction"]["after"], "active");
+    assert_eq!(rows[4]["error"]["code"], "FDB_VALIDATION");
+    assert_eq!(rows[5]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(rows[7]["rows"].as_array().unwrap().len(), 0);
+    let (ok, rows) = run("--interactive", ".timeout 60000\nSELECT\n1 AS n;\n.quit\n");
+    assert!(ok);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["rows"][0][0]["value"], 1);
+    let (ok, rows) = run("--script", ".timeout 60000 SELECT 1; SELECT 2;");
+    assert!(!ok);
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0]["error"].is_object());
+}

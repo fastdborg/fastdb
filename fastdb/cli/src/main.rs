@@ -125,7 +125,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\n--write-buffer-limits ROWS BYTES caps each frontend collection-write buffer for SQL input and migrations.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
+                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\n--write-buffer-limits ROWS BYTES caps each frontend collection-write buffer for SQL input and migrations.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.timeout MILLISECONDS SQL requests cooperative cancellation at its deadline.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
                 io::stdout().lock().flush()?;
                 return Ok(std::process::ExitCode::SUCCESS);
             }
@@ -423,7 +423,7 @@ fn run_interactive(
             ".help" => {
                 writeln!(
                     prompt,
-                    "End statements with a semicolon. .clear discards pending input; .quit exits.\n.profile SELECT ... executes one SELECT with primary engine counters.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.write-limit ROWS BYTES SQL checks write results atomically; budgets do not cap process memory.
+                    "End statements with a semicolon. .clear discards pending input; .quit exits.\n.profile SELECT ... executes one SELECT with primary engine counters.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.timeout MILLISECONDS SQL requests cooperative cancellation at its deadline.\n.write-limit ROWS BYTES SQL checks write results atomically; budgets do not cap process memory.
 Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTerminal editing supports arrows and history. Ctrl-C clears pending input or cancels running engine work.\nHistory stays in memory unless --history PATH is supplied; leading spaces omit entries."
                 )?;
                 continue;
@@ -465,6 +465,15 @@ fn interactive_complete(input: &str) -> fastql_parser::Result<bool> {
     match command_word(&mut rest) {
         ".profile" if rest.trim().is_empty() => Ok(false),
         ".profile" => fastql_parser::script_complete(rest),
+        ".timeout" => {
+            if command_word(&mut rest).parse::<u32>().is_err() {
+                return Ok(true);
+            }
+            if rest.trim().is_empty() {
+                return Ok(false);
+            }
+            fastql_parser::script_complete(rest)
+        }
         ".select-limit" | ".profile-limit" | ".write-limit" => {
             for _ in 0..2 {
                 if command_word(&mut rest).parse::<usize>().is_err() {
@@ -489,11 +498,32 @@ fn run_limited_command(
 ) -> Result<Option<bool>, Box<dyn std::error::Error>> {
     let mut rest = command;
     let name = command_word(&mut rest);
-    if !matches!(name, ".select-limit" | ".profile-limit" | ".write-limit") {
+    if !matches!(
+        name,
+        ".select-limit" | ".profile-limit" | ".write-limit" | ".timeout"
+    ) {
         return Ok(None);
     }
     let before = conn.transaction_state();
     let execution = (|| -> fastdb::Result<_> {
+        if name == ".timeout" {
+            let millis = command_word(&mut rest).parse::<u32>().map_err(|_| {
+                fastdb::Error::Validation("expected uint32 timeout milliseconds".into())
+            })?;
+            let sql = rest.trim_start();
+            if sql.is_empty() {
+                return Err(fastdb::Error::Validation(
+                    "expected one SQL statement after timeout".into(),
+                ));
+            }
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_millis(u64::from(millis)))
+                .ok_or_else(|| fastdb::Error::Validation("timeout deadline overflow".into()))?;
+            let token = fastdb::CancellationToken::with_deadline(deadline);
+            return conn
+                .execute_cancellable(sql, &Parameters::new(), &token)
+                .map(|result| (result, None));
+        }
         let max_rows = command_word(&mut rest).parse::<usize>().map_err(|_| {
             fastdb::Error::Validation("expected nonnegative result row limit".into())
         })?;
