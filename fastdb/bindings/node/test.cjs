@@ -1214,6 +1214,18 @@ test('duplicate projection names preserve positional values in both clients', as
       assert.deepEqual(correlatedUsing.rows, [[1n,1n],[2n,2n]]);
       const nestedUsing = await db.execute('SELECT n,(SELECT (SELECT n)) AS value FROM (SELECT n FROM docs) a RIGHT JOIN (SELECT 1 AS n UNION ALL SELECT 2) b USING(n) ORDER BY n');
       assert.deepEqual(nestedUsing.rows, correlatedUsing.rows);
+      await db.execute('CREATE TABLE nums(value INTEGER)');
+      await db.execute('INSERT INTO nums VALUES(0),(1)');
+      for (const [join, constraint] of [['RIGHT JOIN', ' USING(n)'], ['NATURAL RIGHT JOIN', '']]) {
+        const tableScalar = await db.execute(`SELECT n,(SELECT (SELECT n FROM nums WHERE value=1)) AS value FROM (SELECT n FROM docs) a ${join} (SELECT 1 AS n UNION ALL SELECT 2) b${constraint} ORDER BY n`);
+        assert.deepEqual(tableScalar.columns, ['n', 'value']);
+        assert.deepEqual(tableScalar.rows, correlatedUsing.rows);
+      }
+      for (const field of ['flag', 'data']) {
+        const typedScalar = await db.execute(`SELECT k,(SELECT (SELECT k FROM nums ORDER BY value DESC LIMIT 1)) AS value FROM (SELECT ${field} AS k FROM docs) a JOIN (SELECT ${field} AS k FROM docs) b USING(k)`);
+        const expected = field === 'flag' ? true : Buffer.from([49]);
+        assert.deepEqual(typedScalar.rows, [[expected, expected]]);
+      }
     } finally { await db.close(); }
   }
 });

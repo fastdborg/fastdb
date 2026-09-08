@@ -543,6 +543,8 @@ fn correlated_using_preserves_typed_keys_and_atomic_writes() {
         };
         query("CREATE TABLE docs");
         query("CREATE TABLE other");
+        query("CREATE TABLE nums(n INTEGER)");
+        query("INSERT INTO nums VALUES(0),(1)");
         for (table, value) in [("docs", first), ("other", first), ("other", second)] {
             if value.starts_with("x'") {
                 query(&format!("INSERT INTO {table}(k) VALUES({value})"));
@@ -564,6 +566,11 @@ fn correlated_using_preserves_typed_keys_and_atomic_writes() {
                     (" ORDER BY k", false),
                     (" AS v ORDER BY v LIMIT 1", false),
                     (" ORDER BY k LIMIT 0", true),
+                    (" FROM nums WHERE n=1", false),
+                    (" FROM nums ORDER BY n DESC LIMIT 1", false),
+                    (" AS v FROM nums ORDER BY v,n LIMIT 1", false),
+                    (" FROM nums WHERE n=2", true),
+                    (" FROM nums LIMIT 0", true),
                     (" AS v ORDER BY v LIMIT 1 OFFSET 1", true),
                 ] {
                     for nested in [false, true] {
@@ -609,7 +616,7 @@ fn correlated_using_preserves_typed_keys_and_atomic_writes() {
         query("CREATE TABLE copied");
         query("CREATE UNIQUE INDEX copied_k ON copied(k)");
         let insert =
-            "INSERT INTO copied(k) SELECT (SELECT (SELECT k ORDER BY k)) FROM docs a RIGHT JOIN other b USING(k)";
+            "INSERT INTO copied(k) SELECT (SELECT (SELECT k FROM nums ORDER BY n DESC LIMIT 1)) FROM docs a RIGHT JOIN other b USING(k)";
         query("BEGIN");
         query(insert);
         let expected = query("SELECT k FROM other ORDER BY k");

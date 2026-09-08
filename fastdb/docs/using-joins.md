@@ -104,3 +104,6 @@ Empty-source NATURAL joins have 18 execute/profile comparisons with the pinned e
 
 
 Table-reading scalar subqueries now resolve unqualified outer USING/NATURAL keys in projections, WHERE and ORDER BY when local sources have closed table schemas. For example, `SELECT k,(SELECT max(n) FROM nums WHERE n<k) FROM docs a RIGHT JOIN b USING(k)` uses the retained right key for unmatched rows. A local table column named `k` takes precedence. Bindings whose retained outer alias is reused by an inner table are left unchanged; general unqualified fallback through alias collisions remains open. Source-free wrappers retain this behavior through nested scalar levels. The resolver inspects schema metadata without stepping the inner query. Open collection inner sources, derived inner sources, WITH/compound scopes and broader grouped/window scopes still need full lexical-resolution qualification.
+
+
+Table-backed scalar typed-key coverage adds 180 execute/profile cases (record, boolean and binary), including empty results and pagination, plus a uniqueness-failure/rollback/retry INSERT SELECT. Both Node clients also verify boolean/binary nested reads and unmatched NATURAL/USING RIGHT rows.
