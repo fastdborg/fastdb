@@ -2448,3 +2448,6 @@ Chained NATURAL qualification (2026-09-08): 18 native differential execute/profi
 
 
 Typed NATURAL write qualification (2026-09-08): record, boolean and binary keys retain values through closed-source NATURAL RIGHT JOIN into a collection, including unmatched retained keys. Duplicate unique-index failure preserves prior inserted rows and an active transaction; rollback clears them and retry succeeds. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-typed-writes.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader NATURAL and full V1 qualification remain open.
+
+
+Duplicate NATURAL key qualification (2026-09-08): expanded the duplicate-key matrix to 54 native differential execute/profile cases spanning USING and NATURAL, duplicate public columns on either/both sides, INNER/LEFT/RIGHT, stars and merged/qualified keys. First-column lookup, duplicate positions and suppression on the hidden side match the pinned engine. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-duplicate-columns.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.

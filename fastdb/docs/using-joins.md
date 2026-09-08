@@ -86,3 +86,6 @@ Chained NATURAL joins now have 18 native execute/profile comparisons for INNER/L
 
 
 Typed NATURAL RIGHT JOIN insertion now has record/boolean/binary coverage, including unmatched retained keys, unique-index failure, rollback and retry.
+
+
+Duplicate-column coverage now compares 54 USING/NATURAL shapes with the pinned engine, including duplicates on either/both sides, qualified/unqualified stars and first-key lookup.
