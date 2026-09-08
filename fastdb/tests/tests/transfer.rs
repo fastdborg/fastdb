@@ -262,3 +262,80 @@ fn portable_json_writer_validates_before_output_and_propagates_sink_failure() {
         assert_eq!(output, b"unchanged");
     }
 }
+
+#[test]
+fn maximum_document_depth_roundtrips_storage_and_both_transfer_formats() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    let mut value = Value::String("[\\\"{}]ไทย".into());
+    for depth in 0..63 {
+        value = if depth % 2 == 0 {
+            Value::Array(vec![value])
+        } else {
+            Value::Object([("nested".into(), value)].into())
+        };
+    }
+    let doc = c
+        .insert("docs", [("payload".into(), value.clone())].into())
+        .unwrap();
+    let Value::Record(id) = &doc["id"] else {
+        panic!("record id lost")
+    };
+    assert_eq!(c.get(id).unwrap().unwrap(), doc);
+    assert_eq!(
+        q(&c, "SELECT payload FROM docs").rows,
+        vec![vec![value.clone()]]
+    );
+    for (table, format) in [
+        ("json_copy", TransferFormat::Json),
+        ("lines_copy", TransferFormat::Ndjson),
+    ] {
+        let data = c.export_documents("docs", format).unwrap();
+        // Import IDs deliberately retain their collection name, so replay into
+        // the original collection after a transactional delete.
+        q(&c, "BEGIN");
+        q(&c, "DELETE FROM docs");
+        assert_eq!(
+            c.import_documents("docs", &data, format).unwrap(),
+            1,
+            "{table}"
+        );
+        assert_eq!(c.get(id).unwrap().unwrap(), doc);
+        q(&c, "ROLLBACK");
+    }
+    let too_deep = Value::Array(vec![value]);
+    assert_eq!(
+        c.insert("docs", [("payload".into(), too_deep)].into())
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(c.get(id).unwrap().unwrap(), doc);
+    let header = r#"{"format":"fastdb.documents","version":1}"#;
+    let valid = Value::Object(doc.clone()).into_portable_json().unwrap();
+    let excessive = format!("{}0{}", "[".repeat(137), "]".repeat(137));
+    for (format, input) in [
+        (
+            TransferFormat::Json,
+            format!("{{\"header\":{header},\"documents\":[{valid},{excessive}]}}"),
+        ),
+        (
+            TransferFormat::Ndjson,
+            format!("{header}\n{valid}\n{excessive}\n"),
+        ),
+    ] {
+        q(&c, "BEGIN");
+        q(&c, "DELETE FROM docs");
+        assert_eq!(
+            c.import_documents("docs", &input, format)
+                .unwrap_err()
+                .code(),
+            "FDB_LIMIT"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert!(c.get(id).unwrap().is_none());
+        q(&c, "ROLLBACK");
+        assert_eq!(c.get(id).unwrap().unwrap(), doc);
+    }
+}

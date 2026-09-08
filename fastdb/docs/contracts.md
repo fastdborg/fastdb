@@ -1082,3 +1082,6 @@ Explicit CTE column lists follow pinned ASCII identifier normalization: `WITH q(
 
 
 Initial NATURAL JOIN support in logical queries requires closed sources, such as explicit collection projections. Shared names use ASCII case-insensitive intersection and existing USING merge behavior; no shared names produce an unconditional join. Direct open-schema collections require explicit projections. INNER/LEFT/leading-RIGHT have initial coverage; FULL and broader qualification remain incomplete.
+
+
+Tagged-value nesting: binding input, stored values and document transfer decoding now distinguish the 64-level logical value limit from JSON wrapper depth. An explicit 136-container lexical preflight bounds the deeper serde decoder; quoted content and escapes are excluded. Logical validation remains mandatory after decoding. Node record-key encoding no longer adds a logical level for its wire-only key wrapper. Ordinary untagged SQL/JSON function behavior is unchanged.

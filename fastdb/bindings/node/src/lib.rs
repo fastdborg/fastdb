@@ -460,7 +460,7 @@ impl NativeDatabase {
             })
             .transpose()?;
         self.report(|conn| {
-            let plan: serde_json::Value=serde_json::from_str(&input)?;
+            let plan: serde_json::Value=fastdb::decode_wire_json(&input)?;
             let invalid=||fastdb::Error::Validation("expected migration objects with version, name and sql strings".into());
             let plan=plan.as_array().ok_or_else(invalid)?.iter().map(|m| {
                 let field=|name|m.get(name).and_then(|v|v.as_str()).ok_or_else(invalid);
@@ -514,7 +514,7 @@ impl NativeDatabase {
 }
 
 fn decode_parameters(input: &str) -> fastdb::Result<fastdb::Parameters> {
-    let values: BTreeMap<String, serde_json::Value> = serde_json::from_str(input)?;
+    let values: BTreeMap<String, serde_json::Value> = fastdb::decode_wire_json(input)?;
     values
         .into_iter()
         .map(|(key, value)| fastdb::Value::from_portable_value(value).map(|v| (key, v)))

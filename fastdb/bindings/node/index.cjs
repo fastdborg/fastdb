@@ -70,7 +70,7 @@ function encode(value, depth = 0) {
     const bytes = Buffer.alloc(8); bytes.writeDoubleBE(value);
     return tagged('Number', bytes.toString('hex'));
   }
-  if (value instanceof Record) return tagged('Record', { table: value.table, key: encode(value.key, depth + 1) });
+  if (value instanceof Record) return tagged('Record', { table: value.table, key: encode(value.key, depth) });
   if (value instanceof Vector) return tagged('Vector', [...value.bytes]);
   if (value instanceof Uint8Array) return tagged('Binary', [...value]);
   if (Array.isArray(value)) return tagged('Array', value.map(v => encode(v, depth + 1)));

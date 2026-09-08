@@ -2403,3 +2403,27 @@ test('direct JSON response composition preserves escaped names and nested values
     } finally { await db.close(); }
   }
 });
+
+test('maximum logical depth survives wire framing, storage and transfer', async () => {
+  const {AsyncDatabase} = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      let value = new Record('docs','leaf');
+      for(let i=0;i<64;i++) value = i%2 ? {nested:value} : [value];
+      assert.deepEqual((await db.execute('SELECT $v AS v',{$v:value})).rows,[[value]]);
+      await assert.rejects(async()=>db.execute('SELECT $v',{$v:[value]}),/nesting exceeds 64/);
+      const payload = value.nested;
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {id:docs:deep,payload:$v}',{$v:payload});
+      assert.deepEqual((await db.execute('SELECT payload FROM docs')).rows,[[payload]]);
+      for(const format of ['json','ndjson']) {
+        const data = await db.exportDocuments('docs',format);
+        await db.execute('BEGIN');
+        await db.execute('DELETE FROM docs');
+        await db.importDocuments('docs',data,format);
+        assert.deepEqual((await db.execute('SELECT payload FROM docs')).rows,[[payload]]);
+        await db.execute('ROLLBACK');
+      }
+    } finally { await db.close(); }
+  }
+});

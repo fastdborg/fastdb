@@ -9,7 +9,7 @@ publish = false
 fastql-parser = { path = "../parser" }
 turso_core = { path = "../../core" }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde_json = { workspace = true, features = ["float_roundtrip", "unbounded_depth"] }
 thiserror.workspace = true
 turso_parser = { path = "../../sqlite/parser" }
 turso_ext = { path = "../../extensions/core" }

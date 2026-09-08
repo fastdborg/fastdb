@@ -441,9 +441,11 @@ fn json_documents(input: &str, mut visit: impl FnMut(Document) -> Result<()>) ->
             message
         })
     };
-    let mut deserializer = serde_json::Deserializer::from_str(input);
-    let parsed = serde::Deserializer::deserialize_map(&mut deserializer, Envelope(&mut consume))
-        .and_then(|header| deserializer.end().map(|()| header));
+    let mut deserializer = crate::wire_json::deserializer(input)?;
+    let parsed = crate::parser_stack(|| {
+        serde::Deserializer::deserialize_map(&mut deserializer, Envelope(&mut consume))
+            .and_then(|header| deserializer.end().map(|()| header))
+    });
     if let Some(error) = failure {
         return Err(error);
     }
@@ -474,8 +476,10 @@ fn ndjson_documents(input: &str) -> Result<impl Iterator<Item = Result<Document>
     .map_err(|error| Error::Validation(format!("document transfer: {error}")))?;
     header.check()?;
     Ok(lines.enumerate().map(|(index, line)| {
-        let portable = serde_json::from_str(line)
-            .map_err(|error| Error::Validation(format!("transfer line {}: {error}", index + 2)))?;
+        let portable = crate::decode_wire_json(line).map_err(|error| match error {
+            Error::Limit(_) => error,
+            _ => Error::Validation(format!("transfer line {}: {error}", index + 2)),
+        })?;
         transfer_document(portable)
     }))
 }

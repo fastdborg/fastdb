@@ -58,7 +58,9 @@ impl Value {
         let payload = bytes
             .strip_prefix(b"FDB\x01")
             .ok_or_else(|| Error::Storage("unknown value format".into()))?;
-        let value: Self = serde_json::from_slice(payload)?;
+        let input = std::str::from_utf8(payload)
+            .map_err(|error| Error::Storage(format!("invalid value UTF-8: {error}")))?;
+        let value: Self = crate::decode_wire_json(input)?;
         value.validate()?;
         Ok(value)
     }

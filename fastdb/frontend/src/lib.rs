@@ -10,6 +10,9 @@ mod guard;
 mod integrity;
 pub use integrity::{IntegrityLimits, IntegrityReport};
 mod interrupt;
+mod wire_json;
+#[doc(hidden)]
+pub use wire_json::decode_wire_json;
 mod links;
 pub use interrupt::{CancellationToken, InterruptHandle};
 mod migration;
