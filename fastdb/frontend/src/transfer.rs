@@ -447,6 +447,12 @@ impl Value {
         self.validate()?;
         Ok(serde_json::to_value(Portable::from(self.clone()))?)
     }
+    /// Consume a tagged value using the document transfer v1 value encoding.
+    /// Avoids cloning the owned value tree before portable conversion.
+    pub fn into_portable_value(self) -> Result<serde_json::Value> {
+        self.validate()?;
+        Ok(serde_json::to_value(Portable::from(self))?)
+    }
     /// Decode a tagged transfer v1 value and validate its logical type.
     pub fn from_portable_value(value: serde_json::Value) -> Result<Self> {
         let value = Self::from(serde_json::from_value::<Portable>(value)?);

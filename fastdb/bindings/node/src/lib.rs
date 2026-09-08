@@ -515,10 +515,10 @@ fn decode_parameters(input: &str) -> fastdb::Result<fastdb::Parameters> {
 fn query_value(result: fastdb::QueryResult) -> fastdb::Result<serde_json::Value> {
     let rows = result
         .rows
-        .iter()
+        .into_iter()
         .map(|row| {
-            row.iter()
-                .map(fastdb::Value::to_portable_value)
+            row.into_iter()
+                .map(fastdb::Value::into_portable_value)
                 .collect::<fastdb::Result<Vec<_>>>()
         })
         .collect::<fastdb::Result<Vec<_>>>()?;

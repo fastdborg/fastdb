@@ -3021,3 +3021,19 @@ rejection. Frontend Clippy and formatting passed. Logs:
 `/tmp/fastdb-upsert-ownership.log` and
 `/tmp/fastdb-upsert-ownership-clippy.log`. No broader or installed-client checks
 were repeated for this ownership change. Broader V1 gates remain open.
+
+### Node consumes result values during portable conversion
+
+Added `Value::into_portable_value(self)`, preserving existing validation and the
+transfer-v1 representation while consuming the input value tree. Node's shared
+query-result serializer now consumes rows and cells through this method instead
+of borrowing the complete rowset and cloning every value. Completed input cells
+can be released as output accumulates. The borrowed conversion remains available.
+
+The rebuilt addon passed all 72 Node/application tests and strict TypeScript
+checks, including typed values, vectors, RETURNING, result/write-buffer limits,
+transactions and cancellation. Frontend/Node Clippy and scoped formatting passed.
+Logs: `/tmp/fastdb-node-consumed-values.log` and
+`/tmp/fastdb-consumed-values-clippy.log`. Broader Rust and installed-package checks
+were not repeated. Output JSON still occupies memory; this reduces duplicate
+input ownership without claiming a total-memory bound or closing V1 gates.

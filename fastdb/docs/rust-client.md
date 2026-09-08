@@ -127,3 +127,8 @@ transaction. These limits are distinct from returned-result limits; ordinary rea
 native engine buffers and direct single-document Rust methods are outside this
 setting. See [result-budgets.md](result-budgets.md) for exact buffer accounting and
 initial coverage.
+
+`Value::into_portable_value(self)` consumes a value to produce the same transfer-v1
+JSON representation as `to_portable_value(&self)`, including decimal int64 and
+binary64 bit strings. Use it when the value is no longer needed to avoid cloning
+its tree for conversion. Both methods validate values before encoding.
