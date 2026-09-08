@@ -2320,3 +2320,6 @@ Added merged-key bindings and per-source star suppression before projection lowe
 Tests cover 24 closed-source projection/join shapes, direct collection keys, profiling, NOCASE/BINARY controls, typed record-key INSERT SELECT, unique-index failure/rollback/reuse, and both Node clients. NATURAL/FULL USING remain unsupported. Multi-key implementation cases, correlated/name scopes, grouping/windows, duplicate-key columns and broader affinity/resource qualification remain open; using-joins.md records the work.
 
 The complete fastdb/scripts/check.sh run passed formatting, Clippy, 443 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. Log: /tmp/fastdb-using-check.log. Full V1 qualification remains incomplete.
+
+
+Multi-key collection USING qualification (2026-09-08): a 27-case differential matrix passes for key-list ordering, case/quoted names, INNER/LEFT/RIGHT joins and post-join NULL or merged-key filters. Normal/profiled rows and column order match the pinned native baseline, including unmatched outer rows. Production code is unchanged; formatting and the focused regression pass. Latest full scoped evidence remains 443 Rust tests with one ignored gate and 48 Node/application tests. Broader USING scopes/types and V1 qualification remain open.

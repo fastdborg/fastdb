@@ -327,3 +327,43 @@ fn collection_using_preserves_collation_and_atomic_typed_writes() {
     query(insert);
     assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
 }
+
+#[test]
+fn collection_multi_key_using_preserves_outer_filters_and_key_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,t:'x',v:10}",
+        "INSERT INTO docs {k:2,t:'y',v:20}",
+        "CREATE TABLE baseline(k INTEGER,t TEXT,v INTEGER)",
+        "INSERT INTO baseline VALUES(1,'x',10),(2,'y',20)",
+        "CREATE TABLE b(k INTEGER,t TEXT,w INTEGER)",
+        "INSERT INTO b VALUES(1,'x',100),(2,'z',200)",
+    ] {
+        query(sql);
+    }
+    for keys in ["k,t", "t,k", "K,\"t\""] {
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for filter in ["", " WHERE b.w IS NULL", " WHERE k=2"] {
+                let sql = |source: &str| {
+                    format!("SELECT * FROM (SELECT k,t,v FROM {source}) a {join} b USING({keys}){filter} ORDER BY a.k,b.k")
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}
