@@ -1085,3 +1085,23 @@ Initial NATURAL JOIN support in logical queries requires closed sources, such as
 
 
 Tagged-value nesting: binding input, stored values and document transfer decoding now distinguish the 64-level logical value limit from JSON wrapper depth. An explicit 136-container lexical preflight bounds the deeper serde decoder; quoted content and escapes are excluded. Logical validation remains mandatory after decoding. Node record-key encoding no longer adds a logical level for its wire-only key wrapper. Ordinary untagged SQL/JSON function behavior is unchanged.
+
+
+## Direct JSON iterator sources
+
+Collection and mixed SELECTs accept unqualified `json_each` and `json_tree`
+sources whose arguments are SQL literals or bound parameters. For example:
+
+```sql
+SELECT d.n, j.value
+FROM docs d CROSS JOIN json_each($json) AS j;
+```
+
+The pinned engine evaluates the iterator and supplies its column metadata.
+Qualified stars, aliases, CROSS/LEFT joins and validated collection INSERT SELECT
+have initial regression coverage. Missing iterator bindings return FDB_PARAMETER.
+A failed collection insert restores its document and index changes while keeping
+prior transaction work; a corrected retry can run in the same transaction.
+Computed or correlated iterator arguments in collection queries and general
+table-function support remain unqualified. Ordinary SQL continues to use native
+delegation for supported forms outside collection lowering.

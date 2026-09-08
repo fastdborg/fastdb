@@ -3683,3 +3683,25 @@ Full V1 and broader resource/release qualification remain open.
 ### Combined tools and clients verification
 
 The latest complete scoped run at clean `4e79128bc` passes 559 Rust tests (one existing ignored trigger gate), 79 Node/application tests, formatting, Clippy and strict TypeScript. Pinned upstream source boundaries and all 34 archived workflow copies were rechecked. See verification.md for exact scope and logs; installed artifacts and full V1 release gates retain their separate evidence and unfinished requirements.
+
+
+## Direct JSON iterator sources — 2026-09-08
+
+Collection/mixed SELECT lowering now accepts direct unqualified json_each and
+json_tree sources with literal or bound arguments. Native metadata supplies
+columns without executing the source during inspection. Real-engine regressions
+compare 18 native/collection query cases through execute and profile, including
+qualified stars, CROSS/LEFT joins, paths and named/numbered/anonymous parameters.
+A missing binding returns FDB_PARAMETER. Validated INSERT SELECT failure restores
+documents and indexes, preserves prior transaction work and permits retry.
+Both Node clients cover iterator values, profiling and missing bindings, while
+ordinary computed-argument JSON iterator SQL retains native delegation.
+
+The scoped check log `/tmp/fastdb-json-iterators-check.log` records 561 passing
+Rust tests, zero failures and one existing ignored trigger-cancellation gate;
+80 Node/application tests passed. Formatting and Clippy passed; strict TypeScript
+also passed in a separate confirming run. This checks the implementation tree
+based on `848374cd0`, with this feature's source and tests present. Computed or
+correlated iterator arguments in collection queries and broader table-function
+qualification remain open. No upstream source changes or publication occurred;
+full V1 release gates remain unfinished.

@@ -2475,3 +2475,20 @@ test('migration failures expose lossless versions, UTF-8 offsets and typed cause
     assert.equal(isFastDBError(Object.assign(new Error('test'),{code:'FDB_MIGRATION',migration})),false);
   }
 });
+
+test('direct JSON iterator joins preserve parameters and values in both clients', async () => {
+  const {AsyncDatabase}=require('./index.cjs');
+  for(const db of [new Database(),await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs {n:1}');
+      const sql='SELECT d.n,j.key,j.value FROM docs d CROSS JOIN json_each($json) j ORDER BY j.key';
+      const params={$json:'[1,2,null]'};
+      const rows=[[1n,0n,1n],[1n,1n,2n],[1n,2n,null]];
+      assert.deepEqual((await db.execute(sql,params)).rows,rows);
+      assert.deepEqual((await db.profileSelect(sql,params)).result.rows,rows);
+      await assert.rejects(async()=>db.execute(sql),error=>error.code==='FDB_PARAMETER');
+      assert.deepEqual((await db.execute('SELECT value FROM json_each(json_array(1,2))')).rows,[[1n],[2n]]);
+    } finally {await db.close();}
+  }
+});

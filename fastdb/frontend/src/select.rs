@@ -2798,6 +2798,59 @@ fn source(
     anonymous_alias: String,
     inspect_native: bool,
 ) -> Result<Source> {
+    if let SelectTable::TableCall(name, args, alias) = table {
+        // Closed JSON iterators can expose native columns without executing the
+        // source. Correlated/computed arguments still need expression lowering.
+        if name.db_name.is_some()
+            || !matches!(
+                name.name.as_str().to_ascii_lowercase().as_str(),
+                "json_each" | "json_tree"
+            )
+            || !args
+                .iter()
+                .all(|arg| matches!(arg.as_ref(), Expr::Literal(_) | Expr::Variable(_)))
+        {
+            return Err(unsupported("this table-function source"));
+        }
+        let consumed = args
+            .iter()
+            .filter_map(|arg| {
+                if let Expr::Variable(var) = arg.as_ref() {
+                    Some(
+                        var.name
+                            .as_ref()
+                            .map_or_else(|| format!("?{}", var.index), |name| name.to_string()),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for name in &consumed {
+            if !params.contains_key(name) {
+                return Err(Error::Parameter(name.clone()));
+            }
+        }
+        let statement = connection.prepare(format!("SELECT * FROM {table}"))?;
+        return Ok(Source {
+            table: table.clone(),
+            alias: alias
+                .as_ref()
+                .map_or(name.name.as_str(), |alias| alias.name().as_str())
+                .into(),
+            collection: None,
+            derived: Some(
+                (0..statement.num_columns())
+                    .map(|index| (statement.get_column_name(index).into_owned(), false))
+                    .collect(),
+            ),
+            derived_logical: false,
+            derived_physical: None,
+            native_collations: Default::default(),
+            native_expression_collations: Default::default(),
+            consumed,
+        });
+    }
     if let SelectTable::Select(select, alias) = table {
         let generated = As::As(Name::exact(anonymous_alias));
         let alias = alias.as_ref().unwrap_or(&generated);
