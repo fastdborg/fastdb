@@ -703,3 +703,33 @@ fn direct_union_pagination_preserves_typed_derived_and_insert_rows() {
         }
     }
 }
+
+#[test]
+fn pinned_correlated_unordered_union_pagination_is_not_materialization_equivalent() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE a(k INTEGER)");
+    q(&c, "INSERT INTO a VALUES(1),(2)");
+    let run = |rhs: &str| {
+        q(&c, &format!("SELECT k,(SELECT 1 IN({rhs})) AS found,(SELECT 1 NOT IN({rhs})) AS absent FROM a ORDER BY k"))
+    };
+    let direct = run("SELECT k UNION SELECT NULL LIMIT 1 OFFSET 1");
+    let materialized = run(
+        "WITH q(v) AS MATERIALIZED(SELECT k UNION SELECT NULL) SELECT v FROM q LIMIT 1 OFFSET 1",
+    );
+    assert_eq!(direct.columns, materialized.columns);
+    assert_eq!(
+        direct.rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1), Value::Integer(0)],
+            vec![Value::Integer(2), Value::Null, Value::Null],
+        ]
+    );
+    assert_eq!(
+        materialized.rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1), Value::Integer(0)],
+            vec![Value::Integer(2), Value::Integer(0), Value::Integer(1)],
+        ]
+    );
+}
