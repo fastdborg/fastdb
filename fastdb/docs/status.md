@@ -3956,3 +3956,22 @@ scoped check remains 567 Rust and 81 Node/application passes with one existing
 ignored trigger gate. This adds integration evidence, not general window/frame
 or grouping completeness. Full V1 release gates remain open; no publication
 occurred.
+
+
+## Compound iterator pagination — 2026-09-08
+
+A 16-case native differential matrix combines JSON iterator sources with UNION
+ALL, UNION, INTERSECT and EXCEPT, ordered bound LIMIT/OFFSET, NULLs, duplicate
+values, empty pages and offsets beyond the result. Collection execute/profile
+columns and rows match ordinary native tables. An INTERSECT INSERT SELECT test
+verifies rollback after a later validation failure, prior transaction work,
+absence of failed index entries and successful retry with a smaller bound limit;
+outer rollback leaves no output documents.
+
+All ten table_functions tests passed, plus fastdb-tests formatting and all-target
+Clippy with warnings denied. Logs `/tmp/fastdb-iterator-compounds.log` and
+`/tmp/fastdb-iterator-compounds-clippy.log`. Only tests/documentation changed from
+`8851aef6b`; no complete-suite or client rerun is claimed. The latest full scoped
+check remains 567 Rust and 81 Node/application passes with one existing ignored
+trigger gate. Broader compound/type semantics and full V1 release gates remain
+open. No publication occurred.
