@@ -6712,6 +6712,20 @@ mod lowering_tests {
                                     .execute(&sql.replace("$value", &integer.to_string()), &empty)
                                     .unwrap();
                                 assert_eq!(actual.rows, expected.rows, "{text:?}: {integer}");
+                                // MustBeInt acceptance was established above. Numeric
+                                // CAST exposes the exact converted value, including
+                                // exponent text that a direct INTEGER cast truncates.
+                                let numeric = c
+                                    .execute(
+                                        "SELECT CAST(CAST($value AS NUMERIC) AS INTEGER)",
+                                        &params,
+                                    )
+                                    .unwrap();
+                                assert_eq!(
+                                    numeric.rows,
+                                    vec![vec![crate::Value::Integer(integer)]],
+                                    "exact conversion: {text:?}"
+                                );
                             }
                             Err(error) => {
                                 assert!(
