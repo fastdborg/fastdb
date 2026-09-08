@@ -220,6 +220,62 @@ enum NativeCorrelationMode {
     CompoundArm,
 }
 
+// Match the pinned MustBeInt boundary without executing SQL during planning.
+fn pagination_integer(value: &Value) -> Option<i64> {
+    fn real(number: f64) -> Option<i64> {
+        let integer = number as i64;
+        (number.is_finite()
+            && integer != i64::MIN
+            && integer != i64::MAX
+            && integer as f64 == number)
+            .then_some(integer)
+    }
+    match value {
+        Value::Integer(number) => Some(*number),
+        Value::Boolean(value) => Some(i64::from(*value)),
+        Value::Number(number) => real(*number),
+        Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty()
+                || text.starts_with(['e', 'E'])
+                || text.starts_with(".e")
+                || text.starts_with(".E")
+            {
+                return None;
+            }
+            let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
+            let mut parts = unsigned.split(['e', 'E']);
+            let mantissa = parts.next()?;
+            let exponent = parts.next();
+            if parts.next().is_some() {
+                return None;
+            }
+            if let Some(exponent) = exponent {
+                let digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+                if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+            }
+            if mantissa.bytes().filter(|byte| *byte == b'.').count() > 1
+                || !mantissa
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'.')
+                || (mantissa.is_empty() && exponent.is_none())
+            {
+                return None;
+            }
+            if exponent.is_none() && !mantissa.contains('.') {
+                text.parse().ok()
+            } else {
+                // Pinned numeric conversion treats malformed signed decimal
+                // forms such as '+.' as zero after lexical acceptance.
+                real(text.parse::<f64>().unwrap_or(0.0))
+            }
+        }
+        _ => None,
+    }
+}
+
 // Keep direct scalar pagination when its values can be represented literally.
 // Other value types and expressions retain the existing validation path.
 fn literal_pagination(value: &mut Expr, params: &Parameters) -> Result<bool> {
@@ -231,15 +287,14 @@ fn literal_pagination(value: &mut Expr, params: &Parameters) -> Result<bool> {
                 .name
                 .as_ref()
                 .map_or_else(|| format!("?{}", var.index), |name| name.to_string());
-            match params
+            let bound = params
                 .get(&name)
-                .ok_or_else(|| Error::Parameter(name.clone()))?
-            {
-                Value::Integer(number) => {
-                    *value = expression(&number.to_string())?;
-                    Ok(true)
-                }
-                _ => Ok(false),
+                .ok_or_else(|| Error::Parameter(name.clone()))?;
+            if let Some(number) = pagination_integer(bound) {
+                *value = expression(&number.to_string())?;
+                Ok(true)
+            } else {
+                Ok(false)
             }
         }
         _ => Ok(false),

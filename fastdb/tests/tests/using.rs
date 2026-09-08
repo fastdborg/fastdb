@@ -3065,7 +3065,20 @@ fn pinned_pagination_parameter_conversion_oracle() {
         .unwrap();
     c.execute("INSERT INTO pagination_values VALUES(1),(2),(3)", &empty)
         .unwrap();
+    for sql in [
+        "CREATE TABLE coercion_docs",
+        "INSERT INTO coercion_docs(n) VALUES(1),(4)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
     for (value, integer) in [
+        (Value::Boolean(true), 1),
+        (Value::String(".".into()), 0),
+        (Value::String("+.".into()), 0),
+        (Value::String("-.".into()), 0),
+        (Value::String("+e1".into()), 0),
+        (Value::String(i64::MAX.to_string()), i64::MAX),
+        (Value::String(i64::MIN.to_string()), i64::MIN),
         (Value::Number(1.0), 1),
         (Value::Number(0.0), 0),
         (Value::Number(-1.0), -1),
@@ -3085,11 +3098,32 @@ fn pinned_pagination_parameter_conversion_oracle() {
                 .execute(&sql.replace("$value", &integer.to_string()), &empty)
                 .unwrap();
             assert_eq!(actual.rows, expected.rows, "{sql}: {value:?}");
+            let correlated = format!("SELECT d.n,(WITH chosen AS (SELECT n AS m FROM pagination_values) SELECT 1 FROM chosen WHERE m<d.n ORDER BY m {position}) AS value FROM coercion_docs d ORDER BY d.n");
+            let literal = correlated.replace("$value", &integer.to_string());
+            let bound = Parameters::from([("$value".into(), value.clone())]);
+            assert_eq!(
+                c.execute(&correlated, &bound).unwrap().rows,
+                c.execute(&literal, &empty).unwrap().rows,
+                "{correlated}: {value:?}"
+            );
         }
     }
     for value in [
         Value::Null,
         Value::Number(1.5),
+        Value::Number(i64::MIN as f64),
+        Value::Number(i64::MAX as f64),
+        Value::String("+".into()),
+        Value::String("e1".into()),
+        Value::String(".e1".into()),
+        Value::String("1e".into()),
+        Value::String("1e+".into()),
+        Value::String("0x1".into()),
+        Value::String("1_0".into()),
+        Value::String("NaN".into()),
+        Value::String("inf".into()),
+        Value::String("9223372036854775808".into()),
+        Value::String("-9223372036854775809".into()),
         Value::String("1x".into()),
         Value::String("".into()),
         Value::Binary(vec![49]),
