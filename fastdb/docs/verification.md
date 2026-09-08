@@ -3347,3 +3347,19 @@ formatting, Clippy with warnings denied and strict TypeScript. Log
 `/tmp/fastdb-tuple-predicate-check.log`; twelve focused write tests also passed
 (`/tmp/fastdb-tuple-predicate.log`). No upstream files or dependencies changed.
 Broader tuple SELECT forms and full V1 release gates remain open.
+
+
+## Tuple SELECT bound pagination — 2026-09-09
+
+A five-case tuple SELECT LIMIT/OFFSET matrix compares collection bound values
+with ordinary-table literal equivalents: zero, one-row, unlimited and skipped
+results. Rows and affected counts match; missing parameters preserve data.
+The ordinary-table query with supplied pagination parameters initially returned
+FDB_PARAMETER for $limit. This binding gap remains open; the passing differential
+fixture deliberately uses literal native pagination and does not qualify that
+native parameter path.
+
+All thirteen write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-pagination.log` and
+`/tmp/fastdb-tuple-pagination-clippy.log`. Only tests/documentation changed from
+`232f45167`; no new full-suite/client run is claimed. Full V1 gates remain open.

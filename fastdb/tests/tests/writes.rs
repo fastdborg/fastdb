@@ -578,3 +578,48 @@ fn tuple_predicate_binding_preserves_quoted_fields_and_nested_scope() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn tuple_select_bound_pagination_matches_native_empty_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,2),(3,4)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(a,b) SELECT a,b FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for (limit, offset) in [(0, 0), (1, 0), (1, 1), (-1, 0), (-1, 2)] {
+        q(&c, "BEGIN");
+        let params = Parameters::from([
+            ("$limit".into(), Value::Integer(limit)),
+            ("$offset".into(), Value::Integer(offset)),
+        ]);
+        let query = |source| {
+            format!(
+                "UPDATE {source} SET (a,b)=(SELECT b,a LIMIT $limit OFFSET $offset) RETURNING a,b"
+            )
+        };
+        let native = query("native")
+            .replace("$limit", &limit.to_string())
+            .replace("$offset", &offset.to_string());
+        let expected = c.execute(&native, &Parameters::new()).unwrap();
+        let actual = c.execute(&query("docs"), &params).unwrap();
+        assert_eq!(actual.rows, expected.rows, "{limit}/{offset}");
+        assert_eq!(actual.affected, expected.affected);
+        q(&c, "ROLLBACK");
+    }
+    let before = q(&c, "SELECT a,b FROM docs ORDER BY a").rows;
+    assert_eq!(
+        c.execute(
+            "UPDATE docs SET (a,b)=(SELECT b,a LIMIT $limit)",
+            &Parameters::new()
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_PARAMETER"
+    );
+    assert_eq!(q(&c, "SELECT a,b FROM docs ORDER BY a").rows, before);
+}
