@@ -173,3 +173,8 @@ The mixed-compound reproducer above now matches native IS and IN results after d
 ## Local-WITH scope progress after collation qualification
 
 The local-WITH merged-key reproducer now returns `(1,NULL),(4,3)` through the collection route. Eighteen native/mixed comparisons cover three join forms, three materialization modes and local-column shadowing. Metadata inspection resolves native CTE schemas before qualifying the outer key, and native correlation retains the local WITH scope. The complete scoped run passes 507 Rust tests with one existing ignored gate and 63 Node/application tests (`/tmp/fastdb-local-cte-scope-check.log`). Next qualify parameters, deeper/local CTE scopes, callback evaluation and write-source atomicity. General result-memory budgets, interrupted I/O/commit/checkpoint qualification and distribution/platform gates remain separate unfinished V1 requirements.
+
+
+## Result-budget implementation inventory
+
+[result-budgets.md](result-budgets.md) records the current public/internal collection paths and the next bounded-SELECT implementation step. No bounded-result API has been added yet. The inventory explicitly retains FETCH expansion, write-candidate/RETURNING atomicity and engine working memory as unfinished requirements rather than treating one row collector as the complete resource gate.
