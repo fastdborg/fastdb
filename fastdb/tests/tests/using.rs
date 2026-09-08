@@ -2189,3 +2189,44 @@ fn nested_native_exists_resolves_merged_keys_and_qualified_outer_fields() {
         }
     }
 }
+
+#[test]
+fn pinned_deeper_scalar_merged_key_qualification_preserves_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE a(k INTEGER)",
+        "INSERT INTO a VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2)",
+    ] {
+        query(sql);
+    }
+    for (join, retained) in [("JOIN", "a"), ("LEFT JOIN", "a"), ("RIGHT JOIN", "b")] {
+        for predicate in [
+            "(SELECT KEY)>1",
+            "(SELECT CAST(KEY AS TEXT))='3'",
+            "(SELECT CAST(KEY AS TEXT))=3",
+            "(SELECT CAST(KEY AS INTEGER))='3'",
+            "(SELECT KEY COLLATE NOCASE)>1",
+            "(SELECT KEY WHERE 0)>1",
+            "EXISTS(SELECT 1 WHERE (SELECT KEY)>1)",
+            "x.n IN(SELECT KEY)",
+            "x.n NOT IN(SELECT KEY)",
+        ] {
+            let sql = |key: &str| {
+                format!("SELECT k,(SELECT max(x.n) FROM nums x WHERE x.n<k AND {}) AS v FROM a {join} b USING(k) ORDER BY k", predicate.replace("KEY", key))
+            };
+            let original = query(&sql("k"));
+            let qualified = query(&sql(&format!("{retained}.k")));
+            assert_eq!(qualified.columns, original.columns);
+            assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
+        }
+    }
+}
