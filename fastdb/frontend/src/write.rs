@@ -614,15 +614,13 @@ impl Connection {
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {
-                    let Value::Object(doc) = &row[0] else {
+                    let Some(Value::Object(doc)) = row.into_iter().next() else {
                         return Err(Error::Storage("invalid delete candidate".into()));
                     };
-                    crate::retain_write_document(
-                        &mut snapshot_budget,
-                        &mut documents,
-                        self.delete(id(doc)?)?
-                            .ok_or_else(|| Error::Storage("delete candidate disappeared".into()))?,
-                    )?;
+                    snapshot_budget.document(&doc)?;
+                    let collection = self.catalog(&id(&doc)?.table)?;
+                    self.delete_document(&collection, &doc)?;
+                    documents.push(doc);
                 }
                 Ok(Some(self.returning_rows(
                     &tbl_name, &returning, documents, params, limits,

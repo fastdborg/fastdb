@@ -160,7 +160,10 @@ Collection RETURNING now consumes document snapshots sequentially, releasing eac
 completed snapshot as output accumulates and avoiding a separate vector of
 borrowed snapshot references. SQL UPDATE also consumes the owned candidate document
 and evaluated assignment values instead of cloning them immediately before
-mutation. Candidate formation still completes before any writes. Unprocessed
+mutation. SQL DELETE likewise moves its candidate document into the RETURNING
+snapshot buffer and uses it for storage cleanup, avoiding a second document read
+and decode. Its snapshot check precedes storage mutation. Candidate formation
+still completes before any writes. Unprocessed
 snapshots and complete write candidates can still be materialized; these lifetime
 and ownership changes are not a total-memory cap.
 

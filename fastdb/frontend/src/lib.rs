@@ -541,19 +541,24 @@ impl Connection {
             let Some(doc) = self.get_in(&c, record)? else {
                 return Ok(None);
             };
-            let id = EngineValue::Blob(doc["id"].encode()?);
-            for index in &c.indexes {
-                self.run(
-                    &format!("DELETE FROM {} WHERE id = ?1", quote(&index.storage)),
-                    std::slice::from_ref(&id),
-                )?;
-            }
-            self.run(
-                &format!("DELETE FROM {} WHERE id = ?1", quote(&c.storage)),
-                &[id],
-            )?;
+            self.delete_document(&c, &doc)?;
             Ok(Some(doc))
         })
+    }
+    // Caller owns the operation savepoint and a snapshot read within it.
+    fn delete_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        let id = EngineValue::Blob(doc["id"].encode()?);
+        for index in &c.indexes {
+            self.run(
+                &format!("DELETE FROM {} WHERE id = ?1", quote(&index.storage)),
+                std::slice::from_ref(&id),
+            )?;
+        }
+        self.run(
+            &format!("DELETE FROM {} WHERE id = ?1", quote(&c.storage)),
+            &[id],
+        )?;
+        Ok(())
     }
     pub fn lookup_index(&self, table: &str, name: &str, value: &Value) -> Result<Vec<Document>> {
         self.atomic(|| {

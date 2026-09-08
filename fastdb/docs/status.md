@@ -2946,3 +2946,21 @@ with frontend Clippy and scoped formatting. Logs:
 `/tmp/fastdb-update-snapshot-clippy.log`. Node/installed-package and broader suites
 were not repeated for this check-order change. Other snapshot routes retain their
 documented timing; total-memory and broader V1 qualification remain open.
+
+### DELETE reuses its owned candidate snapshot
+
+Collection SQL DELETE now consumes the candidate document for storage cleanup and
+RETURNING, avoiding a second fetch/decode through the single-document delete API.
+A shared private storage helper removes document and managed index rows; direct
+Rust delete retains its own savepoint and fetch semantics. SQL deletion remains
+inside the existing statement savepoint and checks its snapshot budget before
+storage work.
+
+All 37 write/CTE-write/RETURNING/write-buffer integration tests passed, plus the
+interrupted-collection-mutation test (including plain, correlated and CTE DELETE
+with autocommit and outer transactions). Frontend Clippy and formatting passed.
+Logs: `/tmp/fastdb-delete-snapshot.log`,
+`/tmp/fastdb-delete-snapshot-cancel.log`, and
+`/tmp/fastdb-delete-snapshot-clippy.log`. No broader or Node/package suite was
+repeated. This reduces duplicate work and transient document ownership; it does
+not establish total-memory or full V1 qualification.
