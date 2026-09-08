@@ -3626,3 +3626,15 @@ all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-tuple-join-expressions.log` and
 `/tmp/fastdb-tuple-join-expressions-clippy.log`. Only tests/documentation changed
 from `664bb6c18`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Leading CTE tuple lookup sources — 2026-09-09
+
+A native differential regression verifies leading UPDATE CTEs supply tuple
+lookup sources backed by relational or collection data. Correlated results
+and unmatched NULL tuples agree with native SQL. All seventeen CTE write tests
+passed, plus formatting and all-target fastdb-tests Clippy with warnings denied.
+Logs `/tmp/fastdb-tuple-leading-cte.log` and
+`/tmp/fastdb-tuple-leading-cte-clippy.log`. Only tests/documentation changed from
+`ba36b8446`; no new full-suite/client run is claimed. Tuple-local WITH remains
+separate open work. Full V1 gates remain open.
