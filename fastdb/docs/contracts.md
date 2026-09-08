@@ -1109,8 +1109,11 @@ composed scalar expressions and references to preceding iterator columns. The
 metadata-only probe substitutes NULL for source references; runtime arguments
 use normal SQL argument lowering and execute for each source row. CROSS/LEFT
 joins, NULL/empty inputs, chained iterators and atomic INSERT SELECT failure/retry
-have initial native differential coverage. Unqualified fields in collection joins
-retain the existing ambiguity guard. Argument subqueries, deeper correlation
+have initial native differential coverage. Within iterator arguments, an
+unqualified field resolves when exactly one source can supply it: every other
+source must have closed column metadata that excludes the name. Collections
+remain open, so potentially colliding names still require qualification. This
+does not change unqualified-field resolution elsewhere in collection joins. Argument subqueries, deeper correlation
 scopes, broader typed helper coverage and general table-function support remain
 unqualified.
 Aggregate/window argument forms retain native rejection or the frontend scope

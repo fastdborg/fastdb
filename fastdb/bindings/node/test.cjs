@@ -2497,6 +2497,10 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       const correlated=sql.replace('json_each($json)','json_each(d.j)');
       assert.deepEqual((await db.execute(correlated)).rows,rows);
       assert.deepEqual((await db.profileSelect(correlated)).result.rows,rows);
+      const unqualified=correlated.replace('json_each(d.j)',"json_each(coalesce(j,'[]'))");
+      assert.deepEqual((await db.execute(unqualified)).rows,rows);
+      assert.deepEqual((await db.profileSelect(unqualified)).result.rows,rows);
+
 
     } finally {await db.close();}
   }

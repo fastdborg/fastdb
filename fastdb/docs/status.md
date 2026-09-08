@@ -3748,3 +3748,26 @@ Node/application tests, formatting, Clippy and strict TypeScript passed. Log:
 `/tmp/fastdb-correlated-iterators-check.log`; implementation tree based on
 `6e4b14b19` with this change. No upstream engine or dependency changes occurred.
 This is local evidence; full V1 release gates remain unfinished.
+
+
+## Unqualified JSON iterator arguments — 2026-09-08
+
+Iterator argument lowering now qualifies an unqualified field when exactly one
+source can provide it and all other sources have closed metadata excluding that
+name. Open collections remain potential candidates; ambiguous names retain
+rejection. Resolution outside iterator arguments is unchanged. Native comparisons
+cover direct and coalesce arguments, CROSS/LEFT joins and ambiguous names followed
+by successful connection reuse. Both Node clients cover execute/profile results.
+
+The complete scoped check exited zero: 562 Rust tests passed, zero failed, one
+existing trigger-cancellation gate ignored; 80 Node/application tests, formatting,
+Clippy and strict TypeScript passed. Log `/tmp/fastdb-iterator-names-check.log`,
+implementation tree based on `b7fc98e7c` with this change. Upstream core, parser,
+bindings and CLI files were rechecked unchanged against the pinned revision.
+
+Next concrete gap: `json_each(d.payload.inner.j)` fails metadata preparation with
+`no such function: __fastdb_path`. This reproduced on the preceding addon using
+a nested object supplied through a bound insert parameter. The disposable probe
+must treat the complete internal path as a source reference, and unqualified-name
+walking must preserve its identifier segments for runtime path lowering. Full V1
+scope and remaining release gates remain active; no publication occurred.

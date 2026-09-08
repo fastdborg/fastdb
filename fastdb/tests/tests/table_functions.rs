@@ -133,14 +133,14 @@ fn correlated_json_iterators_match_native_rows() {
     let c = db.connect().unwrap();
     let params = Parameters::new();
     for sql in [
-        "CREATE TABLE native(n INTEGER,j TEXT)",
-        "INSERT INTO native VALUES(1,'[1,2]'),(2,'[3]'),(3,'[]'),(4,NULL)",
+        "CREATE TABLE native(n INTEGER,j TEXT,value TEXT)",
+        "INSERT INTO native(n,j) VALUES(1,'[1,2]'),(2,'[3]'),(3,'[]'),(4,NULL)",
         "CREATE TABLE docs",
         "INSERT INTO docs(n,j) SELECT n,j FROM native",
     ] {
         c.execute(sql, &params).unwrap();
     }
-    for arg in ["d.j", "coalesce(d.j,'[]')"] {
+    for arg in ["d.j", "j", "coalesce(d.j,'[]')", "coalesce(j,'[]')"] {
         for join in ["CROSS JOIN", "LEFT JOIN"] {
             let query = |source| {
                 format!("SELECT d.n,x.key,x.value FROM {source} d {join} json_each({arg}) x ORDER BY d.n,x.key")
@@ -199,5 +199,20 @@ fn correlated_json_iterators_match_native_rows() {
             .unwrap()
             .documents,
         0
+    );
+    for source in ["native", "docs"] {
+        assert!(c
+            .execute(
+                &format!("SELECT x.value FROM {source} d CROSS JOIN json_each(value) x"),
+                &params
+            )
+            .is_err());
+    }
+    // A rejected ambiguous argument does not poison the connection.
+    assert_eq!(
+        c.execute("SELECT count(*) FROM docs", &params)
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(4)]]
     );
 }

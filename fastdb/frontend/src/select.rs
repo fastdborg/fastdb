@@ -5822,6 +5822,35 @@ impl Connection {
             {
                 if let SelectTable::TableCall(_, args, _) = table.as_mut() {
                     for arg in args {
+                        // Collections have open fields. Resolve an unqualified
+                        // argument only when every other source has a closed
+                        // column set that excludes that name.
+                        turso_core::walk_expr_mut(arg, &mut |expr| {
+                            if let Expr::Id(name) | Expr::Name(name) = expr {
+                                if !name.quoted()
+                                    && (name.as_str().eq_ignore_ascii_case("true")
+                                        || name.as_str().eq_ignore_ascii_case("false"))
+                                {
+                                    return Ok(turso_core::WalkControl::Continue);
+                                }
+                                let mut candidates = scope.sources.iter().filter(|source| {
+                                    source.derived.as_ref().is_none_or(|columns| {
+                                        columns.iter().any(|(column, _)| {
+                                            column.eq_ignore_ascii_case(name.as_str())
+                                        })
+                                    })
+                                });
+                                if let Some(source) = candidates.next() {
+                                    if candidates.next().is_none() {
+                                        *expr = Expr::Qualified(
+                                            Name::exact(source.alias.clone()),
+                                            name.clone(),
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(turso_core::WalkControl::Continue)
+                        })?;
                         scope.sql_argument(arg)?;
                     }
                 }
