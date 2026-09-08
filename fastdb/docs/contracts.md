@@ -1175,4 +1175,6 @@ materialization; it is unpacked only when applying the candidate snapshot.
 The SELECT is not duplicated per target. This initial form excludes FROM,
 WITH, compounds, grouping, windows, DISTINCT, ORDER BY and explicit projection
 aliases. Projection arity must match. Broader tuple SELECT forms and scope
-qualification remain open, including unqualified outer names in predicates.
+qualification remain open. Unqualified names in source-free tuple projections
+and predicates bind to the update target; quoted boolean-like names remain
+fields. Nested SELECT scopes are left to candidate SELECT lowering.

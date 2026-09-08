@@ -3330,3 +3330,20 @@ from the last full source check. Logs `/tmp/fastdb-tuple-select-node-focused.log
 and `/tmp/fastdb-tuple-select-node.log`. Only tests/documentation changed from
 `4026f536f`; no native rebuild or new full Rust-suite run is claimed. Full V1
 gates remain open; no publication occurred.
+
+
+## Source-free tuple predicate binding — 2026-09-09
+
+Tuple SELECT predicates now bind unqualified outer fields to the UPDATE target,
+using the same helper as projections. Quoted boolean-like identifiers remain
+fields; nested SELECT scopes are not traversed, while IN's outer operand is
+bound independently. Differential fixtures cover ordinary predicates, quoted
+fields, IN and EXISTS with a local table. Typed conditional-result coverage now
+uses an unqualified predicate.
+
+The full scoped check passed from `21a4fa49f` plus this change: 580 Rust passes,
+zero failures, one existing ignored trigger gate, 83 Node/application passes,
+formatting, Clippy with warnings denied and strict TypeScript. Log
+`/tmp/fastdb-tuple-predicate-check.log`; twelve focused write tests also passed
+(`/tmp/fastdb-tuple-predicate.log`). No upstream files or dependencies changed.
+Broader tuple SELECT forms and full V1 release gates remain open.

@@ -514,7 +514,7 @@ fn tuple_select_parameters_and_conditional_rows_keep_types() {
     let params = Parameters::from([("$r".into(), record.clone()), ("$o".into(), object.clone())]);
     assert_eq!(
         c.execute(
-            "UPDATE docs SET (a,b)=(SELECT $r,$o WHERE docs.n=1) RETURNING n,a,b",
+            "UPDATE docs SET (a,b)=(SELECT $r,$o WHERE n=1) RETURNING n,a,b",
             &params
         )
         .unwrap()
@@ -540,4 +540,41 @@ fn tuple_select_parameters_and_conditional_rows_keep_types() {
         "FDB_PARAMETER"
     );
     assert_eq!(q(&c, "SELECT a,b,n FROM docs").rows, before);
+}
+
+#[test]
+fn tuple_predicate_binding_preserves_quoted_fields_and_nested_scope() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER, a INTEGER, b INTEGER, \"true\" INTEGER)",
+        "INSERT INTO native VALUES(1,2,3,7),(2,4,5,8)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b,\"true\") SELECT n,a,b,\"true\" FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for tuple in [
+        "(SELECT b,a WHERE n=1)",
+        "(SELECT \"true\",a WHERE \"true\"=7)",
+        "(SELECT b,a WHERE n IN (SELECT 1))",
+        "(SELECT b,a WHERE EXISTS(SELECT 1 FROM native x WHERE x.n=1))",
+    ] {
+        q(&c, "BEGIN");
+        let expected = q(
+            &c,
+            &format!("UPDATE native SET (a,b)={tuple} RETURNING n,a,b"),
+        )
+        .rows;
+        assert_eq!(
+            q(
+                &c,
+                &format!("UPDATE docs SET (a,b)={tuple} RETURNING n,a,b")
+            )
+            .rows,
+            expected,
+            "{tuple}"
+        );
+        q(&c, "ROLLBACK");
+    }
 }

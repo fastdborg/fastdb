@@ -167,6 +167,39 @@ fn safe_candidate_assignment(expr: &Expr) -> Result<()> {
     safe_value_expression(&outer)
 }
 
+// A source-free SELECT has no local columns. Nested SELECTs establish their own
+// scopes and remain the responsibility of candidate SELECT lowering.
+fn bind_source_free_tuple_field(
+    value: &mut Expr,
+    target: &QualifiedName,
+) -> turso_core::Result<()> {
+    turso_core::walk_expr_mut(value, &mut |expr| {
+        if matches!(expr, Expr::Subquery(_) | Expr::Exists(_))
+            || matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path")
+        {
+            return Ok(turso_core::WalkControl::SkipChildren);
+        }
+        if let Expr::InSelect { lhs, .. } = expr {
+            // Bind the outer operand without visiting the RHS scope.
+            bind_source_free_tuple_field(lhs, target)?;
+            return Ok(turso_core::WalkControl::SkipChildren);
+        }
+        if let Expr::Id(name) | Expr::Name(name) = expr {
+            if name.quoted()
+                || (!name.as_str().eq_ignore_ascii_case("true")
+                    && !name.as_str().eq_ignore_ascii_case("false"))
+            {
+                *expr = Expr::Qualified(
+                    target.alias.as_ref().unwrap_or(&target.name).clone(),
+                    name.clone(),
+                );
+            }
+        }
+        Ok(turso_core::WalkControl::Continue)
+    })?;
+    Ok(())
+}
+
 fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
     let Stmt::Insert {
         body: InsertBody::Select(_, upsert),
@@ -569,6 +602,7 @@ impl Connection {
                             from: None,
                             group_by: None,
                             window_clause,
+                            where_clause,
                             distinctness: None,
                             ..
                         } = &mut select.body.select
@@ -577,6 +611,9 @@ impl Connection {
                         };
                         if !window_clause.is_empty() || columns.len() != set.col_names.len() {
                             return Err(unsupported("tuple SELECT assignment shape or arity"));
+                        }
+                        if let Some(predicate) = where_clause {
+                            bind_source_free_tuple_field(predicate, &update.tbl_name)?;
                         }
                         let mut args = Vec::new();
                         for column in std::mem::take(columns) {
@@ -587,17 +624,7 @@ impl Connection {
                             };
                             safe_value_expression(&value)?;
                             let mut value = value;
-                            turso_core::walk_expr_mut(&mut value, &mut |expr| {
-                                if matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path") {
-                                    return Ok(turso_core::WalkControl::SkipChildren);
-                                }
-                                if let Expr::Id(name) | Expr::Name(name) = expr {
-                                    if !name.as_str().eq_ignore_ascii_case("true") && !name.as_str().eq_ignore_ascii_case("false") {
-                                        *expr = Expr::Qualified(update.tbl_name.alias.as_ref().unwrap_or(&update.tbl_name.name).clone(), name.clone());
-                                    }
-                                }
-                                Ok(turso_core::WalkControl::Continue)
-                            })?;
+                            bind_source_free_tuple_field(&mut value, &update.tbl_name)?;
                             args.push(value);
                         }
                         columns.push(ResultColumn::Expr(
