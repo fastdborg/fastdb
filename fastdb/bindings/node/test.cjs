@@ -2661,7 +2661,13 @@ test('tuple collection lookups preserve typed results in both clients', async ()
       const record = new Record('docs', 9223372036854775807n);
       const payload = { values: [true, Buffer.from([0,255]), -9223372036854775808n] };
       await db.execute('INSERT INTO lookup(n,a,b) VALUES(1,$a,$b)', { $a: record, $b: payload });
+      await db.execute('UPDATE lookup SET rank=1');
+      await db.execute('INSERT INTO lookup(n,a,b,rank) VALUES(1,$a,$b,2)', { $a: new Record('docs', 'second'), $b: { selected: true } });
       await db.execute('BEGIN');
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n ORDER BY x.rank DESC LIMIT 1) RETURNING n,a,b')).rows,
+        [[1n,new Record('docs', 'second'),{ selected: true }],[2n,null,null]]);
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n ORDER BY x.rank DESC LIMIT 1 OFFSET 1) RETURNING n,a,b')).rows,
+        [[1n,record,payload],[2n,null,null]]);
       const result = await db.execute('UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
       assert.deepEqual(result.rows, [[1n,record,payload],[2n,null,null]]);
       assert.deepEqual(result.transaction, { before: 'active', after: 'active' });

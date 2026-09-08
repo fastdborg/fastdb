@@ -4549,3 +4549,14 @@ tests passed, plus formatting and all-target fastdb-tests Clippy with warnings
 denied. Logs `/tmp/fastdb-tuple-collection-order.log` and
 `/tmp/fastdb-tuple-collection-order-clippy.log`. Only tests/documentation changed
 from `dd9f20e81`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Node ordered tuple lookup coverage — 2026-09-09
+
+Both clients now verify descending tuple lookup ordering and OFFSET across two
+distinct typed matches. Highest-rank and second-match results preserve record
+and object values; unmatched rows remain NULL. The focused test and all 85
+Node/application tests passed against the last full-check addon. Logs
+`/tmp/fastdb-ordered-tuple-node-focused.log` and `/tmp/fastdb-ordered-tuple-node.log`.
+Only tests/documentation changed from `cd35f4e40`; no native rebuild or full Rust
+rerun is claimed. Full V1 gates remain open; no publication occurred.
