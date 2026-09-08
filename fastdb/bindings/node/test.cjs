@@ -1449,3 +1449,48 @@ test('deeper scalar collation and casts preserve client results and atomic write
     } finally { await db.close(); }
   }
 });
+
+test('deeper membership preserves nulls and atomic writes in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of [
+        'CREATE TABLE docs', 'INSERT INTO docs(k) VALUES(1),(2)',
+        'CREATE TABLE native(k INTEGER)', 'INSERT INTO native VALUES(1),(2)',
+        'CREATE TABLE b(k INTEGER)', 'INSERT INTO b VALUES(1),(3)',
+        'CREATE TABLE nums(n INTEGER)', 'INSERT INTO nums VALUES(0),(1),(2),(NULL)',
+        'CREATE TABLE sink', 'CREATE UNIQUE INDEX sink_k ON sink(k)',
+        'INSERT INTO sink(k) VALUES(3)',
+      ]) await db.execute(sql);
+      const select = (source, rhs) => `SELECT k,(SELECT sum(CASE WHEN x.n IN(${rhs}) THEN 1 WHEN x.n NOT IN(${rhs}) THEN 10 ELSE 100 END) FROM nums x WHERE k IS k) AS v FROM ${source} d RIGHT JOIN b USING(k) ORDER BY k`;
+      for (const rhs of ['SELECT k', 'SELECT k WHERE 0', 'SELECT $value', 'SELECT x.n']) {
+        for (const value of rhs.includes('$value') ? [null, 1n] : [undefined]) {
+          const params = value === undefined ? {} : { $value: value };
+          const expected = await db.execute(select('native', rhs), params);
+          const actual = await db.execute(select('docs', rhs), params);
+          assert.deepEqual(actual.columns, expected.columns);
+          assert.deepEqual(actual.rows, expected.rows);
+        }
+      }
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO sink(k) VALUES(9)');
+      const insert = `INSERT INTO sink(k,v) ${select('docs', 'SELECT k')} RETURNING k,v`;
+      await assert.rejects(async () => db.execute(insert), error => {
+        assert.equal(error.code, 'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT k FROM sink ORDER BY k'), [[3n], [9n]]);
+      await db.execute('DELETE FROM sink WHERE k=3');
+      const retry = await db.execute(insert);
+      assert.equal(retry.affected, 2n);
+      assert.deepEqual(retry.rows, [[1n, 121n], [3n, 130n]]);
+      const audit = await db.checkCollectionIntegrity('sink');
+      assert.equal(audit.documents, 3n);
+      assert.equal(audit.indexEntries, 3n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT k FROM sink'), [[3n]]);
+    } finally { await db.close(); }
+  }
+});
