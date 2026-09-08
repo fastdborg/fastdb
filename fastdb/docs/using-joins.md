@@ -116,3 +116,6 @@ Inner JOIN ON predicates in table-backed scalar queries now resolve outer merged
 
 
 Correlated EXISTS/NOT EXISTS and IN/NOT IN now have 72 native execute/profile comparisons covering NULL outer keys, NULL-containing RHS sets, empty filters/LIMIT 0 and aggregate HAVING across USING/NATURAL join directions.
+
+
+Closed derived SELECT sources are now included in inner correlated-key lookup. Named and unnamed native derived sources expose their output names for local-column shadowing; explicit derived aliases also participate in native qualified-reference scope filtering. The added 72 execute/profile comparisons cover outer merged/qualified keys and local same-name columns through direct/nested scalar wrappers, USING/NATURAL joins and each supported outer join direction. Broader logical derived sources, WITH/compound enclosing scopes, alias collisions and full correlation remain unqualified.

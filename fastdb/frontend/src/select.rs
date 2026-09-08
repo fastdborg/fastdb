@@ -81,15 +81,22 @@ fn native_correlated_predicate(
     let mut local = std::collections::BTreeSet::new();
     if let Some(from) = from {
         for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
-            let SelectTable::Table(name, alias, _) = table.as_ref() else {
-                return Ok((inner, false));
-            };
-            local.insert(
-                alias
-                    .as_ref()
-                    .map_or(name.name.as_str(), |a| a.name().as_str())
-                    .to_ascii_lowercase(),
-            );
+            match table.as_ref() {
+                SelectTable::Table(name, alias, _) => {
+                    local.insert(
+                        alias
+                            .as_ref()
+                            .map_or(name.name.as_str(), |a| a.name().as_str())
+                            .to_ascii_lowercase(),
+                    );
+                }
+                SelectTable::Select(_, alias) => {
+                    if let Some(alias) = alias {
+                        local.insert(alias.name().as_str().to_ascii_lowercase());
+                    }
+                }
+                _ => return Ok((inner, false)),
+            }
         }
     }
     let scope = Scope {
@@ -382,7 +389,7 @@ fn qualify_correlated_using(
     if using.bindings.is_empty() || inner.with.is_some() || !inner.body.compounds.is_empty() {
         return Ok(());
     }
-    // Resolve only closed local table schemas here. Open collections and
+    // Resolve only closed local source schemas here. Open collections and
     // other source forms need their own lexical scope resolution.
     let mut using = using.clone();
     if let OneSelect::Select {
@@ -390,7 +397,10 @@ fn qualify_correlated_using(
     } = &inner.body.select
     {
         for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
-            if !matches!(table.as_ref(), SelectTable::Table(..)) {
+            if !matches!(
+                table.as_ref(),
+                SelectTable::Table(..) | SelectTable::Select(..)
+            ) {
                 return Ok(());
             }
             let local = source(connection, table, params, ctes, None, String::new(), true)?;
