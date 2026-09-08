@@ -554,18 +554,21 @@ impl Connection {
                 )?;
                 let mut documents = Vec::new();
                 for row in rows {
-                    let Value::Object(original) = &row[0] else {
+                    let mut values = row.into_iter();
+                    let Some(Value::Object(mut document)) = values.next() else {
                         return Err(Error::Storage("invalid update candidate".into()));
                     };
-                    let mut document = original.clone();
-                    for (path, value) in paths.iter().zip(row[1..].iter()) {
+                    // All assignments were evaluated before any mutation. Move
+                    // their owned values and the snapshot instead of cloning them.
+                    for (path, value) in paths.iter().zip(values) {
                         crate::update::apply(
                             &mut document,
                             path,
-                            if unset { None } else { Some(value.clone()) },
+                            if unset { None } else { Some(value) },
                         )?;
                     }
-                    let collection = self.catalog(&id(original)?.table)?;
+                    // validate_targets forbids changing the record identity.
+                    let collection = self.catalog(&id(&document)?.table)?;
                     self.replace_document(&collection, &document)?;
                     documents.push(document);
                 }

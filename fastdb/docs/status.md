@@ -2724,3 +2724,19 @@ Logs: `/tmp/fastdb-returning-snapshots.log` and
 repeated for this ownership-only change. The gate summary now points to the
 latest historical complete scoped run instead of stale 505/62 counts. Candidate
 and snapshot budgets and the remaining V1 resource/release gates remain open.
+
+### Consume owned SQL UPDATE candidates
+
+SQL collection UPDATE now moves each precomputed candidate document and its
+assignment values into mutation instead of cloning both. All candidates and
+assignments still evaluate before mutation; validated update targets keep the
+record identity immutable. This removes redundant transient document/value copies
+without changing candidate semantics or imposing a candidate memory limit.
+
+All 36 existing focused writes, WITH-writes, RETURNING and result-limit tests
+passed, including pre-update assignment semantics, nested SET/UNSET, CTE candidate
+selection, typed projections, index/transaction rollback and persistence checks.
+Frontend Clippy and formatting passed. Logs: `/tmp/fastdb-update-owned.log` and
+`/tmp/fastdb-update-owned-clippy.log`. Full-suite and Node/package evidence remains
+historical; no repeat was needed for this ownership change. Explicit candidate
+and snapshot budgets and the remaining V1 resource/release gates remain open.

@@ -101,8 +101,11 @@ Forward FETCH requires the same final-result budget before retaining resolved va
 
 Collection RETURNING now consumes document snapshots sequentially, releasing each
 completed snapshot as output accumulates and avoiding a separate vector of
-borrowed snapshot references. Unprocessed snapshots and complete write candidates
-can still be materialized; this lifetime reduction is not a total-memory cap.
+borrowed snapshot references. SQL UPDATE also consumes the owned candidate document
+and evaluated assignment values instead of cloning them immediately before
+mutation. Candidate formation still completes before any writes. Unprocessed
+snapshots and complete write candidates can still be materialized; these lifetime
+and ownership changes are not a total-memory cap.
 
 
 Returned-result limits are only one part of the gate. Engine working memory, statement candidate buffers, deadlines, interrupted I/O and commit/checkpoint outcomes, transfer peak memory, and platform qualification remain required. A green bounded-SELECT test cannot establish a total-memory guarantee.
