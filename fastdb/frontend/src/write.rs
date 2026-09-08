@@ -576,6 +576,44 @@ impl Connection {
                 Some(As::As(Name::exact(format!("__fastdb_set_{i}")))),
             ));
         }
+        let mut with = with;
+        // The pinned write planner exposes its target table before replanning
+        // CTE bodies. A same-named FROM there binds the physical target rather
+        // than the CTE. Preserve that binding in the candidate SELECT.
+        if let Some(with) = with.as_mut().filter(|with| !with.recursive) {
+            let exposed = table.alias.as_ref().unwrap_or(&table.name);
+            if with
+                .ctes
+                .iter()
+                .any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(exposed.as_str()))
+            {
+                for cte in &mut with.ctes {
+                    if cte.select.with.is_some() || !cte.select.body.compounds.is_empty() {
+                        continue;
+                    }
+                    if let OneSelect::Select {
+                        from: Some(from), ..
+                    } = &mut cte.select.body.select
+                    {
+                        for source in std::iter::once(&mut from.select)
+                            .chain(from.joins.iter_mut().map(|join| &mut join.table))
+                        {
+                            if let SelectTable::Table(name, alias, _) = source.as_mut() {
+                                if name.db_name.is_none()
+                                    && name.name.as_str().eq_ignore_ascii_case(exposed.as_str())
+                                {
+                                    name.db_name = Some(Name::exact("main".into()));
+                                    name.name = table.name.clone();
+                                    if alias.is_none() {
+                                        *alias = Some(As::As(exposed.clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let mut target = table.clone();
         // UPDATE/DELETE target names refer to actual tables, even if a CTE
         // has the same name. Preserve that rule in the candidate SELECT.

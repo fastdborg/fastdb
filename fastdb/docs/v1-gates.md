@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-08
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 478 passing Rust tests with one ignored trigger-cancellation gate, 49 passing Node/application tests, formatting, Clippy and strict TypeScript. Later focused checks are recorded below and in verification.md. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 480 passing Rust tests with one ignored trigger-cancellation gate, 49 passing Node/application tests, formatting, Clippy and strict TypeScript. Later focused checks are recorded below and in verification.md. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -26,7 +26,7 @@ Rechecked the current debug Node addon built by the complete scoped run at `a631
 |---|---|---|---|
 | Qualified outer scalar: `SELECT d.n,(SELECT max(n) FROM native WHERE n<d.n) FROM source d ORDER BY d.n` | `(1,NULL),(2,1),(3,2)` | Same | Resolved example; broaden only against a concrete uncovered requirement |
 | Basic WITH UPDATE selecting key 2 | Returns 12, affects 1 | Same | Resolved example |
-| Chained CTE named after the UPDATE target | Returns 11,12,13, affects 3 | `no such column: n` | Preserve pinned write-context name binding, including target aliases; candidate SELECT semantics alone are insufficient |
+| Chained CTE named after the UPDATE target | Returns 11,12,13, affects 3 | Initial direct-FROM nonrecursive CTE fix now matches | Qualify nested/compound CTE scopes, parameters and failure recovery |
 | Inner WITH scalar below | `(1,NULL),(4,3)` | `no such column: n` | Carry outer merged keys through the inner CTE scope without capturing local columns |
 | Inner derived alias collision below | `(1,0),(4,2)` | `no such column: n` | Bind an unqualified outer key without qualifying it through a shadowed alias |
 | Source-free scalar UNION ALL using outer keys | Native rejects compound WHERE-clause subquery | Collection rejects unresolved key | Preserve the pinned limitation; do not treat this probe as a required new compound capability |
@@ -46,7 +46,7 @@ SELECT n,(SELECT max(m) FROM (SELECT 0 AS m UNION ALL SELECT 2) b
 FROM docs a RIGHT JOIN keys b USING(n) ORDER BY n;
 ```
 
-For the ordinary oracle, replace the outer/write `docs` source with `native`; in the first query also rename the target-named CTE and its reference to `native`. These are current reproductions, not complete release evidence. Prioritize the write-context gap because an incorrect fix can select a different mutation set. The resource, recovery, packaging/platform and application gates above remain full V1 requirements.
+For the ordinary oracle, replace the outer/write `docs` source with `native`; in the first query also rename the target-named CTE and its reference to `native`. These are current reproductions, not complete release evidence. Initial write-context lowering now fixes direct FROM references in nonrecursive CTE bodies, preserving target-alias binding. The 24-case UPDATE/DELETE matrix covers plain/arithmetic/aggregate reads, returned rows, affected counts, final indexed data and rollback. Nested/compound CTE scope and broader failure/resource qualification remain open because an incorrect rewrite can select a different mutation set. The resource, recovery, packaging/platform and application gates above remain full V1 requirements.
 
 ## Historical SQL probes and implementation notes
 
