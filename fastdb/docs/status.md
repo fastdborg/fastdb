@@ -3404,3 +3404,15 @@ claimed. Raw evidence:
 `benchmark-results/2026-09-08-linux-debug-node-inplace-1000.json`.
 The addon hash is unchanged; the wrapper source commit identifies the JS change.
 See benchmarks.md for individual medians and limitations. Full V1 remains open.
+
+### Nonzero binary result-memory workload
+
+Extended the isolated result diagnostic with a validated fill byte (0..255).
+All 12 samples at 1,000 rows x 4,096 bytes filled with 255 passed full byte checks.
+Median process peaks ranged from 138 to 200 MiB, despite the same 4,104,000 logical
+cell bytes as zero-filled runs. Raw results:
+`benchmark-results/2026-09-08-linux-debug-node-binary255-1000.json`.
+Nonzero payloads use a hex SQL literal, so differences are not attributed solely
+to transport. Benchmarks.md records medians and limitations. No production code
+changed or correctness suite was repeated. Diff checks passed. Content-sensitive
+transport footprint and broader V1 resource qualification remain open.

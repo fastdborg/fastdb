@@ -216,3 +216,14 @@ These mixed values do not demonstrate an additional peak-RSS or timing improveme
 relative to direct JSON alone. The change avoids a second row-array structure,
 but this workload's whole-process peaks and three samples cannot isolate that
 allocation saving. The native addon hash is unchanged; the JS wrapper differs.
+
+The result diagnostic now accepts a third argument for the binary fill byte
+(0..255, default 0). `node fastdb/scripts/bench-results.cjs 1000 4096 255` passed
+all 12 samples; [raw results](benchmark-results/2026-09-08-linux-debug-node-binary255-1000.json).
+For sync execute/profile and worker execute/profile respectively, median ms / peak
+RSS MiB were 1190.5 / 148.4, 1080.7 / 138.0, 1186.1 / 185.4 and 1166.7 / 199.6.
+The logical cell payload remains 4,104,000 bytes. Decimal JSON byte arrays have
+content-dependent text size. Nonzero fill uses a hex SQL literal while zero fill
+retains zeroblob, so this is broader workload evidence rather than a controlled
+attribution of the timing/RSS difference. Logical payload limits are not process
+memory limits. The harness hash identifies this extension.
