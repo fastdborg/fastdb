@@ -741,6 +741,9 @@ fn iterator_subqueries_resolve_outer_collection_fields() {
         "SELECT d.n,(SELECT count(*) FROM json_each(d.j) x) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(SELECT count(*) FROM main.json_each(d.j) x) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT x.value AS n FROM temp.json_each(d.j) x) SELECT sum(n) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT d.n+x.value AS v FROM json_each(d.j) x) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value AS v FROM json_each(d.j) x UNION ALL SELECT d.n) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+
 
         "SELECT d.n FROM SOURCE d WHERE d.n IN(SELECT x.value FROM json_each(d.j) x) ORDER BY d.n",
         "SELECT d.n,(SELECT count(*) FROM json_each('[1,2]') d WHERE d.value=1) AS total FROM SOURCE d ORDER BY d.n",
@@ -749,7 +752,7 @@ fn iterator_subqueries_resolve_outer_collection_fields() {
     ] {
         let expected=c.execute(&template.replace("SOURCE","native"),&params).unwrap();
         let sql=template.replace("SOURCE","docs");
-        for actual in [c.execute(&sql,&params).unwrap(),c.profile_select(&sql,&params).unwrap().result] {assert_eq!(actual.columns,expected.columns,"{sql}");assert_eq!(actual.rows,expected.rows,"{sql}");}
+        for actual in [c.execute(&sql,&params).unwrap_or_else(|error|panic!("{sql}: {error}")),c.profile_select(&sql,&params).unwrap().result] {assert_eq!(actual.columns,expected.columns,"{sql}");assert_eq!(actual.rows,expected.rows,"{sql}");}
     }
     for sql in [
         "CREATE TABLE output",

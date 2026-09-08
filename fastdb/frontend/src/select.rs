@@ -214,7 +214,7 @@ fn preserve_compound_column_names(select: &mut Select) {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NativeCorrelationMode {
     Native,
-    IteratorArguments,
+    NativeCte,
     ScalarPagination,
     Membership,
     // Membership compares native values inside each arm before set operations.
@@ -319,7 +319,7 @@ fn native_correlated_predicate(
         }
         {
             // Inspect all correlated CTE expressions in metadata probes. At
-            // runtime, bind iterator arguments without changing projection types.
+            // runtime, retain native scalar projection types while binding outer values.
             for cte in &mut with.ctes {
                 cte.select = native_correlated_predicate(
                     connection,
@@ -331,7 +331,7 @@ fn native_correlated_predicate(
                     if metadata {
                         mode
                     } else {
-                        NativeCorrelationMode::IteratorArguments
+                        NativeCorrelationMode::NativeCte
                     },
                 )?
                 .0;
@@ -387,7 +387,7 @@ fn native_correlated_body(
                 sources,
                 metadata,
                 params,
-                if mode == NativeCorrelationMode::IteratorArguments {
+                if mode == NativeCorrelationMode::NativeCte {
                     mode
                 } else if direct_membership {
                     NativeCorrelationMode::CompoundArm
@@ -672,20 +672,6 @@ fn native_correlated_body(
         }
         Ok(correlated)
     };
-    if mode == NativeCorrelationMode::IteratorArguments {
-        if let Some(from) = from {
-            for table in
-                std::iter::once(&mut from.select).chain(from.joins.iter_mut().map(|j| &mut j.table))
-            {
-                if let SelectTable::TableCall(_, args, _) = table.as_mut() {
-                    for arg in args {
-                        rewrite(arg, false)?;
-                    }
-                }
-            }
-        }
-        return Ok((inner, false));
-    }
     let mut correlated_query = false;
     if let Some(value) = where_clause {
         correlated_query |= rewrite(value, false)?;
@@ -723,7 +709,8 @@ fn native_correlated_body(
         if let ResultColumn::Expr(value, alias) = column {
             // Explicit casts produce native scalars whose affinity must remain
             // attached to the subquery result in outer comparisons.
-            let mut typed = mode == NativeCorrelationMode::CompoundArm || !has_cast_affinity(value);
+            let mut typed = mode != NativeCorrelationMode::NativeCte
+                && (mode == NativeCorrelationMode::CompoundArm || !has_cast_affinity(value));
             let correlated = rewrite(value, typed)?;
             correlated_query |= correlated;
             if correlated && typed && !metadata {
@@ -4353,7 +4340,8 @@ impl Connection {
                 if matches!(
                     table.as_ref(),
                     SelectTable::Table(..) | SelectTable::Select(..)
-                ) {
+                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree"))
+                {
                     local.push(source(
                         self,
                         table,
@@ -4400,7 +4388,13 @@ impl Connection {
                     values.extend(group.having.iter_mut());
                 }
                 if let Some(from) = from {
+                    if let SelectTable::TableCall(_, args, _) = from.select.as_mut() {
+                        values.extend(args.iter_mut());
+                    }
                     for join in &mut from.joins {
+                        if let SelectTable::TableCall(_, args, _) = join.table.as_mut() {
+                            values.extend(args.iter_mut());
+                        }
                         if let Some(JoinConstraint::On(value)) = &mut join.constraint {
                             values.push(value);
                         }
@@ -4515,7 +4509,13 @@ impl Connection {
                     values.extend(group.having.iter_mut());
                 }
                 if let Some(from) = from {
+                    if let SelectTable::TableCall(_, args, _) = from.select.as_mut() {
+                        values.extend(args.iter_mut());
+                    }
                     for join in &mut from.joins {
+                        if let SelectTable::TableCall(_, args, _) = join.table.as_mut() {
+                            values.extend(args.iter_mut());
+                        }
                         if let Some(JoinConstraint::On(value)) = &mut join.constraint {
                             values.push(value);
                         }

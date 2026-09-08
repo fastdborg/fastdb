@@ -1150,8 +1150,9 @@ reported transaction state; statement-level validation recovery does not imply
 that native engine errors preserve the enclosing transaction.
 
 
-Nonrecursive CTE runtime traversal binds outer references in iterator arguments
-without retyping the CTE's projections. A correlated CTE over
+Nonrecursive native CTE runtime traversal binds outer references in iterator
+arguments and scalar projections while preserving native scalar projection
+types. Compound-arm correlation also visits iterator arguments. A correlated CTE over
 `temp.json_each(d.j)` has native execute/profile coverage, alongside a scalar
 query over `main.json_each(d.j)`. Broader CTE and nested type propagation remain
 under qualification.

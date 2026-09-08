@@ -4102,3 +4102,22 @@ the current addon. Logs `/tmp/fastdb-runtime-cte-clients-focused.log` and
 `/tmp/fastdb-runtime-cte-clients.log`. Only tests/documentation changed from
 `a89ac921b`; no native rebuild or new full Rust/package run is claimed. Full V1
 release gates remain open; no publication occurred.
+
+
+## Native scalar CTE projections and compound iterator binding — 2026-09-09
+
+Native probes found unresolved outer fields when CTE projections combined an
+outer collection value with an iterator value, and when a UNION ALL CTE combined
+iterator rows with an outer scalar. Runtime native CTE traversal now binds scalar
+projections while preserving native scalar representation. Compound correlation
+recognizes JSON iterator sources and visits their arguments during recursive
+analysis and outer-field binding. Execute/profile differential cases now cover
+both forms, with improved failing-query diagnostics in the regression.
+
+The full scoped check continued through the turn interruption and exited zero:
+572 Rust tests passed, zero failed, one existing trigger-cancellation gate ignored;
+82 Node/application tests, formatting, Clippy and strict TypeScript passed. Log
+`/tmp/fastdb-native-cte-projections-check.log`, implementation tree based on
+`8db691800` with this fix. No source edits occurred during the run. No upstream
+source or dependencies changed. Broader CTE/type propagation and full V1 release
+gates remain open; no publication occurred.
