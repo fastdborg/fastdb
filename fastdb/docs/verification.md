@@ -3580,3 +3580,15 @@ All seven result-limit tests and scoped formatting passed. Log
 `/tmp/fastdb-tuple-returning-limits.log`. Only SQL fixtures/documentation changed
 from `e0e9303e0`; no new full-suite/client or Clippy run is claimed. Full V1 gates
 remain open.
+
+
+## CLI ordered tuple lookup persistence — 2026-09-09
+
+A process-level CLI regression commits an ordered collection tuple lookup,
+checks numeric tagged output and active/autocommit reports, then opens the
+file in a second process and verifies both persisted values and a subsequent
+tuple swap. All three CLI transaction tests passed, plus formatting and
+all-target fastdb-cli Clippy with warnings denied. Logs `/tmp/fastdb-tuple-cli.log`
+and `/tmp/fastdb-tuple-cli-clippy.log`. Only tests/documentation changed from
+`23e24583f`; no new full-suite/client run is claimed. This is orderly process
+reopen evidence, not crash qualification. Full V1 gates remain open.
