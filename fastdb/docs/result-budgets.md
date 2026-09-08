@@ -44,8 +44,13 @@ RETURNING materialization memory**. It must not be used as a process memory cap.
 Transaction control, schema operations, reads and multi-statement input are
 rejected. Writes without RETURNING can succeed with zero budgets; affected rows
 are not returned rows. Empty RETURNING results still charge column metadata.
-Node exposure, cancellation qualification and progressive write collection
-remain unfinished.
+`write_with_result_limits_cancellable` applies the existing cooperative token
+contract: pre-cancelled tokens reject before execution, and delivered engine
+cancellation uses savepoint recovery. Source and RETURNING cancellation with
+prior-work preservation and fresh-token retry have initial Rust coverage.
+Completed-result accounting has no fixed cancellation latency. Node exposure,
+broader cancellation/I/O qualification and progressive write collection remain
+unfinished.
 
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.

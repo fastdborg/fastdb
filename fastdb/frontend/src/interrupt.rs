@@ -55,6 +55,19 @@ impl Connection {
         self.with_cancellation(token, || self.execute(sql, params))
     }
 
+    /// Apply the atomic write-result policy with cooperative cancellation.
+    /// Completed-result accounting has no fixed cancellation latency. A cancelled
+    /// write uses the existing statement/savepoint recovery contract.
+    pub fn write_with_result_limits_cancellable(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: crate::ResultLimits,
+        token: &CancellationToken,
+    ) -> Result<QueryResult> {
+        self.with_cancellation(token, || self.write_with_result_limits(sql, params, limits))
+    }
+
     /// Profile a SELECT using the same cooperative cancellation contract.
     pub fn profile_select_cancellable(
         &self,
@@ -194,6 +207,22 @@ mod tests {
         let other = token.clone();
         std::thread::spawn(move || other.cancel()).join().unwrap();
         assert!(token.is_cancelled());
+        assert_eq!(
+            c.write_with_result_limits_cancellable(
+                "INSERT INTO docs {n:1} RETURNING n",
+                &Parameters::new(),
+                crate::ResultLimits {
+                    max_rows: 1,
+                    max_payload_bytes: 9
+                },
+                &token
+            )
+            .unwrap_err()
+            .code(),
+            "FDB_CANCELLED"
+        );
+        assert_eq!(q(&c, "SELECT id,n FROM docs").rows, prior);
+        assert_eq!(c.transaction_state(), crate::TransactionState::Active);
         let report =
             c.execute_report_cancellable("INSERT INTO docs {n:1}", &Parameters::new(), &token);
         assert_eq!(report.result.unwrap_err().code(), "FDB_CANCELLED");
@@ -228,7 +257,21 @@ mod tests {
             ExtValue::from_integer(args[0].to_integer().unwrap())
         }
         for insert in [false, true] {
-            for (outer, batch) in [(false, false), (true, false), (false, true), (true, true)] {
+            for (outer, mode) in [
+                (false, 0),
+                (true, 0),
+                (false, 1),
+                (true, 1),
+                (false, 2),
+                (true, 2),
+                (false, 3),
+                (true, 3),
+            ] {
+                if mode == 3 && !insert {
+                    continue;
+                }
+                let batch = mode == 1;
+                let bounded = mode >= 2;
                 let db = Database::open(":memory:").unwrap();
                 let c = db.connect().unwrap();
                 unsafe {
@@ -258,11 +301,37 @@ mod tests {
                 let token = CancellationToken::new();
                 *TOKEN.lock().unwrap() = Some(token.clone());
                 CALLS.store(0, Ordering::SeqCst);
-                let sql = format!(
-                    "{}SELECT cancel_token_tick(n) AS n FROM docs",
-                    if insert { "INSERT INTO target(n) " } else { "" }
-                );
-                let report = if batch {
+                let sql = if mode == 3 {
+                    "INSERT INTO target(n) SELECT n FROM docs RETURNING cancel_token_tick(n) AS n"
+                        .to_owned()
+                } else {
+                    format!(
+                        "{}SELECT cancel_token_tick(n) AS n FROM docs",
+                        if insert { "INSERT INTO target(n) " } else { "" }
+                    )
+                };
+                let limits = crate::ResultLimits {
+                    max_rows: 3,
+                    max_payload_bytes: 1000,
+                };
+                let report = if bounded {
+                    let transaction_before = c.transaction_state();
+                    let result = if insert {
+                        c.write_with_result_limits_cancellable(
+                            &sql,
+                            &Parameters::new(),
+                            limits,
+                            &token,
+                        )
+                    } else {
+                        c.select_with_limits_cancellable(&sql, &Parameters::new(), limits, &token)
+                    };
+                    ExecutionReport {
+                        result,
+                        transaction_before,
+                        transaction_after: c.transaction_state(),
+                    }
+                } else if batch {
                     let script = format!("SELECT 42; {sql}; DELETE FROM target;");
                     let mut entries = c.execute_batch_cancellable(&script, &token).unwrap();
                     assert_eq!(entries.len(), 2);
@@ -289,7 +358,23 @@ mod tests {
                         .documents,
                     u64::from(outer)
                 );
-                let retry = q(&c, &sql);
+                let retry = if bounded {
+                    let fresh = CancellationToken::new();
+                    if insert {
+                        c.write_with_result_limits_cancellable(
+                            &sql,
+                            &Parameters::new(),
+                            limits,
+                            &fresh,
+                        )
+                        .unwrap()
+                    } else {
+                        c.select_with_limits_cancellable(&sql, &Parameters::new(), limits, &fresh)
+                            .unwrap()
+                    }
+                } else {
+                    q(&c, &sql)
+                };
                 if insert {
                     assert_eq!(retry.affected, 3);
                 } else {

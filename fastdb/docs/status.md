@@ -2595,3 +2595,22 @@ The complete scoped check passed 520 Rust tests (one existing ignored gate),
 68 Node/application tests, formatting, Clippy and strict TypeScript. Log:
 `/tmp/fastdb-write-result-check.log`. Node exposure, cancellation qualification,
 progressive write collection and the broader resource/release gates remain open.
+
+### Cooperative cancellation for Rust write-result limits
+
+Added `write_with_result_limits_cancellable`, using the existing token delivery
+and savepoint recovery path. A pre-cancelled token rejects before mutation.
+The deterministic token callback matrix now includes bounded SELECT and bounded
+INSERT SELECT in autocommit and outer transactions, plus bounded INSERT SELECT
+cancelled during RETURNING after writes. Delivered cancellation stops after the
+second callback, preserves prior target rows and managed index integrity, and
+allows a fresh-token retry. Completed-result payload accounting still has no
+fixed cancellation latency and is not a memory bound.
+
+Both focused token tests passed with the expanded 14-case execution matrix and
+pre-cancelled write-limit check. Package-scoped frontend Clippy and formatting
+checks passed. Logs: `/tmp/fastdb-write-cancellation.log` and
+`/tmp/fastdb-write-cancellation-clippy.log`. The previous full scoped result of
+520 Rust/68 Node tests remains historical; this Rust-only wrapper and test change
+did not rebuild or requalify the Node package. Node exposure and broader
+interrupted I/O/commit/checkpoint and resource qualification remain unfinished.
