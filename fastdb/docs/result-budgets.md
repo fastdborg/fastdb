@@ -36,8 +36,9 @@ one SQL INSERT/UPDATE/DELETE or supported object write. It runs inside an
 operation savepoint and releases only on success. Native SQL checks metadata
 before execution and each decoded row before frontend retention. Collection SQL and object RETURNING projections check each evaluated row
 before retaining it, including document-star output. Native destinations with
-logical sources currently retain the completed-result check. All routes share
-the same payload accounting. A result limit failure rolls
+logical sources also pass the budget to their final lowered statement collector.
+Internal lowering queries do not inherit that budget. All routes share the same
+payload accounting. A result limit failure rolls
 back that operation, including data and managed indexes, while preserving prior
 pending work when savepoint recovery succeeds. Existing engine/rollback errors
 retain their own error handling and transaction disposition.
@@ -55,7 +56,7 @@ prior-work preservation and fresh-token retry have initial Rust coverage.
 Completed-result accounting has no fixed cancellation latency. Both Node
 clients expose `writeWithResultLimits(sql, limits, parameters?)`; workers accept
 a fourth `{ signal }` argument. Broader cancellation/I/O qualification and
-candidate/snapshot limits and remaining write collection paths remain unfinished.
+candidate/snapshot limits and engine working-memory qualification remain unfinished.
 
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.

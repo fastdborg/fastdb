@@ -2149,6 +2149,19 @@ test('atomic write result policy restores rows indexes and trigger effects in bo
         assert.deepEqual(result.transaction,{before:'active',after:'active'});
       }
       assert.deepEqual(await db.all('SELECT n FROM audit ORDER BY n'),[[1n],[2n],[9n]]);
+      const mixed = 'INSERT INTO native(n) SELECT n+$offset FROM docs ORDER BY n RETURNING n';
+      const mixedBudget = {maxRows:3n,maxPayloadBytes:25n};
+      for (const rejected of [{...mixedBudget,maxPayloadBytes:0n},{...mixedBudget,maxPayloadBytes:24n},{...mixedBudget,maxRows:2n}]) {
+        await assert.rejects(Promise.resolve().then(() => db.writeWithResultLimits(mixed,rejected,{$offset:20n})), error => {
+          assert.equal(error.code,'FDB_LIMIT');
+          assert.deepEqual(error.transaction,{before:'active',after:'active'});
+          return true;
+        });
+        assert.deepEqual(await db.all('SELECT n FROM native ORDER BY n'),[[1n],[2n],[9n]]);
+        assert.deepEqual(await db.all('SELECT n FROM audit ORDER BY n'),[[1n],[2n],[9n]]);
+      }
+      assert.deepEqual((await db.writeWithResultLimits(mixed,mixedBudget,{$offset:20n})).rows,[[21n],[22n],[29n]]);
+
       const value = {r:new Record('docs','prior'),b:Buffer.from([0,255]),t:'猫',a:[true,null]};
       const sql = 'UPDATE docs:prior {value:$v} RETURNING value AS v';
       const exact = {maxRows:1n,maxPayloadBytes:21n}; // v + keys 4 + record 9 + binary 2 + text 3 + array 2

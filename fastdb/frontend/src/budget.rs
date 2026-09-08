@@ -273,6 +273,28 @@ mod evaluation_tests {
                 }
             }
         }
+        let mixed =
+            "INSERT INTO native(n) SELECT n+10 FROM docs RETURNING result_budget_tick(n) AS n";
+        CALLS.store(0, Ordering::SeqCst);
+        assert_eq!(
+            c.write_with_result_limits(
+                mixed,
+                &p,
+                ResultLimits {
+                    max_rows: 3,
+                    max_payload_bytes: 0
+                }
+            )
+            .unwrap_err()
+            .code(),
+            "FDB_LIMIT"
+        );
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            0,
+            "mixed source metadata rejection precedes RETURNING evaluation"
+        );
+        assert_eq!(c.execute("SELECT n FROM native", &p).unwrap().rows.len(), 4);
         let write = "INSERT INTO native VALUES(5),(6) RETURNING result_budget_tick(n) AS n";
         CALLS.store(0, Ordering::SeqCst);
         let error = c

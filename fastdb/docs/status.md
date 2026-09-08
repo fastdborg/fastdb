@@ -2686,3 +2686,23 @@ The complete scoped check passed 521 Rust tests (one existing ignored gate),
 this internal collection change. Candidate/snapshot budgets, remaining mixed native
 result paths, engine working memory, deadlines and the broader V1 release gates
 remain unfinished.
+
+### Progressive mixed-source native write results
+
+Native INSERT statements whose sources require collection lowering now carry the
+explicit result budget to their final lowered statement collector. The lowering
+phase ignores the collector budget, so metadata/internal queries do not inherit
+public result limits. Existing operation savepoints still restore rejected writes.
+This completes initial progressive final-result collection routing across native,
+collection SQL, object and mixed-source write paths; it does not establish limits
+on engine buffers, candidates, snapshots or individual projection working memory.
+
+A callback regression proves mixed-source metadata overflow rejects before
+RETURNING evaluation. Both Node clients additionally cover a parameterized native
+INSERT SELECT from a collection with metadata, row and payload overflow, unchanged
+native rows and trigger audit entries after rejection, and exact-budget retry.
+The complete scoped check passed 521 Rust tests (one existing ignored gate),
+70 Node/application tests, formatting, Clippy and strict TypeScript. Log:
+`/tmp/fastdb-mixed-result-check.log`. No installed-package smoke was rerun for this
+internal routing change. Candidate/snapshot limits, engine working-memory budgets,
+deadlines and broader interrupted I/O/release qualification remain unfinished.

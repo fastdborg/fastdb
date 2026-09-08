@@ -220,7 +220,7 @@ fn insert_clause_subqueries(statement: &Stmt) -> Result<bool> {
 impl Connection {
     /// Execute one data write and reject an oversized returned result atomically.
     /// Native SQL and collection RETURNING rows are checked during frontend
-    /// collection. Native destinations with logical sources retain a final check.
+    /// collection, including native destinations with logical sources.
     /// This does not bound engine or candidate materialization memory. SQL DML
     /// and supported object writes are accepted; transaction control and DDL are not.
     pub fn write_with_result_limits(
@@ -330,6 +330,7 @@ impl Connection {
         statement: &Stmt,
         params: &Parameters,
         leading_with: bool,
+        limits: Option<crate::ResultLimits>,
     ) -> Result<Option<QueryResult>> {
         let Stmt::Insert {
             with: None,
@@ -377,6 +378,7 @@ impl Connection {
             params,
             statement,
             restricted_clauses,
+            limits,
         )
     }
     pub(crate) fn collection_write(
@@ -430,7 +432,7 @@ impl Connection {
         match self.catalog(table.name.as_str()) {
             Ok(_) => {}
             Err(Error::NotFound(_)) => {
-                return self.relational_insert_select(sql, &statement, params, leading_with)
+                return self.relational_insert_select(sql, &statement, params, leading_with, limits)
             }
             Err(e) => return Err(e),
         };

@@ -299,7 +299,7 @@ version accepts a fourth `{ signal }` argument. Use the same required bigint
 writes and object writes run in an operation savepoint. Native SQL checks each
 result row before frontend retention; collection SQL and object RETURNING check
 each projected row before retention. Native destinations with logical sources
-retain a completed-result check. In all cases, overflow returns `FDB_LIMIT` and rolls back that write,
+also check rows during final statement collection. In all cases, overflow returns `FDB_LIMIT` and rolls back that write,
 including index and trigger effects, using the existing recovery path.
 
 ```js

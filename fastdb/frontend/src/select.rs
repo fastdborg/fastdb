@@ -3685,6 +3685,7 @@ struct SelectOptions<'a> {
     snapshot: Option<Option<&'a crate::Document>>,
     guarded: bool,
     native_insert: Option<&'a Stmt>,
+    result_limits: Option<crate::ResultLimits>,
 }
 // A single-execution lowering result. Typed parameters may already be embedded
 // in command; this is not a reusable prepared statement with replaceable binds.
@@ -3818,6 +3819,7 @@ impl Connection {
         params: &Parameters,
         insert: &Stmt,
         restricted_native_clauses: bool,
+        limits: Option<crate::ResultLimits>,
     ) -> Result<Option<QueryResult>> {
         self.collection_select_options(
             sql,
@@ -3827,6 +3829,7 @@ impl Connection {
                 trusted: true,
                 positional: true,
                 native_insert: Some(insert),
+                result_limits: limits,
                 ..Default::default()
             },
         )
@@ -3930,10 +3933,16 @@ impl Connection {
                 )
             });
         }
+        let limits = options.result_limits;
         let Some(plan) = self.lower_collection_select(sql, &expanded, params, options)? else {
             return Ok(None);
         };
-        self.execute_lowered_select(plan, params).map(Some)
+        if limits.is_some() {
+            self.execute_lowered_profiled_with_limits(plan, params, limits)
+                .map(|profile| Some(profile.result))
+        } else {
+            self.execute_lowered_select(plan, params).map(Some)
+        }
     }
     fn correlate_source_free_expression(
         &self,
@@ -4392,6 +4401,7 @@ impl Connection {
             snapshot,
             guarded: _,
             native_insert,
+            result_limits: _,
         } = options;
         // Validate user expressions before introducing any internal function or
         // storage name. The existing write guard continues covering other SQL.
