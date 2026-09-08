@@ -1268,6 +1268,13 @@ fn aggregate_tuple_lookups_match_native_empty_and_grouped_rows() {
                 q(&c, "ROLLBACK");
             }
         }
+        for offset in [0, 1, 2] {
+            q(&c, "BEGIN");
+            let native=q(&c,&format!("UPDATE native SET (a,b)=(SELECT sum(x.a) AS total_value,count(*) AS amount FROM lookup x WHERE x.n=native.n GROUP BY x.a HAVING amount>0 ORDER BY total_value DESC LIMIT 1 OFFSET {offset}) RETURNING n,a,b"));
+            let sql=format!("UPDATE docs SET (a,b)=(SELECT sum(x.a) AS total_value,count(*) AS amount FROM {source} x WHERE x.n=docs.n GROUP BY x.a HAVING amount>0 ORDER BY total_value DESC LIMIT 1 OFFSET {offset}) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
     }
 }
 

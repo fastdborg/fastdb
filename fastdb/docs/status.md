@@ -4997,3 +4997,15 @@ All 29 write tests passed, with formatting and all-target fastdb-tests Clippy
 with warnings denied. Logs `/tmp/fastdb-aggregate-tuple-expressions-final.log`
 and `/tmp/fastdb-aggregate-tuple-expressions-clippy.log`. Only tests/docs changed
 from `9687997c0`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## Grouped tuple ordering and pages — 2026-09-09
+
+The aggregate tuple matrix now compares multiple grouped results with aliases
+in HAVING and ORDER BY, descending aggregate ordering, and offsets selecting
+each group or passing the end. Relational and collection lookups match native
+results, including unmatched outer documents. All 29 write tests passed, with
+formatting and all-target fastdb-tests Clippy with warnings denied. Logs
+`/tmp/fastdb-grouped-tuple-pages.log` and `/tmp/fastdb-grouped-tuple-pages-clippy.log`.
+Only tests/docs changed from `a943d2530`; no new full-suite or client run is
+claimed. Full V1 remains open; no publication occurred.
