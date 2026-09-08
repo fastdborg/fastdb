@@ -663,3 +663,61 @@ fn using_duplicate_key_columns_preserve_first_lookup_and_star_positions() {
         }
     }
 }
+
+#[test]
+fn using_optional_keys_match_null_baseline_and_missing_columns_do_not_poison_connection() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {n:1,k:1}",
+        "INSERT INTO docs {n:2,k:null}",
+        "INSERT INTO docs {n:3}",
+        "CREATE TABLE baseline(n INTEGER,k INTEGER)",
+        "INSERT INTO baseline VALUES(1,1),(2,NULL),(3,NULL)",
+        "CREATE TABLE b(m INTEGER,k INTEGER)",
+        "INSERT INTO b VALUES(10,1),(20,NULL),(30,2)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for source in ["docs", "(SELECT n,k FROM docs)"] {
+            for filter in ["", " WHERE k IS NULL", " WHERE k IS NOT NULL"] {
+                let sql = |source: &str| {
+                    format!(
+                    "SELECT a.n,b.m,k,a.k,b.k FROM {source} a {join} b USING(k){filter} ORDER BY a.n,b.m"
+                )
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql(source);
+                assert_eq!(query(&logical).rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+    query("BEGIN");
+    for invalid in [
+        "SELECT * FROM (SELECT n FROM docs) a JOIN b USING(k)",
+        "SELECT * FROM docs a JOIN (SELECT m FROM b) b USING(k)",
+    ] {
+        assert!(c.execute(invalid, &Parameters::new()).is_err(), "{invalid}");
+        query("INSERT INTO docs {n:4,k:4}");
+        query("DELETE FROM docs WHERE n=4");
+    }
+    query("ROLLBACK");
+    assert_eq!(
+        query("SELECT count(*) FROM docs").rows,
+        vec![vec![Value::Integer(3)]]
+    );
+}

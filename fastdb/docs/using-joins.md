@@ -44,3 +44,6 @@ Typed correlation coverage now includes 90 execute/profile shapes with bare/alia
 
 
 Duplicate public key columns now have a 27-case execute/profile differential matrix for duplicates on either/both derived sources, all three supported join kinds, merged/qualified lookup and star positions. Suppression hides all duplicate public key positions on the suppressed side, matching the pinned baseline. Correlated duplicate-key derived fixtures require separate qualification: the tested native scalar variant rejects with no such column k.
+
+
+Optional and explicit-null keys now match a native NULL baseline in 18 execute/profile shapes across INNER/LEFT/RIGHT joins, direct/closed sources and NULL filters. A missing key in a closed source rejects on either side without preventing later writes and rollback on that connection. Virtual-source and broader correlation qualification remain open.
