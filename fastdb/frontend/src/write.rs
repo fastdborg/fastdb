@@ -809,7 +809,7 @@ impl Connection {
         };
         let mut result = self
             .collection_select_internal(&Stmt::Select(select).to_string(), params, true)?
-            .ok_or_else(|| Error::Storage("write target was not a collection".into()))?;
+            .ok_or_else(|| unsupported("this collection write candidate query"))?;
         for row in &mut result.rows {
             for (i, expr) in assignments.iter().enumerate() {
                 if let Some(value) = parameter(expr, params)? {

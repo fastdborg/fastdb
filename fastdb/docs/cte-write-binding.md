@@ -22,3 +22,5 @@ Explicit nested/outer CTE column lists have 18 native write comparisons covering
 Sibling-local shadowing is covered by six native write comparisons: two distinct nested definitions reuse a name while a third sibling retains the outer definition, across all materialization modes.
 
 Six positional-binding comparisons verify numbered and anonymous parameters across earlier/nested CTE definitions and assignments, with each materialization mode.
+
+The three probed nested CTE forms referencing the current write alias reject in the pinned engine. Collection candidate-lowering rejection is reported as Unsupported, with prior transaction work retained, rather than as a storage failure.

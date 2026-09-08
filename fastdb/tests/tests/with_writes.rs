@@ -738,3 +738,32 @@ fn lifted_nested_ctes_preserve_positional_parameter_order() {
         }
     }
 }
+
+#[test]
+fn unsupported_correlated_cte_writes_preserve_transaction_and_report_query_error() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    for body in [
+        "WITH local_q AS(SELECT d.n AS n) SELECT n FROM local_q",
+        "WITH local_q AS(SELECT x.n FROM native x WHERE x.n<d.n) SELECT max(n) AS n FROM local_q",
+        "WITH local_q AS(SELECT 1 AS n) SELECT n FROM local_q WHERE n<d.n",
+    ] {
+        q(&c, "BEGIN");
+        q(&c, "INSERT INTO docs(n) VALUES(9)");
+        let pending = q(&c, "SELECT n FROM docs ORDER BY n").rows;
+        let sql = |table: &str| {
+            format!("WITH chosen AS({body}) UPDATE {table} AS d SET n=n+10 WHERE EXISTS(SELECT 1 FROM chosen) RETURNING n")
+        };
+        assert!(c.execute(&sql("native"), &Parameters::new()).is_err());
+        let error = c.execute(&sql("docs"), &Parameters::new()).unwrap_err();
+        assert!(matches!(error, fastdb::Error::Unsupported(_)), "{error}");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, pending);
+        assert_eq!(q(&c, "UPDATE docs SET n=n+10 WHERE n=1").affected, 1);
+        q(&c, "ROLLBACK");
+    }
+}
