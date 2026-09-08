@@ -1854,3 +1854,53 @@ test('collated compound membership preserves client write recovery', async () =>
     } finally { await db.close(); }
   }
 });
+
+test('collated scalar ranges and between preserve client write recovery', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of [
+        'CREATE TABLE docs', 'CREATE TABLE baseline(n INTEGER,a,b,c)',
+        "INSERT INTO docs(n,a,b,c) VALUES(1,'beta','ALPHA','GAMMA'),(2,'a ','a','a'),(3,NULL,'a','z')",
+        "INSERT INTO baseline VALUES(1,'beta','ALPHA','GAMMA'),(2,'a ','a','a'),(3,NULL,'a','z')",
+        'CREATE TABLE sink', 'CREATE UNIQUE INDEX sink_n ON sink(n)',
+        'INSERT INTO sink(n) VALUES(2)',
+      ]) await db.execute(sql);
+      const query = predicate => `SELECT d.n,(SELECT ${predicate} UNION ALL SELECT NULL LIMIT 1) AS value FROM docs d`;
+      for (const collation of ['BINARY','NOCASE','RTRIM']) {
+        for (const predicate of [
+          `d.a < d.b COLLATE ${collation}`,
+          `d.a COLLATE ${collation} >= d.b`,
+          `d.a COLLATE ${collation} BETWEEN d.b AND d.c`,
+          `d.a NOT BETWEEN d.b COLLATE ${collation} AND d.c COLLATE BINARY`,
+        ]) {
+          const native = await db.execute(`SELECT d.n,${predicate} AS value FROM baseline d`);
+          const actual = await db.execute(query(predicate));
+          assert.deepEqual(actual.columns,native.columns);
+          assert.deepEqual(actual.rows,native.rows);
+          assert.deepEqual((await db.profileSelect(query(predicate))).result.rows,native.rows);
+        }
+      }
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO sink(n) VALUES(9)');
+      const predicate = 'd.a COLLATE NOCASE BETWEEN d.b AND d.c';
+      const insert = 'INSERT INTO sink(n,value) ' + query(predicate) + ' RETURNING n,value';
+      await assert.rejects(async () => db.execute(insert), error => {
+        assert.equal(error.code,'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT n FROM sink ORDER BY n'),[[2n],[9n]]);
+      await db.execute('DELETE FROM sink WHERE n=2');
+      const retry = await db.execute(insert);
+      assert.equal(retry.affected,3n);
+      assert.deepEqual(retry.rows,await db.all(`SELECT d.n,${predicate} FROM baseline d`));
+      const audit = await db.checkCollectionIntegrity('sink');
+      assert.equal(audit.documents,4n);
+      assert.equal(audit.indexEntries,4n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM sink'),[[2n]]);
+    } finally { await db.close(); }
+  }
+});
