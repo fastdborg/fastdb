@@ -1581,3 +1581,33 @@ fn compound_tuple_selects_match_native() {
         }
     }
 }
+
+#[test]
+fn values_tuple_assignments_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a,b)",
+        "INSERT INTO native VALUES(1,6,11),(2,3,7)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for body in ["VALUES(12,23)", "VALUES(b,a+1)"] {
+        q(&c, "BEGIN");
+        let expected = q(
+            &c,
+            &format!("UPDATE native SET (a,b)=({body}) RETURNING n,a,b"),
+        );
+        assert_eq!(
+            q(
+                &c,
+                &format!("UPDATE docs SET (a,b)=({body}) RETURNING n,a,b")
+            )
+            .rows,
+            expected.rows
+        );
+        q(&c, "ROLLBACK");
+    }
+}

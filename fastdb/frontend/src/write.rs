@@ -648,6 +648,26 @@ impl Connection {
                         if select.with.as_ref().is_some_and(|with| with.recursive) {
                             return Err(unsupported("this tuple SELECT assignment"));
                         }
+                        if select.body.compounds.is_empty() {
+                            if let OneSelect::Values(rows) = &mut select.body.select {
+                                if rows.len() != 1 {
+                                    return Err(unsupported("multi-row tuple VALUES assignment"));
+                                }
+                                for row in rows {
+                                    if row.len() != set.col_names.len() {
+                                        return Err(unsupported("tuple VALUES assignment arity"));
+                                    }
+                                    for value in row {
+                                        safe_candidate_assignment(value)?;
+                                        bind_source_free_tuple_field(value, &update.tbl_name)?;
+                                    }
+                                }
+                                exprs.push(Expr::Subquery(pack_tuple_select(&select, set.col_names.len())?));
+                                fields.extend(set.col_names.iter().map(|name| name.as_str().to_owned()));
+                                widths.push(set.col_names.len());
+                                continue;
+                            }
+                        }
                         if !select.body.compounds.is_empty() {
                             for arm in std::iter::once(&mut select.body.select).chain(select.body.compounds.iter_mut().map(|arm| &mut arm.select)) {
                                 let OneSelect::Select { columns, from, where_clause, .. } = arm else {

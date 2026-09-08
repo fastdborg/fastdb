@@ -4270,7 +4270,10 @@ impl Connection {
         // the enclosing logical scope into its projected and filtering subqueries.
         if inner.with.is_none()
             && inner.body.compounds.is_empty()
-            && matches!(&inner.body.select, OneSelect::Select { from: None, .. })
+            && matches!(
+                &inner.body.select,
+                OneSelect::Select { from: None, .. } | OneSelect::Values(_)
+            )
         {
             let sql = Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
             let logical = logical_parent
@@ -4301,6 +4304,17 @@ impl Connection {
                 fetched_aliases: Default::default(),
                 standalone_aliases: Default::default(),
             };
+            if let OneSelect::Values(rows) = &mut inner.body.select {
+                for value in rows.iter_mut().flatten() {
+                    self.correlate_source_free_expression(
+                        value,
+                        correlation_sources,
+                        params,
+                        ctes,
+                        logical.then_some(&outer_scope),
+                    )?;
+                }
+            }
             if let OneSelect::Select {
                 from: None,
                 columns,
@@ -5248,7 +5262,8 @@ impl Connection {
             return Err(error);
         }
         if let OneSelect::Values(rows) = &mut select.body.select {
-            let mut logical = !expression_subqueries.is_empty()
+            let mut logical = force_logical
+                || !expression_subqueries.is_empty()
                 || cte_logical
                 || (trusted && positional && native_insert.is_none());
             for row in rows.iter_mut() {

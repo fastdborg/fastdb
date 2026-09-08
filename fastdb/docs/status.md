@@ -5234,3 +5234,27 @@ full scoped check. Log: `/tmp/fastdb-compound-tuple-node.log`.
 Only tests/docs changed from `862501a08`; no native rebuild or new Rust-suite
 run is claimed. Broader compound tuple qualification and full V1 remain open.
 No publication occurred.
+
+
+## Single-row VALUES tuple assignments — 2026-09-09
+
+Collection UPDATE now accepts `(a,b)=(VALUES(b,a+1))`. The tuple is packed
+through the existing typed SELECT path; each expression is validated and
+source-free inputs bind to the original target document. VALUES lowering
+retains forced logical context and correlation uses the enclosing logical scope.
+Differential tests cover constants and a field swap with arithmetic, in a
+transaction followed by rollback.
+
+Multi-row tuple VALUES and compound VALUES arms remain unsupported. Local probes
+found the pinned native direct multi-row tuple form selects the last constant
+row, while a correlated multi-row form panics in expression translation
+(`table_references needed translating Expr::Column`). The CTE packing path
+selects the first row; no compatibility claim is made for these multi-row forms.
+Ordinary relational writes remain delegated unchanged. Full V1 remains open.
+
+The complete scoped check passed on `a2b347796` plus this change: 609 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+87 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. The addon was rebuilt. Log:
+`/tmp/fastdb-values-tuples-check.log`. No upstream source, dependency or
+storage-format changes; no publication occurred.
