@@ -544,16 +544,79 @@ impl Connection {
                 validate_returning(&update.returning)?;
                 let mut fields = Vec::new();
                 let mut exprs = Vec::new();
+                let mut widths = Vec::new();
                 for set in update.sets {
                     if set.col_names.len() == 1 {
                         fields.push(set.col_names[0].as_str().to_owned());
                         exprs.push(*set.expr);
+                        widths.push(1);
                     } else if let Expr::Parenthesized(values) = *set.expr {
                         if values.len() != set.col_names.len() {
                             return Err(unsupported("tuple assignment arity mismatch"));
                         }
                         fields.extend(set.col_names.iter().map(|name| name.as_str().to_owned()));
+                        widths.extend(std::iter::repeat_n(1, values.len()));
                         exprs.extend(values.into_iter().map(|value| *value));
+                    } else if let Expr::Subquery(mut select) = *set.expr {
+                        if select.with.is_some()
+                            || !select.body.compounds.is_empty()
+                            || !select.order_by.is_empty()
+                        {
+                            return Err(unsupported("this tuple SELECT assignment"));
+                        }
+                        let OneSelect::Select {
+                            columns,
+                            from: None,
+                            group_by: None,
+                            window_clause,
+                            distinctness: None,
+                            ..
+                        } = &mut select.body.select
+                        else {
+                            return Err(unsupported("this tuple SELECT assignment"));
+                        };
+                        if !window_clause.is_empty() || columns.len() != set.col_names.len() {
+                            return Err(unsupported("tuple SELECT assignment shape or arity"));
+                        }
+                        let mut args = Vec::new();
+                        for column in std::mem::take(columns) {
+                            let ResultColumn::Expr(value, None | Some(As::ImplicitColumnName(_))) =
+                                column
+                            else {
+                                return Err(unsupported("tuple SELECT projection"));
+                            };
+                            safe_value_expression(&value)?;
+                            let mut value = value;
+                            turso_core::walk_expr_mut(&mut value, &mut |expr| {
+                                if matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path") {
+                                    return Ok(turso_core::WalkControl::SkipChildren);
+                                }
+                                if let Expr::Id(name) | Expr::Name(name) = expr {
+                                    if !name.as_str().eq_ignore_ascii_case("true") && !name.as_str().eq_ignore_ascii_case("false") {
+                                        *expr = Expr::Qualified(update.tbl_name.alias.as_ref().unwrap_or(&update.tbl_name.name).clone(), name.clone());
+                                    }
+                                }
+                                Ok(turso_core::WalkControl::Continue)
+                            })?;
+                            args.push(value);
+                        }
+                        columns.push(ResultColumn::Expr(
+                            Box::new(Expr::FunctionCall {
+                                name: Name::exact("__fastdb_h_array_new".into()),
+                                distinctness: None,
+                                args,
+                                order_by: Vec::new(),
+                                within_group: Vec::new(),
+                                filter_over: FunctionTail {
+                                    filter_clause: None,
+                                    over_clause: None,
+                                },
+                            }),
+                            None,
+                        ));
+                        fields.extend(set.col_names.iter().map(|name| name.as_str().to_owned()));
+                        widths.push(set.col_names.len());
+                        exprs.push(Expr::Subquery(select));
                     } else {
                         return Err(unsupported(
                             "collection tuple assignment requires explicit values",
@@ -582,12 +645,31 @@ impl Connection {
                     };
                     // All assignments were evaluated before any mutation. Move
                     // their owned values and the snapshot instead of cloning them.
-                    for (path, value) in paths.iter().zip(values) {
-                        crate::update::apply(
-                            &mut document,
-                            path,
-                            if unset { None } else { Some(value) },
-                        )?;
+                    let mut targets = paths.iter();
+                    for (value, width) in values.zip(&widths) {
+                        let assigned = if *width == 1 {
+                            vec![value]
+                        } else {
+                            match value {
+                                Value::Array(values) if values.len() == *width => values,
+                                Value::Null => vec![Value::Null; *width],
+                                _ => {
+                                    return Err(Error::Storage(
+                                        "invalid tuple assignment result".into(),
+                                    ))
+                                }
+                            }
+                        };
+                        for value in assigned {
+                            let path = targets.next().ok_or_else(|| {
+                                Error::Storage("missing assignment target".into())
+                            })?;
+                            crate::update::apply(
+                                &mut document,
+                                path,
+                                if unset { None } else { Some(value) },
+                            )?;
+                        }
                     }
                     // Reject the next snapshot before validation and storage work.
                     // Earlier rows still belong to the operation savepoint.

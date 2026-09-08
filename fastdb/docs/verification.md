@@ -3280,3 +3280,24 @@ All ten write tests and scoped formatting/Clippy passed. Logs
 `/tmp/fastdb-tuple-subquery-baseline.log` and
 `/tmp/fastdb-tuple-subquery-clippy.log`. Only tests/documentation changed from
 `9cf3f5184`; no new full-suite/client run is claimed. Full V1 remains incomplete.
+
+
+## Initial source-free tuple SELECT assignments — 2026-09-09
+
+Collection UPDATE now packs source-free tuple SELECT projections into one typed
+array per candidate, then applies the tuple through the existing snapshot,
+validation and index path. Unqualified projection fields bind to the UPDATE
+target. Native parity tests cover swaps and zero-row NULL assignment; a later
+candidate validation failure restores rows/indexes and preserves prior work.
+The prior gap regression now asserts successful collection/native behavior.
+
+This is an initial subset: sourceful, grouped, windowed, ordered, DISTINCT,
+compound, WITH and explicitly aliased tuple SELECTs remain open, as does broader
+predicate scope qualification. The full SQL commitment remains unchanged.
+
+Full scoped check passed from `094061cc2` plus this implementation: 578 Rust
+passes, zero failures, one existing ignored trigger-cancellation gate; 83
+Node/application passes; formatting, Clippy with warnings denied and strict
+TypeScript checks. Log `/tmp/fastdb-tuple-select-check.log`. Focused write tests
+also passed (`/tmp/fastdb-tuple-select.log`). No upstream files or dependencies
+changed. Full V1 release gates remain open; no publication occurred.

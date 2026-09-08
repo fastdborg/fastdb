@@ -343,7 +343,7 @@ fn explicit_tuple_updates_preserve_snapshots_and_atomic_validation() {
     ] {
         q(&c, sql);
     }
-    for assignment in ["(a,b)=(b,a)", "(a,b)=(a+1,b+2)"] {
+    for assignment in ["(a,b)=(b,a)", "(a,b)=(a+1,b+2)", "(a,b)=(SELECT b,a)"] {
         for source in ["native", "docs"] {
             q(&c, &format!("UPDATE {source} SET {assignment}"));
         }
@@ -356,7 +356,7 @@ fn explicit_tuple_updates_preserve_snapshots_and_atomic_validation() {
     q(&c, "INSERT INTO docs(a,b) VALUES(0,0)");
     let before = q(&c, "SELECT a,b FROM docs ORDER BY a").rows;
     let error = c
-        .execute("UPDATE docs SET (a,b)=(a+6,b+1)", &Parameters::new())
+        .execute("UPDATE docs SET (a,b)=(SELECT a+6,b+1)", &Parameters::new())
         .unwrap_err();
     assert_eq!(error.code(), "FDB_VALIDATION");
     assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
@@ -447,7 +447,7 @@ fn tuple_updates_preserve_typed_values_and_mixed_assignment_snapshots() {
 }
 
 #[test]
-fn pinned_tuple_subqueries_define_snapshot_and_empty_row_behavior() {
+fn source_free_tuple_subqueries_match_native_snapshots_and_empty_rows() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     q(&c, "CREATE TABLE native(a INTEGER,b INTEGER)");
@@ -477,10 +477,22 @@ fn pinned_tuple_subqueries_define_snapshot_and_empty_row_behavior() {
     }
     q(&c, "CREATE TABLE docs");
     q(&c, "INSERT INTO docs(a,b) SELECT a,b FROM native");
-    let before = q(&c, "SELECT a,b FROM docs ORDER BY a").rows;
-    let error = c
-        .execute("UPDATE docs SET (a,b)=(SELECT b,a)", &Parameters::new())
-        .unwrap_err();
-    assert_eq!(error.code(), "FDB_UNSUPPORTED");
-    assert_eq!(q(&c, "SELECT a,b FROM docs ORDER BY a").rows, before);
+    assert_eq!(
+        q(&c, "UPDATE docs SET (a,b)=(SELECT b,a) RETURNING a,b").rows,
+        vec![
+            vec![Value::Integer(2), Value::Integer(1)],
+            vec![Value::Integer(4), Value::Integer(3)]
+        ]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE docs SET (a,b)=(SELECT 8,9 WHERE 0) RETURNING a,b"
+        )
+        .rows,
+        vec![
+            vec![Value::Null, Value::Null],
+            vec![Value::Null, Value::Null]
+        ]
+    );
 }

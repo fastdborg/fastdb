@@ -1164,5 +1164,15 @@ existing candidate projection, so every right-hand expression reads the same
 pre-update document and all candidates are materialized before mutation.
 Validation and managed indexes share the statement savepoint. Duplicate or
 overlapping targets and ID changes remain rejected. Tuple arity must match;
-subquery-valued tuples remain unsupported. Tuple targets are ordinary column
+source-free tuple SELECT support is described below. Tuple targets are ordinary column
 names; this does not extend nested-path assignment syntax inside tuples.
+
+
+Source-free tuple SELECT assignments now support explicit scalar projections,
+including outer target field values and a zero-row SELECT producing NULL for
+every tuple target. One typed array carries the subquery result into candidate
+materialization; it is unpacked only when applying the candidate snapshot.
+The SELECT is not duplicated per target. This initial form excludes FROM,
+WITH, compounds, grouping, windows, DISTINCT, ORDER BY and explicit projection
+aliases. Projection arity must match. Broader tuple SELECT forms and scope
+qualification remain open, including unqualified outer names in predicates.
