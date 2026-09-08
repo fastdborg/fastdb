@@ -1045,3 +1045,42 @@ fn nested_using_correlation_resolves_outer_sources() {
         vec![vec![Value::Array(vec![Value::Integer(1)])]]
     );
 }
+
+#[test]
+fn nested_using_filters_and_limits_skip_invalid_typed_projections() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,v:7}",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1)",
+    ] {
+        query(sql);
+    }
+    for stop in ["WHERE k=2", "LIMIT 0", "LIMIT 1 OFFSET 1"] {
+        let sql = format!(
+            "SELECT (SELECT (SELECT array::append(a.v,2) {stop})) FROM docs a JOIN b USING(k)"
+        );
+        assert_eq!(query(&sql).rows, vec![vec![Value::Null]], "{sql}");
+        assert_eq!(
+            c.profile_select(&sql, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            vec![vec![Value::Null]],
+            "{sql}"
+        );
+    }
+    let invalid = "SELECT (SELECT (SELECT array::append(a.v,2))) FROM docs a JOIN b USING(k)";
+    assert!(c.execute(invalid, &Parameters::new()).is_err());
+    query("UPDATE docs SET v=array::new()");
+    assert_eq!(
+        query(invalid).rows,
+        vec![vec![Value::Array(vec![Value::Integer(2)])]]
+    );
+}
