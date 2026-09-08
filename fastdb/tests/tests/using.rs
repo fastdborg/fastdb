@@ -1751,3 +1751,47 @@ fn natural_cte_names_match_native_after_ascii_normalization() {
         }
     }
 }
+
+#[test]
+fn invalid_natural_constraints_preserve_transaction_and_allow_valid_retry() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1)",
+        "CREATE TABLE audit(n INTEGER)",
+        "BEGIN",
+        "INSERT INTO audit VALUES(7)",
+    ] {
+        query(sql);
+    }
+    for invalid in [
+        "SELECT * FROM (SELECT k FROM docs) a NATURAL JOIN b ON a.k=b.k",
+        "SELECT * FROM (SELECT k FROM docs) a NATURAL JOIN b USING(k)",
+        "SELECT * FROM docs a NATURAL JOIN b",
+        "SELECT * FROM (SELECT k FROM docs) a NATURAL JOIN docs b",
+    ] {
+        assert!(c.execute(invalid, &Parameters::new()).is_err(), "{invalid}");
+        assert_eq!(
+            c.transaction_state(),
+            fastdb::TransactionState::Active,
+            "{invalid}"
+        );
+        assert_eq!(
+            query("SELECT n FROM audit").rows,
+            vec![vec![Value::Integer(7)]]
+        );
+        assert_eq!(
+            query("SELECT k FROM (SELECT k FROM docs) a NATURAL JOIN b").rows,
+            vec![vec![Value::Integer(1)]]
+        );
+    }
+    query("ROLLBACK");
+    assert!(query("SELECT * FROM audit").rows.is_empty());
+}

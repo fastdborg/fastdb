@@ -2463,3 +2463,6 @@ NATURAL window qualification (2026-09-08): six native differential execute/profi
 
 
 NATURAL CTE name qualification (2026-09-08): nine native differential execute/profile cases pass for differently cased explicit CTE key names, default/MATERIALIZED/NOT MATERIALIZED sources and INNER/LEFT/RIGHT joins. Inferred shared keys use normalized names and preserve native star labels/rows. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-cte-names.log. This verifies results, not materialization callback counts. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.
+
+
+NATURAL rejection/transaction qualification (2026-09-08): four invalid forms (NATURAL with ON, with USING, or an open-schema collection on either side) reject while retaining the active transaction and prior audit write. Valid projected-source NATURAL queries succeed after each error, and rollback clears the pending audit row. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-invalid.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.
