@@ -623,3 +623,37 @@ fn tuple_select_bound_pagination_matches_native_empty_rows() {
     );
     assert_eq!(q(&c, "SELECT a,b FROM docs ORDER BY a").rows, before);
 }
+
+#[test]
+fn tuple_select_keeps_each_candidates_typed_snapshot() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    let mut expected = Vec::new();
+    for n in 1..=3 {
+        let record = Value::Record(Record {
+            table: "docs".into(),
+            key: Key::Integer(n),
+        });
+        let bytes = Value::Binary(vec![n as u8, 0, 255]);
+        let params = Parameters::from([
+            ("$n".into(), Value::Integer(n)),
+            ("$a".into(), record.clone()),
+            ("$b".into(), bytes.clone()),
+        ]);
+        c.execute("INSERT INTO docs(n,a,b) VALUES($n,$a,$b)", &params)
+            .unwrap();
+        expected.push(vec![Value::Integer(n), bytes, record]);
+    }
+    q(&c, "BEGIN");
+    assert_eq!(
+        q(&c, "UPDATE docs SET (a,b)=(SELECT b,a) RETURNING n,a,b").rows,
+        expected
+    );
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, expected);
+    q(&c, "ROLLBACK");
+    for row in &mut expected {
+        row.swap(1, 2);
+    }
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, expected);
+}

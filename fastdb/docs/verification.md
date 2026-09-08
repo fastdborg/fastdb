@@ -3379,3 +3379,14 @@ with warnings denied. Logs `/tmp/fastdb-native-tuple-binding.log` and
 `/tmp/fastdb-native-tuple-binding-clippy.log`. Only tests/documentation changed
 from `2501471a7`; no upstream source changes or new full-suite run occurred.
 Full V1 gates remain open.
+
+
+## Per-candidate typed tuple snapshots — 2026-09-09
+
+A multirow tuple SELECT regression uses distinct record keys and binary values
+for each candidate. RETURNING and stored rows retain the correct per-row swaps;
+outer rollback restores every original tuple. All fourteen write tests passed,
+plus formatting and all-target fastdb-tests Clippy with warnings denied.
+Logs `/tmp/fastdb-tuple-candidates.log` and
+`/tmp/fastdb-tuple-candidates-clippy.log`. Only tests/documentation changed from
+`ab16ab02c`; no new full-suite/client run is claimed. Full V1 gates remain open.
