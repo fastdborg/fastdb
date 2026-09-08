@@ -28,3 +28,5 @@ The collation oracle verifies that RIGHT JOIN USING compares the written right-s
 Initial implementation verification covers 24 closed-source read shapes (inner/left/right, optional following USING join, unqualified/qualified stars, merged/qualified keys and arithmetic), direct collection key lookup, normal/profiled results, normalized NOCASE/BINARY comparison order, typed record-key writes with uniqueness failure/rollback/reuse, and both Node clients. Aliases/grouping/window scopes, correlated references, duplicate-key columns, missing/native virtual columns and complete resource/evaluation qualification remain open.
 
 A 27-case multi-key implementation matrix now matches native output names and rows for reordered/case-varied/quoted key lists, INNER/LEFT/RIGHT joins and post-join NULL/merged-key filtering through execute/profile.
+
+Closed-source grouping/alias qualification now includes eight normal/profiled native comparisons for source-column precedence, HAVING aliases, ordinal grouping and ordering. Open-schema alias nuances and broader window/correlated scopes remain open.

@@ -367,3 +367,46 @@ fn collection_multi_key_using_preserves_outer_filters_and_key_order() {
         }
     }
 }
+
+#[test]
+fn using_group_aliases_and_ordering_match_native_closed_sources() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "INSERT INTO docs {k:2}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(1),(2)",
+    ] {
+        query(sql);
+    }
+    for (projection, group, having) in [
+        ("k,count(*) AS total", "k", "total>1"),
+        ("k+10 AS k,count(*) AS total", "k", "k>10"),
+        ("k-k AS k,count(*) AS total", "k", "total>0"),
+        ("k%2 AS parity,count(*) AS total", "1", "total>0"),
+    ] {
+        for ordering in ["1,total", "total DESC,1"] {
+            let sql = |source: &str| {
+                format!("SELECT {projection} FROM {source} a JOIN b USING(k) GROUP BY {group} HAVING {having} ORDER BY {ordering}")
+            };
+            let expected = query(&sql("baseline"));
+            let logical = sql("(SELECT k FROM docs)");
+            let actual = query(&logical);
+            assert_eq!(actual.columns, expected.columns, "{logical}");
+            assert_eq!(actual.rows, expected.rows, "{logical}");
+            assert_eq!(
+                c.profile_select(&logical, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows,
+                "{logical}"
+            );
+        }
+    }
+}

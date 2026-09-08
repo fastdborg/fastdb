@@ -2049,3 +2049,6 @@ The complete fastdb/scripts/check.sh run passed formatting, Clippy, 443 Rust tes
 
 
 Multi-key collection USING qualification (2026-09-08): a 27-case differential matrix passes for key-list ordering, case/quoted names, INNER/LEFT/RIGHT joins and post-join NULL or merged-key filters. Normal/profiled rows and column order match the pinned native baseline, including unmatched outer rows. Production code is unchanged; formatting and the focused regression pass. Latest full scoped evidence remains 443 Rust tests with one ignored gate and 48 Node/application tests. Broader USING scopes/types and V1 qualification remain open.
+
+
+USING grouped-alias qualification (2026-09-08): an eight-case closed-source differential matrix passes through execute/profile. It covers merged keys, aggregate aliases in HAVING, a same-name shifted projection, a same-name constant projection that must retain separate source groups, GROUP BY ordinals and output ordering. Native result names and rows match. Production code is unchanged; formatting and the focused regression pass. Latest full scoped evidence remains 443 Rust/48 Node with one ignored Rust gate. Open-schema alias nuances, windows/correlation and broader V1 qualification remain open.
