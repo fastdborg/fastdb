@@ -1296,11 +1296,12 @@ fn aggregate_tuple_validation_restores_indexes_and_allows_retry() {
     ] {
         q(&c, sql);
     }
-    for (filtered, nested, windowed) in [
-        (false, false, false),
-        (true, false, false),
-        (false, true, false),
-        (false, false, true),
+    for (filtered, nested, windowed, values) in [
+        (false, false, false, false),
+        (true, false, false, false),
+        (false, true, false, false),
+        (false, false, true, false),
+        (false, false, false, true),
     ] {
         q(&c, "BEGIN");
         q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
@@ -1321,6 +1322,11 @@ fn aggregate_tuple_validation_restores_indexes_and_allows_retry() {
         };
         let sql = if windowed {
             sql.replace("sum(x.a),count(*)", "sum(x.a) OVER(),count(*) OVER()")
+        } else {
+            sql
+        };
+        let sql = if values {
+            "UPDATE docs SET (a,b)=(VALUES((SELECT sum(x.a) FROM lookup x WHERE x.n=docs.n),(SELECT count(*) FROM lookup x WHERE x.n=docs.n))) WHERE n>0 RETURNING a,b".to_owned()
         } else {
             sql
         };

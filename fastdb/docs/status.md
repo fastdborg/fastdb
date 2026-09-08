@@ -5301,3 +5301,15 @@ package identities against the pinned workspace lockfile. Log:
 `/tmp/fastdb-tuple-rust-consumer.log`. Only consumer/docs changed from `12deabd4a`;
 this is a local path-dependent consumer, not published crate verification.
 No new full scoped check is claimed. Full V1 remains open; no publication occurred.
+
+
+## VALUES tuple failure atomicity — 2026-09-09
+
+The write recovery matrix now includes VALUES tuples containing correlated
+aggregate scalar subqueries. A later document's CHECK failure restores earlier
+rows and managed index entries, retains pre-statement transaction work, and
+permits a successful retry followed by rollback. All 36 write tests passed;
+formatting and all-target fastdb-tests Clippy with warnings denied passed.
+Logs: `/tmp/fastdb-values-tuple-recovery.log` and
+`/tmp/fastdb-values-tuple-recovery-clippy.log`. Only tests/docs changed from
+`10c811740`; no new full-suite or client run is claimed. Full V1 remains open.
