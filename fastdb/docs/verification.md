@@ -4450,3 +4450,16 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-update-from-check.log`. No upstream source, dependency or storage
 format changes; no publication occurred. Full V1 remains open.
+
+
+## Typed UPDATE FROM client verification — 2026-09-09
+
+Both Node clients now verify aliased collection source/target UPDATE FROM tuple
+assignments with duplicate source matches. Record IDs with int64 boundary keys,
+objects containing binary/boolean/int64 values, one affected target and one
+RETURNING row, unmatched targets, transaction reports and rollback all pass.
+All 89 Node/application tests passed against the preceding full check's addon.
+Log: `/tmp/fastdb-update-from-node.log`. Only tests/docs changed from `b47ee2a82`;
+no native rebuild or new Rust-suite run is claimed. This is the tested source
+plan's duplicate-selection behavior, not a general ordering guarantee.
+Source join trees, FROM pagination and broader V1 qualification remain open.

@@ -2823,3 +2823,27 @@ test('limited writes bind pagination and preserve transaction recovery in both c
     } finally { await db.close(); }
   }
 });
+
+test('update from preserves typed candidates and unmatched targets in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs(n,a,b) VALUES(1,NULL,NULL),(2,NULL,NULL)');
+      await db.execute('CREATE TABLE source');
+      const record = new Record('docs', 9223372036854775807n);
+      const payload = { values: [true, Buffer.from([0,255]), -9223372036854775808n] };
+      await db.execute('INSERT INTO source(k,a,b) VALUES(1,$a,$b)', { $a: new Record('docs','old'), $b: { old: true } });
+      await db.execute('INSERT INTO source(k,a,b) VALUES(1,$a,$b)', { $a: record, $b: payload });
+      await db.execute('BEGIN');
+      const result = await db.execute('UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s WHERE s.k=target.n RETURNING n,a,b');
+      assert.equal(result.affected, 1n);
+      assert.deepEqual(result.rows, [[1n,record,payload]]);
+      assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,record,payload],[2n,null,null]]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,null,null],[2n,null,null]]);
+    } finally { await db.close(); }
+  }
+});
