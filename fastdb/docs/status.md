@@ -5124,3 +5124,15 @@ existing rollback assertions pass. All 87 Node/application tests passed against
 the addon from the preceding full check. Log `/tmp/fastdb-nested-tuple-node.log`.
 Only tests/docs changed from `d641d69c0`; no native rebuild or new Rust-suite
 run is claimed. Full V1 remains open; no publication occurred.
+
+
+## Nested tuple projection recovery — 2026-09-09
+
+The indexed aggregate recovery matrix now includes separate correlated scalar
+subqueries as tuple projections. A later-row CHECK failure restores earlier
+candidate changes and indexes, retains prior transaction work, and permits a
+filtered retry followed by rollback. All 32 write tests passed, with formatting
+and all-target fastdb-tests Clippy with warnings denied. Logs
+`/tmp/fastdb-nested-tuple-recovery.log` and `/tmp/fastdb-nested-tuple-recovery-clippy.log`.
+Only tests/docs changed from `e821d1696`; no new full-suite or client run is
+claimed. Full V1 remains open; no publication occurred.

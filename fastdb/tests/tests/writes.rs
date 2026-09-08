@@ -1296,7 +1296,7 @@ fn aggregate_tuple_validation_restores_indexes_and_allows_retry() {
     ] {
         q(&c, sql);
     }
-    for filtered in [false, true] {
+    for (filtered, nested) in [(false, false), (true, false), (false, true)] {
         q(&c, "BEGIN");
         q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
         let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
@@ -1308,6 +1308,11 @@ fn aggregate_tuple_validation_restores_indexes_and_allows_retry() {
             )
         } else {
             sql.to_owned()
+        };
+        let sql = if nested {
+            "UPDATE docs SET (a,b)=(SELECT (SELECT sum(x.a) FROM lookup x WHERE x.n=docs.n),(SELECT count(*) FROM lookup x WHERE x.n=docs.n)) WHERE n>0 RETURNING a,b".to_owned()
+        } else {
+            sql
         };
         assert_eq!(
             c.execute(&sql, &Parameters::new()).unwrap_err().code(),
