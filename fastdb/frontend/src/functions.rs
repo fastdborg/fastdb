@@ -1613,6 +1613,10 @@ mod cte_evaluation_tests {
                 "(SELECT cte_tick())<=n",
                 "n IN(SELECT cte_tick())",
                 "n NOT IN(SELECT cte_tick())",
+                "cte_tick() IN(SELECT n)",
+                "cte_tick() NOT IN(SELECT n)",
+                "cte_tick() IN(SELECT n WHERE 0)",
+                "cte_tick() NOT IN(SELECT n WHERE 0)",
             ] {
                 for limit in ["", " LIMIT 0"] {
                     let query = |source: &str| {
