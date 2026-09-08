@@ -1981,11 +1981,21 @@ test('ordered local CTE pagination preserves typed client recovery', async () =>
           }
         }
       }
+      for (const [take,skip,kept] of [
+        ['1','0',true],['1.0','1e0',true],[' +1 ',true,true],
+        [true,false,true],[1,1,true],['.','0',false],['-1','3',false],
+      ]) {
+        const params = {$take:take,$skip:skip,$value:true};
+        const expected = [[1n,null],[4n,kept ? true : null]];
+        const sql = query('MATERIALIZED','DESC');
+        assert.deepEqual((await db.execute(sql,params)).rows,expected);
+        assert.deepEqual((await db.profileSelect(sql,params)).result.rows,expected);
+      }
       await db.execute('BEGIN');
       await db.execute('INSERT INTO sink(n) VALUES(9)');
       const insert = 'INSERT INTO sink(n,value) ' + query('MATERIALIZED','DESC') + ' RETURNING n,value';
       const value = new Record('docs',7n);
-      const params = {$take:1n,$skip:1n,$value:value};
+      const params = {$take:'1.0',$skip:'1e0',$value:value};
       await assert.rejects(async () => db.execute(insert,{$take:1n,$value:value}), error => {
         assert.equal(error.code,'FDB_PARAMETER');
         assert.deepEqual(error.transaction,{before:'active',after:'active'});
