@@ -201,3 +201,40 @@ fn mixed_right_join_stars_follow_pinned_source_order() {
     query("ROLLBACK");
     assert!(query("SELECT * FROM actual").rows.is_empty());
 }
+
+#[test]
+fn pinned_using_collation_follows_normalized_join_operand_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+    for sql in [
+        "CREATE TABLE a(k TEXT COLLATE NOCASE,a INTEGER)",
+        "CREATE TABLE b(k TEXT COLLATE BINARY,b INTEGER)",
+        "INSERT INTO a VALUES('A',1)",
+        "INSERT INTO b VALUES('a',2)",
+    ] {
+        query(sql);
+    }
+    let matched = vec![vec![Value::Integer(1), Value::Integer(2)]];
+    for join in ["JOIN", "LEFT JOIN"] {
+        assert_eq!(
+            query(&format!("SELECT a.a,b.b FROM a {join} b USING(k)")).rows,
+            matched
+        );
+    }
+    assert_eq!(
+        query("SELECT a.a,b.b FROM a RIGHT JOIN b USING(k)").rows,
+        vec![vec![Value::Null, Value::Integer(2)]]
+    );
+    assert_eq!(
+        query("SELECT a.a,b.b FROM a RIGHT JOIN b ON a.k=b.k").rows,
+        matched
+    );
+    assert!(query("SELECT a.a,b.b FROM b JOIN a USING(k)")
+        .rows
+        .is_empty());
+    assert_eq!(
+        query("SELECT a.a,b.b FROM b RIGHT JOIN a USING(k)").rows,
+        matched
+    );
+}
