@@ -1923,6 +1923,10 @@ fn using_sourceful_scalar_keys_resolve_outer_scope_and_local_shadowing() {
             "SELECT k FROM nums WHERE n<k ORDER BY n DESC LIMIT 1",
             "SELECT max(n) FROM shadow WHERE n<k",
             "SELECT max(n) FROM nums WHERE n<a.k",
+            "SELECT count(*) FROM nums GROUP BY n HAVING n<k ORDER BY n LIMIT 1",
+            "SELECT max(n) FROM nums HAVING max(n)<k",
+            "SELECT max(n) AS k FROM nums HAVING k>1",
+            "SELECT count(*) FROM shadow GROUP BY k HAVING k>1",
         ] {
             for nested in [false, true] {
                 let expr = if nested {

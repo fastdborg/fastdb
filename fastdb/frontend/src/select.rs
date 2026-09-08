@@ -412,6 +412,7 @@ fn qualify_correlated_using(
     let OneSelect::Select {
         columns,
         where_clause,
+        group_by,
         ..
     } = &mut inner.body.select
     else {
@@ -426,7 +427,7 @@ fn qualify_correlated_using(
             _ => None,
         })
         .collect();
-    for (value, ordering) in columns
+    for (value, preserves_aliases) in columns
         .iter_mut()
         .filter_map(|column| match column {
             ResultColumn::Expr(value, _) => Some(value),
@@ -434,6 +435,12 @@ fn qualify_correlated_using(
         })
         .chain(where_clause.iter_mut())
         .map(|value| (value, false))
+        .chain(
+            group_by
+                .iter_mut()
+                .flat_map(|group| group.having.iter_mut())
+                .map(|value| (value, true)),
+        )
         .chain(
             inner
                 .order_by
@@ -449,7 +456,7 @@ fn qualify_correlated_using(
                 return Ok(turso_core::WalkControl::SkipChildren);
             }
             if let Expr::Id(name) | Expr::Name(name) = expr {
-                if ordering && aliases.contains(&name.as_str().to_ascii_lowercase()) {
+                if preserves_aliases && aliases.contains(&name.as_str().to_ascii_lowercase()) {
                     return Ok(turso_core::WalkControl::SkipChildren);
                 }
                 if let Some((index, column)) =

@@ -107,3 +107,6 @@ Table-reading scalar subqueries now resolve unqualified outer USING/NATURAL keys
 
 
 Table-backed scalar typed-key coverage adds 180 execute/profile cases (record, boolean and binary), including empty results and pagination, plus a uniqueness-failure/rollback/retry INSERT SELECT. Both Node clients also verify boolean/binary nested reads and unmatched NATURAL/USING RIGHT rows.
+
+
+HAVING in table-backed scalar queries now resolves outer merged USING/NATURAL keys. Explicit result aliases remain available to HAVING and take precedence over outer fallback; local table columns retain native resolution. The native differential matrix includes grouped predicates, aggregate-only HAVING, alias collisions and local grouped-column controls, both directly and inside a source-free scalar wrapper. The pinned engine rejects the probed `SELECT count(*) FROM nums GROUP BY k` with an outer merged key; this work does not add that form.
