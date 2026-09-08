@@ -110,3 +110,6 @@ Table-backed scalar typed-key coverage adds 180 execute/profile cases (record, b
 
 
 HAVING in table-backed scalar queries now resolves outer merged USING/NATURAL keys. Explicit result aliases remain available to HAVING and take precedence over outer fallback; local table columns retain native resolution. The native differential matrix includes grouped predicates, aggregate-only HAVING, alias collisions and local grouped-column controls, both directly and inside a source-free scalar wrapper. The pinned engine rejects the probed `SELECT count(*) FROM nums GROUP BY k` with an outer merged key; this work does not add that form.
+
+
+Inner JOIN ON predicates in table-backed scalar queries now resolve outer merged USING/NATURAL keys. The added 54 native execute/profile cases cover inner JOIN and LEFT JOIN, local-column shadowing, direct/nested scalars and all three supported outer join directions. This uses the same closed-local-schema boundary as scalar WHERE resolution.

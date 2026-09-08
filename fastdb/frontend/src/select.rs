@@ -413,6 +413,7 @@ fn qualify_correlated_using(
         columns,
         where_clause,
         group_by,
+        from,
         ..
     } = &mut inner.body.select
     else {
@@ -434,6 +435,14 @@ fn qualify_correlated_using(
             _ => None,
         })
         .chain(where_clause.iter_mut())
+        .chain(
+            from.iter_mut()
+                .flat_map(|from| from.joins.iter_mut())
+                .filter_map(|join| match &mut join.constraint {
+                    Some(JoinConstraint::On(value)) => Some(value),
+                    _ => None,
+                }),
+        )
         .map(|value| (value, false))
         .chain(
             group_by
