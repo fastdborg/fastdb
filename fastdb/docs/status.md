@@ -4584,3 +4584,15 @@ all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-ordered-tuple-recovery.log` and
 `/tmp/fastdb-ordered-tuple-recovery-clippy.log`. Only tests/documentation changed
 from `afb039079`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Tuple candidate row-buffer limits — 2026-09-09
+
+The existing write-buffer regression matrix now includes source-free tuple
+SELECTs and correlated tuple self-lookups. A one-row candidate limit rejects
+without changing prior rows or active transaction state; raising the limit
+allows retry, and rollback restores committed data. All seven write-buffer
+tests and scoped formatting passed. Log `/tmp/fastdb-tuple-buffer.log`.
+Only SQL fixtures/documentation changed from `6f838c4dd`; no full-suite/client
+or new Clippy run is claimed. These are candidate-buffer limits, not a total
+engine-memory bound. Full V1 gates remain open.
