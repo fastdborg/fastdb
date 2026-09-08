@@ -5048,3 +5048,14 @@ all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-filter-tuple-recovery.log` and `/tmp/fastdb-filter-tuple-recovery-clippy.log`.
 Only tests/docs changed from `79b9dd290`; no new full-suite or client run is
 claimed. Full V1 remains open; no publication occurred.
+
+
+## Filtered tuple parameter recovery — 2026-09-09
+
+A regression reuses one bound parameter across SUM and COUNT FILTER predicates,
+checks several thresholds including no contributing rows, and verifies missing
+parameter rejection before mutation plus rollback after valid retries. All 30
+write tests passed, with formatting and all-target fastdb-tests Clippy with
+warnings denied. Logs `/tmp/fastdb-filter-tuple-params.log` and
+`/tmp/fastdb-filter-tuple-params-clippy.log`. Only tests/docs changed from
+`35a954166`; no new full-suite or client run is claimed. Full V1 remains open.

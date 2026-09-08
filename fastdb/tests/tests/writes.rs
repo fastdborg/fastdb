@@ -1337,3 +1337,41 @@ fn aggregate_tuple_validation_restores_indexes_and_allows_retry() {
         assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before[1..]);
     }
 }
+
+#[test]
+fn filtered_tuple_parameters_validate_before_mutation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup",
+        "INSERT INTO lookup(n,a) VALUES(1,6),(1,11)",
+    ] {
+        q(&c, sql);
+    }
+    let sql="UPDATE docs SET (a,b)=(SELECT sum(x.a) FILTER(WHERE x.a>$minimum),count(*) FILTER(WHERE x.a>$minimum) FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b";
+    q(&c, "BEGIN");
+    let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
+    assert_eq!(
+        c.execute(sql, &Parameters::new()).unwrap_err().code(),
+        "FDB_PARAMETER"
+    );
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
+    for (minimum, sum, count) in [
+        (0, Value::Integer(17), 2),
+        (7, Value::Integer(11), 1),
+        (20, Value::Null, 0),
+    ] {
+        let params = Parameters::from([("$minimum".into(), Value::Integer(minimum))]);
+        assert_eq!(
+            c.execute(sql, &params).unwrap().rows,
+            vec![
+                vec![Value::Integer(1), sum, Value::Integer(count)],
+                vec![Value::Integer(2), Value::Null, Value::Integer(0)]
+            ]
+        );
+    }
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
+}
