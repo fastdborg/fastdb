@@ -5221,3 +5221,16 @@ zero failures, one existing ignored trigger-interruption gate; 87 Node/applicati
 passes; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Log `/tmp/fastdb-compound-tuples-check.log`; addon rebuilt. No upstream
 source, dependency or storage-format changes; no publication. Full V1 remains open.
+
+
+## Node compound tuple verification — 2026-09-09
+
+Both synchronous and worker clients now verify typed record IDs and integer
+values through UNION ALL, UNION, INTERSECT and EXCEPT tuple assignments.
+The cases cover correlated collection lookups, positional descending ordering,
+LIMIT, unmatched-row NULL tuples, active transaction reports and rollback.
+All 87 Node/application tests passed against the addon built by the preceding
+full scoped check. Log: `/tmp/fastdb-compound-tuple-node.log`.
+Only tests/docs changed from `862501a08`; no native rebuild or new Rust-suite
+run is claimed. Broader compound tuple qualification and full V1 remain open.
+No publication occurred.

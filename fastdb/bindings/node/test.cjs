@@ -2679,6 +2679,16 @@ test('tuple collection lookups preserve typed results in both clients', async ()
       const nested = await db.execute('UPDATE docs SET (a,b)=(SELECT (SELECT x.a FROM lookup x WHERE x.n=docs.n ORDER BY x.rank LIMIT 1),(SELECT x.b FROM lookup x WHERE x.n=docs.n ORDER BY x.rank LIMIT 1)) RETURNING n,a,b');
       assert.deepEqual(nested.rows, [[1n,record,payload],[2n,null,null]]);
       assert.deepEqual(nested.transaction, { before: 'active', after: 'active' });
+      for (const [operator, expected] of [
+        ['UNION ALL', [[1n,new Record('docs', 'second'),2n],[2n,null,null]]],
+        ['UNION', [[1n,new Record('docs', 'second'),2n],[2n,null,null]]],
+        ['INTERSECT', [[1n,record,1n],[2n,null,null]]],
+        ['EXCEPT', [[1n,new Record('docs', 'second'),2n],[2n,null,null]]],
+      ]) {
+        const compound = await db.execute(`UPDATE docs SET (a,b)=(SELECT x.a,x.rank FROM lookup x WHERE x.n=docs.n ${operator} SELECT y.a,y.rank FROM lookup y WHERE y.n=docs.n AND y.rank=1 ORDER BY 2 DESC LIMIT 1) RETURNING n,a,b`);
+        assert.deepEqual(compound.rows, expected);
+        assert.deepEqual(compound.transaction, { before: 'active', after: 'active' });
+      }
       const result = await db.execute('UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
       assert.deepEqual(result.rows, [[1n,record,payload],[2n,null,null]]);
       assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
