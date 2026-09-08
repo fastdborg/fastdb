@@ -64,6 +64,89 @@ enum PortableKey {
     Integer(#[serde(with = "decimal")] i64),
     String(String),
 }
+
+// Serialize views of the validated value tree. Unlike Portable (the input
+// representation), these wrappers do not rebuild nested arrays and objects.
+struct PortableRef<'a>(&'a Value);
+struct PortableArray<'a>(&'a [Value]);
+struct PortableObject<'a>(&'a Document);
+struct PortableKeyRef<'a>(&'a Key);
+#[derive(Serialize)]
+struct PortableRecordRef<'a> {
+    table: &'a str,
+    key: PortableKeyRef<'a>,
+}
+fn tagged<S: serde::Serializer>(
+    serializer: S,
+    tag: &str,
+    value: &impl Serialize,
+) -> std::result::Result<S::Ok, S::Error> {
+    use serde::ser::SerializeStruct;
+    let mut output = serializer.serialize_struct("Portable", 2)?;
+    output.serialize_field("type", tag)?;
+    output.serialize_field("value", value)?;
+    output.end()
+}
+impl Serialize for PortableRef<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Null => {
+                use serde::ser::SerializeStruct;
+                let mut output = serializer.serialize_struct("Portable", 1)?;
+                output.serialize_field("type", "Null")?;
+                output.end()
+            }
+            Value::Boolean(value) => tagged(serializer, "Boolean", value),
+            Value::Integer(value) => tagged(serializer, "Integer", &value.to_string()),
+            Value::Number(value) => {
+                tagged(serializer, "Number", &format!("{:016x}", value.to_bits()))
+            }
+            Value::String(value) => tagged(serializer, "String", value),
+            Value::Binary(value) => tagged(serializer, "Binary", value),
+            Value::Vector(value) => tagged(serializer, "Vector", value),
+            Value::Array(value) => tagged(serializer, "Array", &PortableArray(value)),
+            Value::Object(value) => tagged(serializer, "Object", &PortableObject(value)),
+            Value::Record(value) => tagged(
+                serializer,
+                "Record",
+                &PortableRecordRef {
+                    table: &value.table,
+                    key: PortableKeyRef(&value.key),
+                },
+            ),
+        }
+    }
+}
+impl Serialize for PortableArray<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter().map(PortableRef))
+    }
+}
+impl Serialize for PortableObject<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(key, value)| (key, PortableRef(value))))
+    }
+}
+impl Serialize for PortableKeyRef<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self.0 {
+            Key::Integer(value) => tagged(serializer, "Integer", &value.to_string()),
+            Key::String(value) => tagged(serializer, "String", value),
+        }
+    }
+}
 mod decimal {
     use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> {
@@ -211,12 +294,11 @@ impl Connection {
                         let value = values
                             .next()
                             .ok_or_else(|| Error::Storage("missing transfer document".into()))?;
-                        let document =
-                            Portable::from(Value::Object(crate::decode_document(value)?));
+                        let document = Value::Object(crate::decode_document(value)?);
                         if matches!(format, TransferFormat::Json) && count != 0 {
                             output.append(b",")?;
                         }
-                        output.json(&document)?;
+                        output.json(&PortableRef(&document))?;
                         if matches!(format, TransferFormat::Ndjson) {
                             output.append(b"\n")?;
                         }
@@ -445,19 +527,19 @@ impl Value {
     /// A single tagged value using the document transfer v1 value encoding.
     pub fn to_portable_value(&self) -> Result<serde_json::Value> {
         self.validate()?;
-        Ok(serde_json::to_value(Portable::from(self.clone()))?)
+        Ok(serde_json::to_value(PortableRef(self))?)
     }
     /// Consume a tagged value using the document transfer v1 value encoding.
     /// Avoids cloning the owned value tree before portable conversion.
     pub fn into_portable_value(self) -> Result<serde_json::Value> {
         self.validate()?;
-        Ok(serde_json::to_value(Portable::from(self))?)
+        Ok(serde_json::to_value(PortableRef(&self))?)
     }
     /// Consume and serialize a transfer-v1 value directly to JSON text, without
     /// constructing an intermediate serde_json value tree.
     pub fn into_portable_json(self) -> Result<String> {
         self.validate()?;
-        Ok(serde_json::to_string(&Portable::from(self))?)
+        Ok(serde_json::to_string(&PortableRef(&self))?)
     }
     /// Consume and write a transfer-v1 value to a JSON sink without an
     /// intermediate JSON string. Validation completes before writing any bytes.
@@ -465,7 +547,7 @@ impl Value {
     /// the writer or make its output atomic.
     pub fn write_portable_json(self, writer: impl std::io::Write) -> Result<()> {
         self.validate()?;
-        Ok(serde_json::to_writer(writer, &Portable::from(self))?)
+        Ok(serde_json::to_writer(writer, &PortableRef(&self))?)
     }
     /// Decode a tagged transfer v1 value and validate its logical type.
     pub fn from_portable_value(value: serde_json::Value) -> Result<Self> {
@@ -478,6 +560,64 @@ impl Value {
 #[cfg(test)]
 mod export_tests {
     use super::*;
+    #[test]
+    fn borrowed_portable_encoding_matches_owned_wire_at_all_supported_depths() {
+        let mut values = vec![
+            Value::Null,
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Integer(i64::MIN),
+            Value::Integer(i64::MAX),
+            Value::Number(-0.0),
+            Value::Number(f64::MIN_POSITIVE),
+            Value::Number(f64::from_bits(1)),
+            Value::Number(f64::MAX),
+            Value::String("quoted\"\\\nไทย".into()),
+            Value::Binary(vec![0, 127, 255]),
+            Value::Array(Vec::new()),
+            Value::Object(Document::new()),
+            Value::Record(Record {
+                table: "docs".into(),
+                key: Key::Integer(i64::MIN),
+            }),
+            Value::Record(Record {
+                table: "docs".into(),
+                key: Key::String("ไทย\"\n".into()),
+            }),
+            Value::vector32(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector64(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector32_sparse(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector8(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector1bit(&[1.0, 0.0, -1.0]).unwrap(),
+        ];
+        values.push(Value::Object(
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| (format!("field {index}\""), value.clone()))
+                .collect(),
+        ));
+        let mut nested = Value::Null;
+        for depth in 0..=64 {
+            values.push(nested.clone());
+            nested = if depth % 2 == 0 {
+                Value::Array(vec![nested])
+            } else {
+                Value::Object([("nested".into(), nested)].into())
+            };
+        }
+        for value in values {
+            let expected = serde_json::to_string(&Portable::from(value.clone())).unwrap();
+            assert_eq!(value.clone().into_portable_json().unwrap(), expected);
+            let mut output = Vec::new();
+            value.clone().write_portable_json(&mut output).unwrap();
+            assert_eq!(output, expected.as_bytes());
+            let encoded = serde_json::to_value(Portable::from(value.clone())).unwrap();
+            assert_eq!(value.to_portable_value().unwrap(), encoded);
+            assert_eq!(value.clone().into_portable_value().unwrap(), encoded);
+            assert_eq!(Value::from_portable_value(encoded).unwrap(), value);
+        }
+    }
     #[test]
     fn direct_portable_json_preserves_record_shapes_and_rejects_invalid_values() {
         for key in [Key::Integer(i64::MIN), Key::String("ไทย\"\n".into())] {

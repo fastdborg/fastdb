@@ -3485,3 +3485,25 @@ samples. Whole-process peaks and timings remain mixed compared with the prior
 response-buffer run, so no consistent improvement is claimed. See benchmarks.md
 and the raw `2026-09-08-linux-debug-node-writer255-1000.json` report for medians,
 identities and limitations. Full V1 resource/release gates remain open.
+
+
+### Borrowed portable serialization
+
+Portable JSON/value serializers and JSON/NDJSON document exports now traverse
+borrowed views of validated values. Nested arrays/maps are emitted directly
+instead of constructing a second owned Portable tree; `to_portable_value(&self)`
+also avoids cloning its input. Input values and complete output buffers still
+remain resident. Numeric string formatting, UTF-8 validation and downstream
+transport costs remain; no whole-process memory improvement or cap is claimed.
+
+A new byte-for-byte comparison with the previous owned encoder covers every
+value variant, both record-key kinds, five vector encodings, numeric edge values,
+and alternating object/array depths 0–64. It separately checks portable-value
+round trips rather than relying on serde_json's default text recursion limit.
+The six export unit tests and six transfer integration tests pass, including
+exact export limits, preflight behavior, validation-before-output and failed
+sinks. Logs: `/tmp/fastdb-portable-ref-unit.log` and
+`/tmp/fastdb-portable-ref-transfer.log`. General resource and release gates remain
+open.
+
+The rebuilt addon passes all 77 Node/application tests and strict TypeScript; scoped Clippy and formatting also pass. Logs: `/tmp/fastdb-portable-ref-node.log` and `/tmp/fastdb-portable-ref-clippy.log`. Full-suite and installed-package evidence remain separately recorded; these checks do not close V1.

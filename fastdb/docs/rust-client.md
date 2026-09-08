@@ -151,5 +151,6 @@ encoding directly into a caller-owned sink. Validation completes before output;
 invalid values leave the sink unchanged. I/O failures return `FDB_STORAGE` and
 can leave a partial JSON value in the sink. The method does not flush the writer
 or make output atomic. Use a buffered writer for files or sockets. It consumes
-the value but still constructs the portable value representation; this is not
-a database row-streaming API or a total-memory limit.
+the value and serializes borrowed views of its arrays and objects without
+building a second portable tree. The complete input remains resident during
+serialization; this is not a database row-streaming API or a total-memory limit.
