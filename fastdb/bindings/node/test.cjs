@@ -2649,3 +2649,25 @@ test('tuple updates preserve typed snapshots and atomic failure in both clients'
     } finally { await db.close(); }
   }
 });
+
+test('tuple collection lookups preserve typed results in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs(n) VALUES(1),(2)');
+      await db.execute('CREATE TABLE lookup');
+      const record = new Record('docs', 9223372036854775807n);
+      const payload = { values: [true, Buffer.from([0,255]), -9223372036854775808n] };
+      await db.execute('INSERT INTO lookup(n,a,b) VALUES(1,$a,$b)', { $a: record, $b: payload });
+      await db.execute('BEGIN');
+      const result = await db.execute('UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=docs.n) RETURNING n,a,b');
+      assert.deepEqual(result.rows, [[1n,record,payload],[2n,null,null]]);
+      assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, result.rows);
+      await db.execute('ROLLBACK');
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,null,null],[2n,null,null]]);
+    } finally { await db.close(); }
+  }
+});

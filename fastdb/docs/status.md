@@ -4448,3 +4448,15 @@ All sixteen write tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-tuple-lookup-recovery.log` and
 `/tmp/fastdb-tuple-lookup-recovery-clippy.log`. Only tests/documentation changed
 from `f9d700e79`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Node typed tuple lookup coverage — 2026-09-09
+
+Both clients now verify collection tuple lookups with typed record keys, nested
+objects/arrays, boolean, binary and int64 values. Unmatched candidates receive
+NULLs, stored rows match RETURNING, transaction reports remain active, and outer
+rollback restores target data. The focused test and all 84 Node/application
+tests passed against the last full-check addon. Logs
+`/tmp/fastdb-tuple-lookup-node-focused.log` and `/tmp/fastdb-tuple-lookup-node.log`.
+Only tests/documentation changed from `3e7a62be8`; no native rebuild or full Rust
+rerun is claimed. Full V1 gates remain open; no publication occurred.
