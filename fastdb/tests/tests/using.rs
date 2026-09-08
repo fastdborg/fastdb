@@ -154,3 +154,50 @@ fn pinned_using_multiple_keys_and_chained_right_join_star_order() {
         ]
     );
 }
+
+#[test]
+fn mixed_right_join_stars_follow_pinned_source_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {n:1}",
+        "CREATE TABLE baseline(n INTEGER)",
+        "INSERT INTO baseline VALUES(1)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+        "CREATE TABLE c(v INTEGER)",
+        "INSERT INTO c VALUES(10)",
+    ] {
+        query(sql);
+    }
+    for projection in ["*", "d.*,b.*,c.*", "b.k AS first,*"] {
+        let sql = |source: &str| {
+            format!("SELECT {projection} FROM (SELECT n AS a FROM {source}) d RIGHT JOIN b ON d.a=b.k JOIN c ON 1 ORDER BY b.k")
+        };
+        let expected = query(&sql("baseline"));
+        let logical = sql("docs");
+        let actual = query(&logical);
+        assert_eq!(actual.columns, expected.columns, "{logical}");
+        assert_eq!(actual.rows, expected.rows, "{logical}");
+        assert_eq!(
+            c.profile_select(&logical, &Parameters::new())
+                .unwrap()
+                .result
+                .rows,
+            expected.rows
+        );
+    }
+    query("CREATE TABLE expected(x,y,z)");
+    query("CREATE TABLE actual(x,y,z)");
+    query("INSERT INTO expected SELECT * FROM (SELECT n AS a FROM baseline) d RIGHT JOIN b ON d.a=b.k JOIN c ON 1 ORDER BY b.k");
+    query("BEGIN");
+    query("INSERT INTO actual SELECT * FROM (SELECT n AS a FROM docs) d RIGHT JOIN b ON d.a=b.k JOIN c ON 1 ORDER BY b.k");
+    assert_eq!(
+        query("SELECT * FROM actual").rows,
+        query("SELECT * FROM expected").rows
+    );
+    query("ROLLBACK");
+    assert!(query("SELECT * FROM actual").rows.is_empty());
+}

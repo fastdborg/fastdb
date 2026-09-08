@@ -18,3 +18,5 @@ Before enabling the syntax, extend the oracle for multiple keys, chained joins, 
 
 
 The multiple-key/chained oracle now also verifies that USING(t,k) does not reorder the retained table columns. A LEFT JOIN on (k,t) followed by JOIN c USING(k) retains the left key when the earlier right row is unmatched. The pinned `a RIGHT JOIN b USING(k,t) JOIN c USING(k)` star expands to `c,a,k,t,b` for the fixture, reflecting engine join reordering. Do not assume written FROM order when implementing RIGHT-join stars; inspect the pinned planner's join normalization and preserve qualified-star behavior separately.
+
+Mixed ON-query unqualified star ordering now mirrors the pinned leading-RIGHT swap/reverse behavior, with differential read/write tests. This does not yet add merged USING keys or enable collection USING syntax.

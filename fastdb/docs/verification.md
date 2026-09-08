@@ -2301,3 +2301,10 @@ USING join implementation groundwork (2026-09-08): added a passing pinned native
 
 
 USING multi-key/chained oracle (2026-09-08): both native oracle tests pass. Reversing the USING key list preserves table-column star order. Chained LEFT JOIN resolution retains the earlier left key across an unmatched right row. A RIGHT JOIN followed by another USING join exposes pinned star order c,a,k,t,b, rather than written FROM order. using-joins.md records this additional implementation constraint. Collection USING remains unimplemented; full V1 scope remains intact. Formatting and the focused oracle suite pass.
+
+
+## Mixed RIGHT JOIN star ordering (2026-09-08)
+
+Fixed unqualified mixed-query star order for a leading RIGHT JOIN followed by further joins. The pinned planner swaps the first pair and select_star reverses the joined source list; FastDB now mirrors that ordering rather than always using written FROM order. Qualified stars retain explicit source order. Differential tests cover unmatched rows, mixed explicit/star projections, profiling, positional native INSERT SELECT and rollback. This fixes existing ON joins and supplies required groundwork for USING; collection USING/NATURAL remain unimplemented.
+
+The complete fastdb/scripts/check.sh run passed formatting, Clippy, 440 Rust tests with one existing ignored trigger-cancellation gate, 48 Node/application tests and strict TypeScript. The final three-test USING/oracle suite also passed after the write assertions were added. Logs: /tmp/fastdb-right-star-check.log and /tmp/fastdb-right-star-final.log. Full V1 qualification remains incomplete.

@@ -3945,7 +3945,7 @@ impl Connection {
                 return Err(Error::Validation("duplicate table alias".into()));
             }
         }
-        *columns = expand_stars(self, &scope, columns)?;
+        *columns = expand_stars(self, &scope, columns, from.as_ref())?;
         let original_columns = columns.clone();
         let mut typed = Vec::new();
         let mut fetched = Vec::new();
@@ -4955,11 +4955,26 @@ fn expand_stars(
     connection: &Connection,
     scope: &Scope,
     columns: &[ResultColumn],
+    from: Option<&FromClause>,
 ) -> Result<Vec<ResultColumn>> {
+    let mut star_sources = scope.sources.iter().collect::<Vec<_>>();
+    if from
+        .and_then(|from| from.joins.first())
+        .is_some_and(|join| {
+            matches!(join.operator, JoinOperator::TypedJoin(Some(kind))
+            if kind.contains(JoinType::RIGHT) && !kind.contains(JoinType::LEFT))
+        })
+        && star_sources.len() >= 2
+    {
+        // Mirror the pinned planner: RIGHT swaps the first pair, and its
+        // select_star then reverses the entire joined source list.
+        star_sources.swap(0, 1);
+        star_sources.reverse();
+    }
     let mut expanded = Vec::new();
     for column in columns {
         let sources: Vec<&Source> = match column {
-            ResultColumn::Star => scope.sources.iter().collect(),
+            ResultColumn::Star => star_sources.clone(),
             ResultColumn::TableStar(name) => vec![scope
                 .sources
                 .iter()
