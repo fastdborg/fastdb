@@ -5571,6 +5571,17 @@ impl Connection {
                 }
             }
         }
+        // Native pagination probes may return no logical plan. Their parameters
+        // still belong to this compound and must be validated and propagated.
+        if let Some(limit) = &select.limit {
+            for value in std::iter::once(&limit.expr).chain(limit.offset.iter()) {
+                for token in fastql_parser::tokenize(&value.to_string())? {
+                    if token.kind == fastql_parser::Kind::Parameter {
+                        consumed.insert(token.text);
+                    }
+                }
+            }
+        }
         for name in &consumed {
             if !params.contains_key(name) {
                 return Err(Error::Parameter(name.clone()));
