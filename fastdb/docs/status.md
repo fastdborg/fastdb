@@ -2706,3 +2706,21 @@ The complete scoped check passed 521 Rust tests (one existing ignored gate),
 `/tmp/fastdb-mixed-result-check.log`. No installed-package smoke was rerun for this
 internal routing change. Candidate/snapshot limits, engine working-memory budgets,
 deadlines and broader interrupted I/O/release qualification remain unfinished.
+
+### Release completed RETURNING snapshots incrementally
+
+Collection RETURNING now owns and consumes document snapshots one at a time,
+releasing each completed snapshot as returned rows accumulate. It no longer
+builds a second vector of borrowed snapshot references or retains completed
+snapshots until the whole result finishes. Empty writes still take one metadata
+projection path. Unprocessed snapshots and candidates remain materialized, so
+this reduces overlapping retention without establishing a memory cap.
+
+All 14 existing RETURNING/result-limit integration tests passed, covering typed
+snapshots, empty results, projection failure, data/index rollback, exact limits,
+star results, triggers and reopen. Frontend Clippy and formatting checks passed.
+Logs: `/tmp/fastdb-returning-snapshots.log` and
+`/tmp/fastdb-returning-snapshots-clippy.log`. No full or Node/package run was
+repeated for this ownership-only change. The gate summary now points to the
+latest historical complete scoped run instead of stale 505/62 counts. Candidate
+and snapshot budgets and the remaining V1 resource/release gates remain open.

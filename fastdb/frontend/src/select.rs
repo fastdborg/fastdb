@@ -3877,11 +3877,10 @@ impl Connection {
         );
         let mut result = None;
         let mut budget = None;
-        let inputs = if documents.is_empty() {
-            vec![None]
-        } else {
-            documents.iter().map(Some).collect()
-        };
+        // Own one snapshot at a time so completed snapshots are released as
+        // returned rows accumulate. Empty writes still evaluate metadata once.
+        let metadata_only = documents.is_empty().then_some(None);
+        let inputs = documents.into_iter().map(Some).chain(metadata_only);
         for snapshot in inputs {
             let row = self
                 .collection_select_options(
@@ -3890,7 +3889,7 @@ impl Connection {
                     SelectOptions {
                         trusted: true,
                         ignore_unused: true,
-                        snapshot: Some(snapshot),
+                        snapshot: Some(snapshot.as_ref()),
                         ..Default::default()
                     },
                 )?

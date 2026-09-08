@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-08
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 505 passing Rust tests with one ignored trigger-cancellation gate, 62 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-collated-between-check.log`, production change `e7d7dc863`). Later test-only changes include 60 passing Node binding tests and expanded callback qualification; see status.md for exact runs. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 521 passing Rust tests with one ignored trigger-cancellation gate, 70 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-mixed-result-check.log`, production change `dfda4ab06`). Later focused runs are recorded in status.md with their exact scope. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
