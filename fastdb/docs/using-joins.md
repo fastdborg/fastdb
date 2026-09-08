@@ -47,3 +47,6 @@ Duplicate public key columns now have a 27-case execute/profile differential mat
 
 
 Optional and explicit-null keys now match a native NULL baseline in 18 execute/profile shapes across INNER/LEFT/RIGHT joins, direct/closed sources and NULL filters. A missing key in a closed source rejects on either side without preventing later writes and rollback on that connection. Virtual-source and broader correlation qualification remain open.
+
+
+Managed-index coverage compares nine join/filter shapes before/after index creation and after updates/deletes with index removal. Rollback restores data and index catalog entries. EXPLAIN confirms docs_k for the filtered inner join; this does not establish indexed lookup for the join predicate itself.
