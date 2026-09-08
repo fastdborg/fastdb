@@ -4714,3 +4714,14 @@ passed, plus formatting and all-target fastdb-tests Clippy with warnings denied.
 Logs `/tmp/fastdb-tuple-local-chain.log` and
 `/tmp/fastdb-tuple-local-chain-clippy.log`. Only tests/documentation changed from
 `65f921980`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Node chained tuple-local CTE coverage — 2026-09-09
+
+Both clients now exercise chained tuple-local CTEs with declared column names,
+ordered selection, typed record/object results and unmatched NULL tuples.
+The focused test and all 85 Node/application tests passed against the last
+full-check addon. Logs `/tmp/fastdb-local-tuple-node-focused.log` and
+`/tmp/fastdb-local-tuple-node.log`. Only tests/documentation changed from
+`c637019b6`; no native rebuild or full Rust rerun is claimed. Full V1 gates
+remain open; no publication occurred.
