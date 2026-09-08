@@ -619,38 +619,69 @@ mod between_tests {
         for negate in ["", "NOT "] {
             for collation in ["BINARY", "NOCASE", "RTRIM"] {
                 for tail in ["", " LIMIT 0"] {
-                    let predicate = format!("coalesce(NULL,between_tick()+d.lo) {negate}BETWEEN d.lo COLLATE {collation} AND d.hi");
-                    let native =
-                        format!("SELECT {predicate} AS value FROM collated_baseline d{tail}");
-                    let sql = format!("SELECT (SELECT {predicate} UNION ALL SELECT NULL LIMIT 1) AS value FROM collated_inputs d{tail}");
-                    CALLS.store(0, Ordering::SeqCst);
-                    let expected = c.execute(&native, &crate::Parameters::new()).unwrap().rows;
-                    let calls = CALLS.load(Ordering::SeqCst);
-                    assert_eq!(calls, if tail.is_empty() { 2 } else { 0 }, "{native}");
-                    CALLS.store(0, Ordering::SeqCst);
-                    assert_eq!(
-                        c.execute(&sql, &crate::Parameters::new()).unwrap().rows,
-                        expected,
-                        "{sql}"
-                    );
-                    assert_eq!(CALLS.load(Ordering::SeqCst), calls, "{sql}");
-                    CALLS.store(0, Ordering::SeqCst);
-                    assert_eq!(
-                        c.profile_select(&sql, &crate::Parameters::new())
-                            .unwrap()
-                            .result
-                            .rows,
-                        expected,
-                        "{sql}"
-                    );
-                    assert_eq!(CALLS.load(Ordering::SeqCst), calls, "profile: {sql}");
-                    CALLS.store(0, Ordering::SeqCst);
-                    c.execute(
-                        &format!("EXPLAIN QUERY PLAN {sql}"),
-                        &crate::Parameters::new(),
-                    )
-                    .unwrap();
-                    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "plan: {sql}");
+                    for (lhs, lower, upper, per_row) in [
+                        (
+                            "coalesce(NULL,between_tick()+d.lo)".to_owned(),
+                            format!("d.lo COLLATE {collation}"),
+                            "d.hi".to_owned(),
+                            1,
+                        ),
+                        (
+                            format!("d.lo COLLATE {collation}"),
+                            "coalesce(NULL,between_tick()+d.lo)".to_owned(),
+                            "d.hi".to_owned(),
+                            1,
+                        ),
+                        (
+                            format!("d.lo COLLATE {collation}"),
+                            "d.lo".to_owned(),
+                            "coalesce(NULL,between_tick()+d.hi)".to_owned(),
+                            1,
+                        ),
+                        (
+                            "coalesce(NULL,between_tick()+d.lo)".to_owned(),
+                            "coalesce(NULL,between_tick()+d.lo-1)".to_owned(),
+                            format!("d.hi COLLATE {collation}"),
+                            2,
+                        ),
+                    ] {
+                        let predicate = format!("{lhs} {negate}BETWEEN {lower} AND {upper}");
+                        let native =
+                            format!("SELECT {predicate} AS value FROM collated_baseline d{tail}");
+                        let sql = format!("SELECT (SELECT {predicate} UNION ALL SELECT NULL LIMIT 1) AS value FROM collated_inputs d{tail}");
+                        CALLS.store(0, Ordering::SeqCst);
+                        let expected = c.execute(&native, &crate::Parameters::new()).unwrap().rows;
+                        let calls = CALLS.load(Ordering::SeqCst);
+                        assert_eq!(
+                            calls,
+                            if tail.is_empty() { 2 * per_row } else { 0 },
+                            "{native}"
+                        );
+                        CALLS.store(0, Ordering::SeqCst);
+                        assert_eq!(
+                            c.execute(&sql, &crate::Parameters::new()).unwrap().rows,
+                            expected,
+                            "{sql}"
+                        );
+                        assert_eq!(CALLS.load(Ordering::SeqCst), calls, "{sql}");
+                        CALLS.store(0, Ordering::SeqCst);
+                        assert_eq!(
+                            c.profile_select(&sql, &crate::Parameters::new())
+                                .unwrap()
+                                .result
+                                .rows,
+                            expected,
+                            "{sql}"
+                        );
+                        assert_eq!(CALLS.load(Ordering::SeqCst), calls, "profile: {sql}");
+                        CALLS.store(0, Ordering::SeqCst);
+                        c.execute(
+                            &format!("EXPLAIN QUERY PLAN {sql}"),
+                            &crate::Parameters::new(),
+                        )
+                        .unwrap();
+                        assert_eq!(CALLS.load(Ordering::SeqCst), 0, "plan: {sql}");
+                    }
                 }
             }
         }
