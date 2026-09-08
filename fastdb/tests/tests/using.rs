@@ -3140,3 +3140,38 @@ fn pinned_pagination_parameter_conversion_oracle() {
         }
     }
 }
+
+#[test]
+fn local_cte_scalar_numeric_limits_preserve_pinned_literal_behavior() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(n INTEGER)",
+        "CREATE TABLE keys(n INTEGER)",
+        "INSERT INTO docs(n) VALUES(1),(2),(3)",
+        "INSERT INTO baseline VALUES(1),(2),(3)",
+        "INSERT INTO keys VALUES(1),(4)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for limit in ["0.0", "1.0", "1.5", "1e0", "-1.0"] {
+        for offset in [0, 1, 3] {
+            let query = |source, limit: &str| {
+                format!("SELECT n,(WITH chosen AS (SELECT n AS m FROM baseline) SELECT m FROM chosen WHERE m<n ORDER BY m LIMIT {limit} OFFSET {offset}) AS value FROM {source} a RIGHT JOIN keys b USING(n) ORDER BY n")
+            };
+            let native = c.execute(&query("baseline", limit), &params).unwrap();
+            // The pinned scalar compiler replaces these literals with LIMIT 1.
+            // This differs from top-level MustBeInt conversion and LIMIT 0.0.
+            assert_eq!(
+                native.rows,
+                c.execute(&query("baseline", "1"), &params).unwrap().rows,
+                "{limit}: offset {offset}"
+            );
+            let actual = c.execute(&query("docs", limit), &params).unwrap();
+            assert_eq!(actual.columns, native.columns, "{limit}: offset {offset}");
+            assert_eq!(actual.rows, native.rows, "{limit}: offset {offset}");
+        }
+    }
+}
