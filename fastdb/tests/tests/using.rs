@@ -3055,3 +3055,54 @@ fn ordered_local_cte_scalar_preserves_empty_outer_matches() {
         }
     }
 }
+
+#[test]
+fn pinned_pagination_parameter_conversion_oracle() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    c.execute("CREATE TABLE pagination_values(n INTEGER)", &empty)
+        .unwrap();
+    c.execute("INSERT INTO pagination_values VALUES(1),(2),(3)", &empty)
+        .unwrap();
+    for (value, integer) in [
+        (Value::Number(1.0), 1),
+        (Value::Number(0.0), 0),
+        (Value::Number(-1.0), -1),
+        (Value::String("1".into()), 1),
+        (Value::String("1.0".into()), 1),
+        (Value::String("1e0".into()), 1),
+        (Value::String(" +1 ".into()), 1),
+        (Value::String("0".into()), 0),
+        (Value::String("-1".into()), -1),
+    ] {
+        for position in ["LIMIT $value", "LIMIT 1 OFFSET $value"] {
+            let sql = format!("SELECT n FROM pagination_values ORDER BY n {position}");
+            let actual = c
+                .execute(&sql, &Parameters::from([("$value".into(), value.clone())]))
+                .unwrap();
+            let expected = c
+                .execute(&sql.replace("$value", &integer.to_string()), &empty)
+                .unwrap();
+            assert_eq!(actual.rows, expected.rows, "{sql}: {value:?}");
+        }
+    }
+    for value in [
+        Value::Null,
+        Value::Number(1.5),
+        Value::String("1x".into()),
+        Value::String("".into()),
+        Value::Binary(vec![49]),
+    ] {
+        for position in ["LIMIT $value", "LIMIT 1 OFFSET $value"] {
+            let sql = format!("SELECT n FROM pagination_values ORDER BY n {position}");
+            let error = c
+                .execute(&sql, &Parameters::from([("$value".into(), value.clone())]))
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("datatype mismatch"),
+                "{sql}: {value:?}: {error}"
+            );
+        }
+    }
+}
