@@ -126,3 +126,78 @@ fn json_table_function_sources_preserve_write_failure_and_retry() {
         0
     );
 }
+
+#[test]
+fn correlated_json_iterators_match_native_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT)",
+        "INSERT INTO native VALUES(1,'[1,2]'),(2,'[3]'),(3,'[]'),(4,NULL)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) SELECT n,j FROM native",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for arg in ["d.j", "coalesce(d.j,'[]')"] {
+        for join in ["CROSS JOIN", "LEFT JOIN"] {
+            let query = |source| {
+                format!("SELECT d.n,x.key,x.value FROM {source} d {join} json_each({arg}) x ORDER BY d.n,x.key")
+            };
+            let expected = c.execute(&query("native"), &params).unwrap();
+            let sql = query("docs");
+            for actual in [
+                c.execute(&sql, &params).unwrap(),
+                c.profile_select(&sql, &params).unwrap().result,
+            ] {
+                assert_eq!(actual.columns, expected.columns, "{sql}");
+                assert_eq!(actual.rows, expected.rows, "{sql}");
+            }
+        }
+    }
+    let query = |source| {
+        format!("SELECT d.n,x.value,y.value FROM {source} d CROSS JOIN json_each(d.j) x CROSS JOIN json_each(json_array(x.value+1)) y ORDER BY d.n,x.key")
+    };
+    let expected = c.execute(&query("native"), &params).unwrap();
+    assert_eq!(
+        c.execute(&query("docs"), &params).unwrap().rows,
+        expected.rows
+    );
+    for sql in [
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<3)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(0)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    let sql = "INSERT INTO output(n) SELECT x.value FROM docs d CROSS JOIN json_each(d.j) x WHERE x.value IS NOT NULL ORDER BY d.n,x.key RETURNING n";
+    assert_eq!(
+        c.execute(sql, &params).unwrap_err().code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM output", &params).unwrap().rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    assert!(c
+        .lookup_index("output", "output_n", &Value::Integer(1))
+        .unwrap()
+        .is_empty());
+    c.execute("UPDATE docs SET j='[]' WHERE n=2", &params)
+        .unwrap();
+    assert_eq!(
+        c.execute(sql, &params).unwrap().rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    c.execute("ROLLBACK", &params).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

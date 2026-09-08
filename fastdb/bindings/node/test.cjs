@@ -2493,6 +2493,11 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       assert.deepEqual((await db.profileSelect(computed,params)).result.rows,rows);
       await assert.rejects(async()=>db.execute(computed),error=>error.code==='FDB_PARAMETER');
       assert.deepEqual((await db.execute('SELECT value FROM json_each(json_array(1,2))')).rows,[[1n],[2n]]);
+      await db.execute('UPDATE docs SET j=$json',params);
+      const correlated=sql.replace('json_each($json)','json_each(d.j)');
+      assert.deepEqual((await db.execute(correlated)).rows,rows);
+      assert.deepEqual((await db.profileSelect(correlated)).result.rows,rows);
+
     } finally {await db.close();}
   }
 });

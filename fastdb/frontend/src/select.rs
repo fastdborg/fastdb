@@ -2799,8 +2799,8 @@ fn source(
     inspect_native: bool,
 ) -> Result<Source> {
     if let SelectTable::TableCall(name, args, alias) = table {
-        // Inspect closed iterator expressions without evaluating them. Source
-        // references and subqueries need separate scope-aware lowering.
+        // Inspect iterator expressions without evaluating them. Source references
+        // use NULL only in the metadata probe and are lowered in runtime scope.
         if name.db_name.is_some()
             || !matches!(
                 name.name.as_str().to_ascii_lowercase().as_str(),
@@ -2821,6 +2821,7 @@ fn source(
                                 .map_or_else(|| format!("?{}", var.index), |name| name.to_string()),
                         );
                     }
+                    Expr::Id(_) | Expr::Qualified(..) | Expr::DoublyQualified(..) => {}
                     Expr::Literal(_)
                     | Expr::Binary(..)
                     | Expr::Unary(..)
@@ -2860,7 +2861,21 @@ fn source(
                 return Err(Error::Parameter(name.clone()));
             }
         }
-        let statement = connection.prepare(format!("SELECT * FROM {table}"))?;
+        let mut probe = table.clone();
+        if let SelectTable::TableCall(_, args, _) = &mut probe {
+            for arg in args {
+                turso_core::walk_expr_mut(arg, &mut |expr| {
+                    if matches!(
+                        expr,
+                        Expr::Id(_) | Expr::Qualified(..) | Expr::DoublyQualified(..)
+                    ) {
+                        *expr = Expr::Literal(Literal::Null);
+                    }
+                    Ok(turso_core::WalkControl::Continue)
+                })?;
+            }
+        }
+        let statement = connection.prepare(format!("SELECT * FROM {probe}"))?;
         return Ok(Source {
             table: table.clone(),
             alias: alias
@@ -5798,6 +5813,17 @@ impl Connection {
                 if matches!(join.operator,JoinOperator::TypedJoin(Some(t)) if t.contains(JoinType::NATURAL))
                 {
                     return Err(unsupported("NATURAL joins"));
+                }
+            }
+        }
+        if let Some(from) = from {
+            for table in
+                std::iter::once(&mut from.select).chain(from.joins.iter_mut().map(|j| &mut j.table))
+            {
+                if let SelectTable::TableCall(_, args, _) = table.as_mut() {
+                    for arg in args {
+                        scope.sql_argument(arg)?;
+                    }
                 }
             }
         }

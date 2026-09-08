@@ -3727,3 +3727,24 @@ tests, formatting, Clippy and strict TypeScript passed. Log:
 `/tmp/fastdb-computed-iterators-check.log`; checked implementation tree is based on
 `492b38aa2` with this change. No upstream files, dependencies or publication were
 changed. Broader SQL and full embedded V1 release gates remain open.
+
+
+## Per-row JSON iterator arguments — 2026-09-08
+
+Qualified source fields now lower inside direct json_each/json_tree arguments.
+Metadata inspection substitutes NULL references in a disposable AST; runtime
+arguments use normal SQL argument lowering and remain engine-evaluated per row.
+Native comparisons cover qualified fields, coalesce, CROSS/LEFT joins, empty and
+NULL inputs, and chained iterators referencing preceding iterator columns.
+Validated INSERT SELECT failures preserve prior work, remove failed document/index
+changes and permit corrected retry. Both Node clients check per-row execute and
+profile results. Unqualified collection-join fields retain the existing ambiguity
+guard; argument subqueries, deeper correlation and broader scope qualification
+remain open.
+
+The complete scoped `fastdb/scripts/check.sh` exited zero with 562 passing Rust
+tests, zero failures and one existing ignored trigger-cancellation gate. All 80
+Node/application tests, formatting, Clippy and strict TypeScript passed. Log:
+`/tmp/fastdb-correlated-iterators-check.log`; implementation tree based on
+`6e4b14b19` with this change. No upstream engine or dependency changes occurred.
+This is local evidence; full V1 release gates remain unfinished.

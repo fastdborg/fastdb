@@ -1104,8 +1104,15 @@ Qualified stars, aliases, CROSS/LEFT joins and validated collection INSERT SELEC
 have initial regression coverage. Missing iterator bindings return FDB_PARAMETER.
 A failed collection insert restores its document and index changes while keeping
 prior transaction work; a corrected retry can run in the same transaction.
-Correlated iterator arguments, argument subqueries, FastQL typed helper
-lowering inside arguments and general table-function support remain unqualified.
+Qualified per-row source fields also work in iterator arguments, including
+composed scalar expressions and references to preceding iterator columns. The
+metadata-only probe substitutes NULL for source references; runtime arguments
+use normal SQL argument lowering and execute for each source row. CROSS/LEFT
+joins, NULL/empty inputs, chained iterators and atomic INSERT SELECT failure/retry
+have initial native differential coverage. Unqualified fields in collection joins
+retain the existing ambiguity guard. Argument subqueries, deeper correlation
+scopes, broader typed helper coverage and general table-function support remain
+unqualified.
 Aggregate/window argument forms retain native rejection or the frontend scope
 guard. Closed expressions remain in the executed SQL, preserving native lazy
 evaluation; metadata inspection does not evaluate them. Ordinary SQL continues to use native
