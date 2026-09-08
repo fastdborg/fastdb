@@ -1878,3 +1878,57 @@ fn collection_update_from_resolves_duplicate_candidates() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn update_from_validation_restores_indexes_and_prior_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) VALUES(1,1),(2,2)",
+        "DEFINE FIELD v ON docs TYPE integer CHECK(v<10)",
+        "CREATE UNIQUE INDEX docs_v ON docs(v)",
+        "CREATE TABLE source(k INTEGER,v INTEGER)",
+        "INSERT INTO source VALUES(1,6),(1,7),(2,11)",
+        "BEGIN",
+        "INSERT INTO docs(n,v) VALUES(0,0)",
+    ] {
+        q(&c, sql);
+    }
+    let before = q(&c, "SELECT n,v FROM docs ORDER BY n").rows;
+    let sql = "UPDATE docs SET v=s.v FROM source s WHERE s.k=docs.n RETURNING n,v";
+    assert_eq!(
+        c.execute(sql, &Parameters::new()).unwrap_err().code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(q(&c, "SELECT n,v FROM docs ORDER BY n").rows, before);
+    assert!(c
+        .lookup_index("docs", "docs_v", &Value::Integer(7))
+        .unwrap()
+        .is_empty());
+    q(&c, "UPDATE source SET v=8 WHERE k=2");
+    let result = q(&c, sql);
+    assert_eq!(result.affected, 2);
+    assert_eq!(
+        result.rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(7)],
+            vec![Value::Integer(2), Value::Integer(8)]
+        ]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        3
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT n,v FROM docs ORDER BY n").rows, before[1..]);
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        2
+    );
+}

@@ -5511,3 +5511,14 @@ formatting and all-target fastdb Clippy with warnings denied passed. Logs:
 `/tmp/fastdb-partial-dedup-cancel.log` and
 `/tmp/fastdb-partial-dedup-cancel-clippy.log`. Only tests/docs changed from
 `ed2294f84`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## UPDATE FROM validation recovery — 2026-09-09
+
+A duplicate-source UPDATE FROM regression now checks a later target's CHECK
+failure, restored document and managed unique-index state, preserved prior
+pending work, a corrected-source retry, RETURNING/affected counts and final
+rollback. All 43 write tests passed; formatting and all-target fastdb-tests
+Clippy with warnings denied passed. Logs: `/tmp/fastdb-update-from-recovery.log`
+and `/tmp/fastdb-update-from-recovery-clippy.log`. Only tests/docs changed from
+`57893e9ee`; no new full-suite or client run is claimed. Full V1 remains open.
