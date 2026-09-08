@@ -2298,3 +2298,6 @@ Duplicate runtime-name allocation cost (2026-09-08): replaced a full public-name
 
 
 USING join implementation groundwork (2026-09-08): added a passing pinned native oracle for INNER/LEFT/RIGHT merged-star ordering, qualified-star duplication, right-side unqualified key selection and the tested FULL USING rejection. using-joins.md records the required merged-column resolution before star/predicate lowering and the remaining semantic matrix. Collection USING/NATURAL remain unimplemented; this is executable baseline evidence for the next implementation, not feature completion. Formatting and the focused oracle pass. Full V1 scope remains intact.
+
+
+USING multi-key/chained oracle (2026-09-08): both native oracle tests pass. Reversing the USING key list preserves table-column star order. Chained LEFT JOIN resolution retains the earlier left key across an unmatched right row. A RIGHT JOIN followed by another USING join exposes pinned star order c,a,k,t,b, rather than written FROM order. using-joins.md records this additional implementation constraint. Collection USING remains unimplemented; full V1 scope remains intact. Formatting and the focused oracle suite pass.

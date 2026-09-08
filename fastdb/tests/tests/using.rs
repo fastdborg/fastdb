@@ -79,3 +79,78 @@ fn pinned_using_join_merge_rules_and_full_join_rejection() {
         .to_string()
         .contains("FULL OUTER JOIN requires an equality condition"));
 }
+
+#[test]
+fn pinned_using_multiple_keys_and_chained_right_join_star_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+    for sql in [
+        "CREATE TABLE a(k INTEGER,t TEXT,a INTEGER)",
+        "CREATE TABLE b(k INTEGER,t TEXT,b INTEGER)",
+        "CREATE TABLE c(k INTEGER,c INTEGER)",
+        "INSERT INTO a VALUES(1,'x',10),(2,'y',20)",
+        "INSERT INTO b VALUES(1,'x',100),(2,'z',200)",
+        "INSERT INTO c VALUES(1,1000),(2,2000)",
+    ] {
+        query(sql);
+    }
+    let multiple = query("SELECT * FROM a LEFT JOIN b USING(t,k) ORDER BY a.k");
+    assert_eq!(multiple.columns, vec!["k", "t", "a", "b"]);
+    assert_eq!(
+        multiple.rows,
+        vec![
+            vec![
+                Value::Integer(1),
+                Value::String("x".into()),
+                Value::Integer(10),
+                Value::Integer(100)
+            ],
+            vec![
+                Value::Integer(2),
+                Value::String("y".into()),
+                Value::Integer(20),
+                Value::Null
+            ],
+        ]
+    );
+    assert_eq!(
+        query("SELECT * FROM a LEFT JOIN b USING(k,t) ORDER BY a.k").rows,
+        multiple.rows
+    );
+    let chain =
+        query("SELECT k,a.k,b.k,c.k FROM a LEFT JOIN b USING(k,t) JOIN c USING(k) ORDER BY a.k");
+    assert_eq!(
+        chain.rows,
+        vec![
+            vec![Value::Integer(1); 4],
+            vec![
+                Value::Integer(2),
+                Value::Integer(2),
+                Value::Null,
+                Value::Integer(2)
+            ],
+        ]
+    );
+    let right = query("SELECT * FROM a RIGHT JOIN b USING(k,t) JOIN c USING(k) ORDER BY b.k");
+    assert_eq!(right.columns, vec!["c", "a", "k", "t", "b"]);
+    assert_eq!(
+        right.rows,
+        vec![
+            vec![
+                Value::Integer(1000),
+                Value::Integer(10),
+                Value::Integer(1),
+                Value::String("x".into()),
+                Value::Integer(100)
+            ],
+            vec![
+                Value::Integer(2000),
+                Value::Null,
+                Value::Integer(2),
+                Value::String("z".into()),
+                Value::Integer(200)
+            ],
+        ]
+    );
+}
