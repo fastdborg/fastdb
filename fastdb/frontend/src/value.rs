@@ -63,6 +63,25 @@ impl Value {
         Ok(value)
     }
 }
+pub(crate) fn validate_document_value(document: &Document) -> Result<()> {
+    for value in document.values() {
+        value.validate_at(1)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn encode_document(document: &Document) -> Result<Vec<u8>> {
+    validate_document_value(document)?;
+    #[derive(Serialize)]
+    #[serde(tag = "type", content = "value")]
+    enum BorrowedValue<'a> {
+        Object(&'a Document),
+    }
+    let mut bytes = b"FDB\x01".to_vec();
+    serde_json::to_writer(&mut bytes, &BorrowedValue::Object(document))?;
+    Ok(bytes)
+}
+
 pub(crate) fn validate_record(r: &Record) -> Result<()> {
     if r.table.is_empty() || matches!(&r.key, Key::String(s) if s.is_empty()) {
         return Err(Error::Validation(
@@ -110,6 +129,64 @@ mod tests {
                 "encoding {}",
                 String::from_utf8_lossy(&encoded)
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod borrowed_document_tests {
+    use super::*;
+
+    #[test]
+    fn borrowed_encoding_preserves_storage_bytes_and_validation() {
+        let document = Document::from([
+            (
+                "id".into(),
+                Value::Record(Record {
+                    table: "docs".into(),
+                    key: Key::Integer(i64::MAX),
+                }),
+            ),
+            (
+                "é".into(),
+                Value::Array(vec![
+                    Value::Null,
+                    Value::Boolean(true),
+                    Value::Integer(i64::MIN),
+                    Value::Number(-0.0),
+                    Value::String("ไทย".into()),
+                    Value::Binary(vec![0, 255]),
+                    Value::Object(Document::new()),
+                ]),
+            ),
+        ]);
+        let bytes = encode_document(&document).unwrap();
+        assert_eq!(bytes, Value::Object(document.clone()).encode().unwrap());
+        assert_eq!(Value::decode(&bytes).unwrap(), Value::Object(document));
+        for value in [
+            Value::Number(f64::NAN),
+            Value::Vector(vec![]),
+            Value::Record(Record {
+                table: String::new(),
+                key: Key::Integer(1),
+            }),
+        ] {
+            let document = Document::from([("v".into(), value)]);
+            assert_eq!(
+                encode_document(&document).unwrap_err().code(),
+                Value::Object(document.clone()).encode().unwrap_err().code()
+            );
+        }
+        let mut value = Value::Null;
+        for depth in 0..66 {
+            let document = Document::from([("v".into(), value.clone())]);
+            let borrowed = encode_document(&document);
+            let owned = Value::Object(document).encode();
+            assert_eq!(borrowed.is_ok(), owned.is_ok(), "depth {depth}");
+            if let (Ok(a), Ok(b)) = (borrowed, owned) {
+                assert_eq!(a, b);
+            }
+            value = Value::Array(vec![value]);
         }
     }
 }

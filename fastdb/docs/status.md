@@ -2979,3 +2979,21 @@ subset. Log: `/tmp/fastdb-consumer-write-buffers.log`. This qualifies the public
 builder and current DELETE implementation in a dependent application on this
 platform; broader resource, packaging/platform and V1 gates remain open. No
 production code changed and no broader suite was repeated.
+
+### Borrowed document validation and storage encoding
+
+Document validation now traverses borrowed fields at the same nesting depth as
+an owned Object value. INSERT and replacement storage encoding serialize a borrowed
+Object directly into the version-prefixed byte buffer, avoiding the full document
+clone and intermediate JSON byte vector. INSERT returns its owned document and
+PATCH consumes its owned patch fields. The storage format is unchanged.
+
+A regression compares borrowed/owned encoded bytes and decoded values, including
+Unicode, binary data, int64 boundaries, negative zero and nested objects/arrays;
+it also compares invalid-value rejection and all nesting boundaries through depth
+65. Final-source `fastdb/scripts/check.sh` passed: 535 Rust tests, zero failures,
+one existing ignored test; 72 Node/application tests; scoped formatting, Clippy
+and strict TypeScript. Logs: `/tmp/fastdb-borrowed-document.log` and
+`/tmp/fastdb-borrowed-document-check.log`. This reduces transient copies without
+claiming a measured memory ceiling or closing broader V1 resource/release gates.
+Installed-package and standalone-consumer checks were not repeated for this change.

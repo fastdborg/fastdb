@@ -493,13 +493,13 @@ impl Connection {
                 &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
                 &[
                     EngineValue::Blob(doc["id"].encode()?),
-                    EngineValue::Blob(Value::Object(doc.clone()).encode()?),
+                    EngineValue::Blob(value::encode_document(&doc)?),
                 ],
             )?;
             for index in &c.indexes {
                 self.insert_index(index, &doc)?;
             }
-            Ok(doc.clone())
+            Ok(doc)
         })
     }
     pub fn patch(&self, record: &Record, patch: Document) -> Result<Option<Document>> {
@@ -511,7 +511,7 @@ impl Connection {
             let Some(mut doc) = self.get_in(&c, record)? else {
                 return Ok(None);
             };
-            doc.extend(patch.clone());
+            doc.extend(patch);
             self.replace_document(&c, &doc)?;
             Ok(Some(doc))
         })
@@ -521,10 +521,7 @@ impl Connection {
         let id = EngineValue::Blob(doc["id"].encode()?);
         self.run(
             &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
-            &[
-                EngineValue::Blob(Value::Object(doc.clone()).encode()?),
-                id.clone(),
-            ],
+            &[EngineValue::Blob(value::encode_document(doc)?), id.clone()],
         )?;
         for index in &c.indexes {
             self.run(
@@ -975,7 +972,7 @@ fn path_value<'a>(doc: &'a Document, path: &[String]) -> Result<Option<&'a Value
     Err(Error::Validation("empty field path".into()))
 }
 fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
-    Value::Object(doc.clone()).validate()?;
+    value::validate_document_value(doc)?;
     for f in &c.fields {
         // A required nested child applies only when its parent object exists.
         if f.path.len() > 1 && path_value(doc, &f.path[..f.path.len() - 1])?.is_none() {

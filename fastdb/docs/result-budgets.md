@@ -163,7 +163,11 @@ and evaluated assignment values instead of cloning them immediately before
 mutation. SQL DELETE likewise moves its candidate document into the RETURNING
 snapshot buffer and uses it for storage cleanup, avoiding a second document read
 and decode. Its snapshot check precedes storage mutation. Candidate formation
-still completes before any writes. Unprocessed
+still completes before any writes. Document validation and storage encoding now
+borrow document fields instead of cloning the document into a temporary object
+value. Encoding writes directly into the prefixed storage byte buffer. INSERT
+returns its owned document, and PATCH consumes its owned patch fields. These
+changes avoid redundant copies without changing the stored value format. Unprocessed
 snapshots and complete write candidates can still be materialized; these lifetime
 and ownership changes are not a total-memory cap.
 
