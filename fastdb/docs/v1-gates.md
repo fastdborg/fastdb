@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-08
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 482 passing Rust tests with one ignored trigger-cancellation gate, 50 passing Node/application tests, formatting, Clippy and strict TypeScript. Later focused checks are recorded below and in verification.md. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 505 passing Rust tests with one ignored trigger-cancellation gate, 62 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-collated-between-check.log`, production change `e7d7dc863`). Later test-only changes include 60 passing Node binding tests and expanded callback qualification; see status.md for exact runs. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -20,7 +20,7 @@ Cloud beta requirements remain deferred until after embedded V1. They do not blo
 
 ## Current SQL priorities — rechecked 2026-09-08
 
-Rechecked the current debug Node addon built by the complete scoped run at `a631f64ec`; subsequent commits contain test/documentation changes. Fixture: `docs` and `native(n INTEGER)` contain 1,2,3; `keys(n INTEGER)` contains 1,4. Every probe runs inside BEGIN/ROLLBACK. Raw local output: `/tmp/fastdb-current-sql-gaps.log`.
+Rechecked the current debug Node addon built by the complete scoped run at `e7d7dc863`; subsequent commits contain test/documentation changes. Fixture: `docs` and `native(n INTEGER)` contain 1,2,3; `keys(n INTEGER)` contains 1,4. The two local-WITH/alias-collision SELECT probes were rerun in a disposable in-memory database; raw output: `/tmp/fastdb-gate-recheck.log`. Other rows retain their earlier evidence and are labeled accordingly.
 
 | Probe | Pinned ordinary SQL | Collection route | Next action |
 |---|---|---|---|
@@ -28,10 +28,10 @@ Rechecked the current debug Node addon built by the complete scoped run at `a631
 | Basic WITH UPDATE selecting key 2 | Returns 12, affects 1 | Same | Resolved example |
 | Chained CTE named after the UPDATE target | Returns 11,12,13, affects 3 | Initial direct-FROM nonrecursive CTE fix now matches | Qualify nested/compound CTE scopes, parameters and failure recovery |
 | Inner WITH scalar below | `(1,NULL),(4,3)` | `no such column: n` | Carry outer merged keys through the inner CTE scope without capturing local columns |
-| Inner derived alias collision below | `(1,0),(4,2)` | `no such column: n` | Bind an unqualified outer key without qualifying it through a shadowed alias |
+| Inner derived alias collision below | `(1,0),(4,2)` | Same, rechecked | Resolved example; existing alias regression coverage applies |
 | Source-free scalar UNION ALL using outer keys | Native rejects compound WHERE-clause subquery | Collection rejects unresolved key | Preserve the pinned limitation; do not treat this probe as a required new compound capability |
 
-Reproducers for the three open name-resolution gaps:
+Reference probes (the inner WITH example remains open; the write and alias examples have implementation evidence):
 
 ```sql
 WITH docs AS (SELECT 2 AS n), chosen AS (SELECT n FROM docs)
@@ -46,7 +46,7 @@ SELECT n,(SELECT max(m) FROM (SELECT 0 AS m UNION ALL SELECT 2) b
 FROM docs a RIGHT JOIN keys b USING(n) ORDER BY n;
 ```
 
-For the ordinary oracle, replace the outer/write `docs` source with `native`; in the first query also rename the target-named CTE and its reference to `native`. These are current reproductions, not complete release evidence. Initial write-context lowering now fixes FROM references in nonrecursive CTE bodies, including derived FROM wrappers and compound arms, preserving target-alias binding. The successful 696-case UPDATE/DELETE matrix covers direct, derived-wrapper, UNION ALL, UNION, INTERSECT, EXCEPT, EXISTS and IN-filtered bodies with default/MATERIALIZED/NOT MATERIALIZED chosen CTEs, plain/arithmetic/aggregate reads, returned rows, affected counts, final indexed data and rollback. Missing-parameter and uniqueness-failure recovery now preserve prior transaction work and valid indexes, with corrected retry and rollback checks for collection-name and target-alias collisions. Expression-subquery traversal now preserves target binding, with distinct generated membership names preventing the reproduced nested-IN preparation crash. Nested WITH directly inside write CTE definitions now uses scoped flattening; 24 native-rejected alias cases remain outside the comparison evidence. See cte-write-binding.md. Correlated/recursive/deeper scopes and broader failure/resource qualification remain open because an incorrect rewrite can select a different mutation set. The resource, recovery, packaging/platform and application gates above remain full V1 requirements.
+For the ordinary oracle, replace the outer/write `docs` source with `native`; in the first query also rename the target-named CTE and its reference to `native`. Only the inner WITH SELECT remains a current failure among these three reference probes; none provides complete release evidence. Initial write-context lowering now fixes FROM references in nonrecursive CTE bodies, including derived FROM wrappers and compound arms, preserving target-alias binding. The successful 696-case UPDATE/DELETE matrix covers direct, derived-wrapper, UNION ALL, UNION, INTERSECT, EXCEPT, EXISTS and IN-filtered bodies with default/MATERIALIZED/NOT MATERIALIZED chosen CTEs, plain/arithmetic/aggregate reads, returned rows, affected counts, final indexed data and rollback. Missing-parameter and uniqueness-failure recovery now preserve prior transaction work and valid indexes, with corrected retry and rollback checks for collection-name and target-alias collisions. Expression-subquery traversal now preserves target binding, with distinct generated membership names preventing the reproduced nested-IN preparation crash. Nested WITH directly inside write CTE definitions now uses scoped flattening; 24 native-rejected alias cases remain outside the comparison evidence. See cte-write-binding.md. Correlated/recursive/deeper scopes and broader failure/resource qualification remain open because an incorrect rewrite can select a different mutation set. The resource, recovery, packaging/platform and application gates above remain full V1 requirements.
 
 ## Historical SQL probes and implementation notes
 
@@ -168,3 +168,8 @@ Mixed compound-arm collation remains a reproduced query-correctness gap: see mix
 
 
 The mixed-compound reproducer above now matches native IS and IN results after distinguishing exposed-column and expression collation metadata. Both arm orders and reversed IS/IS NOT operands have regression coverage; full scoped checks pass 403 Rust/44 Node tests, and the rebuilt CLI reproducer passes. This resolves the recorded probe, not broader compound/collation or full V1 qualification.
+
+
+## Next implementation target after collation qualification
+
+The local-WITH merged-key failure above still reproduces on the current addon. The equivalent native query returns `(1,NULL),(4,3)`, while the collection query reports `FDB_ENGINE: no such column: n`. The derived-alias neighbor now returns native-equivalent rows. Investigate carrying the outer merged key through local CTE preparation while preserving local-column shadowing, CTE materialization/evaluation behavior, parameters and write-source atomicity. Do not remove local-WITH guards broadly merely to make this one query prepare. General result-memory budgets, interrupted I/O/commit/checkpoint qualification and distribution/platform gates remain separate unfinished V1 requirements.
