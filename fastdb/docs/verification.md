@@ -2376,3 +2376,6 @@ Node CTE label qualification (2026-09-08): both synchronous and worker clients n
 
 
 CTE ASCII-only name qualification (2026-09-08): six execute/profile cases match native result metadata for quoted Ä/ä, ÉKey/éKEY and space-containing ASCII names, using stars and qualified projections. Typed boolean/binary rows retain both positions; non-ASCII case distinctions remain separate while ASCII letters fold. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-cte-unicode-names.log. Latest complete scoped evidence remains 453 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains incomplete.
+
+
+Normalized CTE write qualification (2026-09-08): a focused regression verifies mixed-case references to explicitly named CTE columns in collection INSERT SELECT, retaining integer, boolean, binary and record-reference values. Duplicate unique-index failure preserves prior rows and the active transaction; rollback clears the inserted rows and retry succeeds. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-cte-normalized-writes.log. Latest complete scoped evidence remains 453 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains open.

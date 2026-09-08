@@ -709,3 +709,31 @@ fn explicit_cte_names_fold_ascii_without_merging_unicode_columns() {
         }
     }
 }
+
+#[test]
+fn normalized_cte_names_preserve_typed_insert_and_transaction_failures() {
+    let (_db, c) = setup();
+    q(&c, "CREATE TABLE copied");
+    q(&c, "CREATE UNIQUE INDEX copied_n ON copied(n)");
+    let insert = "WITH q(\"Number\",\"Flag\",\"Data\",\"Link\") AS (SELECT n,flag,data,ref FROM docs) INSERT INTO copied(n,flag,data,ref) SELECT q.\"NUMBER\",q.\"FLAG\",q.\"DATA\",q.\"LINK\" FROM q";
+    let expected = q(&c, "SELECT n,flag,data,ref FROM docs ORDER BY n");
+    q(&c, "BEGIN");
+    q(&c, insert);
+    assert_eq!(
+        q(&c, "SELECT n,flag,data,ref FROM copied ORDER BY n").rows,
+        expected.rows
+    );
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        q(&c, "SELECT n,flag,data,ref FROM copied ORDER BY n").rows,
+        expected.rows
+    );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT * FROM copied").rows.is_empty());
+    q(&c, insert);
+    assert_eq!(
+        q(&c, "SELECT n,flag,data,ref FROM copied ORDER BY n").rows,
+        expected.rows
+    );
+}
