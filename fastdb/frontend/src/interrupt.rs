@@ -65,6 +65,31 @@ impl Connection {
         self.with_cancellation(token, || self.profile_select(sql, params))
     }
 
+    /// Profile a bounded SELECT with cooperative engine-boundary cancellation.
+    pub fn profile_select_with_limits_cancellable(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: crate::ResultLimits,
+        token: &CancellationToken,
+    ) -> Result<crate::ProfiledQuery> {
+        self.with_cancellation(token, || {
+            self.profile_select_with_limits(sql, params, limits)
+        })
+    }
+
+    /// Execute a bounded SELECT with cooperative engine-boundary cancellation.
+    pub fn select_with_limits_cancellable(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: crate::ResultLimits,
+        token: &CancellationToken,
+    ) -> Result<QueryResult> {
+        self.profile_select_with_limits_cancellable(sql, params, limits, token)
+            .map(|profile| profile.result)
+    }
+
     /// Audit collection content with cooperative engine-boundary cancellation.
     pub fn check_collection_integrity_cancellable(
         &self,

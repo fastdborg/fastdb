@@ -45,6 +45,14 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
         assert.deepEqual(actual.result.rows, [expected]);
         assert.equal(actual.metrics.rowsWritten, 0n);
         assert.deepEqual(await client.exactlyOne('SELECT embedding FROM docs'), [vector]);
+        const budget = {maxRows:1n,maxPayloadBytes:9n+BigInt(vector.bytes.length)};
+        assert.deepEqual((await client.selectWithLimits('SELECT embedding FROM docs',budget)).rows, [[vector]]);
+        assert.deepEqual((await client.profileSelectWithLimits('SELECT embedding FROM docs',budget)).result.rows, [[vector]]);
+        await assert.rejects(async () => client.selectWithLimits('SELECT embedding FROM docs', {...budget,maxPayloadBytes:budget.maxPayloadBytes-1n}), error => {
+          assert.equal(error.code,'FDB_LIMIT');
+          assert.deepEqual(error.transaction,{before:'active',after:'active'});
+          return true;
+        });
         assert.equal((await client.checkCollectionIntegrity('docs')).documents, 1n);
       }
       assert.equal((await client.exactlyOne('SELECT value FROM docs'))[0], 9223372036854775807n);
@@ -500,6 +508,11 @@ Vector.bit1([1n]);
 const limits: IntegrityLimits = {maxDocuments: 1n};
 const audit: IntegrityReport = db.checkCollectionIntegrity('docs', limits);
 const profile: ProfiledQuery = db.profileSelect('SELECT 1');
+const resultBudget: import('@fastdb/node').ResultLimits = {maxRows:1n,maxPayloadBytes:100n};
+db.selectWithLimits('SELECT 1',resultBudget);
+db.profileSelectWithLimits('SELECT 1',resultBudget);
+// @ts-expect-error both result budgets are mandatory
+db.selectWithLimits('SELECT 1',{maxRows:1n});
 const counts: bigint[] = [audit.documents, audit.encodedBytes, profile.metrics.vmSteps, profile.metrics.fetchBatches, profile.metrics.fetchRowsRead, profile.metrics.fetchVmSteps];
 // @ts-expect-error lossless limits require bigint
 db.checkCollectionIntegrity('docs', {maxDocuments: 1});
@@ -508,6 +521,8 @@ db.close();
 async function open() {
   const db = await AsyncDatabase.open();
   const options: import('@fastdb/node').ExecuteOptions = {signal:new AbortController().signal};
+  await db.selectWithLimits('SELECT 1',resultBudget,{},options);
+  await db.profileSelectWithLimits('SELECT 1',resultBudget,{},options);
   await db.execute('SELECT 1', {}, options);
   await db.all('SELECT 1', {}, options);
   await db.first('SELECT 1', {}, options);

@@ -14,8 +14,10 @@ verbatim. Arrays and objects sum their contents, with no container overhead.
 Arithmetic is checked. This bounds retained logical payload, not allocator
 usage, the temporary decoded row, engine working memory, or execution time.
 
-Node bindings, FETCH expansion, RETURNING, INSERT SELECT candidates and transfer
-remain separate integration work. This does not close the V1 resource gate.
+Node clients expose `selectWithLimits` and `profileSelectWithLimits` with
+required bigint `maxRows` and `maxPayloadBytes`; worker calls accept AbortSignal.
+FETCH expansion, RETURNING, INSERT SELECT candidates and transfer remain separate
+integration work. This does not close the V1 resource gate.
 
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.

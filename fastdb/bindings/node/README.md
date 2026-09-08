@@ -256,3 +256,30 @@ python3 fastdb/scripts/inspect-node-elf.py fastdb/bindings/node/fastdb.node fast
 ```
 
 The checked-in report identifies the tested stripped artifact by size and SHA-256, records ELF class/machine, linked libraries, search paths and required symbol versions. This local artifact references GLIBC symbols through 2.35 and has no RPATH/RUNPATH. A successful local Linux test does not establish compatibility with older glibc systems, musl distributions, another architecture or another Node version. A release baseline still needs an explicit build environment and tests on the advertised targets. Regenerate the report whenever the addon changes.
+
+
+### Bounded SELECT results
+
+Both clients expose `selectWithLimits(sql, limits, parameters?)` and
+`profileSelectWithLimits(sql, limits, parameters?)`. The worker variants accept
+an additional fourth `{ signal }` argument using the existing cooperative
+cancellation contract. Both budgets are required nonnegative bigint values:
+
+```js
+const result = await asyncDb.selectWithLimits(
+  'SELECT title FROM posts LIMIT 100',
+  { maxRows: 100n, maxPayloadBytes: 65536n },
+);
+```
+
+Overflow throws/rejects with `FDB_LIMIT` and transaction observations, without
+partial rows or metrics. Empty results still charge column names. These APIs
+accept one SQL SELECT; FETCH is currently unsupported. Existing execute/profile
+methods keep their current result policy.
+
+Payload bytes count UTF-8 column names, strings, object keys, record table names
+and string keys; integer keys and numbers cost eight bytes, null and booleans one
+byte, and binary/encoded vectors their byte length. Objects and arrays sum their
+contents. These are logical result budgets, excluding container/allocator
+costs, temporary decoding, Node transport copies and engine working memory.
+They are not process memory limits or deadlines.

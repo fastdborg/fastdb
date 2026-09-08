@@ -18,6 +18,8 @@ export interface FastDBError extends Error { code: string; transaction?: Transac
 /** Recognizes coded FastDB errors and validates any transaction observations. */
 export function isFastDBError(value: unknown): value is FastDBError;
 export interface QueryResult { columns: string[]; rows: Value[][]; affected: bigint; transaction: Transaction; }
+/** Retained logical result limits; excludes engine working memory and temporary decoding. */
+export interface ResultLimits { maxRows: bigint; maxPayloadBytes: bigint; }
 export interface IntegrityLimits { maxDocuments?: bigint; maxEncodedBytes?: bigint; }
 export interface IntegrityReport {
   documents: bigint; indexes: bigint; indexEntries: bigint; encodedBytes: bigint; transaction: Transaction;
@@ -44,6 +46,8 @@ export class Database {
   importDocuments(table: string, input: string, format?: TransferFormat): ImportReport;
   execute(sql: string, parameters?: Parameters): QueryResult;
   profileSelect(sql: string, parameters?: Parameters): ProfiledQuery;
+  selectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters): QueryResult;
+  profileSelectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters): ProfiledQuery;
   checkCollectionIntegrity(table: string, limits?: IntegrityLimits): IntegrityReport;
   executeBatch(script: string): BatchExecution[];
   all(sql: string, parameters?: Parameters): Value[][];
@@ -62,6 +66,8 @@ export class AsyncDatabase {
   importDocuments(table: string, input: string, format?: TransferFormat, options?: ExecuteOptions): Promise<ImportReport>;
   execute(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   profileSelect(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<ProfiledQuery>;
+  selectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
+  profileSelectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters, options?: ExecuteOptions): Promise<ProfiledQuery>;
   checkCollectionIntegrity(table: string, limits?: IntegrityLimits, options?: ExecuteOptions): Promise<IntegrityReport>;
   executeBatch(script: string, options?: ExecuteOptions): Promise<BatchExecution[]>;
   all(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[][]>;

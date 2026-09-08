@@ -120,6 +120,18 @@ function migrationPlan(migrations) {
     });
   return plan;
 }
+function resultLimits(limits) {
+  if (limits === null || typeof limits !== 'object' || Array.isArray(limits)) throw new TypeError('result limits must be an object');
+  for (const key of Object.keys(limits)) {
+    if (key !== 'maxRows' && key !== 'maxPayloadBytes') throw new TypeError(`unknown result limit ${key}`);
+  }
+  return ['maxRows', 'maxPayloadBytes'].map(key => {
+    const value = limits[key];
+    if (typeof value !== 'bigint') throw new TypeError('result limits require both bigint fields');
+    if (value < 0n || value > 18446744073709551615n) throw new RangeError('result limits must fit uint64');
+    return value.toString();
+  });
+}
 function integrityLimits(limits) {
   if (limits === null || typeof limits !== 'object' || Array.isArray(limits)) throw new TypeError('integrity limits must be an object');
   const fields = { maxDocuments: '', maxEncodedBytes: '' };
@@ -179,6 +191,14 @@ class Database {
   profileSelect(sql, parameters = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     return decodeProfile(this.#native.profileSelect(sql, JSON.stringify(params)));
+  }
+  selectWithLimits(sql, limits, parameters = {}) {
+    return this.profileSelectWithLimits(sql, limits, parameters).result;
+  }
+  profileSelectWithLimits(sql, limits, parameters = {}) {
+    const args = resultLimits(limits);
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    return decodeProfile(this.#native.profileSelectWithLimits(sql, JSON.stringify(params), ...args));
   }
   checkCollectionIntegrity(table, limits = {}) {
     return decodeIntegrity(this.#native.checkCollectionIntegrity(table, ...integrityLimits(limits)));
@@ -308,6 +328,14 @@ class AsyncDatabase {
   async profileSelect(sql, parameters = {}, options = {}) {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)], false, options.signal));
+  }
+  async selectWithLimits(sql, limits, parameters = {}, options = {}) {
+    return (await this.profileSelectWithLimits(sql, limits, parameters, options)).result;
+  }
+  async profileSelectWithLimits(sql, limits, parameters = {}, options = {}) {
+    const args = resultLimits(limits);
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    return decodeProfile(await this.#request('profileSelectWithLimits', [sql, JSON.stringify(params), ...args], false, options.signal));
   }
   async checkCollectionIntegrity(table, limits = {}, options = {}) {
     return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal));

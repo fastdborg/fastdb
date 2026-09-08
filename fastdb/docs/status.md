@@ -2499,3 +2499,27 @@ and strict TypeScript. See `result-budgets.md` for the precise accounting policy
 FETCH, Node limit APIs, callback-count qualification and broader resource gates
 remain open; these limits do not bound engine working memory or temporary row
 decoding allocations.
+
+### Bounded SELECT in Node clients
+
+The sync and dedicated-worker clients now expose `selectWithLimits` and
+`profileSelectWithLimits`, accepting required bigint `maxRows` and
+`maxPayloadBytes` budgets. The worker methods accept a fourth `{ signal }`
+argument and use the existing per-operation cancellation lifecycle. Rust also
+exposes cancellable bounded SELECT/profile entry points. Limit failures retain
+the standard coded error and transaction envelope without partial results.
+
+Tests verify nested UTF-8/record/binary/array payload boundaries, native row
+limits, empty metadata, invalid budgets, write rejection, closed clients,
+pending-write preservation, pre-cancellation, active cancellation and retry.
+The scoped Rust suite passed all 514 tests with the existing single ignored
+gate; formatting and Clippy passed. After correcting an unsupported recursive
+CTE in the new cancellation fixture, all 64 Node binding tests and three
+application tests passed, as did strict TypeScript. Offline installed-package
+smokes passed on Linux x64 Node 22.0.0 and 24.19.0 (10 files, 60,555,113 packed
+bytes, debug addon), including exact and one-byte-overflow accounting for all
+five vector encodings in both clients and installed TypeScript consumers.
+
+FETCH accounting, callback-count qualification, engine working-memory budgets,
+transport peaks and the remaining V1 release gates remain open. No package was
+published and no Git remote was pushed.

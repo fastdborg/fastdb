@@ -114,3 +114,17 @@ function checkError(value: unknown) {
   }
 }
 void checkError;
+
+function boundedSelectTypes(sync: Database, asyncDb: AsyncDatabase) {
+  const limits: import('./index').ResultLimits = {maxRows: 10n, maxPayloadBytes: 1024n};
+  const result: import('./index').QueryResult = sync.selectWithLimits('SELECT 1', limits);
+  const profile: import('./index').ProfiledQuery = sync.profileSelectWithLimits('SELECT $x', limits, {$x:1n});
+  const pending: Promise<import('./index').QueryResult> = asyncDb.selectWithLimits('SELECT 1', limits, {}, {signal:new AbortController().signal});
+  const pendingProfile: Promise<import('./index').ProfiledQuery> = asyncDb.profileSelectWithLimits('SELECT 1', limits);
+  // @ts-expect-error both limits are required
+  sync.selectWithLimits('SELECT 1', {maxRows:1n});
+  // @ts-expect-error limits use bigint
+  sync.selectWithLimits('SELECT 1', {maxRows:1,maxPayloadBytes:100n});
+  void result; void profile; void pending; void pendingProfile;
+}
+void boundedSelectTypes;

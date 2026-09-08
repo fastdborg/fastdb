@@ -2024,3 +2024,62 @@ test('ordered local CTE pagination preserves typed client recovery', async () =>
     } finally { await db.close(); }
   }
 });
+
+test('bounded SELECT limits preserve typed results and transactions in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE TABLE native(n INTEGER)');
+      await db.execute('INSERT INTO native VALUES(1),(2)');
+      const payload = { text: '猫', ref: new Record('docs', 7n), bytes: Buffer.from([0,255]), array: [true, null] };
+      await db.execute('INSERT INTO docs {value:$value}', {$value: payload});
+      const sql = 'SELECT value AS v FROM docs';
+      // v=1; object keys=17; text=3; record=12; binary=2; array=2.
+      const exact = {maxRows:1n, maxPayloadBytes:37n};
+      const expected = await db.execute(sql);
+      assert.deepEqual((await db.selectWithLimits(sql, exact)).rows, expected.rows);
+      assert.deepEqual((await db.profileSelectWithLimits(sql, exact)).result.rows, expected.rows);
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO native VALUES(3)');
+      for (const [query, limits] of [[sql, {...exact, maxPayloadBytes:36n}], [sql, {...exact,maxRows:0n}], ['SELECT n FROM native', {maxRows:2n,maxPayloadBytes:100n}], ['SELECT n FROM native WHERE 0',{maxRows:0n,maxPayloadBytes:0n}]]) {
+        await assert.rejects(Promise.resolve().then(() => db.selectWithLimits(query, limits)), e => {
+          assert.equal(e.code, 'FDB_LIMIT');
+          assert.deepEqual(e.transaction, {before:'active',after:'active'});
+          return true;
+        });
+      }
+      assert.deepEqual((await db.selectWithLimits('SELECT n FROM native WHERE 0',{maxRows:0n,maxPayloadBytes:1n})).rows, []);
+      await assert.rejects(Promise.resolve().then(() => db.selectWithLimits('DELETE FROM native', exact)), e => e.code === 'FDB_UNSUPPORTED');
+      assert.equal((await db.selectWithLimits('SELECT n FROM native',{maxRows:3n,maxPayloadBytes:25n})).rows.length, 3);
+      for (const limits of [undefined, null, {}, {maxRows:1,maxPayloadBytes:1n}, {maxRows:-1n,maxPayloadBytes:1n}, {maxRows:1n,maxPayloadBytes:2n**64n}, {...exact,typo:1n}]) {
+        await assert.rejects(Promise.resolve().then(() => db.selectWithLimits(sql,limits)), e => e instanceof TypeError || e instanceof RangeError);
+      }
+      await db.execute('ROLLBACK');
+      assert.equal((await db.all('SELECT n FROM native')).length, 2);
+    } finally { await db.close(); }
+    await assert.rejects(Promise.resolve().then(() => db.selectWithLimits('SELECT 1',{maxRows:1n,maxPayloadBytes:100n})), /clos/i);
+  }
+});
+
+test('bounded worker SELECT cancellation cleans up and allows retry', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  const limits = {maxRows:1n,maxPayloadBytes:100n};
+  try {
+    const cancelled = new AbortController(); cancelled.abort();
+    await assert.rejects(db.selectWithLimits('SELECT 1',limits,{}, {signal:cancelled.signal}), e => e.code === 'FDB_CANCELLED');
+    await db.execute('CREATE TABLE nums(n INTEGER)');
+    await db.execute('INSERT INTO nums VALUES ' + Array.from({length:1000}, (_,i) => '(' + (i+1) + ')').join(','));
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO nums VALUES(1001)');
+    const active = new AbortController();
+    const pending = db.profileSelectWithLimits('SELECT count(*) FROM nums a CROSS JOIN nums b CROSS JOIN nums c',limits,{}, {signal:active.signal});
+    const timer = setTimeout(() => active.abort(), 25);
+    try { await assert.rejects(pending, e => { assert.equal(e.code, 'FDB_CANCELLED'); assert.deepEqual(e.transaction, {before:'active',after:'active'}); return true; }); }
+    finally { clearTimeout(timer); }
+    assert.deepEqual((await db.selectWithLimits('SELECT count(*) AS n FROM nums',limits)).rows, [[1001n]]);
+    await db.execute('ROLLBACK');
+    assert.deepEqual((await db.selectWithLimits('SELECT count(*) AS n FROM nums',limits)).rows, [[1000n]]);
+  } finally { await db.close(); }
+});
