@@ -34,6 +34,16 @@ const path = require('node:path');
 const { Database, AsyncDatabase, Record, Vector, isFastDBError } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
+  async function withDirectJson(client) {
+    const value = {nested:[Buffer.alloc(4096,255),new Record('docs','quoted"key'),-0,'Thai ไทย']};
+    const result = await client.execute('SELECT $value AS payload',{$value:value});
+    assert.deepEqual(result.rows,[[value]]);
+    const profile = await client.profileSelect('SELECT $value AS payload',{$value:value});
+    assert.deepEqual(profile.result.rows,[[value]]);
+    assert(profile.metrics.vmSteps>0n);
+    const batch = await client.executeBatch("SELECT 'first' AS text; SELECT 2 AS n;");
+    assert.deepEqual(batch[1].result.rows,[[2n]]);
+  }
   async function withVectorFields(client) {
     await client.execute('BEGIN');
     try {
@@ -408,6 +418,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual(db.exactlyOne('SELECT $v AS v', {$v: vector})[0], vector);
     }
     await withVectorFields(db);
+    await withDirectJson(db);
     await withCompositeCounts(db);
     await withDuplicateColumns(db);
     await withWrites(db);
@@ -420,6 +431,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual((await worker.exactlyOne('SELECT $v AS v', {$v: vector}))[0], vector);
     }
     await withVectorFields(worker);
+    await withDirectJson(worker);
     const row = await worker.exactlyOne('SELECT id,value FROM docs');
     assert(row[0] instanceof Record);
     assert.equal(row[0].key, 'saved');

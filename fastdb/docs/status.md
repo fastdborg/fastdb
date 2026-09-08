@@ -3366,3 +3366,18 @@ release timing guarantee. Raw output:
 `benchmarks.md` records the per-workload comparison and measurement limitations.
 Whole-process peaks still include setup/runtime/decoded output; broader V1 resource
 and release gates remain open.
+
+### Installed direct-JSON Node response qualification
+
+The offline package consumer now explicitly checks nested 4 KiB binary values,
+record keys, negative zero and Unicode through execute/profile in both clients,
+plus metrics and batch results. This exercises the direct-text response path from
+an isolated installation, alongside existing errors, deadlines, transactions,
+vector and persistence coverage.
+
+Package smoke passed on Linux x64 Node 22.0.0 and 24.19.0: 10 files and 60,623,716
+packed bytes from the current debug addon. Logs:
+`/tmp/fastdb-direct-json-package22.log` and `/tmp/fastdb-direct-json-package24.log`.
+No publication or registry access occurred. Diff checks passed. No production code
+changed or broader suite was repeated. Release artifacts, additional platforms and
+remaining V1 gates stay open.
