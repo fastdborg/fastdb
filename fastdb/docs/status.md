@@ -4040,3 +4040,19 @@ addon; logs `/tmp/fastdb-malformed-iterator-clients-focused.log` and
 `/tmp/fastdb-malformed-iterator-clients.log`. Only tests/documentation changed from
 `28ce7af5e`; no native rebuild, new Rust-suite or packaging run is claimed. Full
 V1 release gates remain open; no publication occurred.
+
+
+## CLI malformed-iterator rollback and reopen — 2026-09-08
+
+A process-level CLI regression verifies malformed per-row JSON during INSERT
+SELECT reports FDB_ENGINE, the exact script byte offset and active-to-autocommit
+transaction state. Script execution stops before the following statement. A
+second process sees only previously committed data, corrects the input, retries
+the write and verifies the result. A final database reopen audits three committed
+documents and three index entries.
+
+All 38 CLI tests passed, together with CLI formatting and all-target Clippy with
+warnings denied. Logs `/tmp/fastdb-cli-iterator-rollback.log` and
+`/tmp/fastdb-cli-iterator-rollback-clippy.log`. Only tests/documentation changed
+from `f3f8250a9`; no new full source-suite or client run is claimed. Full V1 release
+gates remain open; no publication occurred.
