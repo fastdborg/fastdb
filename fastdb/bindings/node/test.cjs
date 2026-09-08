@@ -1760,3 +1760,43 @@ test('unordered UNION pagination preserves parameters and client recovery', asyn
     } finally { await db.close(); }
   }
 });
+
+test('typed compound parameters preserve projections and write recovery in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of [
+        'CREATE TABLE docs', 'CREATE TABLE probe(n INTEGER)', 'INSERT INTO probe VALUES(1)',
+        'CREATE TABLE sink', 'CREATE UNIQUE INDEX sink_n ON sink(n)', 'INSERT INTO sink(n) VALUES(2)',
+      ]) await db.execute(sql);
+      const query = 'SELECT d.n,(SELECT $same FROM probe WHERE d.k IN(SELECT d.k INTERSECT SELECT $same LIMIT 1)) AS value FROM docs d ORDER BY d.n';
+      for (const value of [true, 1n, new Record('docs',7n), Buffer.from('FDB\x01{"type":"Integer","value":7}')]) {
+        await db.execute('INSERT INTO docs(n,k) VALUES(1,$same)', {$same:value});
+        assert.deepEqual((await db.execute(query, {$same:value})).rows, [[1n,value]]);
+        assert.deepEqual((await db.profileSelect(query, {$same:value})).result.rows, [[1n,value]]);
+        await db.execute('DELETE FROM docs');
+      }
+      const value = new Record('docs',7n);
+      await db.execute('INSERT INTO docs(n,k) VALUES(1,$same),(2,$same)', {$same:value});
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO sink(n) VALUES(9)');
+      const insert = 'INSERT INTO sink(n,value) ' + query + ' RETURNING n,value';
+      await assert.rejects(async () => db.execute(insert, {$same:value}), error => {
+        assert.equal(error.code,'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT n FROM sink ORDER BY n'),[[2n],[9n]]);
+      await db.execute('DELETE FROM sink WHERE n=2');
+      const retry = await db.execute(insert, {$same:value});
+      assert.equal(retry.affected,2n);
+      assert.deepEqual(retry.rows,[[1n,value],[2n,value]]);
+      const audit = await db.checkCollectionIntegrity('sink');
+      assert.equal(audit.documents,3n);
+      assert.equal(audit.indexEntries,3n);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM sink'),[[2n]]);
+    } finally { await db.close(); }
+  }
+});
