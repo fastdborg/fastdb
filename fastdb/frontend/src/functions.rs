@@ -1335,39 +1335,45 @@ mod cte_evaluation_tests {
         for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
             for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
                 for tail in ["", " LIMIT 0"] {
-                    let query = |source| {
-                        format!("SELECT n,(WITH chosen AS {materialization} (SELECT n AS m,cte_tick() AS tick FROM baseline) SELECT max(m)+sum(tick) FROM chosen WHERE m<n) AS prior FROM {source} a {join} local_cte_keys b USING(n) ORDER BY n{tail}")
-                    };
-                    CALLS.store(0, Ordering::SeqCst);
-                    let expected = c.execute(&query("baseline"), &params).unwrap().rows;
-                    let calls = CALLS.load(Ordering::SeqCst);
-                    if !tail.is_empty() {
-                        assert_eq!(calls, 0);
-                    }
-                    for profile in [false, true] {
-                        CALLS.store(0, Ordering::SeqCst);
-                        let sql = query("docs");
-                        let actual = if profile {
-                            c.profile_select(&sql, &params).unwrap().result.rows
-                        } else {
-                            c.execute(&sql, &params).unwrap().rows
+                    for consumer in [
+                        "SELECT max(m)+sum(tick) FROM chosen WHERE m<n",
+                        "SELECT tick FROM chosen WHERE m<n ORDER BY m LIMIT 1",
+                        "SELECT tick FROM chosen WHERE m<n ORDER BY m DESC LIMIT 1 OFFSET 1",
+                    ] {
+                        let query = |source| {
+                            format!("SELECT n,(WITH chosen AS {materialization} (SELECT n AS m,cte_tick() AS tick FROM baseline) {consumer}) AS prior FROM {source} a {join} local_cte_keys b USING(n) ORDER BY n{tail}")
                         };
-                        assert_eq!(actual, expected, "{sql}");
+                        CALLS.store(0, Ordering::SeqCst);
+                        let expected = c.execute(&query("baseline"), &params).unwrap().rows;
+                        let calls = CALLS.load(Ordering::SeqCst);
+                        if !tail.is_empty() {
+                            assert_eq!(calls, 0);
+                        }
+                        for profile in [false, true] {
+                            CALLS.store(0, Ordering::SeqCst);
+                            let sql = query("docs");
+                            let actual = if profile {
+                                c.profile_select(&sql, &params).unwrap().result.rows
+                            } else {
+                                c.execute(&sql, &params).unwrap().rows
+                            };
+                            assert_eq!(actual, expected, "{sql}");
+                            assert_eq!(
+                                CALLS.load(Ordering::SeqCst),
+                                calls,
+                                "{sql}; profile={profile}"
+                            );
+                        }
+                        CALLS.store(0, Ordering::SeqCst);
+                        c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
+                            .unwrap();
                         assert_eq!(
                             CALLS.load(Ordering::SeqCst),
-                            calls,
-                            "{sql}; profile={profile}"
+                            0,
+                            "planning {}",
+                            query("docs")
                         );
                     }
-                    CALLS.store(0, Ordering::SeqCst);
-                    c.execute(&format!("EXPLAIN QUERY PLAN {}", query("docs")), &params)
-                        .unwrap();
-                    assert_eq!(
-                        CALLS.load(Ordering::SeqCst),
-                        0,
-                        "planning {}",
-                        query("docs")
-                    );
                 }
             }
         }
