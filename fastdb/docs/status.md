@@ -5113,3 +5113,14 @@ denied and strict TypeScript. Log `/tmp/fastdb-nested-tuple-check-final.log`.
 Diagnostic logging was removed; the Node addon was rebuilt. No upstream source,
 dependency or storage-format changes; no publication. Broader subquery/type
 qualification and full V1 release gates remain open.
+
+
+## Node typed nested tuple projections — 2026-09-09
+
+Both clients now execute tuple projections containing correlated scalar lookups
+with ordering/LIMIT, preserving typed records and nested object/binary/int64
+payloads. Unmatched rows yield NULL values; active transaction reports and the
+existing rollback assertions pass. All 87 Node/application tests passed against
+the addon from the preceding full check. Log `/tmp/fastdb-nested-tuple-node.log`.
+Only tests/docs changed from `d641d69c0`; no native rebuild or new Rust-suite
+run is claimed. Full V1 remains open; no publication occurred.
