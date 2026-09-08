@@ -606,9 +606,7 @@ impl Connection {
                                 _ => false,
                             }
                         }
-                        if select.order_by.iter().any(|sort| ordinal(&sort.expr)) {
-                            return Err(unsupported("positional tuple SELECT ordering"));
-                        }
+                        let positional_order = select.order_by.iter().any(|sort| ordinal(&sort.expr));
                         let OneSelect::Select {
                             columns,
                             from,
@@ -624,9 +622,9 @@ impl Connection {
                         if !window_clause.is_empty() || columns.len() != set.col_names.len() {
                             return Err(unsupported("tuple SELECT assignment shape or arity"));
                         }
-                        if columns.iter().any(|column| {
+                        if (positional_order || columns.iter().any(|column| {
                             matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
-                        }) && from.is_some()
+                        })) && from.is_some()
                         {
                             let mut packed = Vec::new();
                             for (position, column) in columns.iter().enumerate() {
@@ -657,6 +655,9 @@ impl Connection {
                             widths.push(set.col_names.len());
                             exprs.push(Expr::Subquery(packed_select));
                             continue;
+                        }
+                        if positional_order {
+                            return Err(unsupported("source-free positional tuple SELECT ordering"));
                         }
                         if from.is_none() {
                             for sort in &mut select.order_by {

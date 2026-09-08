@@ -3824,3 +3824,20 @@ recovery regression passed after the fix (`/tmp/fastdb-tuple-alias-recovery.log`
 and the final full run above completed with exit 0. Diagnostic logging was
 removed. No upstream source, dependency or persisted-format changes; no
 publication. Full V1 release gates remain open.
+
+
+## Sourceful tuple positional ordering — 2026-09-09
+
+Tuple SELECT assignments with FROM sources now retain positional ORDER BY in
+the original SELECT before packing its outputs. Differential tests cover first
+and second positions with relational/collection lookups and aliased projections.
+Invalid zero, negative and out-of-range positions reject without mutation:
+collection lowering reports FDB_VALIDATION; the native route reports FDB_ENGINE.
+Source-free positional ordering and the other documented tuple gates remain open.
+
+All 24 write tests and 17 CTE-write tests passed, with scoped formatting and
+FastDB/frontend-test Clippy with warnings denied. Logs:
+`/tmp/fastdb-tuple-position-final.log`, `/tmp/fastdb-tuple-position-cte.log`,
+`/tmp/fastdb-tuple-position-clippy-final.log`. This is focused evidence from
+`c9baafcc7` plus the change; no new full-suite or Node run is claimed. No upstream
+source, dependency or storage format changes; no publication. Full V1 remains open.

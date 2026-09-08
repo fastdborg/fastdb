@@ -1048,6 +1048,13 @@ fn tuple_lookup_aliases_match_native() {
     }
     for source in ["lookup", "lookup_docs"] {
         for (projection, order, expected) in [
+            ("x.a,x.b", "1 DESC", [[1, 11, 8], [2, 4, 7]]),
+            ("x.a,x.b", "2 DESC", [[1, 6, 9], [2, 4, 7]]),
+            (
+                "x.a AS chosen,x.b AS other",
+                "2 DESC",
+                [[1, 6, 9], [2, 4, 7]],
+            ),
             (
                 "x.a AS chosen,x.b AS other",
                 "chosen DESC",
@@ -1081,6 +1088,30 @@ fn tuple_lookup_aliases_match_native() {
             );
             let sql = format!("UPDATE docs SET (a,b)=(SELECT {projection} FROM {source} x WHERE x.n=docs.n ORDER BY {order} LIMIT 1) RETURNING n,a,b");
             assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
+        for order in ["0", "3", "-1"] {
+            q(&c, "BEGIN");
+            let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
+            let native = c
+                .execute(
+                    &format!(
+                        "UPDATE native SET (a,b)=(SELECT x.a,x.b FROM lookup x ORDER BY {order})"
+                    ),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            let error = c
+                .execute(
+                    &format!(
+                        "UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM {source} x ORDER BY {order})"
+                    ),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert_eq!(native.code(), "FDB_ENGINE");
+            assert_eq!(error.code(), "FDB_VALIDATION", "{source}: {order}");
+            assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
             q(&c, "ROLLBACK");
         }
     }
