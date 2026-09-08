@@ -36,6 +36,19 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
 (async () => {
   for(const client of [new Database(),await AsyncDatabase.open()]) {
     try {
+      await client.execute('CREATE TABLE tuple_docs');
+      const tupleRecord = new Record('tuple_docs',9223372036854775807n);
+      const tuplePayload = {items:[true,Buffer.from([0,255]),-9223372036854775808n]};
+      await client.execute('INSERT INTO tuple_docs(n,a,b) VALUES(1,$a,$b)',{$a:tupleRecord,$b:tuplePayload});
+      await client.execute('BEGIN');
+      assert.deepEqual((await client.execute('UPDATE tuple_docs SET (a,b)=(VALUES(b,a)) RETURNING a,b')).rows,[[tuplePayload,tupleRecord]]);
+      await assert.rejects(async()=>client.execute('UPDATE tuple_docs SET (a,b)=(VALUES(1,2),(3,4))'),error=>error.code==='FDB_UNSUPPORTED');
+      const tuple = await client.execute('UPDATE tuple_docs SET (a,b)=(SELECT b,a UNION ALL SELECT b,a LIMIT 1) RETURNING a,b');
+      assert.deepEqual(tuple.rows,[[tupleRecord,tuplePayload]]);
+      assert.deepEqual(tuple.transaction,{before:'active',after:'active'});
+      await client.execute('UPDATE tuple_docs SET (a,b)=(VALUES(NULL,NULL))');
+      await client.execute('ROLLBACK');
+      assert.deepEqual((await client.execute('SELECT a,b FROM tuple_docs')).rows,[[tupleRecord,tuplePayload]]);
       const base = {version:1n,name:'base',sql:'CREATE TABLE migration_docs; CREATE UNIQUE INDEX migration_n ON migration_docs(n); INSERT INTO migration_docs {n:1};'};
       await client.migrate([base]);
       const prefix = "-- café 日本語\\nINSERT INTO migration_docs {n:2}; ";

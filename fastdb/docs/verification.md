@@ -4256,3 +4256,18 @@ against the preceding full check's addon. Log:
 error code; correcting it required no implementation change. Only tests/docs
 changed from `f86a50c32`; no new Rust-suite run or native rebuild is claimed.
 Full V1 remains open; no publication occurred.
+
+
+## Installed Node tuple qualification — 2026-09-09
+
+The offline tarball consumer smoke now covers typed single-row VALUES swaps,
+compound tuple assignments, unsupported multi-row rejection, active transaction
+reports and restoration after clearing values and rolling back. Both installed
+synchronous and worker clients pass on Linux x64 with Node 22.0.0 and 24.19.0.
+The package contains 10 files and 60,735,101 packed bytes. Addon SHA-256:
+`6369d935c65230fa5ffdde2dc245a1fae36d2327365b5643a49cc14b55efd752`.
+Logs: `/tmp/fastdb-tuple-package22-final.log` and
+`/tmp/fastdb-tuple-package24-final.log`. The addon is from the preceding full
+scoped check; only smoke/docs changed from `0f7b88ef8`. Installation used offline
+local tarballs outside the workspace, with no publication or registry access.
+This does not qualify other platforms or close the remaining V1 release gates.
