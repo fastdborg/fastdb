@@ -63,3 +63,17 @@ Do not enable FROM merely by forwarding raw joined rows to the existing mutation
 loop: that would update a target repeatedly and paginate source matches instead
 of targets. If planner variations expose different native duplicate selection,
 record that evidence and resolve the compatibility policy before claiming parity.
+
+
+## UPDATE FROM pagination evaluation oracle — 2026-09-09
+
+A native regression verifies an overflowing assignment in a later joined
+candidate fails UPDATE FROM even with LIMIT 0 or LIMIT 1, preserving target
+rows. LIMIT 2 produces the same error. This confirms the tested pinned path
+materializes assignment candidates before pagination, unlike ordinary limited
+UPDATE; applying the limit before candidate evaluation would change behavior.
+All 45 write tests passed; formatting and all-target fastdb-tests Clippy with
+warnings denied passed. Logs: `/tmp/fastdb-update-from-limit-evaluation.log`,
+`/tmp/fastdb-from-limit-evaluation-test.log` and
+`/tmp/fastdb-from-limit-evaluation-clippy.log`. Only tests/docs changed from
+`1f606bcd6`; collection FROM pagination is still unimplemented. Full V1 remains open.

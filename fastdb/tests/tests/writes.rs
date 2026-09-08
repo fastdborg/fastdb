@@ -1987,3 +1987,30 @@ fn update_from_inner_sources_match_native() {
         }
     }
 }
+
+#[test]
+fn native_update_from_evaluates_candidates_before_limit() {
+    for limit in [0, 1, 2] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE target(n INTEGER PRIMARY KEY,v INTEGER)",
+            "INSERT INTO target VALUES(1,0),(2,0)",
+            "CREATE TABLE source(k INTEGER,v INTEGER)",
+            "INSERT INTO source VALUES(1,7),(2,-9223372036854775808)",
+        ] {
+            q(&c, sql);
+        }
+        let sql=format!("UPDATE target SET v=abs(s.v) FROM source s WHERE s.k=target.n RETURNING n,v LIMIT {limit}");
+        let error = c.execute(&sql, &Parameters::new()).unwrap_err();
+        assert_eq!(error.code(), "FDB_ENGINE");
+        assert!(error.to_string().contains("integer overflow"));
+        assert_eq!(
+            q(&c, "SELECT n,v FROM target ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(1), Value::Integer(0)],
+                vec![Value::Integer(2), Value::Integer(0)]
+            ]
+        );
+    }
+}
