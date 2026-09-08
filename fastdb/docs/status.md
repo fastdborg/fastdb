@@ -3069,3 +3069,17 @@ operation/platform coverage and timing qualification remain open. Non-engine wor
 cleanup, completion races and the pinned trigger defect retain their documented
 limitations; this does not close the deadline/resource or full V1 gate. Broader
 suites were not repeated.
+
+### Deadline coverage across result-handling paths
+
+The real-engine deadline regression now covers ordinary SELECT and collection
+INSERT SELECT, SELECT profiling, bounded SELECT, bounded profiling and atomic
+write-result handling. All six expiry paths reject with FDB_CANCELLED, preserve
+prior active-transaction documents and index integrity, and allow fresh-token
+bounded reads/profiling and a returned-write retry before rollback.
+
+Both deadline integration tests passed with the expanded matrix; log:
+`/tmp/fastdb-deadline-result-paths.log`. Scoped formatting and diff checks passed.
+No production code changed and no broader suite was repeated. This checks selected
+cooperative execution paths, not fixed latency, partial-mutation deadline points,
+all operations or platform-wide deadline qualification. V1 gates remain open.
