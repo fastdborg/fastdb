@@ -2432,3 +2432,10 @@ Nested runtime rollback reopen qualification (2026-09-08): a disk-backed regress
 
 
 Nested runtime savepoint qualification (2026-09-08): a focused regression verifies rollback of native audit writes before and after a user savepoint when a nested USING typed projection fails. The connection becomes Autocommit, ROLLBACK TO the stale savepoint rejects without changing that state, and only committed audit data remains. A new transaction reuses the savepoint name, corrects the source, releases/commits and executes the typed query successfully. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-nested-savepoint-error.log. Latest complete scoped evidence remains 461 Rust tests with one ignored gate and 48 Node/application tests; the later 49-test Node run is recorded separately. Full V1 qualification remains open.
+
+
+Initial closed-source NATURAL joins (2026-09-08): added shared-column intersection for known derived/native column sets and reuse of normalized USING predicate/binding/star suppression. Empty intersections become unconditional joins. Direct open-schema collections require explicit field projections; incompatible ON/USING constraints and FULL remain rejected. Native-only statements retain their ordinary route.
+
+A 27-case execute/profile native differential matrix passes for one/multiple/no shared keys, INNER/LEFT/RIGHT joins and unqualified/qualified stars and explicit columns. Both Node clients pass a direct closed-source NATURAL assertion. Broader chained/duplicate/collation/correlation/write and resource qualification remain open.
+
+The full fastdb/scripts/check.sh run passed formatting, Clippy, 466 Rust tests with one existing ignored trigger-cancellation gate, 49 Node/application tests and strict TypeScript. A subsequent focused Node run covers the new NATURAL assertion. Logs: /tmp/fastdb-natural-closed-check.log and /tmp/fastdb-node-natural.log. Full embedded V1 release qualification remains incomplete.

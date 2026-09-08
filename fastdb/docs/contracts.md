@@ -1079,3 +1079,6 @@ Native derived stars with duplicate output names preserve column positions in su
 
 
 Explicit CTE column lists follow pinned ASCII identifier normalization: `WITH q(x,X) AS (...)` exposes two columns named `x`. Aliases inherited from the SELECT body preserve their spelling. A direct typed closed-source projection uses the declared column name for its result label; an explicit output alias overrides that label.
+
+
+Initial NATURAL JOIN support in logical queries requires closed sources, such as explicit collection projections. Shared names use ASCII case-insensitive intersection and existing USING merge behavior; no shared names produce an unconditional join. Direct open-schema collections require explicit projections. INNER/LEFT/leading-RIGHT have initial coverage; FULL and broader qualification remain incomplete.

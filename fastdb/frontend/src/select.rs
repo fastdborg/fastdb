@@ -443,7 +443,8 @@ fn prepare_using(from: Option<&mut FromClause>, sources: &[Source]) -> Result<Us
     if !from
         .joins
         .iter()
-        .any(|join| matches!(join.constraint, Some(JoinConstraint::Using(_))))
+        .any(|join| matches!(join.constraint, Some(JoinConstraint::Using(_)))
+            || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.contains(JoinType::NATURAL)))
     {
         return Ok(merged);
     }
@@ -478,6 +479,38 @@ fn prepare_using(from: Option<&mut FromClause>, sources: &[Source]) -> Result<Us
                 return Err(unsupported("RIGHT JOIN following another join"));
             }
             order.swap(0, 1);
+        }
+        if kind.is_some_and(|kind| kind.contains(JoinType::NATURAL)) {
+            if join.constraint.is_some() {
+                return Err(Error::Validation(
+                    "NATURAL JOIN cannot have ON or USING".into(),
+                ));
+            }
+            if order.iter().any(|index| {
+                sources[*index].collection.is_some() || sources[*index].derived.is_none()
+            }) {
+                return Err(unsupported(
+                    "NATURAL JOIN requires closed sources; project collection fields explicitly",
+                ));
+            }
+            let right_index = *order.last().unwrap();
+            let mut seen = std::collections::BTreeSet::new();
+            let names = sources[right_index]
+                .derived
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter_map(|(name, _)| {
+                    let key = name.to_ascii_lowercase();
+                    (order[..order.len() - 1]
+                        .iter()
+                        .any(|index| column(*index, name).is_some())
+                        && seen.insert(key))
+                    .then(|| Name::exact(name.clone()))
+                })
+                .collect();
+            join.constraint = Some(JoinConstraint::Using(names));
+            join.operator = JoinOperator::TypedJoin(kind.map(|kind| kind & !JoinType::NATURAL));
         }
         let Some(JoinConstraint::Using(names)) = &join.constraint else {
             continue;
@@ -3644,7 +3677,7 @@ impl Connection {
                                                 matches!(
                                                     join.constraint,
                                                     Some(JoinConstraint::Using(_))
-                                                )
+                                                ) || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.contains(JoinType::NATURAL))
                                             }),
                                         )?);
                                     }

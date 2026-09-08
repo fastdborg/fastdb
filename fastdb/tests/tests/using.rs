@@ -1389,3 +1389,49 @@ fn nested_using_runtime_error_clears_user_savepoints_and_allows_new_transaction(
         vec![vec![Value::Array(vec![Value::Integer(2)])]]
     );
 }
+
+#[test]
+fn natural_closed_sources_match_native_shared_columns_and_outer_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,t:1,x:10}",
+        "INSERT INTO docs {k:2,t:2,x:20}",
+        "CREATE TABLE baseline(k INTEGER,t INTEGER,x INTEGER)",
+        "INSERT INTO baseline VALUES(1,1,10),(2,2,20)",
+        "CREATE TABLE b(k INTEGER,t INTEGER,y INTEGER)",
+        "INSERT INTO b VALUES(1,1,100),(2,3,200),(3,3,300)",
+    ] {
+        query(sql);
+    }
+    for right in ["k,y", "k,t,y", "y"] {
+        for join in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+            for projection in ["*", "a.*,b.*", "a.k,b.y"] {
+                let sql = |source: &str| {
+                    format!("SELECT {projection} FROM (SELECT k,t,x FROM {source}) a {join} (SELECT {right} FROM b) b ORDER BY a.x,b.y")
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+    assert!(c
+        .execute("SELECT * FROM docs NATURAL JOIN b", &Parameters::new())
+        .is_err());
+}

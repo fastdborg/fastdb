@@ -1,6 +1,6 @@
 # USING join implementation work
 
-Initial collection USING lowering now supports INNER/LEFT/leading-RIGHT joins, chained merged keys, qualified key references and closed-source star suppression. The implementation builds comparison predicates in normalized operand order and keeps merged-key bindings separate from source columns. Collection stars remain whole documents. NATURAL and FULL USING remain rejected; this is not complete join release qualification.
+Initial collection USING lowering now supports INNER/LEFT/leading-RIGHT joins, chained merged keys, qualified key references and closed-source star suppression. The implementation builds comparison predicates in normalized operand order and keeps merged-key bindings separate from source columns. Collection stars remain whole documents. Closed-source NATURAL joins now have initial shared-column support; open-schema NATURAL and FULL USING remain rejected. This is not complete join release qualification.
 
 `tests/tests/using.rs` verifies ordinary native tables `a(k,left_value)` and `b(k,right_value)`, with matching key 1 and unmatched keys 2/3:
 
@@ -14,7 +14,7 @@ The implementation now builds merged-column metadata before projection/star expa
 
 Collection stars still represent whole documents under the existing result contract. Do not turn them into variable-schema field expansion while adding join keys. Closed derived/native stars need the pinned suppression/order rules. Explicit USING names must resolve consistently without discovering optional collection fields by executing queries.
 
-Remaining qualification must extend the implementation tests for multiple keys, chained joins, case/quoted names, duplicate outputs, missing keys, NULLs, native affinity/collation and typed record/binary keys. Cover GROUP/ORDER aliases, execute/profile/EXPLAIN, INSERT SELECT constraints and rollback. NATURAL joins require a separate known-column intersection policy and must not be enabled incidentally.
+Remaining qualification must extend the implementation tests for multiple keys, chained joins, case/quoted names, duplicate outputs, missing keys, NULLs, native affinity/collation and typed record/binary keys. Cover GROUP/ORDER aliases, execute/profile/EXPLAIN, INSERT SELECT constraints and rollback. NATURAL joins use a case-insensitive intersection of closed source column sets. Direct collections require explicit field projections before participating in NATURAL joins.
 
 
 The multiple-key/chained oracle now also verifies that USING(t,k) does not reorder the retained table columns. A LEFT JOIN on (k,t) followed by JOIN c USING(k) retains the left key when the earlier right row is unmatched. The pinned `a RIGHT JOIN b USING(k,t) JOIN c USING(k)` star expands to `c,a,k,t,b` for the fixture, reflecting engine join reordering. Do not assume written FROM order when implementing RIGHT-join stars; inspect the pinned planner's join normalization and preserve qualified-star behavior separately.
@@ -74,3 +74,6 @@ Typed direct/nested correlation now has 180 execute/profile cases for record/boo
 
 
 Direct scalar CAST routing retains native affinity; outer-source propagation is applied when nested expression plans require it. A 36-case execute/profile matrix verifies the pinned distinction between direct and nested TEXT-cast comparisons.
+
+
+Initial closed-source NATURAL lowering derives shared keys from normalized join inputs and routes them through the existing USING binding/star-suppression path. No shared keys become an unconditional join. ON/USING constraints combined with NATURAL reject. A 27-case execute/profile matrix matches native columns/rows for one/multiple/no shared keys, INNER/LEFT/RIGHT joins and qualified/unqualified projections. Open-schema, FULL, broader duplicate/collation/chained/correlation and write qualification remain incomplete.
