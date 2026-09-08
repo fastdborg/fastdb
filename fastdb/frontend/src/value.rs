@@ -139,6 +139,36 @@ mod borrowed_document_tests {
 
     #[test]
     fn borrowed_encoding_preserves_storage_bytes_and_validation() {
+        for vector in [
+            Value::vector32(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector64(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector32_sparse(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector8(&[1.0, 0.0, -1.0]).unwrap(),
+            Value::vector1bit(&[1.0, 0.0, -1.0]).unwrap(),
+        ] {
+            for key in [Key::Integer(i64::MIN), Key::String("ไทย:\"\n".into())] {
+                let document = Document::from([
+                    (
+                        "id".into(),
+                        Value::Record(Record {
+                            table: "docs".into(),
+                            key,
+                        }),
+                    ),
+                    ("vector".into(), vector.clone()),
+                    (
+                        "nested".into(),
+                        Value::Object(Document::from([(
+                            "escaped\"\n".into(),
+                            Value::String("\0\t\\".into()),
+                        )])),
+                    ),
+                ]);
+                let bytes = encode_document(&document).unwrap();
+                assert_eq!(bytes, Value::Object(document.clone()).encode().unwrap());
+                assert_eq!(Value::decode(&bytes).unwrap(), Value::Object(document));
+            }
+        }
         let document = Document::from([
             (
                 "id".into(),
