@@ -3547,3 +3547,15 @@ inside a binary row to verify I/O error identity and no later script writes.
 Existing output/flush failure, transaction, transfer, terminal and limit tests
 remain green. No Node or engine implementation changed. Full V1 and resource
 qualification remain open.
+
+
+### CLI maximum-depth transfer process qualification
+
+A new CLI regression seeds a valid maximum-depth document through Rust, then
+uses separate CLI processes to export, import, reopen, query and re-export it
+in both JSON and NDJSON. Export bytes and typed query contents match; failed
+duplicate imports leave persisted data unchanged. This also exercises the direct
+CLI report writer with tagged output beyond serde's default text recursion bound.
+All three CLI transfer tests pass (`/tmp/fastdb-cli-deep-transfer.log`). This is
+additional test-only process evidence after the 30-test CLI run; general
+resource/recovery/platform and full V1 gates remain open.

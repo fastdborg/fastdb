@@ -120,3 +120,67 @@ fn transfer_output_failures_preserve_committed_data_in_both_formats() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn maximum_depth_documents_survive_cli_transfer_and_query_processes() {
+    let dir = std::env::temp_dir().join(format!(
+        "fastdb-cli-deep-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let source = dir.join("source.db");
+    let mut value = fastdb::Value::String("quoted\"\\\nไทย".into());
+    for depth in 0..63 {
+        value = if depth % 2 == 0 {
+            fastdb::Value::Array(vec![value])
+        } else {
+            fastdb::Value::Object([("nested".into(), value)].into())
+        };
+    }
+    {
+        let db = fastdb::Database::open(source.to_str().unwrap()).unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute("CREATE TABLE docs", &fastdb::Parameters::new())
+            .unwrap();
+        conn.insert("docs", [("payload".into(), value.clone())].into())
+            .unwrap();
+    }
+    for ndjson in [false, true] {
+        let target = dir.join(if ndjson { "lines.db" } else { "json.db" });
+        let target = target.to_str().unwrap();
+        assert!(run(&[target], b"CREATE TABLE docs;").status.success());
+        let mut source_args = vec!["--export", "docs", source.to_str().unwrap()];
+        let mut import_args = vec!["--import", "docs", target];
+        let mut target_args = vec!["--export", "docs", target];
+        if ndjson {
+            source_args.push("--ndjson");
+            import_args.push("--ndjson");
+            target_args.push("--ndjson");
+        }
+        let exported = run(&source_args, b"");
+        assert!(exported.status.success(), "{exported:?}");
+        let imported = run(&import_args, &exported.stdout);
+        assert!(imported.status.success(), "{imported:?}");
+        let reopened = run(&target_args, b"");
+        assert!(reopened.status.success(), "{reopened:?}");
+        assert_eq!(reopened.stdout, exported.stdout);
+        let queried = run(&[target], b"SELECT payload FROM docs;");
+        assert!(queried.status.success(), "{queried:?}");
+        // The tagged result exceeds serde's default text recursion bound.
+        let report: serde_json::Value =
+            fastdb::decode_wire_json(std::str::from_utf8(&queried.stdout).unwrap()).unwrap();
+        assert_eq!(
+            report["rows"],
+            serde_json::to_value(vec![vec![value.clone()]]).unwrap()
+        );
+        assert_eq!(report["transaction"]["after"], "autocommit");
+        let duplicate = run(&import_args, &exported.stdout);
+        assert!(!duplicate.status.success());
+        assert_eq!(run(&target_args, b"").stdout, exported.stdout);
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
