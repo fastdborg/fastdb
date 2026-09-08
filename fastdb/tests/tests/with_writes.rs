@@ -767,3 +767,41 @@ fn unsupported_correlated_cte_writes_preserve_transaction_and_report_query_error
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn with_tuple_updates_preserve_cte_candidates_and_snapshots() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,2),(3,4)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(a,b) SELECT a,b FROM native",
+        "CREATE UNIQUE INDEX docs_a ON docs(a)",
+    ] {
+        q(&c, sql);
+    }
+    for prefix in [
+        "WITH chosen AS (SELECT $n AS n)",
+        "WITH chosen AS (SELECT a AS n FROM docs WHERE a=$n)",
+    ] {
+        q(&c, "BEGIN");
+        let params = Parameters::from([("$n".into(), Value::Integer(1))]);
+        let expected=c.execute("WITH chosen AS (SELECT $n AS n) UPDATE native SET (a,b)=(b,a) WHERE a IN (SELECT n FROM chosen) RETURNING a,b",&params).unwrap();
+        let sql = format!(
+            "{prefix} UPDATE docs SET (a,b)=(b,a) WHERE a IN (SELECT n FROM chosen) RETURNING a,b"
+        );
+        assert_eq!(c.execute(&sql, &params).unwrap().rows, expected.rows);
+        assert_eq!(
+            q(&c, "SELECT a,b FROM docs ORDER BY a").rows,
+            q(&c, "SELECT a,b FROM native ORDER BY a").rows
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            2
+        );
+        q(&c, "ROLLBACK");
+    }
+}

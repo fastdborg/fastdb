@@ -4281,3 +4281,14 @@ built by the preceding full source check. Logs
 `/tmp/fastdb-tuple-node-focused.log` and `/tmp/fastdb-tuple-node.log`.
 Only tests/documentation changed from `2f1da6cfb`; no native rebuild or new full
 Rust-suite run is claimed. Full V1 gates remain open; no publication occurred.
+
+
+## Leading CTE tuple updates — 2026-09-09
+
+Tuple swaps now have native differential coverage with parameter-only CTEs and
+CTEs reading the target collection. Candidate selection, RETURNING values,
+managed-index integrity and outer rollback match the tested native behavior.
+All sixteen with_writes tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-with-tuples.log` and
+`/tmp/fastdb-with-tuples-clippy.log`. Only tests/documentation changed from
+`772bcea0b`; no new full-suite/client run is claimed. Full V1 gates remain open.
