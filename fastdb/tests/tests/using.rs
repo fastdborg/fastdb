@@ -614,3 +614,52 @@ fn correlated_using_preserves_typed_keys_and_atomic_writes() {
         assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
     }
 }
+
+#[test]
+fn using_duplicate_key_columns_preserve_first_lookup_and_star_positions() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "INSERT INTO docs {k:2}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3)",
+    ] {
+        query(sql);
+    }
+    for (left, right) in [
+        ("k,k+10 AS k", "k"),
+        ("k", "k,k+20 AS k"),
+        ("k,k+10 AS k", "k,k+20 AS k"),
+    ] {
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for projection in ["*", "a.*,b.*", "k,a.k,b.k"] {
+                let sql = |source: &str| {
+                    format!(
+                    "SELECT {projection} FROM (SELECT {left} FROM {source}) a {join} (SELECT {right} FROM b) b USING(k) ORDER BY a.k,b.k"
+                )
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}

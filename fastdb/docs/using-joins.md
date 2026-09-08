@@ -41,3 +41,6 @@ Direct source-free correlation now also qualifies outer merged keys in inner ORD
 
 
 Typed correlation coverage now includes 90 execute/profile shapes with bare/aliased ordering, LIMIT 0 and OFFSET 1 scalar-NULL behavior, plus ordered correlated insertion and transaction failure/retry checks.
+
+
+Duplicate public key columns now have a 27-case execute/profile differential matrix for duplicates on either/both derived sources, all three supported join kinds, merged/qualified lookup and star positions. Suppression hides all duplicate public key positions on the suppressed side, matching the pinned baseline. Correlated duplicate-key derived fixtures require separate qualification: the tested native scalar variant rejects with no such column k.
