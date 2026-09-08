@@ -2348,3 +2348,41 @@ test('timeout completion and invalid signal paths release native token capacity'
     await db.close();
   }
 });
+
+test('closing a worker with a timed write permits clean persistent reopen', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),'fastdb-timeout-close-'));
+  const file = path.join(dir,'database.db');
+  let db;
+  try {
+    db = await AsyncDatabase.open(file);
+    await db.execute('CREATE TABLE input(n)');
+    await db.execute('INSERT INTO input VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)');
+    await db.execute('CREATE TABLE docs');
+    await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+    await db.execute('INSERT INTO docs {id:docs:a,n:1}');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {id:docs:b,n:2}');
+    const operation = db.execute('INSERT INTO docs(n) SELECT count(*) FROM input a,input b,input c,input d,input e,input f,input g,input h,input i,input j', {}, {timeoutMs:20});
+    const rejection = assert.rejects(operation, error => {
+      assert.equal(error.code,'FDB_CANCELLED');
+      assert.deepEqual(error.transaction,{before:'active',after:'active'});
+      return true;
+    });
+    const closed = db.close();
+    assert.equal(db.close(),closed);
+    await assert.rejects(db.execute('SELECT 1'),{code:'FDB_CLOSED'});
+    await Promise.all([rejection,closed]);
+    db = undefined;
+    const reopened = new Database(file);
+    try {
+      assert.deepEqual(reopened.all('SELECT n FROM docs'),[[1n]]);
+      assert.equal(reopened.checkCollectionIntegrity('docs').documents,1n);
+      reopened.execute('INSERT INTO docs {id:docs:b,n:2}');
+      assert.deepEqual(reopened.all('SELECT n FROM docs ORDER BY n'),[[1n],[2n]]);
+    } finally { reopened.close(); }
+  } finally {
+    if (db) await db.close();
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});

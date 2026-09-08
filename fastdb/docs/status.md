@@ -3242,3 +3242,17 @@ The complete worker fault fixture passed; log:
 `/tmp/fastdb-timeout-transport-faults.log`. Diff checks passed. No production code
 changed or broader suite was repeated. Native interrupted-I/O, timeout timing,
 platform and remaining V1 gates remain open.
+
+### Real worker timed-write close and reopen
+
+Added a persistent real-worker lifecycle regression that queues close after an
+expensive timed collection INSERT SELECT. The write reports FDB_CANCELLED with
+Active state, repeated close shares its promise, and new work rejects as closed.
+After close completes, reopening retains only the committed row, confirms index
+integrity, and allows reinsertion of the rolled-back pending record.
+
+The focused test passed against the current addon; log:
+`/tmp/fastdb-timeout-close-reopen.log`. Diff checks passed. No production code
+changed or broader suite was repeated. This verifies cooperative cancellation plus
+orderly close/reopen, not forced process termination, interrupted commit or a hard
+close-latency guarantee. Full V1 gates remain open.
