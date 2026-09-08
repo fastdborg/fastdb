@@ -705,3 +705,36 @@ fn lifted_sibling_ctes_keep_local_shadowing_isolated() {
         }
     }
 }
+
+#[test]
+fn lifted_nested_ctes_preserve_positional_parameter_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(1),(2),(3)");
+    let params = Parameters::from([
+        ("?1".into(), Value::Integer(1)),
+        ("?2".into(), Value::Integer(3)),
+        ("?3".into(), Value::Integer(10)),
+    ]);
+    for placeholders in [["?1", "?2", "?3"], ["?", "?", "?"]] {
+        for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            let [first, second, delta] = placeholders;
+            let sql = |table: &str| {
+                format!("WITH earlier AS(SELECT {first} AS n), chosen AS(WITH local_q AS {hint}(SELECT {second} AS n) SELECT n FROM local_q) UPDATE {table} SET n=n+{delta} WHERE n IN(SELECT n FROM earlier UNION ALL SELECT n FROM chosen) RETURNING n")
+            };
+            q(&c, "BEGIN");
+            let expected = c.execute(&sql("native"), &params).unwrap();
+            let actual = c.execute(&sql("docs"), &params).unwrap();
+            assert_eq!(actual.rows, expected.rows, "{}", sql("docs"));
+            assert_eq!(
+                actual.rows,
+                vec![vec![Value::Integer(11)], vec![Value::Integer(13)]]
+            );
+            assert_eq!(actual.affected, 2);
+            q(&c, "ROLLBACK");
+        }
+    }
+}
