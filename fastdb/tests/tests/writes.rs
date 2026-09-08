@@ -496,3 +496,48 @@ fn source_free_tuple_subqueries_match_native_snapshots_and_empty_rows() {
         ]
     );
 }
+
+#[test]
+fn tuple_select_parameters_and_conditional_rows_keep_types() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs(n) VALUES(1),(2)");
+    let record = Value::Record(Record {
+        table: "docs".into(),
+        key: Key::Integer(i64::MAX),
+    });
+    let object = Value::Object(Document::from([(
+        "values".into(),
+        Value::Array(vec![Value::Boolean(true), Value::Binary(vec![0, 255])]),
+    )]));
+    let params = Parameters::from([("$r".into(), record.clone()), ("$o".into(), object.clone())]);
+    assert_eq!(
+        c.execute(
+            "UPDATE docs SET (a,b)=(SELECT $r,$o WHERE docs.n=1) RETURNING n,a,b",
+            &params
+        )
+        .unwrap()
+        .rows,
+        vec![
+            vec![Value::Integer(1), record.clone(), object.clone()],
+            vec![Value::Integer(2), Value::Null, Value::Null]
+        ]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE docs SET (a,b)=(SELECT b,a),n=n+1 WHERE n=1 RETURNING a,b,n"
+        )
+        .rows,
+        vec![vec![object, record, Value::Integer(2)]]
+    );
+    let before = q(&c, "SELECT a,b,n FROM docs").rows;
+    assert_eq!(
+        c.execute("UPDATE docs SET (a,b)=(SELECT $r,$o)", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_PARAMETER"
+    );
+    assert_eq!(q(&c, "SELECT a,b,n FROM docs").rows, before);
+}

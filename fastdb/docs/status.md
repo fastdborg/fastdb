@@ -4329,3 +4329,18 @@ Node/application passes; formatting, Clippy with warnings denied and strict
 TypeScript checks. Log `/tmp/fastdb-tuple-select-check.log`. Focused write tests
 also passed (`/tmp/fastdb-tuple-select.log`). No upstream files or dependencies
 changed. Full V1 release gates remain open; no publication occurred.
+
+
+## Typed conditional tuple SELECT results — 2026-09-09
+
+A regression verifies tuple SELECT parameters retain maximum int64 record keys,
+objects, arrays, booleans and binary values. A qualified outer-field predicate
+produces a typed tuple for one candidate and NULLs for another. A subsequent
+tuple swap mixed with an ordinary assignment preserves the pre-update snapshot;
+missing parameters reject without changing data.
+
+All eleven write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-select-types.log` and
+`/tmp/fastdb-tuple-select-types-clippy.log`. Only tests/documentation changed
+from `74fcbb11f`; no new full-suite/client run is claimed. Broader tuple SELECT
+forms and full V1 gates remain open.
