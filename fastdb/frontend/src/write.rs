@@ -1283,6 +1283,18 @@ mod candidate_cancellation_tests {
             })
             .unwrap_err();
         assert_eq!(error.code(), "FDB_CANCELLED");
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = calls.clone();
+        c.engine.set_progress_handler(
+            1,
+            Some(Box::new(move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1
+            })),
+        );
+        let interrupted = c.coalesce_update_candidates(vec![row.clone(), row.clone(), row.clone()]);
+        c.engine.set_progress_handler(0, None);
+        assert_eq!(interrupted.unwrap_err().code(), "FDB_CANCELLED");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(
             c.coalesce_update_candidates(vec![row.clone(), row.clone()])
                 .unwrap(),

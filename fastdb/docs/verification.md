@@ -4483,3 +4483,15 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-dedup-cancel-check.log`. No upstream source, dependency or storage
 format changes; no publication occurred. Full V1 remains open.
+
+
+## Partial deduplication cancellation — 2026-09-09
+
+The deterministic deduplication regression now also interrupts at the second
+candidate check, after one candidate has entered the result/map. It verifies
+exactly two checks, FDB_CANCELLED with no partial result, and successful fresh
+deduplication and SQL execution after handler removal. The focused regression,
+formatting and all-target fastdb Clippy with warnings denied passed. Logs:
+`/tmp/fastdb-partial-dedup-cancel.log` and
+`/tmp/fastdb-partial-dedup-cancel-clippy.log`. Only tests/docs changed from
+`ed2294f84`; no new full-suite or client run is claimed. Full V1 remains open.
