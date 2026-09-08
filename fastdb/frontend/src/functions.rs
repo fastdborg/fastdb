@@ -1609,6 +1609,8 @@ mod cte_evaluation_tests {
                 "EXISTS(SELECT 1 WHERE n>=cte_tick())",
                 "NOT EXISTS(SELECT 1 WHERE n>=cte_tick())",
                 "EXISTS(SELECT 1 WHERE EXISTS(SELECT 1 WHERE n>=cte_tick()))",
+                "(SELECT n)>=cte_tick()",
+                "(SELECT cte_tick())<=n",
             ] {
                 for limit in ["", " LIMIT 0"] {
                     let query = |source: &str| {

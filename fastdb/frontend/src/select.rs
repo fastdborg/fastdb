@@ -54,10 +54,60 @@ enum SubqueryAffinity {
     NativeMembership(String, String),
     NativeScalar(String),
 }
+// Prepare scalar metadata without evaluating its expressions. An unresolved
+// outer column denotes a correlated scalar register, whose collation is BINARY.
+fn native_scalar_collation(
+    connection: &Connection,
+    inner: &Select,
+    local: &std::collections::BTreeSet<String>,
+) -> Result<String> {
+    let statement = match connection.prepare(Cmd::Stmt(Stmt::Select(inner.clone())).to_string()) {
+        Ok(statement) => statement,
+        Err(error) if error.to_string().contains("no such column:") => return Ok("BINARY".into()),
+        Err(error)
+            if error
+                .to_string()
+                .split_once("no such table: ")
+                .is_some_and(|(_, alias)| {
+                    local.contains(&alias.trim().trim_matches('"').to_ascii_lowercase())
+                }) =>
+        {
+            return Ok("BINARY".into())
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let program = statement.get_program();
+    let mut implicit = None;
+    let mut explicit = None;
+    if let Some(column) = program.result_columns.first() {
+        let mut value = column.expr.clone();
+        turso_core::walk_expr_mut(&mut value, &mut |expr| {
+            match expr {
+                Expr::Collate(_, name) => {
+                    explicit.get_or_insert_with(|| name.as_str().to_owned());
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+                Expr::Column { table, column, .. } => {
+                    if let Some((_, source)) =
+                        program.table_references.find_table_by_internal_id(*table)
+                    {
+                        if let Some(column) = source.get_column_at(*column) {
+                            implicit.get_or_insert_with(|| column.collation().name());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(turso_core::WalkControl::Continue)
+        })?;
+    }
+    Ok(explicit.or(implicit).unwrap_or_else(|| "BINARY".into()))
+}
 // Predicate-only correlation leaves the native projection intact.
 // The probe substitutes NULL solely for metadata preparation; the executable
 // query retains its outer references and is evaluated by the engine per row.
 fn native_correlated_predicate(
+    connection: &Connection,
     inner: &Select,
     sources: &[Source],
     metadata: bool,
@@ -117,40 +167,76 @@ fn native_correlated_predicate(
             _ => None,
         }
     }
+    let correlation_aliases = local
+        .iter()
+        .cloned()
+        .chain(
+            outer_sources
+                .iter()
+                .map(|source| source.alias.to_ascii_lowercase()),
+        )
+        .collect();
     let rewrite = |value: &mut Expr, typed: bool| -> Result<bool> {
         let mut correlated = false;
         // Lowering the enclosing predicate must preserve nested native queries,
         // while recursively binding any qualified outer references they contain.
-        let mut nested_exists = ExpressionSubqueries::new();
+        let mut nested_queries = ExpressionSubqueries::new();
         let mut nested_error = None;
         turso_core::walk_expr_mut(value, &mut |expr| {
-            if matches!(expr, Expr::Exists(_)) {
+            if matches!(expr, Expr::Exists(_) | Expr::Subquery(_)) {
                 let original = expr.to_string();
-                let Expr::Exists(inner) = expr else {
+                let scalar = matches!(expr, Expr::Subquery(_));
+                let (Expr::Exists(inner) | Expr::Subquery(inner)) = expr else {
                     unreachable!()
                 };
-                let prepared = match native_correlated_predicate(
+                let (prepared, typed_projection) = match native_correlated_predicate(
+                    connection,
                     inner,
                     &outer_sources,
                     metadata,
                     params,
-                    false,
+                    scalar,
                 ) {
-                    Ok((prepared, _)) => prepared,
+                    Ok(prepared) => prepared,
                     Err(error) => {
                         nested_error = Some(error);
                         return Ok(turso_core::WalkControl::SkipChildren);
                     }
                 };
-                let prepared = Expr::Exists(prepared);
+                let scalar_collation = if scalar && !metadata && !typed_projection {
+                    match native_scalar_collation(connection, inner, &correlation_aliases) {
+                        Ok(collation) => collation,
+                        Err(error) => {
+                            nested_error = Some(error);
+                            return Ok(turso_core::WalkControl::SkipChildren);
+                        }
+                    }
+                } else {
+                    "BINARY".into()
+                };
+                let prepared = if scalar {
+                    Expr::Subquery(prepared)
+                } else {
+                    Expr::Exists(prepared)
+                };
                 correlated |= prepared.to_string() != original;
                 if metadata {
                     *expr = prepared;
                 } else {
-                    nested_exists.insert(
-                        original,
-                        (prepared, Default::default(), SubqueryAffinity::None),
-                    );
+                    let (prepared, affinity) = if scalar && !typed_projection {
+                        match expression(&format!("__fastdb_pack({prepared})")) {
+                            Ok(prepared) => {
+                                (prepared, SubqueryAffinity::NativeScalar(scalar_collation))
+                            }
+                            Err(error) => {
+                                nested_error = Some(error);
+                                return Ok(turso_core::WalkControl::SkipChildren);
+                            }
+                        }
+                    } else {
+                        (prepared, SubqueryAffinity::None)
+                    };
+                    nested_queries.insert(original, (prepared, Default::default(), affinity));
                 }
                 return Ok(turso_core::WalkControl::SkipChildren);
             }
@@ -174,7 +260,7 @@ fn native_correlated_predicate(
         }
         if correlated && !metadata {
             let scope = Scope {
-                expression_subqueries: nested_exists,
+                expression_subqueries: nested_queries,
                 using: UsingColumns::default(),
                 qualified_only: true,
                 sources: outer_sources.clone(),
@@ -563,7 +649,7 @@ fn qualify_correlated_using(
     }
     // Resolve only closed local source schemas here. Open collections and
     // other source forms need their own lexical scope resolution.
-    // The pinned planner keeps outer merged keys available to deeper EXISTS
+    // The pinned planner keeps outer merged keys available to deeper query
     // scopes even when this SELECT has a same-named local column. Local columns
     // still take precedence in this SELECT's own expressions.
     let mut inherited_using = using.clone();
@@ -620,6 +706,7 @@ fn qualify_correlated_using(
             }
         }
     }
+    let sourceful = matches!(&inner.body.select, OneSelect::Select { from: Some(_), .. });
     let OneSelect::Select {
         columns,
         where_clause,
@@ -670,7 +757,13 @@ fn qualify_correlated_using(
     {
         let mut nested_error = None;
         turso_core::walk_expr_mut(value, &mut |expr| {
-            if let Expr::Exists(inner) = expr {
+            // Source-free wrappers around sourceful scalars already use the
+            // logical correlation pass, which preserves encoded outer values.
+            let scalar = matches!(expr, Expr::Subquery(inner) if sourceful || matches!(&inner.body.select, OneSelect::Select { from: None, .. }));
+            if matches!(expr, Expr::Exists(_)) || scalar {
+                let (Expr::Exists(inner) | Expr::Subquery(inner)) = expr else {
+                    unreachable!()
+                };
                 if let Err(error) = qualify_correlated_using(
                     connection,
                     params,
@@ -4360,7 +4453,7 @@ impl Connection {
             if let Expr::Exists(mut inner) = expression(sql)? {
                 qualify_correlated_using(self, params, &ctes, &mut inner, &sources, &using)?;
                 *lowered = Expr::Exists(
-                    native_correlated_predicate(&inner, &sources, false, params, true)?.0,
+                    native_correlated_predicate(self, &inner, &sources, false, params, true)?.0,
                 );
                 continue;
             }
@@ -4378,7 +4471,7 @@ impl Connection {
             let mut collation = "BINARY".to_owned();
             let correlated = {
                 let (mut probe, _) =
-                    native_correlated_predicate(&inner, &sources, true, params, false)?;
+                    native_correlated_predicate(self, &inner, &sources, true, params, false)?;
                 let correlated = Cmd::Stmt(Stmt::Select(probe.clone())).to_string()
                     != Cmd::Stmt(Stmt::Select(inner.clone())).to_string();
                 if probe.with.is_none() {
@@ -4429,6 +4522,7 @@ impl Connection {
                 correlated
             };
             let (runtime, typed_projection) = native_correlated_predicate(
+                self,
                 &inner,
                 &sources,
                 false,
@@ -4465,7 +4559,7 @@ impl Connection {
                 && matches!(affinity, SubqueryAffinity::NativeMembership(_, _))
             {
                 *lowered = Expr::Subquery(
-                    native_correlated_predicate(&inner, &sources, false, params, false)?.0,
+                    native_correlated_predicate(self, &inner, &sources, false, params, false)?.0,
                 );
                 *affinity = SubqueryAffinity::NativeMembership(collation, String::new());
                 continue;
@@ -4497,7 +4591,7 @@ impl Connection {
                 SubqueryAffinity::NativeMembership(collation, name)
             } else {
                 let (runtime, _) =
-                    native_correlated_predicate(&inner, &sources, false, params, true)?;
+                    native_correlated_predicate(self, &inner, &sources, false, params, true)?;
                 *lowered = expression(&format!(
                     "__fastdb_pack(({}))",
                     Cmd::Stmt(Stmt::Select(runtime))

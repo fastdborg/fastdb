@@ -2199,10 +2199,14 @@ fn pinned_deeper_scalar_merged_key_qualification_preserves_results() {
             .unwrap_or_else(|e| panic!("{sql}: {e}"))
     };
     for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(k) VALUES(1),(2),('a')",
         "CREATE TABLE a(k INTEGER)",
-        "INSERT INTO a VALUES(1),(2)",
+        "INSERT INTO a VALUES(1),(2),('a')",
         "CREATE TABLE b(k INTEGER)",
-        "INSERT INTO b VALUES(1),(3)",
+        "INSERT INTO b VALUES(1),(3),('a')",
+        "CREATE TABLE labels(v TEXT COLLATE NOCASE)",
+        "INSERT INTO labels VALUES('A')",
         "CREATE TABLE nums(n INTEGER)",
         "INSERT INTO nums VALUES(0),(1),(2)",
     ] {
@@ -2211,6 +2215,10 @@ fn pinned_deeper_scalar_merged_key_qualification_preserves_results() {
     for (join, retained) in [("JOIN", "a"), ("LEFT JOIN", "a"), ("RIGHT JOIN", "b")] {
         for predicate in [
             "(SELECT KEY)>1",
+            "(SELECT x.n)>=0",
+            "(SELECT 'A' COLLATE NOCASE)=KEY",
+            "(SELECT 'A' COLLATE NOCASE LIMIT 1)=KEY",
+            "(SELECT v FROM labels LIMIT 1)=KEY",
             "(SELECT CAST(KEY AS TEXT))='3'",
             "(SELECT CAST(KEY AS TEXT))=3",
             "(SELECT CAST(KEY AS INTEGER))='3'",
@@ -2227,6 +2235,13 @@ fn pinned_deeper_scalar_merged_key_qualification_preserves_results() {
             let qualified = query(&sql(&format!("{retained}.k")));
             assert_eq!(qualified.columns, original.columns);
             assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
+            // Membership lowering needs a separate RHS plan.
+            if !predicate.contains("IN(") {
+                let mixed_sql = sql("k").replace("FROM a ", "FROM docs a ");
+                let mixed = query(&mixed_sql);
+                assert_eq!(mixed.columns, original.columns);
+                assert_eq!(mixed.rows, original.rows, "{mixed_sql}");
+            }
         }
     }
 }
