@@ -546,10 +546,22 @@ fn wrap_json(mut payload: String, prefix: &str, suffix: &str) -> String {
 fn execution_field(result: fastdb::Result<String>) -> String {
     match result {
         Ok(value) => wrap_json(value, "\"result\":", ""),
-        Err(error) => format!(
-            "\"error\":{}",
-            serde_json::json!({"code":error.code(),"message":error.to_string()})
-        ),
+        Err(error) => {
+            let mut diagnostic =
+                serde_json::json!({"code":error.code(),"message":error.to_string()});
+            if let fastdb::Error::Migration {
+                version,
+                offset,
+                source,
+            } = &error
+            {
+                diagnostic["migration"] = serde_json::json!({
+                    "version":version.to_string(),"offset":offset.to_string(),
+                    "cause":{"code":source.code(),"message":source.to_string()}
+                });
+            }
+            format!("\"error\":{diagnostic}")
+        }
     }
 }
 fn query_value(result: fastdb::QueryResult) -> fastdb::Result<JsonText> {

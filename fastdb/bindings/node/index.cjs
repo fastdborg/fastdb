@@ -100,6 +100,10 @@ function unwrap(raw) {
     const error = new Error(report.execution.error.message);
     error.code = report.execution.error.code;
     error.transaction = report.transaction;
+    if (report.execution.error.migration) {
+      const migration = report.execution.error.migration;
+      error.migration = {version:BigInt(migration.version),offset:BigInt(migration.offset),cause:migration.cause};
+    }
     throw error;
   }
   return report;
@@ -173,9 +177,16 @@ function decodeProfile(raw) {
 function isFastDBError(value) {
   if (!(value instanceof Error) || typeof value.code !== 'string' || !/^FDB_[A-Z][A-Z0-9_]*$/.test(value.code)) return false;
   const transaction = value.transaction;
-  return transaction === undefined || (transaction !== null && typeof transaction === 'object' &&
+  if (!(transaction === undefined || (transaction !== null && typeof transaction === 'object' &&
     (transaction.before === 'autocommit' || transaction.before === 'active') &&
-    (transaction.after === 'autocommit' || transaction.after === 'active'));
+    (transaction.after === 'autocommit' || transaction.after === 'active')))) return false;
+  const migration = value.migration;
+  return migration === undefined || (migration !== null && typeof migration === 'object' &&
+    typeof migration.version === 'bigint' && migration.version > 0n &&
+    typeof migration.offset === 'bigint' && migration.offset >= 0n &&
+    migration.cause !== null && typeof migration.cause === 'object' &&
+    typeof migration.cause.code === 'string' && /^FDB_[A-Z][A-Z0-9_]*$/.test(migration.cause.code) &&
+    typeof migration.cause.message === 'string');
 }
 exports.isFastDBError = isFastDBError;
 function cardinalityError(count, transaction) {

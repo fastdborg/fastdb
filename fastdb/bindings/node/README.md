@@ -30,7 +30,7 @@ try {
 
 `execute` returns columns, positional rows, bigint affected count, and transaction before/after observations. `all`, `first` and `exactlyOne` provide row-cardinality helpers; first returns undefined for no rows and exactlyOne throws unless there is one row. A cardinality mismatch is a `RangeError` with code `FDB_CARDINALITY` and the completed statement's `transaction` observations. The statement has already executed: the helper does not undo writes or roll back an outer transaction. Engine/frontend execution failures throw Error with `code` and `transaction` fields. Public Database/AsyncDatabase operations rejected after close (or while the worker is closing) use `FDB_CLOSED` without a transaction field because no statement was submitted. Constructor and JavaScript argument errors currently use ordinary errors without that envelope; the final cross-client error contract is unfinished.
 
-`isFastDBError(error)` narrows a caught `unknown` value to the exported `FastDBError` interface. It recognizes Error instances with an `FDB_*` code and validates transaction observations when present. `transaction` is optional: closed-handle, worker and queue errors can occur before execution. Constructor and argument errors can fail this guard.
+`isFastDBError(error)` narrows a caught `unknown` value to the exported `FastDBError` interface. It recognizes Error instances with an `FDB_*` code and validates transaction observations and migration details when present. `transaction` is optional: closed-handle, worker and queue errors can occur before execution. Constructor and argument errors can fail this guard.
 
 
 `Database` methods are synchronous and block the calling JavaScript thread. Each instance owns one frontend connection and its database lifetime. Close is idempotent; calls after close fail. Closing an active transaction uses the engine's normal connection-drop behavior. Do not share native handles across workers; use AsyncDatabase to own a separate native connection on a dedicated worker. AsyncDatabase exposes cooperative connection interruption and AbortSignal cancellation for queries, profiling, integrity audits, batches, document transfers and migrations. See [operation cancellation](#operation-abortsignal-cancellation) for signatures and outcome handling.
@@ -50,9 +50,11 @@ Migration errors retain `code`, `message` and the runner's transaction observati
 | Edited or incomplete applied history | `FDB_VALIDATION`; a mismatch message distinguishes the version sequence, name or exact SQL source. Restore the original applied prefix before retrying. |
 | Input or stored-history size limit | `FDB_LIMIT`; inspect the message to identify the rejected limit. |
 | Incompatible ledger schema or invalid stored types | `FDB_STORAGE`; the runner does not repair the ledger. |
-| Pending statement failure | Usually `FDB_MIGRATION`, with version, statement byte offset and underlying error text. The runner attempts to roll back all pending scripts and history together. |
+| Pending statement failure | Usually `FDB_MIGRATION`, with `error.migration.version` and `.offset` as bigint values and `.cause.code`/`.message` identifying the underlying failure. The offset counts UTF-8 bytes within that script. The runner attempts to roll back all pending scripts and history together. |
 | Cooperative cancellation | `FDB_CANCELLED`; a pending statement's version and offset remain in its message. Completion can win the abort race. |
 | Rollback failure | `FDB_ROLLBACK`; cleanup did not establish the normal rollback outcome. |
+
+The optional `migration` property has the exported `MigrationFailure` shape. It is present for wrapped statement failures, including interrupted statements; plan parsing, history checks and pre-execution cancellation need not provide it.
 
 Inspect `error.transaction` and the actual result before retrying. A worker transport failure (`FDB_WORKER`) has no transaction observation and does not establish whether accepted migration work committed. JavaScript argument validation may fail before reaching the runner. Keep applied scripts unchanged, including comments and whitespace; correcting an unrecorded pending script is supported after a confirmed failed run.
 

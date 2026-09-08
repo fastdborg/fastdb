@@ -3605,3 +3605,20 @@ tests assert exact metadata, including the second statement's source offset.
 All five migration and four transfer tests pass
 (`/tmp/fastdb-migration-causes.log`). Other CLI errors retain their existing shape.
 Full V1 and broader error-contract qualification remain open.
+
+
+### Structured Node migration causes
+
+Both Node clients now expose optional `FastDBError.migration` metadata for wrapped
+statement failures: bigint version and UTF-8 byte offset, plus underlying
+cause.code/message. Native transport encodes both integers as decimal strings;
+the wrapper restores bigint values. `MigrationFailure` declarations and
+isFastDBError validation cover this optional shape. Preflight/history and
+pre-execution cancellation errors need not carry statement metadata.
+
+All 79 Node/application tests and strict TypeScript pass
+(`/tmp/fastdb-node-migration-causes.log`); scoped Node Clippy and formatting pass.
+New sync/worker tests check versions above 2^53, multibyte source offsets,
+constraint and buffer-limit causes, rollback/index integrity, corrected retry,
+and malformed-metadata guard rejection. Full V1, installed-artifact and broader
+error-contract/platform qualification retain their separate open gates.

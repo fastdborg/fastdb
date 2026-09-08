@@ -2427,3 +2427,38 @@ test('maximum logical depth survives wire framing, storage and transfer', async 
     } finally { await db.close(); }
   }
 });
+
+test('migration failures expose lossless versions, UTF-8 offsets and typed causes', async () => {
+  const {AsyncDatabase,isFastDBError} = require('./index.cjs');
+  for(const worker of [false,true]) for(const limited of [false,true]) {
+    const options = limited ? {writeBufferLimits:{maxRows:1n,maxPayloadBytes:1000n}} : {};
+    const db = worker ? await AsyncDatabase.open(':memory:',options) : new Database(':memory:',options);
+    try {
+      const base = {version:1n,name:'base',sql:'CREATE TABLE docs; CREATE UNIQUE INDEX docs_n ON docs(n); INSERT INTO docs {id:docs:saved,n:1};'};
+      await db.migrate([base]);
+      const prefix = "-- café 日本語\nINSERT INTO docs {id:docs:temp,n:2}; ";
+      const bad = limited ? 'INSERT INTO docs (n) VALUES(3),(4);' : 'INSERT INTO docs {n:1};';
+      const pending = {version:9007199254740993n,name:'pending',sql:prefix+bad};
+      await assert.rejects(async()=>db.migrate([base,pending]),error=>{
+        assert(isFastDBError(error));
+        assert.equal(error.code,'FDB_MIGRATION');
+        assert.equal(error.migration.version,pending.version);
+        assert.equal(error.migration.offset,BigInt(Buffer.byteLength(prefix)));
+        assert.equal(error.migration.cause.code,limited?'FDB_LIMIT':'FDB_CONSTRAINT');
+        assert.equal(typeof error.migration.cause.message,'string');
+        assert.deepEqual(error.transaction,{before:'autocommit',after:'autocommit'});
+        return true;
+      });
+      assert.deepEqual((await db.execute('SELECT n FROM docs')).rows,[[1n]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents,1n);
+      pending.sql=prefix;
+      assert.deepEqual((await db.migrate([base,pending])).applied,[pending.version]);
+      assert.equal((await db.migrate([base,pending])).alreadyApplied,2);
+    } finally { await db.close(); }
+  }
+  for(const migration of [null,{}, {version:1,offset:0n,cause:{code:'FDB_LIMIT',message:'x'}},
+    {version:1n,offset:-1n,cause:{code:'FDB_LIMIT',message:'x'}},
+    {version:1n,offset:0n,cause:{code:'bad',message:'x'}}]) {
+    assert.equal(isFastDBError(Object.assign(new Error('test'),{code:'FDB_MIGRATION',migration})),false);
+  }
+});

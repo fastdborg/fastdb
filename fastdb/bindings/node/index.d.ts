@@ -14,8 +14,9 @@ export class Vector {
 export type Value = null | boolean | string | bigint | number | Uint8Array | Record | Vector | Value[] | { [field: string]: Value };
 export interface Parameters { [name: string]: Value; }
 export interface Transaction { before: 'autocommit' | 'active'; after: 'autocommit' | 'active'; }
-export interface FastDBError extends Error { code: string; transaction?: Transaction; }
-/** Recognizes coded FastDB errors and validates any transaction observations. */
+export interface MigrationFailure { version: bigint; offset: bigint; cause: {code: string; message: string}; }
+export interface FastDBError extends Error { code: string; transaction?: Transaction; migration?: MigrationFailure; }
+/** Recognizes coded FastDB errors and validates optional transaction and migration details. */
 export function isFastDBError(value: unknown): value is FastDBError;
 export interface QueryResult { columns: string[]; rows: Value[][]; affected: bigint; transaction: Transaction; }
 /** Retained logical result limits; excludes engine working memory and temporary decoding. */

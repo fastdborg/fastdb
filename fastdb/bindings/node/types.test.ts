@@ -154,3 +154,15 @@ void AsyncDatabase.open().then(async db => {
   await db.execute('SELECT 1', {}, { timeoutMs: 100n });
   await db.close();
 });
+
+function migrationErrorDetails(error: unknown) {
+  if (isFastDBError(error) && error.migration) {
+    const version: bigint = error.migration.version;
+    const offset: bigint = error.migration.offset;
+    const code: string = error.migration.cause.code;
+    // @ts-expect-error migration versions are lossless bigints
+    const numericVersion: number = error.migration.version;
+    void version; void offset; void code; void numericVersion;
+  }
+}
+void migrationErrorDetails;
