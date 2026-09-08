@@ -3994,3 +3994,16 @@ implementation tree based on `9620937a2` with this fix. This combines the groupe
 windowed and compound iterator regressions with the latest implementation. No
 upstream source or dependencies changed. Broader nested scope/type propagation
 and full V1 release gates remain open; no publication occurred.
+
+
+## Nested iterator alias shadowing — 2026-09-08
+
+Two native differential cases now cover an inner iterator shadowing the outer
+collection alias, and a deeper iterator reusing an intermediate iterator alias
+while its predicate references the outer collection. Execute/profile rows and
+columns match native tables, including zero-count rows. All eleven iterator tests
+and formatting passed; log `/tmp/fastdb-iterator-shadowing.log`. This is a SQL
+fixture extension only, based on `c0dc21f06`; no implementation or dependency
+change, full-suite rerun or new client result is claimed. The complete scoped
+baseline remains 570 Rust and 81 Node/application passes with one ignored trigger
+gate. Broader nested-query qualification and full V1 release gates remain open.
