@@ -1296,3 +1296,113 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod deadline_returning_tests {
+    use super::*;
+    use std::sync::{atomic::AtomicUsize, Mutex};
+    use std::time::{Duration, Instant};
+    use turso_ext::{scalar, ResultCode, Value as ExtValue};
+    static TOKEN: Mutex<Option<CancellationToken>> = Mutex::new(None);
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    #[scalar(name = "deadline_returning_tick")]
+    fn deadline_returning_tick(args: &[ExtValue]) -> ExtValue {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        let token = TOKEN.lock().unwrap().as_ref().unwrap().clone();
+        while !token.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        ExtValue::from_integer(args[0].to_integer().unwrap())
+    }
+
+    #[test]
+    fn expiry_during_returning_restores_mutations_and_indexes() {
+        for (collection, outer) in [(false, false), (false, true), (true, false), (true, true)] {
+            let db = crate::Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            let p = Parameters::new();
+            unsafe {
+                let api = c.engine._build_turso_ext();
+                let code = (api.register_scalar_function)(
+                    api.ctx,
+                    c"deadline_returning_tick".as_ptr(),
+                    1,
+                    false,
+                    0,
+                    deadline_returning_tick,
+                    None,
+                    None,
+                );
+                c.engine._free_extension_ctx(api);
+                assert_eq!(code, ResultCode::OK);
+            }
+            c.execute(
+                if collection {
+                    "CREATE TABLE docs"
+                } else {
+                    "CREATE TABLE docs(n INTEGER)"
+                },
+                &p,
+            )
+            .unwrap();
+            c.execute("CREATE UNIQUE INDEX docs_n ON docs(n)", &p)
+                .unwrap();
+            c.execute("INSERT INTO docs(n) VALUES(1)", &p).unwrap();
+            if outer {
+                c.execute("BEGIN", &p).unwrap();
+                c.execute("INSERT INTO docs(n) VALUES(2)", &p).unwrap();
+            }
+            let before = c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows;
+            let token = CancellationToken::with_deadline(Instant::now() + Duration::from_secs(1));
+            *TOKEN.lock().unwrap() = Some(token.clone());
+            CALLS.store(0, Ordering::SeqCst);
+            let error = c
+                .write_with_result_limits_cancellable(
+                    "UPDATE docs SET n=n+10 RETURNING deadline_returning_tick(n)",
+                    &p,
+                    crate::ResultLimits {
+                        max_rows: 10,
+                        max_payload_bytes: 1000,
+                    },
+                    &token,
+                )
+                .unwrap_err();
+            *TOKEN.lock().unwrap() = None;
+            assert_eq!(error.code(), "FDB_CANCELLED");
+            assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                c.transaction_state(),
+                if outer {
+                    crate::TransactionState::Active
+                } else {
+                    crate::TransactionState::Autocommit
+                }
+            );
+            assert_eq!(
+                c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows,
+                before
+            );
+            if collection {
+                assert_eq!(
+                    c.check_collection_integrity("docs", Default::default())
+                        .unwrap()
+                        .documents,
+                    before.len() as u64
+                );
+            }
+            let fresh = CancellationToken::with_deadline(Instant::now() + Duration::from_secs(60));
+            c.execute_cancellable("UPDATE docs SET n=n+10", &p, &fresh)
+                .unwrap();
+            if outer {
+                c.execute("ROLLBACK", &p).unwrap();
+            }
+            assert_eq!(
+                c.execute("SELECT n FROM docs WHERE n=1", &p)
+                    .unwrap()
+                    .rows
+                    .len(),
+                usize::from(outer)
+            );
+        }
+    }
+}

@@ -3190,3 +3190,19 @@ All five command-limit integration tests passed; log:
 No production code changed or broader suite was repeated. This is selected
 line-mode execution/recovery evidence, not fixed-latency, terminal Ctrl-C/deadline
 interaction or all-platform qualification. Full V1 remains incomplete.
+
+### Deadline expiry during RETURNING
+
+Added a native/collection UPDATE matrix in autocommit and explicit transactions
+where a RETURNING callback waits for the monotonic token deadline, without issuing
+manual cancellation. Each case reaches exactly one callback, reports FDB_CANCELLED,
+restores the original rows and transaction state, validates collection index
+integrity, and permits a fresh-token update followed by caller rollback where
+applicable. This exercises expiry after mutation rather than only source-query
+or pre-execution rejection.
+
+The focused four-case test passed, with frontend Clippy, formatting and diff checks.
+Logs: `/tmp/fastdb-deadline-returning.log` and
+`/tmp/fastdb-deadline-returning-clippy.log`. No production code changed or broader
+suite was repeated. The callback deliberately waits at one selected point; this is
+not a production timing/latency bound, trigger-defect resolution or full V1 gate.
