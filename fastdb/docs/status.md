@@ -3666,3 +3666,15 @@ regression checks sentinel consumption, split-scalar rejection and an exact
 UTF-8 boundary using a small injected limit; process tests verify invalid UTF-8
 reports and unchanged data in both formats. This is not a maximum-size transfer
 benchmark or a complete resource/release qualification. Full V1 remains open.
+
+
+### Actual 64 MiB import boundary qualification
+
+A file-backed CLI regression now exercises the actual byte cap in both JSON and
+NDJSON. Oversized input whose sentinel cuts a UTF-8 scalar returns structured
+FDB_LIMIT diagnostics with empty stdout; exactly 64 MiB valid empty transfers
+padded with whitespace succeed. Existing committed data survives every invocation.
+All five CLI transfer tests pass in 6.76 seconds
+(`/tmp/fastdb-real-import-cap.log`). This verifies input framing and limit
+handling, not maximum-document payload throughput or peak-memory guarantees.
+Full V1 and broader resource/release qualification remain open.

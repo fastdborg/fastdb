@@ -249,3 +249,87 @@ fn transfer_operation_failures_report_codes_without_polluting_data_output() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn actual_import_byte_limit_accepts_exact_input_and_rejects_split_utf8_overflow() {
+    let root = std::env::temp_dir().join(format!(
+        "fastdb-cli-import-cap-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let database = root.join("database.db");
+    let database = database.to_str().unwrap();
+    let input = root.join("input.json");
+    assert!(run(
+        &[database],
+        b"CREATE TABLE docs; INSERT INTO docs {id:docs:saved,n:1};"
+    )
+    .status
+    .success());
+    let limit = 64 * 1024 * 1024;
+    for ndjson in [false, true] {
+        let prefix: &[u8] = if ndjson {
+            b"{\"format\":\"fastdb.documents\",\"version\":1}"
+        } else {
+            b"{\"header\":{\"format\":\"fastdb.documents\",\"version\":1},\"documents\":[]}"
+        };
+        let mut args = vec!["--import", "docs", database];
+        if ndjson {
+            args.push("--ndjson");
+        }
+        for overflow in [true, false] {
+            {
+                let mut writer = std::io::BufWriter::new(std::fs::File::create(&input).unwrap());
+                writer.write_all(prefix).unwrap();
+                let mut remaining = limit - 1 - prefix.len();
+                let spaces = [b' '; 65536];
+                while remaining > 0 {
+                    let count = remaining.min(spaces.len());
+                    writer.write_all(&spaces[..count]).unwrap();
+                    remaining -= count;
+                }
+                writer
+                    .write_all(if overflow {
+                        "ไทย".as_bytes()
+                    } else {
+                        b"\n"
+                    })
+                    .unwrap();
+                writer.flush().unwrap();
+            }
+            let output = Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+                .args(&args)
+                .stdin(Stdio::from(std::fs::File::open(&input).unwrap()))
+                .output()
+                .unwrap();
+            if overflow {
+                assert!(!output.status.success());
+                assert!(output.stdout.is_empty());
+                let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+                assert_eq!(error["error"]["code"], "FDB_LIMIT");
+                assert_eq!(
+                    error["transaction"],
+                    serde_json::json!({"before":"autocommit","after":"autocommit"})
+                );
+            } else {
+                assert_eq!(std::fs::metadata(&input).unwrap().len(), limit as u64);
+                assert!(output.status.success(), "{output:?}");
+                assert!(output.stderr.is_empty());
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(report["imported"], 0);
+            }
+            let data = run(&[database], b"SELECT n FROM docs;");
+            assert!(data.status.success());
+            let report: serde_json::Value = serde_json::from_slice(&data.stdout).unwrap();
+            assert_eq!(
+                report["rows"],
+                serde_json::json!([[{"type":"Integer","value":1}]])
+            );
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
