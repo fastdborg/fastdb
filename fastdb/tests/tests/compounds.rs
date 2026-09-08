@@ -733,3 +733,67 @@ fn pinned_correlated_unordered_union_pagination_is_not_materialization_equivalen
         ]
     );
 }
+
+#[test]
+fn rejected_composite_membership_reports_rollback_and_allows_retry() {
+    for composite in [
+        Value::Array(vec![Value::Integer(1)]),
+        Value::Object(std::collections::BTreeMap::from([(
+            "n".into(),
+            Value::Integer(1),
+        )])),
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            "CREATE TABLE probe(n INTEGER)",
+            "INSERT INTO probe VALUES(1)",
+            "CREATE TABLE sink",
+            "CREATE UNIQUE INDEX sink_n ON sink(n)",
+            "INSERT INTO docs(n,k) VALUES(1,1)",
+        ] {
+            q(&c, sql);
+        }
+        c.execute(
+            "INSERT INTO docs(n,k) VALUES(2,$value)",
+            &Parameters::from([("$value".into(), composite.clone())]),
+        )
+        .unwrap();
+        q(&c, "BEGIN");
+        q(&c, "INSERT INTO sink(n) VALUES(9)");
+        let insert = "INSERT INTO sink(n) SELECT d.n FROM docs d WHERE (SELECT count(*) FROM probe WHERE d.k IN(SELECT d.k INTERSECT SELECT 1 LIMIT 1))=1 ORDER BY d.n RETURNING n";
+        let error = c.execute(insert, &Parameters::new()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("expected scalar or record index value"),
+            "{error}"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+        assert!(q(&c, "SELECT n FROM sink").rows.is_empty());
+        assert_eq!(
+            q(&c, "SELECT k FROM docs WHERE n=2").rows,
+            vec![vec![composite.clone()]]
+        );
+        for table in ["docs", "sink"] {
+            c.check_collection_integrity(table, Default::default())
+                .unwrap();
+        }
+        q(&c, "BEGIN");
+        q(&c, "UPDATE docs SET k=1 WHERE n=2");
+        assert_eq!(
+            q(&c, insert).rows,
+            vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+        );
+        c.check_collection_integrity("sink", Default::default())
+            .unwrap();
+        q(&c, "ROLLBACK");
+        assert!(q(&c, "SELECT n FROM sink").rows.is_empty());
+        assert_eq!(
+            q(&c, "SELECT k FROM docs WHERE n=2").rows,
+            vec![vec![composite]]
+        );
+    }
+}

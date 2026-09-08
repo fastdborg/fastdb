@@ -202,7 +202,7 @@ fn preserve_compound_column_names(select: &mut Select) {
     if let OneSelect::Select { columns, .. } = &mut select.body.select {
         for column in columns {
             if let ResultColumn::Expr(_, Some(alias @ As::ImplicitColumnName(_))) = column {
-                *alias = As::As(alias.name().clone());
+                *alias = As::As(Name::from_string(quote(alias.name().as_str())));
             }
         }
     }
