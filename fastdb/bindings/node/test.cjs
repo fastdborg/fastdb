@@ -2518,6 +2518,11 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       assert.deepEqual((await db.execute(cte,{$delta:1n})).rows,cteRows);
       assert.deepEqual((await db.profileSelect(cte,{$delta:1n})).result.rows,cteRows);
       await assert.rejects(async()=>db.execute(cte),error=>error.code==='FDB_PARAMETER');
+      const predicates='SELECT x.value FROM docs d CROSS JOIN json_each(json_array(EXISTS(SELECT 1 FROM native s WHERE s.n=d.n),$key IN (SELECT n FROM native))) x ORDER BY x.key';
+      assert.deepEqual((await db.execute(predicates,{$key:1n})).rows,[[1n],[1n]]);
+      assert.deepEqual((await db.profileSelect(predicates,{$key:1n})).result.rows,[[1n],[1n]]);
+      await assert.rejects(async()=>db.execute(predicates),error=>error.code==='FDB_PARAMETER');
+
 
 
 

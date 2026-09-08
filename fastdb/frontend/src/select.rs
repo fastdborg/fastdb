@@ -2839,7 +2839,9 @@ fn source(
                                 .map_or_else(|| format!("?{}", var.index), |name| name.to_string()),
                         );
                     }
-                    Expr::Subquery(_) => return Ok(turso_core::WalkControl::SkipChildren),
+                    Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. } => {
+                        return Ok(turso_core::WalkControl::SkipChildren)
+                    }
                     Expr::Id(_) | Expr::Qualified(..) | Expr::DoublyQualified(..) => {}
                     Expr::Literal(_)
                     | Expr::Binary(..)
@@ -2890,6 +2892,8 @@ fn source(
                             | Expr::Qualified(..)
                             | Expr::DoublyQualified(..)
                             | Expr::Subquery(_)
+                            | Expr::Exists(_)
+                            | Expr::InSelect { .. }
                     ) || matches!(expr, Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_path")
                     {
                         *expr = Expr::Literal(Literal::Null);
@@ -5386,15 +5390,28 @@ impl Connection {
             prepare_using(from.as_mut(), &sources)?
         };
         // The pinned engine does not expose outer membership CTEs while
-        // preparing JOIN ON subqueries. Keep these RHS queries in place.
-        let mut join_memberships = std::collections::BTreeSet::new();
+        // preparing JOIN ON or table-function argument subqueries. Keep these
+        // RHS queries in place.
+        let mut inline_memberships = std::collections::BTreeSet::new();
         if let Some(from) = from.as_ref() {
+            for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
+                if let SelectTable::TableCall(_, args, _) = table.as_ref() {
+                    for arg in args {
+                        turso_core::walk_expr_mut(&mut arg.as_ref().clone(), &mut |expr| {
+                            if matches!(expr, Expr::InSelect { .. }) {
+                                inline_memberships.insert(expr.to_string());
+                            }
+                            Ok(turso_core::WalkControl::Continue)
+                        })?;
+                    }
+                }
+            }
             for join in &from.joins {
                 if let Some(JoinConstraint::On(predicate)) = &join.constraint {
                     let mut predicate = *predicate.clone();
                     turso_core::walk_expr_mut(&mut predicate, &mut |expr| {
                         if matches!(expr, Expr::InSelect { .. }) {
-                            join_memberships.insert(expr.to_string());
+                            inline_memberships.insert(expr.to_string());
                         }
                         Ok(turso_core::WalkControl::Continue)
                     })?;
@@ -5539,7 +5556,7 @@ impl Connection {
                 }
                 continue;
             }
-            if (correlated || join_memberships.contains(sql))
+            if (correlated || inline_memberships.contains(sql))
                 && matches!(affinity, SubqueryAffinity::NativeMembership(_, _))
             {
                 *lowered = Expr::Subquery(
@@ -5859,7 +5876,10 @@ impl Connection {
                         // column set that excludes that name.
                         turso_core::walk_expr_mut(arg, &mut |expr| {
                             // Cached subquery lowering owns its local and outer scopes.
-                            if matches!(expr, Expr::Subquery(_)) {
+                            if matches!(
+                                expr,
+                                Expr::Subquery(_) | Expr::Exists(_) | Expr::InSelect { .. }
+                            ) {
                                 return Ok(turso_core::WalkControl::SkipChildren);
                             }
                             // Path identifiers are segments of one field reference.

@@ -2886,3 +2886,25 @@ addon (no native implementation change/rebuild). Logs:
 documentation changed. The latest complete Rust/source-suite and installed-package
 runs retain their separately recorded scope. No publication occurred; full V1
 release qualification remains open.
+
+
+## Predicate subqueries in iterator arguments — 2026-09-08
+
+EXISTS and IN/NOT IN SELECT expressions now use subquery lowering inside JSON
+iterator arguments. Previously the argument-scope guard rejected these forms,
+including some ordinary SQL queries discovered during outer-scope analysis.
+Membership RHS queries remain inline because generated outer membership CTEs are
+not visible while the pinned engine prepares iterator arguments, matching the
+existing JOIN ON treatment. Native comparisons cover correlated EXISTS, NULLs,
+NOT IN and empty membership sets. A multirow insert test verifies rollback after
+a later validation failure, prior transaction work, index restoration and retry.
+Both Node clients cover bound membership, profiles and missing parameters.
+
+The full scoped check exited zero: 567 Rust tests passed, zero failed, one existing
+trigger-cancellation gate ignored; 81 Node/application tests, formatting, Clippy
+and strict TypeScript passed. Log `/tmp/fastdb-iterator-predicates-check.log`,
+implementation tree based on `bfb0ac429` with this change. This also combines the
+recent Rust/worker iterator deadline regressions with the source suite. Installed
+consumer evidence remains separately recorded. No upstream implementation or
+dependencies changed; general table functions, broader query/type qualification
+and full V1 release gates remain open. No publication occurred.

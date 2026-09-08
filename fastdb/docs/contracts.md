@@ -1120,6 +1120,11 @@ these subqueries also resolve preceding JSON iterator columns during metadata
 inspection. Initial coverage includes chained definitions, parameters, local
 alias shadowing and atomic writes. Broader subquery forms, recursive CTEs and
 complete CTE/type propagation remain unqualified.
+EXISTS and IN/NOT IN SELECT predicates also lower inside iterator arguments.
+Initial native comparisons cover correlated EXISTS, NULLs and empty membership
+sets. Membership RHS queries remain in place because the pinned engine does not
+expose generated outer membership CTEs during iterator-argument preparation.
+Validated writes retain statement rollback and corrected retry behavior.
 
 Metadata inspection substitutes NULL for complete source references and scalar
 subqueries in a disposable probe. Runtime expressions remain in SQL; they are not

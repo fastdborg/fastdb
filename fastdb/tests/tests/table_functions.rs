@@ -511,3 +511,71 @@ fn iterator_deadlines_preserve_transaction_work_and_allow_retry() {
         0
     );
 }
+
+#[test]
+fn iterator_predicate_subqueries_preserve_native_nulls() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE native(n INTEGER)",
+        "INSERT INTO native VALUES(1),(2),(NULL)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n) SELECT n FROM native",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for arg in [
+        "json_array(EXISTS(SELECT 1 FROM native s WHERE s.n=d.n))",
+        "json_array(d.n IN (SELECT n FROM native))",
+        "json_array(d.n NOT IN (SELECT n FROM native WHERE n=1))",
+        "json_array(d.n IN (SELECT n FROM native WHERE 0))",
+    ] {
+        let query = |source| {
+            format!("SELECT d.n,x.value FROM {source} d CROSS JOIN json_each({arg}) x ORDER BY d.n")
+        };
+        let expected = c.execute(&query("native"), &params).unwrap();
+        let sql = query("docs");
+        for actual in [
+            c.execute(&sql, &params).unwrap(),
+            c.profile_select(&sql, &params).unwrap().result,
+        ] {
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+        }
+    }
+    for sql in [
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<1)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(-1)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    let sql="INSERT INTO output(n) SELECT x.value FROM docs d CROSS JOIN json_each(json_array(d.n IN (SELECT n FROM native WHERE n=2))) x WHERE d.n IS NOT NULL ORDER BY d.n RETURNING n";
+    assert_eq!(
+        c.execute(sql, &params).unwrap_err().code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM output", &params).unwrap().rows,
+        vec![vec![Value::Integer(-1)]]
+    );
+    assert!(c
+        .lookup_index("output", "output_n", &Value::Integer(0))
+        .unwrap()
+        .is_empty());
+    let retry = sql.replace("WHERE d.n IS NOT NULL", "WHERE d.n=1");
+    assert_eq!(
+        c.execute(&retry, &params).unwrap().rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    c.execute("ROLLBACK", &params).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}
