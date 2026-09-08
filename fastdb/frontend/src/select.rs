@@ -1641,6 +1641,15 @@ impl Scope {
         Ok(())
     }
     fn helper(&self, expr: &mut Expr) -> Result<bool> {
+        // Correlation accessors already return encoded values. A collation
+        // wrapper must not cause those values to be packed a second time.
+        if let Expr::Collate(value, _) = expr {
+            if matches!(order_base(value), Expr::FunctionCall { name, .. }
+                if matches!(name.as_str(), "__fastdb_value" | "__fastdb_correlated_value"))
+            {
+                return self.preserved(value);
+            }
+        }
         if let Expr::Unary(UnaryOperator::Positive, value) = expr {
             return self.preserved(value);
         }

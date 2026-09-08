@@ -2667,3 +2667,38 @@ fn unordered_compound_membership_preserves_logical_value_identity() {
         c.execute("DELETE FROM docs", &Parameters::new()).unwrap();
     }
 }
+
+#[test]
+fn correlated_compound_collations_preserve_native_membership() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE baseline(k TEXT)",
+        "CREATE TABLE probe(n INTEGER)",
+        "INSERT INTO probe VALUES(1)",
+        "INSERT INTO docs(k) VALUES('A'),('a'),('a '),('B')",
+        "INSERT INTO baseline VALUES('A'),('a'),('a '),('B')",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+        for collation in ["BINARY", "NOCASE", "RTRIM"] {
+            for tail in ["LIMIT 1", "LIMIT 1 OFFSET 1", "LIMIT 0"] {
+                for negate in ["", "NOT"] {
+                    let query = |table| {
+                        format!("SELECT d.k,(SELECT count(*) FROM probe WHERE d.k COLLATE {collation} {negate} IN(SELECT d.k COLLATE {collation} {operator} SELECT 'a' {tail})) AS found FROM {table} d ORDER BY d.k")
+                    };
+                    let native = c.execute(&query("baseline"), &params).unwrap();
+                    let sql = query("docs");
+                    let actual = c
+                        .execute(&sql, &params)
+                        .unwrap_or_else(|error| panic!("{sql}: {error}"));
+                    assert_eq!(actual.columns, native.columns, "{sql}");
+                    assert_eq!(actual.rows, native.rows, "{sql}");
+                }
+            }
+        }
+    }
+}
