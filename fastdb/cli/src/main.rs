@@ -244,22 +244,39 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
         return Ok(std::process::ExitCode::SUCCESS);
     }
     if let Some((import, table)) = transfer {
-        if import {
+        let before = conn.transaction_state();
+        let result = if import {
             let mut input = String::new();
             io::stdin()
                 .take(64 * 1024 * 1024 + 1)
                 .read_to_string(&mut input)?;
-            let count = conn.import_documents(&table, &input, format)?;
-            writeln!(
-                io::stdout().lock(),
-                "{}",
-                serde_json::json!({"imported":count})
-            )?;
+            conn.import_documents(&table, &input, format).map(|count| {
+                format!(
+                    "{}\n",
+                    serde_json::json!({"imported":count,
+                    "transaction":{"before":before,"after":conn.transaction_state()}})
+                )
+            })
         } else {
-            io::stdout()
-                .lock()
-                .write_all(conn.export_documents(&table, format)?.as_bytes())?;
-        }
+            conn.export_documents(&table, format)
+        };
+        let data = match result {
+            Ok(data) => data,
+            Err(error) => {
+                let mut diagnostics = io::stderr().lock();
+                writeln!(
+                    diagnostics,
+                    "{}",
+                    serde_json::json!({
+                        "error":{"code":error.code(),"message":error.to_string()},
+                        "transaction":{"before":before,"after":conn.transaction_state()}
+                    })
+                )?;
+                diagnostics.flush()?;
+                return Ok(std::process::ExitCode::FAILURE);
+            }
+        };
+        io::stdout().lock().write_all(data.as_bytes())?;
         io::stdout().lock().flush()?;
         return Ok(std::process::ExitCode::SUCCESS);
     }

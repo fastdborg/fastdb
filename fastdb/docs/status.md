@@ -3559,3 +3559,20 @@ CLI report writer with tagged output beyond serde's default text recursion bound
 All three CLI transfer tests pass (`/tmp/fastdb-cli-deep-transfer.log`). This is
 additional test-only process evidence after the 30-test CLI run; general
 resource/recovery/platform and full V1 gates remain open.
+
+
+### Structured CLI transfer operation reports
+
+CLI import/export operation failures now emit JSON diagnostics on stderr with
+FastDB error code/message and before/after transaction states, exit nonzero, and
+leave stdout empty. Successful imports add transaction observations to their
+count report. Successful exports retain the original transfer payload. Argument,
+open and stream-I/O failures keep their existing diagnostics; output failure does
+not undo a completed import.
+
+All 32 CLI tests pass (`/tmp/fastdb-transfer-errors.log`). New process assertions
+cover duplicate-ID, malformed-input and missing-collection errors, exact error
+codes and transaction states, clean data output, successful retry, and unchanged
+persisted exports after failure in both formats. Existing output-failure tests
+still verify committed import preservation. Full V1 and broader tool/platform
+qualification remain open.

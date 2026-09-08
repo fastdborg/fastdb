@@ -184,3 +184,67 @@ fn maximum_depth_documents_survive_cli_transfer_and_query_processes() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn transfer_operation_failures_report_codes_without_polluting_data_output() {
+    let dir = std::env::temp_dir().join(format!(
+        "fastdb-cli-transfer-errors-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("database.db");
+    let file = file.to_str().unwrap();
+    assert!(run(
+        &[file],
+        b"CREATE TABLE docs; INSERT INTO docs {id:docs:saved,n:1};"
+    )
+    .status
+    .success());
+    for ndjson in [false, true] {
+        let mut export = vec!["--export", "docs", file];
+        let mut import = vec!["--import", "docs", file];
+        let mut missing = vec!["--export", "absent", file];
+        if ndjson {
+            export.push("--ndjson");
+            import.push("--ndjson");
+            missing.push("--ndjson");
+        }
+        let original = run(&export, b"");
+        assert!(original.status.success());
+        for (output, code) in [
+            (run(&import, &original.stdout), "FDB_CONSTRAINT"),
+            (run(&import, b"invalid input"), "FDB_VALIDATION"),
+            (run(&missing, b""), "FDB_NOT_FOUND"),
+        ] {
+            assert!(!output.status.success());
+            assert!(
+                output.stdout.is_empty(),
+                "transfer errors must not become data"
+            );
+            let diagnostic: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+            assert_eq!(diagnostic["error"]["code"], code);
+            assert!(diagnostic["error"]["message"].as_str().unwrap().len() > 1);
+            assert_eq!(
+                diagnostic["transaction"],
+                serde_json::json!({"before":"autocommit","after":"autocommit"})
+            );
+            assert_eq!(run(&export, b"").stdout, original.stdout);
+        }
+        assert!(run(&[file], b"DELETE FROM docs;").status.success());
+        let success = run(&import, &original.stdout);
+        assert!(success.status.success(), "{success:?}");
+        assert!(success.stderr.is_empty());
+        let report: serde_json::Value = serde_json::from_slice(&success.stdout).unwrap();
+        assert_eq!(report["imported"], 1);
+        assert_eq!(
+            report["transaction"],
+            serde_json::json!({"before":"autocommit","after":"autocommit"})
+        );
+        assert_eq!(run(&export, b"").stdout, original.stdout);
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
