@@ -3993,3 +3993,20 @@ formatting and all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-grouped-tuple-pages.log` and `/tmp/fastdb-grouped-tuple-pages-clippy.log`.
 Only tests/docs changed from `a943d2530`; no new full-suite or client run is
 claimed. Full V1 remains open; no publication occurred.
+
+
+## Aggregate FILTER in tuple SELECTs — 2026-09-09
+
+Tuple SELECT projection validation now permits scalar FILTER predicates on
+aggregate calls, including COUNT(*), while validating predicates without nested
+aggregate permission. Direct VALUES/RETURNING retain their stricter validation.
+The existing SELECT path handles execution and correlation. Differential tests
+cover SUM/COUNT filters over relational and collection lookups, target-document
+references, grouping, HAVING exclusion and empty inputs.
+
+All 29 write tests passed, with formatting and all-target fastdb/frontend-test
+Clippy with warnings denied. Logs `/tmp/fastdb-filter-tuples.log` and
+`/tmp/fastdb-filter-tuples-clippy.log`. This is focused evidence from `e8d3a7171`
+plus the change; no new full-suite or Node run is claimed. FILTER subqueries,
+ordered aggregates and other V1 gates remain open. No upstream source,
+dependency or storage-format changes; no publication.

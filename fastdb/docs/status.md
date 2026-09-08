@@ -103,7 +103,7 @@ The current result metadata distinguishes direct typed field projections from or
 
 Direct typed parameters and copied document fields retain their logical types. Ordinary SQL scalar expressions retain engine scalar types: SQL TRUE/FALSE become integer 1/0, so boolean validators require typed Boolean parameters or document literals rather than implicit coercion. The Rust map uses `?1`, `?2`, etc. to bind numbered or anonymous statement slots. Pinned Turso v0.7.2 rejects `$name::suffix`; a differential test preserves that exact engine error instead of reinterpreting it.
 
-Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Scalar DISTINCT tuple SELECTs retain deduplication before ordering/pagination. Initial aggregate/GROUP BY/HAVING tuples use the existing SELECT subset; correlated SUM/COUNT lookups and empty/group-filtered results are verified. Compounds, windows, aggregate FILTER/argument ordering and recursive local CTEs remain unsupported; broader grouping/type qualification is open. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
+Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Scalar DISTINCT tuple SELECTs retain deduplication before ordering/pagination. Initial aggregate/GROUP BY/HAVING tuples use the existing SELECT subset; correlated SUM/COUNT lookups and empty/group-filtered results are verified. Scalar aggregate FILTER predicates are also supported in tuple projections. Compounds, windows, aggregate argument ordering and recursive local CTEs remain unsupported; broader grouping/type and FILTER-subquery qualification is open. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
 
 ## Catalog lifecycle notes
 
@@ -5009,3 +5009,20 @@ formatting and all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-grouped-tuple-pages.log` and `/tmp/fastdb-grouped-tuple-pages-clippy.log`.
 Only tests/docs changed from `a943d2530`; no new full-suite or client run is
 claimed. Full V1 remains open; no publication occurred.
+
+
+## Aggregate FILTER in tuple SELECTs — 2026-09-09
+
+Tuple SELECT projection validation now permits scalar FILTER predicates on
+aggregate calls, including COUNT(*), while validating predicates without nested
+aggregate permission. Direct VALUES/RETURNING retain their stricter validation.
+The existing SELECT path handles execution and correlation. Differential tests
+cover SUM/COUNT filters over relational and collection lookups, target-document
+references, grouping, HAVING exclusion and empty inputs.
+
+All 29 write tests passed, with formatting and all-target fastdb/frontend-test
+Clippy with warnings denied. Logs `/tmp/fastdb-filter-tuples.log` and
+`/tmp/fastdb-filter-tuples-clippy.log`. This is focused evidence from `e8d3a7171`
+plus the change; no new full-suite or Node run is claimed. FILTER subqueries,
+ordered aggregates and other V1 gates remain open. No upstream source,
+dependency or storage-format changes; no publication.

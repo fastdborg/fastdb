@@ -1255,6 +1255,8 @@ fn aggregate_tuple_lookups_match_native_empty_and_grouped_rows() {
     for source in ["lookup", "lookup_docs"] {
         for projection in [
             "sum(x.a),count(*)",
+            "sum(x.a) FILTER(WHERE x.a>7),count(*) FILTER(WHERE x.a>7)",
+            "sum(x.a) FILTER(WHERE x.a>TARGET.n*7),count(*) FILTER(WHERE x.a>TARGET.n*7)",
             "avg(x.a),total(x.a)",
             "min(x.a),max(x.a)",
             "sum(DISTINCT x.a),count(DISTINCT x.a)",
@@ -1262,7 +1264,9 @@ fn aggregate_tuple_lookups_match_native_empty_and_grouped_rows() {
         ] {
             for group in ["", " GROUP BY x.n", " GROUP BY x.n HAVING count(*)>3"] {
                 q(&c, "BEGIN");
-                let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT {projection} FROM lookup x WHERE x.n=native.n{group}) RETURNING n,a,b"));
+                let native_projection = projection.replace("TARGET", "native");
+                let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT {native_projection} FROM lookup x WHERE x.n=native.n{group}) RETURNING n,a,b"));
+                let projection = projection.replace("TARGET", "docs");
                 let sql=format!("UPDATE docs SET (a,b)=(SELECT {projection} FROM {source} x WHERE x.n=docs.n{group}) RETURNING n,a,b");
                 assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
                 q(&c, "ROLLBACK");

@@ -126,7 +126,7 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
             within_group,
             ..
         } => {
-            if filter_over.filter_clause.is_some()
+            if (!aggregates && filter_over.filter_clause.is_some())
                 || filter_over.over_clause.is_some()
                 || !order_by.is_empty()
                 || !within_group.is_empty()
@@ -146,14 +146,19 @@ fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
             for e in args {
                 validate_value_expression(e, aggregates)?;
             }
+            if let Some(predicate) = &filter_over.filter_clause {
+                validate_value_expression(predicate, false)?;
+            }
             Ok(())
         }
         Expr::FunctionCallStar { name, filter_over }
             if aggregates
                 && name.as_str().eq_ignore_ascii_case("count")
-                && filter_over.filter_clause.is_none()
                 && filter_over.over_clause.is_none() =>
         {
+            if let Some(predicate) = &filter_over.filter_clause {
+                validate_value_expression(predicate, false)?;
+            }
             Ok(())
         }
         _ => Err(unsupported("this collection VALUES expression")),
