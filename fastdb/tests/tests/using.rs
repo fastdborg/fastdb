@@ -2616,3 +2616,45 @@ fn unordered_compound_binary_membership_matches_native_keys() {
         }
     }
 }
+
+#[test]
+fn unordered_compound_membership_preserves_logical_value_identity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    c.execute("CREATE TABLE docs", &Parameters::new()).unwrap();
+    c.execute("CREATE TABLE probe(n INTEGER)", &Parameters::new())
+        .unwrap();
+    c.execute("INSERT INTO probe VALUES(1)", &Parameters::new())
+        .unwrap();
+    let values = [
+        Value::Boolean(true),
+        Value::Integer(1),
+        Value::Record(fastdb::Record {
+            table: "docs".into(),
+            key: fastdb::Key::Integer(7),
+        }),
+        Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec()),
+    ];
+    for value in &values {
+        let params = Parameters::from([("$same".into(), value.clone())]);
+        c.execute("INSERT INTO docs(k) VALUES($same)", &params)
+            .unwrap();
+        for (operator, right, expected) in [
+            ("INTERSECT", "d.k", 1),
+            ("INTERSECT", "'different'", 0),
+            ("EXCEPT", "d.k", 0),
+            ("EXCEPT", "'different'", 1),
+        ] {
+            let sql = format!("SELECT d.k,(SELECT count(*) FROM probe WHERE d.k IN(SELECT d.k {operator} SELECT {right} LIMIT 1)) AS found FROM docs d");
+            let actual = c
+                .execute(&sql, &Parameters::new())
+                .unwrap_or_else(|error| panic!("{sql}: {error}"));
+            assert_eq!(
+                actual.rows,
+                vec![vec![value.clone(), Value::Integer(expected)]],
+                "{sql}"
+            );
+        }
+        c.execute("DELETE FROM docs", &Parameters::new()).unwrap();
+    }
+}
