@@ -322,6 +322,37 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual(await client.exactlyOne('SELECT count(array::append(value,1)) FILTER (WHERE n=1) FROM count_values'),[1n]);
     } finally { await client.execute('ROLLBACK'); }
   }
+  async function withJsonIterators(client, prefix) {
+    const docs=prefix+'_docs', output=prefix+'_output';
+    await client.execute('CREATE TABLE '+docs);
+    await client.execute('INSERT INTO '+docs+'(n,payload) VALUES(1,$a),(2,$b)', {
+      $a:{inner:{j:'[1,2]'}}, $b:{inner:{j:'[3]'}}
+    });
+    await client.execute('CREATE TABLE '+output);
+    await client.execute('DEFINE FIELD n ON '+output+' TYPE integer CHECK(n<4)');
+    await client.execute('CREATE UNIQUE INDEX '+output+'_n ON '+output+'(n)');
+    const from=' FROM '+docs+" d CROSS JOIN json_each(d.payload.inner.j) x CROSS JOIN json_each((WITH a AS (SELECT x.value+$delta AS n) SELECT json_array(n) FROM a)) y";
+    const sql='SELECT d.n,x.value,y.value'+from+' ORDER BY d.n,x.key';
+    const params={$delta:1n};
+    const rows=[[1n,1n,2n],[1n,2n,3n],[2n,3n,4n]];
+    assert.deepEqual((await client.execute(sql,params)).rows,rows);
+    assert.deepEqual((await client.profileSelect(sql,params)).result.rows,rows);
+    await assert.rejects(async()=>client.execute(sql),error=>isFastDBError(error) && error.code==='FDB_PARAMETER');
+    await client.execute('BEGIN');
+    try {
+      await client.execute('INSERT INTO '+output+'(n) VALUES(0)');
+      const insert='INSERT INTO '+output+'(n) SELECT y.value'+from;
+      await assert.rejects(async()=>client.execute(insert+' ORDER BY d.n,x.key RETURNING n',params),error=>{
+        assert.equal(error.code,'FDB_VALIDATION');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      assert.deepEqual((await client.execute('SELECT n FROM '+output)).rows,[[0n]]);
+      assert.equal((await client.checkCollectionIntegrity(output)).indexEntries,1n);
+      assert.deepEqual((await client.execute(insert+' WHERE y.value<4 ORDER BY d.n,x.key RETURNING n',params)).rows,[[2n],[3n]]);
+    } finally {await client.execute('ROLLBACK');}
+    assert.equal((await client.checkCollectionIntegrity(output)).documents,0n);
+  }
   async function withWrites(client) {
     await client.execute('BEGIN');
     await assert.rejects(async()=>client.exactlyOne('SELECT value FROM docs WHERE 0'), error=>isFastDBError(error) && error instanceof RangeError && error.code==='FDB_CARDINALITY' && error.transaction.before==='active' && error.transaction.after==='active');
@@ -467,6 +498,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await withCompositeCounts(db);
     await withDuplicateColumns(db);
     await withWrites(db);
+    await withJsonIterators(db,'pkg_sync');
   } finally { db.close(); }
   assert.throws(()=>db.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   const worker = await AsyncDatabase.open(file);
@@ -558,6 +590,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     await withCompositeCounts(worker);
     await withDuplicateColumns(worker);
     await withWrites(worker);
+    await withJsonIterators(worker,'pkg_worker');
   } finally { await worker.close(); }
   await assert.rejects(worker.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   const reopened = new Database(file);
@@ -565,6 +598,11 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n);
     assert.equal(reopened.checkCollectionIntegrity('docs').indexEntries, 1n);
     assert.deepEqual(reopened.execute('SELECT payload FROM depth_docs').rows,[[deepPayload]]);
+    for(const prefix of ['pkg_sync','pkg_worker']) {
+      assert.deepEqual(reopened.execute('SELECT d.n,x.value FROM '+prefix+'_docs d CROSS JOIN json_each(d.payload.inner.j) x ORDER BY d.n,x.key').rows,[[1n,1n],[1n,2n],[2n,3n]]);
+      assert.equal(reopened.checkCollectionIntegrity(prefix+'_output').indexEntries,0n);
+    }
+
   }
   finally { reopened.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

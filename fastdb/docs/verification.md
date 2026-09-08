@@ -2803,3 +2803,26 @@ and strict TypeScript passed. Log `/tmp/fastdb-iterator-cte-check.log`, implemen
 tree based on `b95f25d6d` with this fix. No upstream implementation or dependencies
 changed. Recursive CTEs, broader type/scope qualification and full V1 release gates
 remain open; no publication occurred.
+
+
+## Installed JSON iterator consumers — 2026-09-08
+
+The offline Node package consumer now combines deep bound documents, per-row JSON
+iterators and a parameterized CTE referencing a preceding iterator. Both sync and
+worker clients verify execute/profile rows, missing bindings, validation failure
+with active transaction preservation, index integrity, corrected retry and outer
+rollback. A final synchronous reopen verifies both clients' persisted documents
+and empty rolled-back output indexes.
+
+`node fastdb/scripts/check-node-package.cjs` passed on Linux x64 under Node
+24.19.0 and 22.0.0 using the same debug addon built by the scoped check at
+`44e1a5e5c`'s implementation tree. Each temporary offline package contains ten
+files and 60,682,633 packed bytes. Addon SHA-256:
+`bfa49a4d7e15d9ef32b19bb707606b05b05233a11d1bfad68067edb1a5595306`.
+Logs: `/tmp/fastdb-iterators-package24.log` and
+`/tmp/fastdb-iterators-package22.log`. The harness also checks exact notices,
+consumer TypeScript and missing/incompatible addon diagnostics. Both runs exited
+zero. This change adds consumer qualification only; the latest full source suite
+remains 565 Rust and 80 Node/application passes with one existing ignored gate.
+No registry access or publication occurred. These local debug artifacts do not
+qualify final release packaging or other platforms; full V1 gates remain open.
