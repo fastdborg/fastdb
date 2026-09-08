@@ -2702,3 +2702,71 @@ fn correlated_compound_collations_preserve_native_membership() {
         }
     }
 }
+
+#[test]
+fn collated_correlated_compounds_preserve_typed_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE TABLE probe(n INTEGER)",
+        "INSERT INTO probe VALUES(1)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    for value in [
+        Value::Null,
+        Value::Boolean(true),
+        Value::Integer(i64::MAX),
+        Value::String("A ".into()),
+        Value::Record(fastdb::Record {
+            table: "docs".into(),
+            key: fastdb::Key::Integer(7),
+        }),
+        Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec()),
+        Value::Array(vec![Value::Integer(1)]),
+    ] {
+        c.execute(
+            "INSERT INTO docs(k) VALUES($value)",
+            &Parameters::from([("$value".into(), value.clone())]),
+        )
+        .unwrap();
+        for wrapped in [
+            "d.k COLLATE BINARY",
+            "(d.k COLLATE BINARY)",
+            "(d.k COLLATE BINARY) COLLATE NOCASE",
+        ] {
+            let sql = format!(
+                "SELECT (SELECT {wrapped} UNION ALL SELECT NULL LIMIT 1) AS kept FROM docs d"
+            );
+            let result = c.execute(&sql, &empty).unwrap();
+            assert_eq!(result.columns, vec!["kept"], "{sql}");
+            assert_eq!(result.rows, vec![vec![value.clone()]], "{sql}");
+            // Composite projection is supported; scalar membership deliberately
+            // rejects composite comparison keys.
+            if matches!(value, Value::Array(_)) {
+                continue;
+            }
+            for (operator, expected) in [
+                ("UNION ALL", 1),
+                ("UNION", 1),
+                ("INTERSECT", 1),
+                ("EXCEPT", 0),
+            ] {
+                let sql = format!("SELECT d.k,(SELECT count(*) FROM probe WHERE d.k IN(SELECT {wrapped} {operator} SELECT {wrapped} LIMIT 1)) AS found FROM docs d");
+                let expected = if matches!(value, Value::Null) {
+                    0
+                } else {
+                    expected
+                };
+                assert_eq!(
+                    c.execute(&sql, &empty).unwrap().rows,
+                    vec![vec![value.clone(), Value::Integer(expected)]],
+                    "{sql}"
+                );
+            }
+        }
+        c.execute("DELETE FROM docs", &empty).unwrap();
+    }
+}
