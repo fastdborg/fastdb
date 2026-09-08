@@ -207,3 +207,12 @@ not randomized release-build trials; peak RSS includes startup/setup/runtime and
 JS decoding. Timing differences have only three samples per workload. The result
 supports this serialization change while leaving total-memory bounds, larger and
 more varied workloads, release timing and platform qualification unfinished.
+
+The follow-up in-place JS decoding run at `060bd5469` also passed all 12 samples:
+[raw results](benchmark-results/2026-09-08-linux-debug-node-inplace-1000.json).
+Median ms / peak RSS MiB were sync execute 1071.1 / 130.9, sync profile
+1088.5 / 127.9, worker execute 998.8 / 157.1 and worker profile 1000.9 / 157.7.
+These mixed values do not demonstrate an additional peak-RSS or timing improvement
+relative to direct JSON alone. The change avoids a second row-array structure,
+but this workload's whole-process peaks and three samples cannot isolate that
+allocation saving. The native addon hash is unchanged; the JS wrapper differs.

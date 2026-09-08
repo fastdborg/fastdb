@@ -3394,3 +3394,13 @@ All 77 Node/application tests passed against the current addon; log:
 declarations changed; Rust/TypeScript checks were not repeated. Memory measurement
 follows separately; no peak-memory improvement is inferred solely from the code.
 Full V1 gates remain open.
+
+### In-place decoding measurement outcome
+
+The unchanged 12-sample result diagnostic passed at `060bd5469`. Median process
+peaks were approximately 128–158 MiB, with mixed per-workload timing and RSS changes
+relative to direct JSON alone. No further measured performance improvement is
+claimed. Raw evidence:
+`benchmark-results/2026-09-08-linux-debug-node-inplace-1000.json`.
+The addon hash is unchanged; the wrapper source commit identifies the JS change.
+See benchmarks.md for individual medians and limitations. Full V1 remains open.
