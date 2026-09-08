@@ -5399,3 +5399,15 @@ all-target fastdb-tests Clippy with warnings denied passed. Logs:
 `/tmp/fastdb-write-pagination-coercion-clippy.log`. Only tests/docs changed from
 `9b858da06`; no new full-suite/client run is claimed. These are literal/expression
 cases, not complete bound-value or planner qualification. Full V1 remains open.
+
+
+## Limited UPDATE validation recovery — 2026-09-09
+
+A regression verifies LIMIT 0 skips an invalid assignment and a bound LIMIT 2
+validation failure restores document/index state while retaining a prior pending
+insert. A filtered valid limited retry updates the managed index; final rollback
+restores original documents and index counts. All 40 write tests passed, with
+formatting and all-target fastdb-tests Clippy with warnings denied. Logs:
+`/tmp/fastdb-limit-validation.log` and `/tmp/fastdb-limit-validation-clippy.log`.
+Only tests/docs changed from `fb3d2870b`; no new full-suite/client run is claimed.
+Full V1 remains open.

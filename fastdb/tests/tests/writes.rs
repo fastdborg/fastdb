@@ -1739,3 +1739,66 @@ fn invalid_write_pagination_preserves_documents() {
         }
     }
 }
+
+#[test]
+fn update_limit_bounds_validation_and_restores_failed_candidates() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n) VALUES(1),(2),(3)",
+        "DEFINE FIELD n ON docs TYPE integer CHECK(n<10)",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+        "BEGIN",
+        "INSERT INTO docs(n) VALUES(4)",
+    ] {
+        q(&c, sql);
+    }
+    let before = q(&c, "SELECT n FROM docs ORDER BY n").rows;
+    assert_eq!(q(&c, "UPDATE docs SET n=100 LIMIT 0").affected, 0);
+    assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, before);
+    let sql = "UPDATE docs SET n=CASE WHEN n=1 THEN 7 ELSE 100 END WHERE n<3 LIMIT $count";
+    assert_eq!(
+        c.execute(
+            sql,
+            &Parameters::from([("$count".into(), Value::Integer(2))])
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, before);
+    assert!(c
+        .lookup_index("docs", "docs_n", &Value::Integer(7))
+        .unwrap()
+        .is_empty());
+    assert_eq!(q(&c, "UPDATE docs SET n=7 WHERE n=1 LIMIT 1").affected, 1);
+    assert_eq!(
+        c.lookup_index("docs", "docs_n", &Value::Integer(7))
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        4
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)]
+        ]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        3
+    );
+}
