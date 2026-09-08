@@ -2009,3 +2009,6 @@ The complete fastdb/scripts/check.sh run passed formatting, Clippy, 434 Rust tes
 
 
 Nested duplicate CTE companion qualification (2026-09-08): a focused regression passes with separate outer and nested native duplicate-name CTEs in collection joins. Explicit expected values (10,20,30,40), native differential column/row checks and profiling verify that generated companion scopes do not substitute one source for another. Formatting passes; production code is unchanged. Latest full scoped evidence remains 434 Rust tests with one ignored gate and 48 Node/application tests. Broader scope and V1 release qualification remain open.
+
+
+Authoritative plan/handoff synchronization (2026-09-08): updated parent FastQL.md to describe positional duplicate-name results and the closed-source column-before-alias rule, retaining open-schema collection alias precedence. Updated parent AGENTS.md with current duplicate derived/CTE support, initial AbortSignal/distribution evidence and the distinction between current debug output and prior stripped artifacts. Full V1 scope and remaining release gates are unchanged. Parent files are outside the Git checkout; this note records the synchronization. Documentation-only change; no tests rerun.
