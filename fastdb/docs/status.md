@@ -3445,3 +3445,18 @@ performance or resource-cap guarantee. Full V1 gates remain open.
 ### Combined JSON transport and consumer verification
 
 The complete scoped check now passes 543 Rust tests (one existing ignored trigger gate), 77 Node/application tests, formatting, Clippy and strict TypeScript with the recent direct JSON and buffer reuse changes. The standalone Rust consumer exercises the public portable JSON API and passes with all 244 dependency identities retained. Offline installed synchronous/worker Node consumers pass on Linux x64 Node 22.0.0 and 24.19.0 using the rebuilt debug addon. See verification.md for checked revisions, artifact identity and logs. This advances combined-build and consumer evidence; final release artifacts, other platforms, resource/recovery gates and full V1 remain unfinished.
+
+
+### Grouped window composition qualification
+
+Two additional Rust regressions qualify existing grouped window execution. Nine
+queries compare collection results and column names with ordinary pinned-engine
+queries through both execute and profile. Coverage combines NOCASE grouping,
+nested sum/count aggregates, row_number over aggregate ordering, bound HAVING,
+and bound LIMIT/OFFSET. A separate grouped INSERT SELECT test verifies that a
+later CHECK failure restores inserted groups and managed indexes while retaining
+prior transaction work, then checks successful retry/RETURNING and rollback.
+
+All five window tests pass (`/tmp/fastdb-grouped-windows.log`). These are test-only
+changes after the complete 543-Rust/77-Node run; no newer full-suite total is
+claimed. General window/type/resource semantics and full V1 remain open.
