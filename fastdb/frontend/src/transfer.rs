@@ -453,6 +453,12 @@ impl Value {
         self.validate()?;
         Ok(serde_json::to_value(Portable::from(self))?)
     }
+    /// Consume and serialize a transfer-v1 value directly to JSON text, without
+    /// constructing an intermediate serde_json value tree.
+    pub fn into_portable_json(self) -> Result<String> {
+        self.validate()?;
+        Ok(serde_json::to_string(&Portable::from(self))?)
+    }
     /// Decode a tagged transfer v1 value and validate its logical type.
     pub fn from_portable_value(value: serde_json::Value) -> Result<Self> {
         let value = Self::from(serde_json::from_value::<Portable>(value)?);
@@ -464,6 +470,32 @@ impl Value {
 #[cfg(test)]
 mod export_tests {
     use super::*;
+    #[test]
+    fn direct_portable_json_preserves_record_shapes_and_rejects_invalid_values() {
+        for key in [Key::Integer(i64::MIN), Key::String("ไทย\"\n".into())] {
+            let value = Value::Record(Record {
+                table: "docs".into(),
+                key,
+            });
+            let json: serde_json::Value =
+                serde_json::from_str(&value.clone().into_portable_json().unwrap()).unwrap();
+            assert_eq!(json, value.to_portable_value().unwrap());
+            assert_eq!(Value::from_portable_value(json).unwrap(), value);
+        }
+        assert_eq!(
+            Value::Number(f64::NAN)
+                .into_portable_json()
+                .unwrap_err()
+                .code(),
+            "FDB_VALIDATION"
+        );
+        let mut value = Value::Null;
+        for _ in 0..65 {
+            value = Value::Array(vec![value]);
+        }
+        assert_eq!(value.into_portable_json().unwrap_err().code(), "FDB_LIMIT");
+    }
+
     #[test]
     fn json_preflight_checks_late_envelope_errors_without_writes() {
         let db = crate::Database::open(":memory:").unwrap();

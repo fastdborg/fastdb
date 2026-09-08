@@ -139,6 +139,8 @@ fn consuming_portable_values_preserve_lossless_wire_contract() {
         ]
         .into(),
     );
+    let text = value.clone().into_portable_json().unwrap();
+    assert_eq!(text, value.to_portable_value().unwrap().to_string());
     let encoded = value.clone().into_portable_value().unwrap();
     assert_eq!(encoded["value"]["integer"]["type"], "Integer");
     assert_eq!(encoded["value"]["integer"]["value"], "9223372036854775807");
@@ -161,6 +163,10 @@ fn consuming_portable_values_preserve_lossless_wire_contract() {
         Value::vector8(&[1.0, 0.0, -1.0]).unwrap(),
         Value::vector1bit(&[1.0, 0.0, -1.0]).unwrap(),
     ] {
+        assert_eq!(
+            value.clone().into_portable_json().unwrap(),
+            value.to_portable_value().unwrap().to_string()
+        );
         assert_eq!(
             Value::from_portable_value(value.clone().into_portable_value().unwrap()).unwrap(),
             value

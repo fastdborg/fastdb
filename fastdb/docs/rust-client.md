@@ -140,3 +140,8 @@ engine work uses the existing one-shot progress interruption and rollback path,
 returning `FDB_CANCELLED`. No background timer is started. Parsing, non-engine
 work, cleanup and completion races retain the existing cooperative limitations;
 this is not a hard wall-clock execution bound. Use a fresh token for retry.
+
+`Value::into_portable_json(self)` consumes a value and returns transfer-v1 JSON
+text directly, avoiding an intermediate `serde_json::Value` tree. It validates the
+same value contract and preserves lossless numeric representations. JSON object
+member ordering is not part of the portable value contract.

@@ -3319,3 +3319,19 @@ All 12 samples at 1,000 rows x 4,096 binary bytes passed. Wall times were
 not before/after attribution; peaks include startup/setup/runtime/worker memory.
 No production code changed or correctness suite was repeated. The measured
 footprint supports further transport-memory work; full V1 remains incomplete.
+
+### Direct portable JSON serialization primitive
+
+Added `Value::into_portable_json(self)`, validating and serializing through the
+existing Portable representation directly to text instead of building a JSON
+value tree first. This is intended for consumers that need text, especially binary
+arrays whose intermediate JSON values expand per byte. The current Node path has
+not yet been switched to this primitive; benchmark improvement is unproven.
+
+All five transfer integration tests and a focused record/invalid-value test passed.
+Coverage includes exact int64/negative-zero text, nested values, all five vector
+encodings, both record-key forms, non-finite values and excessive depth. JSON
+member order is not a contract. Formatting and diff checks passed. Logs:
+`/tmp/fastdb-direct-portable-json.log` and `/tmp/fastdb-direct-portable-records.log`.
+Broader suites were not repeated. Node integration, measurement and broader V1
+resource/release gates remain open.
