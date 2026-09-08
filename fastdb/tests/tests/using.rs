@@ -1231,3 +1231,54 @@ fn nested_using_exists_preserves_empty_rows_and_local_shadowing() {
         }
     }
 }
+
+#[test]
+fn nested_using_projection_errors_roll_back_insert_prefixes_and_allow_retry() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,v:[]}",
+        "INSERT INTO docs {k:2,v:7}",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+        "CREATE TABLE copied",
+        "CREATE UNIQUE INDEX copied_k ON copied(k)",
+        "INSERT INTO copied {k:99,v:[]}",
+    ] {
+        query(sql);
+    }
+    let insert = "INSERT INTO copied(k,v) SELECT k,(SELECT (SELECT array::append(a.v,2))) FROM docs a JOIN b USING(k) ORDER BY k";
+    query("BEGIN");
+    query("INSERT INTO copied {k:98,v:[]}");
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+    assert_eq!(
+        query("SELECT k FROM copied ORDER BY k").rows,
+        vec![vec![Value::Integer(99)]]
+    );
+    query("BEGIN");
+    query("UPDATE docs SET v=array::new() WHERE k=2");
+    query(insert);
+    assert_eq!(
+        query("SELECT k,v FROM copied WHERE k<>99 ORDER BY k").rows,
+        vec![
+            vec![Value::Integer(1), Value::Array(vec![Value::Integer(2)])],
+            vec![Value::Integer(2), Value::Array(vec![Value::Integer(2)])]
+        ]
+    );
+    query("ROLLBACK");
+    assert_eq!(
+        query("SELECT k FROM copied ORDER BY k").rows,
+        vec![vec![Value::Integer(99)]]
+    );
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(
+        query("SELECT k FROM copied ORDER BY k").rows,
+        vec![vec![Value::Integer(99)]]
+    );
+}
