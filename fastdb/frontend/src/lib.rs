@@ -181,6 +181,7 @@ impl Database {
             engine: self.engine.connect()?,
             next_atomic_id: std::sync::atomic::AtomicU64::new(0),
             next_subquery_id: std::sync::atomic::AtomicU64::new(0),
+            write_buffer_limits: None,
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -192,6 +193,16 @@ pub struct Connection {
     engine: Arc<EngineConnection>,
     next_atomic_id: std::sync::atomic::AtomicU64,
     next_subquery_id: std::sync::atomic::AtomicU64,
+    write_buffer_limits: Option<ResultLimits>,
+}
+fn retain_write_document(
+    budget: &mut budget::ResultBudget,
+    documents: &mut Vec<Document>,
+    document: Document,
+) -> Result<()> {
+    budget.document(&document)?;
+    documents.push(document);
+    Ok(())
 }
 fn text(value: &str) -> EngineValue {
     EngineValue::Text(value.to_owned().into())
@@ -624,10 +635,11 @@ impl Connection {
                 let suffix = predicate.map_or(String::new(), |p| format!(" WHERE {p}"));
                 let query = format!("SELECT * FROM {}{suffix}", quote(&table));
                 let rows = self
-                    .collection_select_subset(&query, params)?
+                    .write_candidate_select(&query, params, false)?
                     .ok_or_else(|| Error::NotFound(table.clone()))?
                     .rows;
                 let mut candidates = Vec::new();
+                let mut candidate_budget = self.write_buffer_budget()?;
                 for row in rows {
                     let Some(Value::Object(before)) = row.into_iter().next() else {
                         return Err(Error::Storage("expected candidate document".into()));
@@ -640,14 +652,19 @@ impl Connection {
                     let Some(Value::Record(id)) = before.get("id") else {
                         return Err(Error::Storage("expected typed id".into()));
                     };
+                    candidate_budget.document(&patch)?;
+                    candidate_budget.value(&Value::Record(id.clone()))?;
                     candidates.push((id.clone(), patch));
                 }
                 let mut docs = Vec::new();
+                let mut snapshot_budget = self.write_buffer_budget()?;
                 for (id, patch) in candidates {
-                    docs.push(
+                    retain_write_document(
+                        &mut snapshot_budget,
+                        &mut docs,
                         self.patch(&id, patch)?
                             .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
-                    );
+                    )?;
                 }
                 self.object_returning(&table, returning, docs, params, limits)
             }),

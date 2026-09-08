@@ -3787,16 +3787,19 @@ impl Connection {
             },
         )
     }
-    pub(crate) fn collection_select_subset(
+    pub(crate) fn write_candidate_select(
         &self,
         sql: &str,
         params: &Parameters,
+        trusted: bool,
     ) -> Result<Option<QueryResult>> {
         self.collection_select_options(
             sql,
             params,
             SelectOptions {
+                trusted,
                 ignore_unused: true,
+                result_limits: self.write_buffer_limits,
                 ..Default::default()
             },
         )
@@ -3808,6 +3811,7 @@ impl Connection {
             SelectOptions {
                 trusted: true,
                 positional: true,
+                result_limits: self.write_buffer_limits,
                 ..Default::default()
             },
         )?

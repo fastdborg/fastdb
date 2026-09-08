@@ -34,6 +34,36 @@ CLI `.select-limit ROWS BYTES SQL`, `.profile-limit ROWS BYTES SQL` and
 are nonnegative decimal integers; failures use the existing JSON error and
 transaction envelope. See the frontend README for input-mode details.
 
+## Opt-in collection write buffers
+
+Rust connections can opt into frontend collection-write buffer limits:
+
+```rust
+let connection = database.connect()?.with_write_buffer_limits(ResultLimits {
+    max_rows: 10_000,
+    max_payload_bytes: 64 * 1024 * 1024,
+});
+```
+
+Each candidate or document buffer receives its own row/payload counters. Candidate
+SELECT rowsets include column-name bytes, including after bound assignment values
+replace preparation placeholders. VALUES buffers count evaluated cell payloads.
+Object-patch candidates count patch object keys/values and the target record.
+Document snapshot buffers count document keys/values before retaining the next
+snapshot; object single-record SQL writes check their snapshot within the operation
+savepoint. Overflow returns `FDB_LIMIT`, discards the buffer, and uses existing
+write rollback. Candidate queries stop at the first rejected row. Ordinary reads
+and explicit returned-result budgets keep their separate policies.
+
+This setting is initially Rust-only. It does not cap native engine write buffers,
+direct single-document Rust methods (`insert`, `upsert`, `patch`, `delete`), parsing,
+the temporary row being decoded/evaluated, or total memory across overlapping
+buffers. Some snapshot checks occur after mutation and rely on operation rollback.
+The setting is opt-in and disabled on ordinary `connect()` connections. Increasing
+it by consuming the connection with the builder again allows a retry; this does
+not alter transaction state. This is initial buffer coverage, not a completed V1
+memory/resource guarantee.
+
 ## Atomic write-result policy
 
 Rust `Connection::write_with_result_limits(sql, params, ResultLimits)` accepts

@@ -69,6 +69,16 @@ impl ResultBudget {
             }
         }
     }
+    pub(crate) fn document(&mut self, document: &crate::Document) -> Result<()> {
+        self.row(&[])?;
+        if self.limits.is_some() {
+            for (key, value) in document {
+                self.add(key.len())?;
+                self.value(value)?;
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn row(&mut self, row: &[Value]) -> Result<()> {
         self.row_with_fetches(row, &[])
     }
@@ -342,5 +352,40 @@ mod evaluation_tests {
         );
         c.execute("ROLLBACK", &p).unwrap();
         assert_eq!(c.execute("SELECT n FROM native", &p).unwrap().rows.len(), 3);
+        let before = c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows;
+        let c = c.with_write_buffer_limits(ResultLimits {
+            max_rows: 1,
+            max_payload_bytes: 1000,
+        });
+        CALLS.store(0, Ordering::SeqCst);
+        assert_eq!(
+            c.execute("UPDATE docs SET n=result_budget_tick(n)+10", &p)
+                .unwrap_err()
+                .code(),
+            "FDB_LIMIT"
+        );
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            2,
+            "candidate evaluation stops on the first rejected row"
+        );
+        assert_eq!(
+            c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows,
+            before
+        );
+    }
+}
+
+impl crate::Connection {
+    /// Opt into per-buffer limits for frontend collection-write candidates and
+    /// document snapshots. Each buffer gets its own counters; this is not a total
+    /// memory cap and does not constrain native engine write buffers or direct
+    /// single-document Rust methods. Ordinary reads keep their existing policy.
+    pub fn with_write_buffer_limits(mut self, limits: ResultLimits) -> Self {
+        self.write_buffer_limits = Some(limits);
+        self
+    }
+    pub(crate) fn write_buffer_budget(&self) -> Result<ResultBudget> {
+        ResultBudget::new(self.write_buffer_limits, &[])
     }
 }

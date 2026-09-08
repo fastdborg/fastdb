@@ -2823,3 +2823,29 @@ typed values, validation, indexes, QuickJS, vectors, profiling, integrity and
 persistence smoke checks ran in the same consumer. No production code changed or
 broader suite was repeated. This adds dependent-application evidence; it does not
 close resource, platform, packaging or V1 release gates.
+
+### Opt-in collection write buffer limits
+
+Rust connections now expose `with_write_buffer_limits(ResultLimits)` for separate
+per-buffer row/payload limits on frontend collection SQL/object write candidates
+and document snapshots. Candidate SELECT collectors stop at the first rejected
+row; restored assignment parameters retain the query's column-name accounting.
+VALUES and object-patch candidates are checked before retention, and snapshot
+rejection uses the operation savepoint to restore data and indexes. Increasing the
+setting on the same connection permits retry without changing transaction state.
+
+The regression coverage includes VALUES, INSERT SELECT, SQL/object UPDATE, DELETE,
+single-record INSERT/UPSERT snapshot rejection, bound payloads, zero-row writes,
+prior transaction work, index integrity, rollback, retry and a callback proving
+candidate evaluation stops at the rejected row. See [result-budgets.md](result-budgets.md)
+for accounting. This opt-in setting is initially Rust-only and does not cap direct
+single-document Rust methods, native engine buffers, temporary evaluation/parsing
+allocations or total memory across overlapping buffers. Broader V1 resource and
+release gates remain open.
+
+Final-source `fastdb/scripts/check.sh` passed: 528 Rust tests, zero failures,
+one existing ignored trigger-cancellation qualification test; 70 Node/application
+tests; scoped formatting, Clippy and strict TypeScript checks. Log:
+`/tmp/fastdb-write-buffer-final-check.log`. Installed-package and standalone-consumer
+checks were not repeated for this change; platform and release qualification remain
+open.

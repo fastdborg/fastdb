@@ -119,3 +119,11 @@ cargo run --locked -p fastdb --example result_limits
 
 It verifies an exact read budget, rejected UPDATE output, preservation of a prior
 pending insert, a successful retry, rollback and pre-cancelled write rejection.
+
+`connection.with_write_buffer_limits(ResultLimits { max_rows, max_payload_bytes })`
+opts into separate per-buffer limits for frontend collection-write candidates and
+document snapshots. It consumes and returns the connection, preserving its
+transaction. These limits are distinct from returned-result limits; ordinary reads,
+native engine buffers and direct single-document Rust methods are outside this
+setting. See [result-budgets.md](result-budgets.md) for exact buffer accounting and
+initial coverage.

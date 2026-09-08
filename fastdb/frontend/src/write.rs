@@ -284,6 +284,10 @@ impl Connection {
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<QueryResult> {
+        let mut snapshot_budget = self.write_buffer_budget()?;
+        for document in &documents {
+            snapshot_budget.document(document)?;
+        }
         let Some(projection) = projection else {
             return Ok(QueryResult::command(documents.len() as i64));
         };
@@ -477,6 +481,7 @@ impl Connection {
                 if upsert.is_some() {
                     return Err(unsupported("collection ON CONFLICT; use document UPSERT"));
                 }
+                let mut values_budget = self.write_buffer_budget()?;
                 let values = if let (OneSelect::Values(rows), None, true) = (
                     &select.body.select,
                     &select.with,
@@ -495,9 +500,12 @@ impl Connection {
                                     "INSERT field/value count mismatch".into(),
                                 ));
                             }
-                            row.iter()
+                            let values = row
+                                .iter()
                                 .map(|expr| self.write_value(expr, params))
-                                .collect::<Result<Vec<_>>>()
+                                .collect::<Result<Vec<_>>>()?;
+                            values_budget.row(&values)?;
+                            Ok(values)
                         })
                         .collect::<Result<Vec<_>>>()?
                 } else {
@@ -511,9 +519,14 @@ impl Connection {
                 };
                 // Materialize the source before mutation, including self-inserts.
                 let mut documents = Vec::new();
+                let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in values {
                     let doc = fields.iter().cloned().zip(row).collect();
-                    documents.push(self.insert(tbl_name.name.as_str(), doc)?);
+                    crate::retain_write_document(
+                        &mut snapshot_budget,
+                        &mut documents,
+                        self.insert(tbl_name.name.as_str(), doc)?,
+                    )?;
                 }
                 Ok(Some(self.returning_rows(
                     &tbl_name, &returning, documents, params, limits,
@@ -553,6 +566,7 @@ impl Connection {
                     params,
                 )?;
                 let mut documents = Vec::new();
+                let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {
                     let mut values = row.into_iter();
                     let Some(Value::Object(mut document)) = values.next() else {
@@ -570,7 +584,7 @@ impl Connection {
                     // validate_targets forbids changing the record identity.
                     let collection = self.catalog(&id(&document)?.table)?;
                     self.replace_document(&collection, &document)?;
-                    documents.push(document);
+                    crate::retain_write_document(&mut snapshot_budget, &mut documents, document)?;
                 }
                 Ok(Some(self.returning_rows(
                     &update.tbl_name,
@@ -595,14 +609,17 @@ impl Connection {
                 validate_returning(&returning)?;
                 let rows = self.write_candidates(&tbl_name, with, where_clause, &[], params)?;
                 let mut documents = Vec::new();
+                let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {
                     let Value::Object(doc) = &row[0] else {
                         return Err(Error::Storage("invalid delete candidate".into()));
                     };
-                    documents
-                        .push(self.delete(id(doc)?)?.ok_or_else(|| {
-                            Error::Storage("delete candidate disappeared".into())
-                        })?);
+                    crate::retain_write_document(
+                        &mut snapshot_budget,
+                        &mut documents,
+                        self.delete(id(doc)?)?
+                            .ok_or_else(|| Error::Storage("delete candidate disappeared".into()))?,
+                    )?;
                 }
                 Ok(Some(self.returning_rows(
                     &tbl_name, &returning, documents, params, limits,
@@ -882,8 +899,10 @@ impl Connection {
             limit: None,
         };
         let mut result = self
-            .collection_select_internal(&Stmt::Select(select).to_string(), params, true)?
+            .write_candidate_select(&Stmt::Select(select).to_string(), params, true)?
             .ok_or_else(|| unsupported("this collection write candidate query"))?;
+        let mut budget =
+            crate::budget::ResultBudget::new(self.write_buffer_limits, &result.columns)?;
         for row in &mut result.rows {
             for (i, expr) in assignments.iter().enumerate() {
                 if let Some(value) = parameter(expr, params)? {
@@ -891,6 +910,7 @@ impl Connection {
                     row[i + 1] = value.clone();
                 }
             }
+            budget.row(row)?;
         }
         Ok(result.rows)
     }
