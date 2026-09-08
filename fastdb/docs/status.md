@@ -75,7 +75,7 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 
 ## Verification
 
-The latest complete scoped check on 2026-09-09 passed on `b6e7ca293` plus the source-free tuple-alias implementation: 599 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-source-free-alias-check.log`.
+The latest complete scoped check on 2026-09-09 passed on `78a7cc5ab` plus DISTINCT tuple support: 600 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-distinct-tuples-check.log`.
 
 This is local Linux evidence; hosted CI has not run. The ignored trigger-interruption gate remains unresolved. Package installation across advertised platforms, interrupted checkpoints, previous-release upgrade/restore and the other V1 gates below still require qualification. Historical focused and full-run evidence follows in the dated entries and [verification record](verification.md).
 
@@ -103,7 +103,7 @@ The current result metadata distinguishes direct typed field projections from or
 
 Direct typed parameters and copied document fields retain their logical types. Ordinary SQL scalar expressions retain engine scalar types: SQL TRUE/FALSE become integer 1/0, so boolean validators require typed Boolean parameters or document literals rather than implicit coercion. The Rust map uses `?1`, `?2`, etc. to bind numbered or anonymous statement slots. Pinned Turso v0.7.2 rejects `$name::suffix`; a differential test preserves that exact engine error instead of reinterpreting it.
 
-Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Compounds, DISTINCT, grouping, windows and recursive local CTEs remain unsupported. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
+Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Scalar DISTINCT tuple SELECTs retain deduplication before ordering/pagination. Compounds, grouping, windows and recursive local CTEs remain unsupported. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
 
 ## Catalog lifecycle notes
 
@@ -4916,3 +4916,22 @@ All 86 Node/application tests passed against the addon from the preceding full
 check. Log `/tmp/fastdb-source-free-alias-node-final.log`. Only tests/docs changed
 from `706a08c85`; no native rebuild or new full Rust run is claimed. Full V1
 remains open; no publication occurred.
+
+
+## DISTINCT tuple SELECT assignments — 2026-09-09
+
+Tuple SELECT assignments now retain scalar DISTINCT in the original SELECT
+before packing the selected row. Existing SELECT lowering owns comparison and
+representative selection; tuple writes keep their normal candidate snapshot,
+validation and index maintenance path. Differential tests cover duplicated
+relational/collection lookup rows, positional ordering, OFFSET over deduplicated
+rows and beyond the rowset, plus source-free filtered tuples. The validation
+recovery matrix includes DISTINCT with direct and local-CTE sources, failed
+writes, index restoration, valid retry and rollback.
+
+The complete scoped check passed on `78a7cc5ab` plus this change: 600 Rust tests,
+zero failures, one existing ignored trigger-interruption gate; 86 Node/application
+tests; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-distinct-tuples-check.log`; Node addon rebuilt.
+No upstream source, dependency or storage-format changes; no publication.
+Broader tuple grouping/window/compound forms and full V1 qualification remain open.

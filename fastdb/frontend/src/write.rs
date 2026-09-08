@@ -627,7 +627,7 @@ impl Connection {
                             group_by: None,
                             window_clause,
                             where_clause,
-                            distinctness: None,
+                            distinctness,
                             ..
                         } = &mut select.body.select
                         else {
@@ -639,7 +639,7 @@ impl Connection {
                         let explicit_aliases = columns.iter().any(|column| {
                             matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
                         });
-                        if positional_order || explicit_aliases {
+                        if positional_order || explicit_aliases || distinctness.is_some() {
                             let aliases: Vec<_> = columns.iter().filter_map(|column| {
                                 match column {
                                     ResultColumn::Expr(_, Some(alias)) if alias.is_explicit() => Some(alias.name().as_str().to_owned()),

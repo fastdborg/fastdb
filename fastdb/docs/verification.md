@@ -3900,3 +3900,22 @@ All 86 Node/application tests passed against the addon from the preceding full
 check. Log `/tmp/fastdb-source-free-alias-node-final.log`. Only tests/docs changed
 from `706a08c85`; no native rebuild or new full Rust run is claimed. Full V1
 remains open; no publication occurred.
+
+
+## DISTINCT tuple SELECT assignments — 2026-09-09
+
+Tuple SELECT assignments now retain scalar DISTINCT in the original SELECT
+before packing the selected row. Existing SELECT lowering owns comparison and
+representative selection; tuple writes keep their normal candidate snapshot,
+validation and index maintenance path. Differential tests cover duplicated
+relational/collection lookup rows, positional ordering, OFFSET over deduplicated
+rows and beyond the rowset, plus source-free filtered tuples. The validation
+recovery matrix includes DISTINCT with direct and local-CTE sources, failed
+writes, index restoration, valid retry and rollback.
+
+The complete scoped check passed on `78a7cc5ab` plus this change: 600 Rust tests,
+zero failures, one existing ignored trigger-interruption gate; 86 Node/application
+tests; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-distinct-tuples-check.log`; Node addon rebuilt.
+No upstream source, dependency or storage-format changes; no publication.
+Broader tuple grouping/window/compound forms and full V1 qualification remain open.

@@ -710,7 +710,14 @@ fn tuple_lookup_validation_restores_indexes_and_allows_retry() {
     q(&c, "INSERT INTO lookup VALUES(2,6,9)");
     q(&c, "INSERT INTO lookup_docs(n,a,b) VALUES(2,6,9)");
     for source in ["lookup", "lookup_docs"] {
-        for (local, aliases) in [(false, false), (true, false), (false, true), (true, true)] {
+        for (local, aliases, distinct) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+            (false, false, true),
+            (true, true, true),
+        ] {
             q(&c, "BEGIN");
             q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
             let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
@@ -730,6 +737,11 @@ fn tuple_lookup_validation_restores_indexes_and_allows_retry() {
                     "SELECT x.a,x.b",
                     "SELECT x.a AS first_value,x.b AS second_value",
                 )
+            } else {
+                sql
+            };
+            let sql = if distinct {
+                sql.replace("SELECT x.a", "SELECT DISTINCT x.a")
             } else {
                 sql
             };
@@ -1179,6 +1191,47 @@ fn source_free_tuple_aliases_match_native_scope() {
             vec![Value::Integer(1), Value::Null, Value::Null],
             vec![Value::Integer(2), Value::Integer(8), Value::Integer(9)]
         ]
+    );
+    q(&c, "ROLLBACK");
+}
+
+#[test]
+fn distinct_tuple_lookups_deduplicate_before_pagination() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO lookup VALUES(1,6,9),(1,6,9),(1,11,8),(1,11,8)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(n,a,b) SELECT n,a,b FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        for offset in [0, 1, 2] {
+            q(&c, "BEGIN");
+            let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT DISTINCT x.a,x.b FROM lookup x WHERE x.n=native.n ORDER BY 1 LIMIT 1 OFFSET {offset}) RETURNING n,a,b"));
+            let sql = format!("UPDATE docs SET (a,b)=(SELECT DISTINCT x.a,x.b FROM {source} x WHERE x.n=docs.n ORDER BY 1 LIMIT 1 OFFSET {offset}) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
+    }
+    q(&c, "BEGIN");
+    let native = q(
+        &c,
+        "UPDATE native SET (a,b)=(SELECT DISTINCT b,a WHERE n=1) RETURNING n,a,b",
+    );
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE docs SET (a,b)=(SELECT DISTINCT b,a WHERE n=1) RETURNING n,a,b"
+        )
+        .rows,
+        native.rows
     );
     q(&c, "ROLLBACK");
 }
