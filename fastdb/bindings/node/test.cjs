@@ -2386,3 +2386,20 @@ test('closing a worker with a timed write permits clean persistent reopen', asyn
     fs.rmSync(dir,{recursive:true,force:true});
   }
 });
+
+test('direct JSON response composition preserves escaped names and nested values', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const value = { '"}]\nไทย': ['\0\t\\"', new Record('docs','"}]\n'), Buffer.from([0,34,92,255]), -0] };
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      const sql = 'SELECT $value AS "quoted""name"';
+      const result = await db.execute(sql, {$value:value});
+      assert.deepEqual(result.columns,['quoted"name']);
+      assert.deepEqual(result.rows,[[value]]);
+      assert.deepEqual((await db.profileSelect(sql, {$value:value})).result.rows,[[value]]);
+      const batch = await db.executeBatch("SELECT '}]\\\"' AS text; SELECT 2 AS n;");
+      assert.equal(batch.length,2);
+      assert.deepEqual(batch[1].result.rows,[[2n]]);
+    } finally { await db.close(); }
+  }
+});

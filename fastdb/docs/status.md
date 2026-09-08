@@ -3335,3 +3335,21 @@ member order is not a contract. Formatting and diff checks passed. Logs:
 `/tmp/fastdb-direct-portable-json.log` and `/tmp/fastdb-direct-portable-records.log`.
 Broader suites were not repeated. Node integration, measurement and broader V1
 resource/release gates remain open.
+
+### Node direct portable JSON response path
+
+Query rows now serialize each consumed value directly to portable JSON text and
+append it to the response buffer, avoiding the intermediate per-byte JSON value
+tree. Profiling and batch builders preserve that text through their wrappers, and
+the generic response path accepts either internal validated JSON text or ordinary
+JSON values. User values/names always pass through serializers; only fixed syntax
+and numeric offsets are composed directly. Existing version, result/error and
+transaction shapes remain unchanged. Full response strings and JS decoded values
+still occupy memory.
+
+All 76 rebuilt Node/application tests and strict TypeScript passed, plus a focused
+both-client escaped-name/nested-value/profile/batch composition regression. Node
+Clippy, formatting and diff checks passed. Logs: `/tmp/fastdb-node-direct-json.log`,
+`/tmp/fastdb-node-direct-json-escaping.log`, and
+`/tmp/fastdb-node-direct-json-clippy.log`. Memory measurement follows separately;
+installed-package and broader Rust checks were not repeated. V1 gates remain open.

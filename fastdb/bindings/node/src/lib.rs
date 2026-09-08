@@ -370,22 +370,23 @@ impl NativeDatabase {
             })
             .transpose()?;
         self.report(|conn| {
-            let mut entries=Vec::new();
+            let mut entries=String::from("[");
+            let mut first=true;
             let visitor = |entry: fastdb::BatchExecution| {
                 let execution=entry.execution;
                 let result=execution.result.and_then(query_value);
                 let proceed=result.is_ok();
-                let mut value=match result {
-                    Ok(result)=>serde_json::Value::Object(serde_json::Map::from_iter([("result".into(),result)])),
-                    Err(error)=>serde_json::json!({"error":{"code":error.code(),"message":error.to_string()}}),
-                };
-                value["offset"]=entry.offset.into();
-                value["transaction"]=serde_json::json!({"before":execution.transaction_before,"after":execution.transaction_after});
-                entries.push(value);
+                if !first { entries.push(','); }
+                first=false;
+                entries.push('{');
+                entries.push_str(&execution_field(result.map(|value| value.0)));
+                let transaction=serde_json::json!({"before":execution.transaction_before,"after":execution.transaction_after});
+                entries.push_str(&format!(",\"offset\":{},\"transaction\":{transaction}}}",entry.offset));
                 Ok(proceed)
             };
             if let Some(token) = &token { conn.visit_batch_cancellable(&script, token, visitor)?; } else { conn.visit_batch(&script, visitor)?; }
-            Ok(serde_json::Value::Array(entries))
+            entries.push(']');
+            Ok(JsonText(entries))
         })
     }
     #[napi]
@@ -493,25 +494,21 @@ impl NativeDatabase {
             .remove(&self.interrupt_key);
         self.inner.take();
     }
-    fn report(
+    fn report<T: ResponseJson>(
         &self,
-        operation: impl FnOnce(&fastdb::Connection) -> fastdb::Result<serde_json::Value>,
+        operation: impl FnOnce(&fastdb::Connection) -> fastdb::Result<T>,
     ) -> napi::Result<String> {
         let (conn, _) = self
             .inner
             .as_ref()
             .ok_or_else(|| error("database is closed"))?;
         let before = conn.transaction_state();
-        let result = operation(conn);
-        let result = match result {
-            Ok(value) => {
-                serde_json::Value::Object(serde_json::Map::from_iter([("result".into(), value)]))
-            }
-            Err(e) => serde_json::json!({"error":{"code":e.code(),"message":e.to_string()}}),
-        };
-        let mut envelope = serde_json::json!({"version":1,"transaction":{"before":before,"after":conn.transaction_state()}});
-        envelope["execution"] = result;
-        Ok(envelope.to_string())
+        let result = operation(conn).and_then(ResponseJson::into_json);
+        let transaction = serde_json::json!({"before":before,"after":conn.transaction_state()});
+        Ok(format!(
+            "{{\"version\":1,\"execution\":{{{}}},\"transaction\":{transaction}}}",
+            execution_field(result)
+        ))
     }
 }
 
@@ -523,46 +520,67 @@ fn decode_parameters(input: &str) -> fastdb::Result<fastdb::Parameters> {
         .collect()
 }
 
-fn query_value(result: fastdb::QueryResult) -> fastdb::Result<serde_json::Value> {
-    let rows = result
-        .rows
-        .into_iter()
-        .map(|row| {
-            row.into_iter()
-                .map(fastdb::Value::into_portable_value)
-                .collect::<fastdb::Result<Vec<_>>>()
-                .map(serde_json::Value::Array)
-        })
-        .collect::<fastdb::Result<Vec<_>>>()?;
-    Ok(serde_json::Value::Object(serde_json::Map::from_iter([
-        (
-            "columns".into(),
-            serde_json::Value::Array(
-                result
-                    .columns
-                    .into_iter()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
+// Only internally serialized JSON can enter this wrapper. SQL/user text must
+// pass through serde or the validated portable serializer before composition.
+struct JsonText(String);
+trait ResponseJson {
+    fn into_json(self) -> fastdb::Result<String>;
+}
+impl ResponseJson for JsonText {
+    fn into_json(self) -> fastdb::Result<String> {
+        Ok(self.0)
+    }
+}
+impl ResponseJson for serde_json::Value {
+    fn into_json(self) -> fastdb::Result<String> {
+        Ok(serde_json::to_string(&self)?)
+    }
+}
+fn execution_field(result: fastdb::Result<String>) -> String {
+    match result {
+        Ok(value) => format!("\"result\":{value}"),
+        Err(error) => format!(
+            "\"error\":{}",
+            serde_json::json!({"code":error.code(),"message":error.to_string()})
         ),
-        ("rows".into(), serde_json::Value::Array(rows)),
-        (
-            "affected".into(),
-            serde_json::Value::String(result.affected.to_string()),
-        ),
-    ])))
+    }
+}
+fn query_value(result: fastdb::QueryResult) -> fastdb::Result<JsonText> {
+    let mut json = format!(
+        "{{\"columns\":{},\"affected\":{},\"rows\":[",
+        serde_json::to_string(&result.columns)?,
+        serde_json::to_string(&result.affected.to_string())?
+    );
+    for (row_index, row) in result.rows.into_iter().enumerate() {
+        if row_index > 0 {
+            json.push(',');
+        }
+        json.push('[');
+        for (column_index, value) in row.into_iter().enumerate() {
+            if column_index > 0 {
+                json.push(',');
+            }
+            json.push_str(&value.into_portable_json()?);
+        }
+        json.push(']');
+    }
+    json.push_str("]}");
+    Ok(JsonText(json))
 }
 
-fn profile_value(profile: fastdb::ProfiledQuery) -> fastdb::Result<serde_json::Value> {
+fn profile_value(profile: fastdb::ProfiledQuery) -> fastdb::Result<JsonText> {
     let m = profile.metrics;
-    let mut value = serde_json::json!({"metrics":{
+    let metrics = serde_json::json!({
         "rowsRead":m.rows_read.to_string(), "rowsWritten":m.rows_written.to_string(),
         "fullscanSteps":m.fullscan_steps.to_string(), "indexSteps":m.index_steps.to_string(),
         "vmSteps":m.vm_steps.to_string(), "sortOperations":m.sort_operations.to_string(),
         "btreeSeeks":m.btree_seeks.to_string(),
         "fetchBatches":m.fetch_batches.to_string(), "fetchRowsRead":m.fetch_rows_read.to_string(),
         "fetchVmSteps":m.fetch_vm_steps.to_string()
-    }});
-    value["result"] = query_value(profile.result)?;
-    Ok(value)
+    });
+    let result = query_value(profile.result)?;
+    Ok(JsonText(format!(
+        "{{\"metrics\":{metrics},\"result\":{}}}",
+        result.0
+    )))
 }
