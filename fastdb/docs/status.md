@@ -2793,3 +2793,17 @@ also passed. No production code changed, and no broader suite was repeated.
 This is initial terminal qualification, not a cancellation latency/deadline or
 all-platform guarantee. Candidate/snapshot budgets and broader interrupted
 I/O/commit/checkpoint and V1 release gates remain unfinished.
+
+### Runnable Rust result-limit example
+
+The Rust client guide now documents the bounded SELECT/profile and atomic write
+APIs, their cancellable variants, accounting rules and remaining memory/latency
+limits. `frontend/examples/result_limits.rs` is a runnable public-API example
+covering exact read limits, UPDATE result rejection, preservation of a prior
+pending insert, larger-budget retry, rollback and pre-cancelled write rejection.
+
+`cargo run --locked -p fastdb --example result_limits` completed successfully;
+example-scoped Clippy and frontend formatting checks passed. Logs:
+`/tmp/fastdb-result-example.log` and `/tmp/fastdb-result-example-clippy.log`.
+No engine/frontend implementation changed and no broader suite was repeated.
+The full V1 resource, platform and release gates remain unfinished.

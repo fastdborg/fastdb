@@ -85,3 +85,37 @@ Cancellation is cooperative and completion can win the race. Compilation, bundle
 
 
 `migrate_cancellable(&plan, &token)` applies the token to the existing all-pending-migrations transaction. A pre-cancelled token rejects before validation; active cancellation follows migration rollback and retains prior applied history. A migration-wrapped interruption exposes FDB_CANCELLED while retaining version/offset/source details. Other migration execution errors retain FDB_MIGRATION. Parsing and compilation have no fixed cancellation latency; completion can win a race.
+
+## Result limits and atomic write rejection
+
+`select_with_limits(sql, &parameters, limits)` and
+`profile_select_with_limits` accept `ResultLimits { max_rows,
+max_payload_bytes }`. Both limits are explicit `usize` values; zero is valid.
+Column names count even for empty results. Strings and object keys use UTF-8 byte
+lengths, integers/numbers use eight bytes, null/booleans one byte, and binary/vector
+values their byte length. Arrays, objects and records count their contained payload.
+FETCH charges expanded output, including duplicate occurrences and missing nulls.
+
+`write_with_result_limits` accepts one data write and rejects oversized RETURNING
+output with `FDB_LIMIT`. Its operation savepoint restores rejected changes while
+preserving prior pending work when recovery succeeds. It rejects transaction control,
+DDL and reads. Writes without RETURNING can succeed with zero result budgets.
+Inspect `transaction_state()` after an error; engine and rollback errors retain
+their existing transaction semantics.
+
+The matching `select_with_limits_cancellable`,
+`profile_select_with_limits_cancellable` and
+`write_with_result_limits_cancellable` methods take a final `&CancellationToken`.
+Use a fresh token for retries. These APIs bound logical returned payload, **not**
+engine buffers, candidate/snapshot memory, allocator overhead or execution time.
+See [result-budgets.md](result-budgets.md) for the full policy.
+
+Run the [result-limit example](../frontend/examples/result_limits.rs) from the
+checkout root:
+
+```sh
+cargo run --locked -p fastdb --example result_limits
+```
+
+It verifies an exact read budget, rejected UPDATE output, preservation of a prior
+pending insert, a successful retry, rollback and pre-cancelled write rejection.
