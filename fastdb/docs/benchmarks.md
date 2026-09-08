@@ -187,3 +187,23 @@ These peaks include process startup, setup, addon and worker memory; they are no
 query-exclusive allocation measurements. There is no baseline-build comparison,
 release performance guarantee or inferred memory cap. The large observed footprint
 keeps client/transport peak memory an explicit remaining resource requirement.
+
+### Direct Node JSON response comparison
+
+Repeating the unchanged 1,000 x 4,096-byte harness at `f3c70dd16` passed all 12
+correctness samples. Median results across three isolated samples per workload:
+
+| Client / operation | Previous peak RSS MiB | Direct JSON peak RSS MiB | Previous ms | Direct JSON ms |
+|---|---:|---:|---:|---:|
+| Sync execute | 217.1 | 129.4 | 1108.1 | 1039.0 |
+| Sync profile | 216.3 | 124.6 | 1033.0 | 954.9 |
+| Worker execute | 230.8 | 153.9 | 1065.7 | 1045.1 |
+| Worker profile | 230.9 | 162.5 | 1174.7 | 991.2 |
+
+Raw results: [direct JSON response run](benchmark-results/2026-09-08-linux-debug-node-direct-json-1000.json).
+The prior run above used `47252916f`; both record addon and unchanged harness hashes.
+Median process peaks decreased about 30–42%. These are sequential local debug runs,
+not randomized release-build trials; peak RSS includes startup/setup/runtime and
+JS decoding. Timing differences have only three samples per workload. The result
+supports this serialization change while leaving total-memory bounds, larger and
+more varied workloads, release timing and platform qualification unfinished.

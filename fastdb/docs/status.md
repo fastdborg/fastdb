@@ -3353,3 +3353,16 @@ Clippy, formatting and diff checks passed. Logs: `/tmp/fastdb-node-direct-json.l
 `/tmp/fastdb-node-direct-json-escaping.log`, and
 `/tmp/fastdb-node-direct-json-clippy.log`. Memory measurement follows separately;
 installed-package and broader Rust checks were not repeated. V1 gates remain open.
+
+### Measured direct-JSON result-memory comparison
+
+The unchanged isolated result harness passed all 12 samples at `f3c70dd16` with
+1,000 rows x 4,096 binary bytes. Compared with the recorded `47252916f` baseline,
+median process peak RSS fell from 216–231 MiB to 125–163 MiB across sync/worker
+execute/profile workloads (approximately 30–42% lower). Median times were lower
+in this run; three sequential local debug samples per workload do not establish a
+release timing guarantee. Raw output:
+`benchmark-results/2026-09-08-linux-debug-node-direct-json-1000.json`.
+`benchmarks.md` records the per-workload comparison and measurement limitations.
+Whole-process peaks still include setup/runtime/decoded output; broader V1 resource
+and release gates remain open.
