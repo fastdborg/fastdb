@@ -1241,10 +1241,10 @@ fn aggregate_tuple_lookups_match_native_empty_and_grouped_rows() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     for sql in [
-        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "CREATE TABLE native(n INTEGER,a,b)",
         "INSERT INTO native VALUES(1,0,0),(2,0,0)",
         "CREATE TABLE lookup(n INTEGER,a INTEGER)",
-        "INSERT INTO lookup VALUES(1,6),(1,11)",
+        "INSERT INTO lookup VALUES(1,6),(1,11),(1,6)",
         "CREATE TABLE docs",
         "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
         "CREATE TABLE lookup_docs",
@@ -1253,12 +1253,20 @@ fn aggregate_tuple_lookups_match_native_empty_and_grouped_rows() {
         q(&c, sql);
     }
     for source in ["lookup", "lookup_docs"] {
-        for group in ["", " GROUP BY x.n", " GROUP BY x.n HAVING count(*)>2"] {
-            q(&c, "BEGIN");
-            let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT sum(x.a),count(*) FROM lookup x WHERE x.n=native.n{group}) RETURNING n,a,b"));
-            let sql=format!("UPDATE docs SET (a,b)=(SELECT sum(x.a),count(*) FROM {source} x WHERE x.n=docs.n{group}) RETURNING n,a,b");
-            assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
-            q(&c, "ROLLBACK");
+        for projection in [
+            "sum(x.a),count(*)",
+            "avg(x.a),total(x.a)",
+            "min(x.a),max(x.a)",
+            "sum(DISTINCT x.a),count(DISTINCT x.a)",
+            "coalesce(sum(x.a),0)+1,count(*)*2",
+        ] {
+            for group in ["", " GROUP BY x.n", " GROUP BY x.n HAVING count(*)>3"] {
+                q(&c, "BEGIN");
+                let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT {projection} FROM lookup x WHERE x.n=native.n{group}) RETURNING n,a,b"));
+                let sql=format!("UPDATE docs SET (a,b)=(SELECT {projection} FROM {source} x WHERE x.n=docs.n{group}) RETURNING n,a,b");
+                assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
+                q(&c, "ROLLBACK");
+            }
         }
     }
 }

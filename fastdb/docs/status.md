@@ -4983,3 +4983,17 @@ All 87 Node/application tests passed against the addon from the preceding full
 check. Log `/tmp/fastdb-aggregate-tuple-node.log`. Only tests/documentation
 changed from `cfb5fa4e1`; no native rebuild or new Rust-suite run is claimed.
 Full V1 remains open; no publication occurred.
+
+
+## Aggregate tuple expression matrix — 2026-09-09
+
+The tuple differential matrix now covers AVG/TOTAL, MIN/MAX, DISTINCT SUM/COUNT
+inputs and scalar expressions around aggregates, with duplicated input rows,
+empty input, grouping and HAVING exclusion on relational/collection lookups.
+The native result table uses typeless a/b columns: INTEGER affinity otherwise
+coerces TOTAL's floating-point result and is not a document-result oracle.
+
+All 29 write tests passed, with formatting and all-target fastdb-tests Clippy
+with warnings denied. Logs `/tmp/fastdb-aggregate-tuple-expressions-final.log`
+and `/tmp/fastdb-aggregate-tuple-expressions-clippy.log`. Only tests/docs changed
+from `9687997c0`; no new full-suite or client run is claimed. Full V1 remains open.
