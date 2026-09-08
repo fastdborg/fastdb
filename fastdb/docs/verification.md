@@ -3886,3 +3886,17 @@ tests; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. The Node addon was rebuilt. Log `/tmp/fastdb-source-free-alias-check.log`.
 No upstream source, dependency or storage-format changes; no publication.
 Broader tuple forms and full V1 qualification remain open.
+
+
+## Node source-free tuple aliases — 2026-09-09
+
+Both Node clients now exercise duplicate source-free aliases with record/object/
+binary values and positional ordering on the record-valued column. An aliased
+negative projection with a qualified numeric predicate protects the outer-value
+conversion fix; rollback restores the original rows. The initial fixture tried
+to order by an object and was corrected to use a supported record sort key.
+
+All 86 Node/application tests passed against the addon from the preceding full
+check. Log `/tmp/fastdb-source-free-alias-node-final.log`. Only tests/docs changed
+from `706a08c85`; no native rebuild or new full Rust run is claimed. Full V1
+remains open; no publication occurred.

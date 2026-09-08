@@ -2644,6 +2644,10 @@ test('tuple updates preserve typed snapshots and atomic failure in both clients'
       assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT $a,$b WHERE docs.n=7) RETURNING n,a,b', { $a: record, $b: object })).rows,
         [[1n,null,null],[3n,null,null],[7n,record,object]]);
       assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT b,a) WHERE n=7 RETURNING a,b')).rows, [[object,record]]);
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT b AS chosen,a AS chosen WHERE docs.n=7 ORDER BY 1) RETURNING n,a,b')).rows,
+        [[1n,null,null],[3n,null,null],[7n,record,object]]);
+      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(SELECT -n AS n,b AS value WHERE docs.n>3 ORDER BY n) RETURNING n,a,b')).rows,
+        [[1n,null,null],[3n,null,null],[7n,-7n,object]]);
       await db.execute('ROLLBACK');
       assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,2n,3n],[3n,4n,5n]]);
     } finally { await db.close(); }
