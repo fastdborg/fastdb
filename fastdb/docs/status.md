@@ -2177,3 +2177,6 @@ Typed NATURAL write qualification (2026-09-08): record, boolean and binary keys 
 
 
 Duplicate NATURAL key qualification (2026-09-08): expanded the duplicate-key matrix to 54 native differential execute/profile cases spanning USING and NATURAL, duplicate public columns on either/both sides, INNER/LEFT/RIGHT, stars and merged/qualified keys. First-column lookup, duplicate positions and suppression on the hidden side match the pinned engine. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-duplicate-columns.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.
+
+
+NATURAL correlation qualification (2026-09-08): 12 execute/profile equivalence cases pass against explicit USING(k) for direct/nested scalar references, nested EXISTS and direct CAST comparison across INNER/LEFT/RIGHT joins. Result names, values and unmatched retained right keys agree. This is NATURAL-to-USING equivalence evidence, not a new independent native correlation oracle. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-correlation.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.

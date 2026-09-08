@@ -89,3 +89,6 @@ Typed NATURAL RIGHT JOIN insertion now has record/boolean/binary coverage, inclu
 
 
 Duplicate-column coverage now compares 54 USING/NATURAL shapes with the pinned engine, including duplicates on either/both sides, qualified/unqualified stars and first-key lookup.
+
+
+NATURAL-to-USING correlation equivalence now covers 12 execute/profile cases for direct/nested scalars, EXISTS and CAST comparisons across INNER/LEFT/RIGHT.

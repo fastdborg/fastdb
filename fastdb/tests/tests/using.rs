@@ -1563,3 +1563,48 @@ fn natural_typed_keys_insert_atomically_and_retry_after_rollback() {
         assert_eq!(query("SELECT k FROM copied ORDER BY k").rows, expected.rows);
     }
 }
+
+#[test]
+fn natural_join_correlation_matches_equivalent_using_queries() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for expression in [
+            "(SELECT k)",
+            "(SELECT (SELECT k))",
+            "(SELECT EXISTS(SELECT k WHERE k=2))",
+            "(SELECT CAST(k AS TEXT))=1",
+        ] {
+            let sql = |natural: bool| {
+                let prefix = if natural { "NATURAL " } else { "" };
+                let constraint = if natural { "" } else { " USING(k)" };
+                format!("SELECT k,{expression} AS v FROM (SELECT k FROM docs) a {prefix}{join} b{constraint} ORDER BY k")
+            };
+            let expected = query(&sql(false));
+            let natural = sql(true);
+            let actual = query(&natural);
+            assert_eq!(actual.columns, expected.columns, "{natural}");
+            assert_eq!(actual.rows, expected.rows, "{natural}");
+            assert_eq!(
+                c.profile_select(&natural, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows,
+                "{natural}"
+            );
+        }
+    }
+}
