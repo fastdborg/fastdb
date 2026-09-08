@@ -3956,3 +3956,14 @@ passes; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Log `/tmp/fastdb-aggregate-tuples-check.log`; Node addon rebuilt.
 No upstream source, dependency or storage-format changes; no publication.
 Broader grouped/aggregate qualification and full V1 release gates remain open.
+
+
+## Node aggregate tuple results — 2026-09-09
+
+A synchronous/worker client regression verifies correlated SUM/COUNT tuples,
+NULL/0 for empty aggregate input, NULL tuples for absent groups and HAVING
+exclusion, active transaction reports, and rollback to original documents.
+All 87 Node/application tests passed against the addon from the preceding full
+check. Log `/tmp/fastdb-aggregate-tuple-node.log`. Only tests/documentation
+changed from `cfb5fa4e1`; no native rebuild or new Rust-suite run is claimed.
+Full V1 remains open; no publication occurred.

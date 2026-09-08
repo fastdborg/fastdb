@@ -2739,3 +2739,26 @@ test('hidden derived and CTE fields sort logically in both clients', async () =>
     } finally { await db.close(); }
   }
 });
+
+
+test('aggregate tuples preserve empty groups and rollback in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of ['CREATE TABLE docs', 'INSERT INTO docs(n,a,b) VALUES(1,0,0),(2,0,0)',
+        'CREATE TABLE lookup', 'INSERT INTO lookup(n,a) VALUES(1,6),(1,11)', 'BEGIN']) await db.execute(sql);
+      for (const [group, expected] of [
+        ['', [[1n,17n,2n],[2n,null,0n]]],
+        [' GROUP BY x.n', [[1n,17n,2n],[2n,null,null]]],
+        [' GROUP BY x.n HAVING count(*)>2', [[1n,null,null],[2n,null,null]]],
+      ]) {
+        const result = await db.execute(`UPDATE docs SET (a,b)=(SELECT sum(x.a),count(*) FROM lookup x WHERE x.n=docs.n${group}) RETURNING n,a,b`);
+        assert.deepEqual(result.rows, expected);
+        assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
+      }
+      await db.execute('ROLLBACK');
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,0n,0n],[2n,0n,0n]]);
+    } finally { await db.close(); }
+  }
+});
