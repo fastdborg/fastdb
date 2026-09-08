@@ -1711,3 +1711,43 @@ fn natural_window_partitions_match_native_merged_keys() {
         }
     }
 }
+
+#[test]
+fn natural_cte_names_match_native_after_ascii_normalization() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,n:10}",
+        "CREATE TABLE baseline(k INTEGER,n INTEGER)",
+        "INSERT INTO baseline VALUES(1,10)",
+        "CREATE TABLE b(k INTEGER,m INTEGER)",
+        "INSERT INTO b VALUES(1,100),(2,200)",
+    ] {
+        query(sql);
+    }
+    for materialized in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+        for join in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+            let sql = |source: &str| {
+                format!("WITH q(\"Key\",n) AS {materialized} (SELECT k,n FROM {source}), r(\"KEY\",m) AS (SELECT k,m FROM b) SELECT * FROM q a {join} r b ORDER BY a.n,b.m")
+            };
+            let expected = query(&sql("baseline"));
+            let logical = sql("docs");
+            let actual = query(&logical);
+            assert_eq!(actual.columns, expected.columns, "{logical}");
+            assert_eq!(actual.rows, expected.rows, "{logical}");
+            assert_eq!(
+                c.profile_select(&logical, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows,
+                "{logical}"
+            );
+        }
+    }
+}

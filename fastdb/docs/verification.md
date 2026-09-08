@@ -2460,3 +2460,6 @@ Grouped NATURAL qualification (2026-09-08): nine native differential execute/pro
 
 
 NATURAL window qualification (2026-09-08): six native differential execute/profile cases pass for inline ROW_NUMBER and named-window SUM partitioned by merged keys under INNER/LEFT/RIGHT NATURAL joins. Result names and rows match, including NULL-extended outer rows. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-windows.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader windows and full V1 qualification remain open.
+
+
+NATURAL CTE name qualification (2026-09-08): nine native differential execute/profile cases pass for differently cased explicit CTE key names, default/MATERIALIZED/NOT MATERIALIZED sources and INNER/LEFT/RIGHT joins. Inferred shared keys use normalized names and preserve native star labels/rows. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-cte-names.log. This verifies results, not materialization callback counts. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.
