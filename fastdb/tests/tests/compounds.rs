@@ -641,3 +641,65 @@ fn set_collation_precedence_and_representatives_match_native_keys() {
         }
     }
 }
+
+#[test]
+fn direct_union_pagination_preserves_typed_derived_and_insert_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE sink");
+    let source =
+        "SELECT $left AS payload,1 AS marker UNION ALL SELECT $right,2 LIMIT $take OFFSET $skip";
+    for value in [
+        Value::Null,
+        Value::Boolean(true),
+        Value::Integer(i64::MAX),
+        Value::String("text".into()),
+        Value::Binary(b"FDB\x01{\"type\":\"Integer\",\"value\":7}".to_vec()),
+        Value::Record(fastdb::Record {
+            table: "sink".into(),
+            key: fastdb::Key::Integer(7),
+        }),
+        Value::Array(vec![Value::Boolean(false), Value::Integer(9)]),
+    ] {
+        for (take, skip) in [(1, 0), (1, 1), (0, 0)] {
+            let params = Parameters::from([
+                ("$left".into(), Value::Boolean(false)),
+                ("$right".into(), value.clone()),
+                ("$take".into(), Value::Integer(take)),
+                ("$skip".into(), Value::Integer(skip)),
+            ]);
+            let expected = if take == 0 {
+                vec![]
+            } else {
+                vec![vec![
+                    if skip == 0 {
+                        Value::Boolean(false)
+                    } else {
+                        value.clone()
+                    },
+                    Value::Integer(skip + 1),
+                ]]
+            };
+            for sql in [
+                source.to_owned(),
+                format!("SELECT u.payload,u.marker FROM ({source}) u"),
+                format!("WITH u(payload,marker) AS ({source}) SELECT payload,marker FROM u"),
+            ] {
+                let result = c
+                    .execute(&sql, &params)
+                    .unwrap_or_else(|error| panic!("{sql}: {error}"));
+                assert_eq!(result.columns, vec!["payload", "marker"]);
+                assert_eq!(result.rows, expected, "{sql}");
+            }
+            let inserted = c
+                .execute(
+                    &format!("INSERT INTO sink(payload,marker) {source} RETURNING payload,marker"),
+                    &params,
+                )
+                .unwrap();
+            assert_eq!(inserted.rows, expected);
+            assert_eq!(q(&c, "SELECT payload,marker FROM sink").rows, expected);
+            q(&c, "DELETE FROM sink");
+        }
+    }
+}
