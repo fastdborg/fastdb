@@ -1485,6 +1485,10 @@ fn window_tuple_projections_match_native() {
         for (projection, window) in [
             ("row_number() OVER(ORDER BY x.a),sum(x.a) OVER()", ""),
             (
+                "sum(x.a) FILTER(WHERE x.a>7) OVER(),count(*) FILTER(WHERE x.a>7) OVER()",
+                "",
+            ),
+            (
                 "row_number() OVER w,count(*) OVER w",
                 " WINDOW w AS (ORDER BY x.a)",
             ),

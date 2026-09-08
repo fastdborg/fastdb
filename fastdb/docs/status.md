@@ -5189,3 +5189,13 @@ All 34 write tests passed, with formatting and all-target fastdb-tests Clippy
 with warnings denied. Logs `/tmp/fastdb-window-tuple-params.log` and
 `/tmp/fastdb-window-tuple-params-clippy.log`. Only tests/docs changed from
 `6d8a4f8b0`; no new full-suite or client run is claimed. Full V1 remains open.
+
+
+## Filtered window tuple comparison — 2026-09-09
+
+The window tuple differential matrix now covers SUM/COUNT FILTER combined with
+OVER(), preserving final ordering, offsets and unmatched rows through relational
+and collection lookups. All 34 write tests passed, with formatting and all-target
+fastdb-tests Clippy with warnings denied. Logs `/tmp/fastdb-filtered-window-tuples.log`
+and `/tmp/fastdb-filtered-window-tuples-clippy.log`. Only tests/docs changed from
+`3960f677b`; no new full-suite or client run is claimed. Full V1 remains open.
