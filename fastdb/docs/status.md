@@ -2807,3 +2807,19 @@ example-scoped Clippy and frontend formatting checks passed. Logs:
 `/tmp/fastdb-result-example.log` and `/tmp/fastdb-result-example-clippy.log`.
 No engine/frontend implementation changed and no broader suite was repeated.
 The full V1 resource, platform and release gates remain unfinished.
+
+### Standalone Rust result-limit qualification
+
+The out-of-workspace Rust consumer now imports ResultLimits and CancellationToken
+and exercises bounded SELECT/profile, exact and one-byte-over FETCH accounting,
+atomic write-result rejection with prior pending work, retry, pre-cancellation,
+and the cancellable SELECT/profile/write variants. Rollback restores the indexed
+int64 value, and the existing audit/reopen assertions remain intact.
+
+The offline consumer build and execution passed without checkout-injected Rust
+flags, and all 244 resolved registry/git package identities matched the pinned
+workspace lockfile subset. Log: `/tmp/fastdb-consumer-result-limits.log`. Existing
+typed values, validation, indexes, QuickJS, vectors, profiling, integrity and
+persistence smoke checks ran in the same consumer. No production code changed or
+broader suite was repeated. This adds dependent-application evidence; it does not
+close resource, platform, packaging or V1 release gates.

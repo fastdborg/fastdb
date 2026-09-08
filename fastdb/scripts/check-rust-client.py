@@ -40,7 +40,7 @@ def main():
         )
         shutil.copyfile(ROOT / "Cargo.lock", consumer / "Cargo.lock")
         (consumer / "src" / "main.rs").write_text(r'''
-use fastdb::{Database, Parameters, Record, Key, Value, IntegrityLimits, IntegrityReport, ProfiledQuery};
+use fastdb::{Database, Parameters, Record, Key, Value, IntegrityLimits, IntegrityReport, ProfiledQuery, ResultLimits, CancellationToken};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
     let id = Record { table: "docs".into(), key: Key::String("saved".into()) };
@@ -88,7 +88,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(c.profile_select("SELECT id,value FROM docs WHERE value=$value", &params)?.metrics, profile.metrics);
     assert_eq!(c.profile_select("DELETE FROM docs", &Parameters::new()).unwrap_err().code(),"FDB_UNSUPPORTED");
     assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
-    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits and reopen");
+    let empty = Parameters::new();
+    let one = ResultLimits { max_rows: 1, max_payload_bytes: 9 };
+    assert_eq!(c.select_with_limits("SELECT value AS v FROM docs", &empty, one)?.rows, vec![vec![Value::Integer(i64::MAX)]]);
+    assert_eq!(c.profile_select_with_limits("SELECT value AS v FROM docs", &empty, one)?.result.rows, vec![vec![Value::Integer(i64::MAX)]]);
+    assert_eq!(c.select_with_limits("SELECT value AS v FROM docs", &empty, ResultLimits { max_payload_bytes:8, ..one }).unwrap_err().code(), "FDB_LIMIT");
+    let fetch = ResultLimits { max_rows:1, max_payload_bytes:25 };
+    assert_eq!(c.select_with_limits("SELECT record::fetch(docs:saved) AS v", &empty, fetch)?.rows.len(), 1);
+    assert_eq!(c.select_with_limits("SELECT record::fetch(docs:saved) AS v", &empty, ResultLimits { max_payload_bytes:24, ..fetch }).unwrap_err().code(), "FDB_LIMIT");
+    c.execute("BEGIN", &empty)?;
+    c.execute("UPDATE docs SET value=7", &empty)?;
+    let write = "UPDATE docs SET value=8 RETURNING value AS v";
+    assert_eq!(c.write_with_result_limits(write, &empty, ResultLimits { max_rows:0, ..one }).unwrap_err().code(), "FDB_LIMIT");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(c.select_with_limits("SELECT value AS v FROM docs", &empty, one)?.rows, vec![vec![Value::Integer(7)]]);
+    assert_eq!(c.write_with_result_limits(write, &empty, one)?.rows, vec![vec![Value::Integer(8)]]);
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert_eq!(c.write_with_result_limits_cancellable("DELETE FROM docs", &empty, one, &cancelled).unwrap_err().code(), "FDB_CANCELLED");
+    let fresh = CancellationToken::new();
+    assert_eq!(c.write_with_result_limits_cancellable("UPDATE docs SET value=9 RETURNING value AS v", &empty, one, &fresh)?.rows, vec![vec![Value::Integer(9)]]);
+    assert_eq!(c.select_with_limits_cancellable("SELECT value AS v FROM docs", &empty, one, &fresh)?.rows, vec![vec![Value::Integer(9)]]);
+    assert_eq!(c.profile_select_with_limits_cancellable("SELECT value AS v FROM docs", &empty, one, &fresh)?.result.rows, vec![vec![Value::Integer(9)]]);
+    c.execute("ROLLBACK", &empty)?;
+    assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(), 1);
+    assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents, 1);
+    println!("Standalone Rust client smoke passed: typed values, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result limits, cancellation and reopen");
     Ok(())
 }
 ''')
