@@ -1341,3 +1341,51 @@ fn nested_using_runtime_rollback_preserves_persistent_rows_and_indexes() {
     );
     assert!(c.execute(insert, &Parameters::new()).is_err());
 }
+
+#[test]
+fn nested_using_runtime_error_clears_user_savepoints_and_allows_new_transaction() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,v:7}",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1)",
+        "CREATE TABLE audit(n INTEGER)",
+        "INSERT INTO audit VALUES(99)",
+        "BEGIN",
+        "INSERT INTO audit VALUES(1)",
+        "SAVEPOINT app_work",
+        "INSERT INTO audit VALUES(2)",
+    ] {
+        query(sql);
+    }
+    let invalid = "SELECT (SELECT (SELECT array::append(a.v,2))) FROM docs a JOIN b USING(k)";
+    assert!(c.execute(invalid, &Parameters::new()).is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+    assert!(c
+        .execute("ROLLBACK TO app_work", &Parameters::new())
+        .is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+    assert_eq!(
+        query("SELECT n FROM audit ORDER BY n").rows,
+        vec![vec![Value::Integer(99)]]
+    );
+    query("BEGIN");
+    query("SAVEPOINT app_work");
+    query("UPDATE docs SET v=array::new()");
+    assert_eq!(
+        query(invalid).rows,
+        vec![vec![Value::Array(vec![Value::Integer(2)])]]
+    );
+    query("RELEASE app_work");
+    query("COMMIT");
+    assert_eq!(
+        query(invalid).rows,
+        vec![vec![Value::Array(vec![Value::Integer(2)])]]
+    );
+}
