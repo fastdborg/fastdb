@@ -3109,3 +3109,15 @@ and `/tmp/fastdb-cte-projection-writes-clippy.log`. Only tests/documentation cha
 from `3184c18ad`; no new full-suite or client run is claimed. The full scoped
 baseline remains 572 Rust and 82 Node/application passes with one ignored trigger
 gate. Full V1 release gates remain open; no publication occurred.
+
+
+## Client native CTE projection parity — 2026-09-09
+
+Both Node clients now verify native scalar CTE projections combining outer
+collection fields with iterator values, plus a UNION ALL CTE mixing iterator
+rows and an outer scalar. Inputs include NULL; execute/profile return the
+expected bigint sums. The focused test and all 82 Node/application tests passed
+against the current addon. Logs `/tmp/fastdb-native-cte-client-focused.log` and
+`/tmp/fastdb-native-cte-clients.log`. Only tests/documentation changed from
+`9fdef5bdf`; no native rebuild, full Rust-suite or new package run is claimed.
+Full V1 release gates remain open; no publication occurred.

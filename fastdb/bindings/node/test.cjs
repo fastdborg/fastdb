@@ -2529,6 +2529,15 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       assert.deepEqual((await db.execute(qualifiedCte,{$delta:1n})).rows,[[1n,4n]]);
       assert.deepEqual((await db.profileSelect(qualifiedCte,{$delta:1n})).result.rows,[[1n,4n]]);
       await assert.rejects(async()=>db.execute(qualifiedCte),error=>error.code==='FDB_PARAMETER');
+      for(const [expression,total] of [
+        ['(WITH a AS (SELECT d.n+x.value AS v FROM json_each(d.j) x) SELECT sum(v) FROM a)',5n],
+        ['(WITH a AS (SELECT x.value AS v FROM json_each(d.j) x UNION ALL SELECT d.n) SELECT sum(v) FROM a)',4n]
+      ]) {
+        const projected='SELECT d.n,'+expression+' AS total FROM docs d';
+        assert.deepEqual((await db.execute(projected)).rows,[[1n,total]]);
+        assert.deepEqual((await db.profileSelect(projected)).result.rows,[[1n,total]]);
+      }
+
 
 
 
