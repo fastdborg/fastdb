@@ -1991,6 +1991,11 @@ test('ordered local CTE pagination preserves typed client recovery', async () =>
         assert.deepEqual(error.transaction,{before:'active',after:'active'});
         return true;
       });
+      await assert.rejects(async () => db.execute(insert,{$take:'1',$value:value}), error => {
+        assert.equal(error.code,'FDB_PARAMETER');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
       await assert.rejects(async () => db.execute(insert,params), error => {
         assert.equal(error.code,'FDB_CONSTRAINT');
         assert.deepEqual(error.transaction,{before:'active',after:'active'});

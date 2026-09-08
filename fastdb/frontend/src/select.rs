@@ -5821,7 +5821,7 @@ impl Connection {
                 standalone_aliases: Default::default(),
             };
             for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
-                if expression_subquery && scope.sources.is_empty() {
+                if expression_subquery {
                     let mut missing = None;
                     turso_core::walk_expr_mut(value, &mut |expr| {
                         if let Expr::Variable(var) = expr {
