@@ -455,7 +455,14 @@ fn target_named_cte_writes_preserve_native_table_binding() {
     q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
     q(&c, "CREATE TABLE native(n INTEGER UNIQUE)");
     q(&c, "INSERT INTO native VALUES(1),(2),(3)");
-    for shape in ["direct", "derived", "compound"] {
+    for shape in [
+        "direct",
+        "derived",
+        "compound",
+        "union",
+        "intersect",
+        "except",
+    ] {
         for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
             for (aliased, alias_cte) in [(false, false), (true, false), (true, true)] {
                 for projection in ["n", "sum(n) AS n", "n+1 AS n", "count(*) AS n"] {
@@ -472,6 +479,9 @@ fn target_named_cte_writes_preserve_native_table_binding() {
                             let body = match shape {
                                 "derived" => format!("SELECT n FROM ({body}) q"),
                                 "compound" => format!("{body} UNION ALL SELECT 2"),
+                                "union" => format!("{body} UNION SELECT 2"),
+                                "intersect" => format!("{body} INTERSECT SELECT 2"),
+                                "except" => format!("{body} EXCEPT SELECT 2"),
                                 _ => body,
                             };
                             format!("WITH {name} AS (SELECT 2 AS n), chosen AS {hint} ({body}) {write} WHERE n IN (SELECT n FROM chosen) RETURNING n")
