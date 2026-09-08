@@ -29,6 +29,11 @@ required bigint `maxRows` and `maxPayloadBytes`; worker calls accept AbortSignal
 RETURNING, INSERT SELECT candidates and transfer remain separate integration
 work. This does not close the V1 resource gate.
 
+CLI `.select-limit ROWS BYTES SQL`, `.profile-limit ROWS BYTES SQL` and
+`.write-limit ROWS BYTES SQL` expose the same policies for one statement. Limits
+are nonnegative decimal integers; failures use the existing JSON error and
+transaction envelope. See the frontend README for input-mode details.
+
 ## Atomic write-result policy
 
 Rust `Connection::write_with_result_limits(sql, params, ResultLimits)` accepts

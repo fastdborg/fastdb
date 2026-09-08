@@ -2740,3 +2740,22 @@ Frontend Clippy and formatting passed. Logs: `/tmp/fastdb-update-owned.log` and
 `/tmp/fastdb-update-owned-clippy.log`. Full-suite and Node/package evidence remains
 historical; no repeat was needed for this ownership change. Explicit candidate
 and snapshot budgets and the remaining V1 resource/release gates remain open.
+
+### Explicit CLI result-limit commands
+
+Added `.select-limit ROWS BYTES SQL`, `.profile-limit ROWS BYTES SQL` and
+`.write-limit ROWS BYTES SQL`, each accepting one statement and nonnegative
+integer budgets. They call the same Rust result policies and preserve the JSON
+result/error, transaction and optional profiling envelope. Commands work as a
+standalone EOF-delimited input or individual line/interactive commands. Ordinary
+script and `.profile` behavior remains unchanged. Interactive limit commands take
+the command and SQL together on one line; standalone piped SQL can be multiline.
+
+All 22 CLI package tests passed, including exact/over-limit results, missing and
+invalid limits, FETCH nulls, multi-statement rejection, write rollback/retry and
+transaction-control rejection in line and interactive modes. Existing terminal,
+input-limit, migration, transfer, transaction and output-failure tests also passed.
+CLI Clippy and formatting checks passed. Logs: `/tmp/fastdb-cli-result-limits.log`
+and `/tmp/fastdb-cli-result-limits-clippy.log`. No frontend-wide or Node/package
+checks were repeated for this CLI-only change. Candidate/snapshot buffers, engine
+working memory, deadlines and the remaining V1 release gates remain unfinished.

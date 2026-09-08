@@ -30,3 +30,31 @@ The [Rust client guide](docs/rust-client.md) describes local path dependencies a
 The [local benchmark harness](docs/benchmarks.md) measures document filters and exact-vector queries through the CLI, with result checks, query plans and Linux process peak RSS. It is a functional baseline; full release-scale performance qualification remains pending. Use `.profile SELECT ...` in the CLI or `Connection::profile_select` in Rust to obtain primary engine counters alongside query results.
 
 Audit a stored collection with `fastdb-cli --check-collection posts app.db`. Optional `--max-documents N` and `--max-encoded-bytes N` override the defaults of 100,000 documents and 64 MiB. The command prints one JSON report and exits nonzero on failure. See the [audit contract](docs/contracts.md#explicit-collection-content-audit) for coverage and resource limits.
+
+
+### CLI result limits
+
+Use an explicit command followed by nonnegative decimal row and payload-byte
+budgets and one complete SQL statement:
+
+```text
+.select-limit 100 65536 SELECT title FROM posts;
+.profile-limit 100 65536 SELECT title FROM posts;
+.write-limit 100 65536 UPDATE posts SET published=true RETURNING id;
+```
+
+These commands work as standalone EOF-delimited input, or as individual commands
+in line/interactive mode. In interactive mode, submit the command and SQL together
+on one line. Piped standalone input can contain multiline SQL. They use the same
+result accounting as the Rust/Node APIs: column names count even for empty results,
+FETCH output counts after expansion, and overflow emits `FDB_LIMIT` without partial
+rows or profile counters. Write-result rejection rolls back the operation through
+its savepoint, with transaction observations in the error report. `.write-limit`
+accepts data writes; transaction control and DDL use ordinary SQL commands.
+
+These budgets do not cap candidate/snapshot buffers, engine working memory,
+individual decoding allocations or execution time. See
+[result-budgets.md](docs/result-budgets.md) for exact accounting and limitations.
+Existing `.profile`, ordinary scripts, input byte limits and exit-status behavior
+retain their contracts; line and interactive modes continue after a failed command
+and exit nonzero if any command failed.

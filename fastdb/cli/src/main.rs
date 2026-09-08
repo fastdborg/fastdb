@@ -109,7 +109,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.")?;
+                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
                 io::stdout().lock().flush()?;
                 return Ok(std::process::ExitCode::SUCCESS);
             }
@@ -255,7 +255,9 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             }
             let line = String::from_utf8(bytes)?;
             if !line.trim().is_empty() {
-                failed |= if let Some(sql) = line.trim_start().strip_prefix(".profile ") {
+                failed |= if let Some(failed) = run_limited_command(&conn, &line, &mut writer)? {
+                    failed
+                } else if let Some(sql) = line.trim_start().strip_prefix(".profile ") {
                     run_profile(&conn, sql, &mut writer)?
                 } else {
                     output(
@@ -396,7 +398,7 @@ fn run_interactive(
             ".help" => {
                 writeln!(
                     prompt,
-                    "End statements with a semicolon. .clear discards pending input; .quit exits.\n.profile SELECT ... executes one SELECT with primary engine counters.
+                    "End statements with a semicolon. .clear discards pending input; .quit exits.\n.profile SELECT ... executes one SELECT with primary engine counters.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.write-limit ROWS BYTES SQL checks write results atomically; budgets do not cap process memory.
 Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTerminal editing supports arrows and history. Ctrl-C clears pending input or cancels running engine work.\nHistory stays in memory unless --history PATH is supplied; leading spaces omit entries."
                 )?;
                 continue;
@@ -417,6 +419,72 @@ Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTermina
             }
         }
     }
+}
+
+fn run_limited_command(
+    conn: &fastdb::Connection,
+    command: &str,
+    writer: &mut impl Write,
+) -> Result<Option<bool>, Box<dyn std::error::Error>> {
+    fn word<'a>(input: &mut &'a str) -> &'a str {
+        *input = input.trim_start();
+        let end = input.find(char::is_whitespace).unwrap_or(input.len());
+        let token = &input[..end];
+        *input = &input[end..];
+        token
+    }
+    let mut rest = command;
+    let name = word(&mut rest);
+    if !matches!(name, ".select-limit" | ".profile-limit" | ".write-limit") {
+        return Ok(None);
+    }
+    let before = conn.transaction_state();
+    let execution = (|| -> fastdb::Result<_> {
+        let max_rows = word(&mut rest).parse::<usize>().map_err(|_| {
+            fastdb::Error::Validation("expected nonnegative result row limit".into())
+        })?;
+        let max_payload_bytes = word(&mut rest).parse::<usize>().map_err(|_| {
+            fastdb::Error::Validation("expected nonnegative result payload byte limit".into())
+        })?;
+        let sql = rest.trim_start();
+        if sql.trim().is_empty() {
+            return Err(fastdb::Error::Validation(
+                "expected one SQL statement after result limits".into(),
+            ));
+        }
+        let limits = fastdb::ResultLimits {
+            max_rows,
+            max_payload_bytes,
+        };
+        let params = Parameters::new();
+        match name {
+            ".select-limit" => conn
+                .select_with_limits(sql, &params, limits)
+                .map(|result| (result, None)),
+            ".profile-limit" => conn
+                .profile_select_with_limits(sql, &params, limits)
+                .map(|profile| (profile.result, Some(profile.metrics))),
+            ".write-limit" => conn
+                .write_with_result_limits(sql, &params, limits)
+                .map(|result| (result, None)),
+            _ => unreachable!("limited command dispatched"),
+        }
+    })();
+    let (result, metrics) = match execution {
+        Ok((result, metrics)) => (Ok(result), metrics),
+        Err(error) => (Err(error), None),
+    };
+    output_with_metrics(
+        writer,
+        ExecutionReport {
+            result,
+            transaction_before: before,
+            transaction_after: conn.transaction_state(),
+        },
+        None,
+        metrics,
+    )
+    .map(Some)
 }
 
 fn run_profile(
@@ -445,6 +513,9 @@ fn run_script(
     script: &str,
     writer: &mut impl Write,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    if let Some(failed) = run_limited_command(conn, script, writer)? {
+        return Ok(failed);
+    }
     if let Some(sql) = script.trim_start().strip_prefix(".profile ") {
         return run_profile(conn, sql, writer);
     }
