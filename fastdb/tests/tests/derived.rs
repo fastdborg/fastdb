@@ -1379,3 +1379,29 @@ fn unprojected_derived_sort_keys_use_logical_numeric_order() {
         }
     }
 }
+
+#[test]
+fn unprojected_derived_record_keys_sort_numerically() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    for (label, key) in [("six", 6), ("eleven", 11), ("negative", -2)] {
+        let p = Parameters::from([
+            ("$label".into(), Value::String(label.into())),
+            (
+                "$key".into(),
+                Value::Record(fastdb::Record {
+                    table: "docs".into(),
+                    key: fastdb::Key::Integer(key),
+                }),
+            ),
+        ]);
+        c.execute("INSERT INTO docs(label,target) VALUES($label,$key)", &p)
+            .unwrap();
+    }
+    for sql in ["SELECT x.label FROM (SELECT label,target FROM docs) x ORDER BY x.target", "WITH chosen AS (SELECT label,target FROM docs) SELECT x.label FROM chosen x ORDER BY x.target"] {
+        let expected=vec![vec![Value::String("negative".into())],vec![Value::String("six".into())],vec![Value::String("eleven".into())]];
+        assert_eq!(q(&c,sql).rows,expected);
+        assert_eq!(c.profile_select(sql,&Parameters::new()).unwrap().result.rows,expected);
+    }
+}

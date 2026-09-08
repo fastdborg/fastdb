@@ -3748,3 +3748,14 @@ full-check addon. Logs `/tmp/fastdb-derived-sort-node-focused.log` and
 `/tmp/fastdb-derived-sort-node.log`. Only tests/documentation changed from
 `acbe86cce`; no native rebuild or full Rust rerun is claimed. Full V1 gates
 remain open; no publication occurred.
+
+
+## Logical derived record-key ordering — 2026-09-09
+
+A regression verifies unprojected record-valued fields sort by numeric integer
+keys through derived tables and CTEs, including negative and different-width
+positive keys. Execute/profile results agree. All thirty-three derived-query
+tests passed, plus formatting and all-target fastdb-tests Clippy with warnings
+denied. Logs `/tmp/fastdb-derived-record-sort.log` and
+`/tmp/fastdb-derived-record-sort-clippy.log`. Only tests/documentation changed
+from `a6306bfad`; no new full-suite/client run is claimed. Full V1 gates remain open.
