@@ -111,11 +111,30 @@ fn native_scalar_collation(
     }
     Ok(explicit.or(implicit).unwrap_or_else(|| "BINARY".into()))
 }
-// Unordered pagination needs separate lowering: grouping can change the row
-// selected from a distinct set, and UNION ALL wrappers can evaluate skipped
-// arms. Preserve the existing guard until both boundaries are qualified.
+// Grouping can change the row selected by unordered distinct-set pagination.
+// UNION ALL uses direct arms so the engine can skip projections before OFFSET.
+fn direct_compound_pagination(select: &Select) -> bool {
+    fn direct(value: &Expr) -> bool {
+        match value {
+            Expr::Literal(Literal::Numeric(_)) | Expr::Variable(_) => true,
+            Expr::Unary(_, value) => direct(value),
+            _ => false,
+        }
+    }
+    select.limit.as_ref().is_some_and(|limit| {
+        direct(&limit.expr) && limit.offset.as_ref().is_none_or(|offset| direct(offset))
+    })
+}
+
 fn unordered_compound_pagination(select: &Select) -> bool {
-    select.limit.is_some() && select.order_by.is_empty()
+    select.limit.is_some()
+        && select.order_by.is_empty()
+        && (!direct_compound_pagination(select)
+            || select
+                .body
+                .compounds
+                .iter()
+                .any(|arm| arm.operator != CompoundOperator::UnionAll))
 }
 
 fn resolve_compound_expression_order_names(select: &mut Select) {
@@ -5658,6 +5677,10 @@ impl Connection {
             .compounds
             .iter()
             .any(|arm| arm.operator != CompoundOperator::UnionAll);
+        // Keep LIMIT/OFFSET on the compound itself: a CTE wrapper around each
+        // arm can evaluate projections that native UNION ALL would skip.
+        let direct_pagination =
+            !distinct && select.order_by.is_empty() && direct_compound_pagination(select);
         let mut lowered = Vec::new();
         let mut definitions = Vec::new();
         let mut names = Vec::new();
@@ -5710,6 +5733,34 @@ impl Connection {
                     definitions.extend(with.ctes.into_iter().map(|cte| cte.to_string()));
                 }
             }
+            if direct_pagination {
+                let Cmd::Stmt(Stmt::Select(arm)) = &mut plan.command else {
+                    unreachable!()
+                };
+                if !arm.body.compounds.is_empty() || !arm.order_by.is_empty() || arm.limit.is_some()
+                {
+                    return Err(unsupported("nested pagination in a UNION ALL arm"));
+                }
+                let OneSelect::Select { columns, .. } = &mut arm.body.select else {
+                    return Err(unsupported("this paginated UNION ALL arm"));
+                };
+                for (column, typed) in columns.iter_mut().zip(&plan.typed) {
+                    let ResultColumn::Expr(value, _) = column else {
+                        unreachable!("expanded compound columns")
+                    };
+                    if !typed {
+                        *value = Box::new(expression(&format!("__fastdb_pack({value})"))?);
+                    }
+                }
+                lowered.push(
+                    plan.command
+                        .to_string()
+                        .trim()
+                        .trim_end_matches(';')
+                        .to_owned(),
+                );
+                continue;
+            }
             let sql = plan.command.to_string();
             let arm_name = format!("__fastdb_union_arm{index}");
             definitions.push(format!(
@@ -5719,6 +5770,37 @@ impl Connection {
                 sql.trim().trim_end_matches(';')
             ));
             lowered.push(format!("SELECT {values} FROM {arm_name}"));
+        }
+        if direct_pagination {
+            let sql = format!(
+                "{}{}",
+                if definitions.is_empty() {
+                    String::new()
+                } else {
+                    format!("WITH {} ", definitions.join(","))
+                },
+                lowered.join(" UNION ALL ")
+            );
+            let Cmd::Stmt(Stmt::Select(mut result)) = parsed(&sql)? else {
+                unreachable!()
+            };
+            if let Some(mut with) = select.with.clone() {
+                if let Some(generated) = result.with.take() {
+                    with.ctes.extend(generated.ctes);
+                }
+                result.with = Some(with);
+            }
+            result.limit = pagination;
+            return Ok(Some(LoweredSelect {
+                command: Cmd::Stmt(Stmt::Select(result)),
+                typed: vec![true; names.len()],
+                fetched: vec![false; names.len()],
+                names,
+                consumed,
+                ignore_unused: options.ignore_unused,
+                explain: false,
+                native_insert: false,
+            }));
         }
         let width = names.len();
         let keys = (0..width)
