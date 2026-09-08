@@ -644,6 +644,12 @@ mod between_tests {
                             format!("d.hi COLLATE {collation}"),
                             2,
                         ),
+                        (
+                            "coalesce(NULL,between_tick()+d.lo)".to_owned(),
+                            "coalesce(NULL,between_tick()+d.lo)".to_owned(),
+                            format!("d.hi COLLATE {collation}"),
+                            1,
+                        ),
                     ] {
                         let predicate = format!("{lhs} {negate}BETWEEN {lower} AND {upper}");
                         let native =
