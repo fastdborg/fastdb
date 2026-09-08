@@ -753,7 +753,7 @@ test('AbortSignal transfers preserve atomic imports and return complete exports 
 });
 
 test('AbortSignal migrations roll back all pending schema, data and history', async () => {
-  const { AsyncDatabase } = require('./index.cjs');
+  const { AsyncDatabase, isFastDBError } = require('./index.cjs');
   const { getEventListeners } = require('node:events');
   const db = await AsyncDatabase.open();
   let timer;
@@ -765,8 +765,16 @@ test('AbortSignal migrations roll back all pending schema, data and history', as
     const pending = {version:3n,name:'pending',sql:'CREATE TABLE pending; CREATE UNIQUE INDEX pending_n ON pending(n); INSERT INTO pending(n) SELECT a.n*10000+b.n*100+c.n FROM numbers a CROSS JOIN numbers b CROSS JOIN numbers c;'};
     const controller = new AbortController();
     const operation = db.migrate([base,intermediate,pending],{signal:controller.signal});
-    const rejected = assert.rejects(operation,e=>e.code==='FDB_CANCELLED' && e.transaction.after==='autocommit');
-    timer=setTimeout(()=>controller.abort(),50);
+    const rejected = assert.rejects(operation,e=>{
+      assert(isFastDBError(e));
+      assert.equal(e.code,'FDB_CANCELLED');
+      assert.equal(e.transaction.after,'autocommit');
+      assert.equal(e.migration.version,pending.version);
+      assert.equal(e.migration.offset,BigInt(Buffer.byteLength(pending.sql.slice(0,pending.sql.indexOf('INSERT INTO')))));
+      assert.equal(e.migration.cause.code,'FDB_CANCELLED');
+      return true;
+    });
+    timer=setTimeout(()=>controller.abort(),100);
     await rejected;
     assert.equal(getEventListeners(controller.signal,'abort').length,0);
     assert.deepEqual(await db.exactlyOne('SELECT n FROM docs'),[9n]);
@@ -774,7 +782,12 @@ test('AbortSignal migrations roll back all pending schema, data and history', as
     await assert.rejects(db.execute('SELECT * FROM staged'));
     assert.equal((await db.migrate([base])).alreadyApplied,1);
     const before = new AbortController(); before.abort();
-    await assert.rejects(db.migrate([base,intermediate,pending],{signal:before.signal}),e=>e.code==='FDB_CANCELLED');
+    await assert.rejects(db.migrate([base,intermediate,pending],{signal:before.signal}),e=>{
+      assert(isFastDBError(e));
+      assert.equal(e.code,'FDB_CANCELLED');
+      assert.equal(e.migration,undefined);
+      return true;
+    });
     const fresh = new AbortController();
     const retry = {...pending,sql:'CREATE TABLE pending; CREATE UNIQUE INDEX pending_n ON pending(n); INSERT INTO pending(n) VALUES (1),(2);'};
     assert.deepEqual((await db.migrate([base,intermediate,retry],{signal:fresh.signal})).applied,[2n,3n]);

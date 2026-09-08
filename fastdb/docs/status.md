@@ -3625,3 +3625,15 @@ error-contract/platform qualification retain their separate open gates.
 
 
 Installed Node migration metadata now passes offline package checks on Linux x64 Node 22.0.0 and 24.19.0, including both clients, lossless versions/UTF-8 offsets, rollback/retry, and consumer TypeScript narrowing. See verification.md for artifact identity and logs. Full V1 and final distribution/platform gates remain open.
+
+
+### Worker migration cancellation metadata qualification
+
+The real-worker AbortSignal migration regression now asserts that interruption
+inside the long INSERT SELECT reports its exact migration version and statement
+byte offset, with both outer and underlying FDB_CANCELLED codes. It retains
+rollback of pending schema/data/history, listener cleanup, corrected retry and
+integrity checks. A pre-cancelled request separately verifies absent statement
+metadata and successful isFastDBError narrowing. The focused regression passes
+(`/tmp/fastdb-migration-cancel-metadata.log`); this test-only change does not add a
+new complete-suite count or close broader cancellation/platform/V1 gates.
