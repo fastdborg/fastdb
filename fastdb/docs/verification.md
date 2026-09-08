@@ -3469,3 +3469,17 @@ full-check addon. Logs `/tmp/fastdb-tuple-reopen-node-focused.log` and
 `/tmp/fastdb-tuple-reopen-node.log`. Only tests/documentation changed from
 `f935dbddc`; no native rebuild or full Rust rerun is claimed. This is orderly
 close/reopen evidence, not crash or power-loss qualification. Full V1 remains open.
+
+
+## Tuple lookup alias shadowing — 2026-09-09
+
+Additional differential fixtures verify an inner lookup alias matching the
+updated collection name resolves to the inner table. An equivalent baseline
+uses alias x because the ordinary-table query using alias docs is still rejected
+by the conservative managed-name guard. That guard gap remains open; the
+fixture does not qualify it as native SQL compatibility.
+
+All eighteen write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-shadowing.log` and
+`/tmp/fastdb-tuple-shadowing-clippy.log`. Only tests/documentation changed from
+`7a17d68be`; no new full-suite/client run is claimed. Full V1 gates remain open.

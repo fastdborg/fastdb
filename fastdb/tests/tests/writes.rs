@@ -788,6 +788,29 @@ fn tuple_lookup_multiple_matches_keep_columns_from_one_row() {
     ] {
         q(&c, sql);
     }
+    for tuple in [
+        "(SELECT docs.a,docs.b FROM lookup docs WHERE docs.n=2)",
+        "(SELECT x.a,x.b FROM lookup x WHERE x.n=2)",
+    ] {
+        q(&c, "BEGIN");
+        let native_tuple = tuple
+            .replace("docs.", "x.")
+            .replace("lookup docs", "lookup x");
+        let expected = q(
+            &c,
+            &format!("UPDATE native SET (a,b)={native_tuple} RETURNING n,a,b"),
+        );
+        assert_eq!(
+            q(
+                &c,
+                &format!("UPDATE docs SET (a,b)={tuple} RETURNING n,a,b")
+            )
+            .rows,
+            expected.rows,
+            "{tuple}"
+        );
+        q(&c, "ROLLBACK");
+    }
     for page in ["", " LIMIT 1", " LIMIT 1 OFFSET 1", " LIMIT 1 OFFSET 3"] {
         q(&c, "BEGIN");
         let query = |target| {
