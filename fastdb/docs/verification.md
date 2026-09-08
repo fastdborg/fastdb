@@ -2947,3 +2947,22 @@ Clippy with warnings denied. Logs `/tmp/fastdb-iterator-compounds.log` and
 check remains 567 Rust and 81 Node/application passes with one existing ignored
 trigger gate. Broader compound/type semantics and full V1 release gates remain
 open. No publication occurred.
+
+
+## Correlated iterator sources inside subqueries — 2026-09-08
+
+Native probes found scalar-count and EXISTS queries over inner json_each sources
+failing to resolve outer collection fields. Native correlation now recognizes
+local table-function aliases and traverses iterator arguments as well as query
+predicates. Differential tests cover scalar counts, EXISTS, IN membership and
+per-row JSON arguments through execute/profile. Insert failure after earlier
+candidates restores rows/indexes and preserves prior work; a filtered retry and
+outer rollback succeed. Both Node clients test a scalar-count/EXISTS combination.
+
+The complete scoped check exited zero: 570 Rust tests passed, zero failed, one
+existing trigger-cancellation gate ignored; 81 Node/application tests, formatting,
+Clippy and strict TypeScript passed. Log `/tmp/fastdb-inner-iterators-check.log`,
+implementation tree based on `9620937a2` with this fix. This combines the grouped,
+windowed and compound iterator regressions with the latest implementation. No
+upstream source or dependencies changed. Broader nested scope/type propagation
+and full V1 release gates remain open; no publication occurred.

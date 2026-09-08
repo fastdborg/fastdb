@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-08
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 567 passing Rust tests with one ignored trigger-cancellation gate, 81 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-iterator-predicates-check.log`, implementation tree based on `bfb0ac429` with iterator predicate subqueries). Later focused runs are recorded in status.md with their exact scope. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 570 passing Rust tests with one ignored trigger-cancellation gate, 81 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-inner-iterators-check.log`, implementation tree based on `9620937a2` with correlated inner iterator sources). Later focused runs are recorded in status.md with their exact scope. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|

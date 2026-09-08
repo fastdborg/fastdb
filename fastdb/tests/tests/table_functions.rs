@@ -719,3 +719,63 @@ fn compound_iterator_pages_match_native_and_preserve_write_recovery() {
         0
     );
 }
+
+#[test]
+fn iterator_subqueries_resolve_outer_collection_fields() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT)",
+        "INSERT INTO native VALUES(1,'[1,2]'),(2,'[2]'),(3,'[]')",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) SELECT n,j FROM native",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for template in [
+        "SELECT d.n,(SELECT count(*) FROM json_each('[1,2]') x WHERE x.value=d.n) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n FROM SOURCE d WHERE EXISTS(SELECT 1 FROM json_each('[1,2]') x WHERE x.value=d.n) ORDER BY d.n",
+        "SELECT d.n,(SELECT count(*) FROM json_each(d.j) x) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n FROM SOURCE d WHERE d.n IN(SELECT x.value FROM json_each(d.j) x) ORDER BY d.n",
+    ] {
+        let expected=c.execute(&template.replace("SOURCE","native"),&params).unwrap();
+        let sql=template.replace("SOURCE","docs");
+        for actual in [c.execute(&sql,&params).unwrap(),c.profile_select(&sql,&params).unwrap().result] {assert_eq!(actual.columns,expected.columns,"{sql}");assert_eq!(actual.rows,expected.rows,"{sql}");}
+    }
+    for sql in [
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<2)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(-1)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    let sql="INSERT INTO output(n) SELECT (SELECT count(*) FROM json_each(d.j) x) FROM docs d ORDER BY d.n DESC RETURNING n";
+    assert_eq!(
+        c.execute(sql, &params).unwrap_err().code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM output", &params).unwrap().rows,
+        vec![vec![Value::Integer(-1)]]
+    );
+    assert!(c
+        .lookup_index("output", "output_n", &Value::Integer(0))
+        .unwrap()
+        .is_empty());
+    let retry = sql.replace("FROM docs d ORDER", "FROM docs d WHERE d.n>1 ORDER");
+    assert_eq!(
+        c.execute(&retry, &params).unwrap().rows,
+        vec![vec![Value::Integer(0)], vec![Value::Integer(1)]]
+    );
+    c.execute("ROLLBACK", &params).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

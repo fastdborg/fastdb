@@ -410,7 +410,7 @@ fn native_correlated_body(
     if let Some(from) = from {
         for table in std::iter::once(&from.select).chain(from.joins.iter().map(|j| &j.table)) {
             match table.as_ref() {
-                SelectTable::Table(name, alias, _) => {
+                SelectTable::Table(name, alias, _) | SelectTable::TableCall(name, _, alias) => {
                     local.insert(
                         alias
                             .as_ref()
@@ -674,6 +674,15 @@ fn native_correlated_body(
         correlated_query |= rewrite(value, false)?;
     }
     if let Some(from) = from {
+        for table in
+            std::iter::once(&mut from.select).chain(from.joins.iter_mut().map(|j| &mut j.table))
+        {
+            if let SelectTable::TableCall(_, args, _) = table.as_mut() {
+                for arg in args {
+                    correlated_query |= rewrite(arg, false)?;
+                }
+            }
+        }
         for join in &mut from.joins {
             if let Some(JoinConstraint::On(value)) = &mut join.constraint {
                 correlated_query |= rewrite(value, false)?;

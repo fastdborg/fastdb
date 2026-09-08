@@ -1125,6 +1125,12 @@ Initial native comparisons cover correlated EXISTS, NULLs and empty membership
 sets. Membership RHS queries remain in place because the pinned engine does not
 expose generated outer membership CTEs during iterator-argument preparation.
 Validated writes retain statement rollback and corrected retry behavior.
+JSON iterators can also be sources inside scalar, EXISTS and IN subqueries over
+outer collections. Local iterator aliases participate in scope resolution, while
+outer collection references in predicates and iterator arguments are lowered for
+runtime evaluation. Initial comparisons cover scalar counts, EXISTS filters,
+membership and per-row JSON inputs, with atomic insert failure/retry coverage.
+Broader nested scope and typed-value propagation remain under qualification.
 
 Metadata inspection substitutes NULL for complete source references and scalar
 subqueries in a disposable probe. Runtime expressions remain in SQL; they are not
