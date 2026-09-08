@@ -823,3 +823,26 @@ fn tuple_lookup_multiple_matches_keep_columns_from_one_row() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn tuple_iterator_sources_match_native_values_and_empty_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,'[4,5]',0,0),(2,'[]',0,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j,a,b) SELECT n,j,a,b FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for iterator in ["json_each", "main.json_each", "json_tree"] {
+        q(&c, "BEGIN");
+        let query = |target| {
+            format!("UPDATE {target} SET (a,b)=(SELECT x.key,x.value FROM {iterator}({target}.j) x WHERE x.type='integer') RETURNING n,a,b")
+        };
+        let expected = q(&c, &query("native"));
+        assert_eq!(q(&c, &query("docs")).rows, expected.rows, "{iterator}");
+        q(&c, "ROLLBACK");
+    }
+}

@@ -4511,3 +4511,14 @@ All eighteen write tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-tuple-shadowing.log` and
 `/tmp/fastdb-tuple-shadowing-clippy.log`. Only tests/documentation changed from
 `7a17d68be`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Tuple JSON iterator sources — 2026-09-09
+
+A native differential regression covers tuple assignments from json_each,
+main.json_each and json_tree using per-row JSON input. Iterator key/value
+pairs match native results; empty arrays produce NULL tuple values.
+All nineteen write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-iterators.log` and
+`/tmp/fastdb-tuple-iterators-clippy.log`. Only tests/documentation changed from
+`462c82a87`; no new full-suite/client run is claimed. Full V1 gates remain open.
