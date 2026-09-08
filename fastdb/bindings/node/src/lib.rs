@@ -237,16 +237,12 @@ impl NativeDatabase {
             .transpose()?;
         self.report(|conn| {
             let params = decode_parameters(&parameters)?;
-            let profile = if let Some(token) = &token { conn.profile_select_cancellable(&sql, &params, token)? } else { conn.profile_select(&sql, &params)? };
-            let m = profile.metrics;
-            Ok(serde_json::json!({"result":query_value(profile.result)?, "metrics":{
-                "rowsRead":m.rows_read.to_string(), "rowsWritten":m.rows_written.to_string(),
-                "fullscanSteps":m.fullscan_steps.to_string(), "indexSteps":m.index_steps.to_string(),
-                "vmSteps":m.vm_steps.to_string(), "sortOperations":m.sort_operations.to_string(),
-                "btreeSeeks":m.btree_seeks.to_string(),
-                "fetchBatches":m.fetch_batches.to_string(), "fetchRowsRead":m.fetch_rows_read.to_string(),
-                "fetchVmSteps":m.fetch_vm_steps.to_string()
-            }}))
+            let profile = if let Some(token) = &token {
+                conn.profile_select_cancellable(&sql, &params, token)?
+            } else {
+                conn.profile_select(&sql, &params)?
+            };
+            profile_value(profile)
         })
     }
     #[napi]
@@ -272,19 +268,19 @@ impl NativeDatabase {
         self.report(|conn| {
             let params = decode_parameters(&parameters)?;
             let limits = fastdb::ResultLimits {
-                max_rows: max_rows.parse().map_err(|_| fastdb::Error::Validation("invalid result row limit".into()))?,
-                max_payload_bytes: max_payload_bytes.parse().map_err(|_| fastdb::Error::Validation("invalid result payload limit".into()))?,
+                max_rows: max_rows
+                    .parse()
+                    .map_err(|_| fastdb::Error::Validation("invalid result row limit".into()))?,
+                max_payload_bytes: max_payload_bytes.parse().map_err(|_| {
+                    fastdb::Error::Validation("invalid result payload limit".into())
+                })?,
             };
-            let profile = if let Some(token) = &token { conn.profile_select_with_limits_cancellable(&sql, &params, limits, token)? } else { conn.profile_select_with_limits(&sql, &params, limits)? };
-            let m = profile.metrics;
-            Ok(serde_json::json!({"result":query_value(profile.result)?, "metrics":{
-                "rowsRead":m.rows_read.to_string(), "rowsWritten":m.rows_written.to_string(),
-                "fullscanSteps":m.fullscan_steps.to_string(), "indexSteps":m.index_steps.to_string(),
-                "vmSteps":m.vm_steps.to_string(), "sortOperations":m.sort_operations.to_string(),
-                "btreeSeeks":m.btree_seeks.to_string(),
-                "fetchBatches":m.fetch_batches.to_string(), "fetchRowsRead":m.fetch_rows_read.to_string(),
-                "fetchVmSteps":m.fetch_vm_steps.to_string()
-            }}))
+            let profile = if let Some(token) = &token {
+                conn.profile_select_with_limits_cancellable(&sql, &params, limits, token)?
+            } else {
+                conn.profile_select_with_limits(&sql, &params, limits)?
+            };
+            profile_value(profile)
         })
     }
     #[napi]
@@ -555,4 +551,18 @@ fn query_value(result: fastdb::QueryResult) -> fastdb::Result<serde_json::Value>
             serde_json::Value::String(result.affected.to_string()),
         ),
     ])))
+}
+
+fn profile_value(profile: fastdb::ProfiledQuery) -> fastdb::Result<serde_json::Value> {
+    let m = profile.metrics;
+    let mut value = serde_json::json!({"metrics":{
+        "rowsRead":m.rows_read.to_string(), "rowsWritten":m.rows_written.to_string(),
+        "fullscanSteps":m.fullscan_steps.to_string(), "indexSteps":m.index_steps.to_string(),
+        "vmSteps":m.vm_steps.to_string(), "sortOperations":m.sort_operations.to_string(),
+        "btreeSeeks":m.btree_seeks.to_string(),
+        "fetchBatches":m.fetch_batches.to_string(), "fetchRowsRead":m.fetch_rows_read.to_string(),
+        "fetchVmSteps":m.fetch_vm_steps.to_string()
+    }});
+    value["result"] = query_value(profile.result)?;
+    Ok(value)
 }

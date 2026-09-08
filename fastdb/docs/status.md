@@ -3289,3 +3289,17 @@ Node Clippy, formatting and diff checks. Logs:
 `/tmp/fastdb-node-response-clippy.log`. Broader Rust and installed-package checks
 were not repeated for this binding-only change. No total-memory or full V1
 completion claim follows.
+
+### Shared Node profile envelope ownership
+
+Ordinary and bounded profiling now use one profile-value builder, moving the
+converted query result into the metrics envelope instead of serializing its tree
+again. Metric field names and decimal-string encoding remain unchanged. Batch
+array construction was inspected and already moves completed entries directly.
+
+All 76 rebuilt Node/application tests and strict TypeScript passed, with Node
+Clippy, formatting and diff checks. Logs:
+`/tmp/fastdb-node-profile-ownership.log` and
+`/tmp/fastdb-node-profile-ownership-clippy.log`. Broader Rust and installed-package
+checks were not repeated for this binding-only refactor. Resource/platform and
+full V1 gates remain open.
