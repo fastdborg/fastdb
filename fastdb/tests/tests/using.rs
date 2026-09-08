@@ -1435,3 +1435,45 @@ fn natural_closed_sources_match_native_shared_columns_and_outer_rows() {
         .execute("SELECT * FROM docs NATURAL JOIN b", &Parameters::new())
         .is_err());
 }
+
+#[test]
+fn natural_closed_joins_preserve_normalized_collation_order() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:'A',n:1}",
+        "CREATE TABLE baseline(k TEXT,n INTEGER)",
+        "INSERT INTO baseline VALUES('A',1)",
+        "CREATE TABLE b(k TEXT,m INTEGER)",
+        "INSERT INTO b VALUES('a',10),('b',20)",
+    ] {
+        query(sql);
+    }
+    for (left, right) in [("NOCASE", "BINARY"), ("BINARY", "NOCASE")] {
+        for join in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+            for projection in ["*", "k,a.k,b.k", "a.n,b.m"] {
+                let sql = |source: &str| {
+                    format!("SELECT {projection} FROM (SELECT k COLLATE {left} AS k,n FROM {source}) a {join} (SELECT k COLLATE {right} AS k,m FROM b) b ORDER BY a.n,b.m")
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}

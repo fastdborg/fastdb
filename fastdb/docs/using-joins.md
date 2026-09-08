@@ -77,3 +77,6 @@ Direct scalar CAST routing retains native affinity; outer-source propagation is 
 
 
 Initial closed-source NATURAL lowering derives shared keys from normalized join inputs and routes them through the existing USING binding/star-suppression path. No shared keys become an unconditional join. ON/USING constraints combined with NATURAL reject. A 27-case execute/profile matrix matches native columns/rows for one/multiple/no shared keys, INNER/LEFT/RIGHT joins and qualified/unqualified projections. Open-schema, FULL, broader duplicate/collation/chained/correlation and write qualification remain incomplete.
+
+
+NATURAL collation coverage now includes 18 execute/profile native comparisons with NOCASE/BINARY in both source orders and INNER/LEFT/RIGHT joins, retaining normalized operand precedence and outer-row behavior.

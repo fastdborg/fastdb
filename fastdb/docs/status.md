@@ -2165,3 +2165,6 @@ Initial closed-source NATURAL joins (2026-09-08): added shared-column intersecti
 A 27-case execute/profile native differential matrix passes for one/multiple/no shared keys, INNER/LEFT/RIGHT joins and unqualified/qualified stars and explicit columns. Both Node clients pass a direct closed-source NATURAL assertion. Broader chained/duplicate/collation/correlation/write and resource qualification remain open.
 
 The full fastdb/scripts/check.sh run passed formatting, Clippy, 466 Rust tests with one existing ignored trigger-cancellation gate, 49 Node/application tests and strict TypeScript. A subsequent focused Node run covers the new NATURAL assertion. Logs: /tmp/fastdb-natural-closed-check.log and /tmp/fastdb-node-natural.log. Full embedded V1 release qualification remains incomplete.
+
+
+NATURAL collation qualification (2026-09-08): an 18-case native differential execute/profile matrix passes for NOCASE/BINARY in both source orders, INNER/LEFT/RIGHT joins, stars and merged/qualified key projections. Rows, NULL extension and result labels match normalized native comparison order. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-collation.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Broader NATURAL and full V1 qualification remain open.
