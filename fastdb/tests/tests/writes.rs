@@ -2052,3 +2052,43 @@ fn update_from_pagination_follows_duplicate_resolution() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn update_from_cte_pagination_preserves_bound_scopes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE source(k INTEGER,v INTEGER)",
+        "INSERT INTO source VALUES(1,7),(1,8),(2,9)",
+        "CREATE TABLE source_docs",
+        "INSERT INTO source_docs(k,v) SELECT k,v FROM source",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["source", "source_docs"] {
+        for skip in [0, 1, 2] {
+            q(&c, "BEGIN");
+            let params = Parameters::from([
+                ("$delta".into(), Value::Integer(2)),
+                ("$count".into(), Value::Integer(1)),
+                ("$skip".into(), Value::Integer(skip)),
+            ]);
+            let sql=format!("WITH chosen AS (SELECT k,v+$delta AS v FROM {source}) UPDATE TARGET SET v=s.v FROM chosen s WHERE s.k=TARGET.n RETURNING n,v LIMIT $count OFFSET $skip");
+            let expected = c
+                .execute(
+                    &sql.replace("TARGET", "native")
+                        .replace("source_docs", "source"),
+                    &params,
+                )
+                .unwrap();
+            let actual = c.execute(&sql.replace("TARGET", "docs"), &params).unwrap();
+            assert_eq!(actual.rows, expected.rows);
+            assert_eq!(actual.affected, expected.affected);
+            q(&c, "ROLLBACK");
+        }
+    }
+}

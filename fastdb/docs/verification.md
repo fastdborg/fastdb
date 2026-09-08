@@ -4605,3 +4605,17 @@ transaction reports. The enclosing fixture checks rollback. All 89
 Node/application tests passed against the preceding rebuilt addon. Log:
 `/tmp/fastdb-from-pagination-node.log`. Only tests/docs changed from `712ae6215`;
 no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
+
+
+## Bound CTE UPDATE FROM pagination — 2026-09-09
+
+A differential regression covers a parameterized CTE source and independent
+bound LIMIT/OFFSET, table/collection inputs, first/second/empty pages, RETURNING,
+affected counts and rollback. All 47 write tests passed; formatting and
+all-target fastdb-tests Clippy with warnings denied passed. Logs:
+`/tmp/fastdb-from-cte-pagination-test.log` and
+`/tmp/fastdb-from-cte-pagination-clippy.log`. A separate probe confirmed native
+LIMIT scalar subqueries are rejected (`Subquery is not supported in this position`);
+that form is not newly promised by the pagination implementation. Probe log:
+`/tmp/fastdb-from-cte-pagination.log`. Only tests/docs changed from `1e8ec7aae`;
+no new full-suite/client run is claimed. Full V1 remains open.
