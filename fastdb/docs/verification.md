@@ -3121,3 +3121,14 @@ against the current addon. Logs `/tmp/fastdb-native-cte-client-focused.log` and
 `/tmp/fastdb-native-cte-clients.log`. Only tests/documentation changed from
 `9fdef5bdf`; no native rebuild, full Rust-suite or new package run is claimed.
 Full V1 release gates remain open; no publication occurred.
+
+
+## Native CTE projection shadowing and empty aggregates — 2026-09-09
+
+Two additional native differential cases verify that a CTE's iterator alias can
+shadow the outer collection alias, and that a filtered-empty CTE combining an
+outer field with iterator values yields NULL from sum. Execute/profile columns
+and rows match native tables. All thirteen iterator tests and formatting passed;
+log `/tmp/fastdb-cte-projection-scope.log`. This extends SQL fixtures only from
+`f4497c984`; no implementation change or full-suite/client rerun is claimed.
+Full V1 release gates remain open; no publication occurred.

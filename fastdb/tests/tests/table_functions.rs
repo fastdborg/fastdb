@@ -742,6 +742,9 @@ fn iterator_subqueries_resolve_outer_collection_fields() {
         "SELECT d.n,(SELECT count(*) FROM main.json_each(d.j) x) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT x.value AS n FROM temp.json_each(d.j) x) SELECT sum(n) FROM a) AS total FROM SOURCE d ORDER BY d.n",
         "SELECT d.n,(WITH a AS (SELECT d.n+x.value AS v FROM json_each(d.j) x) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT d.value AS v FROM json_each('[4,5]') d) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+        "SELECT d.n,(WITH a AS (SELECT x.value+d.n AS v FROM json_each(d.j) x WHERE x.value>9) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
+
         "SELECT d.n,(WITH a AS (SELECT x.value AS v FROM json_each(d.j) x UNION ALL SELECT d.n) SELECT sum(v) FROM a) AS total FROM SOURCE d ORDER BY d.n",
 
 
