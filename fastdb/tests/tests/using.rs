@@ -2853,3 +2853,57 @@ fn correlated_union_between_honors_explicit_collation() {
         }
     }
 }
+
+#[test]
+fn pinned_local_cte_merged_keys_preserve_local_shadowing() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE baseline(n INTEGER)",
+        "CREATE TABLE keys(n INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2),(3)",
+        "INSERT INTO keys VALUES(1),(4)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for (join, outer) in [("JOIN", "a.n"), ("LEFT JOIN", "a.n"), ("RIGHT JOIN", "b.n")] {
+        for materialization in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            for shadow in [false, true] {
+                let columns = if shadow { "n AS m,100 AS n" } else { "n AS m" };
+                let query = |reference: &str| {
+                    format!("SELECT n,(WITH chosen AS {materialization} (SELECT {columns} FROM baseline) SELECT max(m) FROM chosen WHERE m<{reference}) AS prior FROM baseline a {join} keys b USING(n) ORDER BY n")
+                };
+                let expected_reference = if shadow { "chosen.n" } else { outer };
+                let actual = c.execute(&query("n"), &params).unwrap();
+                let expected = c.execute(&query(expected_reference), &params).unwrap();
+                assert_eq!(actual.columns, expected.columns, "{}", query("n"));
+                assert_eq!(actual.rows, expected.rows, "{}", query("n"));
+                let rows: Vec<Vec<Value>> = match (join, shadow) {
+                    ("JOIN", false) => vec![vec![Value::Integer(1), Value::Null]],
+                    ("LEFT JOIN", false) => vec![
+                        vec![Value::Integer(1), Value::Null],
+                        vec![Value::Integer(2), Value::Integer(1)],
+                        vec![Value::Integer(3), Value::Integer(2)],
+                    ],
+                    ("RIGHT JOIN", false) => vec![
+                        vec![Value::Integer(1), Value::Null],
+                        vec![Value::Integer(4), Value::Integer(3)],
+                    ],
+                    ("JOIN", true) => vec![vec![Value::Integer(1), Value::Integer(3)]],
+                    ("LEFT JOIN", true) => vec![
+                        vec![Value::Integer(1), Value::Integer(3)],
+                        vec![Value::Integer(2), Value::Integer(3)],
+                        vec![Value::Integer(3), Value::Integer(3)],
+                    ],
+                    ("RIGHT JOIN", true) => vec![
+                        vec![Value::Integer(1), Value::Integer(3)],
+                        vec![Value::Integer(4), Value::Integer(3)],
+                    ],
+                    _ => unreachable!(),
+                };
+                assert_eq!(actual.rows, rows, "{}", query("n"));
+            }
+        }
+    }
+}
