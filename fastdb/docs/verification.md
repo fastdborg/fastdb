@@ -3933,3 +3933,26 @@ All 86 Node/application tests passed against the addon from the previous full
 check. Log `/tmp/fastdb-distinct-tuple-node.log`. Only tests/documentation changed
 from `f2b5eaaf9`; no native rebuild or new Rust-suite run is claimed. Full V1
 remains open; no publication occurred.
+
+
+## Aggregate and grouped tuple SELECTs — 2026-09-09
+
+Tuple SELECT assignments now retain aggregates, GROUP BY and HAVING inside the
+original SELECT before packing its result. Projection validation permits
+aggregate forms only in this SELECT context; direct VALUES and RETURNING retain
+their previous restrictions. Existing SELECT lowering still defines supported
+aggregate functions and grouping/type behavior. Windowed and FILTER/ordered
+aggregate forms remain rejected by this tuple projection validator.
+
+Differential tests cover correlated SUM/COUNT(*) over relational and collection
+lookups, grouped results and HAVING exclusion. Empty aggregate input returns
+NULL/0, whereas no grouped row yields a NULL tuple. A later-row aggregate CHECK
+failure restores documents and indexes, preserves earlier outer-transaction work,
+and permits a filtered retry followed by rollback.
+
+The full scoped check passed on `4f1ee1d26` plus this change: 602 Rust passes,
+zero failures, one existing ignored trigger-interruption gate; 86 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-aggregate-tuples-check.log`; Node addon rebuilt.
+No upstream source, dependency or storage-format changes; no publication.
+Broader grouped/aggregate qualification and full V1 release gates remain open.

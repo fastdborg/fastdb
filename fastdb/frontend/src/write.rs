@@ -32,7 +32,29 @@ fn parameter<'a>(expr: &Expr, params: &'a Parameters) -> Result<Option<&'a Value
     }
     Ok(None)
 }
+fn aggregate_function(function: &str, arity: usize) -> bool {
+    matches!(
+        function,
+        "avg"
+            | "count"
+            | "group_concat"
+            | "string_agg"
+            | "sum"
+            | "total"
+            | "json_group_array"
+            | "jsonb_group_array"
+            | "json_group_object"
+            | "jsonb_group_object"
+            | "array_agg"
+            | "mode"
+            | "percentile_cont"
+            | "percentile_disc"
+    ) || (matches!(function, "min" | "max") && arity <= 1)
+}
 fn safe_value_expression(expr: &Expr) -> Result<()> {
+    validate_value_expression(expr, false)
+}
+fn validate_value_expression(expr: &Expr, aggregates: bool) -> Result<()> {
     match expr {
         Expr::Literal(_)
         | Expr::Variable(_)
@@ -44,32 +66,32 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
         | Expr::Cast { expr: e, .. }
         | Expr::Collate(e, _)
         | Expr::IsNull(e)
-        | Expr::NotNull(e) => safe_value_expression(e),
+        | Expr::NotNull(e) => validate_value_expression(e, aggregates),
         Expr::Binary(a, _, b) => {
-            safe_value_expression(a)?;
-            safe_value_expression(b)
+            validate_value_expression(a, aggregates)?;
+            validate_value_expression(b, aggregates)
         }
         Expr::Between {
             lhs, start, end, ..
         } => {
-            safe_value_expression(lhs)?;
-            safe_value_expression(start)?;
-            safe_value_expression(end)
+            validate_value_expression(lhs, aggregates)?;
+            validate_value_expression(start, aggregates)?;
+            validate_value_expression(end, aggregates)
         }
         Expr::InList { lhs, rhs, .. } => {
-            safe_value_expression(lhs)?;
+            validate_value_expression(lhs, aggregates)?;
             for e in rhs {
-                safe_value_expression(e)?;
+                validate_value_expression(e, aggregates)?;
             }
             Ok(())
         }
         Expr::Like {
             lhs, rhs, escape, ..
         } => {
-            safe_value_expression(lhs)?;
-            safe_value_expression(rhs)?;
+            validate_value_expression(lhs, aggregates)?;
+            validate_value_expression(rhs, aggregates)?;
             if let Some(e) = escape {
-                safe_value_expression(e)?;
+                validate_value_expression(e, aggregates)?;
             }
             Ok(())
         }
@@ -79,20 +101,20 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
             else_expr,
         } => {
             if let Some(base) = base {
-                safe_value_expression(base)?;
+                validate_value_expression(base, aggregates)?;
             }
             for (condition, value) in when_then_pairs {
-                safe_value_expression(condition)?;
-                safe_value_expression(value)?;
+                validate_value_expression(condition, aggregates)?;
+                validate_value_expression(value, aggregates)?;
             }
             if let Some(value) = else_expr {
-                safe_value_expression(value)?;
+                validate_value_expression(value, aggregates)?;
             }
             Ok(())
         }
         Expr::Parenthesized(es) => {
             for e in es {
-                safe_value_expression(e)?;
+                validate_value_expression(e, aggregates)?;
             }
             Ok(())
         }
@@ -115,32 +137,23 @@ fn safe_value_expression(expr: &Expr) -> Result<()> {
             if function == "__fastdb_fetch" {
                 return Err(unsupported("record::fetch in document write expression"));
             }
-            if matches!(
-                function.as_str(),
-                "avg"
-                    | "count"
-                    | "group_concat"
-                    | "string_agg"
-                    | "sum"
-                    | "total"
-                    | "json_group_array"
-                    | "jsonb_group_array"
-                    | "json_group_object"
-                    | "jsonb_group_object"
-                    | "array_agg"
-                    | "mode"
-                    | "percentile_cont"
-                    | "percentile_disc"
-            ) || (matches!(function.as_str(), "min" | "max") && args.len() <= 1)
-            {
+            if !aggregates && aggregate_function(&function, args.len()) {
                 return Err(unsupported("aggregate document write expressions"));
             }
             if name.as_str().eq_ignore_ascii_case("load_extension") {
                 return Err(unsupported("extension loading in document writes"));
             }
             for e in args {
-                safe_value_expression(e)?;
+                validate_value_expression(e, aggregates)?;
             }
+            Ok(())
+        }
+        Expr::FunctionCallStar { name, filter_over }
+            if aggregates
+                && name.as_str().eq_ignore_ascii_case("count")
+                && filter_over.filter_clause.is_none()
+                && filter_over.over_clause.is_none() =>
+        {
             Ok(())
         }
         _ => Err(unsupported("this collection VALUES expression")),
@@ -624,7 +637,7 @@ impl Connection {
                         let OneSelect::Select {
                             columns,
                             from,
-                            group_by: None,
+                            group_by,
                             window_clause,
                             where_clause,
                             distinctness,
@@ -639,7 +652,21 @@ impl Connection {
                         let explicit_aliases = columns.iter().any(|column| {
                             matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
                         });
-                        if positional_order || explicit_aliases || distinctness.is_some() {
+                        let mut aggregates = false;
+                        for column in columns.iter() {
+                            if let ResultColumn::Expr(value, _) = column {
+                                validate_value_expression(value, true)?;
+                                turso_core::walk_expr_mut(&mut value.clone(), &mut |expr| {
+                                    aggregates |= match expr {
+                                        Expr::FunctionCall { name, args, .. } => aggregate_function(&name.as_str().to_ascii_lowercase(), args.len()),
+                                        Expr::FunctionCallStar { .. } => true,
+                                        _ => false,
+                                    };
+                                    Ok(turso_core::WalkControl::Continue)
+                                })?;
+                            }
+                        }
+                        if positional_order || explicit_aliases || distinctness.is_some() || group_by.is_some() || aggregates {
                             let aliases: Vec<_> = columns.iter().filter_map(|column| {
                                 match column {
                                     ResultColumn::Expr(_, Some(alias)) if alias.is_explicit() => Some(alias.name().as_str().to_owned()),
@@ -651,7 +678,7 @@ impl Connection {
                                 let ResultColumn::Expr(value, _) = column else {
                                     return Err(unsupported("tuple SELECT projection"));
                                 };
-                                safe_value_expression(value)?;
+                                validate_value_expression(value, true)?;
                                 if from.is_none() {
                                     bind_source_free_tuple_field(value, &update.tbl_name)?;
                                 }

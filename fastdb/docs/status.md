@@ -75,7 +75,7 @@ V1 is incomplete. The full scope is the FastDB.md master plan in the parent plan
 
 ## Verification
 
-The latest complete scoped check on 2026-09-09 passed on `78a7cc5ab` plus DISTINCT tuple support: 600 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-distinct-tuples-check.log`.
+The latest complete scoped check on 2026-09-09 passed on `4f1ee1d26` plus aggregate tuple support: 602 Rust tests, zero failures, one existing ignored trigger-interruption gate; 86 Node/application tests; formatting, all-target FastDB Clippy with warnings denied, and strict TypeScript checking. The check rebuilt the Node addon and covered the combined tuple-update and logical derived-field ordering changes. Log: `/tmp/fastdb-aggregate-tuples-check.log`.
 
 This is local Linux evidence; hosted CI has not run. The ignored trigger-interruption gate remains unresolved. Package installation across advertised platforms, interrupted checkpoints, previous-release upgrade/restore and the other V1 gates below still require qualification. Historical focused and full-run evidence follows in the dated entries and [verification record](verification.md).
 
@@ -103,7 +103,7 @@ The current result metadata distinguishes direct typed field projections from or
 
 Direct typed parameters and copied document fields retain their logical types. Ordinary SQL scalar expressions retain engine scalar types: SQL TRUE/FALSE become integer 1/0, so boolean validators require typed Boolean parameters or document literals rather than implicit coercion. The Rust map uses `?1`, `?2`, etc. to bind numbered or anonymous statement slots. Pinned Turso v0.7.2 rejects `$name::suffix`; a differential test preserves that exact engine error instead of reinterpreting it.
 
-Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Scalar DISTINCT tuple SELECTs retain deduplication before ordering/pagination. Compounds, grouping, windows and recursive local CTEs remain unsupported. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
+Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering and explicit projection aliases. Their explicit aliases resolve locally in WHERE/ORDER BY; qualify an outer document field when it collides with an alias. This follows source-free logical SELECT alias resolution and differs from native outer-column precedence. Scalar DISTINCT tuple SELECTs retain deduplication before ordering/pagination. Initial aggregate/GROUP BY/HAVING tuples use the existing SELECT subset; correlated SUM/COUNT lookups and empty/group-filtered results are verified. Compounds, windows, aggregate FILTER/argument ordering and recursive local CTEs remain unsupported; broader grouping/type qualification is open. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
 
 ## Catalog lifecycle notes
 
@@ -4949,3 +4949,26 @@ All 86 Node/application tests passed against the addon from the previous full
 check. Log `/tmp/fastdb-distinct-tuple-node.log`. Only tests/documentation changed
 from `f2b5eaaf9`; no native rebuild or new Rust-suite run is claimed. Full V1
 remains open; no publication occurred.
+
+
+## Aggregate and grouped tuple SELECTs — 2026-09-09
+
+Tuple SELECT assignments now retain aggregates, GROUP BY and HAVING inside the
+original SELECT before packing its result. Projection validation permits
+aggregate forms only in this SELECT context; direct VALUES and RETURNING retain
+their previous restrictions. Existing SELECT lowering still defines supported
+aggregate functions and grouping/type behavior. Windowed and FILTER/ordered
+aggregate forms remain rejected by this tuple projection validator.
+
+Differential tests cover correlated SUM/COUNT(*) over relational and collection
+lookups, grouped results and HAVING exclusion. Empty aggregate input returns
+NULL/0, whereas no grouped row yields a NULL tuple. A later-row aggregate CHECK
+failure restores documents and indexes, preserves earlier outer-transaction work,
+and permits a filtered retry followed by rollback.
+
+The full scoped check passed on `4f1ee1d26` plus this change: 602 Rust passes,
+zero failures, one existing ignored trigger-interruption gate; 86 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Log `/tmp/fastdb-aggregate-tuples-check.log`; Node addon rebuilt.
+No upstream source, dependency or storage-format changes; no publication.
+Broader grouped/aggregate qualification and full V1 release gates remain open.

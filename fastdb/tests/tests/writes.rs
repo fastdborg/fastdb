@@ -1235,3 +1235,76 @@ fn distinct_tuple_lookups_deduplicate_before_pagination() {
     );
     q(&c, "ROLLBACK");
 }
+
+#[test]
+fn aggregate_tuple_lookups_match_native_empty_and_grouped_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER)",
+        "INSERT INTO lookup VALUES(1,6),(1,11)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+        "CREATE TABLE lookup_docs",
+        "INSERT INTO lookup_docs(n,a) SELECT n,a FROM lookup",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["lookup", "lookup_docs"] {
+        for group in ["", " GROUP BY x.n", " GROUP BY x.n HAVING count(*)>2"] {
+            q(&c, "BEGIN");
+            let native = q(&c, &format!("UPDATE native SET (a,b)=(SELECT sum(x.a),count(*) FROM lookup x WHERE x.n=native.n{group}) RETURNING n,a,b"));
+            let sql=format!("UPDATE docs SET (a,b)=(SELECT sum(x.a),count(*) FROM {source} x WHERE x.n=docs.n{group}) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, native.rows, "{sql}");
+            q(&c, "ROLLBACK");
+        }
+    }
+}
+
+#[test]
+fn aggregate_tuple_validation_restores_indexes_and_allows_retry() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) VALUES(1,1,0),(2,2,0)",
+        "DEFINE FIELD a ON docs TYPE integer CHECK(a<10)",
+        "CREATE UNIQUE INDEX docs_a ON docs(a)",
+        "CREATE TABLE lookup",
+        "INSERT INTO lookup(n,a) VALUES(1,3),(1,4),(2,5),(2,6)",
+    ] {
+        q(&c, sql);
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(n,a,b) VALUES(0,0,0)");
+    let before = q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows;
+    let sql="UPDATE docs SET (a,b)=(SELECT sum(x.a),count(*) FROM lookup x WHERE x.n=docs.n) WHERE n>0 RETURNING a,b";
+    assert_eq!(
+        c.execute(sql, &Parameters::new()).unwrap_err().code(),
+        "FDB_VALIDATION"
+    );
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
+    assert!(c
+        .lookup_index("docs", "docs_a", &Value::Integer(7))
+        .unwrap()
+        .is_empty());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    let retry = sql.replace("x.n=docs.n", "x.n=docs.n AND x.a<6");
+    assert_eq!(
+        q(&c, &retry).rows,
+        vec![
+            vec![Value::Integer(7), Value::Integer(2)],
+            vec![Value::Integer(5), Value::Integer(1)]
+        ]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        3
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before[1..]);
+}
