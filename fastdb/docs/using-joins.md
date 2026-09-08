@@ -65,3 +65,6 @@ Mixed-affinity coverage now includes 108 execute/profile shapes before/after man
 
 
 Nested scalar gap is broader than merged-key lookup: current direct/closed logical sources fail nested k, a.k and b.k references under all three supported join kinds. Nine pinned native cases pass with exact retained/NULL-extended results. Outer-source propagation through nested planning needs implementation; simply qualifying merged names does not address qualified native-side references.
+
+
+The previously reported nested source-free gap is now fixed by carrying USING scope metadata into recursive scalar lowering. A 54-case execute/profile matrix covers two/three levels, inner WHERE, merged/qualified keys and all three supported join kinds; local FROM shadowing and a typed wrapper also pass. Already-bound compiler accessors are not rebound. General sourceful/WITH/compound and aggregate/window correlation remain unqualified. Both Node clients verify nested RIGHT USING results.

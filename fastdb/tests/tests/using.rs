@@ -978,3 +978,62 @@ fn pinned_nested_using_correlation_retains_merged_and_qualified_outer_keys() {
         }
     }
 }
+
+#[test]
+fn nested_using_correlation_resolves_outer_sources() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for key in ["k", "a.k", "b.k"] {
+            for expression in [
+                format!("(SELECT (SELECT {key}))"),
+                format!("(SELECT (SELECT {key} WHERE {key}=1))"),
+                format!("(SELECT (SELECT (SELECT {key})))"),
+            ] {
+                let sql = |source: &str| {
+                    format!(
+                        "SELECT k,{expression} AS v FROM {source} a {join} b USING(k) ORDER BY k"
+                    )
+                };
+                let expected = query(&sql("baseline"));
+                for source in ["docs", "(SELECT k FROM docs)"] {
+                    let actual = query(&sql(source));
+                    assert_eq!(actual.rows, expected.rows, "{}", sql(source));
+                    assert_eq!(
+                        c.profile_select(&sql(source), &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected.rows,
+                        "{}",
+                        sql(source)
+                    );
+                }
+            }
+        }
+    }
+
+    let local = query("SELECT (SELECT (SELECT k FROM b WHERE k=2)) FROM docs a JOIN b USING(k)");
+    assert_eq!(local.rows, vec![vec![Value::Integer(2)]]);
+    let typed = query(
+        "SELECT (SELECT array::append(array::new(),(SELECT a.k))) FROM docs a JOIN b USING(k)",
+    );
+    assert_eq!(
+        typed.rows,
+        vec![vec![Value::Array(vec![Value::Integer(1)])]]
+    );
+}

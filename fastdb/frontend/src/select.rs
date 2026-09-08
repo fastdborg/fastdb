@@ -366,7 +366,7 @@ type ExpressionSubqueries = std::collections::BTreeMap<
     String,
     (Expr, std::collections::BTreeSet<String>, SubqueryAffinity),
 >;
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct UsingColumns {
     bindings: std::collections::BTreeMap<String, (usize, String)>,
     hidden: std::collections::BTreeSet<(usize, String)>,
@@ -2703,6 +2703,7 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
 }
 #[derive(Default)]
 struct SelectOptions<'a> {
+    outer_scope: Option<(&'a [Source], &'a UsingColumns)>,
     membership_namespace: usize,
     native_with: Option<&'a With>,
     restricted_native_clauses: bool,
@@ -2930,6 +2931,13 @@ impl Connection {
     ) -> Result<()> {
         let mut failure = None;
         turso_core::walk_expr_mut(value, &mut |expr| {
+            // These compiler accessors already bind an outer value. Their
+            // physical column arguments must not be rebound as document paths.
+            if matches!(expr, Expr::FunctionCall { name, .. }
+                if matches!(name.as_str(), "__fastdb_value" | "__fastdb_correlated_value"))
+            {
+                return Ok(turso_core::WalkControl::SkipChildren);
+            }
             if let Expr::InSelect { lhs, .. } = expr {
                 if let Err(error) = self.correlate_source_free_expression(
                     lhs,
@@ -3253,6 +3261,7 @@ impl Connection {
         options: SelectOptions<'_>,
     ) -> Result<Option<LoweredSelect>> {
         let SelectOptions {
+            outer_scope,
             membership_namespace,
             native_with,
             restricted_native_clauses,
@@ -3542,8 +3551,11 @@ impl Connection {
         // Resolve outer collection fields before recursively lowering an inner
         // collection query. Otherwise its typed comparisons pack raw storage
         // IDs as strings, silently losing record identity.
-        let mut correlation_sources: Option<Vec<Source>> = None;
-        let mut correlation_using = UsingColumns::default();
+        let source_free = matches!(&select.body.select, OneSelect::Select { from: None, .. });
+        let inherited_scope = outer_scope.filter(|_| source_free);
+        let mut correlation_sources = inherited_scope.map(|(sources, _)| sources.to_vec());
+        let mut correlation_using =
+            inherited_scope.map_or_else(UsingColumns::default, |(_, using)| using.clone());
         // Prepare nested scalar plans without executing them. Cache by the
         // original AST spelling so aliases and repeated lowering probes retain
         // type/parameter metadata; each occurrence still belongs to the engine.
@@ -3676,6 +3688,8 @@ impl Connection {
                                 nested: true,
                                 positional: exists,
                                 expression_subquery: true,
+                                outer_scope: (!correlation_using.bindings.is_empty())
+                                    .then_some((correlation_sources, &correlation_using)),
                                 ctes: Some(&ctes),
                                 ..Default::default()
                             },
@@ -3936,6 +3950,11 @@ impl Connection {
                                 ) || (expression_subquery && matches!(value, Value::Binary(_)))
                             }))
                 });
+        if from.is_none() {
+            if let Some((outer_sources, _)) = inherited_scope {
+                sources.extend_from_slice(outer_sources);
+            }
+        }
         if (native_insert.is_some() || nested)
             && !cte_logical
             && expression_subqueries.is_empty()
@@ -3966,7 +3985,11 @@ impl Connection {
         {
             return Ok(None);
         }
-        let using = prepare_using(from.as_mut(), &sources)?;
+        let using = if from.is_none() {
+            inherited_scope.map_or_else(UsingColumns::default, |(_, using)| using.clone())
+        } else {
+            prepare_using(from.as_mut(), &sources)?
+        };
         // The pinned engine does not expose outer membership CTEs while
         // preparing JOIN ON subqueries. Keep these RHS queries in place.
         let mut join_memberships = std::collections::BTreeSet::new();

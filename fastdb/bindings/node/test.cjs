@@ -1209,6 +1209,8 @@ test('duplicate projection names preserve positional values in both clients', as
       assert.deepEqual(using.rows, [[1n,2n]]);
       const correlatedUsing = await db.execute('SELECT n,(SELECT n) AS value FROM (SELECT n FROM docs) a RIGHT JOIN (SELECT 1 AS n UNION ALL SELECT 2) b USING(n) ORDER BY n');
       assert.deepEqual(correlatedUsing.rows, [[1n,1n],[2n,2n]]);
+      const nestedUsing = await db.execute('SELECT n,(SELECT (SELECT n)) AS value FROM (SELECT n FROM docs) a RIGHT JOIN (SELECT 1 AS n UNION ALL SELECT 2) b USING(n) ORDER BY n');
+      assert.deepEqual(nestedUsing.rows, correlatedUsing.rows);
     } finally { await db.close(); }
   }
 });
