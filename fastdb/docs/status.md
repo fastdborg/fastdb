@@ -4620,3 +4620,14 @@ all-target fastdb-cli Clippy with warnings denied. Logs `/tmp/fastdb-tuple-cli.l
 and `/tmp/fastdb-tuple-cli-clippy.log`. Only tests/documentation changed from
 `23e24583f`; no new full-suite/client run is claimed. This is orderly process
 reopen evidence, not crash qualification. Full V1 gates remain open.
+
+
+## Ordered tuple shared pagination parameters — 2026-09-09
+
+A regression reuses bound LIMIT/OFFSET parameters in tuple projections and
+pagination, checking first/second-row selection, zero limit and exhausted
+offset. Missing bindings leave target data unchanged. All twenty-one write
+tests passed, plus formatting and all-target fastdb-tests Clippy with warnings
+denied. Logs `/tmp/fastdb-ordered-tuple-params.log` and
+`/tmp/fastdb-ordered-tuple-params-clippy.log`. Only tests/documentation changed
+from `000928b89`; no new full-suite/client run is claimed. Full V1 gates remain open.

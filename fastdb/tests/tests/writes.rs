@@ -909,3 +909,40 @@ fn ordered_tuple_lookup_collation_and_nulls_match_native() {
         }
     }
 }
+
+#[test]
+fn ordered_tuple_lookup_reuses_bound_projection_and_pagination_values() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n) VALUES(1)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER)",
+        "INSERT INTO lookup VALUES(1,10),(1,20)",
+    ] {
+        q(&c, sql);
+    }
+    let sql="UPDATE docs SET (a,b)=(SELECT x.a+$limit,$offset FROM lookup x WHERE x.n=docs.n ORDER BY x.a DESC LIMIT $limit OFFSET $offset) RETURNING a,b";
+    for (limit, offset, expected) in [
+        (1, 0, vec![Value::Integer(21), Value::Integer(0)]),
+        (1, 1, vec![Value::Integer(11), Value::Integer(1)]),
+        (0, 0, vec![Value::Null, Value::Null]),
+        (1, 2, vec![Value::Null, Value::Null]),
+    ] {
+        q(&c, "BEGIN");
+        let params = Parameters::from([
+            ("$limit".into(), Value::Integer(limit)),
+            ("$offset".into(), Value::Integer(offset)),
+        ]);
+        assert_eq!(c.execute(sql, &params).unwrap().rows, vec![expected]);
+        q(&c, "ROLLBACK");
+    }
+    assert_eq!(
+        c.execute(sql, &Parameters::new()).unwrap_err().code(),
+        "FDB_PARAMETER"
+    );
+    assert_eq!(
+        q(&c, "SELECT a,b FROM docs").rows,
+        vec![vec![Value::Null, Value::Null]]
+    );
+}
