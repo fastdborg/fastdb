@@ -1187,3 +1187,11 @@ Sourceful projections preserve their own column scope; outer collection
 references in native queries producing an array are bound before isolated
 SELECT lowering. Grouping, windows, DISTINCT, ORDER BY, compounds, local WITH
 and explicit projection aliases remain outside the tuple implementation.
+
+
+Tuple SELECTs now support ORDER BY source expressions, retaining native sort,
+LIMIT and OFFSET evaluation before selecting the tuple. Source-free ordering
+fields bind to the update target. Positional ORDER BY remains rejected because
+packing the tuple changes projection positions. Initial native comparisons
+cover descending field and arithmetic ordering; broader alias, collation and
+volatile-expression qualification remains open.

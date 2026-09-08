@@ -4522,3 +4522,19 @@ All nineteen write tests passed, plus formatting and all-target fastdb-tests
 Clippy with warnings denied. Logs `/tmp/fastdb-tuple-iterators.log` and
 `/tmp/fastdb-tuple-iterators-clippy.log`. Only tests/documentation changed from
 `462c82a87`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Tuple SELECT source-expression ordering — 2026-09-09
+
+Tuple SELECTs now retain ORDER BY source expressions before LIMIT/OFFSET and
+row selection. Source-free ordering names bind to the update target. Positional
+ordering remains explicitly rejected because tuple packing changes projection
+positions. Native differential fixtures cover descending field and arithmetic
+ordering, including OFFSET; the rejected ordinal is covered by a write test.
+
+Full scoped check passed from `d0ac72f5d` plus this change: 588 Rust passes,
+zero failures, one existing ignored trigger gate; 85 Node/application passes;
+formatting, Clippy with warnings denied and strict TypeScript. Logs
+`/tmp/fastdb-tuple-ordering-check.log` and `/tmp/fastdb-tuple-ordering.log`.
+No upstream files or dependencies changed. Positional/alias ordering and broader
+tuple forms remain open, along with full V1 release gates. No publication occurred.

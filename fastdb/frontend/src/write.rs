@@ -591,11 +591,21 @@ impl Connection {
                         widths.extend(std::iter::repeat_n(1, values.len()));
                         exprs.extend(values.into_iter().map(|value| *value));
                     } else if let Expr::Subquery(mut select) = *set.expr {
-                        if select.with.is_some()
-                            || !select.body.compounds.is_empty()
-                            || !select.order_by.is_empty()
-                        {
+                        if select.with.is_some() || !select.body.compounds.is_empty() {
                             return Err(unsupported("this tuple SELECT assignment"));
+                        }
+                        fn ordinal(value: &Expr) -> bool {
+                            match value {
+                                Expr::Literal(Literal::Numeric(n)) => n.parse::<i64>().is_ok(),
+                                Expr::Parenthesized(values) if values.len() == 1 => {
+                                    ordinal(&values[0])
+                                }
+                                Expr::Unary(_, value) | Expr::Collate(value, _) => ordinal(value),
+                                _ => false,
+                            }
+                        }
+                        if select.order_by.iter().any(|sort| ordinal(&sort.expr)) {
+                            return Err(unsupported("positional tuple SELECT ordering"));
                         }
                         let OneSelect::Select {
                             columns,
@@ -613,6 +623,9 @@ impl Connection {
                             return Err(unsupported("tuple SELECT assignment shape or arity"));
                         }
                         if from.is_none() {
+                            for sort in &mut select.order_by {
+                                bind_source_free_tuple_field(&mut sort.expr, &update.tbl_name)?;
+                            }
                             if let Some(predicate) = where_clause {
                                 bind_source_free_tuple_field(predicate, &update.tbl_name)?;
                             }

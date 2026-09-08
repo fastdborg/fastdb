@@ -382,6 +382,7 @@ fn explicit_tuple_updates_preserve_snapshots_and_atomic_validation() {
         "UPDATE docs SET (a,b)=(1,2),a=3",
         "UPDATE docs SET (id,a)=(docs:other,1)",
         "UPDATE docs SET (a,b)=(1,2,3)",
+        "UPDATE docs SET (a,b)=(SELECT b,a ORDER BY 2)",
     ] {
         assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
     }
@@ -811,7 +812,14 @@ fn tuple_lookup_multiple_matches_keep_columns_from_one_row() {
         );
         q(&c, "ROLLBACK");
     }
-    for page in ["", " LIMIT 1", " LIMIT 1 OFFSET 1", " LIMIT 1 OFFSET 3"] {
+    for page in [
+        "",
+        " LIMIT 1",
+        " LIMIT 1 OFFSET 1",
+        " LIMIT 1 OFFSET 3",
+        " ORDER BY x.a DESC LIMIT 1",
+        " ORDER BY x.a+x.b DESC LIMIT 1 OFFSET 1",
+    ] {
         q(&c, "BEGIN");
         let query = |target| {
             format!("UPDATE {target} SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n={target}.n{page}) RETURNING n,a,b")
