@@ -2426,3 +2426,44 @@ fn deeper_cte_shadowing_matches_pinned_scope_and_collation() {
         }
     }
 }
+
+#[test]
+fn pinned_correlated_compound_membership_qualification_preserves_sets() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE a(k INTEGER)",
+        "INSERT INTO a VALUES(1),(2),(NULL)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3),(NULL)",
+        "CREATE TABLE nums(n INTEGER)",
+        "INSERT INTO nums VALUES(0),(1),(2),(NULL)",
+    ] {
+        query(sql);
+    }
+    for (join, retained) in [("JOIN", "a"), ("LEFT JOIN", "a"), ("RIGHT JOIN", "b")] {
+        for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+            for (left, right) in [
+                ("SELECT KEY", "SELECT NULL"),
+                ("SELECT KEY", "SELECT CAST(KEY AS REAL)"),
+                ("SELECT KEY WHERE 0", "SELECT NULL"),
+            ] {
+                for negate in ["", "NOT "] {
+                    let sql = |key: &str| {
+                        let rhs = format!("{left} {operator} {right}").replace("KEY", key);
+                        let predicate = format!("x.n {negate}IN({rhs})");
+                        format!("SELECT k,(SELECT sum(CASE WHEN {predicate} THEN 1 WHEN NOT({predicate}) THEN 10 ELSE 100 END) FROM nums x WHERE k IS k) AS v FROM a {join} b USING(k) ORDER BY k")
+                    };
+                    let original = query(&sql("k"));
+                    let qualified = query(&sql(&format!("{retained}.k")));
+                    assert_eq!(qualified.columns, original.columns);
+                    assert_eq!(qualified.rows, original.rows, "{}", sql("k"));
+                }
+            }
+        }
+    }
+}
