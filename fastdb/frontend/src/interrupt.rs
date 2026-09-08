@@ -5,16 +5,31 @@ use std::sync::{Arc, Weak};
 /// A sticky cancellation request scoped to executions that explicitly use it.
 /// Clones share the request; cancellation does not retain a connection.
 #[derive(Clone, Default)]
-pub struct CancellationToken(Arc<AtomicBool>);
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+    deadline: Option<std::time::Instant>,
+}
 impl CancellationToken {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Create a token that also requests cancellation once a monotonic deadline
+    /// is reached. Expiry is observed at the same cooperative boundaries as
+    /// manual cancellation, not by a background timer or hard preemption.
+    pub fn with_deadline(deadline: std::time::Instant) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: Some(deadline),
+        }
+    }
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.cancelled.store(true, Ordering::SeqCst);
     }
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.cancelled.load(Ordering::SeqCst)
+            || self
+                .deadline
+                .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     }
 }
 

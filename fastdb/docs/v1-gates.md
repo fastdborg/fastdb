@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-08
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 521 passing Rust tests with one ignored trigger-cancellation gate, 70 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-mixed-result-check.log`, production change `dfda4ab06`). Later focused runs are recorded in status.md with their exact scope. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 535 passing Rust tests with one ignored trigger-cancellation gate, 72 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-borrowed-document-check.log`, production change `228fa363a`). Later focused runs are recorded in status.md with their exact scope. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -177,4 +177,4 @@ The local-WITH merged-key reproducer now returns `(1,NULL),(4,3)` through the co
 
 ## Result-budget implementation inventory
 
-[result-budgets.md](result-budgets.md) records the public/internal collection paths and implemented explicit bounded SELECT APIs in Rust and both Node clients, including cooperative worker cancellation. One-hop FETCH now shares the final payload budget before duplicate output cloning. Write-candidate/RETURNING atomicity, engine working memory, temporary decoding/transport/fetch workspace peaks and deadlines remain unfinished resource requirements. These APIs do not close the V1 resource gate.
+[result-budgets.md](result-budgets.md) records the public/internal collection paths and implemented explicit bounded SELECT APIs in Rust and both Node clients, including cooperative worker cancellation. One-hop FETCH now shares the final payload budget before duplicate output cloning. Explicit atomic RETURNING limits and opt-in collection candidate/snapshot limits now exist in Rust, Node and CLI; see result-budgets.md for exact coverage. Engine working memory, temporary decoding/transport/fetch workspace peaks and complete deadline qualification remain unfinished resource requirements. These APIs do not close the V1 resource gate.

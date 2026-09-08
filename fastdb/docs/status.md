@@ -3049,3 +3049,23 @@ All five transfer integration tests passed, including existing database transfer
 and rollback cases. Scoped formatting and diff checks passed. Log:
 `/tmp/fastdb-consumed-portable-contract.log`. No production code changed and no
 broader suite was repeated. Resource, platform and remaining V1 gates remain open.
+
+### Initial monotonic Rust cancellation deadlines
+
+`CancellationToken::with_deadline(Instant)` now supplies a monotonic expiry to all
+existing cancellable Rust operations. Clones share manual cancellation and the
+same fixed deadline. Expired tokens reject before parsing; engine progress checks
+observe expiry through the existing one-shot interruption path so savepoint cleanup
+can run. Errors remain FDB_CANCELLED. No timer thread or hard preemption is added.
+Ordinary tokens retain manual-only behavior.
+
+Two real-engine deadline tests passed: expired rejection, clone/manual cancellation,
+long SELECT and collection INSERT SELECT expiry, active transaction/index
+preservation, fresh-token retry and rollback. Both existing token regression tests
+also passed. Frontend/tests Clippy, formatting and diff checks passed. Logs:
+`/tmp/fastdb-deadlines.log`, `/tmp/fastdb-deadline-token-regressions.log`, and
+`/tmp/fastdb-deadlines-clippy.log`. Node/CLI deadline configuration, additional
+operation/platform coverage and timing qualification remain open. Non-engine work,
+cleanup, completion races and the pinned trigger defect retain their documented
+limitations; this does not close the deadline/resource or full V1 gate. Broader
+suites were not repeated.

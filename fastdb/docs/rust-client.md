@@ -132,3 +132,11 @@ initial coverage.
 JSON representation as `to_portable_value(&self)`, including decimal int64 and
 binary64 bit strings. Use it when the value is no longer needed to avoid cloning
 its tree for conversion. Both methods validate values before encoding.
+
+`CancellationToken::with_deadline(std::time::Instant)` adds a monotonic deadline
+to any existing cancellable Rust operation. Clones share manual cancellation and
+the same deadline. An already-expired token rejects before parsing; expiry during
+engine work uses the existing one-shot progress interruption and rollback path,
+returning `FDB_CANCELLED`. No background timer is started. Parsing, non-engine
+work, cleanup and completion races retain the existing cooperative limitations;
+this is not a hard wall-clock execution bound. Use a fresh token for retry.
