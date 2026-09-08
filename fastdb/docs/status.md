@@ -2759,3 +2759,19 @@ CLI Clippy and formatting checks passed. Logs: `/tmp/fastdb-cli-result-limits.lo
 and `/tmp/fastdb-cli-result-limits-clippy.log`. No frontend-wide or Node/package
 checks were repeated for this CLI-only change. Candidate/snapshot buffers, engine
 working memory, deadlines and the remaining V1 release gates remain unfinished.
+
+### Multiline interactive result-limit commands
+
+Interactive completion now examines the SQL suffix of `.select-limit`,
+`.profile-limit`, `.write-limit` and `.profile`, rather than attempting to parse
+the dot-command prefix as SQL. Valid headers can accumulate SQL across lines until
+a semicolon; invalid budget headers dispatch immediately to the coded error path.
+Profile command dispatch now shares whitespace-aware prefix parsing, including
+SQL starting on the next line. `.clear` discards a pending limited command.
+
+All 23 CLI package tests passed, including the new multiline read/write/profile,
+clear and invalid-header recovery regression. CLI Clippy and formatting passed.
+Logs: `/tmp/fastdb-cli-multiline-limits.log` and
+`/tmp/fastdb-cli-multiline-clippy.log`. This supersedes the preceding single-line
+interactive restriction. No frontend-wide or Node/package checks were repeated
+for this CLI-only fix. The broader V1 resource and release gates remain open.

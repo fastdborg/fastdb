@@ -257,7 +257,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             if !line.trim().is_empty() {
                 failed |= if let Some(failed) = run_limited_command(&conn, &line, &mut writer)? {
                     failed
-                } else if let Some(sql) = line.trim_start().strip_prefix(".profile ") {
+                } else if let Some(sql) = profile_sql(&line) {
                     run_profile(&conn, sql, &mut writer)?
                 } else {
                     output(
@@ -410,7 +410,7 @@ Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTermina
             return Ok(true);
         }
         buffer.push_str(&line);
-        match fastql_parser::script_complete(&buffer) {
+        match interactive_complete(&buffer) {
             Ok(false) => continue,
             Ok(true) | Err(_) => {
                 reader.remember(&buffer)?;
@@ -421,29 +421,58 @@ Transactions use BEGIN, COMMIT and ROLLBACK. JSON results go to stdout.\nTermina
     }
 }
 
+fn command_word<'a>(input: &mut &'a str) -> &'a str {
+    *input = input.trim_start();
+    let end = input.find(char::is_whitespace).unwrap_or(input.len());
+    let token = &input[..end];
+    *input = &input[end..];
+    token
+}
+
+fn profile_sql(input: &str) -> Option<&str> {
+    let mut rest = input;
+    (command_word(&mut rest) == ".profile").then_some(rest.trim_start())
+}
+
+// Dot commands wrap SQL: only the SQL suffix determines statement completion.
+fn interactive_complete(input: &str) -> fastql_parser::Result<bool> {
+    let mut rest = input;
+    match command_word(&mut rest) {
+        ".profile" if rest.trim().is_empty() => Ok(false),
+        ".profile" => fastql_parser::script_complete(rest),
+        ".select-limit" | ".profile-limit" | ".write-limit" => {
+            for _ in 0..2 {
+                if command_word(&mut rest).parse::<usize>().is_err() {
+                    // Dispatch invalid headers immediately to the normal coded
+                    // error path rather than waiting for more SQL indefinitely.
+                    return Ok(true);
+                }
+            }
+            if rest.trim().is_empty() {
+                return Ok(false);
+            }
+            fastql_parser::script_complete(rest)
+        }
+        _ => fastql_parser::script_complete(input),
+    }
+}
+
 fn run_limited_command(
     conn: &fastdb::Connection,
     command: &str,
     writer: &mut impl Write,
 ) -> Result<Option<bool>, Box<dyn std::error::Error>> {
-    fn word<'a>(input: &mut &'a str) -> &'a str {
-        *input = input.trim_start();
-        let end = input.find(char::is_whitespace).unwrap_or(input.len());
-        let token = &input[..end];
-        *input = &input[end..];
-        token
-    }
     let mut rest = command;
-    let name = word(&mut rest);
+    let name = command_word(&mut rest);
     if !matches!(name, ".select-limit" | ".profile-limit" | ".write-limit") {
         return Ok(None);
     }
     let before = conn.transaction_state();
     let execution = (|| -> fastdb::Result<_> {
-        let max_rows = word(&mut rest).parse::<usize>().map_err(|_| {
+        let max_rows = command_word(&mut rest).parse::<usize>().map_err(|_| {
             fastdb::Error::Validation("expected nonnegative result row limit".into())
         })?;
-        let max_payload_bytes = word(&mut rest).parse::<usize>().map_err(|_| {
+        let max_payload_bytes = command_word(&mut rest).parse::<usize>().map_err(|_| {
             fastdb::Error::Validation("expected nonnegative result payload byte limit".into())
         })?;
         let sql = rest.trim_start();
@@ -516,7 +545,7 @@ fn run_script(
     if let Some(failed) = run_limited_command(conn, script, writer)? {
         return Ok(failed);
     }
-    if let Some(sql) = script.trim_start().strip_prefix(".profile ") {
+    if let Some(sql) = profile_sql(script) {
         return run_profile(conn, sql, writer);
     }
     let mut failed = false;

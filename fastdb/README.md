@@ -44,8 +44,9 @@ budgets and one complete SQL statement:
 ```
 
 These commands work as standalone EOF-delimited input, or as individual commands
-in line/interactive mode. In interactive mode, submit the command and SQL together
-on one line. Piped standalone input can contain multiline SQL. They use the same
+in line/interactive mode. In interactive mode, the SQL following the command and budgets can span
+multiple lines; finish it with a semicolon. `.clear` discards the pending command.
+Piped standalone input can also contain multiline SQL. They use the same
 result accounting as the Rust/Node APIs: column names count even for empty results,
 FETCH output counts after expansion, and overflow emits `FDB_LIMIT` without partial
 rows or profile counters. Write-result rejection rolls back the operation through

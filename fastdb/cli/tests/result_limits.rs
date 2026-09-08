@@ -92,3 +92,23 @@ fn limited_write_commands_preserve_pending_work_and_allow_retry() {
         assert_eq!(reports[9]["rows"], serde_json::json!([]));
     }
 }
+
+#[test]
+fn interactive_limited_commands_accumulate_sql_and_clear_pending_input() {
+    let (ok, reports) = run("--interactive", "CREATE TABLE docs;\n.write-limit 1 9\nINSERT INTO docs {\n n:7\n} RETURNING n;\n.select-limit 1 9 SELECT\n n FROM docs;\n.profile-limit 1 9\nSELECT n\nFROM docs;\n.profile\nSELECT\n n FROM docs;\n.write-limit 1 9 UPDATE docs {\n.clear\n.select-limit 1 9 SELECT n FROM docs;\n.quit\n");
+    assert!(ok, "{reports:?}");
+    assert_eq!(reports.len(), 6);
+    for report in &reports[1..] {
+        assert_eq!(report["rows"][0][0]["value"], 7);
+    }
+    assert!(reports[3]["profile"].is_object());
+    assert!(reports[4]["profile"].is_object());
+    let (ok, reports) = run(
+        "--interactive",
+        ".select-limit invalid 9\n.select-limit 1 9 SELECT\n 8 AS n;\n.quit\n",
+    );
+    assert!(!ok);
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0]["error"]["code"], "FDB_VALIDATION");
+    assert_eq!(reports[1]["rows"][0][0]["value"], 8);
+}
