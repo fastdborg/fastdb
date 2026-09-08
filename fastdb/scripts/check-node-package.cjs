@@ -78,6 +78,15 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
         assert.deepEqual(error.transaction,{before:'active',after:'active'});
         return true;
       });
+      const writeSql = "INSERT INTO budget_targets VALUES(2,'é'),(3,'猫') RETURNING n";
+      const writeBudget = {maxRows:2n,maxPayloadBytes:6n};
+      await assert.rejects(async () => client.writeWithResultLimits(writeSql,{...writeBudget,maxPayloadBytes:5n}), error => {
+        assert.equal(error.code,'FDB_LIMIT');
+        assert.deepEqual(error.transaction,{before:'active',after:'active'});
+        return true;
+      });
+      assert.deepEqual(await client.all('SELECT id FROM budget_targets'),[[1n]]);
+      assert.deepEqual((await client.writeWithResultLimits(writeSql,writeBudget)).rows,[['é'],['猫']]);
       const bytes = Buffer.from([0,255,49]);
       const typed = 'WITH q(x,x) AS (SELECT $flag,$bytes FROM docs), r AS (SELECT q.* FROM q) SELECT r.* FROM r';
       const result = await client.execute(typed, {$flag:true,$bytes:bytes});
@@ -523,6 +532,7 @@ const profile: ProfiledQuery = db.profileSelect('SELECT 1');
 const resultBudget: import('@fastdb/node').ResultLimits = {maxRows:1n,maxPayloadBytes:100n};
 db.selectWithLimits('SELECT 1',resultBudget);
 db.profileSelectWithLimits('SELECT 1',resultBudget);
+db.writeWithResultLimits('DELETE FROM docs',resultBudget);
 // @ts-expect-error both result budgets are mandatory
 db.selectWithLimits('SELECT 1',{maxRows:1n});
 const counts: bigint[] = [audit.documents, audit.encodedBytes, profile.metrics.vmSteps, profile.metrics.fetchBatches, profile.metrics.fetchRowsRead, profile.metrics.fetchVmSteps];
@@ -535,6 +545,7 @@ async function open() {
   const options: import('@fastdb/node').ExecuteOptions = {signal:new AbortController().signal};
   await db.selectWithLimits('SELECT 1',resultBudget,{},options);
   await db.profileSelectWithLimits('SELECT 1',resultBudget,{},options);
+  await db.writeWithResultLimits('DELETE FROM docs',resultBudget,{},options);
   await db.execute('SELECT 1', {}, options);
   await db.all('SELECT 1', {}, options);
   await db.first('SELECT 1', {}, options);

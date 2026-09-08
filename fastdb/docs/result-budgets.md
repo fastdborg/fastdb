@@ -48,9 +48,10 @@ are not returned rows. Empty RETURNING results still charge column metadata.
 contract: pre-cancelled tokens reject before execution, and delivered engine
 cancellation uses savepoint recovery. Source and RETURNING cancellation with
 prior-work preservation and fresh-token retry have initial Rust coverage.
-Completed-result accounting has no fixed cancellation latency. Node exposure,
-broader cancellation/I/O qualification and progressive write collection remain
-unfinished.
+Completed-result accounting has no fixed cancellation latency. Both Node
+clients expose `writeWithResultLimits(sql, limits, parameters?)`; workers accept
+a fourth `{ signal }` argument. Broader cancellation/I/O qualification and
+progressive write collection remain unfinished.
 
 The original integration inventory follows; its next-step language describes
 the design preceding the initial Rust implementation.

@@ -200,6 +200,13 @@ class Database {
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     return decodeProfile(this.#native.profileSelectWithLimits(sql, JSON.stringify(params), ...args));
   }
+  writeWithResultLimits(sql, limits, parameters = {}) {
+    const args = resultLimits(limits);
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const report = unwrap(this.#native.writeWithResultLimits(sql, JSON.stringify(params), ...args));
+    const result = report.execution.result;
+    return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
+  }
   checkCollectionIntegrity(table, limits = {}) {
     return decodeIntegrity(this.#native.checkCollectionIntegrity(table, ...integrityLimits(limits)));
   }
@@ -336,6 +343,13 @@ class AsyncDatabase {
     const args = resultLimits(limits);
     const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
     return decodeProfile(await this.#request('profileSelectWithLimits', [sql, JSON.stringify(params), ...args], false, options.signal));
+  }
+  async writeWithResultLimits(sql, limits, parameters = {}, options = {}) {
+    const args = resultLimits(limits);
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const report = unwrap(await this.#request('writeWithResultLimits', [sql, JSON.stringify(params), ...args], false, options.signal));
+    const result = report.execution.result;
+    return { columns: result.columns, rows: result.rows.map(row => row.map(decode)), affected: BigInt(result.affected), transaction: report.transaction };
   }
   async checkCollectionIntegrity(table, limits = {}, options = {}) {
     return decodeIntegrity(await this.#request('checkCollectionIntegrity', [table, ...integrityLimits(limits)], false, options.signal));

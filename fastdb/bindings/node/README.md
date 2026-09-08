@@ -289,3 +289,27 @@ costs, temporary decoding, Node transport copies and engine working memory.
 FETCH retains its independent reference and tagged-JSON limits; temporary
 references and the target cache are not covered by the final payload budget.
 These limits are not process memory limits or deadlines.
+
+
+### Atomic write-result acceptance
+
+Both clients expose `writeWithResultLimits(sql, limits, parameters?)`; the worker
+version accepts a fourth `{ signal }` argument. Use the same required bigint
+`maxRows` and `maxPayloadBytes` fields as bounded SELECT. Supported SQL data
+writes and object writes run in an operation savepoint. The completed result is
+checked before release; overflow returns `FDB_LIMIT` and rolls back that write,
+including index and trigger effects, using the existing recovery path.
+
+```js
+const result = await asyncDb.writeWithResultLimits(
+  'UPDATE posts SET published=true RETURNING id',
+  { maxRows: 100n, maxPayloadBytes: 65536n },
+);
+```
+
+This is a final-result acceptance policy. **It does not bound candidate or
+RETURNING materialization memory.** Transaction control, DDL, reads and multiple
+statements are rejected. A write without RETURNING can succeed with zero budgets;
+affected rows do not count as returned rows. Empty RETURNING still charges column
+names. Cooperative cancellation uses the usual error/transaction envelope and
+savepoint recovery; completed-result accounting has no fixed cancellation latency.

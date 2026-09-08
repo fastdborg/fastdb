@@ -2614,3 +2614,30 @@ checks passed. Logs: `/tmp/fastdb-write-cancellation.log` and
 520 Rust/68 Node tests remains historical; this Rust-only wrapper and test change
 did not rebuild or requalify the Node package. Node exposure and broader
 interrupted I/O/commit/checkpoint and resource qualification remain unfinished.
+
+### Atomic write-result policy in Node clients
+
+Both clients now expose `writeWithResultLimits(sql, limits, parameters?)` with
+required bigint `maxRows` and `maxPayloadBytes`. The worker accepts a fourth
+`{ signal }` argument through the existing per-operation token path. Successful
+results preserve typed positional rows, bigint affected counts and transaction
+observations; failed result acceptance uses the standard coded error envelope.
+This remains a completed-result acceptance policy, not a write materialization
+memory limit.
+
+Node coverage checks native and collection row/byte overflow, trigger rollback,
+managed index integrity, nested typed RETURNING values, exact retry, transaction
+control rejection, invalid limits and closed clients. Worker cancellation coverage
+checks pre-cancellation, active INSERT SELECT cancellation, queued read recovery,
+listener cleanup, fresh retry and rollback. All 70 Node/application tests,
+strict TypeScript, binding Clippy and formatting checks passed. Offline installed
+package smokes passed on Linux x64 Node 22.0.0 and 24.19.0 (10 files, 60,636,402
+packed bytes, debug addon), including UTF-8 RETURNING rejection/retry in both
+clients and installed consumer types. Logs: `/tmp/fastdb-node-write-policy.log`,
+`/tmp/fastdb-node-write-clippy.log`, `/tmp/fastdb-write-package-node22.log`, and
+`/tmp/fastdb-write-package-node24.log`.
+
+The Rust suite was not rerun for this binding-only change; previous Rust results
+remain historical. Progressive candidates/RETURNING collection, general engine
+memory and deadline controls, broader interrupted I/O/commit/checkpoint outcomes,
+and the remaining V1 release gates remain open. Nothing was published or pushed.

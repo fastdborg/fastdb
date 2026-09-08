@@ -46,6 +46,8 @@ export class Database {
   importDocuments(table: string, input: string, format?: TransferFormat): ImportReport;
   execute(sql: string, parameters?: Parameters): QueryResult;
   profileSelect(sql: string, parameters?: Parameters): ProfiledQuery;
+  /** Checks the completed write result atomically; does not bound materialization memory. */
+  writeWithResultLimits(sql: string, limits: ResultLimits, parameters?: Parameters): QueryResult;
   selectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters): QueryResult;
   profileSelectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters): ProfiledQuery;
   checkCollectionIntegrity(table: string, limits?: IntegrityLimits): IntegrityReport;
@@ -66,6 +68,8 @@ export class AsyncDatabase {
   importDocuments(table: string, input: string, format?: TransferFormat, options?: ExecuteOptions): Promise<ImportReport>;
   execute(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   profileSelect(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<ProfiledQuery>;
+  /** Checks the completed write result atomically; does not bound materialization memory. */
+  writeWithResultLimits(sql: string, limits: ResultLimits, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   selectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters, options?: ExecuteOptions): Promise<QueryResult>;
   profileSelectWithLimits(sql: string, limits: ResultLimits, parameters?: Parameters, options?: ExecuteOptions): Promise<ProfiledQuery>;
   checkCollectionIntegrity(table: string, limits?: IntegrityLimits, options?: ExecuteOptions): Promise<IntegrityReport>;

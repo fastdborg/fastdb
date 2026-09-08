@@ -2120,3 +2120,84 @@ test('bounded FETCH shares final payload limits across duplicates and scalar col
     } finally { await db.close(); }
   }
 });
+
+test('atomic write result policy restores rows indexes and trigger effects in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await db.execute('CREATE TABLE native(n INTEGER UNIQUE)');
+      await db.execute('CREATE TABLE audit(n INTEGER)');
+      await db.execute('CREATE TRIGGER native_audit AFTER INSERT ON native BEGIN INSERT INTO audit VALUES(new.n); END');
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:prior,n:9}');
+      await db.execute('INSERT INTO native VALUES(9)');
+      for (const table of ['docs','native']) {
+        const sql = 'INSERT INTO ' + table + '(n) VALUES(1),(2) RETURNING n';
+        for (const limits of [{maxRows:1n,maxPayloadBytes:17n},{maxRows:2n,maxPayloadBytes:16n}]) {
+          await assert.rejects(Promise.resolve().then(() => db.writeWithResultLimits(sql,limits)), e => {
+            assert.equal(e.code,'FDB_LIMIT');
+            assert.deepEqual(e.transaction,{before:'active',after:'active'});
+            return true;
+          });
+          assert.deepEqual(await db.all('SELECT n FROM '+table),[[9n]]);
+        }
+        const result = await db.writeWithResultLimits(sql,{maxRows:2n,maxPayloadBytes:17n});
+        assert.deepEqual(result.rows,[[1n],[2n]]);
+        assert.equal(result.affected,2n);
+        assert.deepEqual(result.transaction,{before:'active',after:'active'});
+      }
+      assert.deepEqual(await db.all('SELECT n FROM audit ORDER BY n'),[[1n],[2n],[9n]]);
+      const value = {r:new Record('docs','prior'),b:Buffer.from([0,255]),t:'猫',a:[true,null]};
+      const sql = 'UPDATE docs:prior {value:$v} RETURNING value AS v';
+      const exact = {maxRows:1n,maxPayloadBytes:21n}; // v + keys 4 + record 9 + binary 2 + text 3 + array 2
+      await assert.rejects(Promise.resolve().then(() => db.writeWithResultLimits(sql,{...exact,maxPayloadBytes:20n},{$v:value})), e => e.code === 'FDB_LIMIT');
+      assert.deepEqual(await db.exactlyOne('SELECT value FROM docs WHERE n=9'),[null]);
+      assert.deepEqual((await db.writeWithResultLimits(sql,exact,{$v:value})).rows,[[value]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents,3n);
+      for (const sql of ['COMMIT','ROLLBACK','CREATE TABLE nope(n)','SELECT 1']) {
+        await assert.rejects(Promise.resolve().then(() => db.writeWithResultLimits(sql,exact)), e => e.code === 'FDB_UNSUPPORTED');
+      }
+      await assert.rejects(Promise.resolve().then(() => db.writeWithResultLimits('INSERT INTO native VALUES(5)',{maxRows:0,maxPayloadBytes:0n})), TypeError);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM native'),[]);
+      assert.deepEqual(await db.all('SELECT n FROM audit'),[]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents,0n);
+    } finally { await db.close(); }
+    await assert.rejects(Promise.resolve().then(() => db.writeWithResultLimits('DELETE FROM docs',{maxRows:0n,maxPayloadBytes:0n})), /clos/i);
+  }
+});
+
+test('worker write result cancellation rolls back and permits queued retry', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  const limits = {maxRows:1n,maxPayloadBytes:9n};
+  try {
+    await db.execute('CREATE TABLE nums(n INTEGER)');
+    await db.execute('INSERT INTO nums VALUES '+Array.from({length:300},(_,n)=>'('+n+')').join(','));
+    await db.execute('CREATE TABLE docs');
+    await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {id:docs:prior,n:9}');
+    const before = new AbortController(); before.abort();
+    await assert.rejects(db.writeWithResultLimits('DELETE FROM docs',limits,{}, {signal:before.signal}), e => e.code === 'FDB_CANCELLED');
+    const active = new AbortController();
+    const pending = db.writeWithResultLimits('INSERT INTO docs(n) SELECT count(*) FROM nums a CROSS JOIN nums b CROSS JOIN nums c RETURNING n',limits,{}, {signal:active.signal});
+    const following = db.all('SELECT n FROM docs');
+    const settled = Promise.allSettled([pending,following]);
+    const timer = setTimeout(()=>active.abort(),20);
+    const [cancelled,recovered] = await settled;
+    clearTimeout(timer);
+    assert.equal(cancelled.status,'rejected');
+    assert.equal(cancelled.reason.code,'FDB_CANCELLED');
+    assert.deepEqual(cancelled.reason.transaction,{before:'active',after:'active'});
+    assert.equal(recovered.status,'fulfilled');
+    assert.deepEqual(recovered.value,[[9n]]);
+    assert.equal(require('node:events').getEventListeners(active.signal,'abort').length,0);
+    assert.deepEqual((await db.writeWithResultLimits('INSERT INTO docs {n:1} RETURNING n',limits)).rows,[[1n]]);
+    assert.equal((await db.checkCollectionIntegrity('docs')).documents,2n);
+    await db.execute('ROLLBACK');
+    assert.deepEqual(await db.all('SELECT n FROM docs'),[]);
+  } finally { await db.close(); }
+});

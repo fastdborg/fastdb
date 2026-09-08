@@ -128,3 +128,15 @@ function boundedSelectTypes(sync: Database, asyncDb: AsyncDatabase) {
   void result; void profile; void pending; void pendingProfile;
 }
 void boundedSelectTypes;
+
+function writeResultTypes(sync: Database, worker: AsyncDatabase) {
+  const limits: import('./index').ResultLimits = {maxRows:1n,maxPayloadBytes:100n};
+  const result: import('./index').QueryResult = sync.writeWithResultLimits('INSERT INTO docs {n:$n} RETURNING n',limits,{$n:1n});
+  const pending: Promise<import('./index').QueryResult> = worker.writeWithResultLimits('DELETE FROM docs',limits,{}, {signal:new AbortController().signal});
+  // @ts-expect-error both budgets are required
+  sync.writeWithResultLimits('DELETE FROM docs',{maxRows:0n});
+  // @ts-expect-error async cancellation requires AbortSignal
+  worker.writeWithResultLimits('DELETE FROM docs',limits,{}, {signal:true});
+  void result; void pending;
+}
+void writeResultTypes;

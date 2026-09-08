@@ -256,6 +256,44 @@ impl NativeDatabase {
         })
     }
     #[napi]
+    pub fn write_with_result_limits(
+        &self,
+        sql: String,
+        parameters: String,
+        max_rows: String,
+        max_payload_bytes: String,
+        cancellation_key: Option<String>,
+    ) -> napi::Result<String> {
+        let token = cancellation_key
+            .map(|key| {
+                let key = key.parse::<u64>().map_err(error)?;
+                cancellations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| error("unknown cancellation token"))
+            })
+            .transpose()?;
+        self.report(|conn| {
+            let params = decode_parameters(&parameters)?;
+            let limits = fastdb::ResultLimits {
+                max_rows: max_rows
+                    .parse()
+                    .map_err(|_| fastdb::Error::Validation("invalid result row limit".into()))?,
+                max_payload_bytes: max_payload_bytes.parse().map_err(|_| {
+                    fastdb::Error::Validation("invalid result payload limit".into())
+                })?,
+            };
+            let result = if let Some(token) = &token {
+                conn.write_with_result_limits_cancellable(&sql, &params, limits, token)?
+            } else {
+                conn.write_with_result_limits(&sql, &params, limits)?
+            };
+            query_value(result)
+        })
+    }
+    #[napi]
     pub fn check_collection_integrity(
         &self,
         table: String,
