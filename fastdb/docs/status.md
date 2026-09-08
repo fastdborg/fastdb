@@ -2012,3 +2012,6 @@ Nested duplicate CTE companion qualification (2026-09-08): a focused regression 
 
 
 Authoritative plan/handoff synchronization (2026-09-08): updated parent FastQL.md to describe positional duplicate-name results and the closed-source column-before-alias rule, retaining open-schema collection alias precedence. Updated parent AGENTS.md with current duplicate derived/CTE support, initial AbortSignal/distribution evidence and the distinction between current debug output and prior stripped artifacts. Full V1 scope and remaining release gates are unchanged. Parent files are outside the Git checkout; this note records the synchronization. Documentation-only change; no tests rerun.
+
+
+Duplicate CTE outer-join qualification (2026-09-08): a six-case focused regression passes for native integer and logical boolean/binary duplicate-column CTEs on the right of LEFT JOIN. Explicit expected values verify correct matched positions, SQL NULL extension of both unmatched columns, duplicate output metadata and post-join IS NULL/IS NOT NULL filtering through execute/profile. A direct native baseline probe also confirms the integer fixture. Production code is unchanged; formatting and the regression pass. Latest full scoped evidence remains 434 Rust tests with one ignored gate and 48 Node/application tests. Full V1 qualification remains open.

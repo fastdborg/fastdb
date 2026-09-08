@@ -637,3 +637,40 @@ fn duplicate_native_cte_companions_preserve_nested_scope_identity() {
         expected.rows
     );
 }
+
+#[test]
+fn duplicate_cte_outer_joins_preserve_null_extension_and_filters() {
+    let (_db, c) = setup();
+    for definition in [
+        "q(x,x) AS (SELECT 10,20)",
+        "q(x,x) AS (SELECT flag,data FROM docs WHERE n=1)",
+    ] {
+        let values = if definition.contains("flag") {
+            vec![Value::Boolean(true), Value::Binary(vec![49])]
+        } else {
+            vec![Value::Integer(10), Value::Integer(20)]
+        };
+        for predicate in ["", " WHERE v.x IS NULL", " WHERE v.x IS NOT NULL"] {
+            let sql = format!("WITH {definition} SELECT d.n,v.* FROM docs d LEFT JOIN q v ON d.n=1{predicate} ORDER BY d.n");
+            let mut matched = vec![Value::Integer(1)];
+            matched.extend(values.clone());
+            let unmatched = vec![Value::Integer(2), Value::Null, Value::Null];
+            let expected = match predicate {
+                "" => vec![matched, unmatched],
+                " WHERE v.x IS NULL" => vec![unmatched],
+                _ => vec![matched],
+            };
+            let actual = q(&c, &sql);
+            assert_eq!(actual.columns, vec!["n", "x", "x"]);
+            assert_eq!(actual.rows, expected, "{sql}");
+            assert_eq!(
+                c.profile_select(&sql, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected,
+                "{sql}"
+            );
+        }
+    }
+}
