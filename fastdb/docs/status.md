@@ -103,7 +103,7 @@ The current result metadata distinguishes direct typed field projections from or
 
 Direct typed parameters and copied document fields retain their logical types. Ordinary SQL scalar expressions retain engine scalar types: SQL TRUE/FALSE become integer 1/0, so boolean validators require typed Boolean parameters or document literals rather than implicit coercion. The Rust map uses `?1`, `?2`, etc. to bind numbered or anonymous statement slots. Pinned Turso v0.7.2 rejects `$name::suffix`; a differential test preserves that exact engine error instead of reinterpreting it.
 
-Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free positional ordering and explicit projection aliases, compounds, DISTINCT, grouping, windows and recursive local CTEs remain unsupported. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
+Tuple UPDATE assignments support explicit values and scalar SELECT tuples, including source-free expressions, relational/collection/JSON-iterator lookups, joins, derived sources and nonrecursive local CTEs. Source-expression ordering and LIMIT/OFFSET are supported; candidates are evaluated before mutation and retain typed values. Current write limits include INSERT SELECT limited to the current source-query subset, no UPDATE FROM, and incomplete expression type propagation. Tuple SELECT assignments with FROM sources now support explicit/elided projection aliases, including duplicate output names; a positional CTE column list preserves each assigned value while keeping ORDER BY in the original alias scope. Sourceful tuple SELECT assignments also retain positional ORDER BY against their original projections. Source-free tuple SELECTs also support positional ordering when projections have no explicit aliases. Source-free explicit projection aliases, compounds, DISTINCT, grouping, windows and recursive local CTEs remain unsupported. The full V1 scope remains unchanged. Resource limits and catalog concurrency still need release-level verification.
 
 ## Catalog lifecycle notes
 
@@ -4857,3 +4857,20 @@ FastDB/frontend-test Clippy with warnings denied. Logs:
 `/tmp/fastdb-tuple-position-clippy-final.log`. This is focused evidence from
 `c9baafcc7` plus the change; no new full-suite or Node run is claimed. No upstream
 source, dependency or storage format changes; no publication. Full V1 remains open.
+
+
+## Source-free tuple positional ordering — 2026-09-09
+
+Source-free tuple SELECT assignments without explicit projection aliases now
+retain positional ORDER BY inside the original SELECT. Projection and predicate
+fields bind to the pre-update target before introducing the packing CTE.
+Differential coverage verifies first/second positions, parentheses, conditional
+empty rows, LIMIT 0 and OFFSET past the row. An obsolete valid-position rejection
+test now checks an out-of-range position instead. Source-free explicit aliases
+and the remaining tuple restrictions are still open.
+
+All 25 write tests passed, with scoped formatting and all-target FastDB/frontend-
+test Clippy with warnings denied. Logs `/tmp/fastdb-source-free-position-final.log`
+and `/tmp/fastdb-source-free-position-clippy.log`. This is focused evidence from
+`56651b0c9` plus the change; no full-suite or client rerun is claimed. No upstream,
+dependency or storage format changes; no publication. Full V1 remains open.

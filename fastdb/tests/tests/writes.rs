@@ -382,7 +382,7 @@ fn explicit_tuple_updates_preserve_snapshots_and_atomic_validation() {
         "UPDATE docs SET (a,b)=(1,2),a=3",
         "UPDATE docs SET (id,a)=(docs:other,1)",
         "UPDATE docs SET (a,b)=(1,2,3)",
-        "UPDATE docs SET (a,b)=(SELECT b,a ORDER BY 2)",
+        "UPDATE docs SET (a,b)=(SELECT b,a ORDER BY 3)",
     ] {
         assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
     }
@@ -1112,6 +1112,29 @@ fn tuple_lookup_aliases_match_native() {
             assert_eq!(native.code(), "FDB_ENGINE");
             assert_eq!(error.code(), "FDB_VALIDATION", "{source}: {order}");
             assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, before);
+            q(&c, "ROLLBACK");
+        }
+    }
+}
+
+#[test]
+fn source_free_tuple_positions_preserve_candidates_and_empty_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,6,11),(2,8,9)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for order in ["1", "2 DESC", "(2)"] {
+        for tail in ["", " LIMIT 0", " LIMIT 1 OFFSET 1"] {
+            q(&c, "BEGIN");
+            let expected = q(&c, &format!("UPDATE native SET (a,b)=(SELECT b,a WHERE n=1 ORDER BY {order}{tail}) RETURNING n,a,b"));
+            let sql = format!("UPDATE docs SET (a,b)=(SELECT b,a WHERE n=1 ORDER BY {order}{tail}) RETURNING n,a,b");
+            assert_eq!(q(&c, &sql).rows, expected.rows, "{sql}");
             q(&c, "ROLLBACK");
         }
     }

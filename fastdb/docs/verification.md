@@ -3841,3 +3841,20 @@ FastDB/frontend-test Clippy with warnings denied. Logs:
 `/tmp/fastdb-tuple-position-clippy-final.log`. This is focused evidence from
 `c9baafcc7` plus the change; no new full-suite or Node run is claimed. No upstream
 source, dependency or storage format changes; no publication. Full V1 remains open.
+
+
+## Source-free tuple positional ordering — 2026-09-09
+
+Source-free tuple SELECT assignments without explicit projection aliases now
+retain positional ORDER BY inside the original SELECT. Projection and predicate
+fields bind to the pre-update target before introducing the packing CTE.
+Differential coverage verifies first/second positions, parentheses, conditional
+empty rows, LIMIT 0 and OFFSET past the row. An obsolete valid-position rejection
+test now checks an out-of-range position instead. Source-free explicit aliases
+and the remaining tuple restrictions are still open.
+
+All 25 write tests passed, with scoped formatting and all-target FastDB/frontend-
+test Clippy with warnings denied. Logs `/tmp/fastdb-source-free-position-final.log`
+and `/tmp/fastdb-source-free-position-clippy.log`. This is focused evidence from
+`56651b0c9` plus the change; no full-suite or client rerun is claimed. No upstream,
+dependency or storage format changes; no publication. Full V1 remains open.

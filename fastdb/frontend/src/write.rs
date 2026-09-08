@@ -622,17 +622,30 @@ impl Connection {
                         if !window_clause.is_empty() || columns.len() != set.col_names.len() {
                             return Err(unsupported("tuple SELECT assignment shape or arity"));
                         }
-                        if (positional_order || columns.iter().any(|column| {
+                        let explicit_aliases = columns.iter().any(|column| {
                             matches!(column, ResultColumn::Expr(_, Some(alias)) if alias.is_explicit())
-                        })) && from.is_some()
+                        });
+                        if (positional_order || explicit_aliases)
+                            && (from.is_some() || !explicit_aliases)
                         {
                             let mut packed = Vec::new();
-                            for (position, column) in columns.iter().enumerate() {
+                            for (position, column) in columns.iter_mut().enumerate() {
                                 let ResultColumn::Expr(value, _) = column else {
                                     return Err(unsupported("tuple SELECT projection"));
                                 };
                                 safe_value_expression(value)?;
+                                if from.is_none() {
+                                    bind_source_free_tuple_field(value, &update.tbl_name)?;
+                                }
                                 packed.push(format!("tuple_column_{position}"));
+                            }
+                            if from.is_none() {
+                                if let Some(predicate) = where_clause {
+                                    bind_source_free_tuple_field(predicate, &update.tbl_name)?;
+                                }
+                                for sort in &mut select.order_by {
+                                    bind_source_free_tuple_field(&mut sort.expr, &update.tbl_name)?;
+                                }
                             }
                             // Preserve the original alias scope and evaluate each
                             // selected row before packing its tuple result.
