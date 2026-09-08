@@ -1629,6 +1629,22 @@ mod cte_evaluation_tests {
                 "n IN(SELECT cte_tick() INTERSECT SELECT n ORDER BY 1 DESC LIMIT 1)",
                 "n IN(SELECT cte_tick() EXCEPT SELECT n ORDER BY 1 LIMIT 1)",
                 "n IN(SELECT cte_tick() EXCEPT SELECT n ORDER BY 1 DESC LIMIT 1)",
+                "n IN(SELECT cte_tick() UNION ALL SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() UNION ALL SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n IN(SELECT cte_tick() UNION ALL SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() UNION ALL SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
+                "n IN(SELECT cte_tick() UNION SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() UNION SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n IN(SELECT cte_tick() UNION SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() UNION SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
+                "n IN(SELECT cte_tick() INTERSECT SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() INTERSECT SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n IN(SELECT cte_tick() INTERSECT SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() INTERSECT SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
+                "n IN(SELECT cte_tick() EXCEPT SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() EXCEPT SELECT n ORDER BY 1 LIMIT 1 OFFSET 1)",
+                "n IN(SELECT cte_tick() EXCEPT SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
+                "n NOT IN(SELECT cte_tick() EXCEPT SELECT n ORDER BY 1 DESC LIMIT 1 OFFSET 1)",
             ] {
                 for limit in ["", " LIMIT 0"] {
                     let query = |source: &str| {
