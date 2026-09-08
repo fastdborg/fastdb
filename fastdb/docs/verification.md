@@ -3649,3 +3649,13 @@ CTE write tests passed, plus formatting and all-target fastdb-tests Clippy with
 warnings denied. Logs `/tmp/fastdb-tuple-cte-columns.log` and
 `/tmp/fastdb-tuple-cte-columns-clippy.log`. Only tests/documentation changed from
 `52c8f5834`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Derived tuple lookup sources — 2026-09-09
+
+The sourceful tuple lookup matrix now includes derived SELECTs over relational
+and collection sources. Correlated results and unmatched NULL tuples retain
+native parity across the extra source boundary. All twenty-two write tests and
+scoped formatting passed. Log `/tmp/fastdb-tuple-derived.log`. Only source SQL
+fixtures/documentation changed from `a35fced71`; no new full-suite/client or
+Clippy run is claimed. Full V1 gates remain open.

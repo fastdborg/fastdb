@@ -678,7 +678,12 @@ fn sourceful_tuple_select_lookups_match_native_rows() {
         &c,
         "INSERT INTO lookup_docs(n,a,b) SELECT n,a,b FROM lookup",
     );
-    for source in ["lookup", "lookup_docs"] {
+    for source in [
+        "lookup",
+        "lookup_docs",
+        "(SELECT n,a,b FROM lookup)",
+        "(SELECT n,a,b FROM lookup_docs)",
+    ] {
         q(&c, "BEGIN");
         let expected=q(&c,"UPDATE native SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=native.n) RETURNING n,a,b");
         assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM {source} x WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows);
