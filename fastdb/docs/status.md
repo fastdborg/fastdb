@@ -2899,3 +2899,18 @@ All six write-buffer integration tests passed, including these two workflow case
 log: `/tmp/fastdb-buffer-workflows.log`. Scoped formatting passed. No production
 code changed, so broader Rust/Node suites were not repeated. Resource and V1 release
 gates remain open.
+
+### CLI connection write buffer policy
+
+The CLI accepts `--write-buffer-limits ROWS BYTES`, applying the existing connection
+policy to SQL input and migrations before executing work. Both counters allow zero
+and require platform-sized nonnegative integers. Duplicate policies and transfer
+or audit combinations are rejected. The option is disabled by default and does not
+change returned-result budgets or establish a process memory cap.
+
+All 25 CLI package tests passed, including new line-mode limit rejection, active
+transaction preservation, smaller-write retry, rollback and invalid-option checks
+that prove storage was not opened. Scoped formatting and Clippy passed. Logs:
+`/tmp/fastdb-cli-write-buffers.log` and
+`/tmp/fastdb-cli-write-buffers-clippy.log`. No frontend implementation changed;
+broader suites were not repeated. Broader resource and V1 release gates remain open.

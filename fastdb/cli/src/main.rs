@@ -38,6 +38,7 @@ fn output_with_metrics(
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut path = None;
     let mut input_limit = None;
+    let mut write_buffer_limits = None;
     let mut line_mode = false;
     let mut interactive = false;
     let mut script_mode = false;
@@ -51,6 +52,21 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--write-buffer-limits" => {
+                if write_buffer_limits.is_some() {
+                    return Err("choose one write buffer policy".into());
+                }
+                write_buffer_limits = Some(fastdb::ResultLimits {
+                    max_rows: args
+                        .next()
+                        .ok_or("expected write buffer row limit")?
+                        .parse::<usize>()?,
+                    max_payload_bytes: args
+                        .next()
+                        .ok_or("expected write buffer byte limit")?
+                        .parse::<usize>()?,
+                });
+            }
             "--max-input-bytes" => {
                 let limit = args
                     .next()
@@ -109,7 +125,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
+                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\n--write-buffer-limits ROWS BYTES caps each frontend collection-write buffer for SQL input and migrations.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
                 io::stdout().lock().flush()?;
                 return Ok(std::process::ExitCode::SUCCESS);
             }
@@ -149,6 +165,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             || transfer.is_some()
             || history.is_some()
             || input_limit.is_some()
+            || write_buffer_limits.is_some()
         {
             return Err("collection audit cannot be combined with input, history, migration or transfer options".into());
         }
@@ -163,6 +180,9 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             limits.max_encoded_bytes = value;
         }
         return run_audit(path, &table, limits);
+    }
+    if write_buffer_limits.is_some() && transfer.is_some() {
+        return Err("write buffer limits apply only to SQL input and migrations".into());
     }
     let interactive_mode = interactive || (!line_mode && !script_mode && io::stdin().is_terminal());
     let terminal = interactive_mode
@@ -185,6 +205,11 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     let input_limit = input_limit.unwrap_or(16 * 1024 * 1024);
     let db = Database::open(path.as_deref().unwrap_or(":memory:"))?;
     let conn = db.connect()?;
+    let conn = if let Some(limits) = write_buffer_limits {
+        conn.with_write_buffer_limits(limits)
+    } else {
+        conn
+    };
     #[cfg(unix)]
     let _interrupts = if terminal {
         Some(signals::Interrupts::new(conn.interrupt_handle())?)

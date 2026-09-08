@@ -65,6 +65,16 @@ it by consuming the connection with the builder again allows a retry; this does
 not alter transaction state. This is initial buffer coverage, not a completed V1
 memory/resource guarantee.
 
+The CLI accepts `--write-buffer-limits ROWS BYTES` for SQL input modes and
+`--migrate`. Both values are nonnegative decimal integers fitting the platform's
+`usize`; the policy is fixed for the process connection and disabled by default.
+Transfer and integrity-audit modes reject this option because their separate
+policies apply. For example:
+
+```sh
+fastdb-cli --write-buffer-limits 10000 67108864 --script app.db < changes.sql
+```
+
 The policy also applies to collection writes executed by batches and migrations.
 A batch reports `FDB_LIMIT` for the rejected statement and stops before later
 statements; earlier successful statements keep their normal transaction state.
