@@ -3726,3 +3726,14 @@ and all-target fastdb-tests Clippy with warnings denied. Logs
 `/tmp/fastdb-derived-sort.log` and `/tmp/fastdb-derived-sort-clippy.log`.
 Only tests/documentation changed from `9628a9552`; no new full-suite/client run
 is claimed. Full V1 gates remain open.
+
+
+## Nested derived sort keys — 2026-09-09
+
+The direct logical-order regression now includes an unprojected nested numeric
+field through a derived source. Execute/profile preserve ascending/descending
+numeric order across negative and different-width positive values. All thirty-
+two derived-query tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-derived-nested-sort.log` and
+`/tmp/fastdb-derived-nested-sort-clippy.log`. Only tests/documentation changed
+from `278c6e294`; no new full-suite/client run is claimed. Full V1 gates remain open.

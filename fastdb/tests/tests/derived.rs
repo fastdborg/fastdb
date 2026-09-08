@@ -1354,7 +1354,12 @@ fn unprojected_derived_sort_keys_use_logical_numeric_order() {
     ] {
         c.execute(sql, &p).unwrap();
     }
-    for source in ["(SELECT label,n FROM docs) x", "chosen x"] {
+    c.execute("UPDATE docs SET payload.n=n", &p).unwrap();
+    for (source, key) in [
+        ("(SELECT label,n FROM docs) x", "x.n"),
+        ("chosen x", "x.n"),
+        ("(SELECT label,payload FROM docs) x", "x.payload.n"),
+    ] {
         let prefix = if source == "chosen x" {
             "WITH chosen AS (SELECT label,n FROM docs) "
         } else {
@@ -1364,7 +1369,7 @@ fn unprojected_derived_sort_keys_use_logical_numeric_order() {
             ("ASC", vec!["negative", "six", "eleven"]),
             ("DESC", vec!["eleven", "six", "negative"]),
         ] {
-            let sql = format!("{prefix}SELECT x.label FROM {source} ORDER BY x.n {direction}");
+            let sql = format!("{prefix}SELECT x.label FROM {source} ORDER BY {key} {direction}");
             let expected = labels
                 .into_iter()
                 .map(|s| vec![Value::String(s.into())])
