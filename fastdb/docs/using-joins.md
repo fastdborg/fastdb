@@ -119,3 +119,6 @@ Correlated EXISTS/NOT EXISTS and IN/NOT IN now have 72 native execute/profile co
 
 
 Closed derived SELECT sources are now included in inner correlated-key lookup. Named and unnamed native derived sources expose their output names for local-column shadowing; explicit derived aliases also participate in native qualified-reference scope filtering. The added 72 execute/profile comparisons cover outer merged/qualified keys and local same-name columns through direct/nested scalar wrappers, USING/NATURAL joins and each supported outer join direction. Broader logical derived sources, WITH/compound enclosing scopes, alias collisions and full correlation remain unqualified.
+
+
+Inner native derived scalar affinity/collation coverage includes 72 execute/profile comparisons for TEXT/NOCASE, unary plus, numeric CAST and RTRIM through ordered/paginated direct and nested scalars.

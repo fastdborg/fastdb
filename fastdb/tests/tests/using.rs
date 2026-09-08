@@ -2032,3 +2032,56 @@ fn using_correlated_membership_and_exists_preserve_null_and_empty_sets() {
         }
     }
 }
+
+#[test]
+fn using_inner_derived_scalars_preserve_affinity_and_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "INSERT INTO docs {k:2}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(3)",
+        "CREATE TABLE nums(n INTEGER,v TEXT COLLATE NOCASE)",
+        "INSERT INTO nums VALUES(0,'01'),(1,'A'),(2,'a ')",
+    ] {
+        query(sql);
+    }
+    for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+        for projection in ["v", "+v", "CAST(v AS NUMERIC)", "v COLLATE RTRIM"] {
+            for comparison in ["=1", "='a'", "='a '"] {
+                for nested in [false, true] {
+                    let scalar = format!("(SELECT {projection} FROM (SELECT n,v FROM nums) q WHERE n<k ORDER BY n DESC LIMIT 1)");
+                    let scalar = if nested {
+                        format!("(SELECT {scalar})")
+                    } else {
+                        scalar
+                    };
+                    let sql = |source: &str| {
+                        format!("SELECT k,{scalar}{comparison} AS v FROM {source} a {join} b USING(k) ORDER BY k")
+                    };
+                    let expected = query(&sql("baseline"));
+                    let logical = sql("docs");
+                    let actual = query(&logical);
+                    assert_eq!(actual.columns, expected.columns, "{logical}");
+                    assert_eq!(actual.rows, expected.rows, "{logical}");
+                    assert_eq!(
+                        c.profile_select(&logical, &Parameters::new())
+                            .unwrap()
+                            .result
+                            .rows,
+                        expected.rows,
+                        "{logical}"
+                    );
+                }
+            }
+        }
+    }
+}
