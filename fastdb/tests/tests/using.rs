@@ -410,3 +410,62 @@ fn using_group_aliases_and_ordering_match_native_closed_sources() {
         }
     }
 }
+
+#[test]
+fn using_window_keys_and_windowed_writes_preserve_native_results() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "INSERT INTO docs {k:2}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1),(2)",
+        "CREATE TABLE b(k INTEGER,n INTEGER)",
+        "INSERT INTO b VALUES(1,10),(1,20),(2,30)",
+    ] {
+        query(sql);
+    }
+    for (window, clause) in [
+        ("(PARTITION BY k ORDER BY b.n)", ""),
+        ("w", " WINDOW w AS (PARTITION BY k ORDER BY b.n)"),
+    ] {
+        let sql = |source: &str| {
+            format!("SELECT k,row_number() OVER {window} AS r,sum(b.n) OVER {window} AS total FROM {source} a JOIN b USING(k){clause} ORDER BY k,b.n")
+        };
+        let expected = query(&sql("baseline"));
+        for source in ["docs", "(SELECT k FROM docs)"] {
+            let logical = sql(source);
+            let actual = query(&logical);
+            assert_eq!(actual.columns, expected.columns);
+            assert_eq!(actual.rows, expected.rows, "{logical}");
+            assert_eq!(
+                c.profile_select(&logical, &Parameters::new())
+                    .unwrap()
+                    .result
+                    .rows,
+                expected.rows
+            );
+        }
+    }
+    query("CREATE TABLE copied(k INTEGER,r INTEGER CHECK(r=1))");
+    query("INSERT INTO copied VALUES(99,1)");
+    query("BEGIN");
+    let insert = "INSERT INTO copied SELECT k,row_number() OVER(PARTITION BY k ORDER BY b.n) FROM docs a JOIN b USING(k)";
+    assert!(c.execute(insert, &Parameters::new()).is_err());
+    assert_eq!(
+        query("SELECT * FROM copied").rows,
+        vec![vec![Value::Integer(99), Value::Integer(1)]]
+    );
+    query(&format!("{insert} WHERE b.n<>20"));
+    assert_eq!(
+        query("SELECT count(*) FROM copied").rows,
+        vec![vec![Value::Integer(3)]]
+    );
+    query("ROLLBACK");
+    assert_eq!(
+        query("SELECT * FROM copied").rows,
+        vec![vec![Value::Integer(99), Value::Integer(1)]]
+    );
+}

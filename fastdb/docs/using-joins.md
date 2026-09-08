@@ -30,3 +30,5 @@ Initial implementation verification covers 24 closed-source read shapes (inner/l
 A 27-case multi-key implementation matrix now matches native output names and rows for reordered/case-varied/quoted key lists, INNER/LEFT/RIGHT joins and post-join NULL/merged-key filtering through execute/profile.
 
 Closed-source grouping/alias qualification now includes eight normal/profiled native comparisons for source-column precedence, HAVING aliases, ordinal grouping and ordering. Open-schema alias nuances and broader window/correlated scopes remain open.
+
+Inline/named window merged-key partitions and windowed checked writes now have initial read/profile/failure/retry/rollback coverage. A concrete remaining correlation gap is an unqualified outer merged key inside `(SELECT k)`: native USING resolves it, while the logical path currently reports no such column. Merged bindings must reach expression-subquery planning, preserving local shadowing.

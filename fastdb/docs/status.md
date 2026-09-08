@@ -2052,3 +2052,8 @@ Multi-key collection USING qualification (2026-09-08): a 27-case differential ma
 
 
 USING grouped-alias qualification (2026-09-08): an eight-case closed-source differential matrix passes through execute/profile. It covers merged keys, aggregate aliases in HAVING, a same-name shifted projection, a same-name constant projection that must retain separate source groups, GROUP BY ordinals and output ordering. Native result names and rows match. Production code is unchanged; formatting and the focused regression pass. Latest full scoped evidence remains 443 Rust/48 Node with one ignored Rust gate. Open-schema alias nuances, windows/correlation and broader V1 qualification remain open.
+
+
+USING window/write qualification (2026-09-08): inline and named window partitions on merged keys match native results for direct collections and closed derived sources through execute/profile. A windowed native INSERT SELECT CHECK failure preserves prior rows; filtered retry succeeds and outer rollback retains only pre-existing data. Formatting and the focused regression pass; production code is unchanged.
+
+A current correlation probe remains open: SELECT k,(SELECT k) AS v FROM a JOIN b USING(k) returns (1,1) for native one-row tables, while a logical derived collection source fails with no such column: k. Merged bindings currently enter the final scope after expression-subquery planning; outer merged-key visibility needs implementation. Latest full scoped evidence remains 443 Rust/48 Node with one ignored Rust gate; full V1 qualification remains open.
