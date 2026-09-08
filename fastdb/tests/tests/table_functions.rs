@@ -782,3 +782,65 @@ fn iterator_subqueries_resolve_outer_collection_fields() {
         0
     );
 }
+
+#[test]
+fn malformed_iterator_input_reports_native_rollback_and_allows_retry() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT)",
+        "INSERT INTO native VALUES(1,'[1]'),(2,'invalid')",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) SELECT n,j FROM native",
+        "CREATE TABLE output",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "INSERT INTO output(n) VALUES(-1)",
+    ] {
+        c.execute(sql, &params).unwrap();
+    }
+    for source in ["native", "docs"] {
+        for iterator in ["json_each", "json_tree"] {
+            let query=format!("SELECT x.value AS n FROM {source} d CROSS JOIN {iterator}(d.j) x WHERE x.type='integer' ORDER BY d.n,x.id");
+            let insert = format!("INSERT INTO output(n) {query} RETURNING n");
+            for mode in 0..3 {
+                c.execute("BEGIN", &params).unwrap();
+                c.execute("INSERT INTO output(n) VALUES(0)", &params)
+                    .unwrap();
+                let error = match mode {
+                    0 => c.execute(&query, &params).unwrap_err(),
+                    1 => c.profile_select(&query, &params).unwrap_err(),
+                    _ => c.execute(&insert, &params).unwrap_err(),
+                };
+                assert_eq!(error.code(), "FDB_ENGINE");
+                assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+                assert_eq!(
+                    c.execute("SELECT n FROM output", &params).unwrap().rows,
+                    vec![vec![Value::Integer(-1)]]
+                );
+                assert!(c
+                    .lookup_index("output", "output_n", &Value::Integer(1))
+                    .unwrap()
+                    .is_empty());
+                assert_eq!(
+                    c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+                        .unwrap()
+                        .index_entries,
+                    1
+                );
+            }
+            c.execute(&format!("UPDATE {source} SET j='[2]' WHERE n=2"), &params)
+                .unwrap();
+            assert_eq!(
+                c.execute(&insert, &params).unwrap().rows,
+                vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+            );
+            c.execute("DELETE FROM output WHERE n>0", &params).unwrap();
+            c.execute(
+                &format!("UPDATE {source} SET j='invalid' WHERE n=2"),
+                &params,
+            )
+            .unwrap();
+        }
+    }
+}

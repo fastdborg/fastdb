@@ -1138,3 +1138,12 @@ pre-evaluated during inspection. Aggregate/window argument forms retain native
 rejection or the frontend scope guard. Broader typed helper and general
 table-function support remain open. Ordinary SQL retains native delegation for
 supported forms outside collection lowering.
+
+
+Malformed JSON iterator input is a native engine error (FDB_ENGINE). On the
+pinned engine it can abort the entire active transaction, including prior
+uncommitted work, even when encountered by SELECT or profile. Native and
+collection sources have matching regression coverage. Committed data remains
+intact and corrected input can be retried after the rollback. Inspect the
+reported transaction state; statement-level validation recovery does not imply
+that native engine errors preserve the enclosing transaction.

@@ -4007,3 +4007,22 @@ fixture extension only, based on `c0dc21f06`; no implementation or dependency
 change, full-suite rerun or new client result is claimed. The complete scoped
 baseline remains 570 Rust and 81 Node/application passes with one ignored trigger
 gate. Broader nested-query qualification and full V1 release gates remain open.
+
+
+## Malformed iterator input and native transaction rollback — 2026-09-08
+
+A new regression establishes that malformed JSON in a later per-row input aborts
+the pinned engine's active transaction, even for SELECT. Ordinary native and
+collection sources agree through execute, profile and INSERT SELECT RETURNING
+for json_each/json_tree. The test verifies FDB_ENGINE, autocommit afterward,
+rollback of prior uncommitted work, preservation of committed data/indexes and
+corrected input retry. The contract now distinguishes this native transaction-wide
+rollback from statement-level validation recovery.
+
+All twelve iterator integration tests passed, along with formatting and
+fastdb-tests all-target Clippy with warnings denied. Logs:
+`/tmp/fastdb-malformed-iterators.log` and
+`/tmp/fastdb-malformed-iterators-clippy.log`. Only tests/documentation changed from
+`c2fd7feb2`; no new complete-suite or client run is claimed. The full scoped
+baseline remains 570 Rust and 81 Node/application passes with one ignored trigger
+gate. Full V1 release gates remain open; no publication occurred.
