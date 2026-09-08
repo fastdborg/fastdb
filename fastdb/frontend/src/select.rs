@@ -3350,7 +3350,7 @@ impl Connection {
                         }
                         cte.columns
                             .iter()
-                            .map(|c| c.col_name.as_str().to_owned())
+                            .map(|c| c.col_name.as_str().to_ascii_lowercase())
                             .collect()
                     };
                     let physical = derived_physical_names(&names);
@@ -4202,8 +4202,21 @@ impl Connection {
                     let field = scope.field(&expr)?;
                     let name = if let Some(alias) = alias.as_ref().filter(|a| a.is_explicit()) {
                         alias.name().as_str().to_owned()
-                    } else if let Some((_, path)) = &field {
-                        path.last().expect("nonempty path").clone()
+                    } else if let Some((index, path)) = &field {
+                        let name = path.last().expect("nonempty path");
+                        if path.len() == 1 {
+                            scope.sources[*index]
+                                .derived
+                                .as_ref()
+                                .and_then(|columns| {
+                                    columns
+                                        .iter()
+                                        .find(|(column, _)| column.eq_ignore_ascii_case(name))
+                                })
+                                .map_or_else(|| name.clone(), |(column, _)| column.clone())
+                        } else {
+                            name.clone()
+                        }
                     } else if let Some((_, column)) = match &expr {
                         Expr::Id(name) | Expr::Name(name) => scope
                             .using

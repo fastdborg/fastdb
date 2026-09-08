@@ -390,7 +390,14 @@ fn duplicate_collection_cte_names_preserve_positions_types_and_chains() {
         "q(x,X) AS (SELECT flag,data FROM docs ORDER BY n)",
         "q(x,X) AS MATERIALIZED (SELECT flag,data FROM docs ORDER BY n)",
     ] {
-        let expected = q(&c, "SELECT flag AS x,data AS X FROM docs ORDER BY n");
+        let mut expected = q(&c, "SELECT flag AS x,data AS X FROM docs ORDER BY n");
+        // Explicit CTE column lists use the engine's ASCII case folding;
+        // aliases inherited from the SELECT body retain their spelling.
+        let native_definition = definition
+            .replace("flag", "1")
+            .replace("data", "2")
+            .replace(" FROM docs ORDER BY n", "");
+        expected.columns = q(&c, &format!("WITH {native_definition} SELECT q.* FROM q")).columns;
         for tail in [
             "SELECT q.* FROM q",
             ", r AS (SELECT q.* FROM q) SELECT r.* FROM r",

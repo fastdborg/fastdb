@@ -53,3 +53,6 @@ Managed-index coverage compares nine join/filter shapes before/after index creat
 
 
 Renamed and chained CTE keys now have 27 execute/profile differential shapes across default/MATERIALIZED/NOT MATERIALIZED sources and INNER/LEFT/RIGHT joins. A merged native key uses its resolved public name instead of an SQL-quoted expression label. Materialization evaluation counts remain separate qualification.
+
+
+Quoted-key metadata now has 27 execute/profile native comparisons for mixed case, spaces, keywords and explicit aliases. Explicit CTE names follow pinned ASCII lowercase normalization; qualified typed projections retain declared names.

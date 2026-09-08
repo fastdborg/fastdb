@@ -835,3 +835,49 @@ fn using_cte_renamed_keys_preserve_materialized_and_chained_results() {
         }
     }
 }
+
+#[test]
+fn using_quoted_key_labels_and_explicit_aliases_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1}",
+        "CREATE TABLE baseline(k INTEGER)",
+        "INSERT INTO baseline VALUES(1)",
+        "CREATE TABLE b(k INTEGER)",
+        "INSERT INTO b VALUES(1),(2)",
+    ] {
+        query(sql);
+    }
+    for key in ["\"Key\"", "\"odd key\"", "\"select\""] {
+        for join in ["JOIN", "LEFT JOIN", "RIGHT JOIN"] {
+            for projection in [
+                key.to_owned(),
+                format!("{key} AS \"public name\""),
+                format!("a.{key},b.{key}"),
+            ] {
+                let sql = |source: &str| {
+                    format!(
+                    "WITH q({key}) AS (SELECT k FROM {source}), r({key}) AS (SELECT k FROM b) SELECT {projection} FROM q a {join} r b USING({key}) ORDER BY b.{key}"
+                )
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                let profiled = c
+                    .profile_select(&logical, &Parameters::new())
+                    .unwrap()
+                    .result;
+                assert_eq!(profiled.columns, expected.columns, "{logical}");
+                assert_eq!(profiled.rows, expected.rows, "{logical}");
+            }
+        }
+    }
+}
