@@ -933,10 +933,24 @@ impl Connection {
         table: &QualifiedName,
         with: Option<With>,
         predicate: Option<Box<Expr>>,
-        limit: Option<Limit>,
+        mut limit: Option<Limit>,
         assignments: &[Expr],
         params: &Parameters,
     ) -> Result<Vec<Vec<Value>>> {
+        if let Some(limit) = &mut limit {
+            for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
+                let mut failure = None;
+                turso_core::walk_expr_mut(value, &mut |expr| {
+                    if failure.is_none() {
+                        failure = parameter(expr, params).err();
+                    }
+                    Ok(turso_core::WalkControl::Continue)
+                })?;
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+            }
+        }
         for expr in assignments {
             safe_candidate_assignment(expr)?;
         }

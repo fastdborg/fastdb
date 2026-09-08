@@ -2794,3 +2794,32 @@ test('aggregate tuples preserve empty groups and rollback in both clients', asyn
     } finally { await db.close(); }
   }
 });
+
+test('limited writes bind pagination and preserve transaction recovery in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('INSERT INTO docs(n) VALUES(1),(2),(3)');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      for (const write of ['UPDATE docs SET n=n+10', 'DELETE FROM docs']) {
+        await db.execute('BEGIN');
+        await db.execute('INSERT INTO docs(n) VALUES(4)');
+        const sql = write + ' LIMIT $count OFFSET $skip';
+        await assert.rejects(async () => db.execute(sql, { $count: 1n }), error => error.code === 'FDB_PARAMETER');
+        assert.deepEqual((await db.execute('SELECT n FROM docs ORDER BY n')).rows, [[1n],[2n],[3n],[4n]]);
+        const zero = await db.execute(sql, { $count: 0n, $skip: 1n });
+        assert.equal(zero.affected, 0n);
+        const result = await db.execute(sql, { $count: 1n, $skip: 1n });
+        assert.equal(result.affected, 1n);
+        assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
+        const rows = (await db.execute('SELECT n FROM docs ORDER BY n')).rows;
+        assert.equal(rows.length, write.startsWith('UPDATE') ? 4 : 3);
+        assert.equal(rows.filter(([n]) => n > 10n).length, write.startsWith('UPDATE') ? 1 : 0);
+        await db.execute('ROLLBACK');
+        assert.deepEqual((await db.execute('SELECT n FROM docs ORDER BY n')).rows, [[1n],[2n],[3n]]);
+      }
+    } finally { await db.close(); }
+  }
+});

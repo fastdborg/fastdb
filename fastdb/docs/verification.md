@@ -4351,3 +4351,22 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-delete-limit-check.log`. No upstream source, dependency or storage
 format changes; no publication occurred. Full V1 remains open.
+
+
+## Limited-write parameter validation — 2026-09-09
+
+The shared collection candidate path now checks LIMIT/OFFSET expression
+parameters before dispatch. A missing OFFSET binding previously reached the
+engine as NULL and produced a datatype-mismatch FDB_CONSTRAINT; it now reports
+FDB_PARAMETER before candidate execution. Both Node clients exercise missing
+bindings, a zero limit, a successful bound limit/offset retry, transaction
+reports and rollback preserving the original documents. The fixture includes
+a managed unique index and prior pending inserts. Broader pagination coercion,
+planner and cancellation qualification remains open.
+
+The complete scoped check passed on `013dc5309` plus this change: 611 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+88 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-limited-write-bind-check-verified.log`. No upstream source,
+dependency or storage-format changes. Full V1 remains open; no publication.
