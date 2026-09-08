@@ -1,4 +1,4 @@
-# Embedded V1 gate review — 2026-09-07
+# Embedded V1 gate review — 2026-09-08
 
 This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 478 passing Rust tests with one ignored trigger-cancellation gate, 49 passing Node/application tests, formatting, Clippy and strict TypeScript. Later focused checks are recorded below and in verification.md. Installed-package evidence is recorded separately. See verification.md for exact runs and limitations.
 
@@ -18,7 +18,37 @@ This is a navigation and prioritization aid, not a replacement for the parent Fa
 
 Cloud beta requirements remain deferred until after embedded V1. They do not block embedded implementation. V2 inverse links, indexed ANN/FTS/spatial and user scripts are not substitutes for unfinished V1 work.
 
-## Current SQL probes and implementation priorities
+## Current SQL priorities — rechecked 2026-09-08
+
+Rechecked the current debug Node addon built by the complete scoped run at `a631f64ec`; subsequent commits contain test/documentation changes. Fixture: `docs` and `native(n INTEGER)` contain 1,2,3; `keys(n INTEGER)` contains 1,4. Every probe runs inside BEGIN/ROLLBACK. Raw local output: `/tmp/fastdb-current-sql-gaps.log`.
+
+| Probe | Pinned ordinary SQL | Collection route | Next action |
+|---|---|---|---|
+| Qualified outer scalar: `SELECT d.n,(SELECT max(n) FROM native WHERE n<d.n) FROM source d ORDER BY d.n` | `(1,NULL),(2,1),(3,2)` | Same | Resolved example; broaden only against a concrete uncovered requirement |
+| Basic WITH UPDATE selecting key 2 | Returns 12, affects 1 | Same | Resolved example |
+| Chained CTE named after the UPDATE target | Returns 11,12,13, affects 3 | `no such column: n` | Preserve pinned write-context name binding, including target aliases; candidate SELECT semantics alone are insufficient |
+| Inner WITH scalar below | `(1,NULL),(4,3)` | `no such column: n` | Carry outer merged keys through the inner CTE scope without capturing local columns |
+| Inner derived alias collision below | `(1,0),(4,2)` | `no such column: n` | Bind an unqualified outer key without qualifying it through a shadowed alias |
+| Source-free scalar UNION ALL using outer keys | Native rejects compound WHERE-clause subquery | Collection rejects unresolved key | Preserve the pinned limitation; do not treat this probe as a required new compound capability |
+
+Reproducers for the three open name-resolution gaps:
+
+```sql
+WITH docs AS (SELECT 2 AS n), chosen AS (SELECT n FROM docs)
+UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n;
+
+SELECT n,(WITH chosen AS (SELECT n AS m FROM native)
+          SELECT max(m) FROM chosen WHERE m<n) AS prior
+FROM docs a RIGHT JOIN keys b USING(n) ORDER BY n;
+
+SELECT n,(SELECT max(m) FROM (SELECT 0 AS m UNION ALL SELECT 2) b
+          WHERE m<n) AS v
+FROM docs a RIGHT JOIN keys b USING(n) ORDER BY n;
+```
+
+For the ordinary oracle, replace the outer/write `docs` source with `native`; in the first query also rename the target-named CTE and its reference to `native`. These are current reproductions, not complete release evidence. Prioritize the write-context gap because an incorrect fix can select a different mutation set. The resource, recovery, packaging/platform and application gates above remain full V1 requirements.
+
+## Historical SQL probes and implementation notes
 
 Probed the locally built addon after 41a2daf95 using matching `docs` collection and `native(n INTEGER)` rows 1, 2, 3. Each probe ran inside BEGIN/ROLLBACK, so UPDATE probes did not affect later comparisons.
 
