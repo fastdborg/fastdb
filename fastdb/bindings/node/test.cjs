@@ -2513,6 +2513,12 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       const nested=sql.replace('json_each($json)','json_each((SELECT j FROM native WHERE n=d.n))');
       assert.deepEqual((await db.execute(nested)).rows,rows);
       assert.deepEqual((await db.profileSelect(nested)).result.rows,rows);
+      const cte="SELECT d.n,x.value,y.value FROM docs d CROSS JOIN json_each('[1,2]') x CROSS JOIN json_each((WITH a AS (SELECT x.value+$delta AS n) SELECT json_array(n) FROM a)) y ORDER BY x.key";
+      const cteRows=[[1n,1n,2n],[1n,2n,3n]];
+      assert.deepEqual((await db.execute(cte,{$delta:1n})).rows,cteRows);
+      assert.deepEqual((await db.profileSelect(cte,{$delta:1n})).result.rows,cteRows);
+      await assert.rejects(async()=>db.execute(cte),error=>error.code==='FDB_PARAMETER');
+
 
 
 

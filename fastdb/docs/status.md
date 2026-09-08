@@ -3810,3 +3810,24 @@ implementation tree based on `bfdba52c5` with this change. No upstream engine or
 dependencies changed. Broader argument subquery forms, CTE/type propagation and
 correlation to iterator columns remain unqualified. Full V1 release gates remain
 active; no publication occurred.
+
+
+## Iterator correlation inside CTE definitions — 2026-09-08
+
+Native probing identified a collection mismatch for an iterator argument using
+WITH a AS (SELECT x.value AS n), where x is a preceding JSON iterator. Correlation
+scope discovery now includes supported JSON iterator metadata. The disposable
+native metadata probe also traverses nonrecursive CTE definitions with the outer
+scope, replacing outer references while retaining local alias shadowing. Runtime
+CTE definitions preserve per-row references. Differential tests cover ordinary
+inner sources, direct/chained CTEs, parameters and local aliases through execute
+and profile. A validation failure restores document/index writes, preserves prior
+transaction work and permits corrected retry; both Node clients cover bound CTE
+results and missing parameters.
+
+The full scoped check exited zero: 565 Rust tests passed, zero failed, one existing
+trigger-cancellation gate ignored; 80 Node/application tests, formatting, Clippy
+and strict TypeScript passed. Log `/tmp/fastdb-iterator-cte-check.log`, implementation
+tree based on `b95f25d6d` with this fix. No upstream implementation or dependencies
+changed. Recursive CTEs, broader type/scope qualification and full V1 release gates
+remain open; no publication occurred.

@@ -374,3 +374,64 @@ fn scalar_subquery_iterator_arguments_match_native() {
         0
     );
 }
+
+#[test]
+fn iterator_correlated_cte_arguments_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let empty = Parameters::new();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT)",
+        "INSERT INTO native VALUES(1,'[4]'),(2,'[5]')",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) SELECT n,j FROM native",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    for arg in ["(SELECT s.j FROM native s WHERE s.n=x.value)",
+        "(WITH a AS (SELECT x.value AS n) SELECT json_array(n) FROM a)",
+        "(WITH a AS (SELECT x.value AS n), b AS (SELECT n+1 AS n FROM a) SELECT json_array(n) FROM b)",
+        "(WITH a AS (SELECT x.n AS n FROM native x WHERE x.n=2) SELECT json_array(n) FROM a)",
+        "(WITH a AS (SELECT x.value+$delta AS n) SELECT json_array(n) FROM a)"] {
+        let query=|source|format!("SELECT d.n,x.value,y.value FROM {source} d CROSS JOIN json_each('[1,2]') x CROSS JOIN json_each({arg}) y ORDER BY d.n,x.key,y.key");
+        let params=if arg.contains("$delta") {Parameters::from([("$delta".into(),Value::Integer(1))])} else {empty.clone()};
+        let expected=c.execute(&query("native"),&params).unwrap();
+        let sql=query("docs");
+        for actual in [c.execute(&sql,&params).unwrap(),c.profile_select(&sql,&params).unwrap().result] {
+            assert_eq!(actual.columns,expected.columns,"{sql}");
+            assert_eq!(actual.rows,expected.rows,"{sql}");
+        }
+    }
+    for sql in [
+        "CREATE TABLE output",
+        "DEFINE FIELD n ON output TYPE integer CHECK(n<2)",
+        "CREATE UNIQUE INDEX output_n ON output(n)",
+        "BEGIN",
+        "INSERT INTO output(n) VALUES(0)",
+    ] {
+        c.execute(sql, &empty).unwrap();
+    }
+    let sql="INSERT INTO output(n) SELECT y.value FROM docs d CROSS JOIN json_each('[1,2]') x CROSS JOIN json_each((WITH a AS (SELECT x.value AS n) SELECT json_array(n) FROM a)) y WHERE d.n=1 ORDER BY x.key RETURNING n";
+    assert_eq!(c.execute(sql, &empty).unwrap_err().code(), "FDB_VALIDATION");
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        c.execute("SELECT n FROM output", &empty).unwrap().rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    assert!(c
+        .lookup_index("output", "output_n", &Value::Integer(1))
+        .unwrap()
+        .is_empty());
+    let retry = sql.replace("WHERE d.n=1", "WHERE d.n=1 AND y.value=1");
+    assert_eq!(
+        c.execute(&retry, &empty).unwrap().rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    c.execute("ROLLBACK", &empty).unwrap();
+    assert_eq!(
+        c.check_collection_integrity("output", fastdb::IntegrityLimits::default())
+            .unwrap()
+            .documents,
+        0
+    );
+}

@@ -311,13 +311,31 @@ fn native_correlated_predicate(
     mode: NativeCorrelationMode,
 ) -> Result<(Select, bool)> {
     let mut scopes = metadata_scopes.to_vec();
-    if let Some(with) = &inner.with {
+    let mut inner = inner.clone();
+    if let Some(with) = &mut inner.with {
         if with.recursive {
-            return Ok((inner.clone(), false));
+            return Ok((inner, false));
+        }
+        if metadata {
+            // CTE definitions inherit the query's outer correlation scope too.
+            // Rewrite only the disposable probe; runtime definitions keep their
+            // original per-row references and local aliases.
+            for cte in &mut with.ctes {
+                cte.select = native_correlated_predicate(
+                    connection,
+                    &scopes,
+                    &cte.select,
+                    sources,
+                    true,
+                    params,
+                    mode,
+                )?
+                .0;
+            }
         }
         scopes.push(with.clone());
     }
-    native_correlated_body(connection, &scopes, inner, sources, metadata, params, mode)
+    native_correlated_body(connection, &scopes, &inner, sources, metadata, params, mode)
 }
 
 fn native_correlated_body(
@@ -4872,7 +4890,9 @@ impl Connection {
                                     if matches!(
                                         table.as_ref(),
                                         SelectTable::Table(..) | SelectTable::Select(..)
-                                    ) {
+                                    ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _)
+                                        if name.db_name.is_none() && matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree"))
+                                    {
                                         resolved.push(source(
                                             self,
                                             table,

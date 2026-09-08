@@ -1115,8 +1115,11 @@ segments for runtime lowering.
 Scalar subqueries now use the existing query lowering inside iterator arguments.
 Constant and bound scalar SELECTs, native inner sources correlated to the outer
 collection, and coalesce composition have native differential execute/profile
-coverage and atomic write-failure/retry tests. Broader subquery forms, CTE/type
-propagation and correlation to iterator columns remain unqualified.
+coverage and atomic write-failure/retry tests. Nonrecursive CTE definitions in
+these subqueries also resolve preceding JSON iterator columns during metadata
+inspection. Initial coverage includes chained definitions, parameters, local
+alias shadowing and atomic writes. Broader subquery forms, recursive CTEs and
+complete CTE/type propagation remain unqualified.
 
 Metadata inspection substitutes NULL for complete source references and scalar
 subqueries in a disposable probe. Runtime expressions remain in SQL; they are not
