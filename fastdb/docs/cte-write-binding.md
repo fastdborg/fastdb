@@ -14,3 +14,5 @@ Evidence:
 - Constraint/retry/rollback and both Node client regressions cover related target-CTE and nested membership paths.
 
 This is initial qualification of these shapes. Correlated nested definitions, nested WITH in arbitrary expression/derived positions, recursive scopes, broader evaluation/resource behavior and complete V1 compatibility remain open. The native-rejected target-alias shapes do not establish a collection behavior contract.
+
+Nested local-shadowing recovery also covers missing parameters, uniqueness failures, prior pending writes, corrected retry, integrity audits and rollback for collection-name and explicit-target-alias forms.

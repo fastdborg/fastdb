@@ -542,39 +542,46 @@ fn target_named_cte_constraint_failure_restores_rows_indexes_and_prior_work() {
     q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
     q(&c, "INSERT INTO docs(n) VALUES(1),(2),(3)");
     let original = q(&c, "SELECT n FROM docs ORDER BY n").rows;
-    for alias in ["docs", "target"] {
-        q(&c, "BEGIN");
-        q(&c, "INSERT INTO docs(n) VALUES(9)");
-        let pending = q(&c, "SELECT n FROM docs ORDER BY n").rows;
-        let sql = format!("WITH {alias} AS (SELECT 2 AS n), chosen AS (SELECT n FROM {alias} WHERE n<$max) UPDATE docs AS {alias} SET n=CASE WHEN n=1 THEN 10 ELSE 20 END WHERE n IN (SELECT n FROM chosen) RETURNING n");
-        let params = Parameters::from([("$max".into(), Value::Integer(4))]);
-        assert!(c.execute(&sql, &Parameters::new()).is_err());
-        assert!(c.execute(&sql, &params).is_err());
-        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
-        assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, pending);
-        let audit = c
-            .check_collection_integrity("docs", Default::default())
-            .unwrap();
-        assert_eq!(audit.documents, 4);
-        assert_eq!(audit.index_entries, 4);
-        let retry = sql.replace("CASE WHEN n=1 THEN 10 ELSE 20 END", "n+10");
-        let result = c.execute(&retry, &params).unwrap();
-        assert_eq!(result.affected, 3);
-        assert_eq!(
-            q(&c, "SELECT n FROM docs ORDER BY n").rows,
-            vec![
-                vec![Value::Integer(9)],
-                vec![Value::Integer(11)],
-                vec![Value::Integer(12)],
-                vec![Value::Integer(13)]
-            ]
-        );
-        c.check_collection_integrity("docs", Default::default())
-            .unwrap();
-        q(&c, "ROLLBACK");
-        assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, original);
-        c.check_collection_integrity("docs", Default::default())
-            .unwrap();
+    for nested in [false, true] {
+        for alias in ["docs", "target"] {
+            q(&c, "BEGIN");
+            q(&c, "INSERT INTO docs(n) VALUES(9)");
+            let pending = q(&c, "SELECT n FROM docs ORDER BY n").rows;
+            let chosen = if nested {
+                format!("WITH {alias} AS (SELECT n FROM main.docs WHERE n<$max), local_q AS (SELECT n FROM {alias}) SELECT n FROM local_q")
+            } else {
+                format!("SELECT n FROM {alias} WHERE n<$max")
+            };
+            let sql = format!("WITH {alias} AS (SELECT 2 AS n), chosen AS ({chosen}) UPDATE docs AS {alias} SET n=CASE WHEN n=1 THEN 10 ELSE 20 END WHERE n IN (SELECT n FROM chosen) RETURNING n");
+            let params = Parameters::from([("$max".into(), Value::Integer(4))]);
+            assert!(c.execute(&sql, &Parameters::new()).is_err());
+            assert!(c.execute(&sql, &params).is_err());
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, pending);
+            let audit = c
+                .check_collection_integrity("docs", Default::default())
+                .unwrap();
+            assert_eq!(audit.documents, 4);
+            assert_eq!(audit.index_entries, 4);
+            let retry = sql.replace("CASE WHEN n=1 THEN 10 ELSE 20 END", "n+10");
+            let result = c.execute(&retry, &params).unwrap();
+            assert_eq!(result.affected, 3);
+            assert_eq!(
+                q(&c, "SELECT n FROM docs ORDER BY n").rows,
+                vec![
+                    vec![Value::Integer(9)],
+                    vec![Value::Integer(11)],
+                    vec![Value::Integer(12)],
+                    vec![Value::Integer(13)]
+                ]
+            );
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap();
+            q(&c, "ROLLBACK");
+            assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, original);
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap();
+        }
     }
 }
 
