@@ -4436,3 +4436,15 @@ formatting, Clippy with warnings denied and strict TypeScript. Logs
 `/tmp/fastdb-sourceful-tuples.log`. No upstream files or dependencies changed.
 Ordered/grouped/windowed/DISTINCT/compound/local-WITH and explicitly aliased
 tuple forms remain open. Full V1 remains incomplete; no publication occurred.
+
+
+## Tuple lookup validation recovery — 2026-09-09
+
+A regression covers relational and collection tuple lookup sources where a
+later candidate fails validation. Prior transaction work and original rows
+survive, failed managed-index entries disappear, a filtered retry succeeds,
+and outer rollback restores the original documents. Integrity checks pass.
+All sixteen write tests passed, plus formatting and all-target fastdb-tests
+Clippy with warnings denied. Logs `/tmp/fastdb-tuple-lookup-recovery.log` and
+`/tmp/fastdb-tuple-lookup-recovery-clippy.log`. Only tests/documentation changed
+from `f9d700e79`; no new full-suite/client run is claimed. Full V1 gates remain open.
