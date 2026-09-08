@@ -2312,6 +2312,24 @@ impl Scope {
                 let lower_typed = self.preserved(&mut lower)?;
                 let upper_typed = self.preserved(&mut upper)?;
                 if value_typed && lower_typed && upper_typed {
+                    if native_column_collation(lhs)
+                        || native_column_collation(start)
+                        || native_column_collation(end)
+                    {
+                        let (mut value, mut lower, mut upper) =
+                            (*lhs.clone(), *start.clone(), *end.clone());
+                        if self.comparison_key(&mut value)?
+                            && self.comparison_key(&mut lower)?
+                            && self.comparison_key(&mut upper)?
+                        {
+                            // Retain BETWEEN for one lhs evaluation and each
+                            // bound's independent native collation precedence.
+                            **lhs = value;
+                            **start = lower;
+                            **end = upper;
+                            return Ok(());
+                        }
+                    }
                     let negate = if *not { "NOT " } else { "" };
                     *expr = expression(&format!(
                         "{negate}__fastdb_between({value}, {lower}, {upper})"

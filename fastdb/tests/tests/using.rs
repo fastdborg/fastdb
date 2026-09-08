@@ -2803,3 +2803,53 @@ fn correlated_union_scalar_ranges_honor_explicit_collation() {
         }
     }
 }
+
+#[test]
+fn correlated_union_between_honors_explicit_collation() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let params = Parameters::new();
+    for sql in ["CREATE TABLE docs", "CREATE TABLE baseline(a,b,c)",
+        "INSERT INTO docs(a,b,c) VALUES('beta','ALPHA','GAMMA'),('a ','a','a'),('B','a','z'),(NULL,'a','z'),('b',NULL,'z'),('b','a',NULL)",
+        "INSERT INTO baseline VALUES('beta','ALPHA','GAMMA'),('a ','a','a'),('B','a','z'),(NULL,'a','z'),('b',NULL,'z'),('b','a',NULL)"] {
+        c.execute(sql,&params).unwrap();
+    }
+    for not in ["", "NOT"] {
+        for collation in ["BINARY", "NOCASE", "RTRIM"] {
+            for (lhs, lower, upper) in [
+                (
+                    format!("d.a COLLATE {collation}"),
+                    "d.b".into(),
+                    "d.c".into(),
+                ),
+                (
+                    "d.a".into(),
+                    format!("d.b COLLATE {collation}"),
+                    "d.c".into(),
+                ),
+                (
+                    "d.a".into(),
+                    "d.b".into(),
+                    format!("d.c COLLATE {collation}"),
+                ),
+                (
+                    "d.a".into(),
+                    format!("d.b COLLATE {collation}"),
+                    "d.c COLLATE BINARY".into(),
+                ),
+            ] {
+                let predicate = format!("{lhs} {not} BETWEEN {lower} AND {upper}");
+                let native = c
+                    .execute(
+                        &format!("SELECT {predicate} AS result FROM baseline d"),
+                        &params,
+                    )
+                    .unwrap();
+                let sql = format!("SELECT (SELECT {predicate} UNION ALL SELECT NULL LIMIT 1) AS result FROM docs d");
+                let actual = c.execute(&sql, &params).unwrap();
+                assert_eq!(actual.columns, native.columns, "{sql}");
+                assert_eq!(actual.rows, native.rows, "{sql}");
+            }
+        }
+    }
+}
