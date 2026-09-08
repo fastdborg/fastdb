@@ -4464,7 +4464,13 @@ impl Connection {
                 && if inner.with.is_some() {
                     local_cte_logical
                 } else {
-                    logical_parent || nested_logical || local.iter().any(Source::logical)
+                    logical_parent
+                        || nested_logical
+                        || local.iter().any(Source::logical)
+                        || matches!(&inner.body.select, OneSelect::Select { columns, .. }
+                            if columns.iter().any(|column| matches!(column,
+                                ResultColumn::Expr(value, _) if matches!(value.as_ref(),
+                                    Expr::FunctionCall { name, .. } if name.as_str() == "__fastdb_h_array_new"))))
                 }
             {
                 let scope = Scope {

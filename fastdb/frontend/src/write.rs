@@ -599,7 +599,7 @@ impl Connection {
                         }
                         let OneSelect::Select {
                             columns,
-                            from: None,
+                            from,
                             group_by: None,
                             window_clause,
                             where_clause,
@@ -612,8 +612,10 @@ impl Connection {
                         if !window_clause.is_empty() || columns.len() != set.col_names.len() {
                             return Err(unsupported("tuple SELECT assignment shape or arity"));
                         }
-                        if let Some(predicate) = where_clause {
-                            bind_source_free_tuple_field(predicate, &update.tbl_name)?;
+                        if from.is_none() {
+                            if let Some(predicate) = where_clause {
+                                bind_source_free_tuple_field(predicate, &update.tbl_name)?;
+                            }
                         }
                         let mut args = Vec::new();
                         for column in std::mem::take(columns) {
@@ -624,7 +626,9 @@ impl Connection {
                             };
                             safe_value_expression(&value)?;
                             let mut value = value;
-                            bind_source_free_tuple_field(&mut value, &update.tbl_name)?;
+                            if from.is_none() {
+                                bind_source_free_tuple_field(&mut value, &update.tbl_name)?;
+                            }
                             args.push(value);
                         }
                         columns.push(ResultColumn::Expr(

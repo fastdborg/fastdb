@@ -4418,3 +4418,21 @@ plus formatting and all-target fastdb-tests Clippy with warnings denied.
 Logs `/tmp/fastdb-tuple-candidates.log` and
 `/tmp/fastdb-tuple-candidates-clippy.log`. Only tests/documentation changed from
 `ab16ab02c`; no new full-suite/client run is claimed. Full V1 gates remain open.
+
+
+## Sourceful tuple SELECT lookups — 2026-09-09
+
+Tuple SELECT assignments now accept FROM sources supported by candidate
+lowering. Correlated lookups against relational and collection sources match
+native tuple results, including no-match NULLs and outer rollback. Native
+inner SELECTs projecting array::new now bind outer collection operands before
+logical lowering; without this, the generated tuple CTE retained raw docs.n.
+Source-free qualification remains restricted to queries without local sources.
+
+The full scoped check passed from `fe3bd227b` plus this change: 584 Rust passes,
+zero failures, one existing ignored trigger gate; 83 Node/application passes;
+formatting, Clippy with warnings denied and strict TypeScript. Logs
+`/tmp/fastdb-sourceful-tuples-check.log` and focused fifteen-write-test log
+`/tmp/fastdb-sourceful-tuples.log`. No upstream files or dependencies changed.
+Ordered/grouped/windowed/DISTINCT/compound/local-WITH and explicitly aliased
+tuple forms remain open. Full V1 remains incomplete; no publication occurred.

@@ -1178,3 +1178,12 @@ aliases. Projection arity must match. Broader tuple SELECT forms and scope
 qualification remain open. Unqualified names in source-free tuple projections
 and predicates bind to the update target; quoted boolean-like names remain
 fields. Nested SELECT scopes are left to candidate SELECT lowering.
+
+
+Tuple SELECT assignments also accept sources supported by candidate SELECT
+lowering. Initial correlated lookup coverage includes ordinary tables and
+collections, with missing matches assigning NULL to each tuple target.
+Sourceful projections preserve their own column scope; outer collection
+references in native queries producing an array are bound before isolated
+SELECT lowering. Grouping, windows, DISTINCT, ORDER BY, compounds, local WITH
+and explicit projection aliases remain outside the tuple implementation.

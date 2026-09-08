@@ -657,3 +657,30 @@ fn tuple_select_keeps_each_candidates_typed_snapshot() {
     }
     assert_eq!(q(&c, "SELECT n,a,b FROM docs ORDER BY n").rows, expected);
 }
+
+#[test]
+fn sourceful_tuple_select_lookups_match_native_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO native VALUES(1,0,0),(2,0,0),(3,0,0)",
+        "CREATE TABLE lookup(n INTEGER,a INTEGER,b INTEGER)",
+        "INSERT INTO lookup VALUES(1,2,3),(2,4,5)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,a,b) SELECT n,a,b FROM native",
+    ] {
+        q(&c, sql);
+    }
+    q(&c, "CREATE TABLE lookup_docs");
+    q(
+        &c,
+        "INSERT INTO lookup_docs(n,a,b) SELECT n,a,b FROM lookup",
+    );
+    for source in ["lookup", "lookup_docs"] {
+        q(&c, "BEGIN");
+        let expected=q(&c,"UPDATE native SET (a,b)=(SELECT x.a,x.b FROM lookup x WHERE x.n=native.n) RETURNING n,a,b");
+        assert_eq!(q(&c,&format!("UPDATE docs SET (a,b)=(SELECT x.a,x.b FROM {source} x WHERE x.n=docs.n) RETURNING n,a,b")).rows,expected.rows);
+        q(&c, "ROLLBACK");
+    }
+}
