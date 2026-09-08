@@ -2198,3 +2198,6 @@ Installed NATURAL correlation qualification (2026-09-08): both installed clients
 
 
 NATURAL Unicode intersection qualification (2026-09-08): nine native differential execute/profile cases pass for distinct Ä/ä names, mixed Unicode names with ASCII-only case differences and spaced ASCII names across INNER/LEFT/RIGHT joins. Shared-column intersection and output positions match native ASCII identifier rules. Formatting and the focused regression pass; production code is unchanged. Log: /tmp/fastdb-natural-unicode.log. Latest complete scoped evidence remains 466 Rust tests with one ignored gate and 49 Node/application tests. Full V1 qualification remains open.
+
+
+NATURAL join consolidated qualification (2026-09-08): added 18 native differential execute/profile cases for empty left, right or both inputs, with and without shared columns, across INNER/LEFT/RIGHT joins. Column labels and NULL-extended rows match the pinned engine. The complete scoped check now passes 476 Rust tests (zero failures, one existing ignored trigger-cancellation gate), 49 Node/application tests, formatting, Clippy and strict TypeScript. Log: /tmp/fastdb-natural-consolidated-check.log. No production change was needed for these empty-input cases. Full V1 qualification remains open.

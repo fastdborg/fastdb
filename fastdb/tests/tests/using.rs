@@ -1835,3 +1835,47 @@ fn natural_unicode_column_intersections_match_native_ascii_rules() {
         }
     }
 }
+
+#[test]
+fn natural_empty_sources_preserve_outer_rows_with_and_without_shared_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let query = |sql: &str| {
+        c.execute(sql, &Parameters::new())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs {k:1,n:10}",
+        "CREATE TABLE baseline(k INTEGER,n INTEGER)",
+        "INSERT INTO baseline VALUES(1,10)",
+        "CREATE TABLE b(k INTEGER,m INTEGER)",
+        "INSERT INTO b VALUES(2,20)",
+    ] {
+        query(sql);
+    }
+    for (left_filter, right_filter) in
+        [(" WHERE 0", ""), ("", " WHERE 0"), (" WHERE 0", " WHERE 0")]
+    {
+        for right_columns in ["k,m", "m"] {
+            for join in ["NATURAL JOIN", "NATURAL LEFT JOIN", "NATURAL RIGHT JOIN"] {
+                let sql = |source: &str| {
+                    format!("SELECT * FROM (SELECT k,n FROM {source}{left_filter}) a {join} (SELECT {right_columns} FROM b{right_filter}) b")
+                };
+                let expected = query(&sql("baseline"));
+                let logical = sql("docs");
+                let actual = query(&logical);
+                assert_eq!(actual.columns, expected.columns, "{logical}");
+                assert_eq!(actual.rows, expected.rows, "{logical}");
+                assert_eq!(
+                    c.profile_select(&logical, &Parameters::new())
+                        .unwrap()
+                        .result
+                        .rows,
+                    expected.rows,
+                    "{logical}"
+                );
+            }
+        }
+    }
+}

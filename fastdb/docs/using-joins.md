@@ -98,3 +98,6 @@ Grouped NATURAL joins have nine native execute/profile cases for merged keys, GR
 
 
 NATURAL merged-key window partitions have six execute/profile native comparisons for inline ROW_NUMBER and named SUM windows across INNER/LEFT/RIGHT joins.
+
+
+Empty-source NATURAL joins have 18 execute/profile comparisons with the pinned engine: left, right or both inputs empty, with one shared key or no shared columns, across INNER/LEFT/RIGHT joins. NULL extension and result column labels match native behavior.
