@@ -9,8 +9,9 @@ const [target, output, mode] = process.argv.slice(2);
 if (!target || !output || (mode !== undefined && mode !== '--check') || process.argv.length > 6) {
   throw new Error('Usage: node inventory-node-dependencies.cjs <target-triple> <output.json> [--check]');
 }
+const rootPackage = process.env.FASTDB_INVENTORY_PACKAGE || 'fastdb-node';
 const root = path.resolve(__dirname, '../..');
-const args = ['tree', '--locked', '--offline', '-p', 'fastdb-node', '--edges', 'normal,build', '--target', target, '--prefix', 'none', '--format', '{p}\t{l}'];
+const args = ['tree', '--locked', '--offline', '-p', rootPackage, '--edges', 'normal,build', '--target', target, '--prefix', 'none', '--format', '{p}\t{l}'];
 const tree = execFileSync('cargo', args, { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 120000 });
 const packages = new Map();
 for (const line of tree.trimEnd().split('\n')) {
@@ -27,7 +28,7 @@ for (const line of tree.trimEnd().split('\n')) {
 }
 const inventory = {
   schemaVersion: 1,
-  rootPackage: 'fastdb-node',
+  rootPackage,
   target,
   edges: ['normal', 'build'],
   scope: 'Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices',
