@@ -59,3 +59,21 @@ classified above. The tested checkout was `1b6b66d40`, whose only differences
 from candidate source `dcce6c4f0` were delivery documentation. The implementation,
 lockfile and test scripts match. Full output is retained as
 `evidence/final-scoped-check.log` in the candidate.
+
+## Recipient archive verification
+
+The final `dist/fastdb-preview-0.1.0-linux-x64.tar.gz` was extracted into a fresh
+temporary directory; all 31 embedded file checksums passed. The adjacent
+`.tar.gz.sha256` now names the archive by basename, so recipients can verify it
+from any download directory without recreating the repository's `dist/` path:
+
+```sh
+sha256sum -c fastdb-preview-0.1.0-linux-x64.tar.gz.sha256
+tar -xzf fastdb-preview-0.1.0-linux-x64.tar.gz
+cd fastdb-preview-linux-x64
+sha256sum -c SHA256SUMS
+```
+
+This fixes the delivery checksum's path dependency; candidate contents and prior
+acceptance evidence are unchanged. Preview work remains closed pending the next
+product/delivery decision.
