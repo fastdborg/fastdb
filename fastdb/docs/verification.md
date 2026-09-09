@@ -5057,3 +5057,16 @@ standalone smoke passes on Rust 1.88.0 without workspace RUSTFLAGS and verifies
 `/tmp/fastdb-target-iterator-rust.log`. Only verifier/docs changed from `b08e28bc2`;
 this is local path-dependency evidence, not published-crate or cross-platform
 qualification. Full V1 remains open.
+
+
+## Target iterator bound pagination — 2026-09-09
+
+The native differential target-correlated json_each/main.json_each/json_tree
+matrix now exercises bound LIMIT/OFFSET: zero rows, first/second target,
+exhausted offset and negative count. Duplicate iterator matches resolve before
+target pagination; empty arrays leave targets unchanged. RETURNING, affected
+counts, stored values and rollback match native behavior. All 59 write tests
+pass (`/tmp/fastdb-target-iterator-pagination.log`); formatting and all-target
+fastdb-tests Clippy with warnings denied pass
+(`/tmp/fastdb-target-iterator-pagination-clippy.log`). Only tests/docs changed
+from `552bb9695`; no full-suite run is claimed. Full V1 remains open.

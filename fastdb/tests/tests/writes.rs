@@ -2581,16 +2581,24 @@ fn update_from_target_correlated_iterators_match_native() {
         q(&c, sql);
     }
     for iterator in ["json_each", "main.json_each", "json_tree"] {
-        q(&c, "BEGIN");
-        let sql=format!("UPDATE TARGET AS t SET n=s.value FROM {iterator}(t.j) s WHERE s.type='integer' RETURNING n,j");
-        let expected = q(&c, &sql.replace("TARGET", "native"));
-        let actual = q(&c, &sql.replace("TARGET", "docs"));
-        assert_eq!(actual.rows, expected.rows, "{sql}");
-        assert_eq!(actual.affected, expected.affected);
-        assert_eq!(
-            q(&c, "SELECT n,j FROM docs ORDER BY n").rows,
-            q(&c, "SELECT n,j FROM native ORDER BY n").rows
-        );
-        q(&c, "ROLLBACK");
+        for (count, skip) in [(0, 0), (1, 0), (1, 1), (1, 2), (-1, 0)] {
+            let params = Parameters::from([
+                ("$count".into(), Value::Integer(count)),
+                ("$skip".into(), Value::Integer(skip)),
+            ]);
+            q(&c, "BEGIN");
+            let sql=format!("UPDATE TARGET AS t SET n=s.value FROM {iterator}(t.j) s WHERE s.type='integer' RETURNING n,j LIMIT $count OFFSET $skip");
+            let expected = c
+                .execute(&sql.replace("TARGET", "native"), &params)
+                .unwrap();
+            let actual = c.execute(&sql.replace("TARGET", "docs"), &params).unwrap();
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(actual.affected, expected.affected);
+            assert_eq!(
+                q(&c, "SELECT n,j FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n,j FROM native ORDER BY n").rows
+            );
+            q(&c, "ROLLBACK");
+        }
     }
 }
