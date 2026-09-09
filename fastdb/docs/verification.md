@@ -5519,3 +5519,18 @@ All 71 write tests pass (`/tmp/fastdb-replace-typed-keys.log`); fastdb-tests
 formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-replace-typed-keys-clippy.log`). Only tests/docs changed from
 `b24ec0e85`; no full-suite/client rerun is claimed. Full V1 remains open.
+
+
+## Replacement numeric comparison boundaries — 2026-09-09
+
+A native/collection unique-key matrix now compares replacement decisions for
+integer/float equality in both directions, integer zero versus negative floating
+zero, adjacent values beyond exact floating integer precision and i64::MAX versus
+floating 2^63. Surviving labels match the native table, with affected/RETURNING
+counts, collection integrity, indexed lookup and outer rollback checked. This
+qualifies the tested boundaries, not all numeric/planner combinations.
+
+All 72 write tests pass (`/tmp/fastdb-replace-numeric.log`); fastdb-tests formatting
+and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-replace-numeric-clippy.log`). Only tests/docs changed from `2d9ed8cb1`;
+no full-suite/client rerun is claimed. Full V1 remains open.

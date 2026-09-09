@@ -3396,3 +3396,75 @@ fn replacement_conflicts_preserve_typed_nested_index_identity() {
         );
     }
 }
+
+#[test]
+fn replacement_numeric_unique_keys_match_native_comparisons() {
+    for (original, replacement) in [
+        (Value::Integer(1), Value::Number(1.0)),
+        (Value::Number(1.0), Value::Integer(1)),
+        (Value::Integer(0), Value::Number(-0.0)),
+        (
+            Value::Integer(9_007_199_254_740_993),
+            Value::Number(9_007_199_254_740_992.0),
+        ),
+        (
+            Value::Integer(i64::MAX),
+            Value::Number(9_223_372_036_854_775_808.0),
+        ),
+    ] {
+        let mut baseline = None;
+        for collection in [false, true] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            if collection {
+                q(&c, "CREATE TABLE items");
+                q(&c, "CREATE UNIQUE INDEX items_key ON items(k)");
+                q(&c, "CREATE INDEX items_label ON items(label)");
+            } else {
+                q(&c, "CREATE TABLE items(k UNIQUE,label INTEGER)");
+            }
+            c.execute(
+                "INSERT INTO items(k,label) VALUES($key,1)",
+                &Parameters::from([("$key".into(), original.clone())]),
+            )
+            .unwrap();
+            q(&c, "INSERT INTO items(k,label) VALUES('spare',2)");
+            q(&c, "BEGIN");
+            let result = c
+                .execute(
+                    "UPDATE OR REPLACE items SET k=$key WHERE label=2 RETURNING label",
+                    &Parameters::from([("$key".into(), replacement.clone())]),
+                )
+                .unwrap();
+            assert_eq!(result.affected, 1);
+            assert_eq!(result.rows, vec![vec![Value::Integer(2)]]);
+            let labels = q(&c, "SELECT label FROM items ORDER BY label").rows;
+            if collection {
+                assert_eq!(
+                    Some(&labels),
+                    baseline.as_ref(),
+                    "{original:?} -> {replacement:?}"
+                );
+                assert_eq!(
+                    c.check_collection_integrity("items", Default::default())
+                        .unwrap()
+                        .index_entries,
+                    labels.len() as u64 * 2
+                );
+                assert_eq!(
+                    c.lookup_index("items", "items_key", &replacement)
+                        .unwrap()
+                        .len(),
+                    1
+                );
+            } else {
+                baseline = Some(labels);
+            }
+            q(&c, "ROLLBACK");
+            assert_eq!(
+                q(&c, "SELECT label FROM items ORDER BY label").rows,
+                vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+            );
+        }
+    }
+}
