@@ -4802,3 +4802,17 @@ Only the package verifier/docs changed from `79f4a6e82`; the addon is from the
 preceding joined-CTE full check. No new Rust-suite run or native rebuild is
 claimed. This is local Linux installed-package evidence, not publication or
 cross-platform qualification. Full V1 remains open.
+
+
+## Standalone Rust joined CTE/right join reopen — 2026-09-09
+
+The offline Rust consumer outside the workspace now executes a target-alias CTE
+with a leading RIGHT ON followed by LEFT ON, duplicate matches, bound pagination
+and typed tuple RETURNING. It verifies affected count and active transaction
+state, commits, reopens the database and verifies the array/binary/boolean/int64
+payload and record value plus collection integrity. The complete existing
+standalone smoke passes on Rust 1.88.0 without workspace RUSTFLAGS; all 244
+registry/git package identities match the workspace lockfile. Log:
+`/tmp/fastdb-scoped-right-rust.log`. Only verifier/docs changed from `254e4e970`;
+this local path-dependency consumer is not published-crate or cross-platform
+qualification. Full V1 remains open.
