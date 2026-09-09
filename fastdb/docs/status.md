@@ -5923,3 +5923,16 @@ fastdb-tests Clippy with warnings denied passed (`/tmp/fastdb-joined-buffer-clip
 Only tests/docs changed from `0797e2804`; no full-suite run is claimed. This
 qualifies the existing per-buffer row bound, not total workspace memory or
 hard deadlines. Full V1 remains open.
+
+
+## Joined direct-parameter payload budget — 2026-09-09
+
+A regression verifies a 2048-byte bound binary assignment is counted against a
+512-byte write buffer after candidate substitution and before joined pagination,
+including LIMIT 0 and LIMIT 1 with duplicate source matches. FDB_LIMIT preserves
+pending snapshots and index integrity; a larger budget permits retry with exact
+binary RETURNING, and rollback restores the original state. All nine write-buffer
+tests pass (`/tmp/fastdb-joined-payload-buffer.log`); formatting and all-target
+fastdb-tests Clippy with warnings denied pass (`/tmp/fastdb-joined-payload-clippy.log`).
+Only tests/docs changed from `343b7f3ec`; no full-suite run is claimed. Total
+workspace memory, allocation deadlines and full V1 remain open.

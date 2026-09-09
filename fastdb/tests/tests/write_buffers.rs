@@ -355,3 +355,69 @@ fn joined_pagination_does_not_bypass_raw_candidate_row_limits() {
         assert_eq!(audit.index_entries, 1);
     }
 }
+
+#[test]
+fn joined_direct_parameters_consume_payload_budget_before_limit() {
+    for count in [0, 1] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let empty = Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            "INSERT INTO docs {id:docs:a,n:1}",
+            "CREATE TABLE source(k INTEGER)",
+            "INSERT INTO source VALUES(1),(1)",
+            "BEGIN",
+            "INSERT INTO docs {id:docs:b,n:2}",
+        ] {
+            c.execute(sql, &empty).unwrap();
+        }
+        let before = c
+            .execute("SELECT * FROM docs ORDER BY n", &empty)
+            .unwrap()
+            .rows;
+        let payload = Value::Binary(vec![255; 2048]);
+        let params = Parameters::from([("$payload".into(), payload.clone())]);
+        let sql=format!("UPDATE docs SET payload=$payload FROM source s WHERE docs.n=s.k RETURNING payload LIMIT {count}");
+        let c = c.with_write_buffer_limits(ResultLimits {
+            max_rows: 10,
+            max_payload_bytes: 512,
+        });
+        assert_eq!(c.execute(&sql, &params).unwrap_err().code(), "FDB_LIMIT");
+        assert_eq!(c.transaction_state(), TransactionState::Active);
+        assert_eq!(
+            c.execute("SELECT * FROM docs ORDER BY n", &empty)
+                .unwrap()
+                .rows,
+            before
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            2
+        );
+        let c = c.with_write_buffer_limits(ResultLimits {
+            max_rows: 10,
+            max_payload_bytes: 10000,
+        });
+        let result = c.execute(&sql, &params).unwrap();
+        assert_eq!(result.affected, count);
+        assert_eq!(
+            result.rows,
+            if count == 0 {
+                vec![]
+            } else {
+                vec![vec![payload]]
+            }
+        );
+        c.execute("ROLLBACK", &empty).unwrap();
+        assert_eq!(
+            c.execute("SELECT n,payload FROM docs", &empty)
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(1), Value::Null]]
+        );
+    }
+}
