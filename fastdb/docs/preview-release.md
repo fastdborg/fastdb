@@ -20,12 +20,12 @@ release has occurred.
 | P2 | Essential storage correctness | Existing persistence, migration, transfer and bounded process-kill recovery suites pass for the candidate; committed data and indexes survive reopen, failed writes are atomic, and restore yields matching data/indexes | Complete — [application/storage evidence](preview-storage-evidence.md) |
 | P3 | Preview contract and getting started | One guide gives exact install/build commands, a persistent application example, result/error/transaction handling and a finite known-limitations list; each advertised capability has an existing runnable example or test | Complete — [quickstart](preview-quickstart.md) and [delivery evidence](preview-delivery-evidence.md) |
 | P4 | Installable candidate artifacts | A candidate directory contains the CLI, Node tarball, pinned source/Rust-consumer instructions, licenses/notices, checksums and exact source/toolchain identity; local artifact smoke succeeds for Node 22/24 and standalone Rust | Complete — [candidate delivery evidence](preview-delivery-evidence.md) |
-| P5 | Candidate acceptance | Run fastdb/scripts/check.sh once on the candidate source, record exact source and results, classify the one known ignored trigger-cancellation test, and confirm P1–P4 evidence still matches the candidate | Pending milestone boundary; no routine full reruns during development |
-| P6 | Reviewable release handoff | Candidate files, quickstart, change summary and limitations are linked in one manifest; every P0–P5 row has evidence and no unresolved blocker | Pending; uploading/publishing is a separate delivery action |
+| P5 | Candidate acceptance | Run fastdb/scripts/check.sh once on the candidate source, record exact source and results, classify the one known ignored trigger-cancellation test, and confirm P1–P4 evidence still matches the candidate | Complete — [final acceptance](preview-handoff.md#final-acceptance) |
+| P6 | Reviewable release handoff | Candidate files, quickstart, change summary and limitations are linked in one manifest; every P0–P5 row has evidence and no unresolved blocker | Complete — [preview handoff](preview-handoff.md); local candidate only |
 
 Completed milestone: **Application and storage readiness (P1 + P2)**.
 Completed milestone: **Candidate delivery (P3 + P4)**.
-Next milestone: **Acceptance/handoff (P5 + P6)**. Finish each milestone before a completion report. Share brief progress updates
+Completed milestone: **Acceptance/handoff (P5 + P6)**. All preview requirements are closed. Finish each milestone before a completion report. Share brief progress updates
 while working; do not stop after each fixture or small commit.
 
 ## Essential checks and stopping rules

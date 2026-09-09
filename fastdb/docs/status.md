@@ -7087,3 +7087,11 @@ The full scoped check passed with 673 Rust and 101 Node/application tests,
 formatting, Clippy and TypeScript; one known trigger-cancellation test remains
 ignored. Next work is preview candidate delivery (P3 + P4), not more speculative
 SQL or recovery combinations.
+
+## Preview ready for evaluation
+
+The finite P0–P6 preview checklist is complete. See [the handoff](preview-handoff.md)
+for artifacts, acceptance and limitations. Final scoped check: 673 Rust tests,
+101 Node/application tests, formatting, Clippy and TypeScript passed; one known
+trigger-cancellation test ignored. The local preview is unpublished. Stable V1
+is not declared complete; speculative qualification does not reopen this preview.
