@@ -2847,6 +2847,15 @@ test('update from preserves typed candidates and unmatched targets in both clien
       await db.execute('BEGIN');
       await db.execute('CREATE TABLE keys(k INTEGER)');
       await db.execute('INSERT INTO keys VALUES(1),(1)');
+      for (const condition of ['k.k=target.n', 'k.k=(SELECT target.n)']) {
+        await assert.rejects(async () => db.execute('UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s JOIN keys k ON '+condition+' RETURNING n,a,b'), error => {
+          assert(['FDB_ENGINE','FDB_UNSUPPORTED'].includes(error.code));
+          assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+          return true;
+        });
+        assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,null,null],[2n,null,null]]);
+        assert.equal((await db.execute('SELECT count(*) FROM keys')).rows[0][0], 2n);
+      }
       for (const join of ['JOIN','INNER JOIN','CROSS JOIN']) {
         const joined = await db.execute('UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s ' + join + ' keys k ON k.k=s.k WHERE s.k=target.n RETURNING n,a,b');
         assert.equal(joined.affected, 1n);

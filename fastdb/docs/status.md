@@ -5992,3 +5992,14 @@ warnings denied pass (`/tmp/fastdb-source-callback-clippy.log`). Only tests/docs
 changed from `4a399527f`; no full-suite run or addon rebuild is claimed. This
 covers scalar CTE projection evaluation, not every metadata probe or total
 preparation cost. Full V1 remains open.
+
+
+## Joined source-scope client recovery — 2026-09-09
+
+Both Node clients reject direct and nested update-target references in source
+JOIN ON conditions and report active-to-active transaction state. Document
+snapshots and pending source rows remain intact; the enclosing fixture then
+executes valid typed joins and verifies rollback. All 89 Node/application tests
+pass (`/tmp/fastdb-source-scope-node.log`) against the addon from the source-scope
+full check. Only tests/docs changed from `c3f075839`; no new Rust run or addon
+rebuild is claimed. Full V1 remains open.
