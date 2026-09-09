@@ -226,3 +226,21 @@ fn duplicate_columns_keep_positional_tagged_json_in_script_and_line_modes() {
         assert_eq!(reports[5]["rows"], serde_json::json!([]));
     }
 }
+
+#[test]
+fn inventory_reconciliation_example_runs_through_cli() {
+    let (ok, rows) = run(include_str!(
+        "../../examples/inventory-reconciliation.fastql"
+    ));
+    assert!(ok, "{rows:?}");
+    let inventory = &rows[rows.len() - 2]["rows"];
+    assert_eq!(inventory[0][0]["value"], "P1");
+    assert_eq!(inventory[0][1]["value"], 12);
+    assert_eq!(inventory[1][0]["value"], "P2");
+    assert_eq!(inventory[1][1]["value"], 2);
+    let events = &rows[rows.len() - 1]["rows"];
+    assert_eq!(events.as_array().unwrap().len(), 2);
+    assert_eq!(events[0][0]["type"], "Record");
+    assert_eq!(events[0][1]["value"], 2);
+    assert_eq!(events[1][1]["value"], -3);
+}

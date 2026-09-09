@@ -5099,3 +5099,20 @@ pass; the enclosing fixture verifies rollback. All 89 Node/application tests
 pass (`/tmp/fastdb-derived-full-node.log`) against the current addon. Only
 tests/docs changed from `276e45e4a`; no new Rust run or addon rebuild is claimed.
 Direct FULL write joins and broader V1 qualification remain open.
+
+
+## Inventory reconciliation example — 2026-09-09
+
+Added examples/inventory-reconciliation.fastql and its guide: indexed inventory
+collections with nonnegative quantity validation, a relational adjustment table
+with unique SKU keys, typed event references, joined stock updates and atomic
+commit. The guide states known-SKU assumptions and required application handling
+for failed transactions, idempotency and reservations. A CLI regression executes
+the real script and checks final stock and event values.
+
+All eight CLI script tests pass (`/tmp/fastdb-inventory-example-final.log`);
+formatting and all-target fastdb-cli Clippy with warnings denied pass
+(`/tmp/fastdb-inventory-example-clippy.log`). The initial test expected lowercase
+record tags; corrected to the existing CLI Record tag. Only examples/tests/docs
+changed from `2ba05d3c6`; no full-suite run is claimed. This adds an application
+pattern, not external pilot evidence or a complete inventory product. Full V1 remains open.

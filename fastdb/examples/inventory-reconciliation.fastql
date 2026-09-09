@@ -1,0 +1,26 @@
+-- Run against a new database. This sample reconciles known inventory SKUs.
+CREATE TABLE inventory;
+DEFINE FIELD sku ON inventory TYPE string REQUIRED;
+DEFINE FIELD quantity ON inventory TYPE integer REQUIRED CHECK (quantity >= 0);
+CREATE UNIQUE INDEX inventory_sku ON inventory(sku);
+CREATE TABLE inventory_events;
+DEFINE FIELD item ON inventory_events TYPE record<inventory> REQUIRED;
+CREATE TABLE adjustments(sku TEXT PRIMARY KEY,delta INTEGER NOT NULL);
+INSERT INTO inventory(id,sku,quantity)
+VALUES(inventory:p1,'P1',10),(inventory:p2,'P2',5);
+
+BEGIN;
+-- Unique adjustment keys ensure one source match per inventory item.
+INSERT INTO adjustments VALUES('P1',2),('P2',-3);
+INSERT INTO inventory_events(item,delta)
+SELECT i.id,a.delta FROM inventory i JOIN adjustments a ON i.sku=a.sku;
+UPDATE inventory AS i
+SET quantity=i.quantity+a.delta
+FROM adjustments AS a
+WHERE i.sku=a.sku
+RETURNING sku,quantity;
+DELETE FROM adjustments;
+COMMIT;
+
+SELECT sku,quantity FROM inventory ORDER BY sku;
+SELECT item,delta FROM inventory_events ORDER BY item;
