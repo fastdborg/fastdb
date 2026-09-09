@@ -5620,3 +5620,19 @@ Both insert-source oracle tests pass (64 other frontend tests filtered out),
 with warnings denied pass (`/tmp/fastdb-insert-source-oracles-clippy.log`). Only
 test/docs changed from `3b8a436a0`; no full-suite/client rerun is claimed.
 Full V1 remains open.
+
+
+## Relational INSERT SELECT policy dispatch oracle — 2026-09-09
+
+A raw-engine/frontend matrix now compares ABORT, ROLLBACK, FAIL, IGNORE and
+REPLACE for a two-column native INSERT SELECT whose second source row conflicts.
+Each runs in autocommit and an explicit transaction containing prior work.
+Returned rows or exact errors, transaction state and stored rows match the raw
+engine. This verifies relational dispatch; it does not add collection INSERT
+policy support beyond ABORT.
+
+All three insert-source oracle tests pass (64 other frontend tests filtered out),
+`/tmp/fastdb-native-insert-policies.log`. FastDB formatting and all-target Clippy
+with warnings denied pass (`/tmp/fastdb-native-insert-policies-clippy.log`). Only
+test/docs changed from `7d6bb6549`; no full-suite/client rerun is claimed.
+Full V1 remains open.

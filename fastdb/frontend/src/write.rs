@@ -1679,4 +1679,56 @@ mod insert_source_oracle_tests {
             }
         }
     }
+    #[test]
+    fn native_insert_select_conflict_dispositions_match_raw_engine() {
+        for policy in ["ABORT", "ROLLBACK", "FAIL", "IGNORE", "REPLACE"] {
+            for active in [false, true] {
+                let mut baseline = None;
+                for frontend in [false, true] {
+                    let db = Database::open(":memory:").unwrap();
+                    let c = db.connect().unwrap();
+                    for sql in [
+                        "CREATE TABLE items(n INTEGER UNIQUE,v INTEGER)",
+                        "CREATE TABLE source(n INTEGER,v INTEGER)",
+                        "INSERT INTO items VALUES(1,0)",
+                        "INSERT INTO source VALUES(2,20),(1,10),(3,30)",
+                    ] {
+                        c.run(sql, &[]).unwrap();
+                    }
+                    if active {
+                        c.run("BEGIN", &[]).unwrap();
+                        c.run("INSERT INTO items VALUES(4,40)", &[]).unwrap();
+                    }
+                    let sql = format!(
+                        "INSERT OR {policy} INTO items(n,v) SELECT n,v FROM source RETURNING n,v"
+                    );
+                    let result = if frontend {
+                        c.execute(&sql, &crate::Parameters::new())
+                            .map(|result| result.rows)
+                    } else {
+                        c.run(&sql, &[]).map(|rows| {
+                            rows.into_iter()
+                                .map(|row| row.into_iter().map(crate::from_engine).collect())
+                                .collect()
+                        })
+                    }
+                    .map_err(|error| error.to_string());
+                    let observed = (
+                        result,
+                        c.transaction_state(),
+                        c.run("SELECT n,v FROM items ORDER BY n", &[]).unwrap(),
+                    );
+                    if frontend {
+                        assert_eq!(
+                            Some(&observed),
+                            baseline.as_ref(),
+                            "{policy}, active={active}"
+                        );
+                    } else {
+                        baseline = Some(observed);
+                    }
+                }
+            }
+        }
+    }
 }
