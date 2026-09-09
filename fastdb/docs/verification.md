@@ -5899,3 +5899,20 @@ The five-policy stored-row/RETURNING/state comparison and UPSERT preservation
 example were executed against the current addon with assertions:
 `/tmp/fastdb-insert-guide.log`. Only docs changed from `5a6e28b3d`; no suite rerun
 is claimed. Full V1 remains open.
+
+
+## Standalone Rust INSERT policy persistence — 2026-09-09
+
+The standalone consumer now writes separate databases for all five INSERT
+policies using a duplicate record identity between successful typed candidates.
+It checks returned rows/affected counts or errors and transaction state, commits
+surviving work, then closes/reopens each file. Exact persisted rows, record/binary
+payloads, index integrity and lookup of the original unique key are verified.
+
+The offline standalone consumer passes on Rust 1.88.0, outside the workspace
+without injected workspace compiler flags, with 244 registry/git dependency
+identities verified against the pinned lockfile. Log:
+`/tmp/fastdb-insert-policy-rust-consumer.log`. Only verifier/docs changed from
+`ff657e456`; no full-suite rerun is claimed. This is orderly close/reopen through
+a local path dependency, not published-crate or crash qualification.
+Full V1 remains open.

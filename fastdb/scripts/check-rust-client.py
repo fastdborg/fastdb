@@ -169,11 +169,48 @@ fn conflict_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+fn insert_policy_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let p=Parameters::new();
+    let payload=Value::Array(vec![Value::Record(Record {table:"docs".into(),key:Key::Integer(i64::MAX)}),Value::Binary(vec![0,255])]);
+    for policy in ["ABORT","ROLLBACK","FAIL","IGNORE","REPLACE"] {
+        let path=format!("{file}.{policy}");
+        let pending=policy!="ROLLBACK";
+        let prefix=matches!(policy,"FAIL"|"IGNORE"|"REPLACE");
+        let continued=matches!(policy,"IGNORE"|"REPLACE");
+        {
+            let db=Database::open(&path)?;
+            let c=db.connect()?;
+            for sql in ["CREATE TABLE docs","CREATE UNIQUE INDEX docs_n ON docs(n)","INSERT INTO docs(id,n) VALUES(docs:a,1)","BEGIN","INSERT INTO docs(id,n) VALUES(docs:pending,9)"] {c.execute(sql,&p)?;}
+            let result=c.execute(&format!("INSERT OR {policy} INTO docs(id,n,payload) VALUES(docs:b,2,$value),(docs:a,3,$value),(docs:c,4,$value) RETURNING n,payload"),&Parameters::from([("$value".into(),payload.clone())]));
+            if continued {
+                let result=result?;
+                let keys=if policy=="REPLACE" {vec![2,3,4]} else {vec![2,4]};
+                assert_eq!(result.affected,keys.len() as i64);
+                assert_eq!(result.rows,keys.into_iter().map(|n|vec![Value::Integer(n),payload.clone()]).collect::<Vec<_>>());
+            } else {assert_eq!(result.unwrap_err().code(),"FDB_CONSTRAINT");}
+            assert_eq!(c.transaction_state(),if pending {fastdb::TransactionState::Active} else {fastdb::TransactionState::Autocommit});
+            if pending {c.execute("COMMIT",&p)?;}
+        }
+        let db=Database::open(&path)?;
+        let c=db.connect()?;
+        let mut expected=Vec::new();
+        if policy!="REPLACE" {expected.push(vec![Value::Integer(1),Value::Null]);}
+        if prefix {expected.push(vec![Value::Integer(2),payload.clone()]);}
+        if policy=="REPLACE" {expected.push(vec![Value::Integer(3),payload.clone()]);}
+        if continued {expected.push(vec![Value::Integer(4),payload.clone()]);}
+        if pending {expected.push(vec![Value::Integer(9),Value::Null]);}
+        assert_eq!(c.execute("SELECT n,payload FROM docs ORDER BY n",&p)?.rows,expected);
+        assert_eq!(c.check_collection_integrity("docs",IntegrityLimits::default())?.index_entries,expected.len() as u64);
+        assert_eq!(c.lookup_index("docs","docs_n",&Value::Integer(1))?.len(),usize::from(policy!="REPLACE"));
+    }
+    Ok(())
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
     iterator_consumer(&format!("{file}.iterators"))?;
     tuple_consumer(&format!("{file}.tuples"))?;
     conflict_consumer(&format!("{file}.conflicts"))?;
+    insert_policy_consumer(&format!("{file}.insert-policies"))?;
     let id = Record { table: "docs".into(), key: Key::String("saved".into()) };
     let portable = Value::Array(vec![
         Value::Integer(i64::MAX), Value::Number(-0.0),
@@ -272,7 +309,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     c.execute("ROLLBACK", &empty)?;
     assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(),1);
     assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
-    println!("Standalone Rust client smoke passed: typed values, portable JSON, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines, iterator CTEs, UPDATE conflict policies and reopen");
+    println!("Standalone Rust client smoke passed: typed values, portable JSON, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines, iterator CTEs, UPDATE/INSERT conflict policies and reopen");
     Ok(())
 }
 ''')
