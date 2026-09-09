@@ -5017,3 +5017,15 @@ counts, active transaction reports and rollback pass. All 89 Node/application
 tests pass (`/tmp/fastdb-target-iterator-node.log`) against the addon rebuilt by
 the preceding full check. Only tests/docs changed from `c65f50668`; no new Rust
 run or addon rebuild is claimed. Full V1 remains open.
+
+
+## Target iterator callback evaluation — 2026-09-09
+
+The counted-callback regression now compares native and collection UPDATE FROM
+with target-correlated json_array callback expressions, both direct and inside
+scalar subqueries passed to json_each. Results and nonzero callback counts match;
+source preparation introduces no extra evaluations in these cases. The focused
+regression passes (`/tmp/fastdb-iterator-evaluation.log`); formatting and all-target
+fastdb Clippy with warnings denied pass (`/tmp/fastdb-iterator-evaluation-clippy.log`).
+Only tests/docs changed from `d7b146cd0`; no full-suite run or addon rebuild is
+claimed. Broader iterator/planner/resource qualification and full V1 remain open.

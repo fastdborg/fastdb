@@ -1440,6 +1440,25 @@ mod candidate_cancellation_tests {
                 c.execute("ROLLBACK", &p).unwrap();
             }
         }
+        for argument in [
+            "json_array(write_scope_tick(t.n))",
+            "(SELECT json_array(write_scope_tick(t.n)))",
+        ] {
+            let mut expected = None;
+            for target in ["native", "docs"] {
+                c.execute("BEGIN", &p).unwrap();
+                CALLS.store(0, Ordering::SeqCst);
+                let result=c.execute(&format!("UPDATE {target} AS t SET v=s.value FROM json_each({argument}) s RETURNING v"),&p).unwrap();
+                let observed = (result.rows, CALLS.load(Ordering::SeqCst));
+                assert!(observed.1 > 0);
+                if let Some(expected) = &expected {
+                    assert_eq!(&observed, expected, "{argument}");
+                } else {
+                    expected = Some(observed);
+                }
+                c.execute("ROLLBACK", &p).unwrap();
+            }
+        }
     }
 
     #[test]
