@@ -6060,3 +6060,16 @@ checks pass. Logs: `/tmp/fastdb-target-iterator-package22.log` and
 Only verifier/docs changed from `ccc8f23e5`; the addon comes from the preceding
 iterator-scope full check. No new Rust-suite run or native rebuild is claimed.
 This is local Linux evidence; no publication occurred. Full V1 remains open.
+
+
+## Standalone target iterator persistence — 2026-09-09
+
+The offline standalone Rust consumer now commits a target-correlated json_each
+UPDATE FROM whose array result combines the iterator integer with a typed
+maximum-int64 record key. Reopening preserves the exact result alongside the
+existing binary tuple payload; the collection integrity check passes. The full
+standalone smoke passes on Rust 1.88.0 without workspace RUSTFLAGS and verifies
+244 registry/git dependency identities against the workspace lockfile. Log:
+`/tmp/fastdb-target-iterator-rust.log`. Only verifier/docs changed from `b08e28bc2`;
+this is local path-dependency evidence, not published-crate or cross-platform
+qualification. Full V1 remains open.

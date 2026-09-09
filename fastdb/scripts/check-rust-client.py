@@ -121,10 +121,15 @@ fn tuple_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(result.rows,vec![vec![payload.clone(),record.clone()]]);
         assert_eq!(result.affected,1);
         assert_eq!(c.transaction_state(),fastdb::TransactionState::Active);
+        c.execute("UPDATE tuples SET j='[7]'",&empty)?;
+        let result=c.execute("UPDATE tuples AS d SET result=array::new(x.value,$record) FROM json_each(d.j) x RETURNING result",&Parameters::from([("$record".into(),record.clone())]))?;
+        assert_eq!(result.affected,1);
+        assert_eq!(result.rows,vec![vec![Value::Array(vec![Value::Integer(7),record.clone()])]]);
         c.execute("COMMIT",&empty)?;
     }
     let db=Database::open(file)?;
     let c=db.connect()?;
+    assert_eq!(c.execute("SELECT result FROM tuples",&empty)?.rows,vec![vec![Value::Array(vec![Value::Integer(7),record.clone()])]]);
     assert_eq!(c.execute("SELECT a,b FROM tuples",&empty)?.rows,vec![vec![payload,record]]);
     assert_eq!(c.check_collection_integrity("tuples",IntegrityLimits::default())?.documents,1);
     Ok(())
