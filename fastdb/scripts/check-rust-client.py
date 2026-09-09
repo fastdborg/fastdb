@@ -137,19 +137,20 @@ fn tuple_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn conflict_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     let empty=Parameters::new();
     let payload=Value::Array(vec![Value::Record(Record {table:"items".into(),key:Key::Integer(i64::MAX)}),Value::Binary(vec![0,255])]);
-    for policy in ["ABORT","ROLLBACK","IGNORE","FAIL"] {
+    for policy in ["ABORT","ROLLBACK","IGNORE","FAIL","REPLACE"] {
         let path=format!("{file}.{policy}");
-        let retained=matches!(policy,"IGNORE"|"FAIL");
+        let retained=matches!(policy,"IGNORE"|"FAIL"|"REPLACE");
         let pending=policy!="ROLLBACK";
         {
             let db=Database::open(&path)?;
             let c=db.connect()?;
             for sql in ["CREATE TABLE items","CREATE INDEX items_v ON items(v)","CREATE UNIQUE INDEX items_n ON items(n)","INSERT INTO items(n,v) VALUES(1,0),(2,0)","BEGIN","INSERT INTO items(n,v) VALUES(3,0)"] { c.execute(sql,&empty)?; }
             let result=c.execute(&format!("UPDATE OR {policy} items SET n=10,v=7,payload=$value WHERE n<3 RETURNING n,payload"),&Parameters::from([("$value".into(),payload.clone())]));
-            if policy=="IGNORE" {
+            if matches!(policy,"IGNORE"|"REPLACE") {
                 let result=result?;
-                assert_eq!(result.affected,1);
-                assert_eq!(result.rows,vec![vec![Value::Integer(10),payload.clone()]]);
+                let count=if policy=="REPLACE" {2} else {1};
+                assert_eq!(result.affected,count);
+                assert_eq!(result.rows,vec![vec![Value::Integer(10),payload.clone()];count as usize]);
             } else { assert_eq!(result.unwrap_err().code(),"FDB_CONSTRAINT"); }
             assert_eq!(c.transaction_state(),if pending {fastdb::TransactionState::Active} else {fastdb::TransactionState::Autocommit});
             if pending { c.execute("COMMIT",&empty)?; }
@@ -158,11 +159,11 @@ fn conflict_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         let c=db.connect()?;
         let mut expected=Vec::new();
         if !retained { expected.push(vec![Value::Integer(1),Value::Integer(0),Value::Null]); }
-        expected.push(vec![Value::Integer(2),Value::Integer(0),Value::Null]);
+        if policy!="REPLACE" { expected.push(vec![Value::Integer(2),Value::Integer(0),Value::Null]); }
         if pending { expected.push(vec![Value::Integer(3),Value::Integer(0),Value::Null]); }
         if retained { expected.push(vec![Value::Integer(10),Value::Integer(7),payload.clone()]); }
         assert_eq!(c.execute("SELECT n,v,payload FROM items ORDER BY n",&empty)?.rows,expected);
-        assert_eq!(c.check_collection_integrity("items",IntegrityLimits::default())?.index_entries,if pending {6} else {4});
+        assert_eq!(c.check_collection_integrity("items",IntegrityLimits::default())?.index_entries,expected.len() as u64 * 2);
         assert_eq!(c.lookup_index("items","items_n",&Value::Integer(10))?.len(),usize::from(retained));
         assert_eq!(c.lookup_index("items","items_v",&Value::Integer(7))?.len(),usize::from(retained));
     }

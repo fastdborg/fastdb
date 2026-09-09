@@ -5442,3 +5442,18 @@ All 11 write-buffer tests pass (`/tmp/fastdb-replace-limits.log`); fastdb-tests
 formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-replace-limits-clippy.log`). Only tests/docs changed from `d63cdff20`;
 no full-suite or client rerun is claimed. Full V1 remains open.
+
+
+## Standalone Rust replacement persistence — 2026-09-09
+
+The standalone conflict consumer now includes REPLACE alongside the other four
+policies. Two completed updates return typed record/binary payloads; only the
+last updated row survives alongside prior pending work after commit and reopen.
+Reopened exact rows, both managed indexes and indexed lookups are verified.
+
+The offline standalone consumer passes on Rust 1.88.0, outside the workspace
+without injected workspace flags, with 244 registry/git dependency identities
+verified against the pinned lockfile. Log: `/tmp/fastdb-replace-rust-consumer.log`.
+Only verifier/docs changed from `8ea8ff92b`; no full-suite run is claimed. This is
+orderly close/reopen with a local path dependency, not published-crate or crash
+qualification. Full V1 remains open.
