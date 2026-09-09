@@ -6815,3 +6815,17 @@ interruption gate; 97 Node/application tests; formatting, all-target FastDB Clip
 with warnings denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-insert-fail-check.log`. No upstream source or storage-format changes.
 Broader error-stage/client qualification and full V1 remain open.
+
+
+## INSERT OR FAIL Node recovery distinction — 2026-09-09
+
+Both clients now check typed record/binary prefixes retained before VALUES
+uniqueness and SELECT CHECK failures, active error reports, stopped later rows,
+index integrity and outer rollback. The same statements through
+writeWithResultLimits restore all statement inserts while preserving prior work.
+An autocommit failure retains its successful typed insert and a fresh transaction
+commits afterward.
+
+All 98 Node/application tests pass (`/tmp/fastdb-insert-fail-clients.log`) against
+the addon rebuilt for `becfb58bb`. Only tests/docs changed; no Rust/full-suite
+rerun or new addon rebuild is claimed. Full V1 remains open.
