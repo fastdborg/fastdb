@@ -5428,3 +5428,17 @@ future candidate and checks final rows and transaction reports.
 All 93 Node/application tests pass (`/tmp/fastdb-update-replace-node.log`) against
 the addon from the preceding full check. Only tests/docs changed from `918d6cd34`;
 no new Rust/full-suite run or addon rebuild is claimed. Full V1 remains open.
+
+
+## Replacement result-budget recovery — 2026-09-09
+
+Ordinary/joined OR REPLACE regressions now exceed RETURNING row and payload
+limits after repeated unique conflicts. FDB_LIMIT restores exact pre-statement
+documents, both indexes and prior pending work. A sufficient-budget retry returns
+all three completed updates although only the final updated document survives;
+outer rollback restores committed rows and removes pending inserts.
+
+All 11 write-buffer tests pass (`/tmp/fastdb-replace-limits.log`); fastdb-tests
+formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-replace-limits-clippy.log`). Only tests/docs changed from `d63cdff20`;
+no full-suite or client rerun is claimed. Full V1 remains open.
