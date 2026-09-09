@@ -5665,3 +5665,18 @@ transaction reports and enclosing rollback pass. All 89 Node/application tests
 passed against the preceding full check's addon. Log:
 `/tmp/fastdb-left-update-node.log`. Only tests/docs changed from `020006036`;
 no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
+
+
+## Installed joined-update qualification — 2026-09-09
+
+The offline tarball consumer now verifies duplicate collection sources, unmatched
+LEFT JOIN rows, bound pagination after deduplication, missing-binding recovery,
+typed RETURNING and rollback in both installed clients. The complete package
+smoke passed on Linux x64 with Node 22.0.0 and 24.19.0. Both artifacts contain
+10 files and 60,785,038 packed bytes. Addon SHA-256:
+`476ac0574dabf92cc9d4c3cc20261fc53a73e20172dcadc92635aa19b3356aeb`.
+Logs: `/tmp/fastdb-joined-package22.log` and `/tmp/fastdb-joined-package24.log`.
+Only smoke/docs changed from `0c0c26aea`; the addon came from the preceding full
+check. Installations used temporary consumers outside the workspace and offline
+local tarballs; no registry access or publication occurred. Other platforms and
+full V1 remain unqualified.
