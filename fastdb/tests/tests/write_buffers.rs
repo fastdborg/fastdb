@@ -7,6 +7,8 @@ fn collection_write_buffer_rows_reject_before_mutation_and_preserve_prior_work()
         "INSERT INTO docs(n) SELECT n+10 FROM docs",
         "UPDATE docs SET n=n+10",
         "UPDATE OR ROLLBACK docs SET n=n+10",
+        "UPDATE OR IGNORE docs SET n=n+10",
+        "UPDATE OR IGNORE docs SET n=docs.n+10 FROM (SELECT 1 AS k) source",
         "UPDATE OR ROLLBACK docs SET n=docs.n+10 FROM (SELECT 1 AS k) source",
         "UPDATE docs SET (n,a)=(SELECT n+10,n)",
         "UPDATE docs SET (n,a)=(SELECT x.n+10,x.n FROM docs x WHERE x.id=docs.id)",
@@ -420,6 +422,90 @@ fn joined_direct_parameters_consume_payload_budget_before_limit() {
                 .unwrap()
                 .rows,
             vec![vec![Value::Integer(1), Value::Null]]
+        );
+    }
+}
+
+#[test]
+fn ignored_candidates_do_not_hide_returning_limit_failure() {
+    for from in ["", " FROM (SELECT 1 AS k) source"] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let p = Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)",
+            "CREATE INDEX docs_v ON docs(v)",
+            "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            "INSERT INTO docs(n,v) VALUES(1,0),(2,0)",
+            "BEGIN",
+            "INSERT INTO docs(n,v) VALUES(3,0)",
+        ] {
+            c.execute(sql, &p).unwrap();
+        }
+        let before = c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows;
+        let sql = format!(
+            "UPDATE OR IGNORE docs SET v=CASE WHEN docs.n=2 THEN 10 ELSE 1 END{from} RETURNING n,v"
+        );
+        let error = c
+            .write_with_result_limits(
+                &sql,
+                &p,
+                ResultLimits {
+                    max_rows: 1,
+                    max_payload_bytes: 10000,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT");
+        assert_eq!(c.transaction_state(), TransactionState::Active);
+        assert_eq!(
+            c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows,
+            before
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            6
+        );
+        let result = c
+            .write_with_result_limits(
+                &sql,
+                &p,
+                ResultLimits {
+                    max_rows: 2,
+                    max_payload_bytes: 10000,
+                },
+            )
+            .unwrap();
+        assert_eq!(result.affected, 2);
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(
+            c.execute("SELECT n,v FROM docs ORDER BY n", &p)
+                .unwrap()
+                .rows,
+            vec![
+                vec![Value::Integer(1), Value::Integer(1)],
+                vec![Value::Integer(2), Value::Integer(0)],
+                vec![Value::Integer(3), Value::Integer(1)]
+            ]
+        );
+        c.execute("ROLLBACK", &p).unwrap();
+        assert_eq!(
+            c.execute("SELECT n,v FROM docs ORDER BY n", &p)
+                .unwrap()
+                .rows,
+            vec![
+                vec![Value::Integer(1), Value::Integer(0)],
+                vec![Value::Integer(2), Value::Integer(0)]
+            ]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            4
         );
     }
 }

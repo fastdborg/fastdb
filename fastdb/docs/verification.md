@@ -5289,3 +5289,19 @@ row, and the focused client test passed again
 (`/tmp/fastdb-update-ignore-node-focused.log`). The addon is from the preceding
 full check on `91198d780`; only tests/docs changed, so no new Rust/full check or
 addon rebuild is claimed. Full V1 remains open.
+
+
+## OR IGNORE resource-failure recovery — 2026-09-09
+
+Ordinary and joined OR IGNORE now participate in the candidate-row budget
+regression. An additional mixed CHECK-success/failure batch exceeds its RETURNING
+row budget after mutation: FDB_LIMIT restores the complete statement, preserves
+prior pending work and both managed indexes, and permits a larger-budget retry.
+The retry returns only successful candidates; outer rollback restores original
+committed rows. These checks cover candidate and result row limits, not a global
+memory bound or deterministic interruption at every savepoint boundary.
+
+All 10 write-buffer tests pass (`/tmp/fastdb-ignore-limits.log`); fastdb-tests
+formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-ignore-limits-clippy.log`). Only tests/docs changed from `2070adbcb`;
+no full-suite or client rerun is claimed. Full V1 remains open.
