@@ -1,5 +1,7 @@
 # FastDB embedded prototype
 
+Active delivery plan: [V1 release preview checklist](docs/preview-release.md).
+
 An initial FastQL frontend over pinned Rust Turso. **V1 is still in development.** See [status](docs/status.md), [contracts](docs/contracts.md), and [engine provenance](UPSTREAM.md).
 
 From the repository root:

@@ -1,5 +1,7 @@
 # V1 implementation status
 
+Active priority: [V1 release preview checklist](preview-release.md). Its finite requirements govern next work; historical qualification notes below are not additional preview gates.
+
 V1 is incomplete. The full scope is the FastDB.md master plan in the parent planning directory. This file records current evidence and work remaining; no milestone substitutes for the full V1 goal.
 
 ## Repository and tooling
