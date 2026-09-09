@@ -6885,3 +6885,20 @@ The focused new test passes (`/tmp/fastdb-insert-replace-client-focus.log`), fol
 by all 99 Node/application tests (`/tmp/fastdb-insert-replace-clients.log`) against
 the addon rebuilt for `53fd69f97`. Only tests/docs changed; no Rust/full-suite
 rerun or new addon rebuild is claimed. Full V1 remains open.
+
+
+## INSERT replacement interruption recovery — 2026-09-09
+
+The after-write interruption matrix now includes INSERT REPLACE with generated
+IDs conflicting on unique keys and explicit existing record identities, using
+VALUES and collection SELECT sources. Each runs with/without an outer transaction.
+The handler fires after total_changes increases; cancellation restores document
+snapshots and indexed lookups, preserves prior work and transaction state in the
+tested cases, and permits fresh writes. This samples the first observed storage
+change rather than every replacement or I/O boundary.
+
+The expanded focused test passes (one test, 66 filtered out):
+`/tmp/fastdb-insert-replace-interrupt.log`. FastDB formatting and all-target Clippy
+with warnings denied pass (`/tmp/fastdb-insert-replace-interrupt-clippy.log`). Only
+test/docs changed from `78fd07fe3`; no full-suite/client rerun is claimed.
+Full V1 remains open.
