@@ -5330,3 +5330,17 @@ formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
 Addon rebuilt. Log: `/tmp/fastdb-update-fail-check.log`. No upstream source or
 storage-format changes. Broader error-stage, interruption and client-specific
 qualification and full V1 remain open.
+
+
+## OR FAIL Node error disposition — 2026-09-09
+
+Both Node clients now check retained typed record/binary updates before a CHECK
+failure in ordinary and joined UPDATE, active-to-active error reports, later
+candidates remaining unchanged, index integrity and outer rollback. The same
+statement through writeWithResultLimits restores every candidate. An autocommit
+uniqueness failure retains the successful prefix with an autocommit-to-autocommit
+report; a fresh transaction then commits successfully.
+
+All 92 Node/application tests pass (`/tmp/fastdb-update-fail-node.log`) against
+the addon from the preceding full check. Only tests/docs changed from `10bda02ec`;
+no new Rust/full-suite check or addon rebuild is claimed. Full V1 remains open.

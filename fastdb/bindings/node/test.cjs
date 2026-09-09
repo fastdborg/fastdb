@@ -3001,3 +3001,43 @@ test('OR IGNORE preserves typed successes, candidate limits and pending client w
     } finally { await db.close(); }
   }
 });
+
+test('OR FAIL exposes retained typed updates and accurate transaction reports', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of ['CREATE TABLE docs','DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)','CREATE INDEX docs_v ON docs(v)','CREATE UNIQUE INDEX docs_n ON docs(n)','INSERT INTO docs(n,v) VALUES(1,0),(2,0),(3,0)']) await db.execute(sql);
+      const payload=[new Record('docs',9223372036854775807n),Buffer.from([0,255])];
+      for (const from of ['', ' FROM (SELECT 1 AS k) source']) {
+        for (const limited of [false,true]) {
+          await db.execute('BEGIN');
+          await db.execute('INSERT INTO docs(n,v) VALUES(4,0)');
+          const sql=`UPDATE OR FAIL docs SET v=CASE WHEN docs.n=2 THEN 10 ELSE 1 END,payload=$value${from} RETURNING n,payload`;
+          await assert.rejects(async () => limited
+            ? db.writeWithResultLimits(sql,{maxRows:10n,maxPayloadBytes:10000n},{$value:payload})
+            : db.execute(sql,{$value:payload}), error => {
+              assert.equal(error.code,'FDB_VALIDATION');
+              assert.deepEqual(error.transaction,{before:'active',after:'active'});
+              return true;
+            });
+          assert.deepEqual((await db.execute('SELECT n,v,payload FROM docs ORDER BY n')).rows,[[1n,limited?0n:1n,limited?null:payload],[2n,0n,null],[3n,0n,null],[4n,0n,null]]);
+          assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,8n);
+          await db.execute('ROLLBACK');
+          assert.deepEqual((await db.execute('SELECT n,v,payload FROM docs ORDER BY n')).rows,[[1n,0n,null],[2n,0n,null],[3n,0n,null]]);
+        }
+      }
+      await assert.rejects(async () => db.execute('UPDATE OR FAIL docs SET n=10,v=1,payload=$value WHERE n<3 RETURNING n,payload',{$value:payload}),error => {
+        assert.equal(error.code,'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction,{before:'autocommit',after:'autocommit'});
+        return true;
+      });
+      assert.deepEqual((await db.execute('SELECT n,v,payload FROM docs ORDER BY n')).rows,[[2n,0n,null],[3n,0n,null],[10n,1n,payload]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,6n);
+      await db.execute('BEGIN');
+      await db.execute('UPDATE docs SET n=1 WHERE n=10');
+      await db.execute('COMMIT');
+      assert.deepEqual((await db.execute('SELECT n FROM docs ORDER BY n')).rows,[[1n],[2n],[3n]]);
+    } finally { await db.close(); }
+  }
+});
