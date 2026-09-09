@@ -72,6 +72,38 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
 
       await client.execute('ROLLBACK');
       assert.deepEqual((await client.execute('SELECT a,b FROM tuple_docs')).rows,[[tupleRecord,tuplePayload]]);
+      for (const policy of ['ABORT','ROLLBACK','IGNORE','FAIL']) {
+        await client.execute('CREATE TABLE conflicts');
+        await client.execute('CREATE INDEX conflict_v ON conflicts(v)');
+        await client.execute('CREATE UNIQUE INDEX conflict_n ON conflicts(n)');
+        await client.execute('INSERT INTO conflicts(n,v) VALUES(1,0),(2,0)');
+        await client.execute('BEGIN');
+        await client.execute('INSERT INTO conflicts(n,v) VALUES(3,0)');
+        const sql='UPDATE OR '+policy+' conflicts SET n=10,v=7,payload=$value WHERE n<3 RETURNING n,payload';
+        if (policy==='IGNORE') {
+          const result=await client.execute(sql,{$value:tuplePayload});
+          assert.equal(result.affected,1n);
+          assert.deepEqual(result.rows,[[10n,tuplePayload]]);
+          assert.deepEqual(result.transaction,{before:'active',after:'active'});
+        } else {
+          await assert.rejects(async()=>client.execute(sql,{$value:tuplePayload}),error=>{
+            assert.equal(error.code,'FDB_CONSTRAINT');
+            assert.deepEqual(error.transaction,{before:'active',after:policy==='ROLLBACK'?'autocommit':'active'});
+            return true;
+          });
+        }
+        const retained=policy==='IGNORE'||policy==='FAIL';
+        const pending=policy!=='ROLLBACK';
+        const expected=[];
+        if (!retained) expected.push([1n,0n,null]);
+        expected.push([2n,0n,null]);
+        if (pending) expected.push([3n,0n,null]);
+        if (retained) expected.push([10n,7n,tuplePayload]);
+        assert.deepEqual((await client.execute('SELECT n,v,payload FROM conflicts ORDER BY n')).rows,expected);
+        assert.equal((await client.checkCollectionIntegrity('conflicts')).indexEntries,pending?6n:4n);
+        if (pending) await client.execute('COMMIT');
+        await client.execute('DROP TABLE conflicts');
+      }
       const base = {version:1n,name:'base',sql:'CREATE TABLE migration_docs; CREATE UNIQUE INDEX migration_n ON migration_docs(n); INSERT INTO migration_docs {n:1};'};
       await client.migrate([base]);
       const prefix = "-- café 日本語\\nINSERT INTO migration_docs {n:2}; ";

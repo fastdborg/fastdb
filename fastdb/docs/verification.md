@@ -5361,3 +5361,18 @@ against the pinned lockfile. Log: `/tmp/fastdb-conflict-rust-consumer.log`.
 Only the consumer verifier/docs changed from `f1caeffd4`; no new full-suite run
 is claimed. This is orderly close/reopen with a local path dependency, not
 published-crate, process-kill or power-loss qualification. Full V1 remains open.
+
+
+## Installed Node package conflict policies — 2026-09-09
+
+The installed-tarball smoke now checks ABORT, ROLLBACK, IGNORE and FAIL in both
+Node clients, including typed binary/object payloads, affected/RETURNING results,
+transaction reports, retained or discarded pending inserts, and two-index
+integrity. It commits surviving work and cleans up through the installed API.
+
+Offline installation/runtime/strict TypeScript checks pass on Linux x64 with
+Node 22.0.0 and 24.19.0: 10 packed files, 60,792,034 packed bytes. Logs:
+`/tmp/fastdb-conflict-package22.log` and `/tmp/fastdb-conflict-package24.log`.
+The addon is from the full check for `10bda02ec`; only the package verifier/docs
+changed from `4ba215343`. No registry publication, new platform qualification or
+new full-suite run is claimed. Full V1 remains open.
