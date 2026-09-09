@@ -1,8 +1,8 @@
 # FastDB 0.1.0 — embedded V1 preview
 
-Local release draft for https://github.com/fastdborg/fastdb. Source is pushed;
-release assets have not been published. Suggested release type:
-**prerelease**; suggested tag: `fastdb-v0.1.0-preview.1` (not created).
+An unpublished [GitHub draft prerelease](https://github.com/fastdborg/fastdb/releases/tag/untagged-2d5e3413f99424d2484d)
+now contains both assets below. Its intended tag is `fastdb-v0.1.0-preview.1`.
+GitHub reports the archive uploaded with the SHA-256 recorded below.
 The release target must be the artifact source commit
 `dcce6c4f09e98cd4173b54d7bcf8af0a10911436`, not a later documentation commit.
 

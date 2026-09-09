@@ -7106,3 +7106,17 @@ registered as active; no hosted FastDB test result is claimed. The release draft
 now uses this repository for bug reports. Preview assets remain local and the
 preview tag/release has not been created. This closes the repository destination
 handoff without reopening P0–P6 or claiming stable V1 completion.
+
+## Hosted preview handoff and CI
+
+An unpublished GitHub draft prerelease (release ID 385284960) contains the
+133,561,802-byte preview archive and its adjacent checksum. GitHub's asset digest
+matches `467a4f90a0c9bd3d603f8c28cbbe5222ac0dbfea7f2d01b2a922a92852147e8c`;
+its target is the artifact source `dcce6c4f09e98cd4173b54d7bcf8af0a10911436`.
+See [release details](preview-release-draft.md). No public release is claimed.
+
+Repository Actions is enabled with only FastDB registered. The organization's
+existing zero-dollar Actions budget with paid usage blocked was preserved.
+Commit `c6627f5b71b764a012eec5e7ddfba4c2cf0d13ac` adds manual dispatch.
+The [first hosted check](https://github.com/fastdborg/fastdb/actions/runs/34321336233)
+passed setup and entered the scoped check; its result is pending at this entry.
