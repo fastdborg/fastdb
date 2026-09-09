@@ -4848,3 +4848,16 @@ zero failures and one existing ignored trigger-interruption gate; 89 Node/applic
 passes; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Addon rebuilt. Log: `/tmp/fastdb-right-no-on-check.log`. No upstream
 source, dependency or storage-format changes. Full V1 remains open.
+
+
+## Public joined-update contract — 2026-09-09
+
+contracts.md now has a current joined-update section covering supported sources
+and joins, source CTE binding, original snapshots, typed target identity,
+plan-dependent duplicate selection, post-evaluation pagination, RETURNING,
+validation/index atomicity and cancellation/resource/engine-abort limits.
+The inventory example was extracted from the document and executed against the
+addon from the preceding full check; rows and affected count match the documented
+result (`/tmp/fastdb-joined-contract-example.log`). Only docs changed from
+`e6c5df7a9`; no suite run or native rebuild is claimed. This contract records the
+implemented subset and does not close broader V1 release gates.

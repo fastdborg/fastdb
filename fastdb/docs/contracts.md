@@ -34,6 +34,56 @@ Missing pagination bindings report FDB_PARAMETER before candidate execution.
 The existing statement rollback and managed-index guarantees apply. Broader
 planner, expression and cancellation qualification remains open.
 
+## Joined updates
+
+Collection `UPDATE ... FROM` accepts native tables, collections and supported
+SELECT/CTE sources. For example:
+
+```sql
+CREATE TABLE inventory;
+INSERT INTO inventory(id,sku,quantity) VALUES(inventory:p1,'P1',10);
+CREATE TABLE adjustments(sku TEXT,delta INTEGER);
+INSERT INTO adjustments VALUES('P1',2);
+UPDATE inventory AS i
+SET quantity=i.quantity+a.delta
+FROM adjustments AS a
+WHERE i.sku=a.sku
+RETURNING sku,quantity;
+```
+
+The update returns `('P1',12)` and affects one document. Target and source aliases
+have separate roles; CTEs named like the target table or alias keep their source
+binding in joined updates. Direct, derived and CTE self-sources read original
+candidate snapshots before mutations begin.
+
+Source joins currently support inner/cross/comma joins and LEFT joins, plus a
+leading RIGHT join with ON or no constraint, optionally followed by inner/left
+joins. USING, NATURAL, FULL and non-leading RIGHT joins remain unsupported in
+collection UPDATE FROM. Parenthesized FROM join groups are also rejected by the
+pinned native engine. These restrictions describe collection writes; ordinary
+relational writes continue to delegate to the pinned engine.
+
+Each matched target is changed once, even when multiple source rows match.
+Duplicate resolution uses typed record identity: integer key `1` and string key
+`"1"` remain distinct. The selected source match is not deterministic across query
+plans; make matches unique when the assignment must be predictable. Unmatched
+targets remain unchanged. Scalar and tuple assignments retain the supported
+logical value types, evaluated-value validation and atomic managed-index updates.
+
+For joined updates, assignment candidates are evaluated and duplicate targets
+resolved before LIMIT/OFFSET. Consequently, a failing assignment in a later
+candidate can fail the statement even with LIMIT 0 or LIMIT 1. Pagination selects
+targets, not source matches; missing bindings report FDB_PARAMETER. RETURNING
+reports only selected, changed targets. Host duplicate resolution and pagination
+poll cooperative cancellation, including OFFSET-discarded rows. Existing buffer
+limits do not establish a total working-memory or hard execution-time bound.
+
+Statement validation/index failures restore document and index changes. Native
+engine errors can abort the enclosing transaction; inspect transaction reports
+rather than assuming every failure preserves earlier pending work. Broader join
+scope, planner, resource and recovery qualification remains open. See
+[the join design](update-from.md) and [verification evidence](verification.md).
+
 ## Tuple updates
 
 Collection UPDATE supports simultaneous top-level assignments such as
