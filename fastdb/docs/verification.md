@@ -5542,9 +5542,11 @@ Collection SQL INSERT now accepts explicit OR ABORT through the existing atomic
 insert path for supported VALUES and SELECT sources. Other explicit INSERT
 policies and ON CONFLICT remain rejected. Regression coverage checks uniqueness
 and CHECK failures after an earlier row, preservation of prior pending work,
-index integrity, successful retry and outer rollback. VALUES is compared with
-native SQL; the tested native two-column SELECT insertion rejects with
-"1 values for 2 columns" before constraints, so SELECT coverage is collection-only.
+index integrity, successful retry and outer rollback. This initial run compared
+VALUES with the relational frontend and excluded SELECT after a width error.
+Correction: the later direct-engine oracle identified that rejection as a FastDB
+guard-placeholder bug, not a pinned-engine limitation; see the INSERT source-width
+correction below.
 
 The first full scoped check passed formatting/Clippy and preceding Rust suites,
 but stopped on the new fixture's incorrect native SELECT expectation
@@ -5568,3 +5570,24 @@ removes the retry and pending inserts.
 All 94 Node/application tests pass (`/tmp/fastdb-insert-abort-client.log`) against
 the addon rebuilt for `596d5a031`. Only tests/docs changed; no Rust/full-suite
 rerun or new addon rebuild is claimed. Full V1 remains open.
+
+
+## INSERT source-width correction — 2026-09-09
+
+A direct-engine oracle disproved the earlier upstream attribution: the engine
+executes the two-column SELECT source and reaches the expected uniqueness error.
+FastDB's guard-only INSERT template replaced the source with SELECT NULL;
+reparsing that template rejected multi-column target lists before dispatch. The
+placeholder now uses SELECT * FROM (SELECT NULL), leaving width unresolved for
+the name-safety guard. The real source remains unchanged for lowering/delegation.
+The previously skipped native SELECT cases in the INSERT ABORT regression are
+restored, and earlier status/verification attribution is corrected.
+
+The raw-engine/frontend oracle passes (`/tmp/fastdb-insert-width-oracle.log`).
+The complete scoped check on `f5cb82297` plus this change passes: 657 Rust tests,
+zero failures, one existing ignored trigger-interruption gate; 94 Node/application
+tests; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Addon rebuilt. Log: `/tmp/fastdb-insert-width-check.log`. A separate
+rebuilt-addon check verifies successful two-column compound SELECT insertion and
+RETURNING under plain INSERT and OR ABORT (`/tmp/fastdb-insert-width-success.log`).
+No upstream source or storage-format changes. Full V1 remains open.

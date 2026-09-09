@@ -460,7 +460,10 @@ impl Connection {
         else {
             unreachable!()
         };
-        let Cmd::Stmt(Stmt::Select(empty)) = parsed("SELECT NULL")? else {
+        // Guard-only source: star leaves width unresolved during parsing. A
+        // single NULL makes the parser reject multi-column INSERT targets before
+        // the real source can be lowered or delegated to the engine.
+        let Cmd::Stmt(Stmt::Select(empty)) = parsed("SELECT * FROM (SELECT NULL)")? else {
             unreachable!()
         };
         *source = empty;
@@ -1614,5 +1617,33 @@ mod candidate_cancellation_tests {
             c.execute("SELECT 1", &Parameters::new()).unwrap().rows,
             vec![vec![Value::Integer(1)]]
         );
+    }
+}
+
+#[cfg(test)]
+mod insert_source_oracle_tests {
+    use crate::Database;
+
+    #[test]
+    fn raw_engine_two_column_insert_select_probe() {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        c.run("CREATE TABLE items(n INTEGER UNIQUE,v INTEGER)", &[])
+            .unwrap();
+        c.run("INSERT INTO items VALUES(1,0)", &[]).unwrap();
+        let error = c
+            .run(
+                "INSERT OR ABORT INTO items(n,v) SELECT 2,0 UNION ALL SELECT 1,0",
+                &[],
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_CONSTRAINT", "{error:?}");
+        let error = c
+            .execute(
+                "INSERT OR ABORT INTO items(n,v) SELECT 2,0 UNION ALL SELECT 1,0",
+                &crate::Parameters::new(),
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_CONSTRAINT", "{error:?}");
     }
 }

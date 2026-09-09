@@ -3477,11 +3477,6 @@ fn insert_abort_preserves_prior_work_for_values_and_select_sources() {
         "SELECT n,v FROM (SELECT 2 AS n,0 AS v UNION ALL SELECT 3,10)",
     ] {
         for collection in [false, true] {
-            // The pinned native two-column SELECT insertion rejects this fixture
-            // with "1 values for 2 columns", before constraint evaluation.
-            if !collection && !source.starts_with("VALUES") {
-                continue;
-            }
             let db = Database::open(":memory:").unwrap();
             let c = db.connect().unwrap();
             if collection {
