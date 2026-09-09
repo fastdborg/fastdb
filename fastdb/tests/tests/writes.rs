@@ -3133,3 +3133,87 @@ fn update_fail_validation_retains_prefix_but_limited_api_restores_statement() {
         );
     }
 }
+
+#[test]
+fn fail_and_ignore_preserve_user_savepoint_recovery_like_native() {
+    for collection in [false, true] {
+        for policy in ["FAIL", "IGNORE"] {
+            for begin in [false, true] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                if collection {
+                    q(&c, "CREATE TABLE items");
+                    q(&c, "CREATE UNIQUE INDEX items_n ON items(n)");
+                } else {
+                    q(&c, "CREATE TABLE items(n INTEGER UNIQUE)");
+                }
+                q(&c, "INSERT INTO items(n) VALUES(1),(2)");
+                if begin {
+                    q(&c, "BEGIN");
+                }
+                q(&c, "SAVEPOINT outer_work");
+                q(&c, "INSERT INTO items(n) VALUES(3)");
+                q(&c, "SAVEPOINT inner_work");
+                let result = c.execute(
+                    &format!("UPDATE OR {policy} items SET n=10 WHERE n<3 RETURNING n"),
+                    &Parameters::new(),
+                );
+                if policy == "FAIL" {
+                    assert_eq!(result.unwrap_err().code(), "FDB_CONSTRAINT");
+                } else {
+                    assert_eq!(result.unwrap().rows, vec![vec![Value::Integer(10)]]);
+                }
+                assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+                assert_eq!(
+                    q(&c, "SELECT n FROM items ORDER BY n").rows,
+                    vec![
+                        vec![Value::Integer(2)],
+                        vec![Value::Integer(3)],
+                        vec![Value::Integer(10)]
+                    ]
+                );
+                q(&c, "ROLLBACK TO inner_work");
+                assert_eq!(
+                    q(&c, "SELECT n FROM items ORDER BY n").rows,
+                    vec![
+                        vec![Value::Integer(1)],
+                        vec![Value::Integer(2)],
+                        vec![Value::Integer(3)]
+                    ]
+                );
+                q(&c, "RELEASE inner_work");
+                q(&c, "ROLLBACK TO outer_work");
+                assert_eq!(
+                    q(&c, "SELECT n FROM items ORDER BY n").rows,
+                    vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+                );
+                q(&c, "INSERT INTO items(n) VALUES(4)");
+                q(&c, "RELEASE outer_work");
+                if begin {
+                    q(&c, "COMMIT");
+                }
+                assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+                assert_eq!(
+                    q(&c, "SELECT n FROM items ORDER BY n").rows,
+                    vec![
+                        vec![Value::Integer(1)],
+                        vec![Value::Integer(2)],
+                        vec![Value::Integer(4)]
+                    ]
+                );
+                if collection {
+                    assert_eq!(
+                        c.check_collection_integrity("items", Default::default())
+                            .unwrap()
+                            .index_entries,
+                        3
+                    );
+                    assert!(c
+                        .lookup_index("items", "items_n", &Value::Integer(10))
+                        .unwrap()
+                        .is_empty());
+                }
+            }
+        }
+    }
+}

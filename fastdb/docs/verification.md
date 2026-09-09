@@ -5376,3 +5376,17 @@ Node 22.0.0 and 24.19.0: 10 packed files, 60,792,034 packed bytes. Logs:
 The addon is from the full check for `10bda02ec`; only the package verifier/docs
 changed from `4ba215343`. No registry publication, new platform qualification or
 new full-suite run is claimed. Full V1 remains open.
+
+
+## FAIL/IGNORE user-savepoint recovery — 2026-09-09
+
+A native-table/collection matrix now verifies FAIL and IGNORE under nested user
+savepoints, with both explicit BEGIN and SAVEPOINT-started transactions. Retained
+updates remain visible until ROLLBACK TO the inner savepoint; prior inserts remain
+until rollback to the outer savepoint. Fresh inserts commit after recovery, with
+collection integrity and absence of the rolled-back index key checked.
+
+All 68 write tests pass (`/tmp/fastdb-fail-ignore-savepoints.log`); fastdb-tests
+formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-fail-ignore-savepoints-clippy.log`). Only tests/docs changed from
+`fca6b3bee`; no full-suite or client rerun is claimed. Full V1 remains open.
