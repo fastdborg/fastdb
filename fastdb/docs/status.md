@@ -6607,3 +6607,17 @@ TypeScript. Addon rebuilt. Log: `/tmp/fastdb-insert-width-check.log`. A separate
 rebuilt-addon check verifies successful two-column compound SELECT insertion and
 RETURNING under plain INSERT and OR ABORT (`/tmp/fastdb-insert-width-success.log`).
 No upstream source or storage-format changes. Full V1 remains open.
+
+
+## Multi-column native INSERT SELECT client qualification — 2026-09-09
+
+Both Node clients now exercise native-table and collection sources feeding a
+two-column relational destination under plain INSERT and OR ABORT. Binary values,
+RETURNING/affected counts, active transaction reports, repeated-insert uniqueness
+failure and rollback are checked. Direct multi-column INSERT SELECT into the
+managed catalog remains rejected; source collection integrity and a subsequent
+autocommit native insertion succeed.
+
+All 95 Node/application tests pass (`/tmp/fastdb-insert-width-clients.log`) against
+the addon rebuilt for `a6561f7b1`. Only tests/docs changed; no Rust/full-suite rerun
+or new addon rebuild is claimed. Full V1 remains open.

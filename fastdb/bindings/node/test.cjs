@@ -3112,3 +3112,39 @@ test('INSERT OR ABORT restores failed batches and retains typed client values', 
     } finally { await db.close(); }
   }
 });
+
+test('multi-column INSERT SELECT preserves native and collection sources in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db=await open();
+    try {
+      for (const sql of ['CREATE TABLE native_source(n INTEGER,v BLOB)','CREATE TABLE docs','CREATE TABLE target(n INTEGER UNIQUE,v BLOB)']) await db.execute(sql);
+      const bytes=Buffer.from([0,127,255]);
+      await db.execute('INSERT INTO native_source(n,v) VALUES(1,$v),(2,$v)',{$v:bytes});
+      await db.execute('INSERT INTO docs(n,v) VALUES(1,$v),(2,$v)',{$v:bytes});
+      for (const source of ['native_source','docs']) {
+        for (const policy of ['', 'OR ABORT']) {
+          await db.execute('BEGIN');
+          const sql='INSERT '+policy+' INTO target(n,v) SELECT n,v FROM '+source+' ORDER BY n RETURNING n,v';
+          const result=await db.execute(sql);
+          assert.equal(result.affected,2n);
+          assert.deepEqual(result.rows,[[1n,bytes],[2n,bytes]]);
+          assert.deepEqual(result.transaction,{before:'active',after:'active'});
+          await assert.rejects(async()=>db.execute(sql),error=>{
+            assert.equal(error.code,'FDB_CONSTRAINT');
+            assert.deepEqual(error.transaction,{before:'active',after:'active'});
+            return true;
+          });
+          assert.deepEqual((await db.execute('SELECT n,v FROM target ORDER BY n')).rows,result.rows);
+          await db.execute('ROLLBACK');
+          assert.deepEqual((await db.execute('SELECT * FROM target')).rows,[]);
+        }
+      }
+      await assert.rejects(async()=>db.execute("INSERT INTO __fastdb_catalog(name,metadata) SELECT 'injected',X'00'"),error=>error.code==='FDB_UNSUPPORTED');
+      assert.equal((await db.checkCollectionIntegrity('docs')).documents,2n);
+      const final=await db.execute('INSERT INTO target(n,v) SELECT n,v FROM native_source RETURNING n,v');
+      assert.equal(final.affected,2n);
+      assert.deepEqual(final.transaction,{before:'autocommit',after:'autocommit'});
+    } finally { await db.close(); }
+  }
+});
