@@ -5776,3 +5776,15 @@ TypeScript. Addon rebuilt. Log: `/tmp/fastdb-joined-cte-scope-check.log`.
 The initial regression failure is retained in `/tmp/fastdb-self-source-writes-final.log`.
 No upstream source or storage-format changes. Broader scope/planner/resource
 qualification and full V1 remain open.
+
+
+## Typed joined-update CTE scopes in Node clients — 2026-09-09
+
+Both Node clients now exercise source CTEs named like the target collection or
+its alias, with default/MATERIALIZED/NOT MATERIALIZED hints and bound pagination.
+Record IDs, object/array/binary/boolean/int64 payloads, RETURNING, affected counts,
+unchanged unmatched targets and active transaction reports pass. The enclosing
+fixture verifies rollback. All 89 Node/application tests passed against the addon
+rebuilt by the preceding full check. Log: `/tmp/fastdb-joined-cte-node.log`.
+Only tests/docs changed from `e0b7b6f42`; no new Rust run or native rebuild is
+claimed. Broader scope and release qualification, including full V1, remain open.

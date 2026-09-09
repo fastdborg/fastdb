@@ -2861,6 +2861,16 @@ test('update from preserves typed candidates and unmatched targets in both clien
         assert.deepEqual(right.transaction, { before: 'active', after: 'active' });
         await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
       }
+      for (const name of ['docs', 'target']) {
+        for (const hint of ['', 'MATERIALIZED', 'NOT MATERIALIZED']) {
+          const scoped = await db.execute(`WITH ${name}(n,a,b) AS ${hint} (SELECT k,a,b FROM source WHERE k=2), chosen AS (SELECT n,a,b FROM ${name}) UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM chosen s WHERE s.n=target.n RETURNING n,a,b LIMIT $count OFFSET $skip`, { $count: 1n, $skip: 0n });
+          assert.equal(scoped.affected, 1n);
+          assert.deepEqual(scoped.rows, [[2n,record,payload]]);
+          assert.deepEqual(scoped.transaction, { before: 'active', after: 'active' });
+          assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, [[1n,null,null],[2n,record,payload]]);
+          await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
+        }
+      }
       await db.execute('DELETE FROM source WHERE k=2');
       const paginated = 'UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s WHERE s.k=target.n RETURNING n,a,b LIMIT $count OFFSET $skip';
       await assert.rejects(async () => db.execute(paginated, { $count: 1n }), error => error.code === 'FDB_PARAMETER');
