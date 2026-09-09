@@ -2308,3 +2308,52 @@ fn update_from_deduplicates_typed_record_ids_without_conflating_keys() {
         );
     }
 }
+
+#[test]
+fn grouped_update_from_retains_pinned_rejection_and_pending_work() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,10),(2,20)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE source(k INTEGER,w INTEGER)",
+        "INSERT INTO source VALUES(1,100)",
+    ] {
+        q(&c, sql);
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO native VALUES(3,30)");
+    q(&c, "INSERT INTO docs(n,v) VALUES(3,30)");
+    for table in ["native", "docs"] {
+        let before = q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows;
+        for alias in ["", " AS g"] {
+            let sql=format!("UPDATE {table} SET v=100 FROM (source a LEFT JOIN source b ON a.k=b.k){alias} WHERE {table}.n=1");
+            let error = c.execute(&sql, &Parameters::new()).unwrap_err();
+            assert!(
+                matches!(error.code(), "FDB_ENGINE" | "FDB_UNSUPPORTED"),
+                "{sql}: {error}"
+            );
+            if table == "native" {
+                assert!(error
+                    .to_string()
+                    .contains("Parenthesized FROM clause subqueries are not supported"));
+            }
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(
+                q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows,
+                before
+            );
+        }
+    }
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT count(*) FROM docs").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        q(&c, "SELECT count(*) FROM native").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}

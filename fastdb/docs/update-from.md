@@ -23,9 +23,13 @@ alias; do not use an unqualified star once joined sources exist. Follow that
 snapshot with the existing assignment projections, retaining their typed values
 and direct-parameter validation.
 
-Keep the original FROM tree grouped so its JOIN ON/USING scope is preserved.
-Combine it with the actual update target using the same exposed target name as
-the original UPDATE. Resolve self-joins and target-named CTEs using write-context
+Preserve the source-only JOIN ON/USING scope when extending join support.
+The pinned engine rejects parenthesized FROM groups, so wrapping the original
+source tree in a SelectTable::Sub is not a viable engine lowering. Supporting
+additional ungrouped join forms requires another scope-preserving representation
+(for example explicit derived projections with qualified-reference rewriting),
+with native differential evidence before enabling it. Combine supported sources
+with the actual update target using its original exposed name. Resolve self-joins and target-named CTEs using write-context
 binding; do not blanket-rename source references. Existing CTE flattening and
 correlation logic needs differential checks in this new context.
 

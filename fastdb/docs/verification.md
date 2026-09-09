@@ -4816,3 +4816,19 @@ registry/git package identities match the workspace lockfile. Log:
 `/tmp/fastdb-scoped-right-rust.log`. Only verifier/docs changed from `254e4e970`;
 this local path-dependency consumer is not published-crate or cross-platform
 qualification. Full V1 remains open.
+
+
+## Pinned grouped-source rejection — 2026-09-09
+
+The pinned native engine rejects parenthesized FROM join groups. A regression
+covers aliased and unaliased grouped UPDATE FROM for native and collection
+targets, preserving prior pending writes and active transaction state before
+rollback. All 54 write tests passed (`/tmp/fastdb-grouped-source-gate.log`);
+formatting and all-target fastdb-tests Clippy with warnings denied passed
+(`/tmp/fastdb-grouped-source-clippy.log`). Only tests/docs changed from `003aabb79`.
+
+The join design now explicitly rules out SelectTable::Sub wrapping as an engine
+lowering strategy. Remaining supported-native ungrouped USING/NATURAL/FULL and
+non-leading RIGHT joins still need a scope-preserving implementation; native
+parenthesized groups are a pinned limitation rather than a missing compatibility
+feature. No full-suite run is claimed. Full V1 remains open.
