@@ -5161,3 +5161,14 @@ passes; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Addon rebuilt. Log: `/tmp/fastdb-update-abort-check.log`. No upstream
 source or storage-format changes. Broader conflict-policy qualification and full
 V1 remain open.
+
+
+## Explicit OR ABORT Node recovery — 2026-09-09
+
+Both Node clients now exercise an explicit OR ABORT tuple update that conflicts
+with a unique index. FDB_CONSTRAINT reports active-to-active state and preserves
+pending typed snapshots. A valid OR ABORT retry returns exact record/object/binary
+values, followed by the fixture's rollback verification. All 89 Node/application
+tests pass (`/tmp/fastdb-update-abort-node.log`) against the addon from the preceding
+full check. Only tests/docs changed from `9a5f47ffb`; no new Rust-suite run or
+addon rebuild is claimed. Full V1 remains open.

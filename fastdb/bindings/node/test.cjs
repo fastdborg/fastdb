@@ -2653,7 +2653,14 @@ test('tuple updates preserve typed snapshots and atomic failure in both clients'
         return true;
       });
       assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, before);
-      assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=($a,$b),n=7 WHERE n=0 RETURNING a,b', { $a: record, $b: object })).rows, [[record, object]]);
+      await assert.rejects(async () => db.execute('UPDATE OR ABORT docs SET (a,b)=($a,$b),n=1 WHERE n=0 RETURNING a,b', { $a: record, $b: object }), error => {
+        assert.equal(error.code, 'FDB_CONSTRAINT');
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+        return true;
+      });
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows, before);
+      assert.deepEqual((await db.execute('UPDATE OR ABORT docs SET (a,b)=($a,$b),n=7 WHERE n=0 RETURNING a,b', { $a: record, $b: object })).rows, [[record, object]]);
+
       assert.deepEqual((await db.execute('UPDATE docs SET (a,b)=(b,a) WHERE n=7 RETURNING a,b')).rows, [[object, record]]);
       await assert.rejects(async () => db.execute('UPDATE docs SET (n,a)=(SELECT n+8,a)'), error => {
         assert.equal(error.code, 'FDB_VALIDATION');
