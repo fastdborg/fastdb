@@ -3468,3 +3468,81 @@ fn replacement_numeric_unique_keys_match_native_comparisons() {
         }
     }
 }
+
+#[test]
+fn insert_abort_preserves_prior_work_for_values_and_select_sources() {
+    for source in [
+        "VALUES(2,0),(1,0)",
+        "SELECT n,v FROM (SELECT 2 AS n,0 AS v UNION ALL SELECT 1,0)",
+        "SELECT n,v FROM (SELECT 2 AS n,0 AS v UNION ALL SELECT 3,10)",
+    ] {
+        for collection in [false, true] {
+            // The pinned native two-column SELECT insertion rejects this fixture
+            // with "1 values for 2 columns", before constraint evaluation.
+            if !collection && !source.starts_with("VALUES") {
+                continue;
+            }
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            if collection {
+                q(&c, "CREATE TABLE items");
+                q(
+                    &c,
+                    "DEFINE FIELD v ON items TYPE integer REQUIRED CHECK(v<5)",
+                );
+                q(&c, "CREATE UNIQUE INDEX items_n ON items(n)");
+            } else {
+                q(
+                    &c,
+                    "CREATE TABLE items(n INTEGER UNIQUE,v INTEGER CHECK(v<5))",
+                );
+            }
+            q(&c, "INSERT INTO items(n,v) VALUES(1,0)");
+            q(&c, "BEGIN");
+            q(&c, "INSERT INTO items(n,v) VALUES(4,0)");
+            let error = c
+                .execute(
+                    &format!("INSERT OR ABORT INTO items(n,v) {source} RETURNING n,v"),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert_eq!(
+                error.code(),
+                if collection && source.ends_with("3,10)") {
+                    "FDB_VALIDATION"
+                } else {
+                    "FDB_CONSTRAINT"
+                }
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(
+                q(&c, "SELECT n,v FROM items ORDER BY n").rows,
+                vec![
+                    vec![Value::Integer(1), Value::Integer(0)],
+                    vec![Value::Integer(4), Value::Integer(0)]
+                ]
+            );
+            assert_eq!(
+                q(
+                    &c,
+                    "INSERT OR ABORT INTO items(n,v) VALUES(2,1) RETURNING n,v"
+                )
+                .rows,
+                vec![vec![Value::Integer(2), Value::Integer(1)]]
+            );
+            if collection {
+                assert_eq!(
+                    c.check_collection_integrity("items", Default::default())
+                        .unwrap()
+                        .index_entries,
+                    3
+                );
+            }
+            q(&c, "ROLLBACK");
+            assert_eq!(
+                q(&c, "SELECT n FROM items").rows,
+                vec![vec![Value::Integer(1)]]
+            );
+        }
+    }
+}

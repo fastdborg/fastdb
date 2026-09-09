@@ -5534,3 +5534,24 @@ All 72 write tests pass (`/tmp/fastdb-replace-numeric.log`); fastdb-tests format
 and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-replace-numeric-clippy.log`). Only tests/docs changed from `2d9ed8cb1`;
 no full-suite/client rerun is claimed. Full V1 remains open.
+
+
+## Explicit collection INSERT OR ABORT — 2026-09-09
+
+Collection SQL INSERT now accepts explicit OR ABORT through the existing atomic
+insert path for supported VALUES and SELECT sources. Other explicit INSERT
+policies and ON CONFLICT remain rejected. Regression coverage checks uniqueness
+and CHECK failures after an earlier row, preservation of prior pending work,
+index integrity, successful retry and outer rollback. VALUES is compared with
+native SQL; the tested native two-column SELECT insertion rejects with
+"1 values for 2 columns" before constraints, so SELECT coverage is collection-only.
+
+The first full scoped check passed formatting/Clippy and preceding Rust suites,
+but stopped on the new fixture's incorrect native SELECT expectation
+(`/tmp/fastdb-insert-abort-check.log`). After correcting that expectation, all
+73 write tests passed (`/tmp/fastdb-insert-abort-focused.log`), formatting and
+all-target fastdb-tests Clippy passed (`/tmp/fastdb-insert-abort-clippy.log`), and
+the addon rebuild, 93 Node/application tests and strict TypeScript passed
+(`/tmp/fastdb-insert-abort-node.log`). No completely green full-suite rerun is
+claimed. Base `01e899136`; no upstream source or storage-format changes.
+Full V1 remains open.

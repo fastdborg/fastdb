@@ -26,6 +26,11 @@ Field CHECK evaluates a side-effect-free SQL expression against bound final-cand
 
 ## Limited writes
 
+Collection SQL INSERT accepts explicit OR ABORT as its default statement rollback
+policy for supported VALUES and SELECT sources. Other explicit INSERT conflict
+policies and ON CONFLICT clauses remain unsupported; object UPSERT is separate.
+
+
 Collection UPDATE accepts explicit OR ABORT as its default statement rollback
 policy, including supported UPDATE FROM forms. OR ROLLBACK rolls back the enclosing
 transaction on validation or constraint failures during document mutation.

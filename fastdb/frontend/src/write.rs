@@ -550,7 +550,7 @@ impl Connection {
                 body,
                 returning,
             } => {
-                if with.is_some() || or_conflict.is_some() {
+                if with.is_some() || !matches!(or_conflict, None | Some(ResolveType::Abort)) {
                     return Err(unsupported(
                         "collection INSERT WITH/OR CONFLICT; use document UPSERT",
                     ));
