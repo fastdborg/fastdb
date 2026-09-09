@@ -6217,3 +6217,23 @@ all-target fastdb-tests Clippy with warnings denied pass
 (`/tmp/fastdb-update-policies-clippy.log`). Only tests/docs changed from
 `d71be36a3`; no full-suite run is claimed. Broader conflict-policy qualification
 and full V1 remain open.
+
+
+## Collection UPDATE OR ROLLBACK — 2026-09-09
+
+Collection UPDATE now accepts OR ROLLBACK. Validation or constraint failures
+inside document mutation request a whole-transaction rollback; existing atomic
+cleanup observes autocommit and preserves the original error. Rollback failure
+reports FDB_ROLLBACK with both causes. Preparation and buffer-limit failures do
+not take this policy path. Ordinary and joined regressions cover uniqueness and
+CHECK failures, loss of prior pending inserts, index integrity, fresh-transaction
+retry and successful commit. Buffer regressions verify prior work survives
+candidate limits. FAIL/IGNORE/REPLACE remain rejected.
+
+All 63 write tests pass (`/tmp/fastdb-update-rollback.log`). The complete scoped
+check passed on `49253c971` plus this change: 644 Rust passes, zero failures and
+one existing ignored trigger-interruption gate; 89 Node/application passes;
+formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
+Addon rebuilt. Log: `/tmp/fastdb-update-rollback-check.log`. No upstream source
+or storage-format changes. Broader conflict/error-stage qualification and full
+V1 remain open.

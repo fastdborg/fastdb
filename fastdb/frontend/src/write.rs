@@ -638,7 +638,7 @@ impl Connection {
                         }
                     }
                 }
-                if !matches!(update.or_conflict, None | Some(ResolveType::Abort))
+                if !matches!(update.or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback))
                     || update.from.as_ref().is_some_and(|from| from.joins.iter().any(|join| {
                         matches!(join.constraint, Some(JoinConstraint::Using(_)))
                             || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::RIGHT | JoinType::NATURAL))
@@ -853,6 +853,7 @@ impl Connection {
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {
+                    let mutation = (|| -> Result<()> {
                     let mut values = row.into_iter();
                     let Some(Value::Object(mut document)) = values.next() else {
                         return Err(Error::Storage("invalid update candidate".into()));
@@ -892,6 +893,19 @@ impl Connection {
                     let collection = self.catalog(&id(&document)?.table)?;
                     self.replace_document(&collection, &document)?;
                     documents.push(document);
+                    Ok(())
+                    })();
+                    if let Err(cause) = mutation {
+                        if update.or_conflict == Some(ResolveType::Rollback)
+                            && matches!(cause.code(), "FDB_CONSTRAINT" | "FDB_VALIDATION")
+                            && !self.engine.get_auto_commit()
+                        {
+                            if let Err(rollback) = self.run("ROLLBACK", &[]) {
+                                return Err(Error::Rollback { cause: cause.to_string(), rollback: rollback.to_string() });
+                            }
+                        }
+                        return Err(cause);
+                    }
                 }
                 Ok(Some(self.returning_rows(
                     &update.tbl_name,

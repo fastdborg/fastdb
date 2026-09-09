@@ -2783,7 +2783,7 @@ fn pinned_update_conflict_policies_have_distinct_recovery() {
         q(&c, sql);
     }
     let before = q(&c, "SELECT * FROM docs ORDER BY n").rows;
-    for policy in ["FAIL", "IGNORE", "ROLLBACK", "REPLACE"] {
+    for policy in ["FAIL", "IGNORE", "REPLACE"] {
         assert_eq!(
             c.execute(
                 &format!("UPDATE OR {policy} docs SET n=10"),
@@ -2797,4 +2797,65 @@ fn pinned_update_conflict_policies_have_distinct_recovery() {
         assert_eq!(q(&c, "SELECT * FROM docs ORDER BY n").rows, before);
     }
     q(&c, "ROLLBACK");
+}
+
+#[test]
+fn explicit_update_rollback_aborts_mutation_failures_only() {
+    for from in ["", " FROM (SELECT 1 AS k) source"] {
+        for assignment in ["n=1", "v=10"] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            for sql in [
+                "CREATE TABLE docs",
+                "DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)",
+                "CREATE UNIQUE INDEX docs_n ON docs(n)",
+                "INSERT INTO docs(n,v) VALUES(1,0),(2,0)",
+                "BEGIN",
+                "INSERT INTO docs(n,v) VALUES(3,0)",
+            ] {
+                q(&c, sql);
+            }
+            let bad = c
+                .execute(
+                    &format!("UPDATE OR ROLLBACK docs SET v=missing_function(1){from}"),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert!(!matches!(bad.code(), "FDB_ROLLBACK"));
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            let error=c.execute(&format!("UPDATE OR ROLLBACK docs SET {assignment}{from} WHERE docs.n>1 RETURNING n,v"),&Parameters::new()).unwrap_err();
+            assert_eq!(
+                error.code(),
+                if assignment == "n=1" {
+                    "FDB_CONSTRAINT"
+                } else {
+                    "FDB_VALIDATION"
+                }
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+            assert_eq!(
+                q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                vec![
+                    vec![Value::Integer(1), Value::Integer(0)],
+                    vec![Value::Integer(2), Value::Integer(0)]
+                ]
+            );
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .index_entries,
+                2
+            );
+            q(&c, "BEGIN");
+            assert_eq!(
+                q(
+                    &c,
+                    &format!("UPDATE OR ROLLBACK docs SET v=1{from} WHERE docs.n=2 RETURNING v")
+                )
+                .rows,
+                vec![vec![Value::Integer(1)]]
+            );
+            q(&c, "COMMIT");
+        }
+    }
 }
