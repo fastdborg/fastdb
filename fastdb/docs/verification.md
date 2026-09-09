@@ -5813,3 +5813,20 @@ commits afterward.
 All 98 Node/application tests pass (`/tmp/fastdb-insert-fail-clients.log`) against
 the addon rebuilt for `becfb58bb`. Only tests/docs changed; no Rust/full-suite
 rerun or new addon rebuild is claimed. Full V1 remains open.
+
+
+## INSERT FAIL/IGNORE cancellation recovery — 2026-09-09
+
+The after-write interruption matrix now includes VALUES and SELECT insertion
+under FAIL and IGNORE, with and without an enclosing transaction. The handler
+fires after total_changes increases. FDB_CANCELLED restores document snapshots
+and indexed lookups, preserves prior native-table work and expected transaction
+state, and permits fresh writes. Cancellation neither retains a FAIL prefix nor
+becomes an ignored candidate. This samples the first observed storage change,
+not every savepoint or I/O boundary.
+
+The expanded focused test passes (one test, 66 filtered out):
+`/tmp/fastdb-insert-fail-ignore-interrupt.log`. FastDB formatting and all-target
+Clippy with warnings denied pass
+(`/tmp/fastdb-insert-fail-ignore-interrupt-clippy.log`). Only test/docs changed from
+`fd73ad678`; no full-suite/client rerun is claimed. Full V1 remains open.
