@@ -2255,6 +2255,34 @@ test('connection write buffer limits preserve pending work in both clients', asy
   }
 });
 
+test('joined update encoded identity limits preserve pending work in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const options = { writeBufferLimits: { maxRows: 10n, maxPayloadBytes: 300n } };
+  const id = new Record('docs', '\0'.repeat(100));
+  for (const db of [new Database(':memory:', options), await AsyncDatabase.open(':memory:', options)]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      await db.execute('INSERT INTO docs DOCUMENT $doc', {$doc: {id, n: 1n}});
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:pending,n:2}');
+      await assert.rejects(async () => db.execute('UPDATE docs SET n=docs.n+10 FROM (SELECT 1 AS k) source WHERE docs.n=1'), error => {
+        assert.equal(error.code, 'FDB_LIMIT');
+        assert.match(error.message, /encoded value limit/);
+        assert.deepEqual(error.transaction, {before: 'active', after: 'active'});
+        return true;
+      });
+      assert.deepEqual(await db.all('SELECT id,n FROM docs ORDER BY n'), [[id, 1n], [new Record('docs', 'pending'), 2n]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries, 2n);
+      await db.execute('UPDATE docs SET n=11 WHERE n=1');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[2n], [11n]]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT id,n FROM docs'), [[id, 1n]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries, 1n);
+    } finally { await db.close(); }
+  }
+});
+
 test('connection options reject invalid limits before opening a database', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-options-'));

@@ -5999,3 +5999,18 @@ five-package formatting and Clippy; rebuilt Node addon; strict TypeScript.
 Log: `/tmp/fastdb-direct-value-encoding-check.log`. This also verifies the recent
 joined UPDATE identity-map budgeting and encoding preflight in the combined build.
 Platform/distribution and broader V1 release gates remain open.
+
+
+## Node joined UPDATE encoding-limit recovery — 2026-09-09
+
+Both Node clients now exercise an escaped record key whose logical candidate
+payload fits the configured write buffer but whose tagged identity encoding does
+not. Joined UPDATE reports the specific encoding FDB_LIMIT with active-to-active
+transaction state. Exact typed rows and index integrity remain unchanged; a
+non-joined update succeeds and caller rollback restores the original record.
+
+The focused test and all 100 Node/application tests pass. Logs:
+`/tmp/fastdb-node-key-preflight.log` and `/tmp/fastdb-node-key-preflight-all.log`.
+The addon is from the full check recorded at `cb189fd0d`; only tests/docs changed.
+No Rust/full-suite rerun or broader platform qualification is claimed. Full V1
+remains open.
