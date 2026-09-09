@@ -5221,3 +5221,14 @@ formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
 Addon rebuilt. Log: `/tmp/fastdb-update-rollback-check.log`. No upstream source
 or storage-format changes. Broader conflict/error-stage qualification and full
 V1 remain open.
+
+
+## OR ROLLBACK Node transaction reports — 2026-09-09
+
+Both Node clients now check uniqueness and CHECK failures under OR ROLLBACK,
+including active-to-autocommit reports, loss of pending inserts and preserved
+committed rows/indexes. A fresh transaction successfully commits typed record
+and binary array data. All 90 Node/application tests pass
+(`/tmp/fastdb-update-rollback-node.log`) against the addon from the preceding
+full check. Only tests/docs changed from `12f0b8000`; no new Rust-suite run or
+addon rebuild is claimed. Full V1 remains open.

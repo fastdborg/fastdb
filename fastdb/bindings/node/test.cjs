@@ -2933,3 +2933,31 @@ test('update from preserves typed candidates and unmatched targets in both clien
     } finally { await db.close(); }
   }
 });
+
+test('OR ROLLBACK reports full transaction loss and permits fresh client work', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of ['CREATE TABLE docs', 'DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)', 'CREATE UNIQUE INDEX docs_n ON docs(n)', 'INSERT INTO docs(n,v) VALUES(1,0),(2,0)']) await db.execute(sql);
+      for (const [assignment,code] of [['n=1','FDB_CONSTRAINT'],['v=10','FDB_VALIDATION']]) {
+        await db.execute('BEGIN');
+        await db.execute('INSERT INTO docs(n,v) VALUES(3,0)');
+        await assert.rejects(async () => db.execute('UPDATE OR ROLLBACK docs SET '+assignment+' WHERE n>1 RETURNING n,v'), error => {
+          assert.equal(error.code,code);
+          assert.deepEqual(error.transaction,{before:'active',after:'autocommit'});
+          return true;
+        });
+        assert.deepEqual((await db.execute('SELECT n,v FROM docs ORDER BY n')).rows,[[1n,0n],[2n,0n]]);
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,2n);
+      }
+      await db.execute('BEGIN');
+      const record=new Record('docs',9223372036854775807n);
+      const result=await db.execute('UPDATE OR ROLLBACK docs SET payload=$value WHERE n=2 RETURNING payload',{$value:[record,Buffer.from([0,255])]});
+      assert.deepEqual(result.rows,[[[record,Buffer.from([0,255])]]]);
+      assert.deepEqual(result.transaction,{before:'active',after:'active'});
+      await db.execute('COMMIT');
+      assert.deepEqual((await db.execute('SELECT payload FROM docs WHERE n=2')).rows,result.rows);
+    } finally { await db.close(); }
+  }
+});
