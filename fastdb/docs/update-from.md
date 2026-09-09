@@ -36,7 +36,11 @@ correlation logic needs differential checks in this new context.
 Joined updates validate the source SELECT in isolation before candidate
 construction, using lowering and native preparation without stepping the source
 query. This rejects references to the update target in source ON clauses,
-including nested scalar queries, while preserving source-local aliases. This
+including nested scalar queries, while preserving source-local aliases. Top-level
+table-function arguments use NULL only during source-scope validation, then retain
+their original expressions in candidate lowering: native iterator arguments may
+reference the update target. This exception does not expose the target to ON or
+derived source SELECTs. This
 adds source planning work; broader preparation/resource qualification remains open.
 Joined updates resolve source CTEs before exposing the write target. A CTE named
 like the target table or alias therefore retains its source binding. The native

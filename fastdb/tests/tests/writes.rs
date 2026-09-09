@@ -2567,3 +2567,30 @@ fn update_from_source_scope_excludes_target_and_preserves_local_aliases() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn update_from_target_correlated_iterators_match_native() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,j TEXT)",
+        "INSERT INTO native VALUES(1,'[7,8]'),(2,'[9]'),(3,'[]')",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,j) SELECT n,j FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for iterator in ["json_each", "main.json_each", "json_tree"] {
+        q(&c, "BEGIN");
+        let sql=format!("UPDATE TARGET AS t SET n=s.value FROM {iterator}(t.j) s WHERE s.type='integer' RETURNING n,j");
+        let expected = q(&c, &sql.replace("TARGET", "native"));
+        let actual = q(&c, &sql.replace("TARGET", "docs"));
+        assert_eq!(actual.rows, expected.rows, "{sql}");
+        assert_eq!(actual.affected, expected.affected);
+        assert_eq!(
+            q(&c, "SELECT n,j FROM docs ORDER BY n").rows,
+            q(&c, "SELECT n,j FROM native ORDER BY n").rows
+        );
+        q(&c, "ROLLBACK");
+    }
+}

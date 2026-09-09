@@ -6003,3 +6003,22 @@ executes valid typed joins and verifies rollback. All 89 Node/application tests
 pass (`/tmp/fastdb-source-scope-node.log`) against the addon from the source-scope
 full check. Only tests/docs changed from `c3f075839`; no new Rust run or addon
 rebuild is claimed. Full V1 remains open.
+
+
+## Target-correlated UPDATE FROM iterators — 2026-09-09
+
+Native probing exposed an exception to source isolation: top-level iterator
+arguments may reference the update target, unlike ON and derived-source SELECTs.
+The source-validation pass now substitutes NULL for table-function arguments
+only during preparation; actual candidate lowering retains original expressions.
+This corrects the over-rejection introduced by isolated source validation.
+Native differential json_each/main.json_each/json_tree tests cover target JSON
+fields, duplicate values, empty arrays, RETURNING, stored results and rollback.
+All 59 write tests pass (`/tmp/fastdb-write-iterator-target.log`).
+
+The complete scoped check passed on `113fbd57a` plus this change: 638 Rust passes,
+zero failures and one existing ignored trigger-interruption gate; 89 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Addon rebuilt. Log: `/tmp/fastdb-write-iterator-target-check.log`.
+No upstream source or storage-format changes. Broader iterator/scope/resource
+qualification and full V1 remain open.

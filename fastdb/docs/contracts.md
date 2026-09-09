@@ -53,7 +53,8 @@ RETURNING sku,quantity;
 
 The update returns `('P1',12)` and affects one document. Target and source aliases
 have separate roles. The target is visible to assignments and the UPDATE WHERE
-clause, but is not an outer source for FROM join constraints. CTEs named like the
+clause and native JSON iterator arguments, but is not an outer source for FROM
+join constraints or derived source SELECTs. CTEs named like the
 target table or alias keep their source
 binding in joined updates. Direct, derived and CTE self-sources read original
 candidate snapshots before mutations begin.

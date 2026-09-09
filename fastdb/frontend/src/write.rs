@@ -987,7 +987,20 @@ impl Connection {
             else {
                 unreachable!()
             };
-            *source_from = Some(from.clone());
+            let mut validation_from = from.clone();
+            // Native table-function arguments may reference the UPDATE target.
+            // Validate their expressions later in the full candidate scope;
+            // this source-only preparation still checks tables and JOIN ON.
+            for table in std::iter::once(&mut validation_from.select)
+                .chain(validation_from.joins.iter_mut().map(|join| &mut join.table))
+            {
+                if let SelectTable::TableCall(_, args, _) = table.as_mut() {
+                    for arg in args {
+                        **arg = Expr::Literal(Literal::Null);
+                    }
+                }
+            }
+            *source_from = Some(validation_from);
             self.validate_write_source(&select.to_string(), params)?;
         }
         let joined = source.from.is_some();
