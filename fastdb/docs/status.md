@@ -6702,3 +6702,17 @@ commits and reads back exactly.
 All 96 Node/application tests pass (`/tmp/fastdb-insert-rollback-clients.log`)
 against the addon rebuilt for `b0dc3410b`. Only tests/docs changed; no new Rust/
 full-suite run or addon rebuild is claimed. Full V1 remains open.
+
+
+## INSERT policy user-savepoint recovery — 2026-09-09
+
+Native/collection INSERT ABORT and ROLLBACK now run under nested user savepoints,
+with explicit BEGIN and SAVEPOINT-started transactions. ABORT preserves prior
+pending rows and both frames for incremental rollback; ROLLBACK removes all
+pending rows and both frames. Fresh savepoint insertion commits afterward and
+collection index integrity remains consistent.
+
+All 75 write tests pass (`/tmp/fastdb-insert-savepoints.log`); fastdb-tests
+formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-insert-savepoints-clippy.log`). Only tests/docs changed from
+`0dcb166c6`; no full-suite/client rerun is claimed. Full V1 remains open.
