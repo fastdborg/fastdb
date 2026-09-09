@@ -5088,3 +5088,14 @@ and all-target fastdb-tests Clippy with warnings denied pass
 (`/tmp/fastdb-derived-join-write-clippy.log`). Only tests/docs changed from
 `6f61b5d52`; no full-suite run is claimed. Derived-source evidence does not close
 the direct USING/NATURAL/FULL/non-leading RIGHT implementation gaps or full V1.
+
+
+## Typed derived full-join Node updates — 2026-09-09
+
+Both Node clients now consume a derived FULL JOIN ON source, selecting an
+unmatched source row and copying its typed record/object/binary/int64 payload.
+RETURNING, affected count, unchanged other target and active transaction report
+pass; the enclosing fixture verifies rollback. All 89 Node/application tests
+pass (`/tmp/fastdb-derived-full-node.log`) against the current addon. Only
+tests/docs changed from `276e45e4a`; no new Rust run or addon rebuild is claimed.
+Direct FULL write joins and broader V1 qualification remain open.

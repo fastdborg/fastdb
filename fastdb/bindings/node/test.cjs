@@ -2890,6 +2890,12 @@ test('update from preserves typed candidates and unmatched targets in both clien
         assert.deepEqual(right.transaction, { before: 'active', after: 'active' });
         await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
       }
+      const derivedFull=await db.execute('UPDATE docs AS target SET (a,b)=(joined.a,joined.b) FROM (SELECT s.k AS n,s.a AS a,s.b AS b FROM source s FULL JOIN keys k ON s.k=k.k WHERE k.k IS NULL) joined WHERE target.n=joined.n RETURNING n,a,b');
+      assert.equal(derivedFull.affected,1n);
+      assert.deepEqual(derivedFull.rows,[[2n,record,payload]]);
+      assert.deepEqual(derivedFull.transaction,{before:'active',after:'active'});
+      assert.deepEqual((await db.execute('SELECT n,a,b FROM docs ORDER BY n')).rows,[[1n,null,null],[2n,record,payload]]);
+      await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
       for (const name of ['docs', 'target']) {
         for (const hint of ['', 'MATERIALIZED', 'NOT MATERIALIZED']) {
           const scoped = await db.execute(`WITH ${name}(n,a,b) AS ${hint} (SELECT k,a,b FROM source WHERE k=2), chosen AS (SELECT n,a,b FROM ${name}) UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM chosen s WHERE s.n=target.n RETURNING n,a,b LIMIT $count OFFSET $skip`, { $count: 1n, $skip: 0n });
