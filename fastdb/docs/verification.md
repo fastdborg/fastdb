@@ -5673,3 +5673,16 @@ formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
 Addon rebuilt. Log: `/tmp/fastdb-insert-rollback-check.log`. No upstream source or
 storage-format changes. Broader error-stage/client qualification and full V1
 remain open.
+
+
+## INSERT OR ROLLBACK Node transaction reports — 2026-09-09
+
+Both Node clients now check VALUES uniqueness and SELECT CHECK failures under
+INSERT OR ROLLBACK, active-to-autocommit error reports, discarded prior pending
+inserts and retained committed rows/indexes. Missing parameters preserve an
+active transaction; a successful typed record/binary SELECT insertion then
+commits and reads back exactly.
+
+All 96 Node/application tests pass (`/tmp/fastdb-insert-rollback-clients.log`)
+against the addon rebuilt for `b0dc3410b`. Only tests/docs changed; no new Rust/
+full-suite run or addon rebuild is claimed. Full V1 remains open.
