@@ -5909,3 +5909,17 @@ Log: `/tmp/fastdb-joined-crash.log`. Formatting and all-target fastdb-tests Clip
 with warnings denied passed (`/tmp/fastdb-joined-crash-clippy.log`). Only tests/docs
 changed from `6f3496b31`; no full-suite run is claimed. Deterministic interrupted
 I/O, power-loss/platform evidence and full V1 remain open.
+
+
+## Joined pagination raw candidate row budget — 2026-09-09
+
+A regression verifies duplicate UPDATE FROM matches consume the raw candidate
+row budget before deduplication and LIMIT, including LIMIT 0 and LIMIT 1.
+FDB_LIMIT preserves pending work and exact document snapshots; collection
+integrity audits retain both index entries. A larger budget permits retry, and
+rollback restores the original document and index count. All eight write-buffer
+tests passed (`/tmp/fastdb-joined-buffer.log`); formatting and all-target
+fastdb-tests Clippy with warnings denied passed (`/tmp/fastdb-joined-buffer-clippy.log`).
+Only tests/docs changed from `0797e2804`; no full-suite run is claimed. This
+qualifies the existing per-buffer row bound, not total workspace memory or
+hard deadlines. Full V1 remains open.

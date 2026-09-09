@@ -73,7 +73,8 @@ logical value types, evaluated-value validation and atomic managed-index updates
 For joined updates, assignment candidates are evaluated and duplicate targets
 resolved before LIMIT/OFFSET. Consequently, a failing assignment in a later
 candidate can fail the statement even with LIMIT 0 or LIMIT 1. Pagination selects
-targets, not source matches; missing bindings report FDB_PARAMETER. RETURNING
+targets, not source matches; missing bindings report FDB_PARAMETER. Raw candidate
+row limits still count duplicate source matches and apply even with LIMIT 0. RETURNING
 reports only selected, changed targets. Host duplicate resolution and pagination
 poll cooperative cancellation, including OFFSET-discarded rows. Existing buffer
 limits do not establish a total working-memory or hard execution-time bound.

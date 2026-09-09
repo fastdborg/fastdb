@@ -301,3 +301,57 @@ fn update_snapshot_rejects_before_validating_oversized_new_fields() {
         vec![vec![Value::Integer(1)]]
     );
 }
+
+#[test]
+fn joined_pagination_does_not_bypass_raw_candidate_row_limits() {
+    for count in [0, 1] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let p = Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE INDEX docs_v ON docs(v)",
+            "INSERT INTO docs {id:docs:a,n:1,v:0}",
+            "CREATE TABLE source(k INTEGER,v INTEGER)",
+            "INSERT INTO source VALUES(1,10),(1,11),(1,12)",
+            "BEGIN",
+            "INSERT INTO docs {id:docs:b,n:2,v:0}",
+        ] {
+            c.execute(sql, &p).unwrap();
+        }
+        let before = c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows;
+        let c = c.with_write_buffer_limits(ResultLimits {
+            max_rows: 2,
+            max_payload_bytes: 10000,
+        });
+        let sql = format!(
+            "UPDATE docs SET v=s.v FROM source s WHERE docs.n=s.k RETURNING n,v LIMIT {count}"
+        );
+        assert_eq!(c.execute(&sql, &p).unwrap_err().code(), "FDB_LIMIT");
+        assert_eq!(c.transaction_state(), TransactionState::Active);
+        assert_eq!(
+            c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows,
+            before
+        );
+        let audit = c
+            .check_collection_integrity("docs", Default::default())
+            .unwrap();
+        assert_eq!(audit.documents, 2);
+        assert_eq!(audit.index_entries, 2);
+        let c = c.with_write_buffer_limits(ResultLimits {
+            max_rows: 10,
+            max_payload_bytes: 10000,
+        });
+        assert_eq!(c.execute(&sql, &p).unwrap().affected, count);
+        c.execute("ROLLBACK", &p).unwrap();
+        assert_eq!(
+            c.execute("SELECT n,v FROM docs", &p).unwrap().rows,
+            vec![vec![Value::Integer(1), Value::Integer(0)]]
+        );
+        let audit = c
+            .check_collection_integrity("docs", Default::default())
+            .unwrap();
+        assert_eq!(audit.documents, 1);
+        assert_eq!(audit.index_entries, 1);
+    }
+}
