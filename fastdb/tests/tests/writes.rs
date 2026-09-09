@@ -2357,3 +2357,53 @@ fn grouped_update_from_retains_pinned_rejection_and_pending_work() {
         vec![vec![Value::Integer(2)]]
     );
 }
+
+#[test]
+fn update_from_unconstrained_right_join_preserves_empty_sources() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE source(v INTEGER)",
+        "CREATE TABLE source_docs",
+        "CREATE TABLE keys(k INTEGER)",
+    ] {
+        q(&c, sql);
+    }
+    for left_rows in [0, 1, 2] {
+        for right_rows in [0, 2] {
+            for source in ["source", "source_docs"] {
+                for join in ["RIGHT JOIN", "RIGHT OUTER JOIN"] {
+                    q(&c, "BEGIN");
+                    for n in 0..left_rows {
+                        q(&c, &format!("INSERT INTO source VALUES({})", n + 10));
+                        q(
+                            &c,
+                            &format!("INSERT INTO source_docs(v) VALUES({})", n + 10),
+                        );
+                    }
+                    for n in 0..right_rows {
+                        q(&c, &format!("INSERT INTO keys VALUES({})", n + 1));
+                    }
+                    let sql=format!("UPDATE TARGET SET v=coalesce(s.v,100)+k.k FROM {source} s {join} keys k WHERE k.k=TARGET.n RETURNING n,v");
+                    let expected = q(
+                        &c,
+                        &sql.replace("TARGET", "native")
+                            .replace("source_docs", "source"),
+                    );
+                    let actual = q(&c, &sql.replace("TARGET", "docs"));
+                    assert_eq!(actual.rows, expected.rows, "{sql}");
+                    assert_eq!(actual.affected, expected.affected, "{sql}");
+                    assert_eq!(
+                        q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                        q(&c, "SELECT n,v FROM native ORDER BY n").rows
+                    );
+                    q(&c, "ROLLBACK");
+                }
+            }
+        }
+    }
+}

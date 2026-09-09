@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-09
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 628 passing Rust tests with one ignored trigger-cancellation gate, 89 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-joined-cte-scope-check.log`, based on `680985f4a` plus joined-update CTE binding correction). These totals do not prove the gates below. Installed-package evidence is separate: Linux Node 22/24 now cover leading RIGHT/LEFT UPDATE FROM, target-alias CTEs and pagination. The standalone Rust consumer also covers joined RIGHT/LEFT UPDATE FROM, target-alias CTEs, pagination and committed reopen. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 631 passing Rust tests with one ignored trigger-cancellation gate, 89 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-right-no-on-check.log`, based on `a40a6edf1` plus unconstrained leading RIGHT support). These totals do not prove the gates below. Installed-package evidence is separate: Linux Node 22/24 now cover leading RIGHT/LEFT UPDATE FROM, target-alias CTEs and pagination. The standalone Rust consumer also covers joined RIGHT/LEFT UPDATE FROM, target-alias CTEs, pagination and committed reopen. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -22,7 +22,7 @@ Cloud beta requirements remain deferred until after embedded V1. They do not blo
 
 The active SQL write gaps include UPDATE FROM source USING/NATURAL/FULL and
 non-leading RIGHT joins, and broader scope/planner qualification. See [the implementation design](update-from.md). Initial
-single-source, derived/CTE, inner/left joins and leading RIGHT ON sources execute;
+single-source, derived/CTE, inner/left joins and leading RIGHT sources with ON or no constraint execute;
 repeated encoded typed record IDs collapse before pagination and mutation. The deduplication, pagination position-list and candidate-selection loops have
 cooperative progress checks, including OFFSET-discarded candidates. It still needs complete workspace accounting and broader
 cancellation/recovery coverage.

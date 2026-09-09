@@ -4832,3 +4832,19 @@ lowering strategy. Remaining supported-native ungrouped USING/NATURAL/FULL and
 non-leading RIGHT joins still need a scope-preserving implementation; native
 parenthesized groups are a pinned limitation rather than a missing compatibility
 feature. No full-suite run is claimed. Full V1 remains open.
+
+
+## Unconstrained leading RIGHT UPDATE FROM — 2026-09-09
+
+Leading RIGHT JOIN/RIGHT OUTER JOIN without ON now uses the existing reversed
+LEFT join normalization. A native differential matrix covers empty/nonempty
+left and right sources, duplicate matches, native/collection left sources,
+RETURNING, affected counts, stored values and rollback. All 55 write tests pass
+(`/tmp/fastdb-right-no-on.log`). USING/NATURAL/FULL and non-leading RIGHT remain
+rejected; broader join/planner/resource qualification remains open.
+
+The complete scoped check passed on `a40a6edf1` plus this change: 631 Rust passes,
+zero failures and one existing ignored trigger-interruption gate; 89 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Addon rebuilt. Log: `/tmp/fastdb-right-no-on-check.log`. No upstream
+source, dependency or storage-format changes. Full V1 remains open.

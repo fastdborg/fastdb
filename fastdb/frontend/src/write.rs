@@ -625,13 +625,13 @@ impl Connection {
                 )?))
             }
             Stmt::Update(mut update) => {
-                // A leading two-source RIGHT ON join is equivalent to the reversed
-                // LEFT ON join, with qualified source names unchanged.
+                // A leading RIGHT join with ON or no constraint is equivalent to
+                // the reversed LEFT join, with qualified source names unchanged.
                 if let Some(from) = &mut update.from {
                     if let Some(join) = from.joins.first_mut() {
                         if matches!(join.operator, JoinOperator::TypedJoin(Some(kind))
                             if kind.contains(JoinType::RIGHT) && !kind.intersects(JoinType::LEFT | JoinType::NATURAL))
-                            && matches!(join.constraint, Some(JoinConstraint::On(_)))
+                            && matches!(join.constraint, None | Some(JoinConstraint::On(_)))
                         {
                             std::mem::swap(&mut from.select, &mut join.table);
                             join.operator = JoinOperator::TypedJoin(Some(JoinType::LEFT | JoinType::OUTER));
