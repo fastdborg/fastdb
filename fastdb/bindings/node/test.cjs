@@ -2590,7 +2590,8 @@ test('malformed iterator input reports whole transaction rollback in both client
       for(const iterator of ['json_each','json_tree']) {
         const query="SELECT x.value AS n FROM docs d CROSS JOIN "+iterator+"(d.j) x WHERE x.type='integer' ORDER BY d.n,x.id";
         const insert='INSERT INTO output(n) '+query+' RETURNING n';
-        for(const operation of [()=>db.execute(query),()=>db.profileSelect(query),()=>db.execute(insert)]) {
+        const update="UPDATE output SET n=x.value FROM docs d CROSS JOIN "+iterator+"(d.j) x WHERE x.type='integer' RETURNING n";
+        for(const operation of [()=>db.execute(query),()=>db.profileSelect(query),()=>db.execute(insert),()=>db.execute(update)]) {
           await db.execute('BEGIN');
           await db.execute('INSERT INTO output(n) VALUES(0)');
           await assert.rejects(async()=>operation(),error=>{
@@ -2602,6 +2603,13 @@ test('malformed iterator input reports whole transaction rollback in both client
           assert.equal((await db.checkCollectionIntegrity('output')).indexEntries,1n);
         }
         await db.execute("UPDATE docs SET j='[2]' WHERE n=2");
+        await db.execute('BEGIN');
+        const recovered=await db.execute("UPDATE output SET n=x.value FROM docs d CROSS JOIN "+iterator+"(d.j) x WHERE d.n=2 AND x.type='integer' RETURNING n");
+        assert.equal(recovered.affected,1n);
+        assert.deepEqual(recovered.rows,[[2n]]);
+        assert.deepEqual(recovered.transaction,{before:'active',after:'active'});
+        await db.execute('ROLLBACK');
+        assert.deepEqual((await db.execute('SELECT n FROM output')).rows,[[-1n]]);
         assert.deepEqual((await db.execute(insert)).rows,[[1n],[2n]]);
         await db.execute('DELETE FROM output WHERE n>0');
         await db.execute("UPDATE docs SET j='invalid' WHERE n=2");

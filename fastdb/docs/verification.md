@@ -4933,3 +4933,14 @@ all-target fastdb-tests Clippy with warnings denied pass
 (`/tmp/fastdb-joined-malformed-clippy.log`). Only tests/docs changed from
 `26b27cf14`; no full-suite run is claimed. This pins the existing engine-abort
 exception, not a statement-only recovery guarantee. Full V1 remains open.
+
+
+## Joined iterator abort reports in Node clients — 2026-09-09
+
+Both Node clients now exercise malformed json_each/json_tree input in joined
+updates, checking FDB_ENGINE and active-to-autocommit transaction reports.
+Earlier pending writes disappear while committed rows and their index remain;
+corrected input succeeds in a fresh transaction and can be rolled back. All 89
+Node/application tests pass (`/tmp/fastdb-joined-abort-node.log`) against the addon
+from the preceding complete implementation check. Only tests/docs changed from
+`99bf6ddf6`; no new Rust-suite run or addon rebuild is claimed. Full V1 remains open.
