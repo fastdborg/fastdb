@@ -1,6 +1,7 @@
 # FastDB 0.1.0 — embedded V1 preview
 
-Local release draft. Nothing has been published. Suggested release type:
+Local release draft for https://github.com/fastdborg/fastdb. Source is pushed;
+release assets have not been published. Suggested release type:
 **prerelease**; suggested tag: `fastdb-v0.1.0-preview.1` (not created).
 The release target must be the artifact source commit
 `dcce6c4f09e98cd4173b54d7bcf8af0a10911436`, not a later documentation commit.
@@ -70,5 +71,4 @@ Report whether the quickstart worked on your environment, the application you
 tried to build, and any query or API limitation that prevented that workflow.
 For a bug, include a minimal reproduction, expected/actual behavior, runtime
 versions and whether reopening changes the result. Do not include credentials or
-private database contents. A destination for feedback will be added when the
-release repository is selected.
+private database contents. Report bugs at https://github.com/fastdborg/fastdb/issues.

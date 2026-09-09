@@ -7095,3 +7095,14 @@ for artifacts, acceptance and limitations. Final scoped check: 673 Rust tests,
 101 Node/application tests, formatting, Clippy and TypeScript passed; one known
 trigger-cancellation test ignored. The local preview is unpublished. Stable V1
 is not declared complete; speculative qualification does not reopen this preview.
+
+## Preview repository delivery — 2026-09-09
+
+The user-selected repository is https://github.com/fastdborg/fastdb. Remote main
+was verified at `66df9e5d58a9007b9e4bcf2e5033756deb933785` after the authorized
+replacement. The previous main is preserved by tag
+`pre-fastdb-replacement-20260909`. Only `.github/workflows/fastdb-ci.yml` is
+registered as active; no hosted FastDB test result is claimed. The release draft
+now uses this repository for bug reports. Preview assets remain local and the
+preview tag/release has not been created. This closes the repository destination
+handoff without reopening P0–P6 or claiming stable V1 completion.
