@@ -6716,3 +6716,20 @@ All 75 write tests pass (`/tmp/fastdb-insert-savepoints.log`); fastdb-tests
 formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-insert-savepoints-clippy.log`). Only tests/docs changed from
 `0dcb166c6`; no full-suite/client rerun is claimed. Full V1 remains open.
+
+
+## INSERT policy interruption after storage changes — 2026-09-09
+
+The after-write interruption matrix now includes VALUES and SELECT insertion
+under ABORT and ROLLBACK, each with and without an enclosing transaction. The
+handler fires after total_changes increases; FDB_CANCELLED restores documents
+and indexed lookups, retains prior pending native work in the tested cases,
+reports the expected transaction state and permits fresh writes. Cancellation
+does not take the INSERT ROLLBACK mutation-constraint branch. This samples the
+first observed storage change, not every engine/savepoint/I/O boundary.
+
+The focused expanded test passes (one test, 66 filtered out):
+`/tmp/fastdb-insert-policy-interrupt.log`. FastDB formatting and all-target Clippy
+with warnings denied pass (`/tmp/fastdb-insert-policy-interrupt-clippy.log`). Only
+test/docs changed from `e24fab3b1`; no full-suite/client rerun is claimed.
+Full V1 remains open.
