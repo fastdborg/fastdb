@@ -6360,3 +6360,20 @@ report; a fresh transaction then commits successfully.
 All 92 Node/application tests pass (`/tmp/fastdb-update-fail-node.log`) against
 the addon from the preceding full check. Only tests/docs changed from `10bda02ec`;
 no new Rust/full-suite check or addon rebuild is claimed. Full V1 remains open.
+
+
+## Standalone Rust conflict-policy reopen qualification — 2026-09-09
+
+The standalone Rust consumer now writes separate files for UPDATE OR ABORT,
+ROLLBACK, IGNORE and FAIL. A uniqueness conflict follows a successful candidate;
+the consumer checks error/success results and transaction state, commits surviving
+pending work, closes and reopens each file. Reopened rows distinguish statement
+rollback, full transaction loss and retained successful updates. Typed record/
+binary payloads, both managed indexes and indexed lookup results are checked.
+
+`check-rust-client.py` passes on Rust 1.88.0 outside the workspace without injected
+workspace compiler flags, offline, with 244 registry/git identities verified
+against the pinned lockfile. Log: `/tmp/fastdb-conflict-rust-consumer.log`.
+Only the consumer verifier/docs changed from `f1caeffd4`; no new full-suite run
+is claimed. This is orderly close/reopen with a local path dependency, not
+published-crate, process-kill or power-loss qualification. Full V1 remains open.

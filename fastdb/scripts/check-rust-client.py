@@ -134,10 +134,45 @@ fn tuple_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(c.check_collection_integrity("tuples",IntegrityLimits::default())?.documents,1);
     Ok(())
 }
+fn conflict_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let empty=Parameters::new();
+    let payload=Value::Array(vec![Value::Record(Record {table:"items".into(),key:Key::Integer(i64::MAX)}),Value::Binary(vec![0,255])]);
+    for policy in ["ABORT","ROLLBACK","IGNORE","FAIL"] {
+        let path=format!("{file}.{policy}");
+        let retained=matches!(policy,"IGNORE"|"FAIL");
+        let pending=policy!="ROLLBACK";
+        {
+            let db=Database::open(&path)?;
+            let c=db.connect()?;
+            for sql in ["CREATE TABLE items","CREATE INDEX items_v ON items(v)","CREATE UNIQUE INDEX items_n ON items(n)","INSERT INTO items(n,v) VALUES(1,0),(2,0)","BEGIN","INSERT INTO items(n,v) VALUES(3,0)"] { c.execute(sql,&empty)?; }
+            let result=c.execute(&format!("UPDATE OR {policy} items SET n=10,v=7,payload=$value WHERE n<3 RETURNING n,payload"),&Parameters::from([("$value".into(),payload.clone())]));
+            if policy=="IGNORE" {
+                let result=result?;
+                assert_eq!(result.affected,1);
+                assert_eq!(result.rows,vec![vec![Value::Integer(10),payload.clone()]]);
+            } else { assert_eq!(result.unwrap_err().code(),"FDB_CONSTRAINT"); }
+            assert_eq!(c.transaction_state(),if pending {fastdb::TransactionState::Active} else {fastdb::TransactionState::Autocommit});
+            if pending { c.execute("COMMIT",&empty)?; }
+        }
+        let db=Database::open(&path)?;
+        let c=db.connect()?;
+        let mut expected=Vec::new();
+        if !retained { expected.push(vec![Value::Integer(1),Value::Integer(0),Value::Null]); }
+        expected.push(vec![Value::Integer(2),Value::Integer(0),Value::Null]);
+        if pending { expected.push(vec![Value::Integer(3),Value::Integer(0),Value::Null]); }
+        if retained { expected.push(vec![Value::Integer(10),Value::Integer(7),payload.clone()]); }
+        assert_eq!(c.execute("SELECT n,v,payload FROM items ORDER BY n",&empty)?.rows,expected);
+        assert_eq!(c.check_collection_integrity("items",IntegrityLimits::default())?.index_entries,if pending {6} else {4});
+        assert_eq!(c.lookup_index("items","items_n",&Value::Integer(10))?.len(),usize::from(retained));
+        assert_eq!(c.lookup_index("items","items_v",&Value::Integer(7))?.len(),usize::from(retained));
+    }
+    Ok(())
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
     iterator_consumer(&format!("{file}.iterators"))?;
     tuple_consumer(&format!("{file}.tuples"))?;
+    conflict_consumer(&format!("{file}.conflicts"))?;
     let id = Record { table: "docs".into(), key: Key::String("saved".into()) };
     let portable = Value::Array(vec![
         Value::Integer(i64::MAX), Value::Number(-0.0),
@@ -236,7 +271,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     c.execute("ROLLBACK", &empty)?;
     assert_eq!(c.lookup_index("docs", "docs_value", &Value::Integer(i64::MAX))?.len(),1);
     assert_eq!(c.check_collection_integrity("docs", IntegrityLimits::default())?.documents,1);
-    println!("Standalone Rust client smoke passed: typed values, portable JSON, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines, iterator CTEs and reopen");
+    println!("Standalone Rust client smoke passed: typed values, portable JSON, validation, indexes, rollback, QuickJS, vectors, profiles, audits, result/write buffer limits, cancellation/deadlines, iterator CTEs, UPDATE conflict policies and reopen");
     Ok(())
 }
 ''')
