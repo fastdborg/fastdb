@@ -2651,3 +2651,53 @@ fn update_from_derived_join_sources_preserve_merged_scope() {
         }
     }
 }
+
+#[test]
+fn explicit_update_abort_preserves_native_statement_recovery() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER UNIQUE,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0)",
+        "CREATE TABLE docs",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for from in ["", " FROM (SELECT 1 AS k) source"] {
+        for table in ["native", "docs"] {
+            q(&c, "BEGIN");
+            q(&c, &format!("INSERT INTO {table}(n,v) VALUES(3,0)"));
+            let before = q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows;
+            let error = c
+                .execute(
+                    &format!("UPDATE OR ABORT {table} SET n=1{from} WHERE {table}.n>1 RETURNING n"),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert_eq!(error.code(), "FDB_CONSTRAINT", "{table}/{from}: {error}");
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(
+                q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows,
+                before
+            );
+            let result = q(
+                &c,
+                &format!("UPDATE OR ABORT {table} SET v={table}.v+1{from} WHERE {table}.n=2 RETURNING n,v"),
+            );
+            assert_eq!(result.affected, 1);
+            assert_eq!(
+                result.rows,
+                vec![vec![Value::Integer(2), Value::Integer(1)]]
+            );
+            q(&c, "ROLLBACK");
+        }
+    }
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        2
+    );
+}

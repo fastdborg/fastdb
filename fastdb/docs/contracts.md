@@ -26,6 +26,11 @@ Field CHECK evaluates a side-effect-free SQL expression against bound final-cand
 
 ## Limited writes
 
+Collection UPDATE accepts explicit OR ABORT as its default statement rollback
+policy, including supported UPDATE FROM forms. OR ROLLBACK/FAIL/IGNORE/REPLACE
+remain unsupported on collection updates; their distinct recovery semantics are
+not implied by OR ABORT support.
+
 Collection UPDATE and DELETE accept LIMIT/OFFSET, including bound parameters.
 The limit applies to candidate selection before mutation and RETURNING reports
 only changed rows. LIMIT 0 changes no rows; a negative limit removes the count

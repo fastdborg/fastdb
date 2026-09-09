@@ -6160,3 +6160,20 @@ script test. All eight CLI script and four CLI transaction tests pass
 with warnings denied pass (`/tmp/fastdb-inventory-unknown-clippy.log`). Only
 example/tests/docs changed from `b4b6b8ba1`; no full-suite run is claimed.
 Idempotency, reservation workflows, external pilots and full V1 remain open.
+
+
+## Explicit collection UPDATE OR ABORT — 2026-09-09
+
+Collection UPDATE now accepts explicit OR ABORT and uses its existing default
+statement savepoint behavior, including supported UPDATE FROM. Native comparisons
+verify uniqueness failure preserves prior pending rows, valid retry succeeds and
+rollback retains index integrity. Other explicit UPDATE conflict policies remain
+rejected. The initial joined fixture required qualified target fields; the final
+fixture uses those names and all 61 write tests pass (`/tmp/fastdb-update-abort-final.log`).
+
+The complete scoped check passed on `90bccbc35` plus this change: 642 Rust passes,
+zero failures and one existing ignored trigger-interruption gate; 89 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Addon rebuilt. Log: `/tmp/fastdb-update-abort-check.log`. No upstream
+source or storage-format changes. Broader conflict-policy qualification and full
+V1 remain open.
