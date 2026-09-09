@@ -6506,3 +6506,17 @@ warnings denied pass (`/tmp/fastdb-conflict-interrupt-clippy.log`). Only test/do
 changed from `9fd4f18ed`; no full-suite/client rerun is claimed. The existing
 ignored trigger-interruption gate and broader interruption qualification remain
 open, as does full V1.
+
+
+## UPDATE conflict application guide — 2026-09-09
+
+Added `docs/update-conflicts.md`, linked from the FastDB README, with the five
+policy dispositions, an executable SQL fixture and observed results, error-state
+handling, explicit transactions/savepoints, the atomic result-limited API,
+RETURNING/deletion counts and candidate-limit semantics. Scope explicitly excludes
+collection INSERT/object insert/UPSERT policy extensions.
+
+The five-row comparison was executed against the current Node addon, asserting
+exact query values, errors, affected/RETURNING counts and transaction states:
+`/tmp/fastdb-conflict-guide.log`. Only docs changed from `25afff5ab`; no full-suite
+rerun is claimed. Full V1 remains open.
