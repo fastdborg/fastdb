@@ -5605,3 +5605,18 @@ autocommit native insertion succeed.
 All 95 Node/application tests pass (`/tmp/fastdb-insert-width-clients.log`) against
 the addon rebuilt for `a6561f7b1`. Only tests/docs changed; no Rust/full-suite rerun
 or new addon rebuild is claimed. Full V1 remains open.
+
+
+## Direct-engine INSERT width/default oracle — 2026-09-09
+
+Expanded the direct-engine/frontend INSERT SELECT comparison to three-column
+projections, omitted columns with defaults, source stars, leading CTEs and too
+few/many projected values. Returned rows, exact errors and stored rows match the
+raw engine. This checks the real source retains width validation after replacing
+the guard-only placeholder.
+
+Both insert-source oracle tests pass (64 other frontend tests filtered out),
+`/tmp/fastdb-insert-source-oracles.log`. FastDB formatting and all-target Clippy
+with warnings denied pass (`/tmp/fastdb-insert-source-oracles-clippy.log`). Only
+test/docs changed from `3b8a436a0`; no full-suite/client rerun is claimed.
+Full V1 remains open.

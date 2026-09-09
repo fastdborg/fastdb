@@ -1646,4 +1646,37 @@ mod insert_source_oracle_tests {
             .unwrap_err();
         assert_eq!(error.code(), "FDB_CONSTRAINT", "{error:?}");
     }
+    #[test]
+    fn native_insert_source_width_and_defaults_match_raw_engine() {
+        for sql in [
+            "INSERT INTO items(a,b,c) SELECT 1,2,3 RETURNING a,b,c",
+            "INSERT OR ABORT INTO items(a,c) SELECT 1,3 RETURNING a,b,c",
+            "INSERT INTO items SELECT * FROM source RETURNING a,b,c",
+            "WITH chosen AS (SELECT * FROM source) INSERT INTO items SELECT * FROM chosen RETURNING a,b,c",
+            "INSERT INTO items(a,b,c) SELECT 1,2",
+            "INSERT INTO items(a,b) SELECT 1,2,3",
+        ] {
+            let mut baseline = None;
+            for frontend in [false, true] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                c.run("CREATE TABLE items(a INTEGER,b INTEGER DEFAULT 9,c INTEGER)", &[]).unwrap();
+                c.run("CREATE TABLE source(a INTEGER,b INTEGER,c INTEGER)", &[]).unwrap();
+                c.run("INSERT INTO source VALUES(1,2,3),(4,5,6)", &[]).unwrap();
+                let result = if frontend {
+                    c.execute(sql, &crate::Parameters::new()).map(|result| result.rows)
+                } else {
+                    c.run(sql, &[]).map(|rows| rows.into_iter().map(|row| row.into_iter().map(crate::from_engine).collect()).collect())
+                };
+                let result = result.map_err(|error| error.to_string());
+                let stored = c.run("SELECT a,b,c FROM items ORDER BY a", &[]).unwrap();
+                let observed = (result, stored);
+                if frontend {
+                    assert_eq!(Some(&observed), baseline.as_ref(), "{sql}");
+                } else {
+                    baseline = Some(observed);
+                }
+            }
+        }
+    }
 }
