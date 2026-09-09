@@ -3078,3 +3078,37 @@ test('OR REPLACE preserves typed results and restores deleted conflicts on failu
     } finally { await db.close(); }
   }
 });
+
+test('INSERT OR ABORT restores failed batches and retains typed client values', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db=await open();
+    try {
+      for (const sql of ['CREATE TABLE docs','DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)','CREATE UNIQUE INDEX docs_n ON docs(n)','INSERT INTO docs(n,v) VALUES(1,0)','BEGIN','INSERT INTO docs(n,v) VALUES(4,0)']) await db.execute(sql);
+      const payload=[new Record('docs',9223372036854775807n),Buffer.from([0,255])];
+      for (const [source,code] of [
+        ['VALUES(2,0,$value),(1,0,$value)','FDB_CONSTRAINT'],
+        ['SELECT 2,0,$value UNION ALL SELECT 3,10,$value','FDB_VALIDATION'],
+      ]) {
+        await assert.rejects(async()=>db.execute('INSERT OR ABORT INTO docs(n,v,payload) '+source+' RETURNING n,payload',{$value:payload}),error=>{
+          assert.equal(error.code,code);
+          assert.deepEqual(error.transaction,{before:'active',after:'active'});
+          return true;
+        });
+        assert.deepEqual((await db.execute('SELECT n,v FROM docs ORDER BY n')).rows,[[1n,0n],[4n,0n]]);
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,2n);
+      }
+      const result=await db.execute('INSERT OR ABORT INTO docs(n,v,payload) SELECT 2,1,$value RETURNING n,payload',{$value:payload});
+      assert.equal(result.affected,1n);
+      assert.deepEqual(result.rows,[[2n,payload]]);
+      assert.deepEqual(result.transaction,{before:'active',after:'active'});
+      await db.execute('ROLLBACK');
+      assert.deepEqual((await db.execute('SELECT n FROM docs')).rows,[[1n]]);
+      const committed=await db.execute('INSERT OR ABORT INTO docs(n,v,payload) VALUES(2,1,$value) RETURNING payload',{$value:payload});
+      assert.deepEqual(committed.rows,[[payload]]);
+      assert.deepEqual(committed.transaction,{before:'autocommit',after:'autocommit'});
+      assert.deepEqual((await db.execute('SELECT payload FROM docs WHERE n=2')).rows,[[payload]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,2n);
+    } finally { await db.close(); }
+  }
+});

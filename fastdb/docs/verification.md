@@ -5555,3 +5555,16 @@ the addon rebuild, 93 Node/application tests and strict TypeScript passed
 (`/tmp/fastdb-insert-abort-node.log`). No completely green full-suite rerun is
 claimed. Base `01e899136`; no upstream source or storage-format changes.
 Full V1 remains open.
+
+
+## INSERT OR ABORT Node qualification — 2026-09-09
+
+Both Node clients now verify VALUES uniqueness failure and INSERT SELECT CHECK
+failure with typed record/binary bindings, preservation of prior pending work,
+active-to-active error reports and index integrity. Successful SELECT retry and
+autocommit VALUES insertion retain typed RETURNING/read values; outer rollback
+removes the retry and pending inserts.
+
+All 94 Node/application tests pass (`/tmp/fastdb-insert-abort-client.log`) against
+the addon rebuilt for `596d5a031`. Only tests/docs changed; no Rust/full-suite
+rerun or new addon rebuild is claimed. Full V1 remains open.
