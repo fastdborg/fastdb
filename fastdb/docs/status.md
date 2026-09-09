@@ -6431,3 +6431,16 @@ all-target FastDB Clippy with warnings denied and strict TypeScript. Addon rebui
 Log: `/tmp/fastdb-update-replace-check.log`. No upstream source or storage-format
 changes. Broader replacement error-stage, resource, interruption and client
 qualification and full V1 remain open.
+
+
+## OR REPLACE Node results and rollback — 2026-09-09
+
+Both Node clients now verify ordinary/joined replacement with typed record/binary
+RETURNING values, completed updates whose rows are later replaced, affected
+counts, index integrity and outer rollback. A later CHECK failure restores earlier
+conflict deletions and prior pending inserts. An autocommit case skips a deleted
+future candidate and checks final rows and transaction reports.
+
+All 93 Node/application tests pass (`/tmp/fastdb-update-replace-node.log`) against
+the addon from the preceding full check. Only tests/docs changed from `918d6cd34`;
+no new Rust/full-suite run or addon rebuild is claimed. Full V1 remains open.

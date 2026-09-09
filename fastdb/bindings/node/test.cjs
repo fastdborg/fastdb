@@ -3041,3 +3041,40 @@ test('OR FAIL exposes retained typed updates and accurate transaction reports', 
     } finally { await db.close(); }
   }
 });
+
+test('OR REPLACE preserves typed results and restores deleted conflicts on failure', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db=await open();
+    try {
+      for (const sql of ['CREATE TABLE docs','DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)','CREATE UNIQUE INDEX docs_n ON docs(n)','CREATE INDEX docs_v ON docs(v)','INSERT INTO docs(n,v) VALUES(1,0),(2,0),(3,0)']) await db.execute(sql);
+      const payload=[new Record('docs',9223372036854775807n),Buffer.from([0,255])];
+      for (const from of ['', ' FROM (SELECT 1 AS k) source']) {
+        await db.execute('BEGIN');
+        await db.execute('INSERT INTO docs(n,v) VALUES(4,0)');
+        const before=(await db.execute('SELECT * FROM docs ORDER BY n')).rows;
+        await assert.rejects(async()=>db.execute('UPDATE OR REPLACE docs SET n=docs.n+1,v=CASE WHEN docs.n=3 THEN 10 ELSE 1 END'+from+' WHERE docs.n<4 RETURNING n'),error=>{
+          assert.equal(error.code,'FDB_VALIDATION');
+          assert.deepEqual(error.transaction,{before:'active',after:'active'});
+          return true;
+        });
+        assert.deepEqual((await db.execute('SELECT * FROM docs ORDER BY n')).rows,before);
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,8n);
+        const result=await db.execute('UPDATE OR REPLACE docs SET n=10,payload=$value'+from+' WHERE docs.n<3 RETURNING n,payload',{$value:payload});
+        assert.equal(result.affected,2n);
+        assert.deepEqual(result.rows,[[10n,payload],[10n,payload]]);
+        assert.deepEqual(result.transaction,{before:'active',after:'active'});
+        assert.deepEqual((await db.execute('SELECT n,payload FROM docs ORDER BY n')).rows,[[3n,null],[4n,null],[10n,payload]]);
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,6n);
+        await db.execute('ROLLBACK');
+        assert.deepEqual((await db.execute('SELECT n FROM docs ORDER BY n')).rows,[[1n],[2n],[3n]]);
+      }
+      const committed=await db.execute('UPDATE OR REPLACE docs SET n=n+1,payload=$value RETURNING n,payload',{$value:payload});
+      assert.deepEqual(committed.rows,[[2n,payload],[4n,payload]]);
+      assert.equal(committed.affected,2n);
+      assert.deepEqual(committed.transaction,{before:'autocommit',after:'autocommit'});
+      assert.deepEqual((await db.execute('SELECT n,payload FROM docs ORDER BY n')).rows,committed.rows);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,4n);
+    } finally { await db.close(); }
+  }
+});
