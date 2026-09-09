@@ -5711,3 +5711,14 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-update-right-source-check.log`. No upstream source, dependency or
 storage-format changes; no publication occurred. Full V1 remains open.
+
+
+## Typed RIGHT JOIN UPDATE FROM clients — 2026-09-09
+
+Both Node clients now exercise two-source RIGHT JOIN/RIGHT OUTER JOIN with a
+NULL left-side filter selecting an unmatched right-source row. Typed record,
+object/binary/boolean/int64 payloads, affected counts, RETURNING and active
+transaction reports pass; the enclosing fixture verifies rollback. All 89
+Node/application tests passed against the preceding full check's addon. Log:
+`/tmp/fastdb-right-update-node.log`. Only tests/docs changed from `cbdaa2c2e`;
+no native rebuild or new Rust-suite run is claimed. Full V1 remains open.

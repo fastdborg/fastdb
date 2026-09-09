@@ -2854,6 +2854,13 @@ test('update from preserves typed candidates and unmatched targets in both clien
         assert.deepEqual(left.transaction, { before: 'active', after: 'active' });
         await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
       }
+      for (const join of ['RIGHT JOIN','RIGHT OUTER JOIN']) {
+        const right = await db.execute('UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM keys k ' + join + ' source s ON k.k=s.k WHERE s.k=target.n AND k.k IS NULL RETURNING n,a,b');
+        assert.equal(right.affected, 1n);
+        assert.deepEqual(right.rows, [[2n,record,payload]]);
+        assert.deepEqual(right.transaction, { before: 'active', after: 'active' });
+        await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
+      }
       await db.execute('DELETE FROM source WHERE k=2');
       const paginated = 'UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s WHERE s.k=target.n RETURNING n,a,b LIMIT $count OFFSET $skip';
       await assert.rejects(async () => db.execute(paginated, { $count: 1n }), error => error.code === 'FDB_PARAMETER');
