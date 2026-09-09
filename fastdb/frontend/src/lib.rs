@@ -535,6 +535,20 @@ impl Connection {
         }
         Ok(())
     }
+    // Caller owns the statement savepoint. A failure restores conflicting
+    // documents along with the target and all managed indexes.
+    fn replace_conflicting_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        self.validate_candidate(c, doc)?;
+        for index in c.indexes.iter().filter(|index| index.unique) {
+            let value = path_value(doc, &index.path)?.unwrap_or(&Value::Null);
+            for conflict in self.lookup_index(&c.name, &index.name, value)? {
+                if conflict.get("id") != doc.get("id") {
+                    self.delete_document(c, &conflict)?;
+                }
+            }
+        }
+        self.replace_document(c, doc)
+    }
     pub fn delete(&self, record: &Record) -> Result<Option<Document>> {
         self.atomic(|| {
             let c = self.catalog(&record.table)?;

@@ -639,7 +639,7 @@ impl Connection {
                         }
                     }
                 }
-                if !matches!(update.or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore | ResolveType::Fail))
+                if !matches!(update.or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore | ResolveType::Fail | ResolveType::Replace))
                     || update.from.as_ref().is_some_and(|from| from.joins.iter().any(|join| {
                         matches!(join.constraint, Some(JoinConstraint::Using(_)))
                             || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::RIGHT | JoinType::NATURAL))
@@ -859,6 +859,13 @@ impl Connection {
                     let Some(Value::Object(mut document)) = values.next() else {
                         return Err(Error::Storage("invalid update candidate".into()));
                     };
+                    if update.or_conflict == Some(ResolveType::Replace) {
+                        let record = id(&document)?;
+                        let collection = self.catalog(&record.table)?;
+                        if self.get_in(&collection, record)?.is_none() {
+                            return Ok(());
+                        }
+                    }
                     // All assignments were evaluated before any mutation. Move
                     // their owned values and the snapshot instead of cloning them.
                     let mut targets = paths.iter();
@@ -892,7 +899,11 @@ impl Connection {
                     snapshot_budget.document(&document)?;
                     // validate_targets forbids changing the record identity.
                     let collection = self.catalog(&id(&document)?.table)?;
-                    self.replace_document(&collection, &document)?;
+                    if update.or_conflict == Some(ResolveType::Replace) {
+                        self.replace_conflicting_document(&collection, &document)?;
+                    } else {
+                        self.replace_document(&collection, &document)?;
+                    }
                     documents.push(document);
                     Ok(())
                     };

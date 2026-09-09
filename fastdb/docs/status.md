@@ -6406,3 +6406,28 @@ All 68 write tests pass (`/tmp/fastdb-fail-ignore-savepoints.log`); fastdb-tests
 formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-fail-ignore-savepoints-clippy.log`). Only tests/docs changed from
 `fca6b3bee`; no full-suite or client rerun is claimed. Full V1 remains open.
+
+
+## Collection UPDATE OR REPLACE — 2026-09-09
+
+Collection UPDATE now accepts OR REPLACE. Valid candidates remove other documents
+with conflicting unique index keys through the existing full document/index
+deletion path, then update the target. Candidate existence is rechecked so a row
+deleted by an earlier replacement is skipped. Null unique keys and self matches
+do not delete documents. All work remains in the statement savepoint, including
+conflict deletions, so validation and execution failures restore the statement.
+RETURNING retains completed updates even if later replacements delete their rows.
+Required collection fields have no SQL default substitution.
+
+Native/collection differential tests cover ordinary and joined updates, deleted
+future candidates, repeated replacement of a prior target, conflicts across two
+unique indexes, nonunique-index cleanup and outer rollback. A later CHECK failure
+restores prior deletions and pending work; null/self-key cases preserve rows.
+Initial 69 write tests passed (`/tmp/fastdb-update-replace.log`); the additional
+validation test is included in the full check. The complete scoped check on
+`f2323f522` plus this change passed: 652 Rust tests, zero failures, one existing
+ignored trigger-interruption gate; 92 Node/application tests; formatting,
+all-target FastDB Clippy with warnings denied and strict TypeScript. Addon rebuilt.
+Log: `/tmp/fastdb-update-replace-check.log`. No upstream source or storage-format
+changes. Broader replacement error-stage, resource, interruption and client
+qualification and full V1 remain open.

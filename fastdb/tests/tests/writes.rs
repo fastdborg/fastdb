@@ -2771,33 +2771,6 @@ fn pinned_update_conflict_policies_have_distinct_recovery() {
             "{policy}"
         );
     }
-    let db = Database::open(":memory:").unwrap();
-    let c = db.connect().unwrap();
-    for sql in [
-        "CREATE TABLE docs",
-        "CREATE UNIQUE INDEX docs_n ON docs(n)",
-        "INSERT INTO docs(n) VALUES(1),(2)",
-        "BEGIN",
-        "INSERT INTO docs(n) VALUES(3)",
-    ] {
-        q(&c, sql);
-    }
-    let before = q(&c, "SELECT * FROM docs ORDER BY n").rows;
-    {
-        let policy = "REPLACE";
-        assert_eq!(
-            c.execute(
-                &format!("UPDATE OR {policy} docs SET n=10"),
-                &Parameters::new()
-            )
-            .unwrap_err()
-            .code(),
-            "FDB_UNSUPPORTED"
-        );
-        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
-        assert_eq!(q(&c, "SELECT * FROM docs ORDER BY n").rows, before);
-    }
-    q(&c, "ROLLBACK");
 }
 
 #[test]
@@ -3216,4 +3189,122 @@ fn fail_and_ignore_preserve_user_savepoint_recovery_like_native() {
             }
         }
     }
+}
+
+#[test]
+fn update_replace_matches_native_deleted_candidates_and_multiple_conflicts() {
+    for from in ["", " FROM (SELECT 1 AS k) source"] {
+        for assignment in ["n=items.n+1", "n=10", "n=2,v=3"] {
+            let mut baseline = None;
+            for collection in [false, true] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                if collection {
+                    q(&c, "CREATE TABLE items");
+                    q(&c, "CREATE UNIQUE INDEX items_n ON items(n)");
+                    q(&c, "CREATE UNIQUE INDEX items_v ON items(v)");
+                    q(&c, "CREATE INDEX items_tag ON items(tag)");
+                } else {
+                    q(
+                        &c,
+                        "CREATE TABLE items(n INTEGER UNIQUE,v INTEGER UNIQUE,tag TEXT)",
+                    );
+                }
+                q(
+                    &c,
+                    "INSERT INTO items(n,v,tag) VALUES(1,1,'a'),(2,2,'b'),(3,3,'c')",
+                );
+                q(&c, "BEGIN");
+                let result=q(&c,&format!("UPDATE OR REPLACE items SET {assignment}{from} WHERE items.n<3 RETURNING n,v,tag"));
+                let after = q(&c, "SELECT n,v,tag FROM items ORDER BY n").rows;
+                let observed = (result.rows, result.affected, after);
+                if collection {
+                    assert_eq!(Some(&observed), baseline.as_ref());
+                    assert_eq!(
+                        c.check_collection_integrity("items", Default::default())
+                            .unwrap()
+                            .index_entries,
+                        observed.2.len() as u64 * 3
+                    );
+                } else {
+                    baseline = Some(observed);
+                }
+                q(&c, "ROLLBACK");
+                assert_eq!(
+                    q(&c, "SELECT n FROM items ORDER BY n").rows,
+                    vec![
+                        vec![Value::Integer(1)],
+                        vec![Value::Integer(2)],
+                        vec![Value::Integer(3)]
+                    ]
+                );
+                if collection {
+                    assert_eq!(
+                        c.check_collection_integrity("items", Default::default())
+                            .unwrap()
+                            .index_entries,
+                        9
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn update_replace_validation_failure_restores_deleted_conflicts() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+        "CREATE INDEX docs_v ON docs(v)",
+        "INSERT INTO docs(n,v) VALUES(1,0),(2,0),(3,0)",
+        "BEGIN",
+        "INSERT INTO docs(n,v) VALUES(4,0)",
+    ] {
+        q(&c, sql);
+    }
+    let before = q(&c, "SELECT * FROM docs ORDER BY n").rows;
+    for from in ["", " FROM (SELECT 1 AS k) source"] {
+        let error=c.execute(&format!("UPDATE OR REPLACE docs SET n=docs.n+1,v=CASE WHEN docs.n=3 THEN 10 ELSE 1 END{from} WHERE docs.n<4 RETURNING n"),&Parameters::new()).unwrap_err();
+        assert_eq!(error.code(), "FDB_VALIDATION");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT * FROM docs ORDER BY n").rows, before);
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            8
+        );
+    }
+    // Null unique keys do not conflict; self matches must not delete targets.
+    assert_eq!(
+        q(&c, "UPDATE OR REPLACE docs SET n=n RETURNING n").affected,
+        4
+    );
+    assert_eq!(
+        q(&c, "UPDATE OR REPLACE docs SET n=NULL RETURNING n").affected,
+        4
+    );
+    assert_eq!(
+        q(&c, "SELECT count(*) FROM docs").rows,
+        vec![vec![Value::Integer(4)]]
+    );
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        8
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT n FROM docs ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(3)]
+        ]
+    );
 }
