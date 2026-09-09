@@ -6780,3 +6780,17 @@ outer rollback and a successful committed typed insertion.
 All 97 Node/application tests pass (`/tmp/fastdb-insert-ignore-clients.log`)
 against the addon rebuilt for `b1bde2821`. Only tests/docs changed; no Rust/full-
 suite rerun or new addon rebuild is claimed. Full V1 remains open.
+
+
+## Ignored INSERT result-limit recovery — 2026-09-09
+
+VALUES/SELECT INSERT IGNORE batches now exceed RETURNING row and payload limits
+while mixing valid candidates, uniqueness conflicts and CHECK failures. FDB_LIMIT
+restores exact pre-statement documents and both indexes, preserving prior pending
+work. A sufficient-budget retry returns only the two valid rows; outer rollback
+restores the original committed document.
+
+All 12 write-buffer tests pass (`/tmp/fastdb-insert-ignore-limits.log`);
+fastdb-tests formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-insert-ignore-limits-clippy.log`). Only tests/docs changed from
+`7e5ddff2e`; no full-suite/client rerun is claimed. Full V1 remains open.
