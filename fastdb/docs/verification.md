@@ -4920,3 +4920,16 @@ tests pass (`/tmp/fastdb-joined-payload-buffer.log`); formatting and all-target
 fastdb-tests Clippy with warnings denied pass (`/tmp/fastdb-joined-payload-clippy.log`).
 Only tests/docs changed from `343b7f3ec`; no full-suite run is claimed. Total
 workspace memory, allocation deadlines and full V1 remain open.
+
+
+## Malformed joined iterator transaction disposition — 2026-09-09
+
+A native/collection regression confirms malformed json_each input in UPDATE FROM
+returns FDB_ENGINE and aborts the enclosing transaction, discarding earlier
+pending inserts while preserving committed data. A fresh transaction with valid
+input commits successfully; the collection index audit remains consistent.
+All 57 write tests pass (`/tmp/fastdb-joined-malformed.log`); formatting and
+all-target fastdb-tests Clippy with warnings denied pass
+(`/tmp/fastdb-joined-malformed-clippy.log`). Only tests/docs changed from
+`26b27cf14`; no full-suite run is claimed. This pins the existing engine-abort
+exception, not a statement-only recovery guarantee. Full V1 remains open.

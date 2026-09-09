@@ -2473,3 +2473,44 @@ fn update_from_json_iterators_preserves_bound_candidates_and_pagination() {
     );
     q(&c, "ROLLBACK");
 }
+
+#[test]
+fn malformed_joined_iterator_matches_native_transaction_abort_and_retry() {
+    for table in ["native", "docs"] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE native(n INTEGER)");
+        q(&c, "CREATE TABLE docs");
+        q(&c, "CREATE INDEX docs_n ON docs(n)");
+        q(&c, &format!("INSERT INTO {table}(n) VALUES(1)"));
+        q(&c, "BEGIN");
+        q(&c, &format!("INSERT INTO {table}(n) VALUES(2)"));
+        let sql = format!("UPDATE {table} SET n=j.value FROM json_each($json) j RETURNING n");
+        let bad = Parameters::from([("$json".into(), Value::String("bad".into()))]);
+        assert_eq!(c.execute(&sql, &bad).unwrap_err().code(), "FDB_ENGINE");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+        assert_eq!(
+            q(&c, &format!("SELECT n FROM {table}")).rows,
+            vec![vec![Value::Integer(1)]]
+        );
+        q(&c, "BEGIN");
+        let valid = Parameters::from([("$json".into(), Value::String("[7]".into()))]);
+        assert_eq!(
+            c.execute(&sql, &valid).unwrap().rows,
+            vec![vec![Value::Integer(7)]]
+        );
+        q(&c, "COMMIT");
+        assert_eq!(
+            q(&c, &format!("SELECT n FROM {table}")).rows,
+            vec![vec![Value::Integer(7)]]
+        );
+        if table == "docs" {
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .index_entries,
+                1
+            );
+        }
+    }
+}
