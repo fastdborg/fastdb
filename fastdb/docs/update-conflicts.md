@@ -89,6 +89,6 @@ with extra candidates to replace skipped rows. REPLACE skips a candidate deleted
 by an earlier replacement. Result budgets count completed RETURNING rows, which
 can outnumber the final surviving documents.
 
-This guide covers collection UPDATE. It does not extend conflict-policy support
-to collection INSERT, object insert, or UPSERT. Broader expression, interruption,
+This guide covers collection UPDATE. See the [INSERT guide](insert-conflicts.md)
+for SQL insertion policies and their difference from object UPSERT. Broader expression, interruption,
 resource and release qualification remains in progress; see [status](status.md).

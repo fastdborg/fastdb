@@ -6902,3 +6902,16 @@ The expanded focused test passes (one test, 66 filtered out):
 with warnings denied pass (`/tmp/fastdb-insert-replace-interrupt-clippy.log`). Only
 test/docs changed from `78fd07fe3`; no full-suite/client rerun is claimed.
 Full V1 remains open.
+
+
+## INSERT conflict application guide — 2026-09-09
+
+Added `docs/insert-conflicts.md`, linked from the README and UPDATE guide. It
+compares all five SQL INSERT policies using a record-ID conflict fixture, explains
+replacement versus shallow object UPSERT, generated identity implications,
+multiple unique conflicts, transaction reports and candidate/result limits.
+
+The five-policy stored-row/RETURNING/state comparison and UPSERT preservation
+example were executed against the current addon with assertions:
+`/tmp/fastdb-insert-guide.log`. Only docs changed from `5a6e28b3d`; no suite rerun
+is claimed. Full V1 remains open.
