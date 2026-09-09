@@ -5731,3 +5731,23 @@ All 76 write tests pass (`/tmp/fastdb-insert-record-conflicts.log`); fastdb-test
 formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-insert-record-conflicts-clippy.log`). Only tests/docs changed from
 `e2ed87974`; no full-suite/client rerun is claimed. Full V1 remains open.
+
+
+## Collection INSERT OR IGNORE — 2026-09-09
+
+Collection INSERT now accepts OR IGNORE for supported VALUES and SELECT sources.
+Candidate validation/constraint errors are skipped only after insert() restores
+its document/index savepoint and the transaction remains active. Successful
+candidates alone contribute RETURNING/affected counts. Other errors retain
+statement recovery. FAIL/REPLACE and ON CONFLICT remain unsupported for collection
+INSERT; object UPSERT remains separate.
+
+Native/collection regressions interleave valid candidates, uniqueness and CHECK
+failures, verifying continued insertion, results, prior pending work, both indexes
+and outer rollback. Candidate-buffer tests verify FDB_LIMIT preserves prior work.
+All 77 write tests pass (`/tmp/fastdb-insert-ignore.log`). The complete scoped
+check on `c96dfef11` plus this change passes: 663 Rust tests, zero failures, one
+existing ignored trigger-interruption gate; 96 Node/application tests; formatting,
+all-target FastDB Clippy with warnings denied and strict TypeScript. Addon rebuilt.
+Log: `/tmp/fastdb-insert-ignore-check.log`. No upstream source or storage-format
+changes. Broader error-stage/client qualification and full V1 remain open.

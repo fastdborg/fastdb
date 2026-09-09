@@ -30,6 +30,9 @@ Collection SQL INSERT accepts explicit OR ABORT as its default statement rollbac
 policy for supported VALUES and SELECT sources. OR ROLLBACK rolls back the whole
 transaction on validation/constraint failures while inserting a candidate.
 Preparation and buffer/result-limit errors retain existing recovery behavior.
+OR IGNORE skips candidate insertion validation/constraint failures after restoring
+that candidate and its indexes. Only successful candidates contribute affected
+counts and RETURNING. Other errors retain existing statement recovery.
 Other explicit INSERT conflict policies and ON CONFLICT clauses remain unsupported; object UPSERT is separate.
 
 

@@ -3759,3 +3759,37 @@ fn insert_conflict_policies_preserve_typed_record_primary_keys() {
         }
     }
 }
+
+#[test]
+fn insert_ignore_skips_conflicts_and_validation_without_partial_indexes() {
+    for source in [
+        "VALUES(2,1),(1,2),(3,10),(5,3)",
+        "SELECT n,v FROM (SELECT 2 AS n,1 AS v UNION ALL SELECT 1,2 UNION ALL SELECT 3,10 UNION ALL SELECT 5,3)",
+    ] {
+        let mut baseline=None;
+        for collection in [false,true] {
+            let db=Database::open(":memory:").unwrap();
+            let c=db.connect().unwrap();
+            if collection {
+                q(&c,"CREATE TABLE items");
+                q(&c,"DEFINE FIELD v ON items TYPE integer REQUIRED CHECK(v<5)");
+                q(&c,"CREATE INDEX items_v ON items(v)");
+                q(&c,"CREATE UNIQUE INDEX items_n ON items(n)");
+            } else { q(&c,"CREATE TABLE items(n INTEGER UNIQUE,v INTEGER CHECK(v<5))"); }
+            q(&c,"INSERT INTO items(n,v) VALUES(1,0)");
+            q(&c,"BEGIN");
+            q(&c,"INSERT INTO items(n,v) VALUES(4,0)");
+            let result=q(&c,&format!("INSERT OR IGNORE INTO items(n,v) {source} RETURNING n,v"));
+            assert_eq!(result.affected,2);
+            assert_eq!(result.rows,vec![vec![Value::Integer(2),Value::Integer(1)],vec![Value::Integer(5),Value::Integer(3)]]);
+            assert_eq!(c.transaction_state(),fastdb::TransactionState::Active);
+            let rows=q(&c,"SELECT n,v FROM items ORDER BY n").rows;
+            if collection {
+                assert_eq!(Some(rows),baseline);
+                assert_eq!(c.check_collection_integrity("items",Default::default()).unwrap().index_entries,8);
+            } else { baseline=Some(rows); }
+            q(&c,"ROLLBACK");
+            assert_eq!(q(&c,"SELECT n,v FROM items").rows,vec![vec![Value::Integer(1),Value::Integer(0)]]);
+        }
+    }
+}
