@@ -5960,3 +5960,22 @@ corrected input succeeds in a fresh transaction and can be rolled back. All 89
 Node/application tests pass (`/tmp/fastdb-joined-abort-node.log`) against the addon
 from the preceding complete implementation check. Only tests/docs changed from
 `99bf6ddf6`; no new Rust-suite run or addon rebuild is claimed. Full V1 remains open.
+
+
+## Isolated UPDATE FROM source scope — 2026-09-09
+
+A native comparison exposed unintended target visibility in collection source
+JOIN ON clauses. Joined writes now lower and prepare the source SELECT separately
+before combining it with the target; the prepared source query is not stepped.
+Direct and nested scalar target references in ON reject while valid source-local
+aliases execute. Regression checks preserve pending work on rejection and verify
+valid retry/rollback. Source CTE and existing joined-write regressions continue
+to pass. This adds source preparation overhead; broader performance, volatile
+metadata-probe and resource qualification remains open.
+
+All 58 write tests pass (`/tmp/fastdb-source-scope-regression.log`). The complete
+scoped check passed on `e1d1c3748` plus this change: 636 Rust passes, zero failures
+and one existing ignored trigger-interruption gate; 89 Node/application passes;
+formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
+Addon rebuilt. Log: `/tmp/fastdb-source-scope-check.log`. No upstream source or
+storage-format changes. Full V1 remains open.

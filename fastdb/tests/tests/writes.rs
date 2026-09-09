@@ -2514,3 +2514,56 @@ fn malformed_joined_iterator_matches_native_transaction_abort_and_retry() {
         }
     }
 }
+
+#[test]
+fn update_from_source_scope_excludes_target_and_preserves_local_aliases() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE a(k INTEGER)",
+        "INSERT INTO a VALUES(1),(2)",
+        "CREATE TABLE b(v INTEGER)",
+        "INSERT INTO b VALUES(10)",
+    ] {
+        q(&c, sql);
+    }
+    for table in ["native", "docs"] {
+        q(&c, "BEGIN");
+        q(&c, &format!("INSERT INTO {table}(n,v) VALUES(3,0)"));
+        let before = q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows;
+        for predicate in ["a.k=t.n", "a.k=(SELECT t.n)"] {
+            let sql =
+                format!("UPDATE {table} AS t SET v=b.v FROM a JOIN b ON {predicate} RETURNING n,v");
+            let error = c.execute(&sql, &Parameters::new()).unwrap_err();
+            assert!(
+                matches!(error.code(), "FDB_ENGINE" | "FDB_UNSUPPORTED"),
+                "{error}"
+            );
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(
+                q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows,
+                before
+            );
+        }
+        let result = q(
+            &c,
+            &format!(
+                "UPDATE {table} AS target SET v=b.v FROM a AS t JOIN b ON t.k=1 RETURNING n,v"
+            ),
+        );
+        assert_eq!(result.affected, 3);
+        assert_eq!(
+            q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows,
+            vec![
+                vec![Value::Integer(1), Value::Integer(10)],
+                vec![Value::Integer(2), Value::Integer(10)],
+                vec![Value::Integer(3), Value::Integer(10)]
+            ]
+        );
+        q(&c, "ROLLBACK");
+    }
+}

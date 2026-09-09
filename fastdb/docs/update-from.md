@@ -33,6 +33,11 @@ with the actual update target using its original exposed name. Resolve self-join
 binding; do not blanket-rename source references. Existing CTE flattening and
 correlation logic needs differential checks in this new context.
 
+Joined updates validate the source SELECT in isolation before candidate
+construction, using lowering and native preparation without stepping the source
+query. This rejects references to the update target in source ON clauses,
+including nested scalar queries, while preserving source-local aliases. This
+adds source planning work; broader preparation/resource qualification remains open.
 Joined updates resolve source CTEs before exposing the write target. A CTE named
 like the target table or alias therefore retains its source binding. The native
 write-context rebinding used for UPDATE/DELETE without FROM must not apply to

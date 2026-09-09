@@ -975,6 +975,21 @@ impl Connection {
         for expr in assignments {
             safe_candidate_assignment(expr)?;
         }
+        if let Some(from) = &source.from {
+            // The UPDATE target is not in scope while source joins are prepared.
+            let Cmd::Stmt(Stmt::Select(mut select)) = parsed("SELECT 1")? else {
+                unreachable!()
+            };
+            select.with = source.with.clone();
+            let OneSelect::Select {
+                from: source_from, ..
+            } = &mut select.body.select
+            else {
+                unreachable!()
+            };
+            *source_from = Some(from.clone());
+            self.validate_write_source(&select.to_string(), params)?;
+        }
         let joined = source.from.is_some();
         let joined_limit = if joined { limit.take() } else { None };
         let mut columns = vec![ResultColumn::TableStar(

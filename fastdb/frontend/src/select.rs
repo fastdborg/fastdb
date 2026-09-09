@@ -3928,6 +3928,24 @@ impl Connection {
             },
         )
     }
+    pub(crate) fn validate_write_source(&self, sql: &str, params: &Parameters) -> Result<()> {
+        let expanded = expand_paths(&expand_records(sql)?)?;
+        let plan = self.lower_collection_select(
+            sql,
+            &expanded,
+            params,
+            SelectOptions {
+                trusted: true,
+                ignore_unused: true,
+                force_logical: true,
+                ..Default::default()
+            },
+        )?;
+        let command = plan.map_or(expanded, |plan| plan.command.to_string());
+        self.engine.prepare(&command)?;
+        Ok(())
+    }
+
     pub(crate) fn write_candidate_select(
         &self,
         sql: &str,
