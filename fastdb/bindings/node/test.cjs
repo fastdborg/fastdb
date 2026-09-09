@@ -3186,3 +3186,36 @@ test('INSERT OR ROLLBACK reports transaction loss and permits typed retries', as
     } finally { await db.close(); }
   }
 });
+
+test('INSERT OR IGNORE returns only valid typed candidates in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db=await open();
+    try {
+      for (const sql of ['CREATE TABLE docs','DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)','CREATE INDEX docs_v ON docs(v)','CREATE UNIQUE INDEX docs_n ON docs(n)',"INSERT INTO docs(id,n,v) VALUES(docs:existing,1,0)"]) await db.execute(sql);
+      const payload=[new Record('docs',9223372036854775807n),Buffer.from([0,255])];
+      for (const source of [
+        "VALUES(docs:a,2,1,$value),(docs:existing,3,1,$value),(docs:b,1,2,$value),(docs:c,4,10,$value),(docs:d,5,3,$value)",
+        "SELECT docs:a,2,1,$value UNION ALL SELECT docs:existing,3,1,$value UNION ALL SELECT docs:b,1,2,$value UNION ALL SELECT docs:c,4,10,$value UNION ALL SELECT docs:d,5,3,$value",
+      ]) {
+        await db.execute('BEGIN');
+        const result=await db.execute('INSERT OR IGNORE INTO docs(id,n,v,payload) '+source+' RETURNING id,payload',{$value:payload});
+        assert.equal(result.affected,2n);
+        assert.deepEqual(result.rows,[[new Record('docs','a'),payload],[new Record('docs','d'),payload]]);
+        assert.deepEqual(result.transaction,{before:'active',after:'active'});
+        assert.deepEqual((await db.execute('SELECT n,v FROM docs ORDER BY n')).rows,[[1n,0n],[2n,1n],[5n,3n]]);
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,6n);
+        const skipped=await db.execute('INSERT OR IGNORE INTO docs(n,v) VALUES(1,0),(9,10) RETURNING n');
+        assert.equal(skipped.affected,0n);
+        assert.deepEqual(skipped.rows,[]);
+        await db.execute('ROLLBACK');
+        assert.deepEqual((await db.execute('SELECT n FROM docs')).rows,[[1n]]);
+      }
+      const committed=await db.execute('INSERT OR IGNORE INTO docs(n,v,payload) VALUES(1,0,$value),(2,1,$value) RETURNING payload',{$value:payload});
+      assert.deepEqual(committed.rows,[[payload]]);
+      assert.deepEqual(committed.transaction,{before:'autocommit',after:'autocommit'});
+      assert.deepEqual((await db.execute('SELECT payload FROM docs WHERE n=2')).rows,[[payload]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,4n);
+    } finally { await db.close(); }
+  }
+});

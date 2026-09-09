@@ -6767,3 +6767,16 @@ existing ignored trigger-interruption gate; 96 Node/application tests; formattin
 all-target FastDB Clippy with warnings denied and strict TypeScript. Addon rebuilt.
 Log: `/tmp/fastdb-insert-ignore-check.log`. No upstream source or storage-format
 changes. Broader error-stage/client qualification and full V1 remain open.
+
+
+## INSERT OR IGNORE Node candidate qualification — 2026-09-09
+
+Both Node clients now exercise VALUES and SELECT batches containing valid typed
+record/binary payloads, duplicate record IDs, unique-index conflicts and CHECK
+failures. Only successful candidates enter RETURNING/affected counts; all-skipped
+batches return zero rows. Tests check active/autocommit reports, both indexes,
+outer rollback and a successful committed typed insertion.
+
+All 97 Node/application tests pass (`/tmp/fastdb-insert-ignore-clients.log`)
+against the addon rebuilt for `b1bde2821`. Only tests/docs changed; no Rust/full-
+suite rerun or new addon rebuild is claimed. Full V1 remains open.
