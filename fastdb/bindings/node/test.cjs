@@ -3264,3 +3264,39 @@ test('INSERT OR FAIL retains typed prefixes while bounded writes remain atomic',
     } finally { await db.close(); }
   }
 });
+
+test('INSERT OR REPLACE replaces typed documents and restores earlier deletions on failure', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db=await open();
+    try {
+      for (const sql of ['CREATE TABLE docs','DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)','CREATE UNIQUE INDEX docs_n ON docs(n)','CREATE INDEX docs_v ON docs(v)',"INSERT INTO docs(id,n,v,extra) VALUES(docs:a,1,0,'old'),(docs:b,2,0,'other')"]) await db.execute(sql);
+      const payload=[new Record('docs',9223372036854775807n),Buffer.from([0,255])];
+      for (const source of ["VALUES(docs:a,2,1,$value)","SELECT docs:a,2,1,$value"]) {
+        await db.execute('BEGIN');
+        const before=(await db.execute('SELECT * FROM docs ORDER BY n')).rows;
+        await assert.rejects(async()=>db.execute('INSERT OR REPLACE INTO docs(id,n,v,payload) '+source+' UNION ALL SELECT docs:c,3,10,$value',{$value:payload}),error=>{
+          assert.equal(error.code,'FDB_VALIDATION');
+          assert.deepEqual(error.transaction,{before:'active',after:'active'});
+          return true;
+        });
+        assert.deepEqual((await db.execute('SELECT * FROM docs ORDER BY n')).rows,before);
+        const result=await db.execute('INSERT OR REPLACE INTO docs(id,n,v,payload) '+source+' RETURNING id,n,payload,extra',{$value:payload});
+        assert.equal(result.affected,1n);
+        assert.deepEqual(result.rows,[[new Record('docs','a'),2n,payload,null]]);
+        assert.deepEqual(result.transaction,{before:'active',after:'active'});
+        assert.deepEqual((await db.execute('SELECT id,n,payload,extra FROM docs')).rows,result.rows);
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,2n);
+        await db.execute('ROLLBACK');
+        assert.deepEqual((await db.execute('SELECT * FROM docs ORDER BY n')).rows,before);
+      }
+      const result=await db.execute('INSERT OR REPLACE INTO docs(n,v,payload) VALUES(1,1,$value) RETURNING id,payload',{$value:payload});
+      assert.equal(result.affected,1n);
+      assert.notDeepEqual(result.rows[0][0],new Record('docs','a'));
+      assert.deepEqual(result.rows[0][1],payload);
+      assert.deepEqual(result.transaction,{before:'autocommit',after:'autocommit'});
+      assert.deepEqual((await db.execute('SELECT docs:a')).rows,[]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,4n);
+    } finally { await db.close(); }
+  }
+});

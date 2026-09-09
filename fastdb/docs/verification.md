@@ -5854,3 +5854,18 @@ tests; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Addon rebuilt. Log: `/tmp/fastdb-insert-replace-check.log`. No upstream
 source or storage-format changes. Broader error-stage/client qualification and
 full V1 remain open.
+
+
+## INSERT OR REPLACE Node document semantics — 2026-09-09
+
+Both clients now check VALUES/SELECT replacement of a record identity and another
+unique-key conflict together. Typed record/binary payloads survive, omitted
+fields disappear, affected/RETURNING and transaction reports match expectations,
+and indexes remain consistent. A later CHECK failure restores earlier deletions;
+outer rollback restores exact documents. Autocommit generated-ID replacement
+removes the previous identity and preserves the new typed payload.
+
+The focused new test passes (`/tmp/fastdb-insert-replace-client-focus.log`), followed
+by all 99 Node/application tests (`/tmp/fastdb-insert-replace-clients.log`) against
+the addon rebuilt for `53fd69f97`. Only tests/docs changed; no Rust/full-suite
+rerun or new addon rebuild is claimed. Full V1 remains open.
