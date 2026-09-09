@@ -7045,3 +7045,19 @@ integration tests pass. Formatting and all-target frontend Clippy pass. Logs:
 `/tmp/fastdb-position-budget.log`, `/tmp/fastdb-position-budget-writes.log`, and
 `/tmp/fastdb-position-budget-clippy.log`. No full-suite or rebuilt Node addon is
 claimed for this change. Full V1 remains open.
+
+
+## Joined UPDATE pagination coercion comparison — 2026-09-09
+
+A 16-case integration regression compares native and collection joined UPDATE
+with empty or duplicate-matching sources and NULL, fractional, invalid text,
+text-integer, negative and zero LIMIT/OFFSET combinations. Returned rows/affected
+counts or error codes agree; transaction state, final rows, managed index
+integrity and rollback of prior pending work are checked. This compares the
+ordinary frontend delegation route to collection lowering, not a new raw-engine
+oracle or a complete pagination contract.
+
+The focused test passes (one test, 80 filtered out), with test-package formatting
+and all-target Clippy. Logs: `/tmp/fastdb-pagination-coercion.log` and
+`/tmp/fastdb-pagination-coercion-clippy.log`. Only tests/docs changed from
+`a81e13100`; no full-suite/client rerun is claimed. Full V1 remains open.

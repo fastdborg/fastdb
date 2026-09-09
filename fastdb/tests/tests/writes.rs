@@ -3983,3 +3983,71 @@ fn later_insert_replace_validation_failure_restores_prior_replacements() {
         1
     );
 }
+
+#[test]
+fn joined_update_pagination_coercion_matches_native_with_empty_sources() {
+    for empty in [false, true] {
+        for limit in [
+            "NULL",
+            "1.5",
+            "'invalid'",
+            "1 OFFSET NULL",
+            "1 OFFSET 0.5",
+            "'1' OFFSET -2",
+            "-1 OFFSET 1",
+            "0 OFFSET NULL",
+        ] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            for sql in [
+                "CREATE TABLE native(n INTEGER PRIMARY KEY,v INTEGER)",
+                "INSERT INTO native VALUES(1,0),(2,0)",
+                "CREATE TABLE docs",
+                "INSERT INTO docs(n,v) SELECT n,v FROM native",
+                "CREATE UNIQUE INDEX docs_n ON docs(n)",
+                "CREATE TABLE source(k INTEGER,v INTEGER)",
+                "BEGIN",
+                "INSERT INTO native VALUES(3,0)",
+                "INSERT INTO docs(n,v) VALUES(3,0)",
+            ] {
+                q(&c, sql);
+            }
+            if !empty {
+                q(&c, "INSERT INTO source VALUES(1,7),(1,8),(2,9)");
+            }
+            let sql = format!("UPDATE TARGET SET v=s.v FROM source s WHERE s.k=TARGET.n RETURNING n,v LIMIT {limit}");
+            let expected = c.execute(&sql.replace("TARGET", "native"), &Parameters::new());
+            let native_state = c.transaction_state();
+            let actual = c.execute(&sql.replace("TARGET", "docs"), &Parameters::new());
+            match (expected, actual) {
+                (Ok(expected), Ok(actual)) => {
+                    assert_eq!(actual.rows, expected.rows, "{empty}: {sql}");
+                    assert_eq!(actual.affected, expected.affected);
+                }
+                (Err(expected), Err(actual)) => {
+                    assert_eq!(actual.code(), expected.code(), "{empty}: {sql}");
+                }
+                pair => panic!("{empty}: {sql}: {pair:?}"),
+            }
+            assert_eq!(c.transaction_state(), native_state, "{empty}: {sql}");
+            assert_eq!(
+                q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n,v FROM native ORDER BY n").rows
+            );
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .index_entries,
+                3
+            );
+            q(&c, "ROLLBACK");
+            assert_eq!(
+                q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                vec![
+                    vec![Value::Integer(1), Value::Integer(0)],
+                    vec![Value::Integer(2), Value::Integer(0)]
+                ]
+            );
+        }
+    }
+}
