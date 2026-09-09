@@ -5979,3 +5979,16 @@ and one existing ignored trigger-interruption gate; 89 Node/application passes;
 formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
 Addon rebuilt. Log: `/tmp/fastdb-source-scope-check.log`. No upstream source or
 storage-format changes. Full V1 remains open.
+
+
+## Joined-source preparation callback counts — 2026-09-09
+
+A counted non-deterministic scalar callback verifies source validation performs
+zero callback evaluations for default/MATERIALIZED/NOT MATERIALIZED CTEs.
+Actual joined updates match native callback counts and RETURNING values with
+duplicate source matches, followed by rollback. The focused regression passes
+(`/tmp/fastdb-source-callback.log`); formatting and all-target fastdb Clippy with
+warnings denied pass (`/tmp/fastdb-source-callback-clippy.log`). Only tests/docs
+changed from `4a399527f`; no full-suite run or addon rebuild is claimed. This
+covers scalar CTE projection evaluation, not every metadata probe or total
+preparation cost. Full V1 remains open.

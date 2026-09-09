@@ -1368,6 +1368,68 @@ impl Connection {
 mod candidate_cancellation_tests {
     use super::*;
     #[test]
+    fn joined_source_preparation_does_not_evaluate_scalar_callbacks() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use turso_ext::{scalar, ResultCode, Value as ExtValue};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        #[scalar(name = "write_scope_tick")]
+        fn write_scope_tick(args: &[ExtValue]) -> ExtValue {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            ExtValue::from_integer(args[0].to_integer().unwrap())
+        }
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        unsafe {
+            let api = c.engine._build_turso_ext();
+            let code = (api.register_scalar_function)(
+                api.ctx,
+                c"write_scope_tick".as_ptr(),
+                1,
+                false,
+                0,
+                write_scope_tick,
+                None,
+                None,
+            );
+            c.engine._free_extension_ctx(api);
+            assert_eq!(code, ResultCode::OK);
+        }
+        let p = Parameters::new();
+        for sql in [
+            "CREATE TABLE native(n INTEGER,v INTEGER)",
+            "INSERT INTO native VALUES(1,0)",
+            "CREATE TABLE docs",
+            "INSERT INTO docs(n,v) VALUES(1,0)",
+            "CREATE TABLE source(k INTEGER,v INTEGER)",
+            "INSERT INTO source VALUES(1,10),(1,11)",
+        ] {
+            c.execute(sql, &p).unwrap();
+        }
+        for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+            let with =
+                format!("WITH chosen AS {hint} (SELECT k,write_scope_tick(v) AS v FROM source)");
+            CALLS.store(0, Ordering::SeqCst);
+            c.validate_write_source(&format!("{with} SELECT 1 FROM chosen"), &p)
+                .unwrap();
+            assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+            let mut expected = None;
+            for target in ["native", "docs"] {
+                c.execute("BEGIN", &p).unwrap();
+                CALLS.store(0, Ordering::SeqCst);
+                let result=c.execute(&format!("{with} UPDATE {target} SET v=s.v FROM chosen s WHERE {target}.n=s.k RETURNING v"),&p).unwrap();
+                let observed = (result.rows, CALLS.load(Ordering::SeqCst));
+                assert!(observed.1 > 0);
+                if let Some(expected) = &expected {
+                    assert_eq!(&observed, expected, "{hint}");
+                } else {
+                    expected = Some(observed);
+                }
+                c.execute("ROLLBACK", &p).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn cancelled_candidate_pagination_stops_during_offset_and_allows_retry() {
         let db = crate::Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();
