@@ -5738,3 +5738,21 @@ passes; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. The native addon was rebuilt. Log: `/tmp/fastdb-leading-right-check.log`.
 The focused write run passed all 50 tests (`/tmp/fastdb-leading-right.log`). No upstream
 source, dependency or storage-format changes; no publication occurred. Full V1 remains open.
+
+
+## Cooperative joined-update pagination — 2026-09-09
+
+The host position-list builder now polls the engine progress handler for each
+candidate. Candidate selection also polls each retained or skipped candidate,
+replacing an uninterruptible iterator nth() over an OFFSET prefix. Deterministic
+tests interrupt partially built position lists and partially discarded prefixes,
+verify FDB_CANCELLED, and verify successful retry. These checks do not establish
+hard bounds for allocation, individual value destruction, remaining-buffer cleanup
+or total workspace memory.
+
+The complete scoped check passed on `b72fb7292` plus this change: 626 Rust passes,
+zero failures and one existing ignored trigger-interruption gate; 89 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Addon rebuilt. Log: `/tmp/fastdb-pagination-host-cancel-check.log`.
+The focused three host-cancellation tests passed in `/tmp/fastdb-pagination-cancel.log`.
+No upstream source or storage-format changes; full V1 remains open.

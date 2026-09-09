@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-09
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 624 passing Rust tests with one ignored trigger-cancellation gate, 89 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-leading-right-check.log`, based on `a6a044f46` plus leading RIGHT JOIN support). These totals do not prove the gates below. Installed-package evidence is separate: Linux Node 22/24 and the standalone Rust consumer cover joined LEFT UPDATE FROM and pagination, but predate RIGHT JOIN support. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 626 passing Rust tests with one ignored trigger-cancellation gate, 89 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-pagination-host-cancel-check.log`, based on `b72fb7292` plus cooperative host pagination). These totals do not prove the gates below. Installed-package evidence is separate: Linux Node 22/24 and the standalone Rust consumer cover joined LEFT UPDATE FROM and pagination, but predate RIGHT JOIN support. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|
@@ -23,8 +23,8 @@ Cloud beta requirements remain deferred until after embedded V1. They do not blo
 The active SQL write gaps include UPDATE FROM source USING/NATURAL/FULL and
 non-leading RIGHT joins, and broader scope/planner qualification. See [the implementation design](update-from.md). Initial
 single-source, derived/CTE, inner/left joins and leading RIGHT ON sources execute;
-repeated encoded typed record IDs collapse before pagination and mutation. The deduplication loop has cooperative
-progress checks. It still needs complete workspace accounting and broader
+repeated encoded typed record IDs collapse before pagination and mutation. The deduplication, pagination position-list and candidate-selection loops have
+cooperative progress checks, including OFFSET-discarded candidates. It still needs complete workspace accounting and broader
 cancellation/recovery coverage.
 
 Ordinary collection UPDATE/DELETE LIMIT/OFFSET now execute, with missing-binding

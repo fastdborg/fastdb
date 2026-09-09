@@ -1265,7 +1265,13 @@ impl Connection {
         limit: Limit,
         params: &Parameters,
     ) -> Result<Vec<Vec<Value>>> {
-        let mut indices = "0,".repeat(rows.len());
+        let mut indices = String::new();
+        for _ in &rows {
+            if self.engine.should_interrupt_for_progress(1) {
+                return Err(Error::Engine(turso_core::LimboError::Interrupt));
+            }
+            indices.push_str("0,");
+        }
         indices.pop();
         let Cmd::Stmt(Stmt::Select(mut select)) = parsed(&format!(
             "SELECT __fastdb_h_array_new(key) FROM json_each('[{indices}]')"
@@ -1278,10 +1284,17 @@ impl Connection {
         let selected = self
             .write_candidate_select(&Stmt::Select(select).to_string(), params, true)?
             .ok_or_else(|| unsupported("joined update pagination"))?;
+        self.select_update_candidates(rows, selected.rows)
+    }
+    fn select_update_candidates(
+        &self,
+        rows: Vec<Vec<Value>>,
+        selected: Vec<Vec<Value>>,
+    ) -> Result<Vec<Vec<Value>>> {
         let mut candidates = rows.into_iter();
         let mut position = 0usize;
         let mut output = Vec::new();
-        for row in selected.rows {
+        for row in selected {
             let Some(Value::Array(index)) = row.first() else {
                 return Err(Error::Storage("invalid candidate pagination row".into()));
             };
@@ -1293,10 +1306,19 @@ impl Connection {
             let skip = index
                 .checked_sub(position)
                 .ok_or_else(|| Error::Storage("unordered candidate pagination".into()))?;
-            let candidate = candidates
-                .nth(skip)
-                .ok_or_else(|| Error::Storage("candidate pagination exceeds rowset".into()))?;
-            output.push(candidate);
+            // Poll even for discarded OFFSET rows: nth() can otherwise drop a
+            // large candidate prefix without returning to the engine.
+            for offset in 0..=skip {
+                if self.engine.should_interrupt_for_progress(1) {
+                    return Err(Error::Engine(turso_core::LimboError::Interrupt));
+                }
+                let candidate = candidates
+                    .next()
+                    .ok_or_else(|| Error::Storage("candidate pagination exceeds rowset".into()))?;
+                if offset == skip {
+                    output.push(candidate);
+                }
+            }
             position = index + 1;
         }
         Ok(output)
@@ -1329,6 +1351,63 @@ impl Connection {
 #[cfg(test)]
 mod candidate_cancellation_tests {
     use super::*;
+    #[test]
+    fn cancelled_candidate_pagination_stops_during_offset_and_allows_retry() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let rows = (0..5).map(|n| vec![Value::Integer(n)]).collect::<Vec<_>>();
+        let selected = vec![vec![Value::Array(vec![Value::Integer(4)])]];
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = calls.clone();
+        c.engine.set_progress_handler(
+            1,
+            Some(Box::new(move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 2
+            })),
+        );
+        let interrupted = c.select_update_candidates(rows.clone(), selected.clone());
+        c.engine.set_progress_handler(0, None);
+        assert_eq!(interrupted.unwrap_err().code(), "FDB_CANCELLED");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(
+            c.select_update_candidates(rows, selected).unwrap(),
+            vec![vec![Value::Integer(4)]]
+        );
+        assert_eq!(
+            c.execute("SELECT 1", &Parameters::new()).unwrap().rows,
+            vec![vec![Value::Integer(1)]]
+        );
+    }
+
+    #[test]
+    fn cancelled_candidate_position_generation_allows_retry() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let Cmd::Stmt(Stmt::Select(select)) = parsed("SELECT 1 LIMIT 1").unwrap() else {
+            unreachable!()
+        };
+        let limit = select.limit.unwrap();
+        let rows = vec![vec![Value::Integer(7)]; 5];
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = calls.clone();
+        c.engine.set_progress_handler(
+            1,
+            Some(Box::new(move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 2
+            })),
+        );
+        let interrupted =
+            c.paginate_update_candidates(rows.clone(), None, limit.clone(), &Parameters::new());
+        c.engine.set_progress_handler(0, None);
+        assert_eq!(interrupted.unwrap_err().code(), "FDB_CANCELLED");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(
+            c.paginate_update_candidates(rows, None, limit, &Parameters::new())
+                .unwrap(),
+            vec![vec![Value::Integer(7)]]
+        );
+    }
+
     #[test]
     fn cancelled_duplicate_resolution_discards_candidates_and_allows_retry() {
         let db = crate::Database::open(":memory:").unwrap();

@@ -44,6 +44,12 @@ behavior. Only then pass candidates to the current validation/index/savepoint
 loop and produce RETURNING. Limit zero and runtime failures must preserve the
 existing transaction-report behavior.
 
+The current pagination position-list builder and candidate-selection loop poll
+the engine progress handler once per candidate, including rows discarded by
+OFFSET. This extends cooperative cancellation into these host phases. String
+allocation/copying, individual value destruction and remaining-buffer cleanup
+are not hard-deadline bounded; total workspace accounting remains open.
+
 ## Required verification
 
 - Native/collection source and target comparisons with unique and duplicate
