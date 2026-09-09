@@ -6200,3 +6200,20 @@ permit the valid retry and rollback. All 61 write tests pass
 Clippy with warnings denied pass (`/tmp/fastdb-update-abort-validation-clippy.log`).
 Only tests/docs changed from `38e31171a`; no full-suite run is claimed.
 Broader conflict-policy qualification and full V1 remain open.
+
+
+## Native UPDATE conflict-policy oracle — 2026-09-09
+
+A pinned-engine matrix records a second-row uniqueness conflict: ABORT restores
+the statement; FAIL retains the first update; IGNORE returns the first update;
+ROLLBACK removes prior pending work and returns to autocommit; REPLACE returns
+two updates while deleting the conflicting first target. Collection policies
+other than ABORT remain rejected before mutation, with pending snapshots intact.
+These differences require separate implementations, not aliases of the current
+savepoint path. Native probe: `/tmp/fastdb-update-policy-oracle.log`.
+
+All 62 write tests pass (`/tmp/fastdb-update-policies-test.log`); formatting and
+all-target fastdb-tests Clippy with warnings denied pass
+(`/tmp/fastdb-update-policies-clippy.log`). Only tests/docs changed from
+`d71be36a3`; no full-suite run is claimed. Broader conflict-policy qualification
+and full V1 remain open.

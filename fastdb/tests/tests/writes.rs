@@ -2723,3 +2723,78 @@ fn explicit_update_abort_preserves_native_statement_recovery() {
         2
     );
 }
+
+#[test]
+fn pinned_update_conflict_policies_have_distinct_recovery() {
+    for (policy, values, active, returned) in [
+        ("ABORT", vec![1, 2, 3, 4], true, None),
+        ("FAIL", vec![10, 2, 3, 4], true, None),
+        ("IGNORE", vec![10, 2, 3, 4], true, Some(1)),
+        ("ROLLBACK", vec![1, 2, 3], false, None),
+        ("REPLACE", vec![10, 3, 4], true, Some(2)),
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE native(id INTEGER PRIMARY KEY,n INTEGER UNIQUE)",
+            "INSERT INTO native VALUES(1,1),(2,2),(3,3)",
+            "BEGIN",
+            "INSERT INTO native VALUES(4,4)",
+        ] {
+            q(&c, sql);
+        }
+        let result = c.execute(
+            &format!("UPDATE OR {policy} native SET n=10 WHERE id<3 RETURNING id,n"),
+            &Parameters::new(),
+        );
+        if let Some(count) = returned {
+            let result = result.unwrap();
+            assert_eq!(result.affected, count);
+            assert_eq!(result.rows.len(), count as usize);
+        } else {
+            assert_eq!(result.unwrap_err().code(), "FDB_CONSTRAINT");
+        }
+        assert_eq!(
+            c.transaction_state(),
+            if active {
+                fastdb::TransactionState::Active
+            } else {
+                fastdb::TransactionState::Autocommit
+            }
+        );
+        assert_eq!(
+            q(&c, "SELECT n FROM native ORDER BY id").rows,
+            values
+                .into_iter()
+                .map(|n| vec![Value::Integer(n)])
+                .collect::<Vec<_>>(),
+            "{policy}"
+        );
+    }
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+        "INSERT INTO docs(n) VALUES(1),(2)",
+        "BEGIN",
+        "INSERT INTO docs(n) VALUES(3)",
+    ] {
+        q(&c, sql);
+    }
+    let before = q(&c, "SELECT * FROM docs ORDER BY n").rows;
+    for policy in ["FAIL", "IGNORE", "ROLLBACK", "REPLACE"] {
+        assert_eq!(
+            c.execute(
+                &format!("UPDATE OR {policy} docs SET n=10"),
+                &Parameters::new()
+            )
+            .unwrap_err()
+            .code(),
+            "FDB_UNSUPPORTED"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT * FROM docs ORDER BY n").rows, before);
+    }
+    q(&c, "ROLLBACK");
+}
