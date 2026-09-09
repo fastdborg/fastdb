@@ -103,8 +103,19 @@ fn tuple_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(c.transaction_state(),fastdb::TransactionState::Active);
         c.execute("ROLLBACK",&empty)?;
         assert_eq!(c.execute("SELECT a,b FROM tuples",&empty)?.rows,vec![vec![record.clone(),payload.clone()]]);
+        c.execute("CREATE TABLE tuple_source",&empty)?;
+        c.execute("INSERT INTO tuple_source(a,b) SELECT a,b FROM tuples",&empty)?;
+        c.execute("INSERT INTO tuple_source(a,b) SELECT a,b FROM tuples",&empty)?;
+        c.execute("CREATE TABLE tuple_keys(n INTEGER)",&empty)?;
         c.execute("BEGIN",&empty)?;
         assert_eq!(c.execute("UPDATE tuples SET (a,b)=(SELECT b,a UNION ALL SELECT b,a LIMIT 1) RETURNING a,b",&empty)?.rows,vec![vec![payload.clone(),record.clone()]]);
+        c.execute("UPDATE tuples SET (a,b)=(NULL,NULL)",&empty)?;
+        let joined="UPDATE tuples SET (a,b)=(s.b,s.a) FROM tuple_source s LEFT JOIN tuple_keys k ON k.n=1 WHERE k.n IS NULL RETURNING a,b LIMIT $count OFFSET $skip";
+        assert_eq!(c.execute(joined,&Parameters::from([("$count".into(),Value::Integer(1))])).unwrap_err().code(),"FDB_PARAMETER");
+        assert_eq!(c.execute(joined,&Parameters::from([("$count".into(),Value::Integer(1)),("$skip".into(),Value::Integer(1))]))?.affected,0);
+        let result=c.execute(joined,&Parameters::from([("$count".into(),Value::Integer(1)),("$skip".into(),Value::Integer(0))]))?;
+        assert_eq!(result.rows,vec![vec![payload.clone(),record.clone()]]);
+        assert_eq!(result.affected,1);
         c.execute("COMMIT",&empty)?;
     }
     let db=Database::open(file)?;

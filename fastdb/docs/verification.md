@@ -4664,3 +4664,16 @@ Only smoke/docs changed from `0c0c26aea`; the addon came from the preceding full
 check. Installations used temporary consumers outside the workspace and offline
 local tarballs; no registry access or publication occurred. Other platforms and
 full V1 remain unqualified.
+
+
+## Standalone Rust joined-update persistence — 2026-09-09
+
+The offline outside-workspace Rust consumer now covers duplicate collection
+sources, an unmatched LEFT JOIN, bound pagination after deduplication,
+missing-binding recovery, typed RETURNING and affected counts. Committing and
+reopening preserves the selected record/array/binary/int64 values and passes
+collection integrity. The full standalone smoke passed with Rust 1.88.0, without
+checkout-injected RUSTFLAGS, and all 244 resolved registry/git identities match
+the workspace lockfile. Log: `/tmp/fastdb-joined-rust-consumer.log`.
+Only smoke/docs changed from `3b6553247`; this qualifies a local path consumer,
+not published Rust artifacts or other platforms. Full V1 remains open.
