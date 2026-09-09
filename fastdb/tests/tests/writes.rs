@@ -2407,3 +2407,69 @@ fn update_from_unconstrained_right_join_preserves_empty_sources() {
         }
     }
 }
+
+#[test]
+fn update_from_json_iterators_preserves_bound_candidates_and_pagination() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for iterator in ["json_each", "main.json_each"] {
+        for skip in [0, 1, 2] {
+            q(&c, "BEGIN");
+            let params = Parameters::from([
+                (
+                    "$json".into(),
+                    Value::String(r#"[{"n":1,"v":10},{"n":1,"v":11},{"n":2,"v":20}]"#.into()),
+                ),
+                ("$skip".into(), Value::Integer(skip)),
+            ]);
+            let sql=format!("UPDATE TARGET SET v=json_extract(j.value,'$.v') FROM {iterator}($json) j WHERE TARGET.n=json_extract(j.value,'$.n') RETURNING n,v LIMIT 1 OFFSET $skip");
+            let expected = c
+                .execute(&sql.replace("TARGET", "native"), &params)
+                .unwrap();
+            let actual = c.execute(&sql.replace("TARGET", "docs"), &params).unwrap();
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(actual.affected, expected.affected);
+            assert_eq!(
+                q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n,v FROM native ORDER BY n").rows
+            );
+            q(&c, "ROLLBACK");
+        }
+    }
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO docs(n,v) VALUES(4,40)");
+    let before = q(&c, "SELECT n,v FROM docs ORDER BY n").rows;
+    let sql = "UPDATE docs SET v=j.value FROM json_each($json) j WHERE docs.n=j.key RETURNING n,v";
+    assert_eq!(
+        c.execute(sql, &Parameters::new()).unwrap_err().code(),
+        "FDB_PARAMETER"
+    );
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(q(&c, "SELECT n,v FROM docs ORDER BY n").rows, before);
+    let record = Value::Record(Record {
+        table: "docs".into(),
+        key: Key::Integer(i64::MAX),
+    });
+    let params = Parameters::from([
+        ("$json".into(), Value::String("[7]".into())),
+        ("$record".into(), record.clone()),
+    ]);
+    let typed=c.execute("UPDATE docs SET payload=array::new(j.value,$record) FROM json_each($json) j WHERE docs.n=j.key+1 RETURNING n,payload",&params).unwrap();
+    assert_eq!(typed.affected, 1);
+    assert_eq!(
+        typed.rows,
+        vec![vec![
+            Value::Integer(1),
+            Value::Array(vec![Value::Integer(7), record])
+        ]]
+    );
+    q(&c, "ROLLBACK");
+}

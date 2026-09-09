@@ -5877,3 +5877,17 @@ addon from the preceding full check; rows and affected count match the documente
 result (`/tmp/fastdb-joined-contract-example.log`). Only docs changed from
 `e6c5df7a9`; no suite run or native rebuild is claimed. This contract records the
 implemented subset and does not close broader V1 release gates.
+
+
+## Joined JSON iterator write qualification — 2026-09-09
+
+Bound json_each/main.json_each UPDATE FROM sources now have native differential
+coverage for duplicate targets, LIMIT/OFFSET, RETURNING, affected counts and
+stored values. Missing iterator bindings preserve active pending work; a valid
+retry combines an iterator integer and a typed maximum-int64 record key in an
+array assignment. All 56 write tests pass (`/tmp/fastdb-joined-iterator-final.log`);
+formatting and all-target fastdb-tests Clippy with warnings denied pass
+(`/tmp/fastdb-joined-iterator-clippy.log`). Only tests/docs changed from `e4de91534`;
+no full-suite run or addon rebuild is claimed. This does not extend the existing
+malformed-JSON engine-abort contract or establish broad iterator/resource
+qualification. Full V1 remains open.
