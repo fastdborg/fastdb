@@ -72,7 +72,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
 
       await client.execute('ROLLBACK');
       assert.deepEqual((await client.execute('SELECT a,b FROM tuple_docs')).rows,[[tupleRecord,tuplePayload]]);
-      for (const policy of ['ABORT','ROLLBACK','IGNORE','FAIL']) {
+      for (const policy of ['ABORT','ROLLBACK','IGNORE','FAIL','REPLACE']) {
         await client.execute('CREATE TABLE conflicts');
         await client.execute('CREATE INDEX conflict_v ON conflicts(v)');
         await client.execute('CREATE UNIQUE INDEX conflict_n ON conflicts(n)');
@@ -80,10 +80,10 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
         await client.execute('BEGIN');
         await client.execute('INSERT INTO conflicts(n,v) VALUES(3,0)');
         const sql='UPDATE OR '+policy+' conflicts SET n=10,v=7,payload=$value WHERE n<3 RETURNING n,payload';
-        if (policy==='IGNORE') {
+        if (policy==='IGNORE'||policy==='REPLACE') {
           const result=await client.execute(sql,{$value:tuplePayload});
-          assert.equal(result.affected,1n);
-          assert.deepEqual(result.rows,[[10n,tuplePayload]]);
+          assert.equal(result.affected,policy==='REPLACE'?2n:1n);
+          assert.deepEqual(result.rows,policy==='REPLACE'?[[10n,tuplePayload],[10n,tuplePayload]]:[[10n,tuplePayload]]);
           assert.deepEqual(result.transaction,{before:'active',after:'active'});
         } else {
           await assert.rejects(async()=>client.execute(sql,{$value:tuplePayload}),error=>{
@@ -92,15 +92,15 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
             return true;
           });
         }
-        const retained=policy==='IGNORE'||policy==='FAIL';
+        const retained=policy==='IGNORE'||policy==='FAIL'||policy==='REPLACE';
         const pending=policy!=='ROLLBACK';
         const expected=[];
         if (!retained) expected.push([1n,0n,null]);
-        expected.push([2n,0n,null]);
+        if (policy!=='REPLACE') expected.push([2n,0n,null]);
         if (pending) expected.push([3n,0n,null]);
         if (retained) expected.push([10n,7n,tuplePayload]);
         assert.deepEqual((await client.execute('SELECT n,v,payload FROM conflicts ORDER BY n')).rows,expected);
-        assert.equal((await client.checkCollectionIntegrity('conflicts')).indexEntries,pending?6n:4n);
+        assert.equal((await client.checkCollectionIntegrity('conflicts')).indexEntries,BigInt(expected.length)*2n);
         if (pending) await client.execute('COMMIT');
         await client.execute('DROP TABLE conflicts');
       }

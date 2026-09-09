@@ -6473,3 +6473,18 @@ verified against the pinned lockfile. Log: `/tmp/fastdb-replace-rust-consumer.lo
 Only verifier/docs changed from `8ea8ff92b`; no full-suite run is claimed. This is
 orderly close/reopen with a local path dependency, not published-crate or crash
 qualification. Full V1 remains open.
+
+
+## Installed Node replacement qualification — 2026-09-09
+
+The installed package conflict matrix now includes REPLACE in both clients,
+checking two completed RETURNING rows, one surviving updated document, typed
+payloads, active transaction reports and managed-index counts. The matrix still
+runs the other four policies.
+
+Offline package installation/runtime and strict TypeScript checks pass on Linux
+x64, Node 22.0.0 and 24.19.0: 10 files, 60,809,611 packed bytes. Logs:
+`/tmp/fastdb-replace-package22.log` and `/tmp/fastdb-replace-package24.log`.
+The addon is from the full check for `918d6cd34`; only verifier/docs changed from
+`d581d2910`. No registry publication, new platform coverage or full-suite rerun
+is claimed. Full V1 remains open.
