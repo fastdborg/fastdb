@@ -694,3 +694,116 @@ fn ignored_insert_candidates_do_not_hide_result_limit_failures() {
         );
     }
 }
+
+#[test]
+fn insert_replacement_victims_survive_result_limit_failures() {
+    for source in [
+        "VALUES(docs:a,2,30),(docs:d,5,50)",
+        "SELECT docs:a,2,30 UNION ALL SELECT docs:d,5,50",
+    ] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        let p = Parameters::new();
+        for sql in [
+            "CREATE TABLE docs",
+            "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            "CREATE UNIQUE INDEX docs_v ON docs(v)",
+            "INSERT INTO docs(id,n,v) VALUES(docs:a,1,10),(docs:b,2,20),(docs:c,3,30)",
+            "BEGIN",
+            "INSERT INTO docs(id,n,v) VALUES(docs:pending,4,40)",
+        ] {
+            c.execute(sql, &p).unwrap();
+        }
+        let before = c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows;
+        let sql = format!("INSERT OR REPLACE INTO docs(id,n,v) {source} RETURNING n,v");
+        for limits in [
+            ResultLimits {
+                max_rows: 1,
+                max_payload_bytes: 10000,
+            },
+            ResultLimits {
+                max_rows: 10,
+                max_payload_bytes: 1,
+            },
+        ] {
+            assert_eq!(
+                c.write_with_result_limits(&sql, &p, limits)
+                    .unwrap_err()
+                    .code(),
+                "FDB_LIMIT"
+            );
+            assert_eq!(c.transaction_state(), TransactionState::Active);
+            assert_eq!(
+                c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows,
+                before
+            );
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .index_entries,
+                8
+            );
+            for n in 1..=4 {
+                assert_eq!(
+                    c.lookup_index("docs", "docs_n", &Value::Integer(n))
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(
+                    c.lookup_index("docs", "docs_v", &Value::Integer(n * 10))
+                        .unwrap()
+                        .len(),
+                    1
+                );
+            }
+            assert!(c
+                .lookup_index("docs", "docs_n", &Value::Integer(5))
+                .unwrap()
+                .is_empty());
+        }
+        let result = c
+            .write_with_result_limits(
+                &sql,
+                &p,
+                ResultLimits {
+                    max_rows: 2,
+                    max_payload_bytes: 10000,
+                },
+            )
+            .unwrap();
+        assert_eq!(result.affected, 2);
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![Value::Integer(2), Value::Integer(30)],
+                vec![Value::Integer(5), Value::Integer(50)]
+            ]
+        );
+        assert_eq!(
+            c.execute("SELECT n FROM docs ORDER BY n", &p).unwrap().rows,
+            vec![
+                vec![Value::Integer(2)],
+                vec![Value::Integer(4)],
+                vec![Value::Integer(5)]
+            ]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            6
+        );
+        c.execute("ROLLBACK", &p).unwrap();
+        assert_eq!(
+            c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows,
+            before[..3]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            6
+        );
+    }
+}

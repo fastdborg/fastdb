@@ -5933,3 +5933,17 @@ and 60,811,659 packed bytes. Logs: `/tmp/fastdb-insert-package22.log` and
 for `53fd69f97`; only verifier/docs changed from `0ebfb67c1`. No full-suite rerun,
 other-platform qualification or registry publication is claimed. Full V1 remains
 open.
+
+
+## INSERT replacement result-limit recovery — 2026-09-09
+
+A write-buffer regression now covers INSERT REPLACE deleting a same-ID document
+and two distinct unique-key victims, followed by another candidate. VALUES and
+SELECT sources both restore exact documents, both unique indexes and prior
+transaction work when RETURNING exceeds either row or payload limits. Retrying
+with sufficient limits succeeds, and caller rollback restores the original rows.
+
+All 13 write-buffer tests pass (`/tmp/fastdb-insert-replace-result-limits.log`).
+FastDB test-package formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-insert-replace-result-limits-clippy.log`). Only tests/docs changed
+from `e1fd9e3b3`; no full-suite or client rerun is claimed. Full V1 remains open.
