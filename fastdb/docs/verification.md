@@ -4772,3 +4772,17 @@ fixture verifies rollback. All 89 Node/application tests passed against the addo
 rebuilt by the preceding full check. Log: `/tmp/fastdb-joined-cte-node.log`.
 Only tests/docs changed from `e0b7b6f42`; no new Rust run or native rebuild is
 claimed. Broader scope and release qualification, including full V1, remain open.
+
+
+## Joined-update typed target-key separation — 2026-09-09
+
+A regression verifies integer record key 1 and string record key "1" remain
+separate targets under duplicate source matches. Unlimited and LIMIT/OFFSET
+updates check one returned row per changed target, preserved typed IDs, stored
+values, indexed-field query counts and rollback. The assertion accepts either
+matching source value instead of promising a planner-independent duplicate winner.
+All 53 write tests passed (`/tmp/fastdb-joined-typed-keys.log`). Formatting and
+all-target fastdb-tests Clippy with warnings denied passed after removing an
+unnecessary test cast (`/tmp/fastdb-joined-typed-keys-clippy-final.log`). Only
+tests/docs changed from `688323676`; no full-suite or addon rebuild is claimed.
+Broader duplicate/planner/resource qualification and full V1 remain open.

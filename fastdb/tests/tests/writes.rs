@@ -2264,3 +2264,47 @@ fn update_from_target_named_ctes_keep_source_and_target_bindings_separate() {
         }
     }
 }
+
+#[test]
+fn update_from_deduplicates_typed_record_ids_without_conflating_keys() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "INSERT INTO docs(id,n,v) VALUES(type::record('docs',1),1,0),(type::record('docs','1'),2,0)",
+        "CREATE INDEX docs_v ON docs(v)",
+        "CREATE TABLE source",
+        "INSERT INTO source(target,v) VALUES(type::record('docs',1),10),(type::record('docs',1),11),(type::record('docs','1'),20),(type::record('docs','1'),21)",
+    ] {
+        q(&c, sql);
+    }
+    let before = q(&c, "SELECT id,n,v FROM docs ORDER BY n").rows;
+    for limit in ["", " LIMIT 1 OFFSET 1"] {
+        q(&c, "BEGIN");
+        let result = q(&c, &format!("UPDATE docs AS d SET v=s.v FROM source s WHERE d.id=s.target RETURNING id,n,v{limit}"));
+        let expected = if limit.is_empty() { 2 } else { 1 };
+        assert_eq!(result.affected, expected);
+        assert_eq!(result.rows.len(), expected as usize);
+        let stored = q(&c, "SELECT id,n,v FROM docs ORDER BY n").rows;
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[0][0], before[0][0]);
+        assert_eq!(stored[1][0], before[1][0]);
+        assert_ne!(stored[0][0], stored[1][0]);
+        for row in &result.rows {
+            let n = if row[1] == Value::Integer(1) { 0 } else { 1 };
+            assert_eq!(row, &stored[n]);
+            let valid = if n == 0 { [10, 11] } else { [20, 21] };
+            assert!(valid.iter().any(|v| row[2] == Value::Integer(*v)));
+        }
+        assert_eq!(
+            q(&c, "SELECT count(*) FROM docs WHERE v>0").rows,
+            vec![vec![Value::Integer(expected)]]
+        );
+        q(&c, "ROLLBACK");
+        assert_eq!(q(&c, "SELECT id,n,v FROM docs ORDER BY n").rows, before);
+        assert_eq!(
+            q(&c, "SELECT count(*) FROM docs WHERE v>0").rows,
+            vec![vec![Value::Integer(0)]]
+        );
+    }
+}
