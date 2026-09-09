@@ -7079,3 +7079,11 @@ All 41 SELECT integration tests pass (`/tmp/fastdb-not-indexed.log`). Formatting
 and all-target frontend/test-package Clippy pass
 (`/tmp/fastdb-not-indexed-clippy.log`); two fixture corrections preceded the final
 test pass. No full-suite or rebuilt Node addon is claimed. Full V1 remains open.
+
+## Preview application/storage milestone
+
+P1 and P2 are complete. See [the milestone evidence](preview-storage-evidence.md).
+The full scoped check passed with 673 Rust and 101 Node/application tests,
+formatting, Clippy and TypeScript; one known trigger-cancellation test remains
+ignored. Next work is preview candidate delivery (P3 + P4), not more speculative
+SQL or recovery combinations.

@@ -64,3 +64,7 @@ Describe remaining unsupported behavior accurately; do not promise full SQLite c
 ```
 
 This guide is an initial tested application-development aid. External pilots, broader application patterns and the remaining [V1 gates](v1-gates.md) still require evidence.
+
+The tracker also provides `exportTracker` and `restoreTracker` for a complete
+application snapshot, including people, tasks and relational events. See the
+[export/restore walkthrough](../examples/node-task-tracker/README.md#export-and-restore-the-application).

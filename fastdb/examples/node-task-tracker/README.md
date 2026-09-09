@@ -20,3 +20,38 @@ The smoke test forces the relational event insert to fail after the document upd
 See the [AI application guide](../../docs/ai-application-guide.md) for a runnable storage-layer walkthrough and suggested application-agent instructions.
 
 `openTracker` closes its connection if migration fails. It rethrows the migration error when cleanup succeeds and retains both errors in an AggregateError when close also fails. The cleanup fault test uses a simulated client; it does not establish native interrupted-close durability.
+
+## Export and restore the application
+
+`exportTracker` returns a versioned JSON string containing typed NDJSON exports
+of both collections and the relational completion events, read in one transaction.
+`restoreTracker` imports that snapshot into an empty tracker initialized by
+`openTracker`. It restores all three datasets in one transaction and rejects a
+nonempty target. Migrations recreate validation rules and indexes before import.
+
+```js
+const fs = require('node:fs/promises');
+const {openTracker, exportTracker, restoreTracker} = require('./app.cjs');
+
+async function copyTracker() {
+  const source = await openTracker('./tracker-demo.db');
+  const target = await openTracker('./restored-tracker.db'); // fresh path
+  try {
+    const snapshot = await exportTracker(source);
+    await fs.writeFile('./tracker-export.json', snapshot, 'utf8');
+    await restoreTracker(target, await fs.readFile('./tracker-export.json', 'utf8'));
+  } finally {
+    await target.close();
+    await source.close();
+  }
+}
+copyTracker().catch(console.error);
+```
+
+Run this snippet from this example directory. Exclusively own each connection
+through the entire operation; do not call these helpers inside an existing
+transaction. This application snapshot is materialized in memory and is not a
+physical database backup or a crash-safe file-writing utility. Keep the export
+with the matching application migration version. The test verifies a late
+relational failure rolls back both imported collections, a corrected retry,
+exact data and index integrity after reopening, and nonempty-target rejection.

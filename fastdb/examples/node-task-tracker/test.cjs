@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {openTracker,addPerson,addTask,completeTask,listTasks}=require('./app.cjs');
+const {openTracker,addPerson,addTask,completeTask,listTasks,exportTracker,restoreTracker}=require('./app.cjs');
 
 test('task tracker persists linked tasks and atomic completion events',async()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fastdb-tracker-'));
@@ -85,4 +85,43 @@ test('task completion only rolls back a transaction it started',async()=>{
     assert.deepEqual(error.errors,[original,cleanup]);
     return true;
   });
+});
+
+
+test('tracker snapshot restores documents, links and events atomically into a fresh database', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-tracker-restore-'));
+  let source, restored;
+  try {
+    source = await openTracker(path.join(dir, 'source.db'));
+    const owner = await addPerson(source, 'sam', 'Sam');
+    const done = await addTask(source, 'done', 'Complete task', owner);
+    await addTask(source, 'pending', 'Pending task', owner);
+    await completeTask(source, done);
+    const expected = await listTasks(source);
+    const snapshot = await exportTracker(source);
+    restored = await openTracker(path.join(dir, 'restored.db'));
+    const invalid = JSON.parse(snapshot);
+    invalid.events.push(invalid.events[0]); // fail after both collection imports
+    await assert.rejects(restoreTracker(restored, JSON.stringify(invalid)));
+    for (const table of ['people', 'tasks', 'task_events']) {
+      assert.deepEqual(await restored.exactlyOne('SELECT count(*) FROM '+table), [0n]);
+    }
+    assert.equal((await restored.checkCollectionIntegrity('tasks')).indexEntries, 0n);
+    await restoreTracker(restored, snapshot);
+    assert.deepEqual(await listTasks(restored), expected);
+    assert.equal((await restored.checkCollectionIntegrity('tasks')).indexEntries, 2n);
+    await assert.rejects(restoreTracker(restored, snapshot), /empty tracker/);
+    await restored.close();
+    restored = await openTracker(path.join(dir, 'restored.db'));
+    assert.deepEqual(await listTasks(restored), expected);
+    for (const table of ['people', 'tasks']) {
+      assert.deepEqual(await restored.all('SELECT * FROM '+table+' ORDER BY id'), await source.all('SELECT * FROM '+table+' ORDER BY id'));
+      await restored.checkCollectionIntegrity(table);
+    }
+    assert.deepEqual(await restored.all('SELECT * FROM task_events'), await source.all('SELECT * FROM task_events'));
+  } finally {
+    if (restored) await restored.close();
+    if (source) await source.close();
+    fs.rmSync(dir, {recursive:true, force:true});
+  }
 });

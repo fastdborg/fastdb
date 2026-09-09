@@ -58,7 +58,48 @@ async function listTasks(db) {
   return rows.map(([id,title,done,person])=>({id,title,done,owner:person?.name ?? null}));
 }
 
-module.exports = {openTracker, addPerson, addTask, completeTask, listTasks};
+// Exclusively own the connection until the operation finishes.
+async function transferTransaction(db, operation) {
+  await db.execute('BEGIN');
+  try {
+    const result = await operation();
+    await db.execute('COMMIT');
+    return result;
+  } catch (error) {
+    try { await db.execute('ROLLBACK'); }
+    catch (rollbackError) { throw new AggregateError([error, rollbackError], 'Tracker transfer and rollback failed'); }
+    throw error;
+  }
+}
+
+async function exportTracker(db) {
+  return transferTransaction(db, async () => JSON.stringify({
+    version: 1,
+    people: await db.exportDocuments('people', 'ndjson'),
+    tasks: await db.exportDocuments('tasks', 'ndjson'),
+    events: await db.all('SELECT task_key,kind FROM task_events ORDER BY task_key'),
+  }));
+}
+
+async function restoreTracker(db, input) {
+  const data = JSON.parse(input);
+  if (data?.version !== 1 || typeof data.people !== 'string' || typeof data.tasks !== 'string' ||
+      !Array.isArray(data.events) || data.events.some(row => !Array.isArray(row) || row.length !== 2 || row.some(value => typeof value !== 'string'))) {
+    throw new Error('Invalid tracker export');
+  }
+  return transferTransaction(db, async () => {
+    for (const table of ['people', 'tasks', 'task_events']) {
+      if ((await db.exactlyOne('SELECT count(*) FROM '+table))[0] !== 0n) throw new Error('Restore requires an empty tracker');
+    }
+    await db.importDocuments('people', data.people, 'ndjson');
+    await db.importDocuments('tasks', data.tasks, 'ndjson');
+    for (const [key, kind] of data.events) {
+      await db.execute('INSERT INTO task_events VALUES($key,$kind)', {$key:key, $kind:kind});
+    }
+  });
+}
+
+module.exports = {openTracker, addPerson, addTask, completeTask, listTasks, exportTracker, restoreTracker};
 
 if (require.main === module) {
   (async()=> {
