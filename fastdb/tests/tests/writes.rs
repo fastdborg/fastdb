@@ -2602,3 +2602,52 @@ fn update_from_target_correlated_iterators_match_native() {
         }
     }
 }
+
+#[test]
+fn update_from_derived_join_sources_preserve_merged_scope() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE a(k INTEGER,v INTEGER)",
+        "INSERT INTO a VALUES(1,10),(2,20)",
+        "CREATE TABLE source_docs",
+        "INSERT INTO source_docs(k,v) SELECT k,v FROM a",
+        "CREATE TABLE b(k INTEGER,w INTEGER)",
+        "INSERT INTO b VALUES(2,200),(3,300)",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["a", "source_docs"] {
+        for (key, join) in [
+            ("k", "JOIN b USING(k)"),
+            ("k", "LEFT JOIN b USING(k)"),
+            ("coalesce(a.k,b.k)", "FULL JOIN b ON a.k=b.k"),
+        ] {
+            q(&c, "BEGIN");
+            let sql=format!("UPDATE TARGET AS t SET v=s.v FROM (SELECT {key} AS k,coalesce(a.v,0)+coalesce(b.w,0) AS v FROM {source} AS a {join}) s WHERE t.n=s.k RETURNING n,v");
+            let expected = q(
+                &c,
+                &sql.replace("TARGET", "native").replace("source_docs", "a"),
+            );
+            let actual = q(&c, &sql.replace("TARGET", "docs"));
+            assert_eq!(actual.affected, expected.affected, "{sql}");
+            let sort = |mut rows: Vec<Vec<Value>>| {
+                rows.sort_by_key(|row| match row[0] {
+                    Value::Integer(n) => n,
+                    _ => panic!("integer key"),
+                });
+                rows
+            };
+            assert_eq!(sort(actual.rows), sort(expected.rows), "{sql}");
+            assert_eq!(
+                q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n,v FROM native ORDER BY n").rows
+            );
+            q(&c, "ROLLBACK");
+        }
+    }
+}

@@ -6086,3 +6086,21 @@ pass (`/tmp/fastdb-target-iterator-pagination.log`); formatting and all-target
 fastdb-tests Clippy with warnings denied pass
 (`/tmp/fastdb-target-iterator-pagination-clippy.log`). Only tests/docs changed
 from `552bb9695`; no full-suite run is claimed. Full V1 remains open.
+
+
+## Derived joined-update source joins — 2026-09-09
+
+Native differential fixtures qualify derived SELECT sources using inner/left
+USING joins and full joins with equality ON, backed by native or collection
+left sources. Explicitly qualified source values and projected merged keys
+preserve RETURNING row sets, affected counts, stored results and rollback.
+Unordered RETURNING is compared without an order promise. The initial collection
+fixture hit the existing requirement to qualify non-merged joined fields; the
+corrected fixture uses a.v and b.w. Native probing rejects FULL JOIN USING with
+an equality-ON requirement, so that form is not claimed.
+
+All 60 write tests pass (`/tmp/fastdb-derived-join-write-final.log`); formatting
+and all-target fastdb-tests Clippy with warnings denied pass
+(`/tmp/fastdb-derived-join-write-clippy.log`). Only tests/docs changed from
+`6f61b5d52`; no full-suite run is claimed. Derived-source evidence does not close
+the direct USING/NATURAL/FULL/non-leading RIGHT implementation gaps or full V1.

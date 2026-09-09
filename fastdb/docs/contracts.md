@@ -66,6 +66,12 @@ collection UPDATE FROM. Parenthesized FROM join groups are also rejected by the
 pinned native engine. These restrictions describe collection writes; ordinary
 relational writes continue to delegate to the pinned engine.
 
+A derived SELECT source can use the supported SELECT join subset, including
+inner/left USING and full joins with equality ON. Project the needed source keys
+and values explicitly, qualify non-merged fields in collection joins, and refer
+to those projections through the derived alias in UPDATE. This does not enable
+the same join forms directly in the write FROM clause.
+
 Each matched target is changed once, even when multiple source rows match.
 Duplicate resolution uses typed record identity: integer key `1` and string key
 `"1"` remain distinct. The selected source match is not deterministic across query
