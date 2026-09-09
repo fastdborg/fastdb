@@ -6022,3 +6022,14 @@ passes; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Addon rebuilt. Log: `/tmp/fastdb-write-iterator-target-check.log`.
 No upstream source or storage-format changes. Broader iterator/scope/resource
 qualification and full V1 remain open.
+
+
+## Target-correlated iterator Node values — 2026-09-09
+
+Both Node clients exercise json_each/main.json_each/json_tree joined updates
+whose arguments read a target field or nested document path. Array assignments
+combine iterator integers and maximum-int64 record keys; RETURNING, affected
+counts, active transaction reports and rollback pass. All 89 Node/application
+tests pass (`/tmp/fastdb-target-iterator-node.log`) against the addon rebuilt by
+the preceding full check. Only tests/docs changed from `c65f50668`; no new Rust
+run or addon rebuild is claimed. Full V1 remains open.

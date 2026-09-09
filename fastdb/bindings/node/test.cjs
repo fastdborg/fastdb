@@ -2504,6 +2504,18 @@ test('direct JSON iterator joins preserve parameters and values in both clients'
       const deep=correlated.replace('json_each(d.j)', 'json_each(d.payload.inner.j)');
       assert.deepEqual((await db.execute(deep)).rows,rows);
       assert.deepEqual((await db.profileSelect(deep)).result.rows,rows);
+      const targetRecord=new Record('docs',9223372036854775807n);
+      for(const iterator of ['json_each','main.json_each','json_tree']) {
+        for(const argument of ['d.j','d.payload.inner.j']) {
+          await db.execute('BEGIN');
+          const updated=await db.execute('UPDATE docs AS d SET result=array::new(x.value,$record) FROM '+iterator+'('+argument+") x WHERE x.type='integer' AND x.key=0 RETURNING n,result",{$record:targetRecord});
+          assert.equal(updated.affected,1n);
+          assert.deepEqual(updated.rows,[[1n,[1n,targetRecord]]]);
+          assert.deepEqual(updated.transaction,{before:'active',after:'active'});
+          await db.execute('ROLLBACK');
+          assert.deepEqual((await db.execute('SELECT result FROM docs')).rows,[[null]]);
+        }
+      }
       const scalar=sql.replace('json_each($json)','json_each((SELECT $json))');
       assert.deepEqual((await db.execute(scalar,params)).rows,rows);
       assert.deepEqual((await db.profileSelect(scalar,params)).result.rows,rows);
