@@ -4677,3 +4677,21 @@ checkout-injected RUSTFLAGS, and all 244 resolved registry/git identities match
 the workspace lockfile. Log: `/tmp/fastdb-joined-rust-consumer.log`.
 Only smoke/docs changed from `3b6553247`; this qualifies a local path consumer,
 not published Rust artifacts or other platforms. Full V1 remains open.
+
+
+## Two-source RIGHT JOIN UPDATE FROM — 2026-09-09
+
+A two-source RIGHT JOIN/RIGHT OUTER JOIN with ON now normalizes to the reversed
+LEFT ON source tree before candidate construction. Source aliases and the ON
+expression remain unchanged. Native differential fixtures cover table/collection
+sources, matched/unmatched right rows, coalesced missing left values, untouched
+targets, RETURNING, affected counts and rollback. All 49 write tests passed in
+the focused run. Longer RIGHT trees, FULL, USING and NATURAL source joins remain
+rejected; broader duplicate/planner/collation and scope qualification remains open.
+
+The complete scoped check passed on `d4b6bd541` plus this change: 623 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+89 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-update-right-source-check.log`. No upstream source, dependency or
+storage-format changes; no publication occurred. Full V1 remains open.

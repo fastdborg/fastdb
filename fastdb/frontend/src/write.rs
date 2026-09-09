@@ -624,7 +624,20 @@ impl Connection {
                     &tbl_name, &returning, documents, params, limits,
                 )?))
             }
-            Stmt::Update(update) => {
+            Stmt::Update(mut update) => {
+                // A two-source RIGHT ON join is equivalent to the reversed
+                // LEFT ON join, with qualified source names unchanged.
+                if let Some(from) = &mut update.from {
+                    if let [join] = from.joins.as_mut_slice() {
+                        if matches!(join.operator, JoinOperator::TypedJoin(Some(kind))
+                            if kind.contains(JoinType::RIGHT) && !kind.intersects(JoinType::LEFT | JoinType::NATURAL))
+                            && matches!(join.constraint, Some(JoinConstraint::On(_)))
+                        {
+                            std::mem::swap(&mut from.select, &mut join.table);
+                            join.operator = JoinOperator::TypedJoin(Some(JoinType::LEFT | JoinType::OUTER));
+                        }
+                    }
+                }
                 if update.or_conflict.is_some()
                     || update.from.as_ref().is_some_and(|from| from.joins.iter().any(|join| {
                         matches!(join.constraint, Some(JoinConstraint::Using(_)))

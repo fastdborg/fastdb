@@ -2,7 +2,8 @@
 
 Status: initial single-source, inner-join and left-join collection UPDATE FROM is implemented,
 with encoded typed-ID duplicate resolution and initial LIMIT/OFFSET support after
-deduplication. USING/NATURAL/RIGHT/FULL source joins remain explicitly rejected. Ordinary relational UPDATE FROM delegates to the
+deduplication. Two-source RIGHT ON joins are normalized to reversed LEFT ON joins.
+USING/NATURAL/FULL and longer RIGHT source trees remain explicitly rejected. Ordinary relational UPDATE FROM delegates to the
 pinned engine. The remaining design below requires no engine changes or new
 storage format.
 
