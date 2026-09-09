@@ -4706,3 +4706,19 @@ transaction reports pass; the enclosing fixture verifies rollback. All 89
 Node/application tests passed against the preceding full check's addon. Log:
 `/tmp/fastdb-right-update-node.log`. Only tests/docs changed from `cbdaa2c2e`;
 no native rebuild or new Rust-suite run is claimed. Full V1 remains open.
+
+
+## Leading RIGHT JOIN followed by source joins — 2026-09-09
+
+Collection UPDATE FROM now normalizes a leading RIGHT ON join even when followed
+by inner or left joins, retaining the subsequent join sequence and source aliases.
+A native differential regression covers matched and unmatched source rows,
+RETURNING, affected counts and rollback. Non-leading RIGHT, FULL, USING and
+NATURAL joins remain rejected; broader scope/planner and resource gates remain open.
+
+The complete scoped check passed on `a6a044f46` plus this change: 624 Rust passes,
+zero failures and one existing ignored trigger-interruption gate; 89 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. The native addon was rebuilt. Log: `/tmp/fastdb-leading-right-check.log`.
+The focused write run passed all 50 tests (`/tmp/fastdb-leading-right.log`). No upstream
+source, dependency or storage-format changes; no publication occurred. Full V1 remains open.

@@ -625,10 +625,10 @@ impl Connection {
                 )?))
             }
             Stmt::Update(mut update) => {
-                // A two-source RIGHT ON join is equivalent to the reversed
+                // A leading two-source RIGHT ON join is equivalent to the reversed
                 // LEFT ON join, with qualified source names unchanged.
                 if let Some(from) = &mut update.from {
-                    if let [join] = from.joins.as_mut_slice() {
+                    if let Some(join) = from.joins.first_mut() {
                         if matches!(join.operator, JoinOperator::TypedJoin(Some(kind))
                             if kind.contains(JoinType::RIGHT) && !kind.intersects(JoinType::LEFT | JoinType::NATURAL))
                             && matches!(join.constraint, Some(JoinConstraint::On(_)))

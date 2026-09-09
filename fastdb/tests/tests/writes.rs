@@ -2170,3 +2170,32 @@ fn update_from_right_source_join_preserves_unmatched_rows() {
         }
     }
 }
+
+#[test]
+fn update_from_leading_right_join_preserves_following_joins() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE source(k INTEGER,v INTEGER)",
+        "INSERT INTO source VALUES(1,7)",
+        "CREATE TABLE extras(k INTEGER,delta INTEGER)",
+        "INSERT INTO extras VALUES(1,10),(2,20)",
+        "CREATE TABLE final(k INTEGER,bonus INTEGER)",
+        "INSERT INTO final VALUES(1,5)",
+    ] {
+        q(&c, sql);
+    }
+    for join in ["JOIN", "LEFT JOIN"] {
+        q(&c, "BEGIN");
+        let sql=format!("UPDATE TARGET SET v=coalesce(s.v,100)+e.delta+coalesce(f.bonus,50) FROM source s RIGHT JOIN extras e ON e.k=s.k {join} final f ON f.k=e.k WHERE e.k=TARGET.n RETURNING n,v");
+        let expected = q(&c, &sql.replace("TARGET", "native"));
+        let actual = q(&c, &sql.replace("TARGET", "docs"));
+        assert_eq!(actual.rows, expected.rows, "{sql}");
+        assert_eq!(actual.affected, expected.affected);
+        q(&c, "ROLLBACK");
+    }
+}
