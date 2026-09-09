@@ -5717,3 +5717,17 @@ The focused expanded test passes (one test, 66 filtered out):
 with warnings denied pass (`/tmp/fastdb-insert-policy-interrupt-clippy.log`). Only
 test/docs changed from `e24fab3b1`; no full-suite/client rerun is claimed.
 Full V1 remains open.
+
+
+## INSERT policy typed primary-key conflicts — 2026-09-09
+
+ABORT and ROLLBACK now have explicit duplicate-record-ID coverage with integer
+and string keys representing 1. Each conflict follows a successful candidate in
+the same batch; that candidate disappears. ABORT retains prior pending work,
+ROLLBACK discards it, committed typed identities remain distinct and managed
+index counts stay consistent.
+
+All 76 write tests pass (`/tmp/fastdb-insert-record-conflicts.log`); fastdb-tests
+formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-insert-record-conflicts-clippy.log`). Only tests/docs changed from
+`e2ed87974`; no full-suite/client rerun is claimed. Full V1 remains open.

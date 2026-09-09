@@ -3689,3 +3689,73 @@ fn insert_policies_match_native_user_savepoint_disposition() {
         }
     }
 }
+
+#[test]
+fn insert_conflict_policies_preserve_typed_record_primary_keys() {
+    for policy in ["ABORT", "ROLLBACK"] {
+        for key in [Key::Integer(1), Key::String("1".into())] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            q(&c, "CREATE TABLE docs");
+            q(&c, "CREATE UNIQUE INDEX docs_n ON docs(n)");
+            q(&c,"INSERT INTO docs(id,n) VALUES(type::record('docs',1),1),(type::record('docs','1'),2)");
+            q(&c, "BEGIN");
+            q(&c, "INSERT INTO docs(id,n) VALUES(docs:pending,3)");
+            let id = Value::Record(Record {
+                table: "docs".into(),
+                key,
+            });
+            let error=c.execute(&format!("INSERT OR {policy} INTO docs(id,n) VALUES(docs:new,4),($id,5) RETURNING id,n"),&Parameters::from([("$id".into(),id)])).unwrap_err();
+            assert_eq!(error.code(), "FDB_CONSTRAINT");
+            let active = policy == "ABORT";
+            assert_eq!(
+                c.transaction_state(),
+                if active {
+                    fastdb::TransactionState::Active
+                } else {
+                    fastdb::TransactionState::Autocommit
+                }
+            );
+            assert!(c
+                .get(&Record {
+                    table: "docs".into(),
+                    key: Key::String("new".into())
+                })
+                .unwrap()
+                .is_none());
+            let mut expected = vec![vec![Value::Integer(1)], vec![Value::Integer(2)]];
+            if active {
+                expected.push(vec![Value::Integer(3)]);
+            }
+            assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, expected);
+            assert_eq!(
+                c.check_collection_integrity("docs", Default::default())
+                    .unwrap()
+                    .index_entries,
+                if active { 3 } else { 2 }
+            );
+            if active {
+                q(&c, "ROLLBACK");
+            }
+            assert_eq!(
+                q(&c, "SELECT id,n FROM docs ORDER BY n").rows,
+                vec![
+                    vec![
+                        Value::Record(Record {
+                            table: "docs".into(),
+                            key: Key::Integer(1)
+                        }),
+                        Value::Integer(1)
+                    ],
+                    vec![
+                        Value::Record(Record {
+                            table: "docs".into(),
+                            key: Key::String("1".into())
+                        }),
+                        Value::Integer(2)
+                    ],
+                ]
+            );
+        }
+    }
+}
