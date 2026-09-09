@@ -5916,3 +5916,20 @@ identities verified against the pinned lockfile. Log:
 `ff657e456`; no full-suite rerun is claimed. This is orderly close/reopen through
 a local path dependency, not published-crate or crash qualification.
 Full V1 remains open.
+
+
+## Installed Node INSERT conflict policies — 2026-09-09
+
+The local packed-package verifier now exercises all five INSERT conflict policies
+through both Database and AsyncDatabase. A duplicate record identity between
+successful candidates checks affected counts/RETURNING or structured errors,
+transaction disposition, exact surviving rows with nested binary/i64 payloads,
+and index integrity while preserving prior transaction work where appropriate.
+
+Offline installation and smoke checks pass on Linux x64 with Node 22.0.0 and
+24.19.0, including strict TypeScript consumers. Each tarball contains 10 files
+and 60,811,659 packed bytes. Logs: `/tmp/fastdb-insert-package22.log` and
+`/tmp/fastdb-insert-package24.log`. The addon was built by the full check recorded
+for `53fd69f97`; only verifier/docs changed from `0ebfb67c1`. No full-suite rerun,
+other-platform qualification or registry publication is claimed. Full V1 remains
+open.

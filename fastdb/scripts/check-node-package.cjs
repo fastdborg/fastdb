@@ -104,6 +104,40 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
         if (pending) await client.execute('COMMIT');
         await client.execute('DROP TABLE conflicts');
       }
+      for (const policy of ['ABORT','ROLLBACK','FAIL','IGNORE','REPLACE']) {
+        await client.execute('CREATE TABLE insert_docs');
+        await client.execute('CREATE UNIQUE INDEX insert_n ON insert_docs(n)');
+        await client.execute('INSERT INTO insert_docs(id,n) VALUES(insert_docs:a,1)');
+        await client.execute('BEGIN');
+        await client.execute('INSERT INTO insert_docs(id,n) VALUES(insert_docs:pending,9)');
+        const sql='INSERT OR '+policy+' INTO insert_docs(id,n,payload) VALUES(insert_docs:b,2,$value),(insert_docs:a,3,$value),(insert_docs:c,4,$value) RETURNING n,payload';
+        const pending=policy!=='ROLLBACK';
+        const continued=policy==='IGNORE'||policy==='REPLACE';
+        const prefix=continued||policy==='FAIL';
+        if (continued) {
+          const result=await client.execute(sql,{$value:tuplePayload});
+          const keys=policy==='REPLACE'?[2n,3n,4n]:[2n,4n];
+          assert.equal(result.affected,BigInt(keys.length));
+          assert.deepEqual(result.rows,keys.map(n=>[n,tuplePayload]));
+          assert.deepEqual(result.transaction,{before:'active',after:'active'});
+        } else {
+          await assert.rejects(async()=>client.execute(sql,{$value:tuplePayload}),error=>{
+            assert.equal(error.code,'FDB_CONSTRAINT');
+            assert.deepEqual(error.transaction,{before:'active',after:pending?'active':'autocommit'});
+            return true;
+          });
+        }
+        const expected=[];
+        if (policy!=='REPLACE') expected.push([1n,null]);
+        if (prefix) expected.push([2n,tuplePayload]);
+        if (policy==='REPLACE') expected.push([3n,tuplePayload]);
+        if (continued) expected.push([4n,tuplePayload]);
+        if (pending) expected.push([9n,null]);
+        assert.deepEqual((await client.execute('SELECT n,payload FROM insert_docs ORDER BY n')).rows,expected);
+        assert.equal((await client.checkCollectionIntegrity('insert_docs')).indexEntries,BigInt(expected.length));
+        if (pending) await client.execute('COMMIT');
+        await client.execute('DROP TABLE insert_docs');
+      }
       const base = {version:1n,name:'base',sql:'CREATE TABLE migration_docs; CREATE UNIQUE INDEX migration_n ON migration_docs(n); INSERT INTO migration_docs {n:1};'};
       await client.migrate([base]);
       const prefix = "-- café 日本語\\nINSERT INTO migration_docs {n:2}; ";
