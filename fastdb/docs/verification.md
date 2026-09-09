@@ -5636,3 +5636,20 @@ All three insert-source oracle tests pass (64 other frontend tests filtered out)
 with warnings denied pass (`/tmp/fastdb-native-insert-policies-clippy.log`). Only
 test/docs changed from `7d6bb6549`; no full-suite/client rerun is claimed.
 Full V1 remains open.
+
+
+## Collection-source relational INSERT policy oracle — 2026-09-09
+
+The relational INSERT SELECT conflict matrix now compares three routes: raw
+engine with a native source, FastDB with a native source, and FastDB with a
+collection source. Explicit source ordering ensures the conflict follows the
+first successful row. All five policies match returned rows or exact errors,
+transaction state and final relational rows, in autocommit and explicit
+transactions with prior work. This exercises logical source lowering without
+adding those policies to collection destinations.
+
+All three insert-source oracle tests pass (64 other frontend tests filtered out),
+`/tmp/fastdb-mixed-insert-policies.log`. FastDB formatting and all-target Clippy
+with warnings denied pass (`/tmp/fastdb-mixed-insert-policies-clippy.log`). Only
+test/docs changed from `36c7e6781`; no full-suite/client rerun is claimed.
+Full V1 remains open.

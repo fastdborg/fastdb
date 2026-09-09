@@ -1684,25 +1684,37 @@ mod insert_source_oracle_tests {
         for policy in ["ABORT", "ROLLBACK", "FAIL", "IGNORE", "REPLACE"] {
             for active in [false, true] {
                 let mut baseline = None;
-                for frontend in [false, true] {
+                for mode in [0, 1, 2] {
                     let db = Database::open(":memory:").unwrap();
                     let c = db.connect().unwrap();
                     for sql in [
                         "CREATE TABLE items(n INTEGER UNIQUE,v INTEGER)",
-                        "CREATE TABLE source(n INTEGER,v INTEGER)",
                         "INSERT INTO items VALUES(1,0)",
-                        "INSERT INTO source VALUES(2,20),(1,10),(3,30)",
                     ] {
                         c.run(sql, &[]).unwrap();
+                    }
+                    if mode == 2 {
+                        c.execute("CREATE TABLE source", &crate::Parameters::new())
+                            .unwrap();
+                        c.execute(
+                            "INSERT INTO source(n,v) VALUES(2,10),(1,20),(3,30)",
+                            &crate::Parameters::new(),
+                        )
+                        .unwrap();
+                    } else {
+                        c.run("CREATE TABLE source(n INTEGER,v INTEGER)", &[])
+                            .unwrap();
+                        c.run("INSERT INTO source VALUES(2,10),(1,20),(3,30)", &[])
+                            .unwrap();
                     }
                     if active {
                         c.run("BEGIN", &[]).unwrap();
                         c.run("INSERT INTO items VALUES(4,40)", &[]).unwrap();
                     }
                     let sql = format!(
-                        "INSERT OR {policy} INTO items(n,v) SELECT n,v FROM source RETURNING n,v"
+                        "INSERT OR {policy} INTO items(n,v) SELECT n,v FROM source ORDER BY v RETURNING n,v"
                     );
-                    let result = if frontend {
+                    let result = if mode != 0 {
                         c.execute(&sql, &crate::Parameters::new())
                             .map(|result| result.rows)
                     } else {
@@ -1718,11 +1730,11 @@ mod insert_source_oracle_tests {
                         c.transaction_state(),
                         c.run("SELECT n,v FROM items ORDER BY n", &[]).unwrap(),
                     );
-                    if frontend {
+                    if mode != 0 {
                         assert_eq!(
                             Some(&observed),
                             baseline.as_ref(),
-                            "{policy}, active={active}"
+                            "{policy}, active={active}, mode={mode}"
                         );
                     } else {
                         baseline = Some(observed);
