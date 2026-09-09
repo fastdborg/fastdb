@@ -76,15 +76,13 @@ fn crash_writer_child() {
                             ("$name".into(), patch["name"].clone()),
                             ("$payload".into(), patch["payload"].clone()),
                         ]);
-                        assert_eq!(
-                            c.execute(
-                                "UPDATE items SET (name,payload)=(VALUES($name,$payload)) WHERE id=$id",
-                                &params,
-                            )
-                            .unwrap()
-                            .affected,
-                            1
-                        );
+                        let sql = if slot % 8 == 0 {
+                            marker("joined", batch);
+                            "WITH target AS (SELECT $id AS id,$name AS name,$payload AS payload), copies AS (SELECT * FROM target UNION ALL SELECT * FROM target) UPDATE items AS target SET (name,payload)=(s.name,s.payload) FROM copies s WHERE target.id=s.id LIMIT 1"
+                        } else {
+                            "UPDATE items SET (name,payload)=(VALUES($name,$payload)) WHERE id=$id"
+                        };
+                        assert_eq!(c.execute(sql, &params,).unwrap().affected, 1);
                     } else {
                         assert!(c.patch(id, patch).unwrap().is_some());
                     }
@@ -126,7 +124,7 @@ impl Drop for KillOnDrop {
 
 #[test]
 fn killed_commit_and_checkpoint_loops_recover_atomic_batches() {
-    for phase in ["rewrite", "commit", "checkpoint"] {
+    for phase in ["joined", "rewrite", "commit", "checkpoint"] {
         for delay_ms in [0, 1, 5] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("kill.db");

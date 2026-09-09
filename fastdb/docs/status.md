@@ -5891,3 +5891,21 @@ formatting and all-target fastdb-tests Clippy with warnings denied pass
 no full-suite run or addon rebuild is claimed. This does not extend the existing
 malformed-JSON engine-abort contract or establish broad iterator/resource
 qualification. Full V1 remains open.
+
+
+## Joined-update process-crash recovery — 2026-09-09
+
+The process-kill workload now alternates joined tuple updates with existing
+VALUES tuples and patch writes. Joined updates use a target-alias CTE, duplicate
+source rows, typed record/binary parameters and LIMIT 1. A new marker immediately
+before joined execution adds three kill windows (0/1/5 ms), for 12 total across
+joined/rewrite/commit/checkpoint phases. Timing does not prove a kill at a specific
+engine instruction or I/O boundary.
+
+Both crash tests passed in 18.34 seconds, including two reopens per case,
+acknowledged-commit bounds, exact document payloads, unique-index lookups and
+absence checks, relational mirrors, audit rows and native integrity_check.
+Log: `/tmp/fastdb-joined-crash.log`. Formatting and all-target fastdb-tests Clippy
+with warnings denied passed (`/tmp/fastdb-joined-crash-clippy.log`). Only tests/docs
+changed from `6f3496b31`; no full-suite run is claimed. Deterministic interrupted
+I/O, power-loss/platform evidence and full V1 remain open.
