@@ -2657,9 +2657,10 @@ fn explicit_update_abort_preserves_native_statement_recovery() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     for sql in [
-        "CREATE TABLE native(n INTEGER UNIQUE,v INTEGER)",
+        "CREATE TABLE native(n INTEGER UNIQUE,v INTEGER CHECK(v<5))",
         "INSERT INTO native VALUES(1,0),(2,0)",
         "CREATE TABLE docs",
+        "DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)",
         "CREATE UNIQUE INDEX docs_n ON docs(n)",
         "INSERT INTO docs(n,v) SELECT n,v FROM native",
     ] {
@@ -2677,6 +2678,27 @@ fn explicit_update_abort_preserves_native_statement_recovery() {
                 )
                 .unwrap_err();
             assert_eq!(error.code(), "FDB_CONSTRAINT", "{table}/{from}: {error}");
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(
+                q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows,
+                before
+            );
+            let error = c
+                .execute(
+                    &format!(
+                        "UPDATE OR ABORT {table} SET v=10{from} WHERE {table}.n>1 RETURNING n,v"
+                    ),
+                    &Parameters::new(),
+                )
+                .unwrap_err();
+            assert_eq!(
+                error.code(),
+                if table == "docs" {
+                    "FDB_VALIDATION"
+                } else {
+                    "FDB_CONSTRAINT"
+                }
+            );
             assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
             assert_eq!(
                 q(&c, &format!("SELECT n,v FROM {table} ORDER BY n")).rows,

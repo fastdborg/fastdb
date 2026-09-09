@@ -5172,3 +5172,15 @@ values, followed by the fixture's rollback verification. All 89 Node/application
 tests pass (`/tmp/fastdb-update-abort-node.log`) against the addon from the preceding
 full check. Only tests/docs changed from `9a5f47ffb`; no new Rust-suite run or
 addon rebuild is claimed. Full V1 remains open.
+
+
+## Explicit OR ABORT CHECK recovery — 2026-09-09
+
+The ordinary/joined OR ABORT regression now also checks evaluated CHECK failures.
+Native targets report FDB_CONSTRAINT and collection validators retain
+FDB_VALIDATION; both preserve pending snapshots and active transactions, then
+permit the valid retry and rollback. All 61 write tests pass
+(`/tmp/fastdb-update-abort-validation.log`); formatting and all-target fastdb-tests
+Clippy with warnings denied pass (`/tmp/fastdb-update-abort-validation-clippy.log`).
+Only tests/docs changed from `38e31171a`; no full-suite run is claimed.
+Broader conflict-policy qualification and full V1 remain open.
