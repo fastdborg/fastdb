@@ -2783,7 +2783,7 @@ fn pinned_update_conflict_policies_have_distinct_recovery() {
         q(&c, sql);
     }
     let before = q(&c, "SELECT * FROM docs ORDER BY n").rows;
-    for policy in ["FAIL", "IGNORE", "REPLACE"] {
+    for policy in ["FAIL", "REPLACE"] {
         assert_eq!(
             c.execute(
                 &format!("UPDATE OR {policy} docs SET n=10"),
@@ -2939,5 +2939,70 @@ fn update_conflict_recovery_matches_native_across_user_savepoints() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn update_ignore_restores_skipped_documents_and_all_indexes() {
+    for from in ["", " FROM (SELECT 1 AS k) source"] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)",
+            "CREATE INDEX docs_a ON docs(a)",
+            "CREATE UNIQUE INDEX docs_n ON docs(n)",
+            "INSERT INTO docs(n,v,a) VALUES(1,0,0),(2,0,0),(3,0,0)",
+            "BEGIN",
+            "INSERT INTO docs(n,v,a) VALUES(4,0,0)",
+        ] {
+            q(&c, sql);
+        }
+        let result = q(
+            &c,
+            &format!("UPDATE OR IGNORE docs SET n=10,a=7{from} WHERE docs.n<3 RETURNING n,a"),
+        );
+        assert_eq!(result.affected, 1);
+        assert_eq!(
+            result.rows,
+            vec![vec![Value::Integer(10), Value::Integer(7)]]
+        );
+        assert_eq!(
+            q(&c, "SELECT n,a FROM docs ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(2), Value::Integer(0)],
+                vec![Value::Integer(3), Value::Integer(0)],
+                vec![Value::Integer(4), Value::Integer(0)],
+                vec![Value::Integer(10), Value::Integer(7)]
+            ]
+        );
+        let result = q(
+            &c,
+            &format!("UPDATE OR IGNORE docs SET v=10,a=9{from} RETURNING n"),
+        );
+        assert_eq!(result.affected, 0);
+        assert!(result.rows.is_empty());
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            8
+        );
+        q(&c, "ROLLBACK");
+        assert_eq!(
+            q(&c, "SELECT n FROM docs ORDER BY n").rows,
+            vec![
+                vec![Value::Integer(1)],
+                vec![Value::Integer(2)],
+                vec![Value::Integer(3)]
+            ]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            6
+        );
     }
 }

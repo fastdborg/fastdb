@@ -30,8 +30,16 @@ Collection UPDATE accepts explicit OR ABORT as its default statement rollback
 policy, including supported UPDATE FROM forms. OR ROLLBACK rolls back the enclosing
 transaction on validation or constraint failures during document mutation.
 Preparation and buffer-limit errors retain their existing statement recovery;
-engine errors can still abort a transaction independently. OR FAIL/IGNORE/REPLACE
+engine errors can still abort a transaction independently. OR FAIL/REPLACE
 remain unsupported on collection updates.
+
+OR IGNORE skips candidates that fail document mutation validation or constraints.
+Each skipped candidate restores its document and all managed indexes; earlier
+successful candidates remain part of the statement. RETURNING and affected counts
+include only successful candidates. Candidate LIMIT applies before skips, so
+skipped rows do not cause additional candidates to be selected. Preparation,
+buffer-limit and other execution errors still fail the statement; skipped
+candidates can consume the conservative write-buffer budget.
 
 Collection UPDATE and DELETE accept LIMIT/OFFSET, including bound parameters.
 The limit applies to candidate selection before mutation and RETURNING reports

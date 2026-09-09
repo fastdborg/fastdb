@@ -5248,3 +5248,26 @@ formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-policy-savepoints-clippy.log`). Only tests/docs changed from
 `3ae59b986`; no new full-suite or client run is claimed. Broader error-stage,
 interruption and rollback-failure qualification and full V1 remain open.
+
+
+## Collection UPDATE OR IGNORE — 2026-09-09
+
+Collection UPDATE now accepts OR IGNORE for ordinary and supported joined writes.
+Each candidate uses a nested atomic savepoint. Mutation validation/constraint
+failures restore that candidate's document and all managed indexes before
+continuing; only successful candidates enter RETURNING and affected counts.
+Other failures retain statement recovery, and an engine-aborted transaction is
+not treated as a skipped row. LIMIT still selects candidates before skips;
+skipped candidates can consume conservative write-buffer accounting. FAIL and
+REPLACE remain unsupported.
+
+The new regression covers a uniqueness failure after a nonunique managed index
+has changed, all-skipped CHECK failures, RETURNING/counts, preserved pending work,
+outer rollback and integrity across both indexes, with and without UPDATE FROM.
+All 65 write tests pass (`/tmp/fastdb-update-ignore.log`). The full scoped check
+on `ab856402a` plus this change passed: 646 Rust tests, zero failures, one existing
+ignored trigger-interruption gate; 90 Node/application tests; formatting,
+all-target FastDB Clippy with warnings denied and strict TypeScript. The addon
+was rebuilt. Log: `/tmp/fastdb-update-ignore-check.log`. No upstream source or
+storage-format changes. Broader policy/error-stage, resource and client-specific
+qualification and full V1 remain open.
