@@ -553,7 +553,7 @@ impl Connection {
                 body,
                 returning,
             } => {
-                if with.is_some() || !matches!(or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore)) {
+                if with.is_some() || !matches!(or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore | ResolveType::Fail)) {
                     return Err(unsupported(
                         "collection INSERT WITH/OR CONFLICT; use document UPSERT",
                     ));
@@ -623,6 +623,13 @@ impl Connection {
                         Err(cause) => {
                             // insert() has already restored the failed document
                             // and all index work through its candidate savepoint.
+                            if or_conflict == Some(ResolveType::Fail)
+                                && matches!(cause.code(), "FDB_CONSTRAINT" | "FDB_VALIDATION")
+                                && !self.engine.get_auto_commit()
+                            {
+                                retained_failure = Some(cause);
+                                return Ok(None);
+                            }
                             if or_conflict == Some(ResolveType::Ignore)
                                 && matches!(cause.code(), "FDB_CONSTRAINT" | "FDB_VALIDATION")
                                 && !self.engine.get_auto_commit()

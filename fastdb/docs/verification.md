@@ -5778,3 +5778,24 @@ All 12 write-buffer tests pass (`/tmp/fastdb-insert-ignore-limits.log`);
 fastdb-tests formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-insert-ignore-limits-clippy.log`). Only tests/docs changed from
 `7e5ddff2e`; no full-suite/client rerun is claimed. Full V1 remains open.
+
+
+## Collection INSERT OR FAIL — 2026-09-09
+
+Collection INSERT now accepts OR FAIL. After insert() restores a failed candidate,
+a validation/constraint cause is deferred until the statement savepoint releases,
+retaining earlier successful candidates without a partial failed document/index.
+Autocommit commits that prefix; explicit transactions retain it pending. No
+partial RETURNING rows are delivered on error. Other errors retain statement
+recovery; the atomic result-limited API keeps its outer rollback wrapper.
+Collection INSERT REPLACE and ON CONFLICT remain unsupported.
+
+Native/collection regressions cover VALUES/SELECT uniqueness and VALUES CHECK
+failures, stopped later candidates, retained successful rows, index integrity,
+autocommit/active state and outer rollback. All 78 write tests pass
+(`/tmp/fastdb-insert-fail.log`). The complete scoped check on `9c9ecb407` plus this
+change passes: 665 Rust tests, zero failures, one existing ignored trigger-
+interruption gate; 97 Node/application tests; formatting, all-target FastDB Clippy
+with warnings denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-insert-fail-check.log`. No upstream source or storage-format changes.
+Broader error-stage/client qualification and full V1 remain open.

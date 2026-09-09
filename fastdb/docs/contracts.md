@@ -33,7 +33,11 @@ Preparation and buffer/result-limit errors retain existing recovery behavior.
 OR IGNORE skips candidate insertion validation/constraint failures after restoring
 that candidate and its indexes. Only successful candidates contribute affected
 counts and RETURNING. Other errors retain existing statement recovery.
-Other explicit INSERT conflict policies and ON CONFLICT clauses remain unsupported; object UPSERT is separate.
+OR FAIL restores the failed candidate and stops on insertion validation/constraint
+failure, retaining earlier successful candidates before returning the error.
+Autocommit commits that prefix; explicit transactions keep it pending. The atomic
+write_with_result_limits wrapper still restores the statement on any error.
+INSERT OR REPLACE and ON CONFLICT clauses remain unsupported; object UPSERT is separate.
 
 
 Collection UPDATE accepts explicit OR ABORT as its default statement rollback
