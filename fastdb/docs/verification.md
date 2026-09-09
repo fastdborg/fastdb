@@ -5472,3 +5472,21 @@ x64, Node 22.0.0 and 24.19.0: 10 files, 60,809,611 packed bytes. Logs:
 The addon is from the full check for `918d6cd34`; only verifier/docs changed from
 `d581d2910`. No registry publication, new platform coverage or full-suite rerun
 is claimed. Full V1 remains open.
+
+
+## Conflict-policy interruption after storage changes — 2026-09-09
+
+The existing after-write progress-handler matrix now includes ordinary/joined
+REPLACE with a conflicting next key and ordinary IGNORE/FAIL updates. It verifies
+the handler actually fired after total_changes increased, FDB_CANCELLED, restored
+document snapshots and indexed lookups, preserved prior native-table work and
+transaction state, integrity, and successful fresh writes. Each case runs with
+and without an enclosing transaction. This samples the first observed storage
+change, not every deletion/index/savepoint or I/O boundary.
+
+The expanded focused frontend test passes (one test, 63 filtered out):
+`/tmp/fastdb-conflict-interrupt.log`. FastDB formatting and all-target Clippy with
+warnings denied pass (`/tmp/fastdb-conflict-interrupt-clippy.log`). Only test/docs
+changed from `9fd4f18ed`; no full-suite/client rerun is claimed. The existing
+ignored trigger-interruption gate and broader interruption qualification remain
+open, as does full V1.
