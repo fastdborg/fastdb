@@ -1379,6 +1379,22 @@ impl Connection {
         limit: Limit,
         params: &Parameters,
     ) -> Result<Vec<Vec<Value>>> {
+        // json_each receives one two-byte placeholder per candidate, with
+        // brackets replacing the final comma (or an empty two-byte array).
+        let position_bytes = rows
+            .len()
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(1))
+            .map(|bytes| bytes.max(2))
+            .ok_or_else(|| Error::Limit("joined update position buffer overflow".into()))?;
+        if self
+            .write_buffer_limits
+            .is_some_and(|limits| position_bytes > limits.max_payload_bytes)
+        {
+            return Err(Error::Limit(
+                "joined update position buffer limit exceeded".into(),
+            ));
+        }
         let mut indices = String::new();
         for _ in &rows {
             if self.engine.should_interrupt_for_progress(1) {
@@ -1611,6 +1627,37 @@ mod candidate_cancellation_tests {
             c.paginate_update_candidates(rows, None, limit, &Parameters::new())
                 .unwrap(),
             vec![vec![Value::Integer(7)]]
+        );
+    }
+
+    #[test]
+    fn pagination_position_buffer_rejects_before_building_and_allows_retry() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let c = db
+            .connect()
+            .unwrap()
+            .with_write_buffer_limits(crate::ResultLimits {
+                max_rows: 10,
+                max_payload_bytes: 4,
+            });
+        let rows = vec![vec![Value::Integer(1)], vec![Value::Integer(2)]];
+        let limit = Limit {
+            expr: Box::new(Expr::Literal(Literal::Numeric("1".into()))),
+            offset: None,
+        };
+        let error = c
+            .paginate_update_candidates(rows.clone(), None, limit.clone(), &Parameters::new())
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT");
+        assert!(error.to_string().contains("position buffer"));
+        let c = c.with_write_buffer_limits(crate::ResultLimits {
+            max_rows: 10,
+            max_payload_bytes: 1000,
+        });
+        assert_eq!(
+            c.paginate_update_candidates(rows, None, limit, &Parameters::new())
+                .unwrap(),
+            vec![vec![Value::Integer(1)]]
         );
     }
 

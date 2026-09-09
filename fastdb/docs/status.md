@@ -7030,3 +7030,18 @@ The focused test and all 100 Node/application tests pass. Logs:
 The addon is from the full check recorded at `cb189fd0d`; only tests/docs changed.
 No Rust/full-suite rerun or broader platform qualification is claimed. Full V1
 remains open.
+
+
+## Joined UPDATE pagination payload preflight — 2026-09-09
+
+The generated JSON candidate-position array now has an overflow-checked size
+preflight against the configured write-buffer byte ceiling before string
+construction. This bounds the array payload, not surrounding generated SQL,
+allocator overhead or total workspace. Unbounded connections retain their policy.
+
+Six candidate preparation/cancellation tests pass, including oversized position
+payload rejection and larger-budget retry. All 80 write and 13 write-buffer
+integration tests pass. Formatting and all-target frontend Clippy pass. Logs:
+`/tmp/fastdb-position-budget.log`, `/tmp/fastdb-position-budget-writes.log`, and
+`/tmp/fastdb-position-budget-clippy.log`. No full-suite or rebuilt Node addon is
+claimed for this change. Full V1 remains open.

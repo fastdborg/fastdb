@@ -69,6 +69,11 @@ behavior. Only then pass candidates to the current validation/index/savepoint
 loop and produce RETURNING. Limit zero and runtime failures must preserve the
 existing transaction-report behavior.
 
+The pagination position-array payload is size-checked with overflow-safe arithmetic
+against the configured write-buffer byte ceiling before its string is built.
+The empty array costs two bytes; each nonempty array costs twice the candidate
+count plus one. Surrounding generated SQL and allocator overhead are not included.
+
 The current pagination position-list builder and candidate-selection loop poll
 the engine progress handler once per candidate, including rows discarded by
 OFFSET. This extends cooperative cancellation into these host phases. String
