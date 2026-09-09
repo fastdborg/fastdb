@@ -3873,3 +3873,113 @@ fn insert_fail_retains_successful_candidates_like_native() {
         }
     }
 }
+
+#[test]
+fn insert_replace_removes_identity_and_multiple_unique_conflicts_atomically() {
+    for source in ["VALUES(1,20,30)", "SELECT 1,20,30"] {
+        let mut baseline = None;
+        for collection in [false, true] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            if collection {
+                q(&c, "CREATE TABLE items");
+                q(&c, "CREATE UNIQUE INDEX items_n ON items(n)");
+                q(&c, "CREATE UNIQUE INDEX items_v ON items(v)");
+                q(&c, "CREATE INDEX items_label ON items(label)");
+                q(&c,"INSERT INTO items(id,n,v,label) VALUES(type::record('items',1),10,10,1),(type::record('items',2),20,20,2),(type::record('items',3),30,30,3)");
+            } else {
+                q(&c,"CREATE TABLE items(id INTEGER PRIMARY KEY,n INTEGER UNIQUE,v INTEGER UNIQUE,label INTEGER)");
+                q(
+                    &c,
+                    "INSERT INTO items VALUES(1,10,10,1),(2,20,20,2),(3,30,30,3)",
+                );
+            }
+            let before = q(&c, "SELECT * FROM items ORDER BY n").rows;
+            q(&c, "BEGIN");
+            let source = if collection {
+                source.replace("1,20,30", "type::record('items',1),20,30")
+            } else {
+                source.to_owned()
+            };
+            let result = q(
+                &c,
+                &format!("INSERT OR REPLACE INTO items(id,n,v) {source} RETURNING n,v,label"),
+            );
+            assert_eq!(result.affected, 1);
+            assert_eq!(
+                result.rows,
+                vec![vec![Value::Integer(20), Value::Integer(30), Value::Null]]
+            );
+            let rows = q(&c, "SELECT n,v,label FROM items").rows;
+            if collection {
+                assert_eq!(Some(rows), baseline);
+                assert_eq!(
+                    c.check_collection_integrity("items", Default::default())
+                        .unwrap()
+                        .index_entries,
+                    3
+                );
+            } else {
+                baseline = Some(rows);
+            }
+            q(&c, "ROLLBACK");
+            assert_eq!(q(&c, "SELECT * FROM items ORDER BY n").rows, before);
+        }
+    }
+}
+
+#[test]
+fn later_insert_replace_validation_failure_restores_prior_replacements() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE docs",
+        "DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)",
+        "CREATE UNIQUE INDEX docs_n ON docs(n)",
+        "INSERT INTO docs(id,n,v,extra) VALUES(docs:a,1,0,'old')",
+        "BEGIN",
+        "INSERT INTO docs(id,n,v) VALUES(docs:pending,2,0)",
+    ] {
+        q(&c, sql);
+    }
+    let before = q(&c, "SELECT * FROM docs ORDER BY n").rows;
+    for sql in [
+        "INSERT OR REPLACE INTO docs(id,n,v) VALUES(docs:a,1,1),(docs:b,3,10)",
+        "INSERT OR REPLACE INTO docs(n,v) VALUES(1,1),(3,10)",
+    ] {
+        assert_eq!(
+            c.execute(sql, &Parameters::new()).unwrap_err().code(),
+            "FDB_VALIDATION"
+        );
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&c, "SELECT * FROM docs ORDER BY n").rows, before);
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            2
+        );
+    }
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(
+            &c,
+            "INSERT OR REPLACE INTO docs(n,v) VALUES(1,1) RETURNING n,v"
+        )
+        .rows,
+        vec![vec![Value::Integer(1), Value::Integer(1)]]
+    );
+    assert!(c
+        .get(&Record {
+            table: "docs".into(),
+            key: Key::String("a".into())
+        })
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap()
+            .index_entries,
+        1
+    );
+}

@@ -474,7 +474,15 @@ impl Connection {
         )?;
         Ok(())
     }
-    pub fn insert(&self, table: &str, mut doc: Document) -> Result<Document> {
+    pub fn insert(&self, table: &str, doc: Document) -> Result<Document> {
+        self.insert_with_replace(table, doc, false)
+    }
+    fn insert_with_replace(
+        &self,
+        table: &str,
+        mut doc: Document,
+        replace: bool,
+    ) -> Result<Document> {
         self.atomic(|| {
             let c = self.catalog(table)?;
             if !doc.contains_key("id") {
@@ -492,6 +500,14 @@ impl Connection {
             }
             normalize_document_id(&c, &mut doc)?;
             self.validate_candidate(&c, &doc)?;
+            if replace {
+                if let Some(Value::Record(record)) = doc.get("id") {
+                    if let Some(previous) = self.get_in(&c, record)? {
+                        self.delete_document(&c, &previous)?;
+                    }
+                }
+                self.delete_unique_conflicts(&c, &doc)?;
+            }
             self.run(
                 &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
                 &[
@@ -539,6 +555,10 @@ impl Connection {
     // documents along with the target and all managed indexes.
     fn replace_conflicting_document(&self, c: &Collection, doc: &Document) -> Result<()> {
         self.validate_candidate(c, doc)?;
+        self.delete_unique_conflicts(c, doc)?;
+        self.replace_document(c, doc)
+    }
+    fn delete_unique_conflicts(&self, c: &Collection, doc: &Document) -> Result<()> {
         for index in c.indexes.iter().filter(|index| index.unique) {
             let value = path_value(doc, &index.path)?.unwrap_or(&Value::Null);
             for conflict in self.lookup_index(&c.name, &index.name, value)? {
@@ -547,7 +567,7 @@ impl Connection {
                 }
             }
         }
-        self.replace_document(c, doc)
+        Ok(())
     }
     pub fn delete(&self, record: &Record) -> Result<Option<Document>> {
         self.atomic(|| {

@@ -5830,3 +5830,27 @@ The expanded focused test passes (one test, 66 filtered out):
 Clippy with warnings denied pass
 (`/tmp/fastdb-insert-fail-ignore-interrupt-clippy.log`). Only test/docs changed from
 `fd73ad678`; no full-suite/client rerun is claimed. Full V1 remains open.
+
+
+## Collection INSERT OR REPLACE — 2026-09-09
+
+Collection INSERT now accepts OR REPLACE. The existing insertion path optionally
+removes the same record ID and other unique-key conflicts after candidate
+validation, then inserts the new document and indexes. UPDATE and INSERT share
+unique-conflict cleanup. Replacement omits fields not supplied in the new document;
+it is not object merge. Candidate/statement savepoints restore conflict deletions
+on failure. Public typed insert retains its existing non-replacement behavior;
+ON CONFLICT clauses remain unsupported.
+
+Native/collection VALUES and SELECT tests cover one insertion replacing a primary
+identity and two distinct unique-key conflicts, nonunique-index cleanup, omitted
+fields, results and outer rollback. A later CHECK failure restores earlier
+replacements with explicit or generated IDs; successful generated-ID replacement
+removes the prior identity. Initial 79 write tests pass
+(`/tmp/fastdb-insert-replace.log`); the added failure test is included in the full
+check. Complete scoped check on `b7cc88090` plus this change passes: 667 Rust tests,
+zero failures, one existing ignored trigger-interruption gate; 98 Node/application
+tests; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Addon rebuilt. Log: `/tmp/fastdb-insert-replace-check.log`. No upstream
+source or storage-format changes. Broader error-stage/client qualification and
+full V1 remain open.

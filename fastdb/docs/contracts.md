@@ -37,7 +37,12 @@ OR FAIL restores the failed candidate and stops on insertion validation/constrai
 failure, retaining earlier successful candidates before returning the error.
 Autocommit commits that prefix; explicit transactions keep it pending. The atomic
 write_with_result_limits wrapper still restores the statement on any error.
-INSERT OR REPLACE and ON CONFLICT clauses remain unsupported; object UPSERT is separate.
+INSERT OR REPLACE removes an existing document with the same record ID and other
+documents conflicting with unique index keys before inserting the new document.
+All their managed index entries are removed atomically. Omitted fields are absent
+in the replacement document; this is not an object merge. Candidate validation
+and other statement failures restore earlier replacements. ON CONFLICT clauses
+remain unsupported; object UPSERT is separate.
 
 
 Collection UPDATE accepts explicit OR ABORT as its default statement rollback

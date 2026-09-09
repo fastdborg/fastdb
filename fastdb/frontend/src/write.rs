@@ -553,7 +553,7 @@ impl Connection {
                 body,
                 returning,
             } => {
-                if with.is_some() || !matches!(or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore | ResolveType::Fail)) {
+                if with.is_some() || !matches!(or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore | ResolveType::Fail | ResolveType::Replace)) {
                     return Err(unsupported(
                         "collection INSERT WITH/OR CONFLICT; use document UPSERT",
                     ));
@@ -618,7 +618,7 @@ impl Connection {
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in values {
                     let doc = fields.iter().cloned().zip(row).collect();
-                    let document = match self.insert(tbl_name.name.as_str(), doc) {
+                    let document = match self.insert_with_replace(tbl_name.name.as_str(), doc, or_conflict == Some(ResolveType::Replace)) {
                         Ok(document) => document,
                         Err(cause) => {
                             // insert() has already restored the failed document
