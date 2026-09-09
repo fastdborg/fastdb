@@ -3308,3 +3308,91 @@ fn update_replace_validation_failure_restores_deleted_conflicts() {
         ]
     );
 }
+
+#[test]
+fn replacement_conflicts_preserve_typed_nested_index_identity() {
+    let reference = Value::Record(Record {
+        table: "refs".into(),
+        key: Key::Integer(1),
+    });
+    let keys = vec![
+        reference.clone(),
+        Value::Binary(
+            b"FDB\x01{\"type\":\"Record\",\"value\":{\"table\":\"refs\",\"key\":{\"Integer\":1}}}"
+                .to_vec(),
+        ),
+        Value::Record(Record {
+            table: "refs".into(),
+            key: Key::String("1".into()),
+        }),
+        Value::Integer(1),
+        Value::String("1".into()),
+    ];
+    for (selected, key) in keys.iter().enumerate() {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE docs");
+        q(&c, "CREATE UNIQUE INDEX docs_key ON docs(data.k)");
+        q(&c, "CREATE INDEX docs_label ON docs(label)");
+        for (i, value) in keys.iter().enumerate() {
+            c.insert(
+                "docs",
+                Document::from([
+                    (
+                        "id".into(),
+                        Value::Record(Record {
+                            table: "docs".into(),
+                            key: Key::Integer(i as i64),
+                        }),
+                    ),
+                    (
+                        "data".into(),
+                        Value::Object(Document::from([("k".into(), value.clone())])),
+                    ),
+                    ("label".into(), Value::Integer(i as i64)),
+                ]),
+            )
+            .unwrap();
+        }
+        q(
+            &c,
+            "INSERT INTO docs(id,label) VALUES(type::record('docs',100),100)",
+        );
+        let before = q(&c, "SELECT * FROM docs ORDER BY label").rows;
+        q(&c, "BEGIN");
+        let result = c
+            .execute(
+                "UPDATE OR REPLACE docs SET data.k=$key WHERE label=100 RETURNING docs.data.k",
+                &Parameters::from([("$key".into(), key.clone())]),
+            )
+            .unwrap();
+        assert_eq!(result.affected, 1);
+        assert_eq!(result.rows, vec![vec![key.clone()]]);
+        for (i, value) in keys.iter().enumerate() {
+            let found = c.lookup_index("docs", "docs_key", value).unwrap();
+            assert_eq!(found.len(), 1);
+            assert_eq!(
+                found[0]["label"],
+                Value::Integer(if i == selected { 100 } else { i as i64 })
+            );
+        }
+        assert!(c
+            .lookup_index("docs", "docs_label", &Value::Integer(selected as i64))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            10
+        );
+        q(&c, "ROLLBACK");
+        assert_eq!(q(&c, "SELECT * FROM docs ORDER BY label").rows, before);
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            12
+        );
+    }
+}

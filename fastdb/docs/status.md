@@ -6520,3 +6520,18 @@ The five-row comparison was executed against the current Node addon, asserting
 exact query values, errors, affected/RETURNING counts and transaction states:
 `/tmp/fastdb-conflict-guide.log`. Only docs changed from `25afff5ab`; no full-suite
 rerun is claimed. Full V1 remains open.
+
+
+## Replacement typed nested-index identities — 2026-09-09
+
+A nested unique-index replacement matrix distinguishes integer-key and string-key
+record references, binary bytes imitating a record encoding, an integer and text.
+Replacing each key deletes only its matching document, preserves all other typed
+keys, removes the deleted document's secondary-index entry, returns the typed key
+and restores exact snapshots on outer rollback. The fixture uses the qualified
+`RETURNING docs.data.k` path; unqualified `data.k` is interpreted as a SQL name.
+
+All 71 write tests pass (`/tmp/fastdb-replace-typed-keys.log`); fastdb-tests
+formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-replace-typed-keys-clippy.log`). Only tests/docs changed from
+`b24ec0e85`; no full-suite/client rerun is claimed. Full V1 remains open.
