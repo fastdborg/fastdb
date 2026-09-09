@@ -5654,3 +5654,14 @@ passes, zero failures and one existing ignored trigger-interruption gate;
 denied and strict TypeScript. Addon rebuilt. Log:
 `/tmp/fastdb-update-left-source-check.log`. No upstream source, dependency or
 storage-format changes; no publication occurred. Full V1 remains open.
+
+
+## Typed LEFT JOIN UPDATE FROM clients — 2026-09-09
+
+Both Node clients now exercise LEFT JOIN/LEFT OUTER JOIN sources with a NULL
+right-side filter that selects the unmatched left-source row. Typed record and
+nested binary/boolean/int64 payloads, affected counts, RETURNING, active
+transaction reports and enclosing rollback pass. All 89 Node/application tests
+passed against the preceding full check's addon. Log:
+`/tmp/fastdb-left-update-node.log`. Only tests/docs changed from `020006036`;
+no native rebuild or new Rust-suite run is claimed. Full V1 remains open.

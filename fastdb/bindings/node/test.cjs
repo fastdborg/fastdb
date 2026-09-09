@@ -2846,6 +2846,15 @@ test('update from preserves typed candidates and unmatched targets in both clien
         assert.deepEqual(joined.transaction, { before: 'active', after: 'active' });
         await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
       }
+      await db.execute('INSERT INTO source(k,a,b) VALUES(2,$a,$b)', { $a: record, $b: payload });
+      for (const join of ['LEFT JOIN','LEFT OUTER JOIN']) {
+        const left = await db.execute('UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s ' + join + ' keys k ON k.k=s.k WHERE s.k=target.n AND k.k IS NULL RETURNING n,a,b');
+        assert.equal(left.affected, 1n);
+        assert.deepEqual(left.rows, [[2n,record,payload]]);
+        assert.deepEqual(left.transaction, { before: 'active', after: 'active' });
+        await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
+      }
+      await db.execute('DELETE FROM source WHERE k=2');
       const paginated = 'UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s WHERE s.k=target.n RETURNING n,a,b LIMIT $count OFFSET $skip';
       await assert.rejects(async () => db.execute(paginated, { $count: 1n }), error => error.code === 'FDB_PARAMETER');
       for (const [count, skip, expected] of [[0n,0n,[]],[1n,1n,[]],[1n,0n,[[1n,record,payload]]]]) {
