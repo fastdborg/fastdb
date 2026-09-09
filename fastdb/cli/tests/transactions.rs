@@ -140,3 +140,95 @@ fn cli_commits_ordered_tuple_lookups_and_reopens() {
     assert_eq!(reopened[1]["rows"][0][1]["value"], 4);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn inventory_script_failure_discards_uncommitted_events_on_exit() {
+    let root = std::env::temp_dir().join(format!(
+        "fastdb-inventory-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("inventory.db");
+    let run = |script: &str| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_fastdb-cli"))
+            .arg(&file)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        let rows = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        (output.status.success(), rows)
+    };
+    let script = include_str!("../../examples/inventory-reconciliation.fastql");
+    let (ok, rows) = run(&script.replace("('P2',-3)", "('P2',-30)"));
+    assert!(!ok);
+    let failure = rows.last().unwrap();
+    assert_eq!(failure["error"]["code"], "FDB_VALIDATION");
+    assert_eq!(failure["transaction"]["after"], "active");
+    {
+        let db = fastdb::Database::open(file.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        let p = fastdb::Parameters::new();
+        assert_eq!(
+            c.execute("SELECT quantity FROM inventory ORDER BY sku", &p)
+                .unwrap()
+                .rows,
+            vec![
+                vec![fastdb::Value::Integer(10)],
+                vec![fastdb::Value::Integer(5)]
+            ]
+        );
+        for table in ["inventory_events", "adjustments"] {
+            assert_eq!(
+                c.execute(&format!("SELECT count(*) FROM {table}"), &p)
+                    .unwrap()
+                    .rows,
+                vec![vec![fastdb::Value::Integer(0)]]
+            );
+        }
+        assert_eq!(
+            c.check_collection_integrity("inventory", Default::default())
+                .unwrap()
+                .index_entries,
+            2
+        );
+    }
+    let (_, transaction) = script.split_once("BEGIN;").unwrap();
+    assert!(run(&format!("BEGIN;{transaction}")).0);
+    {
+        let db = fastdb::Database::open(file.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        let p = fastdb::Parameters::new();
+        assert_eq!(
+            c.execute("SELECT quantity FROM inventory ORDER BY sku", &p)
+                .unwrap()
+                .rows,
+            vec![
+                vec![fastdb::Value::Integer(12)],
+                vec![fastdb::Value::Integer(2)]
+            ]
+        );
+        assert_eq!(
+            c.execute("SELECT count(*) FROM inventory_events", &p)
+                .unwrap()
+                .rows,
+            vec![vec![fastdb::Value::Integer(2)]]
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

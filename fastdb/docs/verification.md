@@ -5116,3 +5116,17 @@ formatting and all-target fastdb-cli Clippy with warnings denied pass
 record tags; corrected to the existing CLI Record tag. Only examples/tests/docs
 changed from `2ba05d3c6`; no full-suite run is claimed. This adds an application
 pattern, not external pilot evidence or a complete inventory product. Full V1 remains open.
+
+
+## Inventory CLI failure and corrected retry — 2026-09-09
+
+A file-backed CLI regression derives a negative-stock batch from the actual
+inventory example. Validation fails with an active transaction report; CLI exit
+closes the connection and rolls back pending event/staging writes. Reopen verifies
+original stock, empty event/staging tables and index integrity. Running the
+corrected transaction and reopening again verifies committed quantities and two
+events. All four CLI transaction tests pass (`/tmp/fastdb-inventory-recovery.log`);
+formatting and all-target fastdb-cli Clippy with warnings denied pass
+(`/tmp/fastdb-inventory-recovery-clippy.log`). Only tests/docs changed from
+`d7fd30c09`; no full-suite run is claimed. This is orderly CLI error/close recovery,
+not a process-kill or power-loss test. Full V1 remains open.

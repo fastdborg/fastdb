@@ -25,3 +25,8 @@ clearing staging. It does not implement batch idempotency, competing inventory
 reservations or automatic retries. Replaying a batch without an application
 idempotency key could apply its deltas twice. The CLI regression runs the actual
 script and checks final stock and event values.
+
+A file-backed regression also substitutes a negative-stock adjustment, checks
+rollback after the failing CLI closes, then reruns the corrected transaction and
+verifies committed state after reopening. Applications that keep a connection
+open must perform their own transaction rollback as described above.
