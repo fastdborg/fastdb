@@ -7119,4 +7119,8 @@ Repository Actions is enabled with only FastDB registered. The organization's
 existing zero-dollar Actions budget with paid usage blocked was preserved.
 Commit `c6627f5b71b764a012eec5e7ddfba4c2cf0d13ac` adds manual dispatch.
 The [first hosted check](https://github.com/fastdborg/fastdb/actions/runs/34321336233)
-passed setup and entered the scoped check; its result is pending at this entry.
+passed setup, then failed when the hosted runner exhausted disk space. The
+check annotation reports `System.IO.IOException: No space left on device`;
+job logs were unavailable after that failure. No test failure or pass is inferred.
+CI now disables dev/test debug symbols and incremental compilation to reduce
+build storage, preserving debug assertions and the complete scoped suite.
