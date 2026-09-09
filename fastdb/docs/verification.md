@@ -5305,3 +5305,28 @@ All 10 write-buffer tests pass (`/tmp/fastdb-ignore-limits.log`); fastdb-tests
 formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-ignore-limits-clippy.log`). Only tests/docs changed from `2070adbcb`;
 no full-suite or client rerun is claimed. Full V1 remains open.
+
+
+## Collection UPDATE OR FAIL — 2026-09-09
+
+Collection UPDATE now accepts OR FAIL. Each candidate has a nested savepoint;
+mutation validation/constraint failure restores that row and all its indexes,
+then releases the statement frame before reporting the error. Earlier successful
+candidates remain pending in an explicit transaction or commit in autocommit.
+No partial RETURNING result is delivered. Other error classes retain statement
+recovery. The explicitly atomic write_with_result_limits API retains its outer
+rollback behavior even for OR FAIL. OR REPLACE remains unsupported.
+
+Native/collection differential tests cover uniqueness failure after a successful
+candidate, with and without UPDATE FROM, in autocommit and explicit transactions.
+They verify retained values, no partial index changes and outer rollback. A CHECK
+regression verifies prefix retention, stopped later candidates and the atomic
+result-limited API distinction. The initial 66-write-test run passed
+(`/tmp/fastdb-update-fail.log`); the added CHECK regression is included in the
+complete check. After fixing a Clippy single-element test-loop warning, the full
+scoped check on `93249fa1b` plus this change passed: 649 Rust tests, zero failures,
+one existing ignored trigger-interruption gate; 91 Node/application tests;
+formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
+Addon rebuilt. Log: `/tmp/fastdb-update-fail-check.log`. No upstream source or
+storage-format changes. Broader error-stage, interruption and client-specific
+qualification and full V1 remain open.

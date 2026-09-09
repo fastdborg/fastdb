@@ -540,7 +540,8 @@ impl Connection {
             return Err(unsupported("attached collection writes"));
         }
         crate::guard::internal_names(sql)?;
-        self.atomic(|| match statement {
+        let mut retained_failure = None;
+        let result = self.atomic(|| match statement {
             Stmt::Insert {
                 with,
                 or_conflict,
@@ -638,7 +639,7 @@ impl Connection {
                         }
                     }
                 }
-                if !matches!(update.or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore))
+                if !matches!(update.or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback | ResolveType::Ignore | ResolveType::Fail))
                     || update.from.as_ref().is_some_and(|from| from.joins.iter().any(|join| {
                         matches!(join.constraint, Some(JoinConstraint::Using(_)))
                             || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::RIGHT | JoinType::NATURAL))
@@ -897,12 +898,21 @@ impl Connection {
                     };
                     // A skipped candidate must restore both its document and every
                     // managed index, including indexes changed before a conflict.
-                    let mutation = if update.or_conflict == Some(ResolveType::Ignore) {
+                    let mutation = if matches!(update.or_conflict, Some(ResolveType::Ignore | ResolveType::Fail)) {
                         self.atomic(mutate)
                     } else {
                         mutate()
                     };
                     if let Err(cause) = mutation {
+                        if update.or_conflict == Some(ResolveType::Fail)
+                            && matches!(cause.code(), "FDB_CONSTRAINT" | "FDB_VALIDATION")
+                            && !self.engine.get_auto_commit()
+                        {
+                            // Release the statement frame before returning the error,
+                            // retaining the successful prefix but no partial failed row.
+                            retained_failure = Some(cause);
+                            return Ok(None);
+                        }
                         if update.or_conflict == Some(ResolveType::Ignore)
                             && matches!(cause.code(), "FDB_CONSTRAINT" | "FDB_VALIDATION")
                             && !self.engine.get_auto_commit()
@@ -959,7 +969,11 @@ impl Connection {
                 )?))
             }
             _ => unreachable!("write statement dispatched above"),
-        })
+        })?;
+        match retained_failure {
+            Some(cause) => Err(cause),
+            None => Ok(result),
+        }
     }
     fn write_value(&self, expr: &Expr, params: &Parameters) -> Result<Value> {
         if let Some(value) = parameter(expr, params)? {

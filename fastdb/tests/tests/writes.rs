@@ -2783,7 +2783,8 @@ fn pinned_update_conflict_policies_have_distinct_recovery() {
         q(&c, sql);
     }
     let before = q(&c, "SELECT * FROM docs ORDER BY n").rows;
-    for policy in ["FAIL", "REPLACE"] {
+    {
+        let policy = "REPLACE";
         assert_eq!(
             c.execute(
                 &format!("UPDATE OR {policy} docs SET n=10"),
@@ -3003,6 +3004,132 @@ fn update_ignore_restores_skipped_documents_and_all_indexes() {
                 .unwrap()
                 .index_entries,
             6
+        );
+    }
+}
+
+#[test]
+fn update_fail_retains_successful_prefix_without_partial_index_changes() {
+    for collection in [false, true] {
+        for active in [false, true] {
+            for from in ["", " FROM (SELECT 1 AS k) source"] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                if collection {
+                    q(&c, "CREATE TABLE items");
+                    q(&c, "CREATE INDEX items_v ON items(v)");
+                    q(&c, "CREATE UNIQUE INDEX items_n ON items(n)");
+                } else {
+                    q(&c, "CREATE TABLE items(n INTEGER UNIQUE,v INTEGER)");
+                }
+                q(&c, "INSERT INTO items(n,v) VALUES(1,0),(2,0),(3,0)");
+                if active {
+                    q(&c, "BEGIN");
+                    q(&c, "INSERT INTO items(n,v) VALUES(4,0)");
+                }
+                let error = c
+                    .execute(
+                        &format!(
+                            "UPDATE OR FAIL items SET n=10,v=7{from} WHERE items.n<3 RETURNING n,v"
+                        ),
+                        &Parameters::new(),
+                    )
+                    .unwrap_err();
+                assert_eq!(error.code(), "FDB_CONSTRAINT");
+                assert_eq!(
+                    c.transaction_state(),
+                    if active {
+                        fastdb::TransactionState::Active
+                    } else {
+                        fastdb::TransactionState::Autocommit
+                    }
+                );
+                let mut expected = vec![
+                    vec![Value::Integer(2), Value::Integer(0)],
+                    vec![Value::Integer(3), Value::Integer(0)],
+                ];
+                if active {
+                    expected.push(vec![Value::Integer(4), Value::Integer(0)]);
+                }
+                expected.push(vec![Value::Integer(10), Value::Integer(7)]);
+                assert_eq!(q(&c, "SELECT n,v FROM items ORDER BY n").rows, expected);
+                if collection {
+                    assert_eq!(
+                        c.check_collection_integrity("items", Default::default())
+                            .unwrap()
+                            .index_entries,
+                        if active { 8 } else { 6 }
+                    );
+                }
+                if active {
+                    q(&c, "ROLLBACK");
+                    assert_eq!(
+                        q(&c, "SELECT n,v FROM items ORDER BY n").rows,
+                        vec![
+                            vec![Value::Integer(1), Value::Integer(0)],
+                            vec![Value::Integer(2), Value::Integer(0)],
+                            vec![Value::Integer(3), Value::Integer(0)]
+                        ]
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn update_fail_validation_retains_prefix_but_limited_api_restores_statement() {
+    for limited in [false, true] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for sql in [
+            "CREATE TABLE docs",
+            "DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)",
+            "CREATE INDEX docs_v ON docs(v)",
+            "INSERT INTO docs(n,v) VALUES(1,0),(2,0),(3,0)",
+            "BEGIN",
+            "INSERT INTO docs(n,v) VALUES(4,0)",
+        ] {
+            q(&c, sql);
+        }
+        let sql = "UPDATE OR FAIL docs SET v=CASE WHEN n=2 THEN 10 ELSE 1 END RETURNING n,v";
+        let error = if limited {
+            c.write_with_result_limits(
+                sql,
+                &Parameters::new(),
+                fastdb::ResultLimits {
+                    max_rows: 10,
+                    max_payload_bytes: 10000,
+                },
+            )
+            .unwrap_err()
+        } else {
+            c.execute(sql, &Parameters::new()).unwrap_err()
+        };
+        assert_eq!(error.code(), "FDB_VALIDATION");
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+            vec![
+                vec![
+                    Value::Integer(1),
+                    Value::Integer(if limited { 0 } else { 1 })
+                ],
+                vec![Value::Integer(2), Value::Integer(0)],
+                vec![Value::Integer(3), Value::Integer(0)],
+                vec![Value::Integer(4), Value::Integer(0)]
+            ]
+        );
+        assert_eq!(
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap()
+                .index_entries,
+            4
+        );
+        q(&c, "ROLLBACK");
+        assert_eq!(
+            q(&c, "SELECT v FROM docs ORDER BY n").rows,
+            vec![vec![Value::Integer(0)]; 3]
         );
     }
 }
