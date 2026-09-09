@@ -1451,7 +1451,10 @@ impl Connection {
             let Some(id @ Value::Record(_)) = document.get("id") else {
                 return Err(Error::Storage("missing joined update target ID".into()));
             };
-            let key = id.encode()?;
+            let key = id.encode_with_limit(
+                self.write_buffer_limits
+                    .map(|limits| limits.max_payload_bytes),
+            )?;
             if let Some(position) = positions.get(&key) {
                 rows[*position] = row;
             } else {

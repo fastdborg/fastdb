@@ -54,6 +54,34 @@ impl Value {
         bytes.extend(serde_json::to_vec(self)?);
         Ok(bytes)
     }
+    /// Check the complete tagged encoding before allocating its byte buffer.
+    pub(crate) fn encode_with_limit(&self, max_bytes: Option<usize>) -> Result<Vec<u8>> {
+        if let Some(limit) = max_bytes {
+            self.validate()?;
+            struct Counter {
+                used: usize,
+                limit: usize,
+            }
+            impl std::io::Write for Counter {
+                fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                    if bytes.len() > self.limit.saturating_sub(self.used) {
+                        return Err(std::io::Error::other("encoded value limit exceeded"));
+                    }
+                    self.used += bytes.len();
+                    Ok(bytes.len())
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            let mut counter = Counter { used: 0, limit };
+            std::io::Write::write_all(&mut counter, b"FDB\x01")
+                .map_err(|_| Error::Limit("encoded value limit exceeded".into()))?;
+            serde_json::to_writer(&mut counter, self)
+                .map_err(|_| Error::Limit("encoded value limit exceeded".into()))?;
+        }
+        self.encode()
+    }
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
         let payload = bytes
             .strip_prefix(b"FDB\x01")
@@ -99,6 +127,31 @@ pub(crate) fn validate_record(r: &Record) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_encoding_preserves_bytes_and_counts_header_and_escapes() {
+        for value in [
+            Value::Null,
+            Value::Record(Record {
+                table: "docs".into(),
+                key: Key::String("\"\\é".into()),
+            }),
+            Value::Binary(vec![0, 255]),
+        ] {
+            let expected = value.encode().unwrap();
+            assert_eq!(value.encode_with_limit(None).unwrap(), expected);
+            assert_eq!(
+                value.encode_with_limit(Some(expected.len())).unwrap(),
+                expected
+            );
+            for limit in [0, 3, expected.len() - 1] {
+                assert_eq!(
+                    value.encode_with_limit(Some(limit)).unwrap_err().code(),
+                    "FDB_LIMIT"
+                );
+            }
+        }
+    }
+
     #[test]
     fn stored_numbers_round_trip_binary64_bits() {
         let mut bits = 0x1234_5678_9abc_def0u64;

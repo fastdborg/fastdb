@@ -6980,3 +6980,21 @@ and distinct integer/string identity row limits. All 80 write and 13 write-buffe
 integration tests pass. Logs: `/tmp/fastdb-joined-key-budget.log` and
 `/tmp/fastdb-joined-key-budget-writes.log`. This is scoped Rust evidence; no full
 suite or rebuilt Node addon is claimed for this change. Full V1 remains open.
+
+
+## Joined UPDATE identity encoding preflight — 2026-09-09
+
+With write-buffer limits enabled, joined UPDATE now counts the complete tagged
+record-ID encoding before allocating its encoded copy. The counting writer stops
+at the per-buffer byte ceiling and includes the format header and JSON escaping.
+The separate cumulative identity-map budget still charges distinct retained keys
+once; duplicate candidate matches retain the existing last-match behavior.
+Unbounded connections retain the prior encoding path. This does not bound source
+values already materialized, allocator overhead or total query memory.
+
+All 68 frontend unit tests pass with the existing trigger-cancellation test
+ignored (`/tmp/fastdb-key-preflight.log`), including exact encoding boundaries and
+identity deduplication/cancellation. All 80 write and 13 write-buffer integration
+tests pass (`/tmp/fastdb-key-preflight-writes.log`). Formatting and all-target
+frontend Clippy pass (`/tmp/fastdb-key-preflight-clippy.log`). No complete scoped
+suite or rebuilt Node addon is claimed. Full V1 remains open.
