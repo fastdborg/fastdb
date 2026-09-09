@@ -1361,3 +1361,17 @@ ORDER BY on an unprojected typed CTE/derived column uses its logical sort key,
 not the stored tagged representation. Collection-document accessors use the
 direct sort accessor; encoded column/nested accessors use sort_encoded. This
 preserves numeric ordering when tuple-local CTE lookups choose a limited row.
+
+## Automatic collection creation on document writes
+
+Document INSERT (object bodies and DOCUMENT parameters), object UPSERT, and Rust
+Connection::insert/upsert create a missing target collection with no fields or
+indexes declared. The creation belongs to the write transaction: failed writes
+or an outer rollback undo it. Existing collections retain validation and indexes;
+existing relational objects are never converted. Record references do not create
+the referenced collection. SQL INSERT VALUES/SELECT retains ordinary missing-table
+behavior because it does not identify a document operation. Explicit CREATE TABLE
+remains available to declare validation/indexes before the first write.
+
+This addition is subsequent to the published 0.1.0 preview. Its existing release
+assets are unchanged.

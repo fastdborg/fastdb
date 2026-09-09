@@ -275,7 +275,7 @@ impl Connection {
     }
     pub fn upsert(&self, table: &str, mut doc: Document) -> Result<Document> {
         self.atomic(|| {
-            let c = self.catalog(table)?;
+            let c = self.collection_for_write(table)?;
             crate::normalize_document_id(&c, &mut doc)?;
             let Value::Record(id) = &doc["id"] else {
                 unreachable!("normalized id");

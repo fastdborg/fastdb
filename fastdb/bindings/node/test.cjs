@@ -3328,3 +3328,19 @@ test('INSERT OR REPLACE replaces typed documents and restores earlier deletions 
     } finally { await db.close(); }
   }
 });
+
+test('document INSERT and UPSERT automatically create collections in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute('INSERT INTO auto_docs DOCUMENT $doc', {$doc: {id: new Record('auto_docs', 'a'), n: 1n}});
+      await db.execute('UPSERT auto_people:a {name:\'Alice\'}');
+      assert.equal((await db.all('SELECT * FROM auto_docs')).length, 1);
+      assert.equal((await db.all('SELECT * FROM auto_people')).length, 1);
+      await db.execute('BEGIN');
+      await db.execute('UPSERT rolled_back:a {n:1}');
+      await db.execute('ROLLBACK');
+      await db.execute('CREATE TABLE rolled_back');
+    } finally { await db.close(); }
+  }
+});

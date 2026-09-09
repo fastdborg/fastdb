@@ -7124,3 +7124,18 @@ check annotation reports `System.IO.IOException: No space left on device`;
 job logs were unavailable after that failure. No test failure or pass is inferred.
 CI now disables dev/test debug symbols and incremental compilation to reduce
 build storage, preserving debug assertions and the complete scoped suite.
+
+## Automatic collection creation — 2026-09-09
+
+User-requested requirement: document INSERT/UPSERT creates a missing target
+collection without a preceding declaration. Implemented for object/DOCUMENT
+INSERT, object UPSERT and Rust insert/upsert; both Node clients inherit it.
+Creation shares the write's atomic scope, so failed writes and outer rollback
+remove it. Existing relational objects are not converted; native SQL INSERT
+VALUES/SELECT retains missing-table errors. References do not create collections.
+
+Focused persistent regression passed, covering creation, UPSERT retry, rollback,
+failed first writes, relational collisions and reopen. Full scoped suite passed:
+674 Rust tests, one known ignored, 102 Node/application tests, fmt, Clippy and
+TypeScript. Log: `/tmp/fastdb-auto-collection-check.log`. This is a follow-up
+to the published 0.1.0 preview; released artifacts were not replaced.

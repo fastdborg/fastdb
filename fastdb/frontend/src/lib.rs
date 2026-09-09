@@ -307,6 +307,17 @@ impl Connection {
             _ => Err(Error::Storage("invalid collection metadata".into())),
         }
     }
+    // Call inside the write's atomic scope: failed writes also undo creation.
+    fn collection_for_write(&self, name: &str) -> Result<Collection> {
+        match self.catalog(name) {
+            Ok(collection) => Ok(collection),
+            Err(Error::NotFound(_)) => {
+                self.create_collection(name, false)?;
+                self.catalog(name)
+            }
+            Err(error) => Err(error),
+        }
+    }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
         collection.version = catalog::version();
@@ -484,7 +495,7 @@ impl Connection {
         replace: bool,
     ) -> Result<Document> {
         self.atomic(|| {
-            let c = self.catalog(table)?;
+            let c = self.collection_for_write(table)?;
             if !doc.contains_key("id") {
                 let rows = self.run("SELECT uuid7_str()", &[])?;
                 let Some(EngineValue::Text(key)) = rows.first().and_then(|r| r.first()) else {
@@ -655,6 +666,7 @@ impl Connection {
                     id
                 };
                 let record = normalized_id(&record, &canonical(&table)?)?;
+                self.collection_for_write(&table)?;
                 let before = self.get(&record)?.unwrap_or_default();
                 let Value::Object(mut doc) =
                     self.evaluate(fastql_parser::Expr::Object(fields), params, Some(&before))?
