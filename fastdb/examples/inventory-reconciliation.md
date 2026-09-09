@@ -19,14 +19,16 @@ transaction if any step fails; statement rollback alone would leave preceding
 event inserts pending. Inspect the error's transaction report because some
 native engine errors abort the entire transaction themselves.
 
-This sample accepts known SKUs. An inner join leaves unknown adjustment SKUs
-unmatched; an application should reject or separately report them before
-clearing staging. It does not implement batch idempotency, competing inventory
+Before writing events, a LEFT JOIN counts unmatched adjustment SKUs. A relational
+CHECK requires that count to be zero, so unknown SKUs reject the batch with
+FDB_CONSTRAINT before stock changes or staging cleanup. An application can also
+report the unmatched SKUs to its user. The sample does not implement batch
+idempotency, competing inventory
 reservations or automatic retries. Replaying a batch without an application
 idempotency key could apply its deltas twice. The CLI regression runs the actual
 script and checks final stock and event values.
 
-A file-backed regression also substitutes a negative-stock adjustment, checks
+A file-backed regression substitutes negative-stock and unknown-SKU adjustments, checks
 rollback after the failing CLI closes, then reruns the corrected transaction and
 verifies committed state after reopening. Applications that keep a connection
 open must perform their own transaction rollback as described above.

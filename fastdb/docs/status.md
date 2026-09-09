@@ -6146,3 +6146,17 @@ formatting and all-target fastdb-cli Clippy with warnings denied pass
 (`/tmp/fastdb-inventory-recovery-clippy.log`). Only tests/docs changed from
 `d7fd30c09`; no full-suite run is claimed. This is orderly CLI error/close recovery,
 not a process-kill or power-loss test. Full V1 remains open.
+
+
+## Inventory unknown-SKU rejection — 2026-09-09
+
+The inventory example now counts unmatched staging SKUs through a LEFT JOIN and
+requires zero via a relational CHECK before event insertion or stock mutation.
+Unknown SKUs produce FDB_CONSTRAINT instead of silently disappearing during
+staging cleanup. File-backed failure/reopen/retry coverage includes both unknown
+SKUs and negative stock; successful reconciliation remains covered by the actual
+script test. All eight CLI script and four CLI transaction tests pass
+(`/tmp/fastdb-inventory-unknown.log`); formatting and all-target fastdb-cli Clippy
+with warnings denied pass (`/tmp/fastdb-inventory-unknown-clippy.log`). Only
+example/tests/docs changed from `b4b6b8ba1`; no full-suite run is claimed.
+Idempotency, reservation workflows, external pilots and full V1 remain open.
