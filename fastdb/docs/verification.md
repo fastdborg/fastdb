@@ -5029,3 +5029,18 @@ regression passes (`/tmp/fastdb-iterator-evaluation.log`); formatting and all-ta
 fastdb Clippy with warnings denied pass (`/tmp/fastdb-iterator-evaluation-clippy.log`).
 Only tests/docs changed from `d7b146cd0`; no full-suite run or addon rebuild is
 claimed. Broader iterator/planner/resource qualification and full V1 remain open.
+
+
+## Installed target-correlated iterator updates — 2026-09-09
+
+Offline installed-package consumers pass on Linux x64 Node 22.0.0 and 24.19.0.
+Both clients execute target-correlated json_each(json_array(d.n)) UPDATE FROM,
+check typed record tuple RETURNING, affected count and active transaction state,
+then roll back to original values. Existing package runtime and strict TypeScript
+checks pass. Logs: `/tmp/fastdb-target-iterator-package22.log` and
+`/tmp/fastdb-target-iterator-package24.log`. Each package has 10 files and
+60,786,041 packed bytes; addon SHA-256:
+`fcdae09ff6404464673ec25fdb932c9586543ef35bad3ab4dd3347dc238ad601`.
+Only verifier/docs changed from `ccc8f23e5`; the addon comes from the preceding
+iterator-scope full check. No new Rust-suite run or native rebuild is claimed.
+This is local Linux evidence; no publication occurred. Full V1 remains open.

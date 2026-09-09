@@ -65,6 +65,11 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.equal(scopedRight.affected,1n);
       assert.deepEqual(scopedRight.rows,[[tuplePayload,tupleRecord]]);
       assert.deepEqual(scopedRight.transaction,{before:'active',after:'active'});
+      const targetIterator = await client.execute('UPDATE tuple_docs AS d SET (a,b)=(s.value,$record) FROM json_each(json_array(d.n)) s RETURNING a,b',{$record:tupleRecord});
+      assert.equal(targetIterator.affected,1n);
+      assert.deepEqual(targetIterator.rows,[[1n,tupleRecord]]);
+      assert.deepEqual(targetIterator.transaction,{before:'active',after:'active'});
+
       await client.execute('ROLLBACK');
       assert.deepEqual((await client.execute('SELECT a,b FROM tuple_docs')).rows,[[tupleRecord,tuplePayload]]);
       const base = {version:1n,name:'base',sql:'CREATE TABLE migration_docs; CREATE UNIQUE INDEX migration_n ON migration_docs(n); INSERT INTO migration_docs {n:1};'};
