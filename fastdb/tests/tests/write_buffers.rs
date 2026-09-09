@@ -4,6 +4,8 @@ use fastdb::{Database, Parameters, ResultLimits, TransactionState, Value};
 fn collection_write_buffer_rows_reject_before_mutation_and_preserve_prior_work() {
     for sql in [
         "INSERT INTO docs(n) VALUES(4),(5)",
+        "INSERT OR ROLLBACK INTO docs(n) VALUES(4),(5)",
+        "INSERT OR ROLLBACK INTO docs(n) SELECT n+10 FROM docs",
         "INSERT INTO docs(n) SELECT n+10 FROM docs",
         "UPDATE docs SET n=n+10",
         "UPDATE OR ROLLBACK docs SET n=n+10",

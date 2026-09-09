@@ -553,7 +553,7 @@ impl Connection {
                 body,
                 returning,
             } => {
-                if with.is_some() || !matches!(or_conflict, None | Some(ResolveType::Abort)) {
+                if with.is_some() || !matches!(or_conflict, None | Some(ResolveType::Abort | ResolveType::Rollback)) {
                     return Err(unsupported(
                         "collection INSERT WITH/OR CONFLICT; use document UPSERT",
                     ));
@@ -618,10 +618,24 @@ impl Connection {
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in values {
                     let doc = fields.iter().cloned().zip(row).collect();
+                    let document = match self.insert(tbl_name.name.as_str(), doc) {
+                        Ok(document) => document,
+                        Err(cause) => {
+                            if or_conflict == Some(ResolveType::Rollback)
+                                && matches!(cause.code(), "FDB_CONSTRAINT" | "FDB_VALIDATION")
+                                && !self.engine.get_auto_commit()
+                            {
+                                if let Err(rollback) = self.run("ROLLBACK", &[]) {
+                                    return Err(Error::Rollback { cause: cause.to_string(), rollback: rollback.to_string() });
+                                }
+                            }
+                            return Err(cause);
+                        }
+                    };
                     crate::retain_write_document(
                         &mut snapshot_budget,
                         &mut documents,
-                        self.insert(tbl_name.name.as_str(), doc)?,
+                        document,
                     )?;
                 }
                 Ok(Some(self.returning_rows(

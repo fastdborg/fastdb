@@ -6669,3 +6669,23 @@ All three insert-source oracle tests pass (64 other frontend tests filtered out)
 with warnings denied pass (`/tmp/fastdb-mixed-insert-policies-clippy.log`). Only
 test/docs changed from `36c7e6781`; no full-suite/client rerun is claimed.
 Full V1 remains open.
+
+
+## Collection INSERT OR ROLLBACK — 2026-09-09
+
+Collection INSERT now accepts OR ROLLBACK. Validation/constraint failures from
+candidate insertion roll back the enclosing transaction; existing atomic cleanup
+preserves the original cause after observing autocommit. A rollback failure keeps
+both causes in FDB_ROLLBACK. Preparation and buffer/result-limit failures retain
+existing recovery. Other explicit INSERT policies remain unsupported except ABORT.
+
+Native/collection VALUES and SELECT regressions cover second-row uniqueness and
+CHECK failures, discarded pending work, restored committed rows/indexes and a
+fresh successful transaction. Candidate-buffer tests preserve prior work on
+FDB_LIMIT. All 74 write tests pass (`/tmp/fastdb-insert-rollback.log`). The full
+scoped check on `f4fc19402` plus this change passes: 660 Rust tests, zero failures,
+one existing ignored trigger-interruption gate; 95 Node/application tests;
+formatting, all-target FastDB Clippy with warnings denied and strict TypeScript.
+Addon rebuilt. Log: `/tmp/fastdb-insert-rollback-check.log`. No upstream source or
+storage-format changes. Broader error-stage/client qualification and full V1
+remain open.
