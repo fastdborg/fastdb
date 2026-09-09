@@ -4786,3 +4786,19 @@ all-target fastdb-tests Clippy with warnings denied passed after removing an
 unnecessary test cast (`/tmp/fastdb-joined-typed-keys-clippy-final.log`). Only
 tests/docs changed from `688323676`; no full-suite or addon rebuild is claimed.
 Broader duplicate/planner/resource qualification and full V1 remain open.
+
+
+## Installed Node package joined scope/right join qualification — 2026-09-09
+
+Offline temporary consumers outside the checkout pass on Linux x64 Node 22.0.0
+and 24.19.0. Both synchronous and worker clients exercise a target-alias CTE,
+leading RIGHT ON followed by LEFT ON, duplicate resolution, bound pagination,
+typed tuple RETURNING, active transaction reports and rollback. Existing package
+runtime and strict TypeScript checks also pass. Logs:
+`/tmp/fastdb-scoped-right-package22.log` and `/tmp/fastdb-scoped-right-package24.log`.
+Each tarball contains 10 files and 60,786,744 packed bytes; addon SHA-256:
+`be9eea7af6374e509aa382f368a42ad4e3a7f2341050782a6af49f50ffcca54e`.
+Only the package verifier/docs changed from `79f4a6e82`; the addon is from the
+preceding joined-CTE full check. No new Rust-suite run or native rebuild is
+claimed. This is local Linux installed-package evidence, not publication or
+cross-platform qualification. Full V1 remains open.

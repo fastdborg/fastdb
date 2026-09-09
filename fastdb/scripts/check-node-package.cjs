@@ -61,6 +61,10 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.equal(joined.affected,1n);
       assert.deepEqual(joined.rows,[[tuplePayload,tupleRecord]]);
       assert.deepEqual(joined.transaction,{before:'active',after:'active'});
+      const scopedRight = await client.execute('WITH d AS (SELECT n,a,b FROM tuple_source) UPDATE tuple_docs AS d SET (a,b)=(s.b,s.a) FROM tuple_keys k RIGHT JOIN d s ON k.n=s.n LEFT JOIN tuple_keys extra ON extra.n=s.n WHERE s.n=d.n AND k.n IS NULL AND extra.n IS NULL RETURNING a,b LIMIT $count OFFSET $skip',{$count:1n,$skip:0n});
+      assert.equal(scopedRight.affected,1n);
+      assert.deepEqual(scopedRight.rows,[[tuplePayload,tupleRecord]]);
+      assert.deepEqual(scopedRight.transaction,{before:'active',after:'active'});
       await client.execute('ROLLBACK');
       assert.deepEqual((await client.execute('SELECT a,b FROM tuple_docs')).rows,[[tupleRecord,tuplePayload]]);
       const base = {version:1n,name:'base',sql:'CREATE TABLE migration_docs; CREATE UNIQUE INDEX migration_n ON migration_docs(n); INSERT INTO migration_docs {n:1};'};
