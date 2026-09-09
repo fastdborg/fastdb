@@ -2131,3 +2131,33 @@ fn document_between_native_bounds_preserves_payloads_and_affinity() {
     assert!(query(&c, "SELECT * FROM copied").rows.is_empty());
     query(&c, "ROLLBACK");
 }
+
+#[test]
+fn collection_not_indexed_bypasses_managed_candidates() {
+    let (_db, c) = setup();
+    for table in ["users NOT INDEXED", "users AS u NOT INDEXED"] {
+        let alias = if table.contains(" AS ") { "u" } else { "users" };
+        let sql = format!("SELECT name FROM {table} WHERE {alias}.profile.city='Bangkok'");
+        assert_eq!(
+            query(&c, &sql).rows,
+            query(
+                &c,
+                "SELECT name FROM users WHERE users.profile.city='Bangkok'"
+            )
+            .rows
+        );
+        let plan = format!("{:?}", query(&c, &format!("EXPLAIN QUERY PLAN {sql}")).rows);
+        assert!(!plan.contains("users_city"), "{plan}");
+        query(&c, "BEGIN");
+        query(&c, "UPDATE users:2 {profile:{city:'Paris'}}");
+        assert_eq!(query(&c, &sql).rows.len(), 1);
+        query(&c, "ROLLBACK");
+        assert_eq!(query(&c, &sql).rows.len(), 2);
+    }
+    assert!(c
+        .execute(
+            "SELECT name FROM users INDEXED BY users_city",
+            &Parameters::new()
+        )
+        .is_err());
+}

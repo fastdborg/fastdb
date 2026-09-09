@@ -3157,7 +3157,7 @@ fn source(
             .db_name
             .as_ref()
             .is_some_and(|n| !n.as_str().eq_ignore_ascii_case("main"))
-            || indexed.is_some())
+            || matches!(indexed, Some(Indexed::IndexedBy(_))))
     {
         return Err(unsupported(
             "attached collections or explicit INDEXED clauses",
@@ -5896,7 +5896,13 @@ impl Connection {
             .sources
             .iter()
             .enumerate()
-            .map(|(i, _)| {
+            .map(|(i, source)| {
+                if matches!(
+                    &source.table,
+                    SelectTable::Table(_, _, Some(Indexed::NotIndexed))
+                ) {
+                    return Ok(None);
+                }
                 where_clause
                     .as_ref()
                     .map_or(Ok(None), |p| indexed_filter(&scope, i, p))

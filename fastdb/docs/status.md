@@ -7061,3 +7061,19 @@ The focused test passes (one test, 80 filtered out), with test-package formattin
 and all-target Clippy. Logs: `/tmp/fastdb-pagination-coercion.log` and
 `/tmp/fastdb-pagination-coercion-clippy.log`. Only tests/docs changed from
 `a81e13100`; no full-suite/client rerun is claimed. Full V1 remains open.
+
+
+## Collection SELECT NOT INDEXED — 2026-09-09
+
+Collection table sources now accept NOT INDEXED and bypass managed-index
+candidate selection while retaining normal predicate evaluation. Explicit
+INDEXED BY remains rejected; UPDATE/DELETE target hints remain unsupported.
+The regression checks named/aliased sources, matching indexed-query results,
+absence of the managed index in EXPLAIN QUERY PLAN, transaction-visible updates
+and rollback. This does not promise suppression of unrelated native engine
+indexes or complete planner qualification.
+
+All 41 SELECT integration tests pass (`/tmp/fastdb-not-indexed.log`). Formatting
+and all-target frontend/test-package Clippy pass
+(`/tmp/fastdb-not-indexed-clippy.log`); two fixture corrections preceded the final
+test pass. No full-suite or rebuilt Node addon is claimed. Full V1 remains open.
