@@ -2092,3 +2092,42 @@ fn update_from_cte_pagination_preserves_bound_scopes() {
         }
     }
 }
+
+#[test]
+fn update_from_left_source_join_preserves_unmatched_rows() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+        "CREATE TABLE source(k INTEGER,v INTEGER)",
+        "INSERT INTO source VALUES(1,7),(2,8)",
+        "CREATE TABLE source_docs",
+        "INSERT INTO source_docs(k,v) SELECT k,v FROM source",
+        "CREATE TABLE extras(k INTEGER,delta INTEGER)",
+        "INSERT INTO extras VALUES(1,10),(1,20)",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["source", "source_docs"] {
+        for join in ["LEFT JOIN", "LEFT OUTER JOIN"] {
+            q(&c, "BEGIN");
+            let sql=format!("UPDATE TARGET SET v=s.v+coalesce(e.delta,100) FROM {source} s {join} extras e ON e.k=s.k WHERE s.k=TARGET.n RETURNING n,v");
+            let expected = q(
+                &c,
+                &sql.replace("TARGET", "native")
+                    .replace("source_docs", "source"),
+            );
+            let actual = q(&c, &sql.replace("TARGET", "docs"));
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(actual.affected, expected.affected);
+            assert_eq!(
+                q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n,v FROM native ORDER BY n").rows
+            );
+            q(&c, "ROLLBACK");
+        }
+    }
+}

@@ -628,7 +628,7 @@ impl Connection {
                 if update.or_conflict.is_some()
                     || update.from.as_ref().is_some_and(|from| from.joins.iter().any(|join| {
                         matches!(join.constraint, Some(JoinConstraint::Using(_)))
-                            || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::LEFT | JoinType::RIGHT | JoinType::OUTER | JoinType::NATURAL))
+                            || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::RIGHT | JoinType::NATURAL))
                     }))
                     || update.indexed.is_some()
                     || !update.order_by.is_empty()

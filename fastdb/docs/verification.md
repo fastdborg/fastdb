@@ -4619,3 +4619,22 @@ LIMIT scalar subqueries are rejected (`Subquery is not supported in this positio
 that form is not newly promised by the pagination implementation. Probe log:
 `/tmp/fastdb-from-cte-pagination.log`. Only tests/docs changed from `1e8ec7aae`;
 no new full-suite/client run is claimed. Full V1 remains open.
+
+
+## LEFT JOIN UPDATE FROM sources — 2026-09-09
+
+UPDATE FROM now accepts LEFT JOIN/LEFT OUTER JOIN ON source sequences. The target
+cross join precedes the source joins, preserving unmatched left-source rows for
+each target. Differential fixtures cover table/collection left sources,
+duplicate right matches, coalescing missing right values, untouched targets,
+RETURNING, affected counts and rollback. All 48 write tests passed in the
+focused run. RIGHT/FULL and USING/NATURAL source joins remain rejected because
+they require additional grouping/merged-column handling. Broader source scope,
+planner and release qualification remain open.
+
+The complete scoped check passed on `432eab8fa` plus this change: 622 Rust
+passes, zero failures and one existing ignored trigger-interruption gate;
+89 Node/application passes; formatting, all-target FastDB Clippy with warnings
+denied and strict TypeScript. Addon rebuilt. Log:
+`/tmp/fastdb-update-left-source-check.log`. No upstream source, dependency or
+storage-format changes; no publication occurred. Full V1 remains open.
