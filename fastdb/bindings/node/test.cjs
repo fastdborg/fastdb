@@ -2961,3 +2961,43 @@ test('OR ROLLBACK reports full transaction loss and permits fresh client work', 
     } finally { await db.close(); }
   }
 });
+
+test('OR IGNORE preserves typed successes, candidate limits and pending client work', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
+    const db = await open();
+    try {
+      for (const sql of ['CREATE TABLE docs', 'DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)', 'CREATE INDEX docs_v ON docs(v)', 'CREATE UNIQUE INDEX docs_n ON docs(n)', 'INSERT INTO docs(n,v) VALUES(1,0),(2,0),(3,0)', 'BEGIN', 'INSERT INTO docs(n,v) VALUES(4,0)']) await db.execute(sql);
+      const payload=[new Record('docs',9223372036854775807n),Buffer.from([0,255])];
+      for (const from of ['', ' FROM (SELECT 1 AS k) source']) {
+        // A selected but invalid candidate consumes LIMIT; it must not be replaced.
+        const skipped=await db.execute(`UPDATE OR IGNORE docs SET v=CASE WHEN docs.n=2 THEN 10 ELSE 1 END,payload=$value${from} WHERE docs.n IN (2,3) RETURNING n,payload LIMIT $count`,{$value:payload,$count:1n});
+        assert.equal(skipped.affected,0n);
+        assert.deepEqual(skipped.rows,[]);
+        assert.deepEqual(skipped.transaction,{before:'active',after:'active'});
+        // A mixed batch must continue past rejected candidates and return only successes.
+        const mixed=await db.execute(`UPDATE OR IGNORE docs SET v=CASE WHEN docs.n=2 THEN 10 ELSE 1 END,payload=$value${from} WHERE docs.n IN (2,3) RETURNING n,payload`,{$value:payload});
+        assert.equal(mixed.affected,1n);
+        assert.deepEqual(mixed.rows,[[3n,payload]]);
+        assert.deepEqual(mixed.transaction,{before:'active',after:'active'});
+        const conflict=await db.execute(`UPDATE OR IGNORE docs SET n=1,v=2,payload=$value${from} WHERE docs.n=2 RETURNING n`,{$value:payload});
+        assert.equal(conflict.affected,0n);
+        assert.deepEqual(conflict.rows,[]);
+        assert.deepEqual((await db.execute('SELECT n,v,payload FROM docs ORDER BY n')).rows,[[1n,0n,null],[2n,0n,null],[3n,1n,payload],[4n,0n,null]]);
+        await assert.rejects(async () => db.execute(`UPDATE OR IGNORE docs SET v=$missing${from}`),error => {
+          assert.equal(error.code,'FDB_PARAMETER');
+          assert.deepEqual(error.transaction,{before:'active',after:'active'});
+          return true;
+        });
+        assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,8n);
+      }
+      await db.execute('ROLLBACK');
+      assert.deepEqual((await db.execute('SELECT n,v,payload FROM docs ORDER BY n')).rows,[[1n,0n,null],[2n,0n,null],[3n,0n,null]]);
+      const committed=await db.execute('UPDATE OR IGNORE docs SET v=CASE WHEN n=2 THEN 10 ELSE 1 END,payload=$value WHERE n IN (2,3) RETURNING n,payload',{$value:payload});
+      assert.deepEqual(committed.rows,[[3n,payload]]);
+      assert.deepEqual(committed.transaction,{before:'autocommit',after:'autocommit'});
+      assert.deepEqual((await db.execute('SELECT payload FROM docs WHERE n=3')).rows,[[payload]]);
+      assert.equal((await db.checkCollectionIntegrity('docs')).indexEntries,6n);
+    } finally { await db.close(); }
+  }
+});

@@ -5271,3 +5271,21 @@ all-target FastDB Clippy with warnings denied and strict TypeScript. The addon
 was rebuilt. Log: `/tmp/fastdb-update-ignore-check.log`. No upstream source or
 storage-format changes. Broader policy/error-stage, resource and client-specific
 qualification and full V1 remain open.
+
+
+## OR IGNORE client recovery and typed results — 2026-09-09
+
+Both Node clients now exercise ordinary/joined OR IGNORE with mixed CHECK
+successes and failures, uniqueness failures after another index changes, typed
+record/binary payloads, affected counts, RETURNING, active/autocommit reports,
+missing-parameter rejection, outer rollback and committed retries. Integrity
+checks cover both managed indexes. A LIMIT 1 fixture selects an invalid candidate
+while another qualifying valid row exists and verifies no replacement is returned;
+this fixture does not promise a general unordered candidate order.
+
+All 91 Node/application tests passed (`/tmp/fastdb-update-ignore-node.log`). The
+LIMIT fixture was then strengthened to include the additional qualifying valid
+row, and the focused client test passed again
+(`/tmp/fastdb-update-ignore-node-focused.log`). The addon is from the preceding
+full check on `91198d780`; only tests/docs changed, so no new Rust/full check or
+addon rebuild is claimed. Full V1 remains open.
