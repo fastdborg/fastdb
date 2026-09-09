@@ -29,6 +29,13 @@ the original UPDATE. Resolve self-joins and target-named CTEs using write-contex
 binding; do not blanket-rename source references. Existing CTE flattening and
 correlation logic needs differential checks in this new context.
 
+Joined updates resolve source CTEs before exposing the write target. A CTE named
+like the target table or alias therefore retains its source binding. The native
+write-context rebinding used for UPDATE/DELETE without FROM must not apply to
+joined updates. Differential fixtures cover chained CTEs, materialization hints,
+target aliases, self-sources and pagination; self-source assignments read the
+original candidate snapshots before mutation.
+
 Materialize the candidate query before any mutation, with the existing candidate
 row and byte budgets. Resolve repeated targets using encoded typed record IDs
 (`Value::Record(...).encode()`), never a stringified key that conflates integer

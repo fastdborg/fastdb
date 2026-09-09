@@ -1,6 +1,6 @@
 # Embedded V1 gate review — 2026-09-09
 
-This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 626 passing Rust tests with one ignored trigger-cancellation gate, 89 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-pagination-host-cancel-check.log`, based on `b72fb7292` plus cooperative host pagination). These totals do not prove the gates below. Installed-package evidence is separate: Linux Node 22/24 and the standalone Rust consumer cover joined LEFT UPDATE FROM and pagination, but predate RIGHT JOIN support. See verification.md for exact runs and limitations.
+This is a navigation and prioritization aid, not a replacement for the parent FastDB.md and FastQL.md plans. The current implementation is not release-complete. Most recent complete scoped evidence: 628 passing Rust tests with one ignored trigger-cancellation gate, 89 passing Node/application tests, formatting, Clippy and strict TypeScript (`/tmp/fastdb-joined-cte-scope-check.log`, based on `680985f4a` plus joined-update CTE binding correction). These totals do not prove the gates below. Installed-package evidence is separate: Linux Node 22/24 and the standalone Rust consumer cover joined LEFT UPDATE FROM and pagination, but predate RIGHT JOIN support. See verification.md for exact runs and limitations.
 
 | Required area | Current evidence | What still prevents a completion claim |
 |---|---|---|

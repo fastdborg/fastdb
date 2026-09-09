@@ -1120,10 +1120,11 @@ impl Connection {
             Ok(())
         }
         let mut with = source.with;
-        // The pinned write planner exposes its target table before replanning
-        // CTE bodies. A same-named FROM there binds the physical target rather
-        // than the CTE. Preserve that binding in the candidate SELECT.
-        if let Some(with) = with.as_mut().filter(|with| !with.recursive) {
+        // Without FROM, the pinned write planner exposes its target before
+        // replanning CTE bodies. Joined updates resolve source CTEs first.
+        // In the former path, a same-named FROM binds the physical target
+        // rather than the CTE. Preserve that binding in the candidate SELECT.
+        if let Some(with) = with.as_mut().filter(|with| !with.recursive && !joined) {
             let exposed = table.alias.as_ref().unwrap_or(&table.name);
             if with
                 .ctes

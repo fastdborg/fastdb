@@ -2199,3 +2199,68 @@ fn update_from_leading_right_join_preserves_following_joins() {
         q(&c, "ROLLBACK");
     }
 }
+
+#[test]
+fn update_from_self_sources_preserve_original_snapshots_and_scopes() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,10),(2,20),(3,30)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for source in ["TARGET s", "(SELECT n,v FROM TARGET) s", "chosen s"] {
+        for limit in ["", " LIMIT 1 OFFSET 1"] {
+            q(&c, "BEGIN");
+            let sql = format!("WITH chosen AS (SELECT n,v FROM TARGET) UPDATE TARGET AS t SET v=s.v+1 FROM {source} WHERE s.n=t.n-1 RETURNING n,v{limit}");
+            let expected = q(&c, &sql.replace("TARGET", "native"));
+            let actual = q(&c, &sql.replace("TARGET", "docs"));
+            assert_eq!(actual.rows, expected.rows, "{sql}");
+            assert_eq!(actual.affected, expected.affected, "{sql}");
+            assert_eq!(
+                q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                q(&c, "SELECT n,v FROM native ORDER BY n").rows,
+                "{sql}"
+            );
+            q(&c, "ROLLBACK");
+        }
+    }
+}
+
+#[test]
+fn update_from_target_named_ctes_keep_source_and_target_bindings_separate() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    for sql in [
+        "CREATE TABLE native(n INTEGER,v INTEGER)",
+        "INSERT INTO native VALUES(1,10),(2,20),(3,30)",
+        "CREATE TABLE docs",
+        "INSERT INTO docs(n,v) SELECT n,v FROM native",
+    ] {
+        q(&c, sql);
+    }
+    for name in ["TARGET", "t"] {
+        for alias in ["", " AS t"] {
+            let target = if alias.is_empty() { "TARGET" } else { "t" };
+            for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
+                for limit in ["", " LIMIT 1 OFFSET 1"] {
+                    q(&c, "BEGIN");
+                    let sql = format!("WITH {name}(n,v) AS {hint} (SELECT 1,100 UNION ALL SELECT 2,200), chosen AS (SELECT n,v FROM {name}) UPDATE TARGET{alias} SET v=s.v+1 FROM chosen s WHERE s.n={target}.n RETURNING n,v{limit}");
+                    let expected = q(&c, &sql.replace("TARGET", "native"));
+                    let actual = q(&c, &sql.replace("TARGET", "docs"));
+                    assert_eq!(actual.rows, expected.rows, "{sql}");
+                    assert_eq!(actual.affected, expected.affected, "{sql}");
+                    assert_eq!(
+                        q(&c, "SELECT n,v FROM docs ORDER BY n").rows,
+                        q(&c, "SELECT n,v FROM native ORDER BY n").rows,
+                        "{sql}"
+                    );
+                    q(&c, "ROLLBACK");
+                }
+            }
+        }
+    }
+}

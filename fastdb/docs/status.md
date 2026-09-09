@@ -5756,3 +5756,23 @@ passes; formatting, all-target FastDB Clippy with warnings denied and strict
 TypeScript. Addon rebuilt. Log: `/tmp/fastdb-pagination-host-cancel-check.log`.
 The focused three host-cancellation tests passed in `/tmp/fastdb-pagination-cancel.log`.
 No upstream source or storage-format changes; full V1 remains open.
+
+
+## Joined-update CTE binding and self-sources — 2026-09-09
+
+A differential regression exposed incorrect rebinding of a source CTE named like
+an UPDATE FROM target alias: collection targets received their own values plus
+one instead of the CTE values. Joined updates now retain source CTE bindings;
+the physical-target rebinding used by non-joined writes remains unchanged.
+Tests cover table/alias name collisions, chained CTEs, materialization hints,
+pagination, RETURNING, affected counts and stored rows. Direct, derived and CTE
+self-sources also match native original-snapshot behavior before mutation.
+
+All 52 write tests passed after the fix (`/tmp/fastdb-joined-cte-fix.log`). The
+complete scoped check passed on `680985f4a` plus this change: 628 Rust passes,
+zero failures and one existing ignored trigger-interruption gate; 89 Node/application
+passes; formatting, all-target FastDB Clippy with warnings denied and strict
+TypeScript. Addon rebuilt. Log: `/tmp/fastdb-joined-cte-scope-check.log`.
+The initial regression failure is retained in `/tmp/fastdb-self-source-writes-final.log`.
+No upstream source or storage-format changes. Broader scope/planner/resource
+qualification and full V1 remain open.
