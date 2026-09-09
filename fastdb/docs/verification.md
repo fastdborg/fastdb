@@ -5982,3 +5982,20 @@ identity deduplication/cancellation. All 80 write and 13 write-buffer integratio
 tests pass (`/tmp/fastdb-key-preflight-writes.log`). Formatting and all-target
 frontend Clippy pass (`/tmp/fastdb-key-preflight-clippy.log`). No complete scoped
 suite or rebuilt Node addon is claimed. Full V1 remains open.
+
+
+## Direct value encoding and combined verification — 2026-09-09
+
+Value encoding now serializes directly into the final tagged byte vector instead
+of allocating a temporary JSON vector and copying its contents. Validation and
+storage format are unchanged. The compatibility regression compares against the
+previous encoding path for nested documents, escaped Unicode keys and all five
+vector encodings; existing numeric bit-roundtrip and bounded-encoding tests pass.
+This removes one temporary payload buffer; no total-memory or timing claim is made.
+
+The complete FastDB-scoped check passes: 670 Rust tests, zero failures and the
+one existing ignored trigger-interruption test; 99 Node/application tests;
+five-package formatting and Clippy; rebuilt Node addon; strict TypeScript.
+Log: `/tmp/fastdb-direct-value-encoding-check.log`. This also verifies the recent
+joined UPDATE identity-map budgeting and encoding preflight in the combined build.
+Platform/distribution and broader V1 release gates remain open.

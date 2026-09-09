@@ -51,7 +51,7 @@ impl Value {
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
         let mut bytes = b"FDB\x01".to_vec();
-        bytes.extend(serde_json::to_vec(self)?);
+        serde_json::to_writer(&mut bytes, self)?;
         Ok(bytes)
     }
     /// Check the complete tagged encoding before allocating its byte buffer.
@@ -220,6 +220,10 @@ mod borrowed_document_tests {
                     ),
                 ]);
                 let bytes = encode_document(&document).unwrap();
+                let mut previous_encoding = b"FDB\x01".to_vec();
+                previous_encoding
+                    .extend(serde_json::to_vec(&Value::Object(document.clone())).unwrap());
+                assert_eq!(bytes, previous_encoding);
                 assert_eq!(bytes, Value::Object(document.clone()).encode().unwrap());
                 assert_eq!(Value::decode(&bytes).unwrap(), Value::Object(document));
             }
