@@ -5232,3 +5232,19 @@ and binary array data. All 90 Node/application tests pass
 (`/tmp/fastdb-update-rollback-node.log`) against the addon from the preceding
 full check. Only tests/docs changed from `12f0b8000`; no new Rust-suite run or
 addon rebuild is claimed. Full V1 remains open.
+
+
+## UPDATE conflict policies across user savepoints — 2026-09-09
+
+A native-table/collection differential matrix covers ABORT and ROLLBACK under
+nested user savepoints, both with an explicit BEGIN and with a transaction
+started by SAVEPOINT. ROLLBACK removes both savepoints and all pending inserts;
+ABORT preserves pending work and permits rollback to each savepoint. In
+autocommit, both policies restore the failed statement. A fresh savepoint can
+commit after recovery, and collection index integrity remains consistent.
+
+All 64 write tests pass (`/tmp/fastdb-policy-savepoints.log`); fastdb-tests
+formatting and all-target Clippy with warnings denied pass
+(`/tmp/fastdb-policy-savepoints-clippy.log`). Only tests/docs changed from
+`3ae59b986`; no new full-suite or client run is claimed. Broader error-stage,
+interruption and rollback-failure qualification and full V1 remain open.
