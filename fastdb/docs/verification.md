@@ -5947,3 +5947,20 @@ All 13 write-buffer tests pass (`/tmp/fastdb-insert-replace-result-limits.log`).
 FastDB test-package formatting and all-target Clippy with warnings denied pass
 (`/tmp/fastdb-insert-replace-result-limits-clippy.log`). Only tests/docs changed
 from `e1fd9e3b3`; no full-suite or client rerun is claimed. Full V1 remains open.
+
+
+## Joined UPDATE identity-map budget — 2026-09-09
+
+Duplicate resolution now charges each distinct retained encoded record ID to a
+separate write-buffer row/payload budget before inserting its map entry. Repeated
+matches only replace the selected candidate and do not charge the identity again.
+This extends opt-in `with_write_buffer_limits`; it does not impose a default cap.
+Encoding itself precedes the check, and map nodes, vector capacity and allocator
+overhead remain outside accounting, so total workspace qualification stays open.
+
+The five candidate preparation/cancellation tests pass, including a new exact
+encoded-byte boundary with escaped Unicode keys, duplicate last-match selection,
+and distinct integer/string identity row limits. All 80 write and 13 write-buffer
+integration tests pass. Logs: `/tmp/fastdb-joined-key-budget.log` and
+`/tmp/fastdb-joined-key-budget-writes.log`. This is scoped Rust evidence; no full
+suite or rebuilt Node addon is claimed for this change. Full V1 remains open.

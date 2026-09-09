@@ -378,7 +378,8 @@ mod evaluation_tests {
 
 impl crate::Connection {
     /// Opt into per-buffer limits for frontend collection-write candidates and
-    /// document snapshots. Each buffer gets its own counters; this is not a total
+    /// document snapshots, including retained encoded identities for joined UPDATE
+    /// duplicate resolution. Each buffer gets its own counters; this is not a total
     /// memory cap and does not constrain native engine write buffers or direct
     /// single-document Rust methods. Ordinary reads keep their existing policy.
     pub fn with_write_buffer_limits(mut self, limits: ResultLimits) -> Self {

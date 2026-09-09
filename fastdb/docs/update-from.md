@@ -54,8 +54,11 @@ row and byte budgets. Resolve repeated targets using encoded typed record IDs
 (`Value::Record(...).encode()`), never a stringified key that conflates integer
 and string IDs. Retain one original snapshot and the chosen assignment tuple per
 target. A later source match replaces assignments, rather than applying another
-mutation to a previously changed document. The distinct-target buffer and lookup
-map also need explicit resource accounting.
+mutation to a previously changed document. The identity lookup map charges each distinct encoded ID once against a separate
+write-buffer row/payload budget before retaining it. Duplicate matches do not add
+map entries or consume that budget again. Encoding occurs before this check; map
+nodes, vector capacity and allocator overhead still need resource accounting.
+This is not a total workspace bound.
 
 Apply LIMIT/OFFSET after duplicate resolution. Preserve parameter validation and
 native scalar coercion; do not add a second ad hoc numeric parser. Evaluate

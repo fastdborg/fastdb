@@ -1439,6 +1439,7 @@ impl Connection {
     }
     fn coalesce_update_candidates(&self, candidates: Vec<Vec<Value>>) -> Result<Vec<Vec<Value>>> {
         let mut positions = std::collections::BTreeMap::new();
+        let mut key_budget = self.write_buffer_budget()?;
         let mut rows = Vec::new();
         for row in candidates {
             if self.engine.should_interrupt_for_progress(1) {
@@ -1454,6 +1455,13 @@ impl Connection {
             if let Some(position) = positions.get(&key) {
                 rows[*position] = row;
             } else {
+                // Charge each retained encoded identity once, before map insertion.
+                // Duplicate matches replace a row without growing this map.
+                let encoded = Value::Binary(key);
+                key_budget.row(std::slice::from_ref(&encoded))?;
+                let Value::Binary(key) = encoded else {
+                    unreachable!()
+                };
                 positions.insert(key, rows.len());
                 rows.push(row);
             }
@@ -1601,6 +1609,73 @@ mod candidate_cancellation_tests {
                 .unwrap(),
             vec![vec![Value::Integer(7)]]
         );
+    }
+
+    #[test]
+    fn duplicate_identity_budget_counts_retained_encoded_keys() {
+        let db = crate::Database::open(":memory:").unwrap();
+        let row = |key, value| {
+            vec![
+                Value::Object(Document::from([(
+                    "id".into(),
+                    Value::Record(crate::Record {
+                        table: "docs".into(),
+                        key,
+                    }),
+                )])),
+                Value::Integer(value),
+            ]
+        };
+        let first = row(crate::Key::String("\"\\é".into()), 1);
+        let last = row(crate::Key::String("\"\\é".into()), 2);
+        let Value::Object(doc) = &first[0] else {
+            unreachable!()
+        };
+        let bytes = doc["id"].encode().unwrap().len();
+        let c = db
+            .connect()
+            .unwrap()
+            .with_write_buffer_limits(crate::ResultLimits {
+                max_rows: 1,
+                max_payload_bytes: bytes,
+            });
+        assert_eq!(
+            c.coalesce_update_candidates(vec![first.clone(), last.clone()])
+                .unwrap(),
+            vec![last]
+        );
+        let c = c.with_write_buffer_limits(crate::ResultLimits {
+            max_rows: 1,
+            max_payload_bytes: bytes - 1,
+        });
+        assert_eq!(
+            c.coalesce_update_candidates(vec![first])
+                .unwrap_err()
+                .code(),
+            "FDB_LIMIT"
+        );
+        let c = c.with_write_buffer_limits(crate::ResultLimits {
+            max_rows: 1,
+            max_payload_bytes: 10000,
+        });
+        assert_eq!(
+            c.coalesce_update_candidates(vec![
+                row(crate::Key::Integer(1), 1),
+                row(crate::Key::String("1".into()), 2)
+            ])
+            .unwrap_err()
+            .code(),
+            "FDB_LIMIT"
+        );
+        let c = c.with_write_buffer_limits(crate::ResultLimits {
+            max_rows: 2,
+            max_payload_bytes: 10000,
+        });
+        let rows = vec![
+            row(crate::Key::Integer(1), 1),
+            row(crate::Key::String("1".into()), 2),
+        ];
+        assert_eq!(c.coalesce_update_candidates(rows.clone()).unwrap(), rows);
     }
 
     #[test]
