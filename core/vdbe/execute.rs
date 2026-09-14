@@ -4766,14 +4766,17 @@ pub fn op_program(
                                 return Ok(InsnFunctionStepResult::IO(io));
                             }
                             StepResult::Row => continue,
-                            StepResult::Interrupt | StepResult::Busy => {
+                            result @ (StepResult::Interrupt | StepResult::Busy) => {
                                 *state.active_op_state.program() = OpProgramState::Step {
                                     is_trigger,
                                     statement,
                                     saved_last_insert_rowid,
                                     saved_changes_value: saved_last_changes_value,
                                 };
-                                return Err(LimboError::Busy);
+                                return Err(match result {
+                                    StepResult::Interrupt => LimboError::Interrupt,
+                                    _ => LimboError::Busy,
+                                });
                             }
                         },
                         Err(LimboError::Constraint(constraint_err)) => {

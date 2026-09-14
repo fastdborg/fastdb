@@ -1053,7 +1053,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Pinned trigger executor converts Interrupt to Busy; see docs/trigger-interrupt.md"]
     fn native_target_after_write_cancellation_requires_interrupt_propagation() {
         check_native_target_subquery_cancellation(true);
     }
