@@ -24,7 +24,7 @@ recovery-io-evidence.md. Final-candidate acceptance remains separate.
 | 10. SQL-shaped write validation | tests/tests/writes.rs; tests/tests/insert_select.rs; tests/tests/checks.rs | Inspect validation/index failure assertions on supported write routes |
 | 11. Field metadata lifecycle | tests/tests/catalog.rs; tests/tests/persistence.rs | Reviewed: field_removal_is_metadata_only_and_incompatible_definitions_fail preserves stored name and unique index after REMOVE FIELD; typed_round_trips_and_definition_build_failure rejects a conflicting definition against existing data and then successfully installs the correct definition |
 | 12. Row cardinality and helpers | tests/tests/returning.rs; bindings/node/test.cjs | Reviewed: explicit zero/one/many assertions for all/first/exactlyOne and direct record reads in both clients; existing RETURNING tests cover one, many and empty rows, typed metadata and projection-failure rollback |
-| 13. Deferred syntax errors | parser/; docs/contracts.md | Review documented V2/V3 rejection examples and stable error classifications |
+| 13. Deferred syntax errors | parser/; docs/contracts.md | Concrete gap reproduced: documented deferred declarations and brace projection reject with generic FDB_ENGINE syntax errors rather than feature/version errors; see below |
 | 14. SDK and encoding version review | bindings/node/index.d.ts; docs/node-sdk.md; docs/transfer.md; frontend/src/value.rs | Embedded value boundaries reviewed below; final SDK artifact identity/version remains S6 work; cloud wire protocol follows cloud scope |
 
 ## Remaining bounded S1 work
@@ -95,3 +95,21 @@ are checked as integers in persistence.rs, while the Node record-cardinality
 test checks typed document IDs and extracted integer/string keys separately.
 No encoding change is needed for these reviewed requirements. Final release
 packaging must still bind the SDK API to its advertised package version under S6.
+
+## Reproduced deferred-feature error gap
+
+A Node probe on 2026-09-14 created an empty posts collection and attempted these
+master-plan examples individually. None executed successfully:
+
+| Form | Observed code |
+|---|---|
+| SELECT posts:p1 { title, author.* } | FDB_ENGINE |
+| DEFINE RELATION authored_posts ON posts FROM posts.author | FDB_ENGINE |
+| CREATE SEARCH INDEX posts_text ON posts (title) USING FULLTEXT | FDB_ENGINE |
+| SELECT relation::fetch(id,'x') FROM posts | FDB_UNSUPPORTED |
+| LET $x = 1 | FDB_ENGINE |
+
+Item 13 explicitly asks for feature/version errors. Its bounded repair is to
+classify recognized deferred grammar at the FastDB boundary and regression-test
+these examples, preserving ordinary SQL/contextual identifier dispatch. Do not
+enable the features or reserve arbitrary identifiers to satisfy this requirement.
