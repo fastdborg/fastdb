@@ -15,15 +15,15 @@ recovery-io-evidence.md. Final-candidate acceptance remains separate.
 | 1. Pinned ordinary SQL baseline | UPSTREAM.md; tests/tests/sql_compat.rs | Reviewed: ordinary_sql_matches_the_pinned_engine compares column names and typed rows against direct engine execution, including CRUD, rollback, aliases, CREATE AS SELECT and native ON CONFLICT; malformed_collection_sql_preserves_native_parse_errors_and_active_work compares parse errors and retained transaction state |
 | 2. Grammar and parameter ambiguities | parser/src/tests.rs; tests/tests/writes.rs; tests/tests/sql_compat.rs; bindings/node/test.cjs | Reviewed grammar assertions plus focused both-client runtime binding regression; see below |
 | 3. Collection versus relational CREATE | tests/tests/catalog.rs; tests/tests/persistence.rs; parser/src/tests.rs | Reviewed: sql_boundaries_and_ordinary_tables verifies native integer primary keys after bare IF NOT EXISTS and CREATE AS SELECT; info_is_logical_and_if_not_exists_never_converts_models asserts the existing document model survives a column-list IF NOT EXISTS; parser tests distinguish the three CREATE routes |
-| 4. Record construction and direct targets | tests/tests/references.rs; tests/tests/standalone.rs | Inspect fixed/dynamic/key-type and direct-target assertions |
+| 4. Record construction and direct targets | tests/tests/writes.rs; bindings/node/test.cjs | Reviewed: fixed/dynamic construction, distinct integer/string keys, wrong-target rejection, extractor types and direct-target versus reference projection; focused both-client regression passed |
 | 5. Document examples with setup | tests/tests/writes.rs; tests/tests/checks.rs | Compare the master-plan examples with executable fixtures |
-| 6. Missing/null and nested mutation | tests/tests/expressions.rs; tests/tests/writes.rs | Inspect path, duplicate-key and immutable-ID assertions |
+| 6. Missing/null and nested mutation | tests/tests/expressions.rs; tests/tests/writes.rs; parser/src/tests.rs | Reviewed: document_paths_preserve_null_presence_and_typed_values distinguishes null presence and missing paths, preserves a record through quoted dotted-key/array access, and rejects unsupported path forms; writes assertions preserve literal dotted keys, reject invalid parents/duplicate assignments/ID mutation, and check index removal after UNSET; parser rejects duplicate object keys |
 | 7. Index consistency and recovery | tests/tests/integrity.rs; tests/tests/crash_stress.rs; frontend/src/recovery_io.rs | Recovery evidence belongs to S2/S3; do not create a second recovery campaign here |
 | 8. Lossless typed values | tests/tests/numbers.rs; tests/tests/references.rs; tests/tests/vectors.rs; bindings/node/test.cjs | Inspect native primary-key versus document-ID assertions and value round trips |
 | 9. One-hop links | tests/tests/links.rs | Reviewed: batching, typed identity, relational targets, transaction snapshots and shared byte budget; select_fetches_are_typed_one_hop_projections asserts missing references return null, fetched references remain unexpanded, and nested fetch/predicate/order/write fetch forms reject |
 | 10. SQL-shaped write validation | tests/tests/writes.rs; tests/tests/insert_select.rs; tests/tests/checks.rs | Inspect validation/index failure assertions on supported write routes |
 | 11. Field metadata lifecycle | tests/tests/catalog.rs | Explicit metadata-only removal, incompatible definition and reopen regressions exist |
-| 12. Row cardinality and helpers | tests/tests/returning.rs; bindings/node/test.cjs; bindings/node/index.d.ts | Both Node clients expose all/first/exactlyOne; collection helpers add their separately documented document cardinality |
+| 12. Row cardinality and helpers | tests/tests/returning.rs; bindings/node/test.cjs | Reviewed: explicit zero/one/many assertions for all/first/exactlyOne and direct record reads in both clients; existing RETURNING tests cover one, many and empty rows, typed metadata and projection-failure rollback |
 | 13. Deferred syntax errors | parser/; docs/contracts.md | Review documented V2/V3 rejection examples and stable error classifications |
 | 14. SDK and encoding version review | bindings/node/index.d.ts; docs/node-sdk.md; docs/transfer.md | Embedded SDK/transfer review required; cloud wire protocol follows cloud scope |
 
@@ -67,6 +67,14 @@ against the existing addon on 2026-09-14; log /tmp/fastdb-v1-parameters.log.
 No engine rebuild or full scoped rerun was performed for this test-only change
 during the active vector measurement; include it at final scoped acceptance.
 
-Items 1, 2, 3 and 9 now have inspected assertions for their explicit checklist
+Items 1, 2, 3, 4, 6, 9 and 12 now have inspected assertions for their explicit checklist
 requirements; no additional test matrix is requested for them. This review does not
 claim that all possible SQL statements or CREATE variants have been enumerated.
+
+The focused Node 24 test `V1 record targets and row cardinality stay explicit in
+both clients` passed on 2026-09-14 (log /tmp/fastdb-v1-record-cardinality.log).
+It covers missing and existing direct targets, a reference-valued SELECT,
+integer/string identity, wrong-target validation without extra rows, and
+zero/one/many helper behavior. It also verifies multirow UPDATE RETURNING and
+empty DELETE RETURNING. This is focused evidence; a new full scoped run has not
+yet been performed for these added Node tests.

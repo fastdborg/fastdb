@@ -5,6 +5,29 @@ const { Database, Record, Vector } = require('./index.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+test('V1 record targets and row cardinality stay explicit in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      assert.deepEqual(await db.all('SELECT docs:missing'), []);
+      assert.equal(await db.first('SELECT docs:missing'), undefined);
+      await assert.rejects(async () => db.exactlyOne('SELECT docs:missing'), /exactly one/);
+      await db.execute("INSERT INTO docs {id:docs:1,n:10}");
+      await db.execute("INSERT INTO docs {id:type::record('docs',$key),n:20}", {$key:'1'});
+      assert.equal((await db.exactlyOne('SELECT docs:1'))[0].n, 10n);
+      assert.equal((await db.exactlyOne('SELECT docs:`1`'))[0].n, 20n);
+      assert.deepEqual(await db.exactlyOne('SELECT docs:1 AS reference'), [new Record('docs',1n)]);
+      assert.deepEqual(await db.all('SELECT record::id(id) FROM docs ORDER BY n'), [[1n],['1']]);
+      await assert.rejects(async () => db.execute('INSERT INTO docs {id:other:1}'), error => error.code === 'FDB_VALIDATION');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[10n],[20n]]);
+      assert.deepEqual(await db.first('SELECT n FROM docs ORDER BY n'), [10n]);
+      await assert.rejects(async () => db.exactlyOne('SELECT n FROM docs'), /exactly one/);
+      assert.deepEqual((await db.execute('UPDATE docs SET n=n+1 RETURNING n')).rows.sort((a,b)=>Number(a[0]-b[0])), [[11n],[21n]]);
+      assert.deepEqual((await db.execute('DELETE FROM docs WHERE 0 RETURNING n')).rows, []);
+    } finally { await db.close(); }
+  }
+});
 test('V1 parameter spellings bind through native and document routes in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
