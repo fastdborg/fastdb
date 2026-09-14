@@ -20,4 +20,9 @@ cargo test --locked -p fastdb-tests --test persistence checkpointed_offline_back
 
 The test verifies a zero-length WAL after checkpoint, closes all source handles before copying, advances the original database after backup, and restores into a separate directory. It checks typed values (including int64, binary64 bits, binary, references, arrays and vectors), relational rows/views, collection metadata, required/CHECK validation, unique and nested indexes, exact migration history, rollback after update/delete, and persistent new writes. It also checks that restoration and subsequent writes leave the backup bytes unchanged.
 
-This is a controlled same-build restore rehearsal. Interrupted copy/checkpoint/commit, machine or storage failure, cross-process contention, older released binaries, other platforms and online backup remain unqualified. There is no released FastDB version yet from which to claim a previous-release upgrade test.
+This is a controlled same-build restore rehearsal. Interrupted copies, machine or
+storage failures, cross-process contention, other platforms and online backup
+are outside its evidence. Selected commit/checkpoint process-exit boundaries
+have separate evidence in recovery-io-evidence.md. Preview.1 and preview.2 are
+published; previous-release upgrade evidence is recorded in
+[the current S4 rehearsal](v1-upgrade-restore-evidence.md).

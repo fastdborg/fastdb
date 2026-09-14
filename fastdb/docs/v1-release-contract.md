@@ -41,6 +41,9 @@ specific repair task within its row; it does not add a new qualification program
 
 S7's missing measurement is now complete; see the
 [million-vector evidence and practical limits](v1-million-vector-evidence.md).
+S4's current implementation rehearsal also passed; see
+[upgrade and restore evidence](v1-upgrade-restore-evidence.md). Final packaged
+binary verification remains part of S6.
 S1 and S3 still require their identified work before a completion claim.
 The [S1 acceptance index](v1-language-acceptance.md) maps the fourteen FastQL
 acceptance bullets to existing evidence and three bounded review actions.
