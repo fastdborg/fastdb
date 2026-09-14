@@ -11,7 +11,7 @@ From the extracted directory:
 ```sh
 sha256sum -c SHA256SUMS
 printf "INSERT INTO notes {id:notes:first,text:'hello'}; SELECT notes:first;\n" | ./fastdb-cli notes.db
-npm install --offline --ignore-scripts --no-audit --no-fund --no-save ./fastdb-node-0.1.0.tgz
+npm install --offline --ignore-scripts --no-audit --no-fund --no-save ./fastdb-node-1.0.0.tgz
 node tracker.cjs ./tracker.db
 ```
 

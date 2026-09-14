@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "fastql-parser",
  "rquickjs",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "fastdb",
  "fastql-parser",
@@ -1993,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-node"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "fastdb",
  "napi",
@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-tests"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "fastdb",
  "fastql-parser",
@@ -2020,7 +2020,7 @@ checksum = "9afc2bd4d5a73106dd53d10d73d3401c2f32730ba2c0b93ddb888a8983680471"
 
 [[package]]
 name = "fastql-parser"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "thiserror 2.0.16",
