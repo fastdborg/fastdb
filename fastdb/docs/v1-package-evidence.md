@@ -1,5 +1,18 @@
 # S6 optimized Linux review bundle
 
+## Final archive and Rust consumer
+
+The 1.0.0 standalone Rust consumer passed outside the workspace with Rust 1.88.0,
+including typed values, portable JSON, validation/indexes, rollback, bundled
+functions, vectors, profiling, limits/cancellation, write policies and reopen.
+All 244 resolved registry/git package identities matched the pinned lockfile.
+Log: /tmp/fastdb-1.0.0-rust-consumer.log.
+
+The final archive dist/fastdb-1.0.0-linux-x64.tar.gz was extracted into a fresh
+temporary directory and every embedded checksum verified. Archive SHA-256:
+17d5a0e98bdb88de9ad63a6e7c7d097491a1dab6e7632202c82d1a6018ff5a01.
+Its adjacent .sha256 file contains that digest. Publication remains pending.
+
 ## Versioned 1.0.0 candidate
 
 Clean source 1824de044 sets only FastDB package versions to 1.0.0, preserving
