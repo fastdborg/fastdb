@@ -1,5 +1,13 @@
 # S1 language acceptance review
 
+Milestone verification on 2026-09-14: `bash fastdb/scripts/check.sh` completed
+successfully with 676 Rust tests passed, one known ignored trigger-cancellation
+test, 105 Node/application tests passed, formatting, Clippy and strict TypeScript.
+Log: /tmp/fastdb-v1-acceptance-check.log. Executable source corresponds to
+8bd196c5c; the only intervening commit 22fe10260 records the diagnostic gap below.
+This includes the new parameter-spelling and record/cardinality tests. It does
+not close the deferred-feature diagnostic gap or approve the isolated core patch.
+
 This index follows the fourteen acceptance bullets in the authoritative parent
 FastQL.md, section 10. It identifies existing evidence to inspect, not fourteen
 new test campaigns or a claim that every SQL combination is supported. The
