@@ -40,6 +40,8 @@ specific repair task within its row; it does not add a new qualification program
 | S7 | Document/vector performance evidence | Retained benchmark reports include document/index and 100k vector measurements | Review existing reports against latency, memory, scanned records and index-use requirements; finish only the missing 100k–1m evaluation points and record any practical capacity limits |
 
 S1, S3 and S7 require a bounded evidence review before a completion claim.
+The [S1 acceptance index](v1-language-acceptance.md) maps the fourteen FastQL
+acceptance bullets to existing evidence and three bounded review actions.
 This document does not silently waive their gaps. The historical [gate review](v1-gates.md)
 contains detail; generic statements there about broader qualification are not
 instructions to expand these rows indefinitely.
