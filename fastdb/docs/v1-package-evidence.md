@@ -1,5 +1,12 @@
 # S6 optimized Linux review bundle
 
+Hosted CI for pushed source 38bce712c640917add8875d3b533f352b56aa305 completed
+successfully on 2026-09-14:
+[run 34850463566](https://github.com/fastdborg/fastdb/actions/runs/34850463566).
+The retained log is /tmp/fastdb-v1-hosted-ci.log. This validates the pushed
+implementation plus packaging/handoff changes; it does not include the isolated
+trigger patch or turn the local review bundle into a published stable release.
+
 Built from clean source 7e7f376fcb510b3b093a4044277958fd37c6a3bd on 2026-09-14:
 
 ```sh
