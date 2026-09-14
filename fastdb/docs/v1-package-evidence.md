@@ -1,5 +1,28 @@
 # S6 optimized Linux review bundle
 
+## Approved-source bundle
+
+On 2026-09-14, clean source b9cd0c7f1 produced
+dist/fastdb-v1-approved-linux-x64 with the approved trigger fix included.
+Release compilation, notice generation and all bundle checksums passed.
+Exact-tarball installation, SDK and TypeScript checks passed on Node 22.0.0 and
+24.19.0 (10 files, 23,389,610 packed bytes). A separately installed copy also
+passed preview.2-to-candidate upgrade and reopen checks. Logs:
+/tmp/fastdb-v1-approved-build.log, /tmp/fastdb-approved-package22.log,
+/tmp/fastdb-approved-package24.log, /tmp/fastdb-approved-upgrade.log.
+
+Node tarball SHA-256:
+28340808e946615f0d6c306464f84b136af98d4dd164d1e1a801ba5a336a9dbc.
+CLI SHA-256:
+234c2e816dfbf271e0a2e0975de164f234f2ef63bfd43d285eae5f2019a555c4.
+
+This supersedes the unpatched artifact for release preparation. It includes the
+current SDK/query/backup/performance handoff. Package version remains 0.1.0;
+final release identity and publication are still outstanding. The evidence
+below describes the earlier review build and remains historical.
+
+## Earlier unpatched review bundle
+
 Hosted CI for pushed source 38bce712c640917add8875d3b533f352b56aa305 completed
 successfully on 2026-09-14:
 [run 34850463566](https://github.com/fastdborg/fastdb/actions/runs/34850463566).
