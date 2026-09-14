@@ -1,4 +1,12 @@
-# S6 optimized Linux review bundle
+# S6 optimized Linux release evidence
+
+Published on explicit user approval at 2026-09-14T16:07:40Z:
+[FastDB 1.0.0](https://github.com/fastdborg/fastdb/releases/tag/fastdb-v1.0.0).
+GitHub reports draft=false and prerelease=false. Both asset digests still match
+the locally verified archive and checksum file. Release source is
+1824de044fbdcb9d183e77fe30421d0ba25f5001. The records below describe preparation
+and superseded candidate states; publication is now complete. No npm/crates.io
+publication was performed.
 
 ## Staged GitHub delivery
 

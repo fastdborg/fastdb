@@ -1,8 +1,7 @@
 # FastDB 1.0.0 — embedded database
 
-Release notes prepared for candidate source
-1824de044fbdcb9d183e77fe30421d0ba25f5001. Publication is pending; this document
-does not announce an already published release.
+Release source: 1824de044fbdcb9d183e77fe30421d0ba25f5001.
+GitHub distribution: Linux x64 archive and checksum file.
 
 FastDB combines ordinary relational SQL with typed document collections in one
 embedded database. Each collection has its own backing table. Document insert
