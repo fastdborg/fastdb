@@ -1,5 +1,17 @@
 # S6 optimized Linux review bundle
 
+## Staged GitHub delivery
+
+Draft release 388515990 (fastdb-v1.0.0) targets the exact artifact source
+1824de044fbdcb9d183e77fe30421d0ba25f5001. GitHub reports both assets uploaded.
+Its archive digest matches the local archive SHA-256 recorded below; the
+checksum-file digest also matches locally:
+ff0a78c7e37097404cc809a684ed6d2198a062dab0c9be45a863c74ad939fb30.
+The release remains a draft, not public delivery.
+
+Hosted CI 34862181988 passed for integrated-core source f41e2d177. The later
+release-preparation run 34863800320 is pending as of this staging record.
+
 ## Final archive and Rust consumer
 
 The 1.0.0 standalone Rust consumer passed outside the workspace with Rust 1.88.0,
