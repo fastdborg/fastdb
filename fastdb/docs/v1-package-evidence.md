@@ -1,5 +1,20 @@
 # S6 optimized Linux review bundle
 
+## Versioned 1.0.0 candidate
+
+Clean source 1824de044 sets only FastDB package versions to 1.0.0, preserving
+upstream package identities. Locked/offline Cargo metadata validation passed.
+The optimized dist/fastdb-1.0.0-linux-x64 bundle built successfully and every
+SHA256SUMS entry verified. Exact Node 22.0.0/24.19.0 package checks passed
+(10 files, 23,387,556 packed bytes), including installed SDK and TypeScript.
+Preview.2-to-separately-installed-1.0.0 upgrade and reopen also passed.
+Logs: /tmp/fastdb-1.0.0-build.log, /tmp/fastdb-1.0.0-package22.log,
+/tmp/fastdb-1.0.0-package24.log and /tmp/fastdb-1.0.0-upgrade.log.
+Node tarball SHA-256:
+d508c83e749bdfc6359f744b040414b5001fbb826e167e3ea624d60483f01d5f.
+The artifact remains local and unpublished. Final delivery review must use this
+versioned artifact rather than the earlier 0.1.0 review packages below.
+
 ## Approved-source bundle
 
 On 2026-09-14, clean source b9cd0c7f1 produced
