@@ -19,13 +19,13 @@ recovery-io-evidence.md. Final-candidate acceptance remains separate.
 | 5. Document examples with setup | tests/tests/writes.rs; tests/tests/checks.rs | Compare the master-plan examples with executable fixtures |
 | 6. Missing/null and nested mutation | tests/tests/expressions.rs; tests/tests/writes.rs; parser/src/tests.rs | Reviewed: document_paths_preserve_null_presence_and_typed_values distinguishes null presence and missing paths, preserves a record through quoted dotted-key/array access, and rejects unsupported path forms; writes assertions preserve literal dotted keys, reject invalid parents/duplicate assignments/ID mutation, and check index removal after UNSET; parser rejects duplicate object keys |
 | 7. Index consistency and recovery | tests/tests/integrity.rs; tests/tests/crash_stress.rs; frontend/src/recovery_io.rs | Recovery evidence belongs to S2/S3; do not create a second recovery campaign here |
-| 8. Lossless typed values | tests/tests/numbers.rs; tests/tests/references.rs; tests/tests/vectors.rs; bindings/node/test.cjs | Inspect native primary-key versus document-ID assertions and value round trips |
+| 8. Lossless typed values | tests/tests/persistence.rs; tests/tests/transfer.rs; bindings/node/test.cjs | Reviewed: persisted int64/binary/boolean/object round trips, distinct numeric/text record keys, native integer primary keys, portable round trips of all five vector encodings, and Node typed-value/record-identity assertions |
 | 9. One-hop links | tests/tests/links.rs | Reviewed: batching, typed identity, relational targets, transaction snapshots and shared byte budget; select_fetches_are_typed_one_hop_projections asserts missing references return null, fetched references remain unexpanded, and nested fetch/predicate/order/write fetch forms reject |
 | 10. SQL-shaped write validation | tests/tests/writes.rs; tests/tests/insert_select.rs; tests/tests/checks.rs | Inspect validation/index failure assertions on supported write routes |
-| 11. Field metadata lifecycle | tests/tests/catalog.rs | Explicit metadata-only removal, incompatible definition and reopen regressions exist |
+| 11. Field metadata lifecycle | tests/tests/catalog.rs; tests/tests/persistence.rs | Reviewed: field_removal_is_metadata_only_and_incompatible_definitions_fail preserves stored name and unique index after REMOVE FIELD; typed_round_trips_and_definition_build_failure rejects a conflicting definition against existing data and then successfully installs the correct definition |
 | 12. Row cardinality and helpers | tests/tests/returning.rs; bindings/node/test.cjs | Reviewed: explicit zero/one/many assertions for all/first/exactlyOne and direct record reads in both clients; existing RETURNING tests cover one, many and empty rows, typed metadata and projection-failure rollback |
 | 13. Deferred syntax errors | parser/; docs/contracts.md | Review documented V2/V3 rejection examples and stable error classifications |
-| 14. SDK and encoding version review | bindings/node/index.d.ts; docs/node-sdk.md; docs/transfer.md | Embedded SDK/transfer review required; cloud wire protocol follows cloud scope |
+| 14. SDK and encoding version review | bindings/node/index.d.ts; docs/node-sdk.md; docs/transfer.md; frontend/src/value.rs | Embedded value boundaries reviewed below; final SDK artifact identity/version remains S6 work; cloud wire protocol follows cloud scope |
 
 ## Remaining bounded S1 work
 
@@ -67,7 +67,7 @@ against the existing addon on 2026-09-14; log /tmp/fastdb-v1-parameters.log.
 No engine rebuild or full scoped rerun was performed for this test-only change
 during the active vector measurement; include it at final scoped acceptance.
 
-Items 1, 2, 3, 4, 6, 9 and 12 now have inspected assertions for their explicit checklist
+Items 1, 2, 3, 4, 6, 8, 9, 11 and 12 now have inspected assertions for their explicit checklist
 requirements; no additional test matrix is requested for them. This review does not
 claim that all possible SQL statements or CREATE variants have been enumerated.
 
@@ -78,3 +78,20 @@ integer/string identity, wrong-target validation without extra rows, and
 zero/one/many helper behavior. It also verifies multirow UPDATE RETURNING and
 empty DELETE RETURNING. This is focused evidence; a new full scoped run has not
 yet been performed for these added Node tests.
+
+## Value boundary review
+
+Three different boundaries must remain distinct:
+
+| Boundary | Current representation and compatibility evidence |
+|---|---|
+| Internal persisted values | `FDB` plus byte version 1, followed by serde-tagged JSON; value.rs rejects unknown prefixes and validates decoded values. This is internal storage, not the portable transfer protocol. Catalog versioning is separate. |
+| Portable transfer | `fastdb.documents` header version 1; Integer uses a canonical decimal string, Number uses finite binary64 bits as hex, records retain tagged key kinds, vectors/binary retain bytes. transfer.rs verifies JSON/NDJSON cross-database round trips, unknown-version rejection, signed-zero bits, nested tag-like user objects and all five vector encodings. |
+| Embedded Node API | index.d.ts exposes bigint integers, number floating values, Uint8Array binary, Record and Vector instances, nested arrays/objects, and positional QueryResult columns/rows. node-sdk.md defines collection helpers and explicitly limits TypeScript generics to expected shapes. This is an in-process API, not a network wire format. |
+
+The portable transfer tests compare signed-zero bits explicitly; ordinary Rust
+float equality alone would not establish that distinction. Native primary keys
+are checked as integers in persistence.rs, while the Node record-cardinality
+test checks typed document IDs and extracted integer/string keys separately.
+No encoding change is needed for these reviewed requirements. Final release
+packaging must still bind the SDK API to its advertised package version under S6.
