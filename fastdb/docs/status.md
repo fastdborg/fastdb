@@ -7139,3 +7139,15 @@ failed first writes, relational collisions and reopen. Full scoped suite passed:
 674 Rust tests, one known ignored, 102 Node/application tests, fmt, Clippy and
 TypeScript. Log: `/tmp/fastdb-auto-collection-check.log`. This is a follow-up
 to the published 0.1.0 preview; released artifacts were not replaced.
+
+## Preview.2 published — 2026-09-14
+
+[Preview.2](https://github.com/fastdborg/fastdb/releases/tag/fastdb-v0.1.0-preview.2)
+is published from d09958794abfac5dd3e275e801a64e208569a1da. The rebuilt exact
+Node tarball passed package and TypeScript consumers on Node 22.0.0/24.19.0;
+installed-package automatic creation, failed-write cleanup, rollback and reopen
+passed on both. Archive and embedded checksums passed; GitHub's archive digest
+matched 0c35592085be2d9f4bafe0164e09405856d77cd09836842c8068d358b60de6d5.
+Evidence is retained in dist/fastdb-preview.2-linux-x64/evidence. Source CI passed
+in run 34336044586. Preview.1 remains available. Stable V1 is not complete.
+See [next tasks](next-tasks.md) for the finite continuation list.
