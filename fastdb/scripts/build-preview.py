@@ -37,6 +37,9 @@ packed = json.loads(subprocess.check_output(
 run(['git', 'archive', '--format=tar.gz', '--prefix=fastdb-source/', '-o', str(out/'fastdb-source.tar.gz'), source])
 for src, dst in [('fastdb/docs/preview-quickstart.md','README.md'), ('fastdb/docs/preview-release.md','LIMITATIONS.md'), ('fastdb/UPSTREAM.md','UPSTREAM.md'), ('fastdb/bindings/node/LICENSE.md','LICENSE.md'), ('fastdb/bindings/node/THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md'), ('fastdb/bindings/node/THIRD_PARTY_CRATE_NOTICES.md','NODE_CRATE_NOTICES.md')]:
     shutil.copy2(root/src, out/dst)
+if args.release:
+    for src, dst in [('v1-candidate-quickstart.md','README.md'), ('v1-release-contract.md','LIMITATIONS.md'), ('node-sdk.md','SDK.md'), ('v1-query-matrix.md','QUERY-CONTRACT.md'), ('backup-restore.md','BACKUP.md'), ('v1-million-vector-evidence.md','PERFORMANCE.md')]:
+        shutil.copy2(root/'fastdb/docs'/src, out/dst)
 for package in ['fastdb-cli', 'fastdb-node']:
     inventory = out/'evidence'/f'{package}-dependencies.json'
     audit = out/'evidence'/f'{package}-notice-audit.json'
