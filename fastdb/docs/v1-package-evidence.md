@@ -32,6 +32,12 @@ package as the old package. Creation, upgrade and reopen phases all passed:
 /tmp/fastdb-v1-review-upgrade.log. This replaces a development-addon-only claim
 with an exact optimized-package upgrade check for this source.
 
+The bundled CLI was also executed against a temporary fresh database: object
+INSERT automatically created notes, SELECT returned its typed record/document,
+and a second CLI process returned the same saved text. Both processes exited 0.
+This verifies the candidate quickstart's persistence path using the retained
+optimized CLI, independently of the Node addon.
+
 ## Remaining release work
 
 This is a local review bundle, not stable V1 or a registry publication. Its Node
