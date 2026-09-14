@@ -15,8 +15,9 @@ stable target remains the full embedded scope in v1-release-contract.md.
 
 Paths below are relative to fastdb/. Test files are evidence locations; their
 presence alone does not close an acceptance item. The latest recorded scoped
-run is 676 Rust tests, one known ignored trigger test, and 103 Node tests; see
-recovery-io-evidence.md. Final-candidate acceptance remains separate.
+run for c4dd652bc is 677 Rust tests, one known ignored trigger test, and 105 Node
+tests; see the deferred-feature repair evidence below. Final-candidate acceptance
+remains separate.
 
 | FastQL acceptance item | Existing evidence location | Review disposition |
 |---|---|---|
@@ -26,10 +27,10 @@ recovery-io-evidence.md. Final-candidate acceptance remains separate.
 | 4. Record construction and direct targets | tests/tests/writes.rs; bindings/node/test.cjs | Reviewed: fixed/dynamic construction, distinct integer/string keys, wrong-target rejection, extractor types and direct-target versus reference projection; focused both-client regression passed |
 | 5. Document examples with setup | tests/tests/writes.rs; tests/tests/checks.rs | Compare the master-plan examples with executable fixtures |
 | 6. Missing/null and nested mutation | tests/tests/expressions.rs; tests/tests/writes.rs; parser/src/tests.rs | Reviewed: document_paths_preserve_null_presence_and_typed_values distinguishes null presence and missing paths, preserves a record through quoted dotted-key/array access, and rejects unsupported path forms; writes assertions preserve literal dotted keys, reject invalid parents/duplicate assignments/ID mutation, and check index removal after UNSET; parser rejects duplicate object keys |
-| 7. Index consistency and recovery | tests/tests/integrity.rs; tests/tests/crash_stress.rs; frontend/src/recovery_io.rs | Recovery evidence belongs to S2/S3; do not create a second recovery campaign here |
+| 7. Index consistency and recovery | tests/tests/persistence.rs; tests/tests/integrity.rs; tests/tests/crash_stress.rs; frontend/src/recovery_io.rs | Reviewed assertions cover insert/patch/delete index lookups, failed unique writes, rollback, reopen and process-kill recovery; crash_stress checks expected documents and absent original/archived index entries after each recovered batch. Reuse S2/S3 evidence; the trigger exception remains separately open |
 | 8. Lossless typed values | tests/tests/persistence.rs; tests/tests/transfer.rs; bindings/node/test.cjs | Reviewed: persisted int64/binary/boolean/object round trips, distinct numeric/text record keys, native integer primary keys, portable round trips of all five vector encodings, and Node typed-value/record-identity assertions |
 | 9. One-hop links | tests/tests/links.rs | Reviewed: batching, typed identity, relational targets, transaction snapshots and shared byte budget; select_fetches_are_typed_one_hop_projections asserts missing references return null, fetched references remain unexpanded, and nested fetch/predicate/order/write fetch forms reject |
-| 10. SQL-shaped write validation | tests/tests/writes.rs; tests/tests/insert_select.rs; tests/tests/checks.rs | Inspect validation/index failure assertions on supported write routes |
+| 10. SQL-shaped write validation | tests/tests/writes.rs; tests/tests/insert_select.rs; tests/tests/checks.rs | Reviewed: every_write_path_checks_evaluated_values_and_preserves_indexes rejects invalid object/column-list/parameter inserts, SET/object patches and UPSERT; multirow_failure_rolls_back_and_checks_use_final_candidate checks cross-field final values; later_conflicts_rollback_copies_indexes_and_keep_outer_transaction checks INSERT SELECT leaves prior work and no failed-copy index entries |
 | 11. Field metadata lifecycle | tests/tests/catalog.rs; tests/tests/persistence.rs | Reviewed: field_removal_is_metadata_only_and_incompatible_definitions_fail preserves stored name and unique index after REMOVE FIELD; typed_round_trips_and_definition_build_failure rejects a conflicting definition against existing data and then successfully installs the correct definition |
 | 12. Row cardinality and helpers | tests/tests/returning.rs; bindings/node/test.cjs | Reviewed: explicit zero/one/many assertions for all/first/exactlyOne and direct record reads in both clients; existing RETURNING tests cover one, many and empty rows, typed metadata and projection-failure rollback |
 | 13. Deferred syntax errors | frontend/src/deferred.rs; tests/tests/deferred.rs | Implemented version-specific FDB_UNSUPPORTED for documented future statement forms; focused regression and full scoped acceptance passed |
@@ -37,15 +38,16 @@ recovery-io-evidence.md. Final-candidate acceptance remains separate.
 
 ## Remaining bounded S1 work
 
-1. Inspect the assertions identified above and record uncovered explicit examples.
-   Add a regression only for a missing contractual behavior or reproduced bug.
+1. Complete item 5 with one executable document-example workflow using explicit
+   setup and required fields; map its assertions to the master-plan examples.
 2. Reconcile the current SELECT/write support with the V1 capability table:
    filters, projections, joins, ordering, pagination and direct record targets.
    Distinguish native rejection, implemented collection support and an actual
    missing required form. Historical status entries are chronological evidence,
    not the current support matrix.
-3. Review public value encodings and error classifications, then freeze a concise
-   current language contract with links to the completed evidence.
+3. Consolidate the reviewed value encodings and error classifications into the
+   current language contract. Item 14's final package version belongs to S6;
+   encoding and deferred-error implementation reviews are complete here.
 
 For example, contracts.md restricts USING in collection UPDATE FROM while allowing
 supported USING forms in SELECT-derived sources. These are different contexts;
