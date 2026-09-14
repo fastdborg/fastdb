@@ -39,7 +39,9 @@ specific repair task within its row; it does not add a new qualification program
 | S6 | Installable clients/tools | Published Linux x64 preview bundles; exact Node 22/24 package and TypeScript checks; standalone Rust evidence | Produce final candidate artifacts and notices, identify advertised platforms, test those artifacts, then publish |
 | S7 | Document/vector performance evidence | Retained benchmark reports include document/index and 100k vector measurements | Review existing reports against latency, memory, scanned records and index-use requirements; finish only the missing 100k–1m evaluation points and record any practical capacity limits |
 
-S1, S3 and S7 require a bounded evidence review before a completion claim.
+S7's missing measurement is now complete; see the
+[million-vector evidence and practical limits](v1-million-vector-evidence.md).
+S1 and S3 still require their identified work before a completion claim.
 The [S1 acceptance index](v1-language-acceptance.md) maps the fourteen FastQL
 acceptance bullets to existing evidence and three bounded review actions.
 This document does not silently waive their gaps. The historical [gate review](v1-gates.md)
