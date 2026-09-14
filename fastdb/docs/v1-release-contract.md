@@ -31,13 +31,13 @@ specific repair task within its row; it does not add a new qualification program
 
 | ID | Required outcome | Evidence already available | Remaining concrete work |
 |---|---|---|---|
-| S1 | Pinned dialect and value semantics | Differential SQL suites; typed value, alias, expression and serialization regressions | Reconcile the supported-query list with FastQL V1 commitments; enumerate remaining required forms instead of treating every unsupported combination as a blocker |
+| S1 | Pinned dialect and value semantics | Differential SQL suites; typed value, alias, expression and serialization regressions | [Query matrix](v1-query-matrix.md) and [acceptance review](v1-language-acceptance.md) are written; complete the current scoped run including the combined example workflow |
 | S2 | Document/index consistency | Full scoped suite passed with 674 Rust tests and 103 Node tests; integrity audits and failed-write regressions | Include that scoped check on the final implementation candidate; repair any actual candidate regression |
 | S3 | Transaction and recovery behavior | Bounded process-kill tests, interrupted statement checks and explicit transaction reports | [Selected commit/checkpoint I/O evidence passed](recovery-io-evidence.md); integrate the validated trigger Interrupt-to-Busy fix after core-exception review |
-| S4 | Backup and upgrade | Offline restore procedure; released preview.1 to preview.2 upgrade rehearsal | Rehearse previous published binary to the final candidate and its documented backup restore |
+| S4 | Backup and upgrade | Offline restore procedure; released preview.1 to preview.2 upgrade rehearsal | [Preview.2-to-current and offline restore passed](v1-upgrade-restore-evidence.md); repeat upgrade smoke against the final packaged artifact under S6 |
 | S5 | Execution/resource controls | Input, candidate/result and deadline controls; cancellation and lifecycle tests | [Scope reconciled](v1-resource-scope.md): retain existing bounded-control tests at final acceptance; streaming and a global allocator cap are not explicit V1 requirements |
 | S6 | Installable clients/tools | Published Linux x64 preview bundles; exact Node 22/24 package and TypeScript checks; standalone Rust evidence | Produce final candidate artifacts and notices, identify advertised platforms, test those artifacts, then publish |
-| S7 | Document/vector performance evidence | Retained benchmark reports include document/index and 100k vector measurements | Review existing reports against latency, memory, scanned records and index-use requirements; finish only the missing 100k–1m evaluation points and record any practical capacity limits |
+| S7 | Document/vector performance evidence | Retained benchmark reports include document/index and 100k vector measurements | [Complete for the measured execution path](v1-million-vector-evidence.md): retained 100k and 1m/768-dimensional reports include latency, RSS, counters and plans; publish the documented capacity limits |
 
 S7's missing measurement is now complete; see the
 [million-vector evidence and practical limits](v1-million-vector-evidence.md).

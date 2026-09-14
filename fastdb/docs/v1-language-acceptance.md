@@ -1,5 +1,13 @@
 # S1 language acceptance review
 
+S1 implementation milestone accepted on 2026-09-14 at source 2ca34930b:
+the query matrix and value/error review are consolidated, all fourteen acceptance
+items have evidence or their explicit final-artifact dependency, and the full
+scoped check passed with 677 Rust tests, one known ignored S3 trigger test,
+106 Node/application tests, formatting, Clippy and strict TypeScript.
+Log: /tmp/fastdb-v1-language-final.log. The combined document workflow is included.
+Final SDK version/artifact checks remain S6; S3 is not waived by S1 acceptance.
+
 Milestone verification on 2026-09-14: `bash fastdb/scripts/check.sh` completed
 successfully with 676 Rust tests passed, one known ignored trigger-cancellation
 test, 105 Node/application tests passed, formatting, Clippy and strict TypeScript.
