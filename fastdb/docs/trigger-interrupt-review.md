@@ -1,5 +1,18 @@
 # Trigger interruption core exception for review
 
+Approved explicitly by the user on 2026-09-14 and integrated unchanged as
+ded389aea. The patch inventory is in ../UPSTREAM.md. The original isolated
+validation below remains applicable to the unchanged core patch; current
+combined-source verification is running and is not yet claimed complete.
+
+Combined verification completed after integration: 678 Rust tests passed with
+zero ignored, 106 Node/application tests passed, formatting, Clippy and strict
+TypeScript passed. Log: /tmp/fastdb-approved-trigger-scoped.log. The previously
+ignored after-write trigger regression passed. Together with the unchanged
+patch's 98 upstream trigger tests and selected recovery-I/O evidence, this closes
+the named S3 implementation requirement. Final artifacts must be rebuilt from
+this integrated source; earlier review bundles do not contain the fix.
+
 Candidate based on 9a82a36ea; isolated from main. Requirement S3: preserve
 cancellation errors and transaction cleanup when a native trigger is interrupted.
 

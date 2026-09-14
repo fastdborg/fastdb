@@ -17,7 +17,23 @@ Local integration changes:
 1. Five explicit FastDB workspace members and corresponding lockfile entries; upstream default-members unchanged.
 2. FastDB implementation, tests, scripts, and documentation under `fastdb/`.
 3. Inherited workflow YAML files moved unchanged into `.github/upstream-workflows/` so GitHub cannot execute them. Only `.github/workflows/fastdb-ci.yml` remains active. Audit this directory on every upstream merge before pushing.
-4. No upstream engine, parser, bindings, or CLI implementation changes. The frontend also directly depends on the pinned workspace parser/extension crates for AST lowering and statically linked pure accessors; registration uses the documented unsafe startup extension context API, which is freed before exposing the connection.
+4. One approved engine exception is recorded below; upstream parser, bindings and CLI implementation files remain unchanged. The frontend also directly depends on the pinned workspace parser/extension crates for AST lowering and statically linked pure accessors; registration uses the documented unsafe startup extension context API, which is freed before exposing the connection.
+
+## Approved core exception: trigger interruption
+
+The user explicitly approved candidate 660a61afb947121fa8abf346ed600c780dfe123c
+on 2026-09-14. It was integrated unchanged as ded389aea. The isolated patch in
+core/vdbe/execute.rs preserves StepResult::Interrupt through OpProgram while
+retaining Busy for actual contention and saving subprogram state in both cases.
+The frontend cannot safely distinguish these outcomes after the old mapping.
+No storage format or public API changes are introduced.
+
+The previously ignored after-write trigger-cancellation regression is enabled.
+The isolated candidate passed 98 pinned upstream trigger tests and its full
+FastDB scoped suite; see [review evidence](docs/trigger-interrupt-review.md).
+Combined-current-source verification is recorded separately after integration.
+On upstream upgrades, check whether the fix is present before removing this
+exception; preserve the regression and revalidate affected trigger behavior.
 
 The root planning directory is not a Git repository. The ancestry-preserving checkout lives in `turso/`; product source is `turso/fastdb/`.
 
