@@ -10,7 +10,10 @@ ff0a78c7e37097404cc809a684ed6d2198a062dab0c9be45a863c74ad939fb30.
 The release remains a draft, not public delivery.
 
 Hosted CI 34862181988 passed for integrated-core source f41e2d177. The later
-release-preparation run 34863800320 is pending as of this staging record.
+release-preparation run 34863800320 passed: 678 Rust tests with zero ignored,
+106 Node/application tests, formatting, Clippy and strict TypeScript. Log:
+/tmp/fastdb-1.0.0-hosted.log. Draft source and both uploaded asset digests were
+rechecked against local files after CI completed. Publication approval remains.
 
 ## Final archive and Rust consumer
 
