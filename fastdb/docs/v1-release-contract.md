@@ -31,9 +31,9 @@ specific repair task within its row; it does not add a new qualification program
 
 | ID | Required outcome | Evidence already available | Remaining concrete work |
 |---|---|---|---|
-| S1 | Pinned dialect and value semantics | Differential SQL suites; typed value, alias, expression and serialization regressions | [Query matrix](v1-query-matrix.md) and [acceptance review](v1-language-acceptance.md) are written; complete the current scoped run including the combined example workflow |
-| S2 | Document/index consistency | Full scoped suite passed with 674 Rust tests and 103 Node tests; integrity audits and failed-write regressions | Include that scoped check on the final implementation candidate; repair any actual candidate regression |
-| S3 | Transaction and recovery behavior | Bounded process-kill tests, interrupted statement checks and explicit transaction reports | [Selected commit/checkpoint I/O evidence passed](recovery-io-evidence.md); integrate the validated trigger Interrupt-to-Busy fix after core-exception review |
+| S1 | Pinned dialect and value semantics | Differential SQL suites; typed value, alias, expression and serialization regressions | [Query matrix](v1-query-matrix.md) and [acceptance review](v1-language-acceptance.md) accepted with the passing scoped run including the combined example workflow |
+| S2 | Document/index consistency | Integrated scoped suite passed with 678 Rust tests, zero ignored, and 106 Node tests; integrity audits and failed-write regressions | Include that scoped check on the final implementation candidate; repair any actual candidate regression |
+| S3 | Transaction and recovery behavior | Bounded process-kill tests, interrupted statement checks and explicit transaction reports | [Selected commit/checkpoint I/O evidence passed](recovery-io-evidence.md); [approved trigger fix integrated and verified](trigger-interrupt-review.md); include it in final artifacts |
 | S4 | Backup and upgrade | Offline restore procedure; released preview.1 to preview.2 upgrade rehearsal | [Preview.2-to-current and offline restore passed](v1-upgrade-restore-evidence.md); repeat upgrade smoke against the final packaged artifact under S6 |
 | S5 | Execution/resource controls | Input, candidate/result and deadline controls; cancellation and lifecycle tests | [Scope reconciled](v1-resource-scope.md): retain existing bounded-control tests at final acceptance; streaming and a global allocator cap are not explicit V1 requirements |
 | S6 | Installable clients/tools | Published Linux x64 preview bundles; exact Node 22/24 package and TypeScript checks; standalone Rust evidence | Produce final candidate artifacts and notices, identify advertised platforms, test those artifacts, then publish |
@@ -44,7 +44,7 @@ S7's missing measurement is now complete; see the
 S4's current implementation rehearsal also passed; see
 [upgrade and restore evidence](v1-upgrade-restore-evidence.md). Final packaged
 binary verification remains part of S6.
-S1 and S3 still require their identified work before a completion claim.
+S1 and S3 implementation milestones are accepted. Final artifact checks and publication remain open under S6.
 The [S1 acceptance index](v1-language-acceptance.md) maps the fourteen FastQL
 acceptance bullets to existing evidence and three bounded review actions.
 This document does not silently waive their gaps. The historical [gate review](v1-gates.md)

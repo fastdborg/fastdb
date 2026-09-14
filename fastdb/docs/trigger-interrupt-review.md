@@ -3,7 +3,7 @@
 Approved explicitly by the user on 2026-09-14 and integrated unchanged as
 ded389aea. The patch inventory is in ../UPSTREAM.md. The original isolated
 validation below remains applicable to the unchanged core patch; current
-combined-source verification is running and is not yet claimed complete.
+combined-source verification passed as recorded below.
 
 Combined verification completed after integration: 678 Rust tests passed with
 zero ignored, 106 Node/application tests passed, formatting, Clippy and strict
@@ -33,5 +33,5 @@ were disabled; test scope and debug assertions were preserved.
 
 This validates the named defect and the required surrounding suites. It is not
 an interrupted commit/checkpoint or arbitrary cancellation-boundary guarantee.
-Acceptance requires recording the core exception in UPSTREAM.md and integrating
-this isolated candidate. Main and published release artifacts remain unchanged.
+The approved exception is recorded in UPSTREAM.md and integrated into main.
+Published preview artifacts remain unchanged and predate this fix.
