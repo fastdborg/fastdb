@@ -25,7 +25,7 @@ remains separate.
 | 2. Grammar and parameter ambiguities | parser/src/tests.rs; tests/tests/writes.rs; tests/tests/sql_compat.rs; bindings/node/test.cjs | Reviewed grammar assertions plus focused both-client runtime binding regression; see below |
 | 3. Collection versus relational CREATE | tests/tests/catalog.rs; tests/tests/persistence.rs; parser/src/tests.rs | Reviewed: sql_boundaries_and_ordinary_tables verifies native integer primary keys after bare IF NOT EXISTS and CREATE AS SELECT; info_is_logical_and_if_not_exists_never_converts_models asserts the existing document model survives a column-list IF NOT EXISTS; parser tests distinguish the three CREATE routes |
 | 4. Record construction and direct targets | tests/tests/writes.rs; bindings/node/test.cjs | Reviewed: fixed/dynamic construction, distinct integer/string keys, wrong-target rejection, extractor types and direct-target versus reference projection; focused both-client regression passed |
-| 5. Document examples with setup | tests/tests/writes.rs; tests/tests/checks.rs | Compare the master-plan examples with executable fixtures |
+| 5. Document examples with setup | bindings/node/test.cjs | FastQL V1 document examples compose with explicit setup in both clients passes the combined workflow described below |
 | 6. Missing/null and nested mutation | tests/tests/expressions.rs; tests/tests/writes.rs; parser/src/tests.rs | Reviewed: document_paths_preserve_null_presence_and_typed_values distinguishes null presence and missing paths, preserves a record through quoted dotted-key/array access, and rejects unsupported path forms; writes assertions preserve literal dotted keys, reject invalid parents/duplicate assignments/ID mutation, and check index removal after UNSET; parser rejects duplicate object keys |
 | 7. Index consistency and recovery | tests/tests/persistence.rs; tests/tests/integrity.rs; tests/tests/crash_stress.rs; frontend/src/recovery_io.rs | Reviewed assertions cover insert/patch/delete index lookups, failed unique writes, rollback, reopen and process-kill recovery; crash_stress checks expected documents and absent original/archived index entries after each recovered batch. Reuse S2/S3 evidence; the trigger exception remains separately open |
 | 8. Lossless typed values | tests/tests/persistence.rs; tests/tests/transfer.rs; bindings/node/test.cjs | Reviewed: persisted int64/binary/boolean/object round trips, distinct numeric/text record keys, native integer primary keys, portable round trips of all five vector encodings, and Node typed-value/record-identity assertions |
@@ -38,8 +38,8 @@ remains separate.
 
 ## Remaining bounded S1 work
 
-1. Complete item 5 with one executable document-example workflow using explicit
-   setup and required fields; map its assertions to the master-plan examples.
+1. Include the completed item 5 workflow at the next scoped milestone; its
+   focused run passes and its assertions are mapped below.
 2. Reconcile the current SELECT/write support with the V1 capability table:
    filters, projections, joins, ordering, pagination and direct record targets.
    Distinguish native rejection, implemented collection support and an actual
@@ -136,3 +136,30 @@ completed successfully: 677 Rust tests passed with one known ignored trigger
 test, 105 Node/application tests, formatting, Clippy and strict TypeScript.
 Log: /tmp/fastdb-deferred-scoped.log. This closes the reproduced item 13
 diagnostic gap; it does not enable any deferred feature.
+
+## Combined document-example workflow
+
+The Node regression `FastQL V1 document examples compose with explicit setup in
+both clients` passed on 2026-09-14 with Node 24 (log /tmp/fastdb-v1-examples.log).
+It uses the master-plan users/posts examples with explicit collection setup,
+required title/name validation, optional typed fields, a unique name index and
+an author-reference index. Both synchronous and worker clients execute the same
+workflow. The mappings are:
+
+- Optional fields and document inserts: setup declares every validator needed by
+  the fixture before inserting Alice and the referenced post.
+- Atomic changes: parameterized nested SET, object patch, array::append and UNSET
+  execute together; fetched author assertions check their resulting values and
+  actual field absence.
+- Queries and links: the author JOIN filters with a parameter and uses explicit
+  ordering/pagination; forward fetch returns the expected post/author values.
+- ID UPSERT: changing the title retains the omitted published field, proving
+  shallow patch behavior. An invalid empty title fails validation.
+- Direct targets and transactions: DELETE returns through the ordinary API,
+  direct SELECT observes absence, ROLLBACK restores the post, and both collection
+  integrity audits pass after the complete workflow.
+
+This closes the combined document-example fixture task. Earlier focused tests
+remain the evidence for individual grammar/value branches. The added test has
+not yet been included in a new full scoped run; retain the last full-run counts
+until that milestone finishes.

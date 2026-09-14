@@ -5,6 +5,47 @@ const { Database, Record, Vector } = require('./index.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+test('FastQL V1 document examples compose with explicit setup in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      for (const sql of [
+        'CREATE TABLE users', 'CREATE TABLE posts',
+        'DEFINE FIELD name ON users TYPE string REQUIRED',
+        'DEFINE FIELD nickname ON users TYPE string NULLABLE',
+        'DEFINE FIELD profile ON users TYPE object',
+        'DEFINE FIELD profile.city ON users TYPE string',
+        'DEFINE FIELD title ON posts TYPE string REQUIRED CHECK(length(title)>0)',
+        'DEFINE FIELD author ON posts TYPE record<users>',
+        'DEFINE FIELD published ON posts TYPE boolean',
+        'CREATE UNIQUE INDEX user_name ON users(name)',
+        'CREATE INDEX post_author ON posts(author)',
+        "INSERT INTO users {id:users:u1,name:'Alice',nickname:null,profile:{city:'Bangkok'},tags:[]}",
+        "INSERT INTO posts {id:posts:p1,title:'Hello',author:users:u1,published:false}",
+      ]) await db.execute(sql);
+      await db.execute('UPDATE users SET profile.city=$city WHERE id=users:u1 RETURNING *', {$city:'Paris'});
+      await db.execute("UPDATE posts {title:'Updated title',published:true} WHERE id=posts:p1 RETURNING *");
+      await db.execute('UPDATE users SET tags=array::append(tags,$tag) WHERE id=users:u1 RETURNING *', {$tag:'fastdb'});
+      await db.execute('UPDATE users UNSET nickname WHERE id=users:u1 RETURNING *');
+      assert.deepEqual(await db.all('SELECT p.title,u.name FROM posts p JOIN users u ON p.author=u.id WHERE u.name=$name ORDER BY p.title,p.id LIMIT 20 OFFSET 0', {$name:'Alice'}), [['Updated title','Alice']]);
+      const [title,author] = await db.exactlyOne('SELECT p.title,record::fetch(p.author) FROM posts p WHERE p.id=posts:p1');
+      assert.equal(title,'Updated title');
+      assert.equal(author.profile.city,'Paris');
+      assert.deepEqual(author.tags,['fastdb']);
+      assert.equal(Object.hasOwn(author,'nickname'),false);
+      await db.execute("UPSERT posts {id:posts:p1,title:'Hello again',author:users:u1} RETURNING *");
+      assert.equal((await db.collection('posts').get('p1')).published,true);
+      await assert.rejects(async()=>db.execute("UPDATE posts:p1 {title:''}"), e=>e.code==='FDB_VALIDATION');
+      await db.execute('BEGIN');
+      await db.execute('DELETE FROM posts:p1 RETURNING *');
+      assert.deepEqual(await db.all('SELECT posts:p1'),[]);
+      await db.execute('ROLLBACK');
+      assert.equal((await db.collection('posts').get('p1')).title,'Hello again');
+      await db.checkCollectionIntegrity('users');
+      await db.checkCollectionIntegrity('posts');
+    } finally { await db.close(); }
+  }
+});
 test('V1 record targets and row cardinality stay explicit in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
