@@ -1124,3 +1124,6 @@ mod stack_tests {
             .unwrap();
     }
 }
+
+#[cfg(all(test, unix))]
+mod recovery_io;
