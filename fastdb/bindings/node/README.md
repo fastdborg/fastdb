@@ -363,4 +363,4 @@ This is not a hard promise-return deadline. Native progress checks observe expir
 parsing, non-engine work, cleanup and response transport can exceed the requested
 time, and completion can win a race. Synchronous clients do not expose this option.
 
-For typed collection CRUD helpers, see the [document SDK guide](../../docs/node-sdk.md).
+For typed collection CRUD helpers, see the [document SDK guide](https://github.com/fastdborg/fastdb/blob/main/fastdb/docs/node-sdk.md).

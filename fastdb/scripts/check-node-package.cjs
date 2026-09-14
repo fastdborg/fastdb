@@ -40,6 +40,17 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
 (async () => {
   for(const client of [new Database(),await AsyncDatabase.open()]) {
     try {
+      const people = client.collection('sdk_people');
+      const alice = await people.upsert('alice', {name:'Alice', active:true});
+      assert.deepEqual(alice.id, new Record('sdk_people','alice'));
+      assert.deepEqual(await people.get('alice'), alice);
+      assert.equal((await people.merge('alice',{active:false})).name,'Alice');
+      await client.execute('BEGIN');
+      await people.delete('alice');
+      await client.execute('ROLLBACK');
+      assert.equal((await people.all()).length,1);
+      const generated = await people.insert({name:'Generated',active:true});
+      assert.deepEqual(await people.delete(generated.id.key),generated);
       await client.execute('CREATE TABLE tuple_docs');
       const tupleRecord = new Record('tuple_docs',9223372036854775807n);
       const tuplePayload = {items:[true,Buffer.from([0,255]),-9223372036854775808n]};
@@ -776,6 +787,13 @@ Vector.sparse32Entries(3, entries);
 Vector.sparse32Entries(3, [[0,1n]]);
 // @ts-expect-error components require numbers
 Vector.bit1([1n]);
+interface Person {name:string; active:boolean;}
+const people = db.collection<Person>('people');
+const personName: string = people.insert({name:'Alice',active:true}).name;
+const personId: Record | undefined = people.get('alice')?.id;
+// @ts-expect-error name is a string
+people.insert({name:42,active:true});
+void personName; void personId;
 const limits: IntegrityLimits = {maxDocuments: 1n};
 const audit: IntegrityReport = db.checkCollectionIntegrity('docs', limits);
 const profile: ProfiledQuery = db.profileSelect('SELECT 1');
@@ -800,6 +818,11 @@ db.close();
 async function open() {
   const db = await AsyncDatabase.open();
   const options: import('@fastdb/node').ExecuteOptions = {signal:new AbortController().signal,timeoutMs:1000};
+  const people = db.collection<Person>('people');
+  const person = await people.upsert('alice',{name:'Alice',active:true},options);
+  const personName: string = person.name;
+  await people.merge(person.id.key,{active:false},options);
+  void personName;
   await db.selectWithLimits('SELECT 1',resultBudget,{},options);
   await db.profileSelectWithLimits('SELECT 1',resultBudget,{},options);
   await db.writeWithResultLimits('DELETE FROM docs',resultBudget,{},options);

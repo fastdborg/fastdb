@@ -7166,3 +7166,13 @@ generated/numeric IDs, binary/nested values, quoted fields and relational reject
 Full scoped check passed: 674 Rust tests, one known ignored, 103 Node/application
 tests, formatting, Clippy and strict TypeScript. Log: /tmp/fastdb-sdk-check.log.
 Published preview.2 assets are unchanged; SDK helpers require this newer source.
+
+## SDK installed-package milestone — 2026-09-14
+
+The package smoke now exercises collection helpers through installed @fastdb/node
+in both clients: auto-creation/upsert, read, merge, delete, generated IDs and
+transaction rollback. Installed declarations compile typed sync/async consumers
+and reject invalid field types. Node 22.0.0 and 24.19.0 both passed the complete
+package smoke. Logs: /tmp/fastdb-sdk-package22.log and /tmp/fastdb-sdk-package24.log.
+The packaged README now uses a repository URL for the SDK guide. No database
+implementation changed, and no full-suite rerun or new release is claimed.
