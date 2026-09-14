@@ -32,7 +32,7 @@ recovery-io-evidence.md. Final-candidate acceptance remains separate.
 | 10. SQL-shaped write validation | tests/tests/writes.rs; tests/tests/insert_select.rs; tests/tests/checks.rs | Inspect validation/index failure assertions on supported write routes |
 | 11. Field metadata lifecycle | tests/tests/catalog.rs; tests/tests/persistence.rs | Reviewed: field_removal_is_metadata_only_and_incompatible_definitions_fail preserves stored name and unique index after REMOVE FIELD; typed_round_trips_and_definition_build_failure rejects a conflicting definition against existing data and then successfully installs the correct definition |
 | 12. Row cardinality and helpers | tests/tests/returning.rs; bindings/node/test.cjs | Reviewed: explicit zero/one/many assertions for all/first/exactlyOne and direct record reads in both clients; existing RETURNING tests cover one, many and empty rows, typed metadata and projection-failure rollback |
-| 13. Deferred syntax errors | parser/; docs/contracts.md | Concrete gap reproduced: documented deferred declarations and brace projection reject with generic FDB_ENGINE syntax errors rather than feature/version errors; see below |
+| 13. Deferred syntax errors | frontend/src/deferred.rs; tests/tests/deferred.rs | Implemented version-specific FDB_UNSUPPORTED for documented future statement forms; focused regression and full scoped acceptance passed |
 | 14. SDK and encoding version review | bindings/node/index.d.ts; docs/node-sdk.md; docs/transfer.md; frontend/src/value.rs | Embedded value boundaries reviewed below; final SDK artifact identity/version remains S6 work; cloud wire protocol follows cloud scope |
 
 ## Remaining bounded S1 work
@@ -121,3 +121,16 @@ Item 13 explicitly asks for feature/version errors. Its bounded repair is to
 classify recognized deferred grammar at the FastDB boundary and regression-test
 these examples, preserving ordinary SQL/contextual identifier dispatch. Do not
 enable the features or reserve arbitrary identifiers to satisfy this requirement.
+
+Repair: the frontend now identifies unquoted leading declaration keywords and
+direct-record brace projections before native execution. It returns
+FDB_UNSUPPORTED with the planned V2/V3 scope for relation/search/function
+declarations, changefeed declarations/inspection/removal and procedural LET/DO.
+Function namespace rejection remains the existing FDB_UNSUPPORTED behavior.
+The focused deferred.rs regression passed on 2026-09-14, checking nine forms,
+an intact active transaction, preserved prior data, and ordinary SQL identifier
+and string controls. Log: /tmp/fastdb-deferred-test.log. Full scoped verification
+completed successfully: 677 Rust tests passed with one known ignored trigger
+test, 105 Node/application tests, formatting, Clippy and strict TypeScript.
+Log: /tmp/fastdb-deferred-scoped.log. This closes the reproduced item 13
+diagnostic gap; it does not enable any deferred feature.

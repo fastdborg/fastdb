@@ -4,6 +4,7 @@ mod bundled;
 pub use budget::ResultLimits;
 mod catalog;
 mod check;
+mod deferred;
 mod expression;
 mod functions;
 mod guard;
@@ -833,7 +834,10 @@ impl Connection {
                     limits,
                 )
             }),
-            Statement::Sql(sql) => self.sql(&sql, params),
+            Statement::Sql(sql) => {
+                deferred::check(&sql)?;
+                self.sql(&sql, params)
+            }
         }
     }
     pub(crate) fn guard_native_sql(&self, sql: &str) -> Result<()> {
