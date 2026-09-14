@@ -1,7 +1,7 @@
 # FastDB embedded prototype
 
 Preview.2 is [published](https://github.com/fastdborg/fastdb/releases/tag/fastdb-v0.1.0-preview.2).
-Continue with [next tasks toward V1](docs/next-tasks.md); the [preview checklist](docs/preview-release.md) is complete.
+See the [stable release target](docs/v1-release-contract.md) and [next tasks toward V1](docs/next-tasks.md); the [preview checklist](docs/preview-release.md) is complete.
 
 An initial FastQL frontend over pinned Rust Turso. **V1 is still in development.** See [status](docs/status.md), [contracts](docs/contracts.md), and [engine provenance](UPSTREAM.md).
 

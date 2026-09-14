@@ -8,7 +8,7 @@ it does not reopen preview acceptance or replace the parent FastDB.md scope.
 | N1 | Ship preview.2 with automatic collections | Updated assets pass exact-package checks and are published with source identity and checksums | Complete: [release](https://github.com/fastdborg/fastdb/releases/tag/fastdb-v0.1.0-preview.2) |
 | N2 | Deliver a typed document SDK | Collection CRUD methods work in both Node clients, with TypeScript examples and transaction/error regression checks | Complete: [SDK contract](node-sdk.md), both-client CRUD regression and strict TypeScript checks |
 | N3 | Verify SDK consumption and resolve usage blockers | Installed packages expose collection CRUD and strict TypeScript declarations on supported Node versions; reproduced blockers are resolved | Complete for the delivered SDK: Node 22/24 package checks passed; further actual bugs remain actionable |
-| N4 | Freeze stable V1 behavior | A concise supported contract covers SQL/documents, validation/indexes, values, transactions, links, bundled functions/vectors, tools and clients; each remaining scope gap is named | Open |
+| N4 | Freeze stable V1 behavior | A concise supported contract covers the full embedded scope and resolves its named remaining gaps | [Target contract and finite requirements](v1-release-contract.md) written; S1/S3/S5 scope reconciliation remains open |
 | N5 | Close stable release evidence and ship | Required master-plan evidence below is linked to a fixed candidate, remaining failures are resolved, and supported artifacts are published | Open |
 
 N5 evidence covers the master plan's seven required areas: pinned SQL differential
