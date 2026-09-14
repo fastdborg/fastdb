@@ -5,6 +5,21 @@ const { Database, Record, Vector } = require('./index.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+test('V1 parameter spellings bind through native and document routes in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute('CREATE TABLE docs');
+      for (const [expression, key] of [['?', '?1'], ['?1', '?1'], [':value', ':value'], ['@value', '@value'], ['$value', '$value']]) {
+        const parameters = {[key]: 9223372036854775807n};
+        assert.deepEqual(await db.exactlyOne(`SELECT ${expression} AS value`, parameters), [9223372036854775807n]);
+        assert.deepEqual((await db.execute(`INSERT INTO docs(n) VALUES(${expression}) RETURNING n`, parameters)).rows, [[9223372036854775807n]]);
+        assert.deepEqual(await db.exactlyOne(`SELECT count(*) FROM docs WHERE n=${expression}`, parameters), [BigInt((await db.all('SELECT n FROM docs')).length)]);
+      }
+      assert.deepEqual(await db.exactlyOne('SELECT ?1, :value, @value, $value', {'?1':1n, ':value':2n, '@value':3n, '$value':4n}), [1n,2n,3n,4n]);
+    } finally { await db.close(); }
+  }
+});
 test('native typed parameters and values preserve identities and binary64', () => {
   const db = new Database();
   db.execute('CREATE TABLE docs');
