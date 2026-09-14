@@ -27,3 +27,5 @@ During a milestone, use focused tests. Run the full scoped suite at its code
 acceptance boundary; package/platform checks only for affected artifacts.
 Do not add speculative query combinations or platforms. Record actual application
 limitations and fix those that block the selected workflow.
+
+N5 progress: [preview.1 → preview.2 released-binary upgrade rehearsal](preview-upgrade-evidence.md) passed.
