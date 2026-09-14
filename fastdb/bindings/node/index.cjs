@@ -201,6 +201,7 @@ function closedError(message = 'database is closed') {
   return error;
 }
 class Database {
+  collection(name) { return collectionClient(this, name, false); }
   #handle; #closed = false;
   constructor(path = ':memory:', options = {}) { this.#handle = new NativeDatabase(path, ...connectionOptions(options)); }
   get #native() {
@@ -265,6 +266,7 @@ exports.Vector = Vector;
 
 const asyncConstruction = Symbol('AsyncDatabase');
 class AsyncDatabase {
+  collection(name) { return collectionClient(this, name, true); }
   #interruptKey;
   #worker; #pending = new Map(); #next = 0; #bytes = 0;
   #ready; #readyResolve; #readyReject; #exited;
@@ -408,3 +410,50 @@ class AsyncDatabase {
   }
 }
 exports.AsyncDatabase = AsyncDatabase;
+
+// Collection identifiers are quoted; document values and record keys are bound.
+function collectionClient(db, name, asynchronous) {
+  if (typeof name !== 'string' || !name.length || name.includes('\0')) throw new TypeError('collection name must be a nonempty string without NUL');
+  const quote = value => '"' + value.replaceAll('"', '""') + '"';
+  const table = quote(name);
+  const record = key => new Record(name, key);
+  const document = value => {
+    if (!value || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new TypeError('expected a document object');
+    return value;
+  };
+  const fields = value => {
+    document(value);
+    if (Object.hasOwn(value, 'id')) throw new TypeError('pass the record key separately; document must omit id');
+    return Object.entries(value);
+  };
+  const run = (sql, params, options, many = false) => {
+    const project = result => many ? result.rows.map(row => row[0]) : result.rows[0]?.[0];
+    const check = info => {
+      if (info.rows[0]?.[0]?.model !== 'document') throw new TypeError('collection methods require a document collection');
+    };
+    const missing = error => { if (error.code !== 'FDB_NOT_FOUND') throw error; };
+    if (asynchronous) return (async () => {
+      try { check(await db.execute(`INFO FOR TABLE ${table}`, {}, options)); } catch (error) { missing(error); }
+      return project(await db.execute(sql, params, options));
+    })();
+    try { check(db.execute(`INFO FOR TABLE ${table}`)); } catch (error) { missing(error); }
+    return project(db.execute(sql, params));
+  };
+  return Object.freeze({
+    all(options) { return run(`SELECT * FROM ${table}`, {}, options, true); },
+    get(key, options) { return run(`SELECT * FROM ${table} WHERE id=$id`, {$id:record(key)}, options); },
+    insert(value, options) { return run(`INSERT INTO ${table} DOCUMENT $doc RETURNING *`, {$doc:document(value)}, options); },
+    upsert(key, value, options) {
+      const params = {$id:record(key)};
+      const body = fields(value).map(([field, v], i) => { params[`$v${i}`] = v; return `${quote(field)}:$v${i}`; });
+      return run(`UPSERT ${table} {id:$id${body.length ? ',' + body.join(',') : ''}} RETURNING *`, params, options);
+    },
+    merge(key, value, options) {
+      const params = {$id:record(key)};
+      const sets = fields(value).map(([field, v], i) => { params[`$v${i}`] = v; return `${quote(field)}=$v${i}`; });
+      return sets.length ? run(`UPDATE ${table} SET ${sets.join(',')} WHERE id=$id RETURNING *`, params, options)
+        : run(`SELECT * FROM ${table} WHERE id=$id`, params, options);
+    },
+    delete(key, options) { return run(`DELETE FROM ${table} WHERE id=$id RETURNING *`, {$id:record(key)}, options); },
+  });
+}

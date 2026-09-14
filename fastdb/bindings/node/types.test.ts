@@ -166,3 +166,22 @@ function migrationErrorDetails(error: unknown) {
   }
 }
 void migrationErrorDetails;
+
+interface Person { name: string; active: boolean; }
+const people = db.collection<Person>('people');
+const insertedPerson = people.insert({name:'Alice', active:true});
+const personId: Record = insertedPerson.id;
+const foundPerson: string | undefined = people.get('alice')?.name;
+people.merge('alice', {active:false});
+// @ts-expect-error name is a string
+people.insert({name:123, active:true});
+// @ts-expect-error record keys are string or bigint
+people.get(1);
+async function collectionTypes(client: AsyncDatabase) {
+  const collection = client.collection<Person>('people');
+  const result = await collection.upsert('alice', {name:'Alice', active:true}, {timeoutMs:1000});
+  const name: string = result.name;
+  const removed = await collection.delete(result.id.key);
+  void name; void removed;
+}
+void personId; void foundPerson; void collectionTypes;

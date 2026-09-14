@@ -7151,3 +7151,18 @@ matched 0c35592085be2d9f4bafe0164e09405856d77cd09836842c8068d358b60de6d5.
 Evidence is retained in dist/fastdb-preview.2-linux-x64/evidence. Source CI passed
 in run 34336044586. Preview.1 remains available. Stable V1 is not complete.
 See [next tasks](next-tasks.md) for the finite continuation list.
+
+## Typed Node collection SDK — 2026-09-14
+
+N2 now follows the user's SDK direction instead of waiting for an existing app.
+Database and AsyncDatabase expose collection<T>(name) with all/get/insert/upsert/
+merge/delete helpers. Values and record keys are bound; identifiers are quoted.
+Methods return documents with typed IDs, preserve shallow-merge semantics and
+reject relational-table targets. Async options forward cancellation/deadlines.
+See [SDK contract](node-sdk.md) for metadata-check and transaction ownership limits.
+
+Both-client focused CRUD regression passed, including rollback, missing records,
+generated/numeric IDs, binary/nested values, quoted fields and relational rejection.
+Full scoped check passed: 674 Rust tests, one known ignored, 103 Node/application
+tests, formatting, Clippy and strict TypeScript. Log: /tmp/fastdb-sdk-check.log.
+Published preview.2 assets are unchanged; SDK helpers require this newer source.

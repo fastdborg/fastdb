@@ -41,6 +41,7 @@ export interface Migration { version: bigint; name: string; sql: string; }
 export interface MigrationReport { alreadyApplied: number; applied: bigint[]; transaction: Transaction; }
 export interface ImportReport { imported: number; transaction: Transaction; }
 export class Database {
+  collection<T extends object = Document>(name: string): Collection<T>;
   constructor(path?: string, options?: DatabaseOptions);
   close(): void;
   migrate(migrations: Migration[]): MigrationReport;
@@ -61,6 +62,7 @@ export class Database {
 
 export interface ExecuteOptions { signal?: AbortSignal; timeoutMs?: number; }
 export class AsyncDatabase {
+  collection<T extends object = Document>(name: string): AsyncCollection<T>;
   private constructor();
   static open(path?: string, options?: DatabaseOptions): Promise<AsyncDatabase>;
   interrupt(): boolean;
@@ -79,4 +81,24 @@ export class AsyncDatabase {
   all(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[][]>;
   first(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[] | undefined>;
   exactlyOne(sql: string, parameters?: Parameters, options?: ExecuteOptions): Promise<Value[]>;
+}
+
+export type Document = { [field: string]: Value };
+export type StoredDocument<T> = Omit<T, 'id'> & { id: Record };
+/** Generic types describe application expectations; use field validation for runtime enforcement. */
+export interface Collection<T extends object = Document> {
+  all(): StoredDocument<T>[];
+  get(key: string | bigint): StoredDocument<T> | undefined;
+  insert(value: T): StoredDocument<T>;
+  upsert(key: string | bigint, value: Partial<Omit<T, 'id'>>): StoredDocument<T>;
+  merge(key: string | bigint, value: Partial<Omit<T, 'id'>>): StoredDocument<T> | undefined;
+  delete(key: string | bigint): StoredDocument<T> | undefined;
+}
+export interface AsyncCollection<T extends object = Document> {
+  all(options?: ExecuteOptions): Promise<StoredDocument<T>[]>;
+  get(key: string | bigint, options?: ExecuteOptions): Promise<StoredDocument<T> | undefined>;
+  insert(value: T, options?: ExecuteOptions): Promise<StoredDocument<T>>;
+  upsert(key: string | bigint, value: Partial<Omit<T, 'id'>>, options?: ExecuteOptions): Promise<StoredDocument<T>>;
+  merge(key: string | bigint, value: Partial<Omit<T, 'id'>>, options?: ExecuteOptions): Promise<StoredDocument<T> | undefined>;
+  delete(key: string | bigint, options?: ExecuteOptions): Promise<StoredDocument<T> | undefined>;
 }

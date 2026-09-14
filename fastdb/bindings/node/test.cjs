@@ -3344,3 +3344,34 @@ test('document INSERT and UPSERT automatically create collections in both client
     } finally { await db.close(); }
   }
 });
+
+test('collection SDK supports typed CRUD, merge, rollback and native-table rejection', async () => {
+  const {AsyncDatabase} = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      const people = db.collection('people');
+      const alice = await people.upsert('alice', {name:'Alice', profile:{active:true}, bytes:Buffer.from([0,255])});
+      assert.deepEqual(alice.id, new Record('people','alice'));
+      assert.deepEqual(await people.get('alice'), alice);
+      assert.equal(await people.get('absent'), undefined);
+      const changed = await people.merge('alice', {name:'Bob'});
+      assert.deepEqual(changed.profile, {active:true});
+      assert.equal(changed.name,'Bob');
+      await db.execute('BEGIN');
+      await people.delete('alice');
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await people.get('alice'), changed);
+      assert.equal((await people.all()).length,1);
+      const generated = await people.insert({name:'Generated'});
+      assert(generated.id instanceof Record);
+      assert.deepEqual(await people.delete(generated.id.key),generated);
+      const numeric = await people.upsert(1n, {'quoted"field':'safe'});
+      assert.equal(numeric['quoted"field'],'safe');
+      assert.equal(await people.merge('absent',{name:'Nobody'}),undefined);
+      await db.execute('CREATE TABLE native(n INTEGER)');
+      await db.execute('INSERT INTO native VALUES(1)');
+      await assert.rejects(async()=>db.collection('native').delete(1n),/document collection/);
+      assert.equal((await db.all('SELECT * FROM native')).length,1);
+    } finally { await db.close(); }
+  }
+});

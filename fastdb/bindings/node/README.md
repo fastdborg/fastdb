@@ -362,3 +362,5 @@ not cancel later requests. `close()` has no timeout option.
 This is not a hard promise-return deadline. Native progress checks observe expiry;
 parsing, non-engine work, cleanup and response transport can exceed the requested
 time, and completion can win a race. Synchronous clients do not expose this option.
+
+For typed collection CRUD helpers, see the [document SDK guide](../../docs/node-sdk.md).
