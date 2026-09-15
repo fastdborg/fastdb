@@ -1,3 +1,4 @@
+mod cloud;
 mod input;
 #[cfg(unix)]
 mod signals;
@@ -53,6 +54,9 @@ fn output_with_metrics(
     Ok(failed)
 }
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("cloud") {
+        return cloud::run(std::env::args().skip(2).collect());
+    }
     let mut path = None;
     let mut input_limit = None;
     let mut write_buffer_limits = None;

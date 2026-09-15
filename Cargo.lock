@@ -1986,9 +1986,11 @@ version = "1.0.0"
 dependencies = [
  "fastdb",
  "fastql-parser",
+ "reqwest",
  "rustyline",
  "serde_json",
  "signal-hook",
+ "uuid",
 ]
 
 [[package]]
@@ -4928,7 +4930,9 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "h2",
  "http",
  "http-body",
