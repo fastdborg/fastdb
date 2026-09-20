@@ -5,7 +5,7 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const LIMIT: usize = 64 * 1024;
-const HELP: &str = "fastdb cloud whoami\nfastdb cloud db create NAME\nfastdb cloud db list\nfastdb cloud db show UUID\nfastdb cloud db delete UUID\nfastdb cloud db access UUID\n\nSet FASTDB_API_KEY. FASTDB_CLOUD_URL defaults to https://cloud.fastdb.org.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request.\nQueries need query and databases:read scopes. JSON output goes to stdout.";
+const HELP: &str = "fastdb cloud whoami\nfastdb cloud db create NAME\nfastdb cloud db list\nfastdb cloud db show UUID\nfastdb cloud db delete UUID\nfastdb cloud db access UUID\nfastdb cloud db read UUID < query.sql\n\nSet FASTDB_API_KEY. FASTDB_CLOUD_URL defaults to https://cloud.fastdb.org.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request.\nAccess needs query and databases:read scopes; read needs only query.\nRead submits stdin once without a replay receipt; another read may see newer data. JSON output goes to stdout.";
 
 struct Cloud {
     http: Client,
@@ -116,6 +116,32 @@ impl Cloud {
             serde_json::to_string(value)?.replace(&self.key, "[redacted]")
         );
         Ok(())
+    }
+    fn read(&self, id: &str) -> Result<std::process::ExitCode> {
+        let path = format!("{}/read", database_path(id)?);
+        let mut sql = String::new();
+        io::stdin()
+            .take((LIMIT + 1) as u64)
+            .read_to_string(&mut sql)?;
+        if sql.len() > LIMIT {
+            return Err("Cloud input exceeds 64 KiB".into());
+        }
+        let statements =
+            fastql_parser::split_script(&sql).map_err(|_| "Invalid SQL/FastQL script")?;
+        if statements.is_empty() {
+            return Err("Read requires SQL on stdin".into());
+        }
+        if statements.len() > 32 {
+            return Err("Cloud batches allow at most 32 statements".into());
+        }
+        // Server-side native enforcement is authoritative. Do not infer read
+        // safety from a SQL prefix or fetch sequence metadata before submission.
+        let body = json!({ "statements": statements.iter().map(|statement| json!({ "sql": statement.sql })).collect::<Vec<_>>() });
+        let result = self
+            .request(Method::POST, &path, Some(&body))
+            .map_err(|error| error.message)?;
+        self.output(&result)?;
+        Ok(std::process::ExitCode::SUCCESS)
     }
     fn access(&self, id: &str) -> Result<std::process::ExitCode> {
         let path = database_path(id)?;
@@ -267,6 +293,7 @@ pub fn run(args: Vec<String>) -> Result<std::process::ExitCode> {
         ["db", "show", id] => (Method::GET, database_path(id)?, None),
         ["db", "delete", id] => (Method::DELETE, database_path(id)?, None),
         ["db", "access", id] => return cloud.access(id),
+        ["db", "read", id] => return cloud.read(id),
         _ => return Err(HELP.into()),
     };
     let result = cloud

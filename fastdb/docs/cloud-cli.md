@@ -44,3 +44,24 @@ server query execution, storage and account quotas.
 
 Generic client checks: `python3 fastdb/scripts/check-cloud-cli.py target/debug/fastdb-cli`.
 Cloudflare-backed checks live in the separate private service repository.
+
+## Optional read-only request
+
+The next CLI candidate adds a single-request command:
+
+```sh
+printf 'SELECT n FROM items WHERE id=1;\n' | fastdb cloud db read DATABASE_UUID
+```
+
+It reads SQL/FastQL from stdin and sends one authenticated POST to the database's
+`/read` endpoint. It needs the `query` scope and ownership (or a matching scoped
+key), without `databases:read` or a preliminary database-info request. Output is
+the typed JSON response. The server enforces the supported SELECT-only subset;
+write statements are rejected. Up to32statements and64KiBencoded request body
+are accepted, subject to server limits.
+
+This command creates no replay receipt and does not advance database sequence.
+It never retries automatically. Running it again may observe newer committed
+data. Use `db access` for writes and its existing receipt-backed retry behavior.
+The previously packaged September15candidate does not include this command;
+updated artifact qualification and publication remain pending.

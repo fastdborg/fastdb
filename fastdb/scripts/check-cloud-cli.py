@@ -33,6 +33,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             result = {'error': f'echo {key}'}
         elif self.path == '/v1/whoami':
             result = {'user': {'email': 'synthetic@example.test'}, 'echo': key}
+        elif self.path.endswith('/read'):
+            if mode == 'read-failed':
+                status, result = 503, {'error': 'read unavailable'}
+            else:
+                result = {'sequence': 7, 'results': []}
         elif self.path.endswith('/query'):
             query_attempts.append(value)
             if mode == 'retry' and len(query_attempts) == 1:
@@ -81,6 +86,21 @@ try:
     assert len({q['requestId'] for q in query_attempts}) == 2
     run(['db', 'access', database], 'SELECT 1; SELECT 2;\n.quit\n')
     assert len(query_attempts[-1]['statements']) == 2
+    before = len(requests)
+    result = run(['db', 'read', database], 'SELECT 1; SELECT 2;')
+    assert len(requests) == before + 1, 'read must not prefetch sequence or retry'
+    method, path, body = requests[-1]
+    assert method == 'POST' and path == f'/v1/databases/{database}/read'
+    assert set(body) == {'statements'} and len(body['statements']) == 2
+    assert json.loads(result.stdout)['sequence'] == 7
+    for sql in ['', 'x' * (64 * 1024 + 1), 'SELECT 1;' * 33]:
+        before = len(requests)
+        run(['db', 'read', database], sql, success=False)
+        assert len(requests) == before
+    mode = 'read-failed'
+    before = len(requests)
+    run(['db', 'read', database], 'SELECT 1;', success=False)
+    assert len(requests) == before + 1, 'failed read must not retry automatically'
     query_attempts.clear()
     mode = 'retry'
     result = run(['db', 'access', database], 'INSERT INTO t VALUES (1);\n.retry\n.quit\n', success=False)
