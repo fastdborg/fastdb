@@ -32,8 +32,10 @@ The user approved the exact six-file NORMAL-mode checkpoint correction, now
 integrated into this candidate. It syncs WAL frames before database backfill and
 preserves that barrier across failed asynchronous sync/retry, including automatic
 checkpoint cleanup after a committed write. The seven permanent crash-model and
-boundary regressions pass on the integrated source; combined release checks and
-exact-artifact qualification remain pending.
+boundary regressions pass on the integrated source. Combined checks pass:
+757 Rust, 121 Node/application and three C ABI tests, formatting/Clippy and
+TypeScript, plus affected-core Clippy. Hosted scoped CI run 36148357666 passes
+on integrated commit `5f4133d73`. Exact-artifact qualification remains pending.
 See the [review and before/after evidence](proposals/checkpoint-wal-sync.md).
 
 ## Intended distribution and compatibility
@@ -53,7 +55,7 @@ is not a data rollback. SQLite adoption is separate from FastDB version upgrades
 ## Remaining release evidence
 
 - [ ] Clean source/lockfile identity and hosted scoped CI.
-- [ ] Integrated checkpoint correction's native regressions and combined checks.
+- [x] Integrated checkpoint correction's native regressions and combined checks.
 - [ ] Exact seven-client artifacts, SQLite adoption and process ownership.
 - [ ] Released-version upgrade and restore checks, including stored functions.
 - [ ] Measured search/resource envelope and sustained readers/writer behavior.

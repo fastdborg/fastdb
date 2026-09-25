@@ -184,3 +184,6 @@ All seven tests pass; log `/tmp/fastdb-checkpoint-integrated.log`. The shared
 six-file core diff is byte-for-byte identical to the approved patch. Cargo.lock
 is unchanged. Full scoped verification and exact-artifact qualification follow
 in the production checklist rather than being inferred from this focused pass.
+
+Isolated integration commit:
+[`5f4133d732eb2a297bf32af2f7a3fd3c305be8c5`](https://github.com/fastdborg/fastdb/commit/5f4133d732eb2a297bf32af2f7a3fd3c305be8c5).

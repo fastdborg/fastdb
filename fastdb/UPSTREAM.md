@@ -158,6 +158,7 @@ The 2.1 candidate integrates upstream's
 checkpoint barrier plus the reviewed local failed-completion retry and automatic
 checkpoint cleanup. The combined core patch SHA-256 is
 `5154633cc2c1187efa0b3066c008ac46f1f999286fb48ccacf3a1a7743da7d88`.
+Isolated integration commit: `5f4133d732eb2a297bf32af2f7a3fd3c305be8c5`.
 It changes `core/storage/wal.rs`, `core/storage/pager.rs`, `core/vdbe/mod.rs`,
 `core/vdbe/vacuum.rs`, `core/mvcc/database/mod.rs` and
 `core/mvcc/database/checkpoint_state_machine.rs`.
