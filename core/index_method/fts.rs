@@ -2774,11 +2774,17 @@ impl IndexMethodCursor for FtsCursor {
                         {
                             let cache = self.shared_directory_cache.read();
                             if let Some(ref cached) = *cache {
-                                if cached.directory.is_consistent_with_btree().map_err(|e| {
-                                    LimboError::InternalError(format!(
-                                        "FTS cache validation failed: {e}"
-                                    ))
-                                })? {
+                                // A cached directory retains its originating pager and
+                                // snapshot. Never validate or reuse it through another
+                                // connection's view of the same database.
+                                let pager = conn.get_pager_from_database_index(&database_id)?;
+                                if Arc::ptr_eq(&cached.directory.pager, &pager)
+                                    && cached.directory.is_consistent_with_btree().map_err(|e| {
+                                        LimboError::InternalError(format!(
+                                            "FTS cache validation failed: {e}"
+                                        ))
+                                    })?
+                                {
                                     tracing::debug!(
                                         "FTS open_read: using cached directory (skipping catalog load)"
                                     );
