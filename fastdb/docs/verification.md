@@ -6093,3 +6093,10 @@ passes all 14 fixture groups (`/tmp/fastdb-sqlite-adoption-harness.json`).
 These are development-source results, not final artifact qualification. The
 separately proposed NORMAL checkpoint correction is excluded from this source;
 its approval, integration and affected regression checks remain a release gate.
+
+Hosted FastDB CI run
+[36145990461](https://github.com/fastdborg/fastdb/actions/runs/36145990461)
+also passes on preparation commit
+`61ddaaddfcc23c222eb584e50db0a0559a41e4f5`, reviewed in draft PR #9.
+This is the pre-backport preparation source; final integrated-source CI remains
+required before release.

@@ -34,8 +34,11 @@ Inspected upstream main at
 
 The review also found a separate upstream NORMAL-mode checkpoint durability fix,
 [`cc26d08508cbe045472fa3015e2bce4a389b5e06`](https://github.com/tursodatabase/turso/commit/cc26d08508cbe045472fa3015e2bce4a389b5e06).
-Its applicability to the pinned FastDB build is being tested separately; it is
-not the first-FULL-commit exception and must not be silently included in it.
+The pinned build reproduces its power-loss defect. A separately reviewed
+[candidate backport](proposals/checkpoint-wal-sync.md) also handles failed-sync
+retry and automatic-checkpoint completion on this pin. Isolated tests pass;
+user approval and shared-core integration remain pending. It is not the
+first-FULL-commit exception and must not be silently included in it.
 
 | Exception / local commit | Required behavior and regression | When to update or remove |
 |---|---|---|
