@@ -2,13 +2,7 @@
 mod dynamic;
 mod vtab_xconnect;
 use crate::index_method::backing_btree::BackingBtreeIndexMethod;
-#[cfg(all(
-    feature = "fts",
-    any(
-        not(target_family = "wasm"),
-        all(target_os = "wasi", feature = "fts_wasi")
-    )
-))]
+#[cfg(all(feature = "fts", not(target_family = "wasm")))]
 use crate::index_method::fts::{FtsIndexMethod, FTS_INDEX_METHOD_NAME};
 use crate::index_method::toy_vector_sparse_ivf::VectorSparseInvertedIndexMethod;
 use crate::index_method::{
@@ -259,13 +253,7 @@ impl Database {
                 BACKING_BTREE_INDEX_METHOD_NAME.to_string(),
                 Arc::new(BackingBtreeIndexMethod),
             );
-            #[cfg(all(
-                feature = "fts",
-                any(
-                    not(target_family = "wasm"),
-                    all(target_os = "wasi", feature = "fts_wasi")
-                )
-            ))]
+            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
             syms.index_methods
                 .insert(FTS_INDEX_METHOD_NAME.to_string(), Arc::new(FtsIndexMethod));
         }

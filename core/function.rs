@@ -383,13 +383,7 @@ impl VectorFunc {
 }
 
 /// Full-text search functions
-#[cfg(all(
-    feature = "fts",
-    any(
-        not(target_family = "wasm"),
-        all(target_os = "wasi", feature = "fts_wasi")
-    )
-))]
+#[cfg(all(feature = "fts", not(target_family = "wasm")))]
 #[derive(Debug, Clone, PartialEq, strum::EnumIter)]
 pub enum FtsFunc {
     /// fts_score(col1, col2, ..., query): computes FTS relevance score
@@ -403,13 +397,7 @@ pub enum FtsFunc {
     Highlight,
 }
 
-#[cfg(all(
-    feature = "fts",
-    any(
-        not(target_family = "wasm"),
-        all(target_os = "wasi", feature = "fts_wasi")
-    )
-))]
+#[cfg(all(feature = "fts", not(target_family = "wasm")))]
 impl FtsFunc {
     pub fn is_deterministic(&self) -> bool {
         true
@@ -424,13 +412,7 @@ impl FtsFunc {
     }
 }
 
-#[cfg(all(
-    feature = "fts",
-    any(
-        not(target_family = "wasm"),
-        all(target_os = "wasi", feature = "fts_wasi")
-    )
-))]
+#[cfg(all(feature = "fts", not(target_family = "wasm")))]
 impl Display for FtsFunc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let str = match self {
@@ -1447,13 +1429,7 @@ pub enum Func {
     Scalar(ScalarFunc),
     Math(MathFunc),
     Vector(VectorFunc),
-    #[cfg(all(
-        feature = "fts",
-        any(
-            not(target_family = "wasm"),
-            all(target_os = "wasi", feature = "fts_wasi")
-        )
-    ))]
+    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
     Fts(FtsFunc),
     #[cfg(feature = "json")]
     Json(JsonFunc),
@@ -1469,13 +1445,7 @@ impl Display for Func {
             Self::Scalar(scalar_func) => write!(f, "{scalar_func}"),
             Self::Math(math_func) => write!(f, "{math_func}"),
             Self::Vector(vector_func) => write!(f, "{vector_func}"),
-            #[cfg(all(
-                feature = "fts",
-                any(
-                    not(target_family = "wasm"),
-                    all(target_os = "wasi", feature = "fts_wasi")
-                )
-            ))]
+            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
             Self::Fts(fts_func) => write!(f, "{fts_func}"),
             #[cfg(feature = "json")]
             Self::Json(json_func) => write!(f, "{json_func}"),
@@ -1499,13 +1469,7 @@ impl Deterministic for Func {
             Self::Scalar(scalar_func) => scalar_func.is_deterministic(),
             Self::Math(math_func) => math_func.is_deterministic(),
             Self::Vector(vector_func) => vector_func.is_deterministic(),
-            #[cfg(all(
-                feature = "fts",
-                any(
-                    not(target_family = "wasm"),
-                    all(target_os = "wasi", feature = "fts_wasi")
-                )
-            ))]
+            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
             Self::Fts(fts_func) => fts_func.is_deterministic(),
             #[cfg(feature = "json")]
             Self::Json(json_func) => json_func.is_deterministic(),
@@ -1825,29 +1789,11 @@ impl Func {
             "vector_concat" => Ok(Some(Self::Vector(VectorFunc::VectorConcat))),
             "vector_slice" => Ok(Some(Self::Vector(VectorFunc::VectorSlice))),
             // FTS functions
-            #[cfg(all(
-                feature = "fts",
-                any(
-                    not(target_family = "wasm"),
-                    all(target_os = "wasi", feature = "fts_wasi")
-                )
-            ))]
+            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
             "fts_score" => Ok(Some(Self::Fts(FtsFunc::Score))),
-            #[cfg(all(
-                feature = "fts",
-                any(
-                    not(target_family = "wasm"),
-                    all(target_os = "wasi", feature = "fts_wasi")
-                )
-            ))]
+            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
             "fts_match" => Ok(Some(Self::Fts(FtsFunc::Match))),
-            #[cfg(all(
-                feature = "fts",
-                any(
-                    not(target_family = "wasm"),
-                    all(target_os = "wasi", feature = "fts_wasi")
-                )
-            ))]
+            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
             "fts_highlight" => Ok(Some(Self::Fts(FtsFunc::Highlight))),
             // Test type functions (for custom type system testing)
             "test_uint_encode" => Ok(Some(Self::Scalar(ScalarFunc::TestUintEncode))),
@@ -1970,13 +1916,7 @@ impl Func {
         }
 
         // FTS functions (feature-gated)
-        #[cfg(all(
-            feature = "fts",
-            any(
-                not(target_family = "wasm"),
-                all(target_os = "wasi", feature = "fts_wasi")
-            )
-        ))]
+        #[cfg(all(feature = "fts", not(target_family = "wasm")))]
         for f in FtsFunc::iter() {
             push(f.to_string(), "s", f.arities(), f.is_deterministic());
         }

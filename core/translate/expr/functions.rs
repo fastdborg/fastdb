@@ -55,13 +55,7 @@ pub(super) fn translate_like_base(
                 },
             });
         }
-        #[cfg(all(
-            feature = "fts",
-            any(
-                not(target_family = "wasm"),
-                all(target_os = "wasi", feature = "fts_wasi")
-            )
-        ))]
+        #[cfg(all(feature = "fts", not(target_family = "wasm")))]
         ast::LikeOperator::Match => {
             // Transform MATCH to fts_match():
             // - `col MATCH 'query'` -> `fts_match(col, 'query')`
@@ -94,13 +88,7 @@ pub(super) fn translate_like_base(
                 },
             });
         }
-        #[cfg(not(all(
-            feature = "fts",
-            any(
-                not(target_family = "wasm"),
-                all(target_os = "wasi", feature = "fts_wasi")
-            )
-        )))]
+        #[cfg(any(not(feature = "fts"), target_family = "wasm"))]
         ast::LikeOperator::Match => {
             crate::bail_parse_error!("MATCH requires the 'fts' feature to be enabled")
         }
