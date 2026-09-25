@@ -287,7 +287,10 @@ fn translate_integrity_check_impl(
         let mut bound_indexes = Vec::new();
         if let Some(indexes) = schema.indexes.get(btree_table.name.as_str()) {
             for index in indexes {
-                if index.root_page <= 0 {
+                // A backing B-tree stores an index method's own records, not
+                // one secondary-index entry per table row. Its pages still
+                // participate in the physical IntegrityCk above.
+                if index.root_page <= 0 || index.is_backing_btree_index() {
                     continue;
                 }
 

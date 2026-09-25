@@ -18,6 +18,130 @@ use turso_core::{Numeric, Value};
 #[cfg(not(feature = "checksum"))]
 const PAGE_SIZE: usize = 4096;
 
+#[cfg(all(feature = "fts", not(target_family = "wasm")))]
+#[turso_macros::test]
+fn test_fts_backing_storage_integrity(db: TempDatabase) {
+    let conn = db.connect_limbo();
+    conn.execute("CREATE TABLE docs(title TEXT)").unwrap();
+    conn.execute("INSERT INTO docs VALUES ('Fast river'),('Quiet ocean')")
+        .unwrap();
+    conn.execute("CREATE INDEX docs_text ON docs USING fts(title)")
+        .unwrap();
+    for sql in [
+        "SELECT title FROM docs WHERE fts_match(title,'river')",
+        "BEGIN",
+        "UPDATE docs SET title='Changed river' WHERE title='Fast river'",
+        "DELETE FROM docs WHERE title='Quiet ocean'",
+        "ROLLBACK",
+        "INSERT INTO docs VALUES ('New river')",
+        "PRAGMA wal_checkpoint(TRUNCATE)",
+    ] {
+        conn.execute(sql).unwrap();
+        assert_eq!(run_integrity_check(&conn), "ok", "after {sql}");
+        assert_eq!(run_quick_check(&conn), "ok", "after {sql}");
+    }
+    drop(conn);
+    let reopened = TempDatabase::new_with_existent(&db.path);
+    let conn = reopened.connect_limbo();
+    assert_eq!(run_integrity_check(&conn), "ok");
+    assert_eq!(run_quick_check(&conn), "ok");
+    conn.execute("BEGIN").unwrap();
+    conn.execute("DROP INDEX docs_text").unwrap();
+    assert_eq!(run_integrity_check(&conn), "ok");
+    conn.execute("ROLLBACK").unwrap();
+    assert_eq!(run_integrity_check(&conn), "ok");
+    assert_eq!(
+        crate::common::limbo_exec_rows(
+            &conn,
+            "SELECT title FROM docs WHERE fts_match(title,'river')"
+        )
+        .len(),
+        2
+    );
+    conn.execute("DROP INDEX docs_text").unwrap();
+    assert_eq!(run_integrity_check(&conn), "ok");
+}
+
+#[turso_macros::test]
+fn test_drop_table_frees_backing_and_ordinary_indexes(db: TempDatabase) {
+    let conn = db.connect_limbo();
+    conn.execute("CREATE TABLE storage(key TEXT, payload BLOB)")
+        .unwrap();
+    conn.execute("CREATE INDEX storage_key ON storage(key)")
+        .unwrap();
+    conn.execute("CREATE INDEX storage_data ON storage USING backing_btree(key,payload)")
+        .unwrap();
+    conn.execute("BEGIN").unwrap();
+    conn.execute("DROP TABLE storage").unwrap();
+    assert_eq!(run_integrity_check(&conn), "ok");
+    conn.execute("ROLLBACK").unwrap();
+    assert_eq!(run_integrity_check(&conn), "ok");
+    conn.execute("DROP TABLE storage").unwrap();
+    assert_eq!(run_integrity_check(&conn), "ok");
+    checkpoint_database(&conn);
+    drop(conn);
+    let reopened = TempDatabase::new_with_existent(&db.path);
+    assert_eq!(run_integrity_check(&reopened.connect_limbo()), "ok");
+}
+
+#[cfg(all(
+    feature = "fts",
+    not(target_family = "wasm"),
+    not(feature = "checksum")
+))]
+#[turso_macros::test]
+fn test_fts_backing_storage_physical_corruption(db: TempDatabase) {
+    let conn = db.connect_limbo();
+    conn.execute("CREATE TABLE docs(title TEXT)").unwrap();
+    conn.execute("INSERT INTO docs VALUES ('Fast river')")
+        .unwrap();
+    conn.execute("CREATE INDEX docs_text ON docs USING fts(title)")
+        .unwrap();
+    assert_eq!(run_integrity_check(&conn), "ok");
+    let roots = crate::common::limbo_exec_rows(
+        &conn,
+        "SELECT rootpage FROM sqlite_schema WHERE name='__turso_internal_fts_dir_docs_text_key'",
+    );
+    let rusqlite::types::Value::Integer(root) = roots[0][0] else {
+        panic!("expected backing B-tree root");
+    };
+    checkpoint_database(&conn);
+    drop(conn);
+    {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&db.path)
+            .unwrap();
+        let offset = (root as u64 - 1) * PAGE_SIZE as u64;
+        let mut page = [0u8; PAGE_SIZE];
+        file.seek(SeekFrom::Start(offset)).unwrap();
+        file.read_exact(&mut page).unwrap();
+        assert_eq!(
+            page[0], 0x0a,
+            "small FTS backing tree should be an index leaf"
+        );
+        assert!(read_u16_be(&page, 3) > 0);
+        // Point the first cell outside its page. Physical checks must still
+        // traverse this backing root even though row/index pairing is skipped.
+        write_u16_be(&mut page, 8, u16::MAX);
+        file.seek(SeekFrom::Start(offset)).unwrap();
+        file.write_all(&page).unwrap();
+        file.sync_all().unwrap();
+    }
+    let reopened = TempDatabase::new_with_existent(&db.path);
+    let conn = reopened.connect_limbo();
+    let result = run_integrity_check_catching_panic(&conn).expect("corruption must not panic");
+    assert_ne!(
+        result, "ok",
+        "physical corruption of a backing root was skipped"
+    );
+    assert!(
+        !result.contains("wrong # of entries"),
+        "must report physical corruption: {result}"
+    );
+}
+
 /// Helper to run integrity_check and return the result string
 fn run_integrity_check(conn: &Arc<turso_core::Connection>) -> String {
     let rows = conn
