@@ -208,7 +208,8 @@ requested removing browser support to reduce overhead. Isolated commit
 member, WASI QuickJS bindgen wiring, browser source/build/probe code and browser
 release gates are removed. `fastdb-protocol` stays because Python depends on it.
 Five active core exceptions remained after removal. The approved 2.1 checkpoint
-barrier/retry correction brings the current active count to six. Earlier browser
+barrier/retry correction brought the active count to six. The separately approved named-savepoint
+cancellation correction below brings the current count to seven. Earlier browser
 sections above are historical, not current build instructions; see
 [removal evidence](docs/browser-removal.md).
 
@@ -228,3 +229,22 @@ See [client contracts and qualification](docs/native-language-clients.md).
 The 2.1 dependency updates and current lockfile identity are recorded in the
 [security review](docs/dependency-security.md) and its machine-readable receipt.
 The checkpoint exception itself does not change Cargo.lock.
+
+## Approved core exception: canceled-write savepoint recovery
+
+The user separately approved the exact three-core-file patch on 2026-09-25.
+Isolated commit `3ae0065e5` records the named-savepoint poison snapshot/restore
+and five engine lifecycle regressions. SHA-256 of the exact core diff:
+`4dea3c65be5cbb174721fb25eb164d29e9641681d7028b48bc6f77fd1958e122`.
+After a canceled unjournaled write is undone, COMMIT/root RELEASE can preserve
+earlier caller work. An earlier abandoned write still prevents commit when the
+chosen savepoint did not undo it. RELEASE without rollback is unchanged.
+
+The isolated candidate passes 41 lifecycle tests, 20 overlapping savepoint tests,
+ten deterministic frontend cancellation/scope cases in one regression, formatting
+and scoped core/frontend Clippy. Combined source and rebuilt package checks are
+recorded separately. No file-format, dependency or public API changes occur.
+The inspected upstream `64b8ef5742fc18937f9c89806c81e3f6475dc7a3` lacks this
+state; review/remove criteria and immutable evidence are in
+[the proposal](docs/proposals/cancellation-savepoint-poison.md) and the
+[exception register](docs/core-exceptions.md).

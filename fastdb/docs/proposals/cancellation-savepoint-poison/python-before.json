@@ -1,0 +1,226 @@
+[
+  {
+    "outer": "BEGIN",
+    "scenario": "control",
+    "before_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "active"
+    },
+    "commit": "ok",
+    "after_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "autocommit"
+    }
+  },
+  {
+    "outer": "BEGIN",
+    "scenario": "read_only",
+    "cancel": {
+      "code": "FDB_CANCELLED",
+      "transaction": {
+        "after": "active",
+        "before": "active"
+      },
+      "message": "engine: interrupt"
+    },
+    "before_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "active"
+    },
+    "commit": "ok",
+    "after_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "autocommit"
+    }
+  },
+  {
+    "outer": "BEGIN",
+    "scenario": "write_only",
+    "cancel": {
+      "code": "FDB_CANCELLED",
+      "transaction": {
+        "after": "active",
+        "before": "active"
+      },
+      "message": "engine: interrupt"
+    },
+    "before_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "active"
+    },
+    "commit": {
+      "code": "FDB_ENGINE",
+      "transaction": {
+        "after": "autocommit",
+        "before": "active"
+      },
+      "message": "engine: Transaction error: cannot commit - an unfinished write statement was abandoned"
+    },
+    "after_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [],
+      "state": "autocommit"
+    }
+  },
+  {
+    "outer": "SAVEPOINT caller",
+    "scenario": "control",
+    "before_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "active"
+    },
+    "commit": "ok",
+    "after_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "autocommit"
+    }
+  },
+  {
+    "outer": "SAVEPOINT caller",
+    "scenario": "read_only",
+    "cancel": {
+      "code": "FDB_CANCELLED",
+      "transaction": {
+        "after": "active",
+        "before": "active"
+      },
+      "message": "engine: interrupt"
+    },
+    "before_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "active"
+    },
+    "commit": "ok",
+    "after_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "autocommit"
+    }
+  },
+  {
+    "outer": "SAVEPOINT caller",
+    "scenario": "write_only",
+    "cancel": {
+      "code": "FDB_CANCELLED",
+      "transaction": {
+        "after": "active",
+        "before": "active"
+      },
+      "message": "engine: interrupt"
+    },
+    "before_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [
+        [
+          99
+        ]
+      ],
+      "state": "active"
+    },
+    "commit": {
+      "code": "FDB_ENGINE",
+      "transaction": {
+        "after": "autocommit",
+        "before": "active"
+      },
+      "message": "engine: Transaction error: cannot commit - an unfinished write statement was abandoned"
+    },
+    "after_commit": {
+      "sink": [
+        [
+          0
+        ]
+      ],
+      "prior": [],
+      "state": "autocommit"
+    }
+  }
+]

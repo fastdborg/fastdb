@@ -34,9 +34,22 @@ preserves that barrier across failed asynchronous sync/retry, including automati
 checkpoint cleanup after a committed write. The seven permanent crash-model and
 boundary regressions pass on the integrated source. Combined checks pass:
 757 Rust, 121 Node/application and three C ABI tests, formatting/Clippy and
-TypeScript, plus affected-core Clippy. Hosted scoped CI run 36148357666 passes
-on integrated commit `5f4133d73`. Exact-artifact qualification remains pending.
+TypeScript, plus affected-core Clippy. Hosted scoped CI run 36150018518 passes
+on integrated source `a4df9cc27`. Exact-artifact qualification remains pending.
 See the [review and before/after evidence](proposals/checkpoint-wal-sync.md).
+
+The first exact artifact matrix found an additional inherited cancellation
+recovery defect: a canceled native write is undone, but a stale transaction
+marker makes later COMMIT/root RELEASE reject earlier caller work. Python
+3.10/3.12/3.14 and Node reproduce it. The candidate is **not release-qualified**;
+the separately approved [correction](proposals/cancellation-savepoint-poison.md)
+is now integrated as isolated core commit `3ae0065e5`. It restores the transaction
+marker only after successful savepoint rollback and retains the abandoned-write
+guard. Its isolated affected tests pass; combined checks and a fresh artifact
+matrix remain required.
+C ABI, CLI, SQLite adoption, Node installations, the exact-source Rust consumer,
+PHP/Go/Swift/C#, ownership and V1/V2 upgrade/restore checks otherwise pass, but
+these observations do not qualify a corrected artifact that has not been built.
 
 ## Intended distribution and compatibility
 

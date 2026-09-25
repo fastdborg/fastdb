@@ -81,6 +81,69 @@ class ABI(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(len(set(handles)), 12)
 
+    def check_cancelled_plain_write(self, start, finish):
+        def execute(sql):
+            response = call(self.handle, sql)
+            self.assertIn("result", response["execution"], f"{sql}: {response}")
+            return response
+
+        def integers(sql):
+            rows = execute(sql)["execution"]["result"]["rows"]
+            return [[int(cell["value"]) for cell in row] for row in rows]
+
+        for sql in [
+            "CREATE TABLE nums(n INTEGER)",
+            "CREATE TABLE sink(n INTEGER)",
+            "CREATE TABLE prior(n INTEGER)",
+            "INSERT INTO nums VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)",
+            start,
+            "INSERT INTO prior VALUES(99)",
+        ]:
+            execute(sql)
+        self.assertEqual(integers("SELECT last_insert_rowid()"), [[1]])
+        results = []
+        failures = []
+        started = threading.Event()
+
+        def write():
+            try:
+                started.set()
+                # Bound a missed interrupt; completing this workload is not a pass.
+                results.append(call(self.handle,
+                    "INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e,nums f,nums g,nums h,nums i", 3000))
+            except BaseException as error:
+                failures.append(error)
+
+        active = threading.Thread(target=write)
+        active.start()
+        try:
+            self.assertTrue(started.wait(1))
+            time.sleep(0.05)
+            self.assertTrue(active.is_alive(), "Write completed before interruption")
+            interrupted = receive(lib.fdb_interrupt(self.handle))
+        finally:
+            active.join(5)
+        self.assertFalse(active.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(interrupted["execution"], {"result": True})
+        self.assertEqual(results[0]["execution"]["error"]["code"], "FDB_CANCELLED")
+        self.assertEqual(results[0]["transaction"], {"before": "active", "after": "active"})
+        # Savepoint rollback retains this value, proving native inserts happened.
+        self.assertGreater(integers("SELECT last_insert_rowid()")[0][0], 1,
+                           "Cancellation must interrupt an in-flight native writer")
+        self.assertEqual(integers("SELECT n FROM sink"), [])
+        self.assertEqual(integers("SELECT n FROM prior"), [[99]])
+        execute("INSERT INTO sink VALUES(7)")
+        self.assertEqual(execute(finish)["transaction"], {"before": "active", "after": "autocommit"})
+        self.assertEqual(integers("SELECT n FROM prior"), [[99]])
+        self.assertEqual(integers("SELECT n FROM sink"), [[7]])
+
+    def test_cancelled_plain_write_preserves_commit(self):
+        self.check_cancelled_plain_write("BEGIN", "COMMIT")
+
+    def test_cancelled_plain_write_preserves_root_release(self):
+        self.check_cancelled_plain_write("SAVEPOINT caller", "RELEASE caller")
+
     def test_close_remains_interruptible(self):
         # A long query with its own deadline prevents the regression from hanging
         # the test process if close makes its handle unreachable too early.

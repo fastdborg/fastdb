@@ -1,0 +1,22 @@
+   Compiling fastdb v2.1.0 (/home/tan/Sites/fastdb/turso/fastdb/frontend)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 56.32s
+     Running unittests src/lib.rs (target/debug/deps/fastdb-7a84f7836d55336d)
+
+running 1 test
+test interrupt::tests::cancelled_plain_native_writes_undo_rows_and_preserve_caller_work ... FAILED
+
+failures:
+
+---- interrupt::tests::cancelled_plain_native_writes_undo_rows_and_preserve_caller_work stdout ----
+
+thread 'interrupt::tests::cancelled_plain_native_writes_undo_rows_and_preserve_caller_work' panicked at fastdb/frontend/src/interrupt.rs:225:72:
+called `Result::unwrap()` on an `Err` value: Engine(TxError("cannot commit - an unfinished write statement was abandoned"))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    interrupt::tests::cancelled_plain_native_writes_undo_rows_and_preserve_caller_work
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.25s
+
+error: test failed, to rerun pass `-p fastdb --lib`

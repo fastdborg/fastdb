@@ -1,0 +1,84 @@
+$ node -e "require('./fastdb.node')"
+AggregateError: Cancelled native writes must preserve committable caller work
+    at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:63:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  [errors]: [
+    Error: COMMIT after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned
+        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {
+      [cause]: [Error]
+    },
+    Error: RELEASE caller after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned
+        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {
+      [cause]: [Error]
+    }
+  ]
+}
+node:child_process:981
+    throw err;
+    ^
+
+Error: Command failed: /home/tan/.nvm/versions/node/v24.19.0/bin/node smoke.cjs
+AggregateError: Cancelled native writes must preserve committable caller work
+    at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:63:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  [errors]: [
+    Error: COMMIT after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned
+        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {
+      [cause]: [Error]
+    },
+    Error: RELEASE caller after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned
+        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {
+      [cause]: [Error]
+    }
+  ]
+}
+
+    at genericNodeError (node:internal/errors:985:15)
+    at wrappedFn (node:internal/errors:539:14)
+    at checkExecSyncError (node:child_process:942:11)
+    at execFileSync (node:child_process:978:15)
+    at run (/home/tan/Sites/fastdb/turso/fastdb/scripts/check-node-package.cjs:13:37)
+    at Object.<anonymous> (/home/tan/Sites/fastdb/turso/fastdb/scripts/check-node-package.cjs:835:3)
+    at Module._compile (node:internal/modules/cjs/loader:1872:14)
+    at Object..js (node:internal/modules/cjs/loader:2003:10)
+    at Module.load (node:internal/modules/cjs/loader:1594:32)
+    at Module._load (node:internal/modules/cjs/loader:1396:12) {
+  status: 1,
+  signal: null,
+  output: [
+    null,
+    '',
+    'AggregateError: Cancelled native writes must preserve committable caller work\n' +
+      '    at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:63:11\n' +
+      '    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {\n' +
+      '  [errors]: [\n' +
+      '    Error: COMMIT after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned\n' +
+      '        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {\n' +
+      '      [cause]: [Error]\n' +
+      '    },\n' +
+      '    Error: RELEASE caller after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned\n' +
+      '        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {\n' +
+      '      [cause]: [Error]\n' +
+      '    }\n' +
+      '  ]\n' +
+      '}\n'
+  ],
+  pid: 2553926,
+  stdout: '',
+  stderr: 'AggregateError: Cancelled native writes must preserve committable caller work\n' +
+    '    at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:63:11\n' +
+    '    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {\n' +
+    '  [errors]: [\n' +
+    '    Error: COMMIT after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned\n' +
+    '        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {\n' +
+    '      [cause]: [Error]\n' +
+    '    },\n' +
+    '    Error: RELEASE caller after a cancelled native write: engine: Transaction error: cannot commit - an unfinished write statement was abandoned\n' +
+    '        at /tmp/fastdb-package-kP2nch/consumer/smoke.cjs:52:33 {\n' +
+    '      [cause]: [Error]\n' +
+    '    }\n' +
+    '  ]\n' +
+    '}\n'
+}
+
+Node.js v24.19.0

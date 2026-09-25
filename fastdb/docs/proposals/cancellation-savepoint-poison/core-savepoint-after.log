@@ -1,0 +1,33 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.01s
+     Running unittests lib.rs (/tmp/fastdb-cancel-poison-target/debug/deps/turso_core-6c1dc3e32320ecc6)
+
+running 20 tests
+path: /tmp/.tmphFLomN/test_15867039731786700969
+path: /tmp/.tmpX9mTG7/test_5585878151143609035
+path: /tmp/.tmp2lBo0r/test_519865222618054085
+path: /tmp/.tmpKrEyVj/test_12713646517170287474
+path: /tmp/.tmp7wX4nc/test_10278238487241892970
+path: /tmp/.tmpAG78aB/test_7205452249393847771
+test storage::wal::test::test_savepoint_rollback_discards_frame_cache_past_rollback_point ... ok
+test vdbe::statement_lifecycle_tests::test_wal_savepoint_is_busy_while_autocommit_writer_suspended ... ok
+test vdbe::statement_lifecycle_tests::test_wal_savepoint_ops_are_busy_while_writer_suspended ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_release_does_not_clear_abandoned_writer_poison ... ok
+test vdbe::statement_lifecycle_tests::test_first_writer_without_statement_savepoint_error_rolls_back_joined_writer ... ok
+test vdbe::statement_lifecycle_tests::test_mvcc_savepoint_is_busy_while_writer_suspended ... ok
+test vdbe::statement_lifecycle_tests::test_first_writer_without_statement_savepoint_resume_last_commits_joined_writer ... ok
+test vdbe::statement_lifecycle_tests::test_first_writer_without_statement_savepoint_abandon_rolls_back_joined_writer ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_after_poison_keeps_earlier_abandonment ... ok
+test vdbe::statement_lifecycle_tests::test_nested_named_savepoints_restore_the_selected_poison_snapshot ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_rollback_restores_poison_after_cancel ... ok
+test storage::wal::test::test_savepoint_rollback_preserves_read_lock ... ok
+test storage::wal::test::test_savepoint_then_tx_rollback_allows_restart_checkpoint_from_other_connection ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_recovers_poison_from_lazy_attached_writer ... ok
+test mvcc::database::tests::test_savepoint_insert_delete_then_fail ... ok
+test mvcc::database::tests::test_savepoint_multiple_statements_last_fails ... ok
+test mvcc::database::tests::test_savepoint_same_row_multiple_statements ... ok
+test mvcc::database::tests::test_savepoint_index_multiple_statements ... ok
+test mvcc::database::tests::test_conflict_abort_ckpt_indexed_update_savepoint_integrity_check ... ok
+test mvcc::database::tests::test_conflict_abort_ckpt_indexed_update_savepoint_integrity_check_passive ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 2139 filtered out; finished in 41.42s
+
