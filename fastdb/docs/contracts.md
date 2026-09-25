@@ -6,11 +6,14 @@ during V1 development. Early descriptions of alpha status, duplicate-column
 rejection and unfinished release gates are historical; later sections and the
 release record supersede them. Do not reopen those gates from this history.
 
-Active V2 contracts: [spatial and H3](v2-spatial.md),
+Released V2 contracts: [spatial and H3](v2-spatial.md),
 [record brace projections](v2-record-projections.md),
 [inverse relationships](v2-relations.md), and
-[the implementation checklist](v2-tasks.md). V2 additions are development work,
-not functionality in the published 1.0.0 binaries.
+[the completed implementation checklist](v2-tasks.md). These are included in
+the published 2.0.0 Linux x64 release.
+
+Post-release [nested projection paths](nested-projections.md) are separate work
+and are not included in the published 2.0.0 binaries.
 
 V2 transaction change: the approved scalar-read engine fix preserves caller
 transactions and named savepoints after read-only extension/helper failures.

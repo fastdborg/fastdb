@@ -3705,3 +3705,40 @@ test('V2 JavaScript worker cancellation preserves prior transaction work', async
     await db.execute('ROLLBACK');
   } finally { await db.close(); }
 });
+
+test('nested wildcard and signed array paths preserve embedded objects in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const first = {title:'First', n:9223372036854775807n, bytes:Buffer.from([0,255]), ref:new Record('users','a')};
+      const last = {title:'Last', meta:{active:true}};
+      await db.execute('INSERT INTO users {id:users:a,post:$first,posts:$posts}', {$first:first,$posts:[first,last]});
+      assert.deepEqual(await db.all('SELECT post.* FROM users'), [[first]]);
+      const result = await db.execute('SELECT posts.*.*,posts.0.*,posts.-1.* FROM users');
+      assert.deepEqual(result.columns,['posts','posts','posts']);
+      assert.deepEqual(result.rows, [[[first,last],first,last]]);
+      assert.deepEqual(await db.all('SELECT u.posts.*.title AS titles FROM users u'), [[['First','Last']]]);
+      assert.deepEqual(await db.all('SELECT posts.2.*,posts.-3.*,unknown.* FROM users'), [[null,null,null]]);
+      assert.deepEqual(await db.all('SELECT post.* FROM users post'), await db.all('SELECT * FROM users'));
+    } finally { await db.close(); }
+  }
+});
+
+test('linked projection wildcards fetch records while indexes retain typed IDs', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute("INSERT INTO authors {id:authors:a,name:'Alice'}");
+      await db.execute("INSERT INTO posts {id:posts:p1,title:'First',author:authors:a}");
+      await db.execute("INSERT INTO posts {id:posts:p2,title:'Last',author:authors:a}");
+      await db.execute('INSERT INTO users {id:users:u,posts:[posts:p1,posts:p2]}');
+      const ids = [new Record('posts','p1'),new Record('posts','p2')];
+      const first = {id:ids[0],title:'First',author:new Record('authors','a')};
+      const last = {id:ids[1],title:'Last',author:new Record('authors','a')};
+      assert.deepEqual(await db.all('SELECT posts,posts[0],posts.0,posts[-1],posts[$] FROM users'), [[ids,ids[0],ids[0],ids[1],ids[1]]]);
+      assert.deepEqual(await db.all('SELECT posts.*,posts.*.*,posts[0].*,posts[-1].* FROM users'), [[[first,last],[first,last],first,last]]);
+      assert.deepEqual(await db.all('SELECT posts.*.author.*.name FROM users'), [[['Alice','Alice']]]);
+      assert.deepEqual(await db.all('SELECT posts[-3].*,posts[2].* FROM users'), [[null,null]]);
+    } finally { await db.close(); }
+  }
+});

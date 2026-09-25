@@ -6061,3 +6061,17 @@ All 41 SELECT integration tests pass (`/tmp/fastdb-not-indexed.log`). Formatting
 and all-target frontend/test-package Clippy pass
 (`/tmp/fastdb-not-indexed-clippy.log`); two fixture corrections preceded the final
 test pass. No full-suite or rebuilt Node addon is claimed. Full V1 remains open.
+
+## 2026-09-25: post-release nested projection paths
+
+The [nested projection contract](nested-projections.md) is separate from the
+published 2.0.0 artifacts. SurrealDB 3.2.4 was executed locally to verify plain
+record arrays, single/double wildcards and bracket first/last selection. Dot
+positions and negative indexes are intentional FastQL extensions.
+
+Final Linux x64 `bash fastdb/scripts/check.sh` passed: 742 Rust, 117
+Node/application and three C ABI tests, plus scoped fmt/Clippy and strict
+TypeScript. Rust 1.88.0, Node 24.19.0, development profile. An initial full run
+exposed an OR FAIL regression from wrapping native alias-star INSERT sources;
+the guard was corrected and the focused regression, all seven projection tests
+and the full scoped check were rerun successfully. No upstream core changes.

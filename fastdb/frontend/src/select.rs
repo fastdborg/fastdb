@@ -1562,6 +1562,42 @@ impl Scope {
             .typed_field(&parts[1..])
             .then(|| (i, parts[1..].to_vec())))
     }
+    fn projection_field(&self, expr: &Expr) -> Result<Option<(usize, Vec<String>)>> {
+        if let Some(field) = self.field(expr)? {
+            return Ok(Some(field));
+        }
+        // Within an explicit traversal, an unknown SQL qualifier can be the
+        // first document field. Actual source aliases keep precedence.
+        if self.sources.len() != 1 {
+            return Ok(None);
+        }
+        let parts = match expr {
+            Expr::Qualified(a, b) => vec![a.as_str().to_owned(), b.as_str().to_owned()],
+            Expr::DoublyQualified(a, b, c) => vec![
+                a.as_str().to_owned(),
+                b.as_str().to_owned(),
+                c.as_str().to_owned(),
+            ],
+            Expr::FunctionCall { name, args, .. } if name.as_str() == "__fastdb_path" => {
+                let mut parts = Vec::new();
+                for arg in args {
+                    match arg.as_ref() {
+                        Expr::Id(name) | Expr::Name(name) => parts.push(name.as_str().to_owned()),
+                        _ => return Ok(None),
+                    }
+                }
+                parts
+            }
+            _ => return Ok(None),
+        };
+        if parts
+            .first()
+            .is_some_and(|name| self.sources[0].alias.eq_ignore_ascii_case(name))
+        {
+            return Ok(None);
+        }
+        Ok(self.sources[0].typed_field(&parts).then_some((0, parts)))
+    }
     fn accessor(&self, i: usize, path: &[String], typed: bool) -> Result<Expr> {
         if self.sources[i].derived.is_some() {
             let Some((column, nested)) = path.split_first() else {
@@ -1950,6 +1986,11 @@ impl Scope {
             return Ok(false);
         };
         let helper = helper.to_owned();
+        if helper == "doc_project" {
+            return Err(unsupported(
+                "paths are allowed only as top-level SELECT projections",
+            ));
+        }
         if filter_over.filter_clause.is_some()
             || filter_over.over_clause.is_some()
             || !order_by.is_empty()
@@ -2211,7 +2252,7 @@ impl Scope {
                 return Ok(());
             }
         }
-        if matches!(expr, Expr::FunctionCall {name,..} if matches!(name.as_str(), "__fastdb_fetch" | "__fastdb_relation_fetch"))
+        if matches!(expr, Expr::FunctionCall {name,..} if matches!(name.as_str(), "__fastdb_fetch" | "__fastdb_relation_fetch" | "__fastdb_h_doc_project"))
         {
             return Err(unsupported(
                 "fetch is allowed only as a top-level SELECT projection",
@@ -2770,6 +2811,7 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
             "__fastdb_h_array_new" => Some("array::new"),
             "__fastdb_h_array_append" => Some("array::append"),
             "__fastdb_h_doc_get" => Some("doc::get"),
+            "__fastdb_h_doc_project" => Some("doc::project"),
             "__fastdb_h_doc_has" => Some("doc::has"),
             "__fastdb_h_doc_row" => Some("doc::row"),
             _ => None,
@@ -3821,6 +3863,8 @@ fn lower_distinct(
 // longer paths as a temporary AST expression; Scope resolves it before SQL
 // preparation. This marker is never a registered engine function.
 pub(crate) fn expand_paths(sql: &str) -> Result<String> {
+    let expanded = crate::projection_path::expand(sql)?;
+    let sql = expanded.as_str();
     use fastql_parser::Kind;
     let tokens = fastql_parser::tokenize(sql)?;
     let is_name = |i: usize| matches!(tokens[i].kind, Kind::Word | Kind::Identifier);
@@ -3989,6 +4033,7 @@ struct LoweredSelect {
     typed: Vec<bool>,
     fetched: Vec<bool>,
     inverse: std::collections::BTreeMap<usize, crate::relations::PreparedRelation>,
+    paths: std::collections::BTreeMap<usize, Vec<crate::projection_path::Part>>,
     names: Vec<String>,
     consumed: std::collections::BTreeSet<String>,
     ignore_unused: bool,
@@ -4056,17 +4101,19 @@ impl Connection {
                 "profiling requires one SQL SELECT".into(),
             ));
         }
-        let has_fetch = fastql_parser::tokenize(&expanded)?.iter().any(|t| {
-            t.kind == fastql_parser::Kind::Word
-                && matches!(
-                    t.text.as_str(),
-                    "__fastdb_fetch"
-                        | "__fastdb_relation_fetch"
-                        | "__fastdb_near"
-                        | "__fastdb_text"
-                        | "__fastdb_vector"
-                )
-        });
+        let has_fetch = crate::projection_path::has_wildcard(&expanded)?
+            || fastql_parser::tokenize(&expanded)?.iter().any(|t| {
+                t.kind == fastql_parser::Kind::Word
+                    && matches!(
+                        t.text.as_str(),
+                        "__fastdb_h_doc_project"
+                            | "__fastdb_fetch"
+                            | "__fastdb_relation_fetch"
+                            | "__fastdb_near"
+                            | "__fastdb_text"
+                            | "__fastdb_vector"
+                    )
+            });
         let execute = || match self.lower_collection_select(
             &sql,
             &expanded,
@@ -4273,17 +4320,23 @@ impl Connection {
         }
         let expanded = expand_paths(&expand_records(Some(self), sql)?)?;
         if !options.guarded
-            && fastql_parser::tokenize(&expanded)?.iter().any(|t| {
-                t.kind == fastql_parser::Kind::Word
-                    && matches!(
-                        t.text.as_str(),
-                        "__fastdb_fetch"
-                            | "__fastdb_relation_fetch"
-                            | "__fastdb_near"
-                            | "__fastdb_text"
-                            | "__fastdb_vector"
-                    )
-            })
+            // Native INSERT conflict policies (especially OR FAIL) must keep
+            // their own statement boundary. Fetched native sources are rejected
+            // during lowering, so SQL alias stars need no read snapshot here.
+            && ((options.native_insert.is_none()
+                && crate::projection_path::has_wildcard(&expanded)?)
+                || fastql_parser::tokenize(&expanded)?.iter().any(|t| {
+                    t.kind == fastql_parser::Kind::Word
+                        && matches!(
+                            t.text.as_str(),
+                            "__fastdb_h_doc_project"
+                                | "__fastdb_fetch"
+                                | "__fastdb_relation_fetch"
+                                | "__fastdb_near"
+                                | "__fastdb_text"
+                                | "__fastdb_vector"
+                        )
+                }))
         {
             return self.atomic(|| {
                 self.collection_select_options(
@@ -5550,6 +5603,7 @@ impl Connection {
                 typed: vec![true; width],
                 fetched: vec![false; width],
                 inverse: Default::default(),
+                paths: Default::default(),
                 names: (1..=width).map(|i| format!("column{i}")).collect(),
                 consumed: scope.consumed.into_inner(),
                 ignore_unused,
@@ -5947,6 +6001,7 @@ impl Connection {
         let mut typed = Vec::new();
         let mut fetched = Vec::new();
         let mut inverse = std::collections::BTreeMap::new();
+        let mut paths = std::collections::BTreeMap::new();
         let mut names = Vec::new();
         let mut rewritten = Vec::new();
         for column in columns.iter() {
@@ -5974,7 +6029,17 @@ impl Connection {
                 }
                 ResultColumn::Expr(expr, alias) => {
                     let mut expr = *expr.clone();
-                    let field = scope.field(&expr)?;
+                    let field = scope.field(&expr)?.or(match &expr {
+                        Expr::FunctionCall { name, args, .. }
+                            if name.as_str() == "__fastdb_h_doc_project" =>
+                        {
+                            match args.first() {
+                                Some(value) => scope.projection_field(value)?,
+                                None => None,
+                            }
+                        }
+                        _ => None,
+                    });
                     let name = if let Some(alias) = alias.as_ref().filter(|a| a.is_explicit()) {
                         alias.name().as_str().to_owned()
                     } else if let Some((index, path)) = &field {
@@ -6017,7 +6082,9 @@ impl Connection {
                         public_expression_name(&expr)?
                     };
                     let is_inverse = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_relation_fetch");
-                    let is_fetch = is_inverse
+                    let is_path = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_h_doc_project");
+                    let is_fetch = is_path
+                        || is_inverse
                         || matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch");
                     fetched.push(is_fetch);
                     if is_fetch {
@@ -6037,6 +6104,8 @@ impl Connection {
                         };
                         if (if is_inverse {
                             !(2..=4).contains(&args.len())
+                        } else if is_path {
+                            args.len() != 2
                         } else {
                             args.len() != 1
                         }) || distinctness.is_some()
@@ -6065,7 +6134,33 @@ impl Connection {
                                 )?,
                             );
                         }
-                        expr = *args[0].clone();
+                        let mut base = *args[0].clone();
+                        if is_path {
+                            let encoded = args[1].to_string();
+                            let encoded = encoded
+                                .strip_prefix('\'')
+                                .and_then(|s| s.strip_suffix('\''))
+                                .ok_or_else(|| unsupported("invalid projection path"))?
+                                .replace("''", "'");
+                            let mut parts = crate::projection_path::decode(&encoded)?;
+                            if let Some((index, field)) = scope.projection_field(&base)? {
+                                let mut prefix = field[1..]
+                                    .iter()
+                                    .cloned()
+                                    .map(crate::projection_path::Part::Key)
+                                    .collect::<Vec<_>>();
+                                prefix.append(&mut parts);
+                                parts = prefix;
+                                base = scope.accessor(index, &field[..1], true)?;
+                            }
+                            if parts.len() > 64 {
+                                return Err(Error::Limit(
+                                    "projection path nesting exceeds 64".into(),
+                                ));
+                            }
+                            paths.insert(names.len(), parts);
+                        }
+                        expr = base;
                         scope.typed(&mut expr)?;
                         typed.push(true);
                     } else if scope.preserved(&mut expr)? {
@@ -6514,6 +6609,7 @@ impl Connection {
                 typed,
                 fetched,
                 inverse,
+                paths,
                 names,
                 consumed: scope.consumed.into_inner(),
                 ignore_unused,
@@ -6756,6 +6852,7 @@ impl Connection {
                 typed: vec![true; names.len()],
                 fetched: vec![false; names.len()],
                 inverse: Default::default(),
+                paths: Default::default(),
                 names,
                 consumed,
                 ignore_unused: options.ignore_unused,
@@ -6822,6 +6919,7 @@ impl Connection {
             typed: vec![true; width],
             fetched: vec![false; width],
             inverse: Default::default(),
+            paths: Default::default(),
             names,
             consumed,
             ignore_unused: options.ignore_unused,
@@ -6840,6 +6938,7 @@ impl Connection {
             typed,
             fetched,
             inverse,
+            paths,
             names,
             consumed,
             ignore_unused,
@@ -6889,6 +6988,7 @@ impl Connection {
                 typed: Vec::new(),
                 fetched: Vec::new(),
                 inverse: Default::default(),
+                paths: Default::default(),
                 names: Vec::new(),
                 consumed,
                 ignore_unused: false,
@@ -6901,6 +7001,7 @@ impl Connection {
             typed,
             fetched,
             inverse,
+            paths,
             names,
             consumed,
             ignore_unused,
@@ -7025,6 +7126,7 @@ impl Connection {
             typed,
             fetched,
             inverse,
+            paths,
             names,
             consumed,
             ignore_unused,
@@ -7116,7 +7218,7 @@ impl Connection {
                     if *fetch {
                         if inverse.contains_key(&position) {
                             reverse.push((position, value.clone()));
-                        } else {
+                        } else if !paths.contains_key(&position) {
                             forward.push(value.clone());
                         }
                     }
@@ -7143,7 +7245,7 @@ impl Connection {
             let mut reverse_values = reverse_values.into_iter();
             for row in &mut rows {
                 for (position, (value, fetch)) in row.iter_mut().zip(&fetched).enumerate() {
-                    if *fetch {
+                    if *fetch && !paths.contains_key(&position) {
                         *value = if inverse.contains_key(&position) {
                             reverse_values.next()
                         } else {
@@ -7151,6 +7253,26 @@ impl Connection {
                         }
                         .expect("matching fetch count");
                     }
+                }
+            }
+        }
+        if !native_insert && !explain && !paths.is_empty() {
+            let inputs = rows
+                .iter()
+                .flat_map(|row| {
+                    paths
+                        .iter()
+                        .map(|(index, path)| (row[*index].clone(), path.clone()))
+                })
+                .collect::<Vec<_>>();
+            let (values, counters) = crate::projection_path::project(self, &inputs, &mut budget)?;
+            metrics.fetch_batches += counters.batches;
+            metrics.fetch_rows_read += counters.rows_read;
+            metrics.fetch_vm_steps += counters.vm_steps;
+            let mut values = values.into_iter();
+            for row in &mut rows {
+                for index in paths.keys() {
+                    row[*index] = values.next().expect("path output count");
                 }
             }
         }
@@ -7300,11 +7422,28 @@ fn expand_stars(
     for column in columns {
         let sources: Vec<&Source> = match column {
             ResultColumn::Star => star_sources.clone(),
-            ResultColumn::TableStar(name) => vec![scope
-                .sources
-                .iter()
-                .find(|s| s.alias.eq_ignore_ascii_case(name.as_str()))
-                .ok_or_else(|| Error::Validation("unknown star qualifier".into()))?],
+            ResultColumn::TableStar(name) => {
+                if let Some(source) = scope
+                    .sources
+                    .iter()
+                    .find(|s| s.alias.eq_ignore_ascii_case(name.as_str()))
+                {
+                    vec![source]
+                } else {
+                    let value = expression(&quote(name.as_str()))?;
+                    if scope.field(&value)?.is_none() {
+                        return Err(Error::Validation("unknown star qualifier".into()));
+                    }
+                    expanded.push(ResultColumn::Expr(
+                        Box::new(expression(&format!(
+                            "__fastdb_h_doc_project({},'[\"All\"]')",
+                            quote(name.as_str())
+                        ))?),
+                        Some(As::As(Name::exact(name.as_str().into()))),
+                    ));
+                    continue;
+                }
+            }
             _ => {
                 expanded.push(column.clone());
                 continue;
