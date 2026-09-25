@@ -1,8 +1,8 @@
 # Maintained engine exceptions
 
 Required review checklist for every upstream sync. Baseline and full provenance
-are in [UPSTREAM.md](../UPSTREAM.md). All six exceptions below are approved and
-integrated. No equivalent upstream fix or upstream issue/PR has been verified for
+are in [UPSTREAM.md](../UPSTREAM.md). The five active exceptions below are approved and
+integrated. The retired WASI exception is recorded separately. No equivalent upstream fix or upstream issue/PR has been verified for
 this register yet; do not infer that upstream still lacks a fix from that status.
 No automatic removal or periodic monitoring is configured.
 
@@ -13,7 +13,15 @@ No automatic removal or periodic monitoring is configured.
 | First FULL commit WAL sync `fe2ccd404` | Native first-commit sync probe and FULL/NORMAL/OFF controls; browser flush-fault matrix. [Review](proposals/wal-first-commit-sync.md). | Upstream flushes prepared frames before publishing/acknowledging FULL commits, including the first commit. |
 | FTS backing storage `12109384a` | `test_fts_backing_storage_integrity`, `test_drop_table_frees_backing_and_ordinary_indexes`, `test_fts_backing_storage_physical_corruption`; upgrade/restore rehearsal. [Review](proposals/fts-integrity.md). | Upstream excludes backing trees only from inappropriate logical counts, retains physical checks, and reclaims all backing roots on teardown/rollback. Existing orphan pages still need separate handling. |
 | Scalar read errors `f26014f04` | `scalar_read_error_preserves_transactions_and_named_savepoints`, FastDB user-function tests and Node cancellation/transaction tests. [Review](proposals/udf-error-transaction.md). | Upstream read-only extension failures preserve caller transactions, savepoints and changes(), while autocommit cleanup and writer rollback controls pass. |
-| Opt-in WASI FTS `2ef619c07` | Native FTS suites plus threaded-WASI shared fixture and installed Chromium/Firefox lifecycle, OPFS, rollback, recovery and worker cleanup. [Review](proposals/fts-wasi.md). | Upstream supplies equivalent WASI FTS support. Update frontend feature wiring and target dependency configuration too; preserve indexed search, thread-host requirements and the pinned format contract. |
+
+## Retired exception: WASI FTS
+
+The user removed browser support from active V2 development. Commit `ae6777a17`
+reverts `2ef619c07` in isolation, restoring the ten core files to their prior state.
+Frontend WASI feature wiring, the browser package and its build/probe code are
+also removed. This exception is **not active** and must not be reapplied on an
+upstream sync. The reviewed patches remain historical evidence for any separately
+requested future browser work. See [the removal record](browser-removal.md).
 
 ## Upstream sync checklist
 
@@ -30,8 +38,8 @@ No automatic removal or periodic monitoring is configured.
 - [ ] Update this register, UPSTREAM.md, proposal status and release provenance in
   the sync commit. Preserve the regression even when the local patch is removed.
 
-The two newly approved patches remain byte-for-byte available in their review
-files. Their SHA-256 values are respectively
+The scalar-error patch and retired WASI patch remain byte-for-byte available
+in their review files. Their SHA-256 values are respectively
 `953e88426f9c5e5ea52a3f41251c7e64bc0b2bb06c70557f58ff596454c68b0a`
 and `b6771224bade4381592906cbc16962add85819f1881e56860bc02a10a992d881`.
 The frontend WASI wiring patch is

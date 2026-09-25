@@ -1,5 +1,11 @@
 # Proposed core exception: opt-in full-text support on WASI
 
+Retired: after approval/integration, the user explicitly removed browser support.
+Commit `ae6777a17` reverts the core exception; frontend wiring is removed too.
+The proposal below is historical and must not be reapplied automatically. See
+[removal evidence](../browser-removal.md).
+
+
 Current status: explicitly approved by the user and integrated in isolated commit
 `2ef619c0704025512d9f4d4f5290dec3940a7361`. The original review and candidate-only evidence below are retained
 as history. Subsequent pending/unintegrated wording describes that earlier state.
