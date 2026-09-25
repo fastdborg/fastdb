@@ -25,6 +25,7 @@ mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
 mod profile;
+mod projection_path;
 mod relations;
 pub use profile::{ProfiledQuery, QueryMetrics};
 mod select;

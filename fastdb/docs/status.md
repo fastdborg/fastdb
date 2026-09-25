@@ -11,6 +11,12 @@ Packages are distributed in the GitHub Linux bundle, not language registries.
 The bundle uses the required development build profile with debug symbols stripped;
 read the release record for Linux library requirements and performance limits.
 
+## Post-release work
+
+[Nested projection paths](nested-projections.md) add SurrealDB-style wildcard
+record fetching plus FastQL dot and negative array indexes. This work is separate
+from the published 2.0.0 artifacts.
+
 ## Implemented V2 behavior
 
 - [Spatial point/radius indexes](v2-spatial.md) and [H3 cells](v2-cell-design.md).
