@@ -33,4 +33,4 @@ if $strip_debug; then
   strip --strip-debug fastdb/bindings/node/fastdb.node
 fi
 node --test fastdb/bindings/node/test.cjs fastdb/examples/node-task-tracker/test.cjs
-npm run typecheck --prefix fastdb/bindings/node
+pnpm --dir fastdb/bindings/node run typecheck

@@ -1,17 +1,22 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
+mod ann;
 mod budget;
 mod bundled;
+mod udf;
 pub use budget::ResultLimits;
 mod catalog;
 mod check;
 mod deferred;
 mod expression;
+mod fulltext;
 mod functions;
 mod guard;
 mod integrity;
 pub use integrity::{IntegrityLimits, IntegrityReport};
 mod interrupt;
+mod wal_replication;
 mod wire_json;
+pub use wal_replication::WalPosition;
 #[doc(hidden)]
 pub use wire_json::decode_wire_json;
 mod links;
@@ -20,8 +25,10 @@ mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
 mod profile;
+mod relations;
 pub use profile::{ProfiledQuery, QueryMetrics};
 mod select;
+mod spatial;
 mod transaction;
 mod transfer;
 pub use transfer::TransferFormat;
@@ -82,6 +89,21 @@ impl Error {
                 | turso_core::LimboError::ForeignKeyConstraint(_)
                 | turso_core::LimboError::Raise(..),
             ) => "FDB_CONSTRAINT",
+            Self::Engine(turso_core::LimboError::ExtensionError(message))
+                if message.starts_with("__fastdb_udf_limit:") =>
+            {
+                "FDB_LIMIT"
+            }
+            Self::Engine(turso_core::LimboError::ExtensionError(message))
+                if message.starts_with("__fastdb_udf_cancelled:") =>
+            {
+                "FDB_CANCELLED"
+            }
+            Self::Engine(turso_core::LimboError::ExtensionError(message))
+                if message.starts_with("__fastdb_udf_validation:") =>
+            {
+                "FDB_VALIDATION"
+            }
             Self::Engine(_) => "FDB_ENGINE",
             Self::Encoding(_) | Self::Storage(_) => "FDB_STORAGE",
             Self::Validation(_) => "FDB_VALIDATION",
@@ -152,12 +174,32 @@ pub struct Field {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<String>,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum IndexKind {
+    #[default]
+    Scalar,
+    Spatial,
+    FullText,
+    Vector,
+}
+impl IndexKind {
+    fn is_scalar(&self) -> bool {
+        *self == Self::Scalar
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Index {
+    #[serde(default, skip_serializing_if = "IndexKind::is_scalar")]
+    kind: IndexKind,
     name: String,
     path: Vec<String>,
     unique: bool,
     storage: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fulltext: Option<fulltext::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vector: Option<ann::Config>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Collection {
@@ -167,25 +209,76 @@ struct Collection {
     storage: String,
     fields: Vec<Field>,
     indexes: Vec<Index>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    relations: Vec<relations::Relation>,
 }
 
 pub struct Database {
     engine: Arc<EngineDatabase>,
+    manual_wal: bool,
 }
 impl Database {
     pub fn open(path: &str) -> Result<Self> {
+        Self::open_internal(path, false)
+    }
+    /// Open with caller-provided storage and ordinary automatic WAL management.
+    ///
+    /// The backend must implement the engine I/O contract, including file
+    /// identity, locking, completion and durability semantics. Use this for
+    /// embedded hosts with their own storage adapter. This method does not make
+    /// an asynchronous backend synchronous or provide durability beyond that
+    /// backend's guarantees.
+    pub fn open_with_io(path: &str, io: Arc<dyn turso_core::IO>) -> Result<Self> {
+        Self::open_internal_io(path, false, io)
+    }
+    /// Open a single-owner database whose caller manages WAL retention.
+    ///
+    /// Disables automatic checkpointing and WAL restart on every connection,
+    /// including catalog initialization. Explicit checkpoint SQL remains available.
+    /// The caller must bound WAL growth, coordinate all access, and publish remote
+    /// commits before acknowledging writes. This method alone provides no remote
+    /// durability. Never mix ordinary and manual-WAL opens of the same file.
+    pub fn open_with_manual_wal(path: &str) -> Result<Self> {
+        Self::open_internal(path, true)
+    }
+    fn open_internal(path: &str, manual_wal: bool) -> Result<Self> {
         let io = EngineDatabase::io_for_path(path)?;
-        let engine = EngineDatabase::open_file(io, path)?;
+        Self::open_internal_io(path, manual_wal, io)
+    }
+    /// Open a manually managed WAL database with caller-provided storage I/O.
+    /// The caller must preserve the engine I/O contract and all single-owner WAL
+    /// requirements of `open_with_manual_wal`. Useful for bounded or instrumented I/O.
+    pub fn open_with_manual_wal_and_io(path: &str, io: Arc<dyn turso_core::IO>) -> Result<Self> {
+        Self::open_internal_io(path, true, io)
+    }
+    fn open_internal_io(path: &str, manual_wal: bool, io: Arc<dyn turso_core::IO>) -> Result<Self> {
+        let engine = EngineDatabase::open_file_with_flags(
+            io,
+            path,
+            turso_core::OpenFlags::default(),
+            turso_core::DatabaseOpts::new().with_index_method(true),
+            None,
+        )?;
         let conn = engine.connect()?;
+        if manual_wal {
+            conn.wal_auto_actions_disable();
+        }
         conn.execute("CREATE TABLE IF NOT EXISTS __fastdb_catalog (name TEXT PRIMARY KEY, metadata TEXT NOT NULL)")?;
-        Ok(Self { engine })
+        conn.execute(udf::DDL)?;
+        Ok(Self { engine, manual_wal })
     }
     pub fn connect(&self) -> Result<Connection> {
+        let engine = self.engine.connect()?;
+        if self.manual_wal {
+            engine.wal_auto_actions_disable();
+        }
         let connection = Connection {
-            engine: self.engine.connect()?,
+            engine,
+            manual_wal: self.manual_wal,
             next_atomic_id: std::sync::atomic::AtomicU64::new(0),
             next_subquery_id: std::sync::atomic::AtomicU64::new(0),
             write_buffer_limits: None,
+            ann_cache: Default::default(),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -195,9 +288,11 @@ impl Database {
 /// Connections expose only checked frontend operations, never raw engine handles.
 pub struct Connection {
     engine: Arc<EngineConnection>,
+    manual_wal: bool,
     next_atomic_id: std::sync::atomic::AtomicU64,
     next_subquery_id: std::sync::atomic::AtomicU64,
     write_buffer_limits: Option<ResultLimits>,
+    ann_cache: std::sync::Mutex<Option<ann::Cache>>,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
@@ -217,7 +312,7 @@ fn quote(name: &str) -> String {
 fn canonical(name: &str) -> Result<String> {
     if name.is_empty()
         || name.contains('\0')
-        || name.to_ascii_lowercase().starts_with("__fastdb_")
+        || guard::reserved_name(name)
         || name.to_ascii_lowercase().starts_with("sqlite_")
     {
         return Err(Error::Validation("invalid or reserved name".into()));
@@ -240,6 +335,26 @@ impl Connection {
         collect_rows(&mut statement)
     }
     fn atomic<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.savepoint(f, |_| true)
+    }
+    fn interruptible_write<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        // Autocommit already has a full-transaction rollback boundary. Keep its
+        // native commit/error behavior; only protect an existing caller scope.
+        if self.engine.get_auto_commit() {
+            return f();
+        }
+        // Native plain writes can omit the engine statement journal. Supply a
+        // rollback boundary for interrupts without changing OR FAIL/ROLLBACK
+        // and other native error dispositions.
+        self.savepoint(f, |error| {
+            matches!(error.code(), "FDB_CANCELLED" | "FDB_ROLLBACK")
+        })
+    }
+    fn savepoint<T>(
+        &self,
+        f: impl FnOnce() -> Result<T>,
+        rollback_on_error: impl FnOnce(&Error) -> bool,
+    ) -> Result<T> {
         // A failed inner SAVEPOINT may already exist when interruption is
         // reported. Unique names let outer cleanup roll back its own frame.
         let id = self
@@ -273,7 +388,12 @@ impl Connection {
                 }),
             };
         }
-        let result = f().and_then(|v| {
+        let operation = f();
+        let should_rollback = match &operation {
+            Err(error) => rollback_on_error(error),
+            Ok(_) => true, // A failed RELEASE must use the ordinary cleanup path.
+        };
+        let result = operation.and_then(|v| {
             self.run(&format!("RELEASE {name}"), &[])?;
             Ok(v)
         });
@@ -283,9 +403,12 @@ impl Connection {
                 if self.engine.get_auto_commit() {
                     return Err(cause);
                 }
-                let rollback = self
-                    .run(&format!("ROLLBACK TO {name}"), &[])
-                    .and_then(|_| self.run(&format!("RELEASE {name}"), &[]));
+                let rollback = if should_rollback {
+                    self.run(&format!("ROLLBACK TO {name}"), &[])
+                        .and_then(|_| self.run(&format!("RELEASE {name}"), &[]))
+                } else {
+                    self.run(&format!("RELEASE {name}"), &[])
+                };
                 match rollback {
                     Ok(_) => Err(cause),
                     Err(rollback) => Err(Error::Rollback {
@@ -321,7 +444,16 @@ impl Connection {
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
-        collection.version = catalog::version();
+        collection.version = if !collection.relations.is_empty()
+            || collection
+                .indexes
+                .iter()
+                .any(|index| index.kind != IndexKind::Scalar)
+        {
+            3
+        } else {
+            collection.version.max(catalog::version())
+        };
         self.run(
             "UPDATE __fastdb_catalog SET metadata = ?1 WHERE name = ?2",
             &[
@@ -339,7 +471,7 @@ impl Connection {
             // Names are collision-free UTF-8 hex, independent of user quoting.
             let storage = format!("__fastdb_c_{}", name.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
             self.run(&format!("CREATE TABLE {} (id BLOB PRIMARY KEY, doc BLOB NOT NULL)", quote(&storage)), &[])?;
-            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new() };
+            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new(), relations: Vec::new() };
             self.run("INSERT INTO __fastdb_catalog VALUES (?1, ?2)", &[text(&name), text(&serde_json::to_string(&collection)?)])?; Ok(())
         })
     }
@@ -390,7 +522,10 @@ impl Connection {
                 (None, true) => return Err(Error::NotFound(field.path.join("."))),
             }
             for index in &c.indexes {
-                catalog::compatible_index(&c, &index.path)?;
+                index.validate_vector_config(&c)?;
+                for path in index.paths() {
+                    catalog::compatible_index(&c, path, index.kind)?;
+                }
             }
             for doc in self.documents(&c)? {
                 self.validate_candidate(&c, &doc)?;
@@ -415,6 +550,27 @@ impl Connection {
         unique: bool,
         if_not_exists: bool,
     ) -> Result<()> {
+        self.create_index_kind(table, name, path, unique, if_not_exists, IndexKind::Scalar)
+    }
+    /// Build an index for two-dimensional points. Missing/null values are excluded from searches.
+    pub fn create_spatial_index(
+        &self,
+        table: &str,
+        name: &str,
+        path: Vec<String>,
+        if_not_exists: bool,
+    ) -> Result<()> {
+        self.create_index_kind(table, name, path, false, if_not_exists, IndexKind::Spatial)
+    }
+    fn create_index_kind(
+        &self,
+        table: &str,
+        name: &str,
+        path: Vec<String>,
+        unique: bool,
+        if_not_exists: bool,
+        kind: IndexKind,
+    ) -> Result<()> {
         validate_path(&path)?;
         let name = canonical(name)?;
         self.atomic(|| {
@@ -424,7 +580,16 @@ impl Connection {
                 &[text(&name)],
             )?;
             if !existing.is_empty() {
-                if if_not_exists
+                if kind == IndexKind::Spatial
+                    && if_not_exists
+                    && c.indexes
+                        .iter()
+                        .any(|i| i.name == name && i.kind == kind && i.path == path)
+                {
+                    return Ok(());
+                }
+                if kind == IndexKind::Scalar
+                    && if_not_exists
                     && matches!(&existing[0][0],EngineValue::Text(t) if t.as_str()=="index")
                 {
                     return Ok(());
@@ -440,7 +605,7 @@ impl Connection {
             {
                 return Err(Error::AlreadyExists(name.clone()));
             }
-            catalog::compatible_index(&c, &path)?;
+            catalog::compatible_index(&c, &path, kind)?;
             let storage = format!(
                 "__fastdb_i_{}",
                 name.as_bytes()
@@ -448,26 +613,17 @@ impl Connection {
                     .map(|b| format!("{b:02x}"))
                     .collect::<String>()
             );
-            // No affinity on key: numeric equality and binary text semantics match SQL expressions.
-            self.run(
-                &format!("CREATE TABLE {} (key, id BLOB NOT NULL)", quote(&storage)),
-                &[],
-            )?;
-            self.run(
-                &format!(
-                    "CREATE {} INDEX {} ON {} (key)",
-                    if unique { "UNIQUE" } else { "" },
-                    quote(&name),
-                    quote(&storage)
-                ),
-                &[],
-            )?;
             let index = Index {
+                kind,
                 name: name.clone(),
                 path: path.clone(),
                 unique,
                 storage,
+                fulltext: None,
+                vector: None,
             };
+            self.run(&index.table_ddl(), &[])?;
+            self.run(&index.index_ddl(), &[])?;
             for doc in self.documents(&c)? {
                 self.insert_index(&index, &doc)?;
             }
@@ -476,14 +632,25 @@ impl Connection {
         })
     }
     fn insert_index(&self, index: &Index, doc: &Document) -> Result<()> {
-        let key = index_scalar(path_value(doc, &index.path)?.unwrap_or(&Value::Null))?;
+        if index.kind == IndexKind::Vector {
+            return self.insert_vector_entry(index, doc);
+        }
+        let mut values = index.document_keys(doc)?;
         let id = doc
             .get("id")
             .ok_or_else(|| Error::Storage("document has no id".into()))?;
+        values.insert(1, EngineValue::Blob(id.encode()?));
+        let slots = (1..=values.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
         self.run(
-            &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&index.storage)),
-            &[key, EngineValue::Blob(id.encode()?)],
+            &format!("INSERT INTO {} VALUES ({slots})", quote(&index.storage)),
+            &values,
         )?;
+        if index.kind == IndexKind::FullText {
+            self.change_text_count(index, 1)?;
+        }
         Ok(())
     }
     pub fn insert(&self, table: &str, doc: Document) -> Result<Document> {
@@ -555,10 +722,7 @@ impl Connection {
             &[EngineValue::Blob(value::encode_document(doc)?), id.clone()],
         )?;
         for index in &c.indexes {
-            self.run(
-                &format!("DELETE FROM {} WHERE id = ?1", quote(&index.storage)),
-                std::slice::from_ref(&id),
-            )?;
+            self.delete_index_entry(index, &id)?;
             self.insert_index(index, doc)?;
         }
         Ok(())
@@ -595,10 +759,7 @@ impl Connection {
     fn delete_document(&self, c: &Collection, doc: &Document) -> Result<()> {
         let id = EngineValue::Blob(doc["id"].encode()?);
         for index in &c.indexes {
-            self.run(
-                &format!("DELETE FROM {} WHERE id = ?1", quote(&index.storage)),
-                std::slice::from_ref(&id),
-            )?;
+            self.delete_index_entry(index, &id)?;
         }
         self.run(
             &format!("DELETE FROM {} WHERE id = ?1", quote(&c.storage)),
@@ -614,6 +775,11 @@ impl Connection {
                 .iter()
                 .find(|i| i.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| Error::NotFound(name.into()))?;
+            if index.kind != IndexKind::Scalar {
+                return Err(Error::Validation(
+                    "scalar lookup requires a scalar index".into(),
+                ));
+            }
             let rows = self.run(
                 &format!(
                     "SELECT c.doc FROM {} AS i JOIN {} AS c ON c.id = i.id WHERE i.key = ?1",
@@ -637,12 +803,50 @@ impl Connection {
         params: &Parameters,
         limits: Option<ResultLimits>,
     ) -> Result<QueryResult> {
+        if udf::has_calls(sql)? {
+            return self.atomic(|| self.execute_snapshot(sql, params, limits));
+        }
+        self.execute_snapshot(sql, params, limits)
+    }
+    fn execute_snapshot(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: Option<ResultLimits>,
+    ) -> Result<QueryResult> {
         use fastql_parser::Statement;
         let object = |expr| match self.evaluate(expr, params, None)? {
             Value::Object(doc) => Ok(doc),
             _ => Err(Error::Validation("expected a typed document object".into())),
         };
         match fastql_parser::parse(sql)? {
+            Statement::CreateFunction {
+                name,
+                parameters,
+                returns,
+                source,
+                replace,
+            } => {
+                self.create_function(&name, parameters, &returns, &source, replace)?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::DropFunction { name, if_exists } => {
+                self.drop_function(&name, if_exists)?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::DefineRelation {
+                name,
+                target,
+                source,
+                path,
+            } => {
+                self.define_relation(&name, &target, &source, path)?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::DropRelation { name, if_exists } => {
+                self.drop_relation(&name, if_exists)?;
+                Ok(QueryResult::command(0))
+            }
             Statement::Upsert {
                 table,
                 target,
@@ -764,6 +968,35 @@ impl Connection {
                 )?;
                 Ok(QueryResult::command(0))
             }
+            Statement::CreateVectorIndex {
+                if_not_exists,
+                table,
+                name,
+                path,
+                dimensions,
+                metric,
+            } => {
+                self.create_vector_index(&table, &name, path, dimensions, &metric, if_not_exists)?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::CreateFullTextIndex {
+                if_not_exists,
+                table,
+                name,
+                paths,
+            } => {
+                self.create_fulltext_index(&table, &name, paths, if_not_exists)?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::CreateSpatialIndex {
+                if_not_exists,
+                table,
+                name,
+                path,
+            } => {
+                self.create_spatial_index(&table, &name, path, if_not_exists)?;
+                Ok(QueryResult::command(0))
+            }
             Statement::CreateIndex {
                 if_not_exists,
                 table,
@@ -794,6 +1027,9 @@ impl Connection {
                 let doc = self.insert(&table, object(value)?)?;
                 self.object_returning(&table, returning, vec![doc], params, limits)
             }),
+            Statement::SelectRecordProjection { target, fields } => self
+                .profile_record_projection(&target, &fields, params, limits)
+                .map(|profile| profile.result),
             Statement::SelectRecord(record) => Ok(QueryResult::documents(
                 self.get(&record)?.into_iter().collect(),
                 0,
@@ -836,11 +1072,25 @@ impl Connection {
             }),
             Statement::Sql(sql) => {
                 deferred::check(&sql)?;
-                self.sql(&sql, params)
+                if write::is_data_write(self, &sql)? {
+                    self.interruptible_write(|| self.sql(&sql, params))
+                } else {
+                    self.sql(&sql, params)
+                }
             }
         }
     }
     pub(crate) fn guard_native_sql(&self, sql: &str) -> Result<()> {
+        if matches!(
+            select::parsed(sql),
+            Ok(turso_parser::ast::Cmd::Stmt(
+                turso_parser::ast::Stmt::CreateIndex { using: Some(_), .. }
+            ))
+        ) {
+            return Err(Error::Unsupported(
+                "native index methods require a managed search index".into(),
+            ));
+        }
         let tokens = guard::native_tokens(sql)?;
         let collections = self.run("SELECT name FROM __fastdb_catalog", &[])?;
         for token in &tokens {
@@ -853,7 +1103,7 @@ impl Connection {
                     | fastql_parser::Kind::String
             ) {
                 let name = token.text.to_ascii_lowercase();
-                if name.starts_with("__fastdb_")
+                if guard::reserved_name(&name)
                     || name == "writable_schema"
                     || collections
                         .iter()
@@ -1064,7 +1314,7 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
         }
     }
     for index in &c.indexes {
-        scalar(path_value(doc, &index.path)?.unwrap_or(&Value::Null))?;
+        index.document_keys(doc)?;
     }
     Ok(())
 }

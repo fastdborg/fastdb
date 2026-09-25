@@ -102,6 +102,7 @@ fn io_stop_child() {
     });
     let db = Database {
         engine: turso_core::Database::open_file(io, &path).unwrap(),
+        manual_wal: false,
     };
     let c = db.connect().unwrap();
     q(&c, "PRAGMA synchronous=FULL");

@@ -1,6 +1,27 @@
-# Embedded alpha contracts (value format 1, catalog version 2; not a V1 release)
+# FastDB behavior contracts and implementation history
 
-Full V1 scope remains defined in the parent FastDB.md and FastQL.md plans. This implementation is an initial persistent slice; the list below is not a reduction of release scope.
+FastDB/FastQL V1 are released; see [release 1.0.0](release-1.0.0.md) and
+[the accepted V1 query matrix](v1-query-matrix.md). This file grew cumulatively
+during V1 development. Early descriptions of alpha status, duplicate-column
+rejection and unfinished release gates are historical; later sections and the
+release record supersede them. Do not reopen those gates from this history.
+
+Active V2 contracts: [spatial and H3](v2-spatial.md),
+[record brace projections](v2-record-projections.md),
+[inverse relationships](v2-relations.md), and
+[the implementation checklist](v2-tasks.md). V2 additions are development work,
+not functionality in the published 1.0.0 binaries.
+
+V2 transaction change: the approved scalar-read engine fix preserves caller
+transactions and named savepoints after read-only extension/helper failures.
+Earlier sections describing transaction-wide rollback for these failures are V1
+history. This also affects read evaluation inside managed writes and RETURNING:
+the frontend restores the failed statement while retaining prior caller work.
+Native writer-error and other engine-error dispositions are not universally
+changed; continue inspecting transaction reports. See [the reviewed change](proposals/udf-error-transaction.md)
+and [combined acceptance evidence](v2-core-integration-evidence.md).
+
+## Original value and collection foundation
 
 Values at the Rust boundary distinguish null, boolean, int64, finite float64, string, binary, record, object, array, and typed vector bytes. Objects are sorted maps. A stored value is `FDB` followed by byte `01`, then UTF-8 JSON of a fully tagged value tree (`type`/`value` at every node). User objects are nested inside an Object tag, so arbitrary keys cannot masquerade as records. Rust serde_json preserves int64 exactly. This internal format is not yet a cross-language wire contract: JavaScript transport must encode integers losslessly before bindings ship. Vector construction and validation for the five pinned representations are described below.
 
@@ -1375,3 +1396,51 @@ remains available to declare validation/indexes before the first write.
 
 This addition is subsequent to the published 0.1.0 preview. Its existing release
 assets are unchanged.
+
+
+## V2 spatial development additions
+
+The current working tree adds spatial scalar functions, managed spatial indexes,
+the `search::near` source and H3 cell aggregation. See the [spatial contract](v2-spatial.md)
+for syntax, validation, query semantics, index selectivity and catalog version 3.
+[Record brace projections](v2-record-projections.md) also preserve positional
+typed columns and zero-or-one rowsets with bounded one-hop expansion. These are
+V2 development additions, not features of published FastDB 1.0.0 artifacts.
+
+[Declared inverse relationships](v2-relations.md) add indexed, paginated one-hop
+array expansion. Declarations require a managed reference index and catalog
+version 3 on their target collection; dependent indexes cannot be removed until
+the relation is dropped. Query profiles, transaction snapshots and result limits
+cover the expansion.
+
+
+## V2 full-text development additions
+
+[Managed full-text search](v2-fulltext.md) adds `CREATE SEARCH INDEX ... USING
+FULLTEXT` and `search::text(index,query,limit)`. String/null validation, catalog
+version 3, transactional counts and text-index maintenance share the document
+write path. Hits retain typed IDs and native BM25 scores. The public limit is
+applied after stable score/ID selection and before outer SQL filters; all matching
+hits are materialized, so returned-row limits do not bound search working memory.
+The approved engine cache-isolation exception is recorded in `UPSTREAM.md`.
+
+V2 ANN development adds managed `CREATE SEARCH INDEX ... USING VECTOR WITH
+(dimensions=N,metric='cosine'|'l2')` and `search::vector(index,query,limit)`.
+Dense float32 HNSW candidates are reranked by distance and typed-ID bytes, then
+limited before outer filters. Graph snapshots and redo logs participate in the
+document transaction; connection caches validate snapshot generations. See
+[the ANN contract](v2-ann.md) and [evidence](v2-ann-evidence.md) for limits and
+completed native qualification. This is
+working-tree functionality, not part of the published V1 contract.
+
+## Ordinary native write cancellation (V2 development)
+
+The frontend protects ordinary INSERT/UPDATE/DELETE in an existing caller
+transaction with a private savepoint. A cancelled plain native write rolls back
+its partial rows and preserves prior work; autocommit keeps its native transaction
+boundary. Non-cancellation error handling retains native conflict dispositions,
+including OR FAIL and OR ROLLBACK. The regression avoids SQL callbacks/triggers,
+which can change engine statement-journal eligibility. See
+[browser/client evidence](v2-browser-client.md) for control/fix results and the
+conflict oracle. The pending user-function scalar-error bug and ambiguous
+FDB_ROLLBACK cleanup outcomes remain separate limitations.

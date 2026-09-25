@@ -50,10 +50,8 @@ fn projection_failure_rolls_back_data_and_indexes_for_all_write_kinds() {
         assert_eq!(q(&c,"SELECT n FROM posts ORDER BY n").rows,vec![vec![Value::Integer(1)],vec![Value::Integer(2)]]);
         assert_eq!(c.lookup_index("posts","post_n",&Value::Integer(1)).unwrap().len(),1);
     }
-    let error = c
-        .execute("COMMIT", &Parameters::new())
-        .expect_err("pinned engine aborts outer transaction on UDF errors");
-    assert!(error.to_string().contains("no transaction is active"));
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    q(&c, "COMMIT");
     q(&c, "BEGIN");
     q(&c, "INSERT INTO posts (n) VALUES (9) RETURNING n");
     q(&c, "COMMIT");

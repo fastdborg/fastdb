@@ -1,6 +1,6 @@
 # Rust embedded client
 
-The prototype Rust client is the `fastdb` crate under `fastdb/frontend`. It remains private and is not available as a published crates.io release. A local application can use a path dependency on an exact FastDB checkout:
+The Rust client is the `fastdb` crate under `fastdb/frontend`. V1 is available through the released source distribution; the crate remains private and is not published on crates.io. V2 additions below are development functionality. A local application can use a path dependency on an exact FastDB checkout:
 
 ```toml
 [dependencies]
@@ -28,6 +28,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Keep the Database alive while using its connections and serialize operations on each connection. Public APIs do not expose the raw engine connection. Use execute_report and transaction_state when recovery needs the observed transaction state; an error does not universally imply either statement-only or full transaction rollback. See [contracts](contracts.md).
+
+## Custom storage I/O (V2 development)
+
+`Database::open_with_io(path, Arc<dyn turso_core::IO>)` opens the same checked
+frontend with a caller-provided engine I/O backend and ordinary automatic WAL
+management. Catalog initialization, WAL access and subsequent connections use
+that backend. The path identifies the database within the backend; it does not
+select the default host filesystem implementation.
+
+This integration API uses the pinned engine's public I/O trait. The embedding
+host must implement its file identity, locking, completion and durability
+contracts and coordinate access to the same files. An asynchronous backend must
+make progress when the synchronous engine drives its completions. The API does
+not add storage durability or provide a browser adapter by itself. The existing
+`open_with_manual_wal_and_io` retains its separate manual-WAL responsibilities.
+
+A native memory-backend regression checks close/reopen, persisted catalog
+validation and unique indexes, rollback and integrity without creating a host
+database file. Browser OPFS has separate [durability/fault evidence](v2-wal-durability-evidence.md) and [upgrade checks](v2-upgrade-restore-evidence.md); those results apply to their identified artifacts and do not qualify an arbitrary custom I/O backend.
+
+## V2 native operations (development)
+
+The connection exposes native lifecycle methods alongside the same FastQL used
+by other clients:
+
+| Method | Purpose |
+|---|---|
+| `create_spatial_index(table, name, path, if_not_exists)` | Managed point/radius candidate index |
+| `create_fulltext_index(table, name, paths, if_not_exists)` | Managed native full-text index over string fields |
+| `create_vector_index(table, name, path, dimensions, metric, if_not_exists)` | Dense float32 ANN index with `cosine` or `l2` metric |
+| `search_vectors(name, query, limit)` | Typed ANN result using an existing managed index |
+| `define_relation(name, target, source, path)` / `drop_relation(name, if_exists)` | Indexed inverse relationship lifecycle |
+| `create_function(name, parameters, returns, source, replace)` / `drop_function(name, if_exists)` | Persisted typed JavaScript function lifecycle |
+
+Native V2 builds require a C/C++ toolchain for the bundled engine dependencies;
+USearch uses C++17. The qualified Linux build links the system C++ runtime.
+Rust-only compilation without those tools has not been qualified.
+
+Paths are vectors of field-name strings; full-text accepts a vector of paths.
+Function parameters are `(name, type)` string pairs. Relation definitions require
+an existing scalar index on the source reference path. These methods preserve
+the same validation and transaction contracts as their FastQL counterparts.
+Spatial/H3 expressions, brace projections and inverse fetches use `execute` or
+the existing query/profile APIs. See [spatial](v2-spatial.md),
+[full-text](v2-fulltext.md), [ANN](v2-ann.md), [relations](v2-relations.md) and
+[function qualification limits](v2-user-functions.md) before relying on a feature.
+Browser full-text and the known scalar-error transaction fix remain separate
+open gates; successful function execution is not full error-path qualification.
 
 ## Typed vector construction
 
@@ -154,3 +202,20 @@ or make output atomic. Use a buffered writer for files or sockets. It consumes
 the value and serializes borrowed views of its arrays and objects without
 building a second portable tree. The complete input remains resident during
 serialization; this is not a database row-streaming API or a total-memory limit.
+## Ordinary native write cancellation (V2 development)
+
+Ordinary INSERT/UPDATE/DELETE inside an existing caller transaction now receives
+a private frontend savepoint. Cancellation rolls back the interrupted statement's
+rows while retaining prior caller work. Autocommit uses its existing native
+transaction boundary, and native conflict policies retain their dispositions.
+The regression uses plain SQL without a trigger or scalar callback; a separate
+oracle compares rows, state, `changes()` and `last_insert_rowid()` to the pinned
+engine. The separately approved scalar-read fix now also preserves caller work
+after read-only extension errors; see [integrated native evidence](v2-core-integration-evidence.md).
+This does not redefine ambiguous `FDB_ROLLBACK` cleanup outcomes as successful rollback.
+
+The [V2 standalone consumer](v2-rust-client-evidence.md) now additionally checks
+the direct managed-index, relation and function APIs, typed search results,
+spatial/H3, projections, rollback and reopening. Its offline build verifies the
+resolved registry/git identities against the pinned baseline. This complements
+workspace tests and does not close the pending scalar-error or release gates.

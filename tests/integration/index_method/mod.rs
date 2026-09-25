@@ -2358,3 +2358,64 @@ fn fts_rolled_back_optimize_does_not_leak_segment_state() {
         "rolled-back document must not be searchable"
     );
 }
+
+// Regression: a cached FTS directory must never retain another connection's
+// pager/snapshot, even when its own metadata still validates in that pager.
+#[cfg(all(feature = "fts", not(target_family = "wasm")))]
+#[turso_macros::test]
+fn test_fts_cache_preserves_connection_snapshots(tmp_db: TempDatabase) {
+    let writer = tmp_db.connect_limbo();
+    writer
+        .execute("CREATE TABLE cache_docs(id TEXT UNIQUE, title TEXT)")
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO cache_docs VALUES ('a','database'),('b','database search'),('c',NULL)",
+        )
+        .unwrap();
+    writer
+        .execute("CREATE INDEX cache_text ON cache_docs USING fts(title)")
+        .unwrap();
+    let reader = tmp_db.connect_limbo();
+    let query = "SELECT id,fts_score(title,'database') AS score FROM cache_docs WHERE fts_match(title,'database') ORDER BY score DESC,id LIMIT 100";
+    let baseline = limbo_exec_rows(&reader, query);
+    assert_eq!(baseline.len(), 2);
+    writer.execute("BEGIN").unwrap();
+    writer
+        .execute("INSERT INTO cache_docs VALUES ('d','database')")
+        .unwrap();
+    assert_eq!(limbo_exec_rows(&writer, query).len(), 3);
+    assert_eq!(
+        limbo_exec_rows(&reader, query),
+        baseline,
+        "uncommitted FTS hits/scores escaped the writer"
+    );
+    reader.execute("BEGIN").unwrap();
+    assert_eq!(limbo_exec_rows(&reader, query), baseline);
+    writer.execute("COMMIT").unwrap();
+    assert_eq!(
+        limbo_exec_rows(&reader, query),
+        baseline,
+        "reader lost its pinned snapshot"
+    );
+    reader.execute("ROLLBACK").unwrap();
+    let committed = limbo_exec_rows(&reader, query);
+    assert_eq!(committed.len(), 3);
+    writer.execute("BEGIN").unwrap();
+    writer
+        .execute("DELETE FROM cache_docs WHERE id='a'")
+        .unwrap();
+    assert_eq!(limbo_exec_rows(&writer, query).len(), 2);
+    assert_eq!(limbo_exec_rows(&reader, query), committed);
+    writer.execute("SAVEPOINT change").unwrap();
+    writer
+        .execute("UPDATE cache_docs SET title='nothing' WHERE id='b'")
+        .unwrap();
+    assert_eq!(limbo_exec_rows(&writer, query).len(), 1);
+    writer.execute("ROLLBACK TO change").unwrap();
+    writer.execute("RELEASE change").unwrap();
+    assert_eq!(limbo_exec_rows(&writer, query).len(), 2);
+    writer.execute("ROLLBACK").unwrap();
+    assert_eq!(limbo_exec_rows(&writer, query), committed);
+    assert_eq!(limbo_exec_rows(&reader, query), committed);
+}

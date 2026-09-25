@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "7457d5340562dcceafa311fcad3f07aef6ea20dc288bf9456603831d5e49aaa4",
+  "inventorySha256": "5b5bfd46c5aa466e3b6d0444bd1e034c41afbf738e6b5b798f7e135fdf4eba50",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -191,6 +191,25 @@
       "inlineNoticeCandidates": []
     },
     {
+      "name": "async-trait",
+      "version": "0.1.89",
+      "status": "archive_verified",
+      "archiveSha256": "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
       "name": "autocfg",
       "version": "1.4.0",
       "status": "archive_verified",
@@ -206,6 +225,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1054,
           "sha256": "27995d58ad5c1145c1a8cd86244ce844886958a35eb2b78c6b772748669999ac"
+        }
+      ]
+    },
+    {
+      "name": "base64",
+      "version": "0.22.1",
+      "status": "archive_verified",
+      "archiveSha256": "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1076,
+          "sha256": "0dd882e53de11566d50f8e8e2d5a651bcf3fabee4987d70f306233cf39094ba7"
         }
       ]
     },
@@ -244,6 +282,70 @@
           "path": "LICENSE-MIT",
           "bytes": 1071,
           "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+        }
+      ]
+    },
+    {
+      "name": "bitpacking",
+      "version": "0.9.3",
+      "status": "archive_verified",
+      "archiveSha256": "96a7139abd3d9cebf8cd6f920a389cf3dc9576172e32f4563f188cae3c3eb019",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1056,
+          "sha256": "81874c6dee7a6d112996c74bb5f66a91b784c1fdc852378ba4c8b08c569a0076"
+        }
+      ]
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "status": "archive_verified",
+      "archiveSha256": "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1082,
+          "sha256": "d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef"
+        }
+      ]
+    },
+    {
+      "name": "bon-macros",
+      "version": "3.8.2",
+      "status": "archive_verified",
+      "archiveSha256": "89ec27229c38ed0eb3c0feee3d2c1d6a4379ae44f418a29a658890e062d8f365",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "bon",
+      "version": "3.8.2",
+      "status": "archive_verified",
+      "archiveSha256": "234655ec178edd82b891e262ea7cf71f6584bcd09eff94db786be23f1821825c",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": [
+        {
+          "path": "README.md",
+          "sha256": "e3e050c76f55d533f8ab6eb3bdd4895cb844f28c66db1d1db72f0e5f13466d87",
+          "markers": [
+            {
+              "line": 260,
+              "text": "Licensed under either of <a href=\"https://github.com/elastio/bon/blob/master/LICENSE-APACHE\">Apache License, Version"
+            }
+          ]
         }
       ]
     },
@@ -367,6 +469,20 @@
       ]
     },
     {
+      "name": "census",
+      "version": "0.4.2",
+      "status": "archive_verified",
+      "archiveSha256": "4f4c707c6a209cbe82d10abd08e1ea8995e9ea937d2550646e02798948992be0",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1062,
+          "sha256": "6755ef28efcf3e523c25a6339c018b6d77db59fc908f90b57441647aa4c51298"
+        }
+      ]
+    },
+    {
       "name": "cfg-if",
       "version": "1.0.0",
       "status": "archive_verified",
@@ -447,6 +563,20 @@
       ]
     },
     {
+      "name": "codespan-reporting",
+      "version": "0.13.1",
+      "status": "archive_verified",
+      "archiveSha256": "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
       "name": "convert_case",
       "version": "0.11.0",
       "status": "archive_verified",
@@ -505,6 +635,68 @@
       ]
     },
     {
+      "name": "crc32fast",
+      "version": "1.4.2",
+      "status": "archive_verified",
+      "archiveSha256": "a97769d94ddab943e4510d138150169a2758b5ef3eb191a9ee688de3e23ef7b3",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1097,
+          "sha256": "61d383b05b87d78f94d2937e2580cce47226d17823c0430fbcad09596537efcf"
+        }
+      ]
+    },
+    {
+      "name": "crossbeam-channel",
+      "version": "0.5.15",
+      "status": "archive_verified",
+      "archiveSha256": "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1099,
+          "sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab"
+        },
+        {
+          "path": "LICENSE-THIRD-PARTY",
+          "bytes": 33447,
+          "sha256": "b16db96b93b1d7cf7bea533f572091ec6bca3234fbe0a83038be772ff391a44c"
+        }
+      ]
+    },
+    {
+      "name": "crossbeam-deque",
+      "version": "0.8.6",
+      "status": "archive_verified",
+      "archiveSha256": "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1099,
+          "sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab"
+        }
+      ]
+    },
+    {
       "name": "crossbeam-epoch",
       "version": "0.9.18",
       "status": "archive_verified",
@@ -539,6 +731,20 @@
           "path": "LICENSE-MIT",
           "bytes": 1099,
           "sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab"
+        }
+      ]
+    },
+    {
+      "name": "crunchy",
+      "version": "0.2.3",
+      "status": "archive_verified",
+      "archiveSha256": "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1082,
+          "sha256": "3eab77734a181b2a2e8418af9004f960f715f04aac4d76a26cf774f63a7b13d1"
         }
       ]
     },
@@ -619,6 +825,723 @@
       ]
     },
     {
+      "name": "cxx-build",
+      "version": "1.0.202",
+      "status": "archive_verified",
+      "archiveSha256": "4fde53ca86b9704a943fef0f1e1d836239a6aedca5de3c65fa9f97ec0bd46d39",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "cxx",
+      "version": "1.0.202",
+      "status": "archive_verified",
+      "archiveSha256": "13f6de320895f42e6e081abb5c7983bedcf0b6d0ff9323de0d33f620c8ac1199",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "cxxbridge-flags",
+      "version": "1.0.202",
+      "status": "archive_verified",
+      "archiveSha256": "49045042e5fced01b80742aba5508de82aa4f13677ed3fa2b4cda709c40c5918",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "cxxbridge-macro",
+      "version": "1.0.202",
+      "status": "archive_verified",
+      "archiveSha256": "b181252e2e3d3b5d183afbdc033a3958b445eb3e1a0ae65fc3d4f5259f5da6fd",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "darling",
+      "version": "0.20.11",
+      "status": "archive_verified",
+      "archiveSha256": "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1067,
+          "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6"
+        }
+      ]
+    },
+    {
+      "name": "darling_core",
+      "version": "0.20.11",
+      "status": "archive_verified",
+      "archiveSha256": "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1067,
+          "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6"
+        }
+      ]
+    },
+    {
+      "name": "darling_macro",
+      "version": "0.20.11",
+      "status": "archive_verified",
+      "archiveSha256": "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1067,
+          "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6"
+        }
+      ]
+    },
+    {
+      "name": "datasketches",
+      "version": "0.2.0",
+      "status": "archive_verified",
+      "archiveSha256": "c286de4e81ea2590afc24d754e0f83810c566f50a1388fa75ebd57928c0d9745",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": [
+        {
+          "path": "README.md",
+          "sha256": "423f9564ff99e1593381d11dc8753a680a97da1e6b0a277b1a99912a838972d6",
+          "markers": [
+            {
+              "line": 5,
+              "text": "    regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/bloom/builder.rs",
+          "sha256": "d41d2da702b5a14d053b39454863fdad16cf5a44deddfffa31072dd5b7626732",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/bloom/mod.rs",
+          "sha256": "77fffe301d5c6d2b77dddb1941f6b09deb7759bd6195601dc0bf5f700ec029ff",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/bloom/sketch.rs",
+          "sha256": "e9baa619768c139860b1719715037be247c1b867dd871f51a7b9af15e1ce6b2e",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/codec.rs",
+          "sha256": "3fb6eacb217879a9b51ef1b2336d012eb8991cf125115e1dbc3fecedc7d1eacf",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/common/binomial_bounds.rs",
+          "sha256": "82eb3a8954b2a91c78e16b70ad69d08f81b0812dc6efa6341fddebf21db0dc16",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/common/mod.rs",
+          "sha256": "c4f4d891f2b620235d84d85ea1d619e5aaedd106bf133b97e3694a9b66095e67",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/common/num_std_dev.rs",
+          "sha256": "5368ce513aebda88d46543ca83190084eb3f99b04d6e68604c6a8c1c7d5b6ccc",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/common/resize.rs",
+          "sha256": "f212520b5ea6d4d42ad2fcb3e9577d88a8ca56d5a7cede411e6f7a630fcc134a",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/countmin/mod.rs",
+          "sha256": "b84d8e029438aa1ee06bb46938b454643d6cc5dc0450560f2c26e7f5f5eea51b",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/countmin/serialization.rs",
+          "sha256": "6d0079fdea847cdf15e6c492d3fe385fec70942c41d0bcc7b2c28a99225da053",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/countmin/sketch.rs",
+          "sha256": "700a1404cf91c739652df8fc9166bc1ce079e6b69de3cb2703f292cad1db6b20",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/error.rs",
+          "sha256": "dc4d1a01c46553d64f87b211ff8c2bf66aa98c3d28377c1afc9cef87ab52369d",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/frequencies/mod.rs",
+          "sha256": "a1ef2c843ae08e8e317c94e7def0fc3f8370667e4e4d07be7059fcd8fd1da0bc",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/frequencies/reverse_purge_item_hash_map.rs",
+          "sha256": "00c25bb9498b6ec3a0cfc254785dce83f83fa0896269cbf3efd1b3a7c12818d9",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/frequencies/serialization.rs",
+          "sha256": "369135adf733b0a939d31f236a29092da2c5b27c124543b93091f3a09ca0907b",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/frequencies/sketch.rs",
+          "sha256": "a8610cf6b05a3900d1e2dd2c916064947cf5576b505e9c8a1ec370b95b5f44ca",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hash/mod.rs",
+          "sha256": "8fbdf66e33bc2ac623cabffc7003d138e6ebecae3d3f1a9e9a107b4894141414",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hash/murmurhash.rs",
+          "sha256": "dd3524d7bfb89dea70372c35bf249316903896509244177bd011052e105f7473",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hash/xxhash.rs",
+          "sha256": "5a974e3a3ef8ad08a57f17d77694c043b5880c7ec761f64cd0ab7905c03a8ca1",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/array4.rs",
+          "sha256": "edd0005c63ed3f5c848c6a5657b34821aa25698690da772df5ea399ed1abb2f1",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/array6.rs",
+          "sha256": "a62a5f907b0df0433a705d958c39d4b24690f193f6e7dea2c43f714d9a3f4c3f",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/array8.rs",
+          "sha256": "af115540501d3fc3ba226b13de493eefc013ff8413cc44834148294a14b9afcf",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/aux_map.rs",
+          "sha256": "44203a747ae102c84046bafe77d6e2b38ec74962f47de87e1549227efca26486",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/composite_interpolation.rs",
+          "sha256": "973a9da65df01cad92bb70b2329b51a0dabd78ca0bf6d53eaa178ffb2e053353",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/container.rs",
+          "sha256": "d20a7435673a11a536fc91f3e878b588ef34f0a85c544ece12dc88d343bbdcb7",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/coupon_mapping.rs",
+          "sha256": "f9356053c99c2771179f8575bc3e48a5c749e64874e121a88133c04f61b0e4a6",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/cubic_interpolation.rs",
+          "sha256": "a7787b588d038987596c30d0d7fd727eb2282f8cfb0aa1ac24532af6a6aa39e6",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/estimator.rs",
+          "sha256": "bcd8ce28500d78caf09d2cc95c7250303d1e02db87b4ba799574b576eb62501f",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/harmonic_numbers.rs",
+          "sha256": "1e24d44489a39ee3497b60a341c728e8a32465de7893ff4a234047c2c2b99b06",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/hash_set.rs",
+          "sha256": "f702bfca284c4b6f96a7e4ddc9e7db3873394762d31c29f7f91e0b3a50107699",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/list.rs",
+          "sha256": "5549e46a7fe3b6aa24e371a0ff3352dcc5ddffd58b094f1403d650ed7e4e9310",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/mod.rs",
+          "sha256": "e4cf6d5bc688f263da932cb00b12fbca9bb7ac0ead1da5554c932f71574a5b51",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/mode.rs",
+          "sha256": "abb87f56612a4bb26de9c5a1a8f37948906cc29d584d455984c8f8163e62759c",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/serialization.rs",
+          "sha256": "35d46e7e52a91e981f5d6028465a36ad5419a80f55caf1872d4da170cbf6c671",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/sketch.rs",
+          "sha256": "1c9f3a3f2b4fb2c04c4a429b047bbd30a0216db2635f9a444f3407e55f826c49",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/hll/union.rs",
+          "sha256": "94c38407db6bbd18b28bf4dafa3953335973cde3017d25c12d1567a29a3804ec",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "70918e9b448f776300009f89f951505bf45379cf9df2f4eae9907991f3948fd6",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/tdigest/mod.rs",
+          "sha256": "ef8e0db23c4e1ebb890fd1df815b19441e1f6b616b17bf030f466366a36b691e",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/tdigest/serialization.rs",
+          "sha256": "171aef4495cd921378cff1edd369c4672fc5d03c1e46419f21c86596ff7161bc",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/tdigest/sketch.rs",
+          "sha256": "c439f99397ddc37a9dbb54a3849bbba64e64763a1c22d4d793c7b3775d6a5021",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/theta/hash_table.rs",
+          "sha256": "f841290fc62175e8bdafb2a469867d228dfb9b01d69046172bd6eed64b4e403b",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/theta/mod.rs",
+          "sha256": "971307b60465675af38b528e8903596d706caadb5f90ecdcf0877c4ec350dbc0",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "src/theta/sketch.rs",
+          "sha256": "6cf67093d88f4e5e7f1e54596dc21c85dd9cbac4ca5ab12560cbb9605678eb5e",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/bloom_serialization_test.rs",
+          "sha256": "e261f4b42d46e35df594ca66a72a96ae3a2b3e83cb7fcdb219dbca1eddd2749c",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/common.rs",
+          "sha256": "29a33e053e984225664770169045781ddc0d85bf08f4e5cc4141ea93db1d13c7",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/countmin_test.rs",
+          "sha256": "6367f6dcf424ebba9478048eedd4e5a47fa77f1f2956121f6dc9967935d3b56b",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/frequencies_serialization_test.rs",
+          "sha256": "3f059c53327f220cfc79f81d84bdf3a61272c3b1ad95a6587034de8dddf9d5f3",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/frequencies_update_test.rs",
+          "sha256": "ba7b50d957e5201deb8f4375ffea50eacae17de7efdf38e7d7345e4f5a467546",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/hll_serialization_test.rs",
+          "sha256": "7c9405065971c3e3f6af5ca3056ca58ba134d822fc00de1f633ac8bc82f77408",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/hll_union_test.rs",
+          "sha256": "476404d513de997a9afb7848f85c774b2a3c16dfda694231477f8dc7bc369081",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/hll_update_test.rs",
+          "sha256": "fcf827354dda73091ec180d0c871b4fcdf136b5fe49e42935a9b44275e66b92d",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/tdigest_serialization_test.rs",
+          "sha256": "ea0e36e663c20242cda8cc6ac46046d1b754e25ae90bf423a8f0caae3aa80798",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/tdigest_test.rs",
+          "sha256": "627e8ac7a495736ce18eb1b6af9292d53afdf7295fe93c93e82ee3eb0e10b918",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        },
+        {
+          "path": "tests/theta_sketch_test.rs",
+          "sha256": "ff6891ccc98f33029fbc70f2b7b38082f6dab1d27dbe8ad5eab01d56ad9a3ac8",
+          "markers": [
+            {
+              "line": 4,
+              "text": "// regarding copyright ownership.  The ASF licenses this file"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "deranged",
+      "version": "0.5.8",
+      "status": "archive_verified",
+      "archiveSha256": "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 11349,
+          "sha256": "edd65bdd88957a205c47d53fa499eed8865a70320f0f03f6391668cb304ea376"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "231c837c45eb53f108fb48929e488965bc4fcc14e9ea21d35f50e6b99d98685b"
+        }
+      ]
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7",
+      "status": "archive_verified",
+      "archiveSha256": "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "9e0dfd2dd4173a530e238cb6adb37aa78c34c6bc7444e0e10c1ab5d8881f63ba"
+        }
+      ]
+    },
+    {
       "name": "displaydoc",
       "version": "0.2.5",
       "status": "archive_verified",
@@ -634,6 +1557,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1023,
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "downcast-rs",
+      "version": "2.0.2",
+      "status": "archive_verified",
+      "archiveSha256": "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1073,
+          "sha256": "fb252fecf98d9af8f1d9201c5860319a514f5a8a24700dc84fc6ea287a7a4958"
         }
       ]
     },
@@ -714,6 +1656,25 @@
       ]
     },
     {
+      "name": "erased-serde",
+      "version": "0.4.10",
+      "status": "archive_verified",
+      "archiveSha256": "d2add8a07dd6a8d93ff627029c51de145e12686fbc36ecb298ac22e74cf02dec",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
       "name": "fallible-iterator",
       "version": "0.3.0",
       "status": "archive_verified",
@@ -753,17 +1714,31 @@
     },
     {
       "name": "fastdb-node",
-      "version": "0.1.0",
+      "version": "2.0.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "0.1.0",
+      "version": "2.0.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
+      "name": "fastdivide",
+      "version": "0.4.2",
+      "status": "archive_verified",
+      "archiveSha256": "9afc2bd4d5a73106dd53d10d73d3401c2f32730ba2c0b93ddb888a8983680471",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE.txt",
+          "bytes": 145,
+          "sha256": "97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9"
+        }
+      ]
+    },
+    {
       "name": "fastql-parser",
-      "version": "0.1.0",
+      "version": "2.0.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -805,6 +1780,44 @@
       ]
     },
     {
+      "name": "float_eq",
+      "version": "1.0.1",
+      "status": "archive_verified",
+      "archiveSha256": "28a80e3145d8ad11ba0995949bbcf48b9df2be62772b3d351ef017dff6ecb853",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11560,
+          "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1069,
+          "sha256": "ed1ce8f1fc7f85a4bf9ff0b95b78a1daeffb816555f72c8946edbb575c28f497"
+        }
+      ]
+    },
+    {
+      "name": "fnv",
+      "version": "1.0.7",
+      "status": "archive_verified",
+      "archiveSha256": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1056,
+          "sha256": "65fdb6c76cd61612070c066eec9ecdb30ee74fb27859d0d9af58b9f499fd0c3e"
+        }
+      ]
+    },
+    {
       "name": "foldhash",
       "version": "0.2.0",
       "status": "archive_verified",
@@ -815,6 +1828,25 @@
           "path": "LICENSE",
           "bytes": 856,
           "sha256": "b1181a40b2a7b25cf66fd01481713bc1005df082c53ef73e851e55071b102744"
+        }
+      ]
+    },
+    {
+      "name": "fs4",
+      "version": "0.13.1",
+      "status": "archive_verified",
+      "archiveSha256": "8640e34b88f7652208ce9e88b1a37a2ae95227d84abec377ccd3c5cfeb141ed4",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1071,
+          "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"
         }
       ]
     },
@@ -1080,6 +2112,72 @@
       ]
     },
     {
+      "name": "h3o-bit",
+      "version": "0.1.2",
+      "status": "archive_verified",
+      "archiveSha256": "3b42eb4efef1f96510ae1a33b2682562a677d504641e9903a77bf5c666b9013e",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1443,
+          "sha256": "83d0dc0dba8549e6678aafaaf0ce4f3b2a1c6a4239b46a1a8ad16d2a68381031"
+        }
+      ]
+    },
+    {
+      "name": "h3o",
+      "version": "0.9.4",
+      "status": "archive_verified",
+      "archiveSha256": "60271ce96dbb45e1ac18955e1b44e9e04dcea01df040819efdedc56c0058c367",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1443,
+          "sha256": "83d0dc0dba8549e6678aafaaf0ce4f3b2a1c6a4239b46a1a8ad16d2a68381031"
+        }
+      ]
+    },
+    {
+      "name": "hashbrown",
+      "version": "0.15.2",
+      "status": "archive_verified",
+      "archiveSha256": "bf151400ff0baff5465007dd2f3e717f3fe502074ca563069ce3a6629d07b289",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2"
+        }
+      ]
+    },
+    {
+      "name": "hashbrown",
+      "version": "0.16.1",
+      "status": "archive_verified",
+      "archiveSha256": "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2"
+        }
+      ]
+    },
+    {
       "name": "hashbrown",
       "version": "0.17.1",
       "status": "archive_verified",
@@ -1135,6 +2233,16 @@
           "sha256": "f7bdb3426d045cd50efd4953026e3eb5a83d0199f458a075602611b9344da5b9"
         }
       ]
+    },
+    {
+      "name": "htmlescape",
+      "version": "0.3.1",
+      "status": "archive_verified",
+      "archiveSha256": "e9025058dae765dee5070ec375f591e2ba14638c63feff74f13805a72e523163",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "iana-time-zone",
@@ -1296,6 +2404,39 @@
       ]
     },
     {
+      "name": "ident_case",
+      "version": "1.0.1",
+      "status": "archive_verified",
+      "archiveSha256": "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1036,
+          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
+        }
+      ]
+    },
+    {
+      "name": "indexmap",
+      "version": "2.11.1",
+      "status": "archive_verified",
+      "archiveSha256": "206a8042aec68fa4a62e8d3f7aa4ceb508177d9324faf261e1959e495b7a1921",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1049,
+          "sha256": "ecc269ef87fd38a1d98e30bfac9ba964a9dbd9315c3770fed98d4d7cb5882055"
+        }
+      ]
+    },
+    {
       "name": "inout",
       "version": "0.1.4",
       "status": "archive_verified",
@@ -1334,6 +2475,44 @@
       ]
     },
     {
+      "name": "inventory",
+      "version": "0.3.24",
+      "status": "archive_verified",
+      "archiveSha256": "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "itertools",
+      "version": "0.14.0",
+      "status": "archive_verified",
+      "archiveSha256": "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1043,
+          "sha256": "7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545"
+        }
+      ]
+    },
+    {
       "name": "itoa",
       "version": "1.0.15",
       "status": "archive_verified",
@@ -1353,6 +2532,25 @@
       ]
     },
     {
+      "name": "jobserver",
+      "version": "0.1.32",
+      "status": "archive_verified",
+      "archiveSha256": "48d1dbcbbeb6a7fec7e059840aa538bd62aaccf972c7346c4d9d2059312853d0",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397"
+        }
+      ]
+    },
+    {
       "name": "lazy_static",
       "version": "1.5.0",
       "status": "archive_verified",
@@ -1368,6 +2566,20 @@
           "path": "LICENSE-MIT",
           "bytes": 1071,
           "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+        }
+      ]
+    },
+    {
+      "name": "levenshtein_automata",
+      "version": "0.2.1",
+      "status": "archive_verified",
+      "archiveSha256": "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1056,
+          "sha256": "aea36047a863d18c11b15d7f862b93b5733fdd0c88fb216bd00b1cac33ee1ac2"
         }
       ]
     },
@@ -1429,6 +2641,25 @@
           "path": "LICENSE.txt",
           "bytes": 14088,
           "sha256": "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7"
+        }
+      ]
+    },
+    {
+      "name": "link-cplusplus",
+      "version": "1.0.12",
+      "status": "archive_verified",
+      "archiveSha256": "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
         }
       ]
     },
@@ -1543,6 +2774,48 @@
       ]
     },
     {
+      "name": "lru",
+      "version": "0.16.4",
+      "status": "archive_verified",
+      "archiveSha256": "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1071,
+          "sha256": "061dc50af2cd9340703daf61978af3200cf681b12ea67a323c33ba109a23a45e"
+        }
+      ]
+    },
+    {
+      "name": "lz4_flex",
+      "version": "0.13.0",
+      "status": "archive_verified",
+      "archiveSha256": "db9a0d582c2874f68138a16ce1867e0ffde6c0bb0a0df85e1f36d04146db488a",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1079,
+          "sha256": "0982c33390159842ecce8e9d6ce2e5e39961fe0e0ffbb2eec39c9ba46db6db10"
+        }
+      ]
+    },
+    {
+      "name": "measure_time",
+      "version": "0.9.0",
+      "status": "archive_verified",
+      "archiveSha256": "51c55d61e72fc3ab704396c5fa16f4c184db37978ae4e94ca8959693a235fc0e",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1101,
+          "sha256": "405776d2ef79101bfa67711bda920ee1b4a762c64f61cc43b37b2c3d2b2ed9a2"
+        }
+      ]
+    },
+    {
       "name": "memchr",
       "version": "2.7.6",
       "status": "archive_verified",
@@ -1558,6 +2831,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1081,
           "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+        }
+      ]
+    },
+    {
+      "name": "memmap2",
+      "version": "0.9.5",
+      "status": "archive_verified",
+      "archiveSha256": "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10835,
+          "sha256": "04ea4849dba9dcae07113850c6f1b1a69052c625210639914eee352023f750ad"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1091,
+          "sha256": "0d25d03b5ab49576178ad0cae7a2648d12c17ad0452fe49c07e55e4b59aa5257"
         }
       ]
     },
@@ -1600,6 +2892,44 @@
           "path": "LICENSE",
           "bytes": 11358,
           "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "name": "minimal-lexical",
+      "version": "0.2.1",
+      "status": "archive_verified",
+      "archiveSha256": "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        },
+        {
+          "path": "LICENSE.md",
+          "bytes": 2003,
+          "sha256": "dbe1fff0fb1314b6af94f161511406275cf01c5a32441fbf24528a57a051d599"
+        }
+      ]
+    },
+    {
+      "name": "murmurhash32",
+      "version": "0.3.1",
+      "status": "archive_verified",
+      "archiveSha256": "2195bf6aa996a481483b29d62a7663eed3fe39600c460e323f8ff41e90bdd89b",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1060,
+          "sha256": "80cabf1d609584449c84fa14e16d675c3650a83e9d04c6e9f0bd3db4e0df21ff"
         }
       ]
     },
@@ -1673,6 +3003,20 @@
       ]
     },
     {
+      "name": "nom",
+      "version": "7.1.3",
+      "status": "archive_verified",
+      "archiveSha256": "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1065,
+          "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0"
+        }
+      ]
+    },
+    {
       "name": "nu-ansi-term",
       "version": "0.50.1",
       "status": "archive_verified",
@@ -1702,6 +3046,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1071,
           "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+        }
+      ]
+    },
+    {
+      "name": "num-conv",
+      "version": "0.2.1",
+      "status": "archive_verified",
+      "archiveSha256": "c6673768db2d862beb9b39a78fdcb1a69439615d5794a1be50caa9bc92c81967",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1050,
+          "sha256": "e2e245f2b566d0bfafb0f6a04c16b82d710c4e6e7d799e39bb4ef6e541b85b98"
         }
       ]
     },
@@ -1782,6 +3145,25 @@
       ]
     },
     {
+      "name": "oneshot",
+      "version": "0.1.13",
+      "status": "archive_verified",
+      "archiveSha256": "269bca4c2591a28585d6bf10d9ed0332b7d76900a1b02bec41bdc3a2cdcda107",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
       "name": "opaque-debug",
       "version": "0.3.1",
       "status": "archive_verified",
@@ -1799,6 +3181,30 @@
           "sha256": "f59f5a78193597e04fd932ee9af86254d14d08be5c9d0e003ab888feccce2161"
         }
       ]
+    },
+    {
+      "name": "ordered-float",
+      "version": "5.3.0",
+      "status": "archive_verified",
+      "archiveSha256": "b7d950ca161dc355eaf28f82b11345ed76c6e1f6eb1f4f4479e0323b9e2fbd0e",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "f7715d38a3fa1b4ac97c5729740752505a39cb92ee83ab5b102aeb5eaa7cdea4"
+        }
+      ]
+    },
+    {
+      "name": "ownedbytes",
+      "version": "0.9.0",
+      "status": "archive_verified",
+      "archiveSha256": "2fbd56f7631767e61784dc43f8580f403f4475bd4aaa4da003e6295e1bab4a7e",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "pack1",
@@ -1906,6 +3312,25 @@
       ]
     },
     {
+      "name": "pkg-config",
+      "version": "0.3.32",
+      "status": "archive_verified",
+      "archiveSha256": "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397"
+        }
+      ]
+    },
+    {
       "name": "polling",
       "version": "3.7.4",
       "status": "archive_verified",
@@ -1958,6 +3383,25 @@
       ]
     },
     {
+      "name": "powerfmt",
+      "version": "0.2.0",
+      "status": "archive_verified",
+      "archiveSha256": "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 11349,
+          "sha256": "155420c6403d4e0fca34105e3c03fdd6939b64c393c7ec6f95f5b72c5474eab0"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "070dbc7dda03a29296f2d58bdb9b7331af90f2abc9f31df22875d1eabaf29852"
+        }
+      ]
+    },
+    {
       "name": "ppv-lite86",
       "version": "0.2.21",
       "status": "archive_verified",
@@ -1973,6 +3417,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1076,
           "sha256": "4cada0bd02ea3692eee6f16400d86c6508bbd3bafb2b65fed0419f36d4f83e8f"
+        }
+      ]
+    },
+    {
+      "name": "prettyplease",
+      "version": "0.2.34",
+      "status": "archive_verified",
+      "archiveSha256": "6837b9e10d61f45f987d50808f83d1ee3d206c66acf650c3e4ae2e1f6ddedf55",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
         }
       ]
     },
@@ -2155,6 +3618,44 @@
       ]
     },
     {
+      "name": "rayon-core",
+      "version": "1.12.1",
+      "status": "archive_verified",
+      "archiveSha256": "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1071,
+          "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+        }
+      ]
+    },
+    {
+      "name": "rayon",
+      "version": "1.10.0",
+      "status": "archive_verified",
+      "archiveSha256": "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1071,
+          "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+        }
+      ]
+    },
+    {
       "name": "regex-automata",
       "version": "0.4.13",
       "status": "archive_verified",
@@ -2291,6 +3792,30 @@
           "path": "LICENSE",
           "bytes": 1111,
           "sha256": "976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70"
+        }
+      ]
+    },
+    {
+      "name": "rust-stemmers",
+      "version": "1.2.0",
+      "status": "archive_verified",
+      "archiveSha256": "e46a2036019fdb888131db7a4c847a1063a7493f971ed94ea82c67eada63ca54",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1068,
+          "sha256": "e46379f1aba07707c23fab8733d3441e9df981b1543046e0317b2036f8fdaef8"
+        },
+        {
+          "path": "algorithms/LICENSE",
+          "bytes": 1555,
+          "sha256": "ea2879fe94b4b2e6b3c6fb18b3bf265f9ff162637e5e1ac21fabc43d8cf34961"
+        },
+        {
+          "path": "test_data/LICENSE",
+          "bytes": 35147,
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
         }
       ]
     },
@@ -2448,6 +3973,25 @@
       ]
     },
     {
+      "name": "scratch",
+      "version": "1.0.9",
+      "status": "archive_verified",
+      "archiveSha256": "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
       "name": "semver",
       "version": "1.0.26",
       "status": "archive_verified",
@@ -2557,6 +4101,25 @@
       ]
     },
     {
+      "name": "sha2",
+      "version": "0.10.9",
+      "status": "archive_verified",
+      "archiveSha256": "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1138,
+          "sha256": "b4eb00df6e2a4d22518fcaa6a2b4646f249b3a3c9814509b22bd2091f1392ff1"
+        }
+      ]
+    },
+    {
       "name": "sharded-slab",
       "version": "0.1.7",
       "status": "archive_verified",
@@ -2610,6 +4173,20 @@
           "path": "COPYING",
           "bytes": 281,
           "sha256": "4d40ffd1478e61d103063fe87b133d13b6784688b8855acd7ebc2aeb64095c6d"
+        }
+      ]
+    },
+    {
+      "name": "sketches-ddsketch",
+      "version": "0.4.0",
+      "status": "archive_verified",
+      "archiveSha256": "05e40b6cf54d988dc1a2223531b969c9a9e30906ad90ef64890c27b4bfbb46ea",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 11346,
+          "sha256": "53e1575d9de4821148b6000750453877b9754319dd148cc7186b6e7662e055c4"
         }
       ]
     },
@@ -2695,6 +4272,20 @@
       ]
     },
     {
+      "name": "strsim",
+      "version": "0.11.1",
+      "status": "archive_verified",
+      "archiveSha256": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1166,
+          "sha256": "1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd"
+        }
+      ]
+    },
+    {
       "name": "strum",
       "version": "0.26.3",
       "status": "archive_verified",
@@ -2756,6 +4347,25 @@
       ]
     },
     {
+      "name": "syn",
+      "version": "3.0.6",
+      "status": "archive_verified",
+      "archiveSha256": "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
       "name": "synstructure",
       "version": "0.13.1",
       "status": "archive_verified",
@@ -2766,6 +4376,109 @@
           "path": "LICENSE",
           "bytes": 1052,
           "sha256": "219920e865eee70b7dcfc948a86b099e7f4fe2de01bcca2ca9a20c0a033f2b59"
+        }
+      ]
+    },
+    {
+      "name": "tantivy-bitpacker",
+      "version": "0.10.0",
+      "status": "archive_verified",
+      "archiveSha256": "4fed3d674429bcd2de5d0a6d1aa5495fed8afd9c5ecce993019caf7615f53fa4",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "tantivy-columnar",
+      "version": "0.7.0",
+      "status": "archive_verified",
+      "archiveSha256": "c57166f5bcfd478f370ab8445afb4678dce44801fa5ce5c451aaf8595583c5dc",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "tantivy-common",
+      "version": "0.11.0",
+      "status": "archive_verified",
+      "archiveSha256": "bbf10915aa75da3c3b0d58b58853d2e889efbaf32d4982a4c3715dde6bba23e5",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "tantivy-fst",
+      "version": "0.5.0",
+      "status": "archive_verified",
+      "archiveSha256": "d60769b80ad7953d8a7b2c70cdfe722bbcdcac6bccc8ac934c40c034d866fc18",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "COPYING",
+          "bytes": 126,
+          "sha256": "01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1113,
+          "sha256": "7297a3511ab0870ee32e2922ba73fbc8e9160c7e1c0007ddc0f509aede016653"
+        }
+      ]
+    },
+    {
+      "name": "tantivy-query-grammar",
+      "version": "0.26.0",
+      "status": "archive_verified",
+      "archiveSha256": "dfadb8526b6da90704feb293b0701a6aae62ea14983143344be2dc5ce30f1d82",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "tantivy-sstable",
+      "version": "0.7.0",
+      "status": "archive_verified",
+      "archiveSha256": "8a2cfc3ac5164cbadc28965ffb145a8f47582a60ae5897859ad8d4316596c606",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "tantivy-stacker",
+      "version": "0.7.0",
+      "status": "archive_verified",
+      "archiveSha256": "6cbb051742da9d53ca9e8fff43a9b10e319338b24e2c0e15d0372df19ffeb951",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "tantivy-tokenizer-api",
+      "version": "0.7.0",
+      "status": "archive_verified",
+      "archiveSha256": "eac258c2c6390673f2685813afeeafcb8c4e0ee7de8dd3fc46838dcc37263f98",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
+    },
+    {
+      "name": "tantivy",
+      "version": "0.26.1",
+      "status": "archive_verified",
+      "archiveSha256": "edde6a10743fff00a4e1a8c9ef020bf5f3cbad301b7d2d39f2b07f123c4eac07",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1099,
+          "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
         }
       ]
     },
@@ -2785,6 +4498,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1056,
           "sha256": "8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36"
+        }
+      ]
+    },
+    {
+      "name": "termcolor",
+      "version": "1.4.1",
+      "status": "archive_verified",
+      "archiveSha256": "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "COPYING",
+          "bytes": 126,
+          "sha256": "01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1081,
+          "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
         }
       ]
     },
@@ -2842,6 +4574,44 @@
           "path": "LICENSE-MIT",
           "bytes": 1071,
           "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5"
+        }
+      ]
+    },
+    {
+      "name": "time-core",
+      "version": "0.1.8",
+      "status": "archive_verified",
+      "archiveSha256": "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc"
+        }
+      ]
+    },
+    {
+      "name": "time",
+      "version": "0.3.47",
+      "status": "archive_verified",
+      "archiveSha256": "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc"
         }
       ]
     },
@@ -2969,6 +4739,25 @@
       ]
     },
     {
+      "name": "typeid",
+      "version": "1.0.3",
+      "status": "archive_verified",
+      "archiveSha256": "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
       "name": "typenum",
       "version": "1.18.0",
       "status": "archive_verified",
@@ -2989,6 +4778,44 @@
           "path": "LICENSE-MIT",
           "bytes": 1083,
           "sha256": "a825bd853ab71619a4923d7b4311221427848070ff44d990da39b0b274c1683f"
+        }
+      ]
+    },
+    {
+      "name": "typetag-impl",
+      "version": "0.2.21",
+      "status": "archive_verified",
+      "archiveSha256": "27a7a9b72ba121f6f1f6c3632b85604cac41aedb5ddc70accbebb6cac83de846",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "typetag",
+      "version": "0.2.21",
+      "status": "archive_verified",
+      "archiveSha256": "be2212c8a9b9bcfca32024de14998494cf9a5dfa59ea1b829de98bac374b86bf",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
         }
       ]
     },
@@ -3084,6 +4911,30 @@
       ]
     },
     {
+      "name": "unicode-width",
+      "version": "0.2.0",
+      "status": "archive_verified",
+      "archiveSha256": "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "COPYRIGHT",
+          "bytes": 321,
+          "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d"
+        },
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1071,
+          "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"
+        }
+      ]
+    },
+    {
       "name": "universal-hash",
       "version": "0.5.1",
       "status": "archive_verified",
@@ -3101,6 +4952,16 @@
           "sha256": "6b50510a0400c72172355cc5d2ba0f2c5c2eb33149b8f96539dc345fdc484920"
         }
       ]
+    },
+    {
+      "name": "usearch",
+      "version": "2.26.2",
+      "status": "archive_verified",
+      "archiveSha256": "b43f3a7c8d3b100d53c1a34e9ce4cd76cc83627bdb4fcd035d4e82102778aeee",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [],
+      "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
+      "inlineNoticeCandidates": []
     },
     {
       "name": "utf16_iter",
@@ -3123,6 +4984,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1053,
           "sha256": "3fa4ca83dcc9237839b1bdeb2e6d16bdfb5ec0c5ce42b24694d8bbf0dcbef72c"
+        }
+      ]
+    },
+    {
+      "name": "utf8-ranges",
+      "version": "1.0.5",
+      "status": "archive_verified",
+      "archiveSha256": "7fcfc827f90e53a02eaef5e535ee14266c1d569214c6aa70133a624d8a3164ba",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "COPYING",
+          "bytes": 126,
+          "sha256": "01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1081,
+          "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
         }
       ]
     },
@@ -3345,6 +5225,83 @@
           "path": "LICENSE",
           "bytes": 2195,
           "sha256": "f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2"
+        }
+      ]
+    },
+    {
+      "name": "zstd-safe",
+      "version": "7.2.4",
+      "status": "archive_verified",
+      "archiveSha256": "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 18,
+          "sha256": "a77b7cfeaf911ed410ffbe76f0cb2b24ad8a4d94e7ead5727e914425c416cc63"
+        },
+        {
+          "path": "LICENSE.Apache-2.0",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE.Mit",
+          "bytes": 1080,
+          "sha256": "129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8"
+        }
+      ]
+    },
+    {
+      "name": "zstd-sys",
+      "version": "2.0.16+zstd.1.5.7",
+      "status": "archive_verified",
+      "archiveSha256": "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 18,
+          "sha256": "a77b7cfeaf911ed410ffbe76f0cb2b24ad8a4d94e7ead5727e914425c416cc63"
+        },
+        {
+          "path": "LICENSE.Apache-2.0",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE.BSD-3-Clause",
+          "bytes": 1595,
+          "sha256": "48341f685c87304089aa099b23c386f8bacc519ef555aa7a13e239908907b3fd"
+        },
+        {
+          "path": "LICENSE.Mit",
+          "bytes": 1080,
+          "sha256": "129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8"
+        },
+        {
+          "path": "zstd/COPYING",
+          "bytes": 18091,
+          "sha256": "f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505"
+        },
+        {
+          "path": "zstd/LICENSE",
+          "bytes": 1549,
+          "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+        }
+      ]
+    },
+    {
+      "name": "zstd",
+      "version": "0.13.3",
+      "status": "archive_verified",
+      "archiveSha256": "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1080,
+          "sha256": "129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8"
         }
       ]
     }

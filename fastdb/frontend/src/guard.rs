@@ -2,6 +2,11 @@
 use turso_core::{Result, WalkControl};
 use turso_parser::ast::*;
 
+pub(crate) fn reserved_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("__fastdb_") || name.starts_with("__turso_internal_")
+}
+
 // FastQL is not always parseable before expansion. Inspect the original token
 // roles so generated helper names never need an exception here. SQLite also
 // accepts single-quoted function names; ordinary string values remain data.
@@ -14,7 +19,7 @@ pub(crate) fn internal_names(sql: &str) -> crate::Result<()> {
                 && tokens
                     .get(i + 1)
                     .is_some_and(|next| matches!(next.text.as_str(), "(" | ".")));
-        if name && token.text.to_ascii_lowercase().starts_with("__fastdb_") {
+        if name && reserved_name(&token.text) {
             return Err(crate::Error::Unsupported("managed names".into()));
         }
     }
@@ -281,7 +286,7 @@ fn redact_cte_sources(
             {
                 if let Some(alias) = alias {
                     let identifier = alias.name().as_str().to_ascii_lowercase();
-                    if !identifier.starts_with("__fastdb_") && identifier != "writable_schema" {
+                    if !reserved_name(&identifier) && identifier != "writable_schema" {
                         bound.insert(identifier);
                         *alias = As::As(Name::exact(String::new()));
                     }
@@ -365,7 +370,7 @@ fn redact_cte_sources(
         for cte in &mut with.ctes {
             redact_cte_sources(&mut cte.select, &visible)?;
             let name = cte.tbl_name.as_str().to_ascii_lowercase();
-            if !name.starts_with("__fastdb_") && name != "writable_schema" {
+            if !reserved_name(&name) && name != "writable_schema" {
                 visible.insert(name);
                 cte.tbl_name = Name::exact(String::new());
             }

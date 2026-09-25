@@ -205,8 +205,63 @@ fn insert_policy_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> 
     }
     Ok(())
 }
+fn v2_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let empty = Parameters::new();
+    let expected_id = Value::Record(Record { table: "posts".into(), key: Key::String("one".into()) });
+    {
+        let db = Database::open(file)?;
+        let c = db.connect()?;
+        c.execute("INSERT INTO users {id:users:alice,name:'Alice'}", &empty)?;
+        c.execute("INSERT INTO posts {id:posts:one,title:'Fast database',author:users:alice,p:geo::point(100,13),v:$v,n:$n}",
+            &Parameters::from([("$v".into(), Value::vector32(&[1.0,0.0])?), ("$n".into(), Value::Integer(i64::MAX))]))?;
+        c.create_index("posts", "post_author", vec!["author".into()], false)?;
+        c.define_relation("authored", "users", "posts", vec!["author".into()])?;
+        c.create_spatial_index("posts", "near_posts", vec!["p".into()], false)?;
+        c.create_fulltext_index("posts", "text_posts", vec![vec!["title".into()]], false)?;
+        c.create_vector_index("posts", "vector_posts", vec!["v".into()], 2, "cosine", false)?;
+        c.create_function("app::upper", vec![("v".into(), "string".into())], "string", "return v.toUpperCase();", false)?;
+        assert_eq!(c.search_vectors("vector_posts", &Value::vector32(&[1.0,0.0])?, 1)?.rows[0][0], expected_id);
+        c.execute("BEGIN", &empty)?;
+        c.execute("UPDATE posts SET title='changed',p=geo::point(0,0),v=vector32('[0,1]')", &empty)?;
+        assert!(c.execute("SELECT id FROM search::text('text_posts','database',20)", &empty)?.rows.is_empty());
+        c.execute("ROLLBACK", &empty)?;
+    }
+    let db = Database::open(file)?;
+    let c = db.connect()?;
+    for query in [
+        "SELECT id FROM search::text('text_posts','database',20)",
+        "SELECT id FROM search::vector('vector_posts',vector32('[1,0]'),1)",
+        "SELECT id FROM search::near('near_posts',geo::point(100,13),1)",
+    ] {
+        assert_eq!(c.execute(query, &empty)?.rows, vec![vec![expected_id.clone()]]);
+    }
+    let row = c.execute("SELECT posts:one {title,author.* AS writer}", &empty)?.exactly_one()?;
+    assert_eq!(row[0], Value::String("Fast database".into()));
+    let Value::Object(ref author) = row[1] else { panic!("missing forward projection") };
+    assert_eq!(author["name"], Value::String("Alice".into()));
+    let row = c.execute("SELECT relation::fetch(users:alice,'authored',20)", &empty)?.exactly_one()?;
+    let Value::Array(ref posts) = row[0] else { panic!("missing inverse relation") };
+    let Value::Object(ref post) = posts[0] else { panic!("missing inverse document") };
+    assert_eq!(post["id"], expected_id);
+    assert_eq!(post["n"], Value::Integer(i64::MAX));
+    assert_eq!(c.execute("SELECT geo::cell(p,7) FROM posts", &empty)?.rows, vec![vec![Value::String("87658b314ffffff".into())]]);
+    assert_eq!(c.execute("SELECT app::upper('hello')", &empty)?.rows, vec![vec![Value::String("HELLO".into())]]);
+    c.execute("BEGIN", &empty)?;
+    c.drop_relation("authored", false)?;
+    c.drop_function("app::upper", false)?;
+    c.execute("DROP INDEX text_posts", &empty)?;
+    assert_eq!(c.execute("PRAGMA integrity_check", &empty)?.rows, vec![vec![Value::String("ok".into())]]);
+    c.execute("ROLLBACK", &empty)?;
+    assert_eq!(c.execute("SELECT app::upper('restored')", &empty)?.rows, vec![vec![Value::String("RESTORED".into())]]);
+    assert_eq!(c.execute("SELECT id FROM search::text('text_posts','database',20)", &empty)?.rows, vec![vec![expected_id]]);
+    assert_eq!(c.execute("PRAGMA integrity_check", &empty)?.rows, vec![vec![Value::String("ok".into())]]);
+    assert_eq!(c.check_collection_integrity("posts", IntegrityLimits::default())?.documents, 1);
+    println!("Standalone V2 API smoke passed: direct index/relation/function APIs, FastQL search/projections/H3, rollback, integrity and reopen");
+    Ok(())
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
+    v2_consumer(&format!("{file}.v2"))?;
     iterator_consumer(&format!("{file}.iterators"))?;
     tuple_consumer(&format!("{file}.tuples"))?;
     conflict_consumer(&format!("{file}.conflicts"))?;

@@ -211,6 +211,84 @@ mod tests {
     use crate::{Database, Parameters, Value};
     use std::sync::atomic::{AtomicBool, Ordering};
     #[test]
+    fn cancelled_plain_native_writes_undo_rows_and_preserve_caller_work() {
+        for outer in [None, Some("BEGIN"), Some("SAVEPOINT caller")] {
+            for via_handle in [false, true] {
+                let db = Database::open(":memory:").unwrap();
+                let c = db.connect().unwrap();
+                let q = |sql: &str| c.execute(sql, &Parameters::new()).unwrap();
+                q("CREATE TABLE source(n INTEGER)");
+                q("INSERT INTO source VALUES(1),(2),(3),(4)");
+                q("CREATE TABLE sink(n INTEGER)");
+                q("CREATE TABLE prior(n INTEGER)");
+                if let Some(sql) = outer {
+                    q(sql);
+                    q("INSERT INTO prior VALUES(9)");
+                }
+                // last_insert_rowid changes during each Insert opcode. Observing
+                // its atomic value avoids adding an SQL function or trigger that
+                // changes the native compiler's statement-journal decisions.
+                assert_ne!(c.engine.last_insert_rowid(), 2);
+                let engine = Arc::downgrade(&c.engine);
+                let fired = Arc::new(AtomicBool::new(false));
+                let observed = fired.clone();
+                c.engine.set_progress_handler(
+                    1,
+                    Some(Box::new(move || {
+                        let engine = engine.upgrade().unwrap();
+                        if engine.last_insert_rowid() == 2 && !observed.swap(true, Ordering::SeqCst)
+                        {
+                            if via_handle {
+                                engine.interrupt();
+                                false
+                            } else {
+                                true
+                            }
+                        } else {
+                            false
+                        }
+                    })),
+                );
+                let error = c
+                    .execute("INSERT INTO sink SELECT n FROM source", &Parameters::new())
+                    .unwrap_err();
+                c.engine.set_progress_handler(0, None);
+                assert!(fired.load(Ordering::SeqCst));
+                assert_eq!(
+                    error.code(),
+                    "FDB_CANCELLED",
+                    "outer={outer:?}, handle={via_handle}: {error:?}"
+                );
+                assert!(
+                    q("SELECT * FROM sink").rows.is_empty(),
+                    "outer={outer:?}, handle={via_handle}"
+                );
+                assert_eq!(
+                    q("SELECT * FROM prior").rows.len(),
+                    usize::from(outer.is_some())
+                );
+                assert_eq!(
+                    c.transaction_state(),
+                    if outer.is_some() {
+                        crate::TransactionState::Active
+                    } else {
+                        crate::TransactionState::Autocommit
+                    }
+                );
+                q("INSERT INTO sink SELECT n FROM source");
+                assert_eq!(
+                    q("SELECT n FROM sink ORDER BY n").rows,
+                    (1..=4).map(|n| vec![Value::Integer(n)]).collect::<Vec<_>>()
+                );
+                if outer.is_some() {
+                    q("ROLLBACK");
+                    assert!(q("SELECT * FROM sink").rows.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn cancellation_tokens_reject_before_writes_and_do_not_cancel_later_work() {
         let db = Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();
@@ -830,6 +908,83 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn interrupted_spatial_index_build_can_retry_without_orphans() {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for i in 1..=3 {
+            q(
+                &c,
+                &format!("INSERT INTO places {{location:geo::point({i},0)}}"),
+            );
+        }
+        let fired = arm_after_write(&c);
+        let result = c.create_spatial_index("places", "locations", vec!["location".into()], false);
+        c.engine.set_progress_handler(0, None);
+        assert!(fired.load(Ordering::SeqCst));
+        assert_eq!(result.unwrap_err().code(), "FDB_CANCELLED");
+        assert!(c.catalog("places").unwrap().indexes.is_empty());
+        assert!(c
+            .run(
+                "SELECT name FROM sqlite_schema WHERE name='locations' OR name LIKE '__fastdb_i_%'",
+                &[]
+            )
+            .unwrap()
+            .is_empty());
+        c.create_spatial_index("places", "locations", vec!["location".into()], false)
+            .unwrap();
+        assert_eq!(
+            q(
+                &c,
+                "SELECT * FROM search::near('locations',geo::point(1,0),0)"
+            )
+            .rows
+            .len(),
+            1
+        );
+        c.check_collection_integrity("places", Default::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn interrupted_text_build_and_write_preserve_indexes_and_prior_work() {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        for i in 1..=3 {
+            q(
+                &c,
+                &format!("INSERT INTO docs {{id:type::record('docs',{i}),title:'original'}}"),
+            );
+        }
+        let fired = arm_after_write(&c);
+        let result = c.create_fulltext_index("docs", "titles", vec![vec!["title".into()]], false);
+        c.engine.set_progress_handler(0, None);
+        assert!(fired.load(Ordering::SeqCst));
+        assert_eq!(result.unwrap_err().code(), "FDB_CANCELLED");
+        assert!(c.catalog("docs").unwrap().indexes.is_empty());
+        drop(db.connect().unwrap());
+        c.create_fulltext_index("docs", "titles", vec![vec!["title".into()]], false)
+            .unwrap();
+        let sql =
+            "SELECT id,score FROM search::text('titles','original',10) ORDER BY score DESC,id";
+        let before = q(&c, sql).rows;
+        q(&c, "BEGIN");
+        q(&c, "INSERT INTO prior {value:1}");
+        let fired = arm_after_write(&c);
+        let result = c.execute("UPDATE docs SET title='changed'", &Parameters::new());
+        c.engine.set_progress_handler(0, None);
+        assert!(fired.load(Ordering::SeqCst));
+        assert_eq!(result.unwrap_err().code(), "FDB_CANCELLED");
+        assert_eq!(q(&c, sql).rows, before);
+        assert_eq!(q(&c, "SELECT * FROM prior").rows.len(), 1);
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        q(&c, "UPDATE docs SET title='changed'");
+        assert!(q(&c, sql).rows.is_empty());
+        q(&c, "ROLLBACK");
+        assert_eq!(q(&c, sql).rows, before);
+    }
+
     #[test]
     fn interrupted_index_build_removes_metadata_and_physical_storage() {
         let db = Database::open(":memory:").unwrap();

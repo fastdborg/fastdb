@@ -963,3 +963,83 @@ fn custom_collations_cover_dotnet_create_collation_cases(
 
     Ok(())
 }
+
+#[turso_ext::scalar(name = "scalar_abort_fixture")]
+fn scalar_abort_fixture(args: &[ExtValue]) -> ExtValue {
+    if args[0].to_integer() == Some(3) {
+        ExtValue::error_with_message("scalar abort fixture".into())
+    } else {
+        ExtValue::from_integer(args[0].to_integer().expect("integer fixture") + 10)
+    }
+}
+
+#[test]
+fn scalar_read_error_preserves_transactions_and_named_savepoints() -> anyhow::Result<()> {
+    for mvcc in [false, true] {
+        for (outer, named) in [(false, false), (false, true), (true, true)] {
+            for query in [
+                "SELECT scalar_abort_fixture(3)",
+                "SELECT scalar_abort_fixture(n) FROM docs",
+                "UPDATE docs SET n=scalar_abort_fixture(n)",
+                "INSERT INTO copied SELECT scalar_abort_fixture(n) FROM docs",
+            ] {
+                let db = TempDatabase::builder().with_mvcc(mvcc).build();
+                let c = db.connect_limbo();
+                register_context_scalar(
+                    &c,
+                    "scalar_abort_fixture",
+                    1,
+                    false,
+                    0,
+                    scalar_abort_fixture,
+                    None,
+                    None,
+                )?;
+                c.execute("CREATE TABLE docs(n INTEGER UNIQUE)")?;
+                c.execute("CREATE TABLE copied(n INTEGER)")?;
+                c.execute("INSERT INTO docs VALUES(1),(2),(3)")?;
+                if outer {
+                    c.execute("BEGIN")?;
+                    c.execute("INSERT INTO docs VALUES(4)")?;
+                }
+                if named {
+                    c.execute("SAVEPOINT operation")?;
+                    c.execute("SAVEPOINT inner_operation")?;
+                }
+                let before: Vec<(i64,)> = c.exec_rows("SELECT n FROM docs ORDER BY n");
+                let changes_before: Vec<(i64,)> = c.exec_rows("SELECT changes()");
+                let mut statement = c.prepare(query)?;
+                let error = statement
+                    .run_with_row_callback(|_| Ok(()))
+                    .expect_err("fixture must fail");
+                drop(statement);
+                assert!(matches!(error, LimboError::ExtensionError(_)), "{error:?}");
+                assert_eq!(
+                    c.get_auto_commit(),
+                    !named,
+                    "mvcc={mvcc}, outer={outer}, named={named}, {query}"
+                );
+                let after: Vec<(i64,)> = c.exec_rows("SELECT n FROM docs ORDER BY n");
+                assert_eq!(after, before, "mvcc={mvcc}, {query}");
+                if query.starts_with("SELECT") {
+                    let changes_after: Vec<(i64,)> = c.exec_rows("SELECT changes()");
+                    assert_eq!(changes_after, changes_before);
+                }
+                let copied: Vec<(i64,)> = c.exec_rows("SELECT n FROM copied");
+                assert!(copied.is_empty());
+                if named {
+                    c.execute("ROLLBACK TO operation")?;
+                    c.execute("RELEASE operation")?;
+                }
+                assert_eq!(c.get_auto_commit(), !outer);
+                if outer {
+                    c.execute("COMMIT")?;
+                }
+                c.execute("SAVEPOINT next_operation")?;
+                c.execute("RELEASE next_operation")?;
+                assert!(c.get_auto_commit());
+            }
+        }
+    }
+    Ok(())
+}

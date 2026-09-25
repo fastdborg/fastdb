@@ -1,0 +1,372 @@
+--- a/core/function.rs
++++ b/core/function.rs
+@@ -383,7 +383,13 @@
+ }
+ 
+ /// Full-text search functions
+-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
++#[cfg(all(
++    feature = "fts",
++    any(
++        not(target_family = "wasm"),
++        all(target_os = "wasi", feature = "fts_wasi")
++    )
++))]
+ #[derive(Debug, Clone, PartialEq, strum::EnumIter)]
+ pub enum FtsFunc {
+     /// fts_score(col1, col2, ..., query): computes FTS relevance score
+@@ -397,7 +403,13 @@
+     Highlight,
+ }
+ 
+-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
++#[cfg(all(
++    feature = "fts",
++    any(
++        not(target_family = "wasm"),
++        all(target_os = "wasi", feature = "fts_wasi")
++    )
++))]
+ impl FtsFunc {
+     pub fn is_deterministic(&self) -> bool {
+         true
+@@ -412,7 +424,13 @@
+     }
+ }
+ 
+-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
++#[cfg(all(
++    feature = "fts",
++    any(
++        not(target_family = "wasm"),
++        all(target_os = "wasi", feature = "fts_wasi")
++    )
++))]
+ impl Display for FtsFunc {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         let str = match self {
+@@ -1429,7 +1447,13 @@
+     Scalar(ScalarFunc),
+     Math(MathFunc),
+     Vector(VectorFunc),
+-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++    #[cfg(all(
++        feature = "fts",
++        any(
++            not(target_family = "wasm"),
++            all(target_os = "wasi", feature = "fts_wasi")
++        )
++    ))]
+     Fts(FtsFunc),
+     #[cfg(feature = "json")]
+     Json(JsonFunc),
+@@ -1445,7 +1469,13 @@
+             Self::Scalar(scalar_func) => write!(f, "{scalar_func}"),
+             Self::Math(math_func) => write!(f, "{math_func}"),
+             Self::Vector(vector_func) => write!(f, "{vector_func}"),
+-            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++            #[cfg(all(
++                feature = "fts",
++                any(
++                    not(target_family = "wasm"),
++                    all(target_os = "wasi", feature = "fts_wasi")
++                )
++            ))]
+             Self::Fts(fts_func) => write!(f, "{fts_func}"),
+             #[cfg(feature = "json")]
+             Self::Json(json_func) => write!(f, "{json_func}"),
+@@ -1469,7 +1499,13 @@
+             Self::Scalar(scalar_func) => scalar_func.is_deterministic(),
+             Self::Math(math_func) => math_func.is_deterministic(),
+             Self::Vector(vector_func) => vector_func.is_deterministic(),
+-            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++            #[cfg(all(
++                feature = "fts",
++                any(
++                    not(target_family = "wasm"),
++                    all(target_os = "wasi", feature = "fts_wasi")
++                )
++            ))]
+             Self::Fts(fts_func) => fts_func.is_deterministic(),
+             #[cfg(feature = "json")]
+             Self::Json(json_func) => json_func.is_deterministic(),
+@@ -1789,11 +1825,29 @@
+             "vector_concat" => Ok(Some(Self::Vector(VectorFunc::VectorConcat))),
+             "vector_slice" => Ok(Some(Self::Vector(VectorFunc::VectorSlice))),
+             // FTS functions
+-            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++            #[cfg(all(
++                feature = "fts",
++                any(
++                    not(target_family = "wasm"),
++                    all(target_os = "wasi", feature = "fts_wasi")
++                )
++            ))]
+             "fts_score" => Ok(Some(Self::Fts(FtsFunc::Score))),
+-            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++            #[cfg(all(
++                feature = "fts",
++                any(
++                    not(target_family = "wasm"),
++                    all(target_os = "wasi", feature = "fts_wasi")
++                )
++            ))]
+             "fts_match" => Ok(Some(Self::Fts(FtsFunc::Match))),
+-            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++            #[cfg(all(
++                feature = "fts",
++                any(
++                    not(target_family = "wasm"),
++                    all(target_os = "wasi", feature = "fts_wasi")
++                )
++            ))]
+             "fts_highlight" => Ok(Some(Self::Fts(FtsFunc::Highlight))),
+             // Test type functions (for custom type system testing)
+             "test_uint_encode" => Ok(Some(Self::Scalar(ScalarFunc::TestUintEncode))),
+@@ -1916,7 +1970,13 @@
+         }
+ 
+         // FTS functions (feature-gated)
+-        #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++        #[cfg(all(
++            feature = "fts",
++            any(
++                not(target_family = "wasm"),
++                all(target_os = "wasi", feature = "fts_wasi")
++            )
++        ))]
+         for f in FtsFunc::iter() {
+             push(f.to_string(), "s", f.arities(), f.is_deterministic());
+         }
+--- a/core/Cargo.toml
++++ b/core/Cargo.toml
+@@ -42,6 +42,8 @@
+ bench = []
+ nanosecond-bench = ["bench"]
+ fts = ["dep:tantivy"]
++# Opt-in threaded WASI full-text support; requires a responsive thread coordinator.
++fts_wasi = ["fts"]
+ codspeed = ["bench"]
+ optimizer_params = ["serde", "dep:serde_json"]
+ stacker = ["dep:stacker"]
+@@ -70,6 +72,9 @@
+ [target.'cfg(not(target_family = "wasm"))'.dependencies]
+ libloading = "0.8.6"
+ tantivy = { version = "0.26.0", optional = true }
++
++[target.'cfg(all(target_arch = "wasm32", target_os = "wasi"))'.dependencies]
++tantivy = { version = "=0.26.1", optional = true, default-features = false, features = ["stopwords", "stemmer", "lz4-compression", "columnar-zstd-compression"] }
+ 
+ [dependencies]
+ # aristo SDK from crates.io (0.4.x — latest; also carries the aristo::instrument
+--- a/core/schema.rs
++++ b/core/schema.rs
+@@ -1470,7 +1470,13 @@
+             .filter(|i| !i.is_backing_btree_index())
+     }
+ 
+-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++    #[cfg(all(
++        feature = "fts",
++        any(
++            not(target_family = "wasm"),
++            all(target_os = "wasi", feature = "fts_wasi")
++        )
++    ))]
+     pub fn has_fts_index(&self, table_name: &str) -> bool {
+         self.get_indices(table_name).any(|idx| {
+             idx.index_method.as_ref().is_some_and(|m| {
+--- a/core/vdbe/execute.rs
++++ b/core/vdbe/execute.rs
+@@ -9597,7 +9597,13 @@
+                 state.registers[*dest + 4].set_value(sql.clone());
+             }
+         }
+-        #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++        #[cfg(all(
++            feature = "fts",
++            any(
++                not(target_family = "wasm"),
++                all(target_os = "wasi", feature = "fts_wasi")
++            )
++        ))]
+         crate::function::Func::Fts(fts_func) => {
+             // FTS functions are typically handled via index method pattern matching.
+             // If we reach here, just return a fallback since no FTS index matched.
+--- a/core/ext/mod.rs
++++ b/core/ext/mod.rs
+@@ -2,7 +2,13 @@
+ mod dynamic;
+ mod vtab_xconnect;
+ use crate::index_method::backing_btree::BackingBtreeIndexMethod;
+-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
++#[cfg(all(
++    feature = "fts",
++    any(
++        not(target_family = "wasm"),
++        all(target_os = "wasi", feature = "fts_wasi")
++    )
++))]
+ use crate::index_method::fts::{FtsIndexMethod, FTS_INDEX_METHOD_NAME};
+ use crate::index_method::toy_vector_sparse_ivf::VectorSparseInvertedIndexMethod;
+ use crate::index_method::{
+@@ -253,7 +259,13 @@
+                 BACKING_BTREE_INDEX_METHOD_NAME.to_string(),
+                 Arc::new(BackingBtreeIndexMethod),
+             );
+-            #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++            #[cfg(all(
++                feature = "fts",
++                any(
++                    not(target_family = "wasm"),
++                    all(target_os = "wasi", feature = "fts_wasi")
++                )
++            ))]
+             syms.index_methods
+                 .insert(FTS_INDEX_METHOD_NAME.to_string(), Arc::new(FtsIndexMethod));
+         }
+--- a/core/index_method/mod.rs
++++ b/core/index_method/mod.rs
+@@ -12,7 +12,13 @@
+ };
+ 
+ pub mod backing_btree;
+-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
++#[cfg(all(
++    feature = "fts",
++    any(
++        not(target_family = "wasm"),
++        all(target_os = "wasi", feature = "fts_wasi")
++    )
++))]
+ pub mod fts;
+ pub mod toy_vector_sparse_ivf;
+ 
+--- a/core/translate/expr/translator.rs
++++ b/core/translate/expr/translator.rs
+@@ -2057,7 +2057,13 @@
+                         Ok(target_register)
+                     }
+                 },
+-                #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++                #[cfg(all(
++                    feature = "fts",
++                    any(
++                        not(target_family = "wasm"),
++                        all(target_os = "wasi", feature = "fts_wasi")
++                    )
++                ))]
+                 Func::Fts(_) => {
+                     // FTS functions are handled via index method pattern matching.
+                     // If we reach here, no index matched, so translate as a regular function call.
+--- a/core/translate/expr/mod.rs
++++ b/core/translate/expr/mod.rs
+@@ -8,7 +8,13 @@
+ use super::emitter::Resolver;
+ use super::optimizer::Optimizable;
+ use super::plan::TableReferences;
+-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
++#[cfg(all(
++    feature = "fts",
++    any(
++        not(target_family = "wasm"),
++        all(target_os = "wasi", feature = "fts_wasi")
++    )
++))]
+ use crate::function::FtsFunc;
+ #[cfg(feature = "json")]
+ use crate::function::JsonFunc;
+--- a/core/translate/expr/functions.rs
++++ b/core/translate/expr/functions.rs
+@@ -55,7 +55,13 @@
+                 },
+             });
+         }
+-        #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++        #[cfg(all(
++            feature = "fts",
++            any(
++                not(target_family = "wasm"),
++                all(target_os = "wasi", feature = "fts_wasi")
++            )
++        ))]
+         ast::LikeOperator::Match => {
+             // Transform MATCH to fts_match():
+             // - `col MATCH 'query'` -> `fts_match(col, 'query')`
+@@ -88,7 +94,13 @@
+                 },
+             });
+         }
+-        #[cfg(any(not(feature = "fts"), target_family = "wasm"))]
++        #[cfg(not(all(
++            feature = "fts",
++            any(
++                not(target_family = "wasm"),
++                all(target_os = "wasi", feature = "fts_wasi")
++            )
++        )))]
+         ast::LikeOperator::Match => {
+             crate::bail_parse_error!("MATCH requires the 'fts' feature to be enabled")
+         }
+--- a/core/translate/optimizer/mod.rs
++++ b/core/translate/optimizer/mod.rs
+@@ -559,7 +559,13 @@
+     Ok(())
+ }
+ 
+-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
++#[cfg(all(
++    feature = "fts",
++    any(
++        not(target_family = "wasm"),
++        all(target_os = "wasi", feature = "fts_wasi")
++    )
++))]
+ /// Transform MATCH expressions to fts_match() function calls.
+ fn transform_match_to_fts_match(
+     where_clause: &mut [WhereTerm],
+@@ -737,7 +743,13 @@
+ pub fn optimize_select_plan(plan: &mut SelectPlan, resolver: &Resolver) -> Result<()> {
+     let schema = resolver.schema();
+     // Transform MATCH expressions to fts_match() for FTS optimizer recognition
+-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++    #[cfg(all(
++        feature = "fts",
++        any(
++            not(target_family = "wasm"),
++            all(target_os = "wasi", feature = "fts_wasi")
++        )
++    ))]
+     transform_match_to_fts_match(&mut plan.where_clause, schema, &plan.table_references)?;
+ 
+     unnest::unnest_exists_subqueries(plan)?;
+@@ -836,7 +848,13 @@
+     let schema = resolver.schema();
+     let available_indexes =
+         AvailableIndexes::for_table_references(resolver, &plan.table_references);
+-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++    #[cfg(all(
++        feature = "fts",
++        any(
++            not(target_family = "wasm"),
++            all(target_os = "wasi", feature = "fts_wasi")
++        )
++    ))]
+     transform_match_to_fts_match(&mut plan.where_clause, schema, &plan.table_references)?;
+ 
+     lift_common_subexpressions_from_binary_or_terms(&mut plan.where_clause)?;
+@@ -883,7 +901,13 @@
+         vec![plan.target_table.clone()],
+         plan.from_tables.outer_query_refs().to_vec(),
+     );
+-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
++    #[cfg(all(
++        feature = "fts",
++        any(
++            not(target_family = "wasm"),
++            all(target_os = "wasi", feature = "fts_wasi")
++        )
++    ))]
+     transform_match_to_fts_match(&mut plan.where_clause, schema, &target_tables)?;
+     lift_common_subexpressions_from_binary_or_terms(&mut plan.where_clause)?;
+     if let ConstantConditionEliminationResult::ImpossibleCondition =

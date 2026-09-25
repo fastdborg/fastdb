@@ -1271,11 +1271,12 @@ fn nested_using_projection_errors_roll_back_insert_prefixes_and_allow_retry() {
     query("BEGIN");
     query("INSERT INTO copied {k:98,v:[]}");
     assert!(c.execute(insert, &Parameters::new()).is_err());
-    assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
     assert_eq!(
         query("SELECT k FROM copied ORDER BY k").rows,
-        vec![vec![Value::Integer(99)]]
+        vec![vec![Value::Integer(98)], vec![Value::Integer(99)]]
     );
+    query("ROLLBACK");
     query("BEGIN");
     query("UPDATE docs SET v=array::new() WHERE k=2");
     query(insert);
@@ -1321,7 +1322,13 @@ fn nested_using_runtime_rollback_preserves_persistent_rows_and_indexes() {
             c.execute(sql, &Parameters::new()).unwrap();
         }
         assert!(c.execute(insert, &Parameters::new()).is_err());
-        assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            c.execute("SELECT k FROM copied ORDER BY k", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(98)], vec![Value::Integer(99)]]
+        );
     }
     {
         let db = Database::open(path.to_str().unwrap()).unwrap();
@@ -1358,7 +1365,7 @@ fn nested_using_runtime_rollback_preserves_persistent_rows_and_indexes() {
 }
 
 #[test]
-fn nested_using_runtime_error_clears_user_savepoints_and_allows_new_transaction() {
+fn nested_using_runtime_error_preserves_user_savepoints_and_allows_retry() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     let query = |sql: &str| {
@@ -1381,10 +1388,21 @@ fn nested_using_runtime_error_clears_user_savepoints_and_allows_new_transaction(
     }
     let invalid = "SELECT (SELECT (SELECT array::append(a.v,2))) FROM docs a JOIN b USING(k)";
     assert!(c.execute(invalid, &Parameters::new()).is_err());
-    assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
-    assert!(c
-        .execute("ROLLBACK TO app_work", &Parameters::new())
-        .is_err());
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    assert_eq!(
+        query("SELECT n FROM audit ORDER BY n").rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(99)]
+        ]
+    );
+    query("ROLLBACK TO app_work");
+    assert_eq!(
+        query("SELECT n FROM audit ORDER BY n").rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(99)]]
+    );
+    query("ROLLBACK");
     assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
     assert_eq!(
         query("SELECT n FROM audit ORDER BY n").rows,

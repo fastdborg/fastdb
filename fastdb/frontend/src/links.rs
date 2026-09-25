@@ -6,7 +6,7 @@ use crate::{
 use std::collections::BTreeMap;
 const CHUNK: usize = 128;
 pub(crate) const MAX_FETCH_REFERENCES: usize = 16_384;
-const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
 pub(crate) struct FetchMetrics {
@@ -15,7 +15,7 @@ pub(crate) struct FetchMetrics {
     pub vm_steps: u64,
 }
 impl FetchMetrics {
-    fn add(&mut self, statement: &turso_core::Statement) {
+    pub(crate) fn add(&mut self, statement: &turso_core::Statement) {
         let metrics = statement.metrics();
         self.batches = self.batches.saturating_add(1);
         self.rows_read = self.rows_read.saturating_add(metrics.rows_read);
@@ -24,9 +24,9 @@ impl FetchMetrics {
 }
 
 // Count the logical tagged JSON representation without allocating encoded copies.
-struct FetchBudget {
-    used: usize,
-    limit: usize,
+pub(crate) struct FetchBudget {
+    pub(crate) used: usize,
+    pub(crate) limit: usize,
 }
 impl std::io::Write for FetchBudget {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -41,7 +41,7 @@ impl std::io::Write for FetchBudget {
     }
 }
 impl FetchBudget {
-    fn charge(&mut self, value: &Value) -> Result<usize> {
+    pub(crate) fn charge(&mut self, value: &Value) -> Result<usize> {
         let before = self.used;
         serde_json::to_writer(&mut *self, value)
             .map_err(|_| Error::Limit("fetch byte limit exceeded".into()))?;
@@ -320,7 +320,7 @@ fn charge_result_target(
 
 // Preserve frontend budget/decoding errors while interrupting engine iteration.
 // The caller drops the statement before its enclosing atomic scope cleans up.
-fn visit_target_rows(
+pub(crate) fn visit_target_rows(
     statement: &mut turso_core::Statement,
     mut visit: impl FnMut(Vec<EngineValue>) -> Result<()>,
 ) -> Result<()> {

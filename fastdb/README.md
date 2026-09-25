@@ -1,9 +1,9 @@
-# FastDB embedded prototype
+# FastDB embedded database
 
-Preview.2 is [published](https://github.com/fastdborg/fastdb/releases/tag/fastdb-v0.1.0-preview.2).
-See the [stable release target](docs/v1-release-contract.md) and [next tasks toward V1](docs/next-tasks.md); the [preview checklist](docs/preview-release.md) is complete.
-
-An initial FastQL frontend over pinned Rust Turso. **V1 is still in development.** See [status](docs/status.md), [contracts](docs/contracts.md), and [engine provenance](UPSTREAM.md).
+FastDB and FastQL [1.0.0 are released](docs/release-1.0.0.md).
+Active development targets [embedded V2](docs/v2-tasks.md), including spatial and
+FastQL V2. See [status](docs/status.md), [contracts](docs/contracts.md), and
+[engine provenance](UPSTREAM.md). Cloud is a separate workstream.
 
 From the repository root:
 
@@ -12,11 +12,16 @@ fastdb/scripts/check.sh
 cargo run --locked -p fastdb-cli -- /tmp/example-fastdb.db < fastdb/examples/persistent.fastql
 ```
 
-Use a fresh database for the example. `fastdb/examples/sql-writes.fastql` additionally exercises column-list inserts, nested SET, and transaction rollback. The prototype CLI opens an interactive prompt for terminal input and reads semicolon-delimited scripts from piped stdin. It supports multiline statements and emits tagged JSON results with statement byte offsets. Use `--interactive` to force prompts or `--script` to force EOF-delimited script input. SQL input buffers default to 16 MiB; `--max-input-bytes N` changes the byte limit. Each report is written and flushed before the next statement executes. It stops at the first execution or output error and exits nonzero; an output failure does not undo prior committed work. Use `--line` for legacy one-statement-per-line processing that continues after errors; this mode also exits nonzero if any statement fails. It is not the final import/export or client wire format.
+Use a fresh database for the example. `fastdb/examples/sql-writes.fastql` additionally exercises column-list inserts, nested SET, and transaction rollback. The CLI opens an interactive prompt for terminal input and reads semicolon-delimited scripts from piped stdin. It supports multiline statements and emits tagged JSON results with statement byte offsets. Use `--interactive` to force prompts or `--script` to force EOF-delimited script input. SQL input buffers default to 16 MiB; `--max-input-bytes N` changes the byte limit. Each report is written and flushed before the next statement executes. It stops at the first execution or output error and exits nonzero; an output failure does not undo prior committed work. Use `--line` for legacy one-statement-per-line processing that continues after errors; this mode also exits nonzero if any statement fails. It is not the final import/export or client wire format.
 
-On Unix terminals, the CLI supports cursor editing and up/down history recall, including multiline statements. Ctrl-C at the prompt clears pending input and leaves any transaction active; `.quit` exits and connection close rolls back uncommitted work. History stays in memory by default. Use `--history /path/to/fastdb-history` to load and save it across sessions; start a statement with a space to omit it. History retains up to 100 entries and skips new entries over 64 KiB. The submission byte limit is checked after terminal line editing and does not bound the editor's live buffer. Ctrl-C during engine execution requests cancellation and returns an error report before the next prompt. Inspect the report's transaction state; interrupted work can end an outer transaction. Nonterminal signal handling, complete deadlines and broader platform qualification remain unfinished.
+On Unix terminals, the CLI supports cursor editing and up/down history recall, including multiline statements. Ctrl-C at the prompt clears pending input and leaves any transaction active; `.quit` exits and connection close rolls back uncommitted work. History stays in memory by default. Use `--history /path/to/fastdb-history` to load and save it across sessions; start a statement with a space to omit it. History retains up to 100 entries and skips new entries over 64 KiB. The submission byte limit is checked after terminal line editing and does not bound the editor's live buffer. Ctrl-C during engine execution requests cancellation and returns an error report before the next prompt. Inspect the report's transaction state; interrupted work can end an outer transaction. See the release record for supported platforms and documented limits.
 
-The Rust client entry point is `fastdb::Database::open(path)?.connect()?`. `execute(sql, &Parameters)` handles the implemented FastQL subset and ordinary SQL. Typed `insert`, `get`, `patch`, `delete`, `define_field`, `create_index`, and `lookup_index` APIs exercise document storage without exposing raw engine access. Collection SELECT supports the initial AST-lowered subset in status.md. SQL-shaped VALUES inserts, SET/UNSET/DELETE, and ID-based UPSERT use the document validation path. Collection/index drops and field removal are transactional; INFO reports logical schema metadata. Field CHECK expressions validate final candidates and existing data when definitions change. Catalog writes use version 2; see contracts.md for prototype compatibility. SQL SELECT/SET/VALUES now support typed document/array/record helpers and lazy null helpers; see status.md for the supported subset. Remaining write/read forms, FastQL features, Node bindings, tools, and release validation are still pending.
+The Rust client entry point is `fastdb::Database::open(path)?.connect()?`. `execute(sql, &Parameters)` handles the implemented FastQL subset and ordinary SQL. Typed `insert`, `get`, `patch`, `delete`, `define_field`, `create_index`, and `lookup_index` APIs exercise document storage without exposing raw engine access. Collection SELECT supports the initial AST-lowered subset in status.md. SQL-shaped VALUES inserts, SET/UNSET/DELETE, and ID-based UPSERT use the document validation path. Collection/index drops and field removal are transactional; INFO reports logical schema metadata. Field CHECK expressions validate final candidates and existing data when definitions change. V1 catalog version 2 remains readable; spatial/full-text indexes and [inverse relationship declarations](docs/v2-relations.md) require version 3. See the [spatial contract](docs/v2-spatial.md) for upgrade behavior. SQL SELECT/SET/VALUES now support typed document/array/record helpers and lazy null helpers; see status.md for the supported subset. See the V2 checklist for future language and engine work.
+
+V2 [full-text search](docs/v2-fulltext.md) provides managed multi-field text indexes
+and `search::text(index,query,limit)` with typed IDs and BM25 scores. Read its
+ranking, post-filter and memory contracts before using it; V2 artifacts are not
+yet published.
 
 The [INSERT conflict guide](docs/insert-conflicts.md) covers insertion recovery and replacement versus object UPSERT. The [UPDATE conflict guide](docs/update-conflicts.md) compares ABORT, ROLLBACK, FAIL, IGNORE and REPLACE, including retained changes on errors and transaction recovery.
 
@@ -32,7 +37,7 @@ The [native Node client](bindings/node/README.md#local-package-smoke) includes a
 
 The [Rust client guide](docs/rust-client.md) describes local path dependencies and the standalone offline consumer smoke. Registry distribution remains pending.
 
-The [local benchmark harness](docs/benchmarks.md) measures document filters and exact-vector queries through the CLI, with result checks, query plans and Linux process peak RSS. It is a functional baseline; full release-scale performance qualification remains pending. Use `.profile SELECT ...` in the CLI or `Connection::profile_select` in Rust to obtain primary engine counters alongside query results.
+The [local benchmark harness](docs/benchmarks.md) measures document filters and exact-vector queries through the CLI, with result checks, query plans and Linux process peak RSS. See the release record and benchmark evidence for measured workloads and limits. Use `.profile SELECT ...` in the CLI or `Connection::profile_select` in Rust to obtain primary engine counters alongside query results.
 
 Audit a stored collection with `fastdb-cli --check-collection posts app.db`. Optional `--max-documents N` and `--max-encoded-bytes N` override the defaults of 100,000 documents and 64 MiB. The command prints one JSON report and exits nonzero on failure. See the [audit contract](docs/contracts.md#explicit-collection-content-audit) for coverage and resource limits.
 
@@ -64,3 +69,14 @@ individual decoding allocations or execution time. See
 Existing `.profile`, ordinary scripts, input byte limits and exit-status behavior
 retain their contracts; line and interactive modes continue after a failed command
 and exit nonzero if any command failed.
+
+V2 development also includes [dense ANN search](docs/v2-ann.md), qualified under
+its documented native contract. Package versions are aligned to `2.0.0` for
+Linux x64 candidate qualification; publication remains pending.
+
+The [Python binding](bindings/python/README.md) embeds the same frontend at
+version `2.0.0`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
+removed from active development and excluded from this release. Linux installed-wheel checks are recorded in the
+[V2 client assessment](docs/v2-client-assessment.md).
+
+[PHP, Swift, C# and Go native clients](docs/native-language-clients.md) share a FastDB C ABI. Local builds and the common contract test are documented there.

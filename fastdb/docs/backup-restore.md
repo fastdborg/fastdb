@@ -1,6 +1,6 @@
 # Offline backup and restore rehearsal
 
-The embedded prototype has a tested offline, checkpointed file-copy procedure on the pinned engine. This preserves the whole database: relational schema/data, collection metadata/documents, managed indexes, and migration history. Collection JSON/NDJSON export is a data transfer format and does not contain all of those objects.
+The embedded engine has a tested offline, checkpointed file-copy procedure on the pinned engine. This preserves the whole database: relational schema/data, collection metadata/documents, managed indexes, and migration history. Collection JSON/NDJSON export is a data transfer format and does not contain all of those objects.
 
 This procedure requires exclusive maintenance access. It does not provide an online backup API or coordinate other processes for you.
 
@@ -23,6 +23,10 @@ The test verifies a zero-length WAL after checkpoint, closes all source handles 
 This is a controlled same-build restore rehearsal. Interrupted copies, machine or
 storage failures, cross-process contention, other platforms and online backup
 are outside its evidence. Selected commit/checkpoint process-exit boundaries
-have separate evidence in recovery-io-evidence.md. Preview.1 and preview.2 are
-published; previous-release upgrade evidence is recorded in
-[the current S4 rehearsal](v1-upgrade-restore-evidence.md).
+have separate evidence in recovery-io-evidence.md. FastDB V1 is released;
+[the older S4 rehearsal](v1-upgrade-restore-evidence.md) is historical evidence.
+Current [V1-to-V2 qualification](v2-upgrade-restore-evidence.md) passes the native
+upgrade/restore rehearsal after the approved FTS backing-storage fix, including
+V1 downgrade rejection and restoration from unchanged V1 and V2 backups.
+Installed browser checks cover their separately identified artifact without FTS. Preserve a V1 backup before introducing V2 metadata;
+opening an upgraded database in V1 is not a supported rollback procedure.

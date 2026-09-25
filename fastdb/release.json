@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "status": "preparing",
+  "engineBase": "046e9cbf67d22491e8ecc941ec2891b02a9f3cad",
+  "clients": [
+    "rust",
+    "node",
+    "python",
+    "php",
+    "swift",
+    "csharp",
+    "go"
+  ],
+  "browser": false,
+  "cloud": false,
+  "qualifiedBinaryPlatforms": [],
+  "binaryPlatformScope": [
+    "x86_64-unknown-linux-gnu"
+  ],
+  "requiredNodeMajors": [
+    22,
+    24
+  ],
+  "requiredPythonMinors": [
+    "3.10",
+    "3.12",
+    "3.14"
+  ]
+}

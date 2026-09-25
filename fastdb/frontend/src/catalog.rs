@@ -45,11 +45,23 @@ pub(crate) const fn legacy_version() -> u32 {
     1
 }
 pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
-    if !matches!(collection.version, 1 | 2) {
+    if !matches!(collection.version, 1..=3) {
         return Err(Error::Storage(format!(
             "unsupported collection metadata version {}",
             collection.version
         )));
+    }
+    if !collection.relations.is_empty() && collection.version < 3 {
+        return Err(Error::Storage("relations require catalog version 3".into()));
+    }
+    if collection
+        .indexes
+        .iter()
+        .any(|i| i.kind != crate::IndexKind::Scalar && (collection.version < 3 || i.unique))
+    {
+        return Err(Error::Storage(
+            "search indexes require catalog version 3 and cannot be unique".into(),
+        ));
     }
     for field in &collection.fields {
         if let FieldType::Vector(dims) = field.kind {
@@ -111,24 +123,40 @@ pub(crate) fn decode(metadata: &str, name: &str) -> Result<Collection> {
             {
                 return Err(Error::Storage("invalid index identity".into()));
             }
-            compatible_index(&c, &index.path)?;
+            index.validate_text_config()?;
+            index.validate_vector_config(&c)?;
+            for path in index.paths() {
+                compatible_index(&c, path, index.kind)?;
+            }
+        }
+        for relation in &c.relations {
+            relation.validate()?;
         }
         Ok(())
     };
     validate().map_err(|e| Error::Storage(format!("invalid collection metadata: {e}")))?;
     Ok(c)
 }
-pub(crate) fn compatible_index(c: &Collection, path: &[String]) -> Result<()> {
+pub(crate) fn compatible_index(
+    c: &Collection,
+    path: &[String],
+    kind: crate::IndexKind,
+) -> Result<()> {
     for field in &c.fields {
         let incompatible = if field.path == path {
-            matches!(
-                field.kind,
-                FieldType::Object | FieldType::Array | FieldType::Vector(_)
-            )
+            match kind {
+                crate::IndexKind::Scalar => matches!(
+                    field.kind,
+                    FieldType::Object | FieldType::Array | FieldType::Vector(_)
+                ),
+                crate::IndexKind::Spatial => !matches!(field.kind, FieldType::Object),
+                crate::IndexKind::FullText => !matches!(field.kind, FieldType::String),
+                crate::IndexKind::Vector => !matches!(field.kind, FieldType::Vector(_)),
+            }
         } else if path.starts_with(&field.path) {
             !matches!(field.kind, FieldType::Object)
         } else {
-            field.path.starts_with(path)
+            kind != crate::IndexKind::Spatial && field.path.starts_with(path)
         };
         if incompatible {
             return Err(Error::Validation(format!(
@@ -147,22 +175,109 @@ fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     Value::Object(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 fn index_info(index: &crate::Index, table: &str) -> Value {
-    object([
+    let mut fields = vec![
         ("name", Value::String(index.name.clone())),
         ("table", Value::String(table.into())),
         ("model", Value::String("document".into())),
         ("path", strings(&index.path)),
         ("unique", Value::Boolean(index.unique)),
-    ])
+        (
+            "kind",
+            Value::String(
+                if index.kind == crate::IndexKind::Spatial {
+                    "spatial"
+                } else if index.kind == crate::IndexKind::FullText {
+                    "fulltext"
+                } else if index.kind == crate::IndexKind::Vector {
+                    "vector"
+                } else {
+                    "scalar"
+                }
+                .into(),
+            ),
+        ),
+    ];
+    if let Some(config) = &index.fulltext {
+        fields.push(("paths", Value::Array(index.paths().map(strings).collect())));
+        fields.push(("tokenizer", Value::String(config.tokenizer.clone())));
+    }
+    if let Some(config) = &index.vector {
+        fields.push(("dimensions", Value::Integer(config.dimensions as i64)));
+        fields.push(("metric", Value::String(config.metric.clone())));
+        fields.push(("implementation", Value::String(config.format.clone())));
+    }
+    object(fields)
+}
+// One connection-validation transaction observes one schema snapshot. Retain
+// every row so duplicate names and unexpected dependencies still reject.
+struct SchemaSnapshot {
+    rows: Vec<Vec<EngineValue>>,
+}
+impl SchemaSnapshot {
+    fn schema_object(&self, name: &str, kind: &str, table: &str, sql: &str) -> Result<()> {
+        let rows: Vec<_> = self.rows.iter().filter(|row| {
+            matches!(row.get(1), Some(EngineValue::Text(actual)) if actual.as_str() == name)
+        }).collect();
+        let valid = match rows.as_slice() {
+            [row] => match row.as_slice() {
+                [EngineValue::Text(actual_kind), _, EngineValue::Text(actual_table), EngineValue::Text(actual_sql)] => {
+                    actual_kind.as_str() == kind
+                        && actual_table.as_str() == table
+                        && schema_tokens(actual_sql.as_str())? == schema_tokens(sql)?
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !valid {
+            return Err(Error::Storage(format!(
+                "missing or incompatible managed schema object {name}"
+            )));
+        }
+        Ok(())
+    }
+    fn managed_dependencies(&self, table: &str, expected_index: Option<&str>) -> Result<()> {
+        for row in &self.rows {
+            let [EngineValue::Text(kind), name, EngineValue::Text(actual_table), sql] =
+                row.as_slice()
+            else {
+                continue;
+            };
+            if actual_table.as_str() != table
+                || !(kind.as_str() == "trigger"
+                    || (kind.as_str() == "index" && !matches!(sql, EngineValue::Null)))
+            {
+                continue;
+            }
+            if !matches!(name, EngineValue::Text(name) if kind.as_str() == "index" && Some(name.as_str()) == expected_index)
+            {
+                return Err(Error::Storage(format!(
+                    "unexpected dependency on managed table {table}"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 impl Connection {
     pub(crate) fn validate_storage_schema(&self) -> Result<()> {
-        self.schema_object("__fastdb_catalog", "table", "__fastdb_catalog", "CREATE TABLE IF NOT EXISTS __fastdb_catalog (name TEXT PRIMARY KEY, metadata TEXT NOT NULL)")?;
-        self.managed_dependencies("__fastdb_catalog", None)?;
+        let schema = SchemaSnapshot {
+            rows: self.run("SELECT type,name,tbl_name,sql FROM sqlite_schema", &[])?,
+        };
+        schema.schema_object("__fastdb_catalog", "table", "__fastdb_catalog", "CREATE TABLE IF NOT EXISTS __fastdb_catalog (name TEXT PRIMARY KEY, metadata TEXT NOT NULL)")?;
+        schema.managed_dependencies("__fastdb_catalog", None)?;
+        schema.schema_object(
+            "__fastdb_functions",
+            "table",
+            "__fastdb_functions",
+            crate::udf::DDL,
+        )?;
+        schema.managed_dependencies("__fastdb_functions", None)?;
+        self.validate_functions()?;
         let mut storage = std::collections::BTreeSet::new();
         for c in self.collections()? {
             storage.insert(c.storage.clone());
-            self.schema_object(
+            schema.schema_object(
                 &c.storage,
                 "table",
                 &c.storage,
@@ -171,7 +286,7 @@ impl Connection {
                     quote(&c.storage)
                 ),
             )?;
-            self.managed_dependencies(&c.storage, None)?;
+            schema.managed_dependencies(&c.storage, None)?;
             for index in &c.indexes {
                 if !storage.insert(index.storage.clone()) {
                     return Err(Error::Storage(format!(
@@ -179,35 +294,58 @@ impl Connection {
                         index.storage
                     )));
                 }
-                self.schema_object(
+                schema.schema_object(
                     &index.storage,
                     "table",
                     &index.storage,
-                    &format!(
-                        "CREATE TABLE {} (\"key\", id BLOB NOT NULL)",
-                        quote(&index.storage)
-                    ),
+                    &index.table_ddl(),
                 )?;
-                self.schema_object(
-                    &index.name,
-                    "index",
-                    &index.storage,
-                    &format!(
-                        "CREATE {} INDEX {} ON {} (\"key\")",
-                        if index.unique { "UNIQUE" } else { "" },
-                        quote(&index.name),
-                        quote(&index.storage)
-                    ),
-                )?;
-                self.managed_dependencies(&index.storage, Some(&index.name))?;
+                schema.schema_object(&index.name, "index", &index.storage, &index.index_ddl())?;
+                schema.managed_dependencies(&index.storage, Some(&index.name))?;
+                if index.kind == crate::IndexKind::Vector {
+                    for (name, ddl) in [
+                        (index.ann_state(), index.ann_state_ddl()),
+                        (index.ann_log(), index.ann_log_ddl()),
+                    ] {
+                        if !storage.insert(name.clone()) {
+                            return Err(Error::Storage("multiple vector storage owners".into()));
+                        }
+                        schema.schema_object(&name, "table", &name, &ddl)?;
+                        schema.managed_dependencies(&name, None)?;
+                    }
+                    self.ann_generation(index)?;
+                }
+                if index.kind == crate::IndexKind::FullText {
+                    let stats = index.text_stats();
+                    let dir = index.text_directory();
+                    let dir_index = format!("{dir}_key");
+                    for name in [&stats, &dir, &dir_index] {
+                        if !storage.insert(name.clone()) {
+                            return Err(Error::Storage("multiple full-text storage owners".into()));
+                        }
+                    }
+                    schema.schema_object(&stats, "table", &stats, &index.text_stats_ddl())?;
+                    schema.managed_dependencies(&stats, None)?;
+                    schema.schema_object(&dir, "table", &dir, &index.text_directory_ddl())?;
+                    schema.schema_object(
+                        &dir_index,
+                        "index",
+                        &dir,
+                        &index.text_directory_index_ddl(),
+                    )?;
+                    schema.managed_dependencies(&dir, Some(&dir_index))?;
+                    self.text_count(index)?;
+                }
             }
         }
-        for row in self.run("SELECT name FROM sqlite_schema", &[])? {
-            let [EngineValue::Text(name)] = row.as_slice() else {
+        for row in &schema.rows {
+            let [_, EngineValue::Text(name), _, _] = row.as_slice() else {
                 return Err(Error::Storage("invalid schema name".into()));
             };
             let canonical = name.as_str().to_ascii_lowercase();
-            if (canonical.starts_with("__fastdb_c_") || canonical.starts_with("__fastdb_i_"))
+            if (canonical.starts_with("__fastdb_c_")
+                || canonical.starts_with("__fastdb_i_")
+                || canonical.starts_with("__turso_internal_fts_dir_"))
                 && !storage.contains(name.as_str())
             {
                 return Err(Error::Storage(format!(
@@ -216,6 +354,7 @@ impl Connection {
                 )));
             }
         }
+        crate::relations::validate_dependencies(&self.collections()?)?;
         Ok(())
     }
     pub(super) fn schema_object(
@@ -259,7 +398,7 @@ impl Connection {
         }
         Ok(())
     }
-    fn collections(&self) -> Result<Vec<Collection>> {
+    pub(crate) fn collections(&self) -> Result<Vec<Collection>> {
         self.run(
             "SELECT name,metadata FROM __fastdb_catalog ORDER BY name",
             &[],
@@ -309,8 +448,15 @@ impl Connection {
                 Err(Error::NotFound(_)) if if_exists => return Ok(()),
                 Err(e) => return Err(e),
             };
+            for owner in self.collections()? {
+                if owner.name != c.name && owner.relations.iter().any(|r| r.source == c.name) {
+                    return Err(Error::Validation(
+                        "drop dependent relations before their source collection".into(),
+                    ));
+                }
+            }
             for index in &c.indexes {
-                self.run(&format!("DROP TABLE {}", quote(&index.storage)), &[])?;
+                self.drop_index_storage(index)?;
             }
             self.run(&format!("DROP TABLE {}", quote(&c.storage)), &[])?;
             self.run(
@@ -327,8 +473,17 @@ impl Connection {
         self.atomic(|| {
             for mut c in self.collections()? {
                 if let Some(position) = c.indexes.iter().position(|i| i.name == name) {
+                    if self
+                        .collections()?
+                        .iter()
+                        .any(|owner| owner.relations.iter().any(|r| r.index == name))
+                    {
+                        return Err(Error::Validation(
+                            "drop dependent relations before their index".into(),
+                        ));
+                    }
                     let index = c.indexes.remove(position);
-                    self.run(&format!("DROP TABLE {}", quote(&index.storage)), &[])?;
+                    self.drop_index_storage(&index)?;
                     self.save_catalog(&c)?;
                     return Ok(true);
                 }
@@ -402,15 +557,17 @@ impl Connection {
                 ("db",None)=>{
                     let mut entries=Vec::new();
                     for c in self.collections()? {entries.push(object([("name",Value::String(c.name)),("model",Value::String("document".into()))]));}
-                    for row in self.run("SELECT name FROM sqlite_schema WHERE type='table' AND substr(lower(name),1,9) != '__fastdb_' AND substr(lower(name),1,7) != 'sqlite_' ORDER BY name",&[])? {
+                    for row in self.run("SELECT name FROM sqlite_schema WHERE type='table' AND substr(lower(name),1,9) != '__fastdb_' AND substr(lower(name),1,7) != 'sqlite_' AND substr(lower(name),1,17) != '__turso_internal_' ORDER BY name",&[])? {
                         if let EngineValue::Text(t)=&row[0] {entries.push(object([("name",Value::String(t.as_str().into())),("model",Value::String("relational".into()))]));}
                     }
-                    let views = self.run("SELECT name FROM sqlite_schema WHERE type='view' AND substr(lower(name),1,9) != '__fastdb_' AND substr(lower(name),1,7) != 'sqlite_' ORDER BY name", &[])?.into_iter().map(|row| object([("name", crate::from_engine(row[0].clone())), ("model", Value::String("relational".into()))])).collect();
+                    let views = self.run("SELECT name FROM sqlite_schema WHERE type='view' AND substr(lower(name),1,9) != '__fastdb_' AND substr(lower(name),1,7) != 'sqlite_' AND substr(lower(name),1,17) != '__turso_internal_' ORDER BY name", &[])?.into_iter().map(|row| object([("name", crate::from_engine(row[0].clone())), ("model", Value::String("relational".into()))])).collect();
                     object([("catalog_version",Value::Integer(i64::from(version()))),("tables",Value::Array(entries)),("views",Value::Array(views))])
                 }
                 ("table",Some(name))=>self.table_info(name)?,
                 ("index",Some(name))=>self.logical_index_info(name)?,
-                _=>return Err(Error::Validation("INFO requires DB, TABLE name, or INDEX name".into())),
+                ("relation",Some(name))=>self.relation_info(name)?,
+                ("function",Some(name))=>self.function_info(name)?,
+                _=>return Err(Error::Validation("INFO requires DB, TABLE name, INDEX name, or RELATION name".into())),
             };
             Ok(QueryResult {columns:vec!["info".into()],rows:vec![vec![info]],affected:0})
         })
@@ -450,11 +607,17 @@ impl Connection {
                     })
                     .collect();
                 let indexes = c.indexes.iter().map(|i| index_info(i, &c.name)).collect();
+                let relations = c
+                    .relations
+                    .iter()
+                    .map(|r| Value::String(r.name.clone()))
+                    .collect();
                 Ok(object([
                     ("name", Value::String(c.name)),
                     ("model", Value::String("document".into())),
                     ("fields", Value::Array(fields)),
                     ("indexes", Value::Array(indexes)),
+                    ("relations", Value::Array(relations)),
                     (
                         "capabilities",
                         strings(&[

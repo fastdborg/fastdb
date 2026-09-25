@@ -4307,11 +4307,15 @@ impl Pager {
                     let pending = self.commit_info.read().completions.first().cloned();
                     let sync_c = match pending {
                         Some(c) => Some(c),
-                        // Skip the fsync when the WAL is not dirty (no frames
-                        // appended since the last successful fsync).
+                        // Prepared frames are not published to the WAL index
+                        // until WalCommitDone, so is_dirty() does not yet cover
+                        // their writes. FULL must sync them before publication.
                         // NORMAL mode skips fsync on WAL commit (but still
                         // fsyncs on checkpoint and wal restart).
-                        None if sync_mode == SyncMode::Full && wal.is_dirty() => {
+                        None if sync_mode == SyncMode::Full
+                            && (wal.is_dirty()
+                                || !self.commit_info.read().prepared_frames.is_empty()) =>
+                        {
                             let sync_c = wal.sync(self.get_sync_type())?;
                             self.commit_info.write().completions.push(sync_c.clone());
                             Some(sync_c)

@@ -11,7 +11,7 @@ fn cli_attaches_transaction_state_to_success_and_error_lines() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"CREATE TABLE posts\nBEGIN\nINSERT INTO posts {n:1}\nUPDATE posts SET n=2 RETURNING array::append(1,2) AS bad\nSELECT * FROM posts\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"CREATE TABLE posts\nBEGIN\nINSERT INTO posts {n:1}\nUPDATE posts SET n=2 RETURNING array::append(1,2) AS bad\nSELECT n FROM posts\n").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(!output.status.success());
     let rows = String::from_utf8(output.stdout)
@@ -24,8 +24,9 @@ fn cli_attaches_transaction_state_to_success_and_error_lines() {
     assert_eq!(rows[1]["transaction"]["after"], "active");
     assert!(rows[3]["error"]["code"].is_string());
     assert_eq!(rows[3]["transaction"]["before"], "active");
-    assert_eq!(rows[3]["transaction"]["after"], "autocommit");
-    assert_eq!(rows[4]["rows"], serde_json::json!([]));
+    assert_eq!(rows[3]["transaction"]["after"], "active");
+    assert_eq!(rows[4]["rows"][0][0]["value"], 1);
+    assert_eq!(rows[4]["rows"].as_array().unwrap().len(), 1);
 }
 
 #[test]
