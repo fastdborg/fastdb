@@ -28,9 +28,13 @@ and its artifacts are unchanged.
   partial-write and failed-sync cases preserve whole old/new indexed state and
   permit recovery/subsequent writes under the documented acknowledgement rules.
 
-The upstream NORMAL-mode checkpoint WAL-sync backport is under separate review.
-Its reproduced recovery defect must be resolved before this candidate is shipped.
-The default FULL-mode control passes the same finite crash model.
+The user approved the exact six-file NORMAL-mode checkpoint correction, now
+integrated into this candidate. It syncs WAL frames before database backfill and
+preserves that barrier across failed asynchronous sync/retry, including automatic
+checkpoint cleanup after a committed write. The seven permanent crash-model and
+boundary regressions pass on the integrated source; combined release checks and
+exact-artifact qualification remain pending.
+See the [review and before/after evidence](proposals/checkpoint-wal-sync.md).
 
 ## Intended distribution and compatibility
 
@@ -49,7 +53,7 @@ is not a data rollback. SQLite adoption is separate from FastDB version upgrades
 ## Remaining release evidence
 
 - [ ] Clean source/lockfile identity and hosted scoped CI.
-- [ ] Approved checkpoint correction and relevant native regressions.
+- [ ] Integrated checkpoint correction's native regressions and combined checks.
 - [ ] Exact seven-client artifacts, SQLite adoption and process ownership.
 - [ ] Released-version upgrade and restore checks, including stored functions.
 - [ ] Measured search/resource envelope and sustained readers/writer behavior.

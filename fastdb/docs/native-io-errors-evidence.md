@@ -61,14 +61,22 @@ application transaction/idempotency marker before retrying non-idempotent work.
 These outcomes concern process restart with the OS still running, not durability
 after machine power loss.
 
-The pinned core's `op_checkpoint` handles **every** pager error by returning a
-PRAGMA row with `busy=1`, `log=NULL`, `checkpointed=NULL`. Thus an I/O failure does
-not throw through the query API and its original errno is not exposed. This is
-a diagnostic limitation of the pinned implementation. The test requires that
-exact failed status; it never accepts query completion as checkpoint success.
+In this synchronous-wrapper matrix, `op_checkpoint` receives the pager error and
+returns a PRAGMA row with `busy=1`, `log=NULL`, `checkpointed=NULL`. Those selected
+failures do not throw through the query API and their original errno is not
+exposed, a diagnostic limitation of that path. The test requires that exact
+failed status; it never accepts query completion as checkpoint success.
 Applications must check the first result column is zero. Later successful
-TRUNCATE checkpointing must return `[0,0,0]` in this fixture. No new core exception
-is introduced for this reporting behavior.
+TRUNCATE checkpointing must return `[0,0,0]` in this fixture.
+
+This is not a universal checkpoint-error contract. An asynchronous completion
+error can propagate outside `op_checkpoint` through the query API. The separately
+approved [checkpoint barrier/retry exception](proposals/checkpoint-wal-sync.md)
+covers failed WAL sync before database backfill, including immediate and deferred
+failed completions and subsequent retries. Applications must handle both thrown
+errors and unsuccessful checkpoint rows. The synchronous matrix above remains
+evidence for its stated injection points; it does not qualify every asynchronous
+completion path or the integrated correction's final release artifacts.
 
 ## Acceptance and scope
 

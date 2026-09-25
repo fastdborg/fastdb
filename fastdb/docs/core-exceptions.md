@@ -1,7 +1,7 @@
 # Maintained engine exceptions
 
 Required review checklist for every upstream sync. Baseline and full provenance
-are in [UPSTREAM.md](../UPSTREAM.md). The five active exceptions below are approved and
+are in [UPSTREAM.md](../UPSTREAM.md). The six active exceptions below are approved and
 integrated. The retired WASI exception is recorded separately. The dated review
 below tracks upstream replacement candidates; no patch is removed from the
 existing pinned engine merely because a newer upstream revision contains a fix.
@@ -35,9 +35,10 @@ Inspected upstream main at
 The review also found a separate upstream NORMAL-mode checkpoint durability fix,
 [`cc26d08508cbe045472fa3015e2bce4a389b5e06`](https://github.com/tursodatabase/turso/commit/cc26d08508cbe045472fa3015e2bce4a389b5e06).
 The pinned build reproduces its power-loss defect. A separately reviewed
-[candidate backport](proposals/checkpoint-wal-sync.md) also handles failed-sync
-retry and automatic-checkpoint completion on this pin. Isolated tests pass;
-user approval and shared-core integration remain pending. It is not the
+[approved backport](proposals/checkpoint-wal-sync.md) also handles failed-sync
+retry and automatic-checkpoint completion on this pin. The user approved its
+exact six-file patch on 2026-09-25, and shared core now includes that patch.
+Integrated acceptance is recorded separately. It is not the
 first-FULL-commit exception and must not be silently included in it.
 
 | Exception / local commit | Required behavior and regression | When to update or remove |
@@ -47,6 +48,7 @@ first-FULL-commit exception and must not be silently included in it.
 | First FULL commit WAL sync `fe2ccd404` | Native first-commit sync probe and FULL/NORMAL/OFF controls. The historical browser flush-fault matrix is supporting evidence, not a current gate. [Review](proposals/wal-first-commit-sync.md). | Upstream flushes prepared frames before publishing/acknowledging FULL commits, including the first commit. |
 | FTS backing storage `12109384a` | `test_fts_backing_storage_integrity`, `test_drop_table_frees_backing_and_ordinary_indexes`, `test_fts_backing_storage_physical_corruption`; upgrade/restore rehearsal. [Review](proposals/fts-integrity.md). | Upstream excludes backing trees only from inappropriate logical counts, retains physical checks, and reclaims all backing roots on teardown/rollback. Existing orphan pages still need separate handling. |
 | Scalar read errors `f26014f04` | `scalar_read_error_preserves_transactions_and_named_savepoints`, FastDB user-function tests and Node cancellation/transaction tests. [Review](proposals/udf-error-transaction.md). | Upstream read-only extension failures preserve caller transactions, savepoints and changes(), while autocommit cleanup and writer rollback controls pass. |
+| Checkpoint WAL barrier (approved 2026-09-25; isolated integration recorded in the review) | `checkpoint_barrier` and `checkpoint_crash_atomicity`: NORMAL backfill follows successful WAL sync; failed returned/immediate/deferred completions cannot skip the barrier; automatic failures preserve published writes; FULL recovery preserves acknowledged writes. [Review](proposals/checkpoint-wal-sync.md). | Upstream includes the barrier from `cc26d08508cbe045472fa3015e2bce4a389b5e06` and equivalent pending-completion, retry and automatic-checkpoint cleanup. Retain all regressions and recheck checkpoint/VACUUM callers before removing the local companion. |
 
 ## Retired exception: WASI FTS
 

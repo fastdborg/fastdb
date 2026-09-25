@@ -1,8 +1,9 @@
 # Core review: make NORMAL-mode checkpoint backfill crash-atomic
 
-Status: **proposed, not integrated**. The shared core remains unchanged. This is
-an additional exception, separate from the previously approved first-commit
-FULL-mode sync fix.
+Status: **approved by the user on 2026-09-25; integrated as the exact reviewed patch**.
+All seven permanent regressions pass on shared source. Combined-source and
+artifact acceptance remain separate release gates. This is an additional exception, separate from
+the previously approved first-commit FULL-mode sync fix.
 
 ## Reproduced defect
 
@@ -96,7 +97,8 @@ FastDB 2.1 preparation changes. Core files are unchanged from that HEAD.
 The temporary candidate checkout is `/tmp/fastdb-checkpoint-wal-sync-patched`,
 created from the same HEAD and overlaid with the current preparation files before
 applying the backport and candidate retry correction. The shared checkout's core
-is untouched.
+was untouched during review; after approval its six-file diff has exactly the
+combined patch SHA-256 recorded above.
 
 The upstream regression removes the newer `SqliteDialect` argument/import for
 our API and strengthens the FULL-mode assertion to require all acknowledged
@@ -121,7 +123,8 @@ Cargo manifests use this checkout's exact resolved dependency versions.
 - [x] Affected upstream unit filters pass with `fts,conn_raw_api`: 126 checkpoint
   and 38 VACUUM tests, zero failures. Logs:
   `/tmp/fastdb-checkpoint-core-unit.log` and `/tmp/fastdb-vacuum-core-unit.log`.
-- [ ] Separate user review, isolated integration commit and exception register.
+- [x] Separate user approval of the combined six-file patch and exception register.
+- [x] Isolated core integration with all seven permanent regressions passing.
 - [ ] Integrated focused regressions and combined release checks.
 
 The seven focused tests pass in
@@ -168,5 +171,16 @@ The [repository workflow](../../../../FastDB-Workflow.md) says: “Any necessary
 local core exception requires a separately reviewed design decision, isolated
 commit, patch inventory entry, and relevant regression tests; it is not
 automatically authorized by this workflow.” Previous approval of the first FULL
-commit fix does not cover this separate NORMAL checkpoint defect. Shared core
-integration therefore remains pending the user's decision.
+commit fix did not cover this separate NORMAL checkpoint defect. The user has
+now explicitly approved the checkpoint core fix. Permanent tests live in
+`fastdb/tests/tests/checkpoint_barrier.rs` and
+`fastdb/tests/tests/checkpoint_crash_atomicity.rs`; the latter uses a standard
+boxed test error in place of `anyhow` without adding a dependency or changing
+its model and assertions. The review snapshot and receipts remain immutable.
+
+Integrated focused command:
+`cargo test --locked -p fastdb-tests --test checkpoint_barrier --test checkpoint_crash_atomicity`.
+All seven tests pass; log `/tmp/fastdb-checkpoint-integrated.log`. The shared
+six-file core diff is byte-for-byte identical to the approved patch. Cargo.lock
+is unchanged. Full scoped verification and exact-artifact qualification follow
+in the production checklist rather than being inferred from this focused pass.

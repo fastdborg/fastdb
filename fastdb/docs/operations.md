@@ -2,7 +2,7 @@
 
 Use the [single-owner deployment contract](deployment.md). Assign an application
 owner responsible for backups, restore drills, upgrades and incident response.
-FastDB maintainers own engine updates, dependency review and the five maintained
+FastDB maintainers own engine updates, dependency review and the six maintained
 [core exceptions](core-exceptions.md); review each exception on every upstream
 sync and release, retaining its regression when an upstream fix replaces the patch.
 
@@ -55,9 +55,13 @@ disk trends to detect growing WALs. For an explicit truncation, schedule the sam
 exclusive maintenance window as the backup procedure. A successful checkpoint
 does not replace an independent backup.
 
-The pinned engine can surface a checkpoint I/O error as a completed PRAGMA with
-`busy=1`, `log=NULL`, `checkpointed=NULL`. Always inspect the row, not just whether
-the query threw. See [returned I/O error evidence](native-io-errors-evidence.md).
+The engine can surface a synchronous checkpoint I/O error as a completed PRAGMA
+with `busy=1`, `log=NULL`, `checkpointed=NULL`. An asynchronous completion error
+at the WAL barrier before database backfill can instead propagate through the
+query API. Handle thrown errors and inspect any returned row: neither successful
+query completion nor absence of a row proves checkpoint success. A maintenance
+TRUNCATE checkpoint must return `[0,0,0]` before a backup can proceed. See
+[returned I/O error evidence](native-io-errors-evidence.md).
 
 Result/queue limits bound their documented payloads, not all process memory.
 FTS search can allocate scratch proportional to indexed documents and materialize

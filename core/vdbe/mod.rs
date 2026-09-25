@@ -1728,7 +1728,13 @@ impl Program {
                     io.set_waker(waker);
                     return Ok(StepResult::IO);
                 }
-                if let Some(err) = io.get_error() {
+                // This exact barrier belongs to a published WAL commit. Let
+                // commit_tx observe its error on reentry and run its existing
+                // AutoCheckpoint cleanup, just as for a returned sync error.
+                let resume_failed_auto_checkpoint =
+                    matches!(state.commit_state, CommitState::Committing)
+                        && pager.failed_auto_checkpoint_wal_sync();
+                if let Some(err) = io.get_error().filter(|_| !resume_failed_auto_checkpoint) {
                     if pager.is_checkpointing() {
                         // Wrap IO errors that occurred during checkpointing in CheckpointFailed error,
                         // so that abort() knows not to try to rollback the transaction, because the transaction
@@ -2754,6 +2760,10 @@ impl Program {
             state.uses_subjournal = false;
         }
         state.auto_txn_cleanup = TxnCleanup::None;
+        // A pre-backfill WAL-sync failure may be observed before its state
+        // machine reenters. Only discard that finished barrier here; other
+        // checkpoint phases can still own unfinished database I/O.
+        pager.cleanup_after_failed_checkpoint_wal_sync();
         if let Some(err) = abort_error {
             return Err(err);
         }
