@@ -7,9 +7,11 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from shipping_policy import PROFILE, POLICY, build_environment, check_artifact, check_profile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +43,31 @@ def sha(path):
 def copy(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
+
+
+def bundled_markdown(source, destination, destinations, source_commit):
+    # These maintained documents use inline Markdown links. Preserve labels,
+    # optional titles and angle brackets while relocating only local targets.
+    def rewrite(match):
+        original = match[2]
+        angled = original.startswith("<")
+        url = urlsplit(original[1:-1] if angled else original)
+        if url.scheme or url.netloc or not url.path:
+            return match[0]
+        target = (source.parent / unquote(url.path)).resolve()
+        if not target.is_relative_to(ROOT) or not target.is_file():
+            raise ValueError(f"Missing or external documentation target in {source}: {original}")
+        if target in destinations:
+            path = quote(Path(os.path.relpath(destinations[target], destination.parent)).as_posix())
+        else:
+            path = f"https://github.com/fastdborg/fastdb/blob/{source_commit}/" + quote(target.relative_to(ROOT).as_posix())
+        rewritten = urlunsplit(("", "", path, url.query, url.fragment))
+        if angled:
+            rewritten = "<" + rewritten + ">"
+        return match[1] + rewritten + match[3]
+
+    return re.sub(r'''(\]\()(<[^>\n]+>|[^()\s]+)([ \t]*(?:"[^"\n]*"|'[^'\n]*')?[ \t]*\))''',
+                  rewrite, source.read_text())
 
 
 def archive(path, files):
@@ -131,7 +158,7 @@ for language in ["php", "swift", "go"]:
     files.append((ROOT / "fastdb/bindings/fixtures/native-client.json", f"fastdb-{language}-{version}/testdata/native-client.json"))
     archive(out / "packages" / f"fastdb-{language}-{version}.tar.gz", files)
 
-for source, name in [("fastdb/docs/v2-release-quickstart.md", "README.md"),
+documents = [("fastdb/docs/v2-release-quickstart.md", "README.md"),
                      ("fastdb/docs/backup-restore.md", "BACKUP.md"),
                      ("fastdb/docs/deployment.md", "DEPLOYMENT.md"),
                      ("fastdb/docs/operations.md", "OPERATIONS.md"),
@@ -145,8 +172,12 @@ for source, name in [("fastdb/docs/v2-release-quickstart.md", "README.md"),
                      ("fastdb/UPSTREAM.md", "UPSTREAM.md"), ("LICENSE.md", "LICENSE.md"),
                      ("fastdb/bindings/c/RUST-LIBRARY-NOTICES.html", "notices/RUST-LIBRARY-NOTICES.html"),
                      ("fastdb/docs/rust-runtime-notices.json", "evidence/rust-runtime-notices.json"),
-                     ("fastdb/bindings/node/THIRD_PARTY_NOTICES.md", "notices/THIRD_PARTY_NOTICES.md")]:
+                     ("fastdb/bindings/node/THIRD_PARTY_NOTICES.md", "notices/THIRD_PARTY_NOTICES.md")]
+destinations = {(ROOT / source).resolve(): Path(name) for source, name in documents}
+for source, name in documents:
     copy(ROOT / source, out / name)
+    if Path(source).suffix == ".md":
+        (out / name).write_text(bundled_markdown(ROOT / source, Path(name), destinations, source_commit))
 
 if capture(["git", "rev-parse", "HEAD"]) != source_commit:
     raise ValueError("Source commit changed during build")
