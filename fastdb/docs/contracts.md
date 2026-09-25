@@ -248,9 +248,9 @@ Collection/object vector32/vector64 constructors preserve typed values. Exact-di
 Typed vectors also support the pinned sparse32, float8 and bit encodings. Sparse indexes must be strictly increasing and below dimension; quantization metadata/components must be finite; lengths, trailing metadata and padding must be valid. Constructors preserve native bytes. Slice/concat preserve typed results, with native unsupported-format errors for bit/float8 operations. FastDB corrects the pinned sparse-concat index-offset defect in its typed frontend; ordinary SQL remains delegated unchanged. These formats retain the same positive-dimension and 65,536-dimension limit and need wider fuzz/numerical/platform qualification before release.
 
 
-## Initial bundled string functions
+## Bundled string functions
 
-The prototype embeds fixed JavaScript source through pinned `rquickjs = 0.12.2` (MSRV 1.87), with its bundled native C runtime. The public catalog currently contains:
+The 2.1 candidate embeds fixed JavaScript source through pinned `rquickjs = 0.13.0` (MSRV 1.87), bundling QuickJS-NG 0.16.2. See [the dependency review](dependency-security.md) for the runtime update. The public catalog currently contains:
 
 | Function | Contract |
 | --- | --- |
@@ -259,13 +259,13 @@ The prototype embeds fixed JavaScript source through pinned `rquickjs = 0.12.2` 
 
 Both require string arguments, reject null/non-string values, and return a typed string. They work through the shared SQL helper and object-write expression paths; they are not currently CHECK-eligible. Successful results are deterministic for fixed inputs and the pinned bundle/runtime Unicode tables. Resource-budget failures can depend on machine load.
 
-Each call creates a fresh runtime with an 8 MiB JavaScript heap limit, 256 KiB stack limit, 65,536-byte UTF-8 input/output limits, and an interrupt handler that stops after 1,000 allowed polls or a 100 ms elapsed deadline. Interrupt polling is cooperative, not a hard real-time deadline. Output size is checked after conversion to a Rust string; these limits do not bound total query memory or total execution time across many rows. Settings use the [rquickjs Runtime API](https://docs.rs/rquickjs/0.12.2/rquickjs/struct.Runtime.html); allocator features that bypass its heap limit are not enabled.
+Each call creates a fresh runtime with an 8 MiB JavaScript heap limit, 256 KiB stack limit, 65,536-byte UTF-8 input/output limits, and an interrupt handler that stops after 1,000 allowed polls or a 100 ms elapsed deadline. Interrupt polling is cooperative, not a hard real-time deadline. Output size is checked after conversion to a Rust string; these limits do not bound total query memory or total execution time across many rows. Settings use the [rquickjs Runtime API](https://docs.rs/rquickjs/0.13.0/rquickjs/struct.Runtime.html); allocator features that bypass its heap limit are not enabled.
 
-Only the compiled-in source is evaluated. Inputs pass as function arguments, never interpolated code. No public user-JavaScript API, module loader, host I/O or database callbacks are installed. The runtime includes JavaScript language built-ins; this is a fixed-function execution boundary, not a general-purpose user-code sandbox.
+These bundled helpers evaluate only compiled-in source. Inputs pass as function arguments, never interpolated code. No module loader, host I/O or database callbacks are installed. Separately, V2 provides the documented [sandboxed stored-function API](v2-user-functions.md); its limits and value contract are distinct from this fixed helper catalog.
 
-Direct object-expression argument errors use validation errors; input/output, execution and recognized allocation/stack failures use `FDB_LIMIT`. Runtime initialization or unexpected bundle failures use storage errors. SQL UDF failures pass through the engine error path and can abort an outer transaction, as documented above; error classification is not yet a frozen cross-language contract.
+Direct object-expression argument errors use validation errors; input/output, execution and recognized allocation/stack failures use `FDB_LIMIT`. Runtime initialization or unexpected bundle failures use storage errors. SQL UDF failures pass through the engine error path. The maintained scalar-read-error correction preserves caller transactions and named savepoints for read-only extension errors; write failures retain the documented rollback/conflict rules. Inspect transaction reports after errors.
 
-Fresh runtimes trade performance for isolated calls. Benchmarks, full dependency/license/security review, Unicode upgrade compatibility, cancellation integration, native C packaging and non-Linux platform tests remain release gates. The two-function catalog does not complete V1 runtime qualification.
+Fresh runtimes trade performance for isolated calls. The Linux release includes cancellation, native packaging and attribution qualification; the [2.1 checklist](v2.1-tasks.md) tracks updated runtime, artifact and workload evidence. Non-Linux platforms are outside the current release scope. Runtime/Unicode upgrades can affect deterministic outputs and must be tested against application expectations.
 
 
 ## Initial collection grouping

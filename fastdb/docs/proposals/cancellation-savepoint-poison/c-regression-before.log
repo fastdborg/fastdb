@@ -1,0 +1,31 @@
+FF
+======================================================================
+FAIL: test_cancelled_plain_write_preserves_commit (__main__.ABI.test_cancelled_plain_write_preserves_commit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tan/Sites/fastdb/turso/fastdb/scripts/check-c-abi.py", line 142, in test_cancelled_plain_write_preserves_commit
+    self.check_cancelled_plain_write("BEGIN", "COMMIT")
+  File "/home/tan/Sites/fastdb/turso/fastdb/scripts/check-c-abi.py", line 137, in check_cancelled_plain_write
+    self.assertEqual(execute(finish)["transaction"], {"before": "active", "after": "autocommit"})
+                     ^^^^^^^^^^^^^^^
+  File "/home/tan/Sites/fastdb/turso/fastdb/scripts/check-c-abi.py", line 87, in execute
+    self.assertIn("result", response["execution"], f"{sql}: {response}")
+AssertionError: 'result' not found in {'error': {'code': 'FDB_ENGINE', 'message': 'engine: Transaction error: cannot commit - an unfinished write statement was abandoned'}} : COMMIT: {'execution': {'error': {'code': 'FDB_ENGINE', 'message': 'engine: Transaction error: cannot commit - an unfinished write statement was abandoned'}}, 'transaction': {'after': 'autocommit', 'before': 'active'}, 'version': 1}
+
+======================================================================
+FAIL: test_cancelled_plain_write_preserves_root_release (__main__.ABI.test_cancelled_plain_write_preserves_root_release)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tan/Sites/fastdb/turso/fastdb/scripts/check-c-abi.py", line 145, in test_cancelled_plain_write_preserves_root_release
+    self.check_cancelled_plain_write("SAVEPOINT caller", "RELEASE caller")
+  File "/home/tan/Sites/fastdb/turso/fastdb/scripts/check-c-abi.py", line 137, in check_cancelled_plain_write
+    self.assertEqual(execute(finish)["transaction"], {"before": "active", "after": "autocommit"})
+                     ^^^^^^^^^^^^^^^
+  File "/home/tan/Sites/fastdb/turso/fastdb/scripts/check-c-abi.py", line 87, in execute
+    self.assertIn("result", response["execution"], f"{sql}: {response}")
+AssertionError: 'result' not found in {'error': {'code': 'FDB_ENGINE', 'message': 'engine: Transaction error: cannot commit - an unfinished write statement was abandoned'}} : RELEASE caller: {'execution': {'error': {'code': 'FDB_ENGINE', 'message': 'engine: Transaction error: cannot commit - an unfinished write statement was abandoned'}}, 'transaction': {'after': 'autocommit', 'before': 'active'}, 'version': 1}
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.145s
+
+FAILED (failures=2)

@@ -4512,6 +4512,30 @@ impl Pager {
         state.lock_source = CheckpointLockSource::Acquire;
     }
 
+    /// Discard a failed pre-backfill WAL barrier observed outside the checkpoint
+    /// state machine. Its single completion is finished and no database I/O has
+    /// been submitted, so this does not abandon outstanding backfill writes.
+    pub fn cleanup_after_failed_checkpoint_wal_sync(&self) {
+        if self
+            .wal
+            .as_ref()
+            .is_some_and(|wal| wal.abort_failed_checkpoint_wal_sync())
+        {
+            self.reset_checkpoint_state();
+        }
+    }
+
+    /// The published WAL commit is waiting only on a failed automatic-checkpoint
+    /// barrier. Reenter commit_tx so its existing checkpoint-error path finishes
+    /// transaction bookkeeping without rolling back that committed write.
+    pub fn failed_auto_checkpoint_wal_sync(&self) -> bool {
+        self.commit_info.read().state == CommitState::AutoCheckpoint
+            && self
+                .wal
+                .as_ref()
+                .is_some_and(|wal| wal.failed_checkpoint_wal_sync())
+    }
+
     /// Clean up after a auto-checkpoint failure.
     /// Auto-checkpoint executed outside of the main transaction - so WAL transaction was already finalized
     pub fn cleanup_after_auto_checkpoint_failure(&self) {
@@ -4624,9 +4648,9 @@ impl Pager {
                 } => {
                     let checkpoint_lock_source = self.checkpoint_state.read().lock_source;
                     let res = return_if_io!(match checkpoint_lock_source {
-                        CheckpointLockSource::Acquire => wal.checkpoint(self, mode),
+                        CheckpointLockSource::Acquire => wal.checkpoint(self, mode, sync_mode),
                         CheckpointLockSource::HeldByCaller => {
-                            wal.vacuum_checkpoint_with_held_lock(self)
+                            wal.vacuum_checkpoint_with_held_lock(self, sync_mode)
                         }
                     });
                     let mut state = self.checkpoint_state.write();
@@ -5033,7 +5057,9 @@ impl Pager {
         mode: CheckpointMode,
         sync_mode: crate::SyncMode,
     ) -> Result<CheckpointResult> {
-        self.io.block(|| self.checkpoint(mode, sync_mode, true))
+        self.io
+            .block(|| self.checkpoint(mode, sync_mode, true))
+            .inspect_err(|_| self.cleanup_after_failed_checkpoint_wal_sync())
     }
 
     pub fn freepage_list(&self) -> u32 {

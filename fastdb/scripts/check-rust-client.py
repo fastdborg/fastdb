@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build a private path-dependent consumer outside the Turso workspace (offline)."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
+from shipping_policy import PROFILE, build_environment, check_profile, profile_toml
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,10 +22,15 @@ def registry_packages(lock):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--shipping-profile", action="store_true", help="Qualify the documented production profile in the standalone consumer")
+    args = parser.parse_args()
     baseline = (ROOT / "Cargo.lock").read_text()
     compiler = subprocess.check_output(["rustc", "-vV"], text=True)
     host = next(line.removeprefix("host: ") for line in compiler.splitlines() if line.startswith("host: "))
-    environment = os.environ.copy()
+    environment = build_environment() if args.shipping_profile else os.environ.copy()
+    if args.shipping_profile:
+        check_profile((ROOT / "Cargo.toml").read_text())
     # Do not make a dependent application rely on the checkout's injected flags.
     for key in ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS"):
         environment.pop(key, None)
@@ -37,6 +44,7 @@ def main():
             '[dependencies]\nfastdb = { path = '
             + json.dumps(str(ROOT / "fastdb" / "frontend"))
             + ' }\n'
+            + (profile_toml() if args.shipping_profile else '')
         )
         shutil.copyfile(ROOT / "Cargo.lock", consumer / "Cargo.lock")
         (consumer / "src" / "main.rs").write_text(r'''
@@ -379,7 +387,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if drift:
             raise RuntimeError(f"Consumer resolved packages outside the pinned lockfile: {sorted(drift)}")
         subprocess.run(
-            ["cargo", "run", "--offline", "--locked", "--", str(consumer / "database.db")],
+            ["cargo", "run", "--offline", "--locked", *(["--profile", PROFILE] if args.shipping_profile else []), "--", str(consumer / "database.db")],
             cwd=consumer, env=environment, check=True,
         )
         print(f"Verified {len(resolved)} registry/git package identities against the workspace lockfile")

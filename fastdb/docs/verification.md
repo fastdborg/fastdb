@@ -6075,3 +6075,51 @@ TypeScript. Rust 1.88.0, Node 24.19.0, development profile. An initial full run
 exposed an OR FAIL regression from wrapping native alias-star INSERT sources;
 the guard was corrected and the focused regression, all seven projection tests
 and the full scoped check were rerun successfully. No upstream core changes.
+
+## 2026-09-25: production 2.1 preparation
+
+The combined development source based on `d442099b66ebe8920fa457e52b10255623a0e1f8`
+passes `bash fastdb/scripts/check.sh`: 750 Rust tests with zero failures or ignored
+tests, 121 Node/application tests, three C ABI tests, scoped formatting/Clippy
+and strict TypeScript. Rust 1.88.0, Node 24.19.0, Linux x64. Log:
+`/tmp/fastdb-v21-scoped-checks.log`. This includes SQLite adoption, process
+ownership, native returned-I/O failures and the dependency updates.
+
+The final SQLite target defensive-mode and backup busy-clock adjustments were
+followed by another successful run of all four permanent CLI adoption tests
+(`/tmp/fastdb-v21-sqlite-final-local.log`). The independent stock-SQLite harness
+passes all 14 fixture groups (`/tmp/fastdb-sqlite-adoption-harness.json`).
+
+These are development-source results, not final artifact qualification. The
+separately proposed NORMAL checkpoint correction is excluded from this source;
+its approval, integration and affected regression checks remain a release gate.
+
+Hosted FastDB CI run
+[36145990461](https://github.com/fastdborg/fastdb/actions/runs/36145990461)
+also passes on preparation commit
+`61ddaaddfcc23c222eb584e50db0a0559a41e4f5`, reviewed in draft PR #9.
+This is the pre-backport preparation source; final integrated-source CI remains
+required before release.
+
+## 2026-09-25: integrated production checkpoint correction
+
+Isolated commit `5f4133d732eb2a297bf32af2f7a3fd3c305be8c5` applies the exact
+separately approved six-file core patch and seven permanent regressions. The
+combined `bash fastdb/scripts/check.sh` run passes: **757 Rust**, zero failures or
+ignored tests, **121 Node/application**, **three C ABI**, scoped formatting and
+Clippy, and strict TypeScript. Log: `/tmp/fastdb-v21-integrated-checks.log`.
+Toolchain/host remain Rust 1.88.0, Node 24.19.0 and Ubuntu 24.04 Linux x64 under
+WSL2. Cargo.lock remains
+`4fffaa23990bc8b514b0081b63da337223320efab2c9371ea4ea42cdf2521194`.
+
+The isolated affected upstream filters passed 126 checkpoint and 38 VACUUM unit
+tests with `fts,conn_raw_api`; the final before/after trace, crash-model and
+failure/retry receipts are in [the core review](proposals/checkpoint-wal-sync.md).
+Additional integrated-source lint passes with `cargo clippy --locked -p
+turso_core --lib --features fts,conn_raw_api --no-deps -- -D warnings`
+(`/tmp/fastdb-v21-core-clippy.log`). Hosted scoped CI
+[run 36148357666](https://github.com/fastdborg/fastdb/actions/runs/36148357666)
+also passes on this exact integrated commit.
+
+These source results do not replace the remaining optimized installed-artifact,
+upgrade/restore, workload and public-download qualification gates.

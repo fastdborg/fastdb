@@ -1,0 +1,22 @@
+   Compiling futures-util v0.3.31
+   Compiling rquickjs-sys v0.13.0
+   Compiling tantivy-sstable v0.7.0
+   Compiling turso_macros v0.7.2 (/tmp/fastdb-cancel-poison-review/macros)
+   Compiling tantivy-columnar v0.7.0
+   Compiling memmap2 v0.9.11
+   Compiling tantivy v0.26.1
+   Compiling rquickjs-core v0.13.0
+   Compiling turso_parser v0.7.2 (/tmp/fastdb-cancel-poison-review/sqlite/parser)
+   Compiling turso_ext v0.7.2 (/tmp/fastdb-cancel-poison-review/extensions/core)
+   Compiling turso_core v0.7.2 (/tmp/fastdb-cancel-poison-review/core)
+   Compiling rquickjs v0.13.0
+   Compiling fastql-parser v2.1.0 (/tmp/fastdb-cancel-poison-review/fastdb/parser)
+   Compiling fastdb v2.1.0 (/tmp/fastdb-cancel-poison-review/fastdb/frontend)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 44s
+     Running unittests src/lib.rs (/tmp/fastdb-cancel-poison-target/debug/deps/fastdb-7a84f7836d55336d)
+
+running 1 test
+test interrupt::tests::cancelled_plain_native_writes_undo_rows_and_preserve_caller_work ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.53s
+

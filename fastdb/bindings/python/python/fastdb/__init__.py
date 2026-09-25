@@ -14,7 +14,7 @@ from typing import Any, Iterator
 
 from . import _native
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __all__ = [
     "Database",
     "Record",

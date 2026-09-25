@@ -8,8 +8,9 @@ integrated as `12109384a`. The affected native suites and complete V1 upgrade an
 restore rehearsal now pass, closing the reopened V2-F gate. See
 [initial search verification](v2-fulltext-evidence.md) and
 [integrated storage verification](v2-upgrade-restore-evidence.md).
-Combined V2 acceptance still has the separate scalar-error transaction failures.
-Browser FTS integration remains under V2-C. This is not a V2 release.
+The scalar-error correction is also integrated, and combined native acceptance
+passed for the published [2.0.0 release](release-2.0.0.md). Browser/WASM is outside
+the native release. The limits below remain part of the supported contract.
 
 ```sql
 CREATE TABLE articles;
@@ -68,9 +69,8 @@ ORDER BY h.score DESC, h.id;
   IDs and the count. They do not prove every native Tantivy posting is intact.
   Owned schema, native directory and counters are checked on connection open;
   managed/internal storage cannot be accessed through public SQL.
-- Rust, SQL/CLI and existing Node clients share the parser and frontend. The
-  native FTS module is excluded on WASM; browser support remains a V2-C decision
-  and release gate.
+- All seven native clients and SQL/CLI share the parser and frontend. Browser/
+  WASM support was removed from the active checkout and is not a release gate.
 
 ## Known native issues and qualification
 
@@ -83,5 +83,6 @@ The native shared directory cache can retain a different connection's pager.
 The approved fix restricts reuse to the requesting pager before the existing
 rollback check. The native regression covers reader isolation, a pinned snapshot
 across commit, savepoint rollback and full rollback. Managed/client acceptance
-is recorded in [verification](v2-fulltext-evidence.md); the remaining V2 release
-gates stay open in the [checklist](v2-tasks.md).
+is recorded in [verification](v2-fulltext-evidence.md). The [V2 checklist](v2-tasks.md)
+is complete; current operating guidance is in [deployment](deployment.md) and
+[operations](operations.md).

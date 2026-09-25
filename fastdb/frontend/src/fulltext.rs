@@ -12,6 +12,10 @@ pub(crate) struct Config {
     pub tokenizer: String,
 }
 const TOKENIZER: &str = "tantivy-default-0.26";
+// Stay below the pinned native FTS cursor's 1,000-document flush threshold.
+// Sixteen text fields plus the ID use at most 2,176 bound parameters.
+const BUILD_BATCH_ROWS: usize = 128;
+const _: () = assert!(BUILD_BATCH_ROWS < turso_core::index_method::fts::BATCH_COMMIT_SIZE);
 fn invalid(message: &str) -> Error {
     Error::Validation(format!("fulltext: {message}"))
 }
@@ -165,10 +169,41 @@ impl Connection {
             self.run(&index.index_ddl(), &[])?;
             self.run(&index.text_stats_ddl(), &[])?;
             self.run(&format!("INSERT INTO {} VALUES (1,0)", quote(&index.text_stats())), &[])?;
-            for doc in self.documents(&c)? { self.insert_index(&index, &doc)?; }
+            for documents in self.documents(&c)?.chunks(BUILD_BATCH_ROWS) {
+                self.insert_text_build_batch(&index, documents)?;
+            }
             c.indexes.push(index.clone());
             self.save_catalog(&c)
         })
+    }
+    fn insert_text_build_batch(&self, index: &Index, documents: &[Document]) -> Result<()> {
+        let mut values = Vec::new();
+        let mut rows = Vec::with_capacity(documents.len());
+        for document in documents {
+            let mut row = index.document_keys(document)?;
+            let id = document
+                .get("id")
+                .ok_or_else(|| Error::Storage("document has no id".into()))?;
+            row.insert(1, EngineValue::Blob(id.encode()?));
+            let first = values.len() + 1;
+            let slots = (first..first + row.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            rows.push(format!("({slots})"));
+            values.extend(row);
+        }
+        // One statement shares an FTS cursor, amortizing its Tantivy commit.
+        // Keep batches below its internal mid-insert flush/reentry path.
+        self.run(
+            &format!(
+                "INSERT INTO {} VALUES {}",
+                quote(&index.storage),
+                rows.join(",")
+            ),
+            &values,
+        )?;
+        self.change_text_count(index, documents.len() as i64)
     }
     pub(crate) fn change_text_count(&self, index: &Index, delta: i64) -> Result<()> {
         let rows = self.run(

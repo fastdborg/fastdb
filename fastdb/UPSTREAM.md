@@ -37,7 +37,7 @@ exception; preserve the regression and revalidate affected trigger behavior.
 
 The root planning directory is not a Git repository. The ancestry-preserving checkout lives in `turso/`; product source is `turso/fastdb/`.
 
-The separate FastDB native addon reuses pinned napi 3.8.3, napi-derive 3.5.2 and napi-build 2.3.1 from the existing lockfile. It depends on FastDB rather than the upstream Node binding and enables FTS through the FastDB frontend rather than the upstream Node binding. The frontend additionally embeds pinned rquickjs 0.12.2 for its fixed bundled string catalog.
+The separate FastDB native addon reuses pinned napi 3.8.3, napi-derive 3.5.2 and napi-build 2.3.1 from the existing lockfile. It depends on FastDB rather than the upstream Node binding and enables FTS through the FastDB frontend rather than the upstream Node binding. The frontend embeds pinned rquickjs 0.13.0 / QuickJS-NG 0.16.2 for its bundled string catalog and sandboxed functions. The 2.1 security review upgrades the formerly shipped rquickjs 0.12.2 / QuickJS-NG 0.15.1; see [dependency review](docs/dependency-security.md).
 
 The frontend enables serde_json's float_roundtrip feature to prevent one-bit numeric changes when reading stored tagged values. This changes a feature of the combined build, without upgrading the dependency or changing the stored format.
 
@@ -80,14 +80,17 @@ source remains under `fastdb/bindings/python`; upstream Python bindings are
 unchanged. See `docs/v2-client-assessment.md` for installed-wheel evidence and
 the browser feasibility probe.
 
-The threaded-WASI probe adds a target-specific rquickjs-sys 0.12.2 bindgen feature
+The following browser-stage history is retained as provenance; browser/WASM
+support and its build gates were removed before the native 2.0.0 release.
+
+The historical threaded-WASI probe added a target-specific rquickjs-sys 0.12.2 bindgen feature
 under the frontend, pinned bindgen 0.72.1 in Cargo.lock, and no existing crate
 version upgrades. Native features remain unchanged. WASI SDK 33.0 and libclang
 18.1.1 are external build tools; C++ exceptions require the SDK's exception-enabled
 libraries. Core and vendor sources remain unchanged. See `docs/v2-wasm-probe.md`
 for real-browser dependency checks and the remaining full-text/worker/I/O gates.
 
-The browser client adds `fastdb-protocol` and `fastdb-browser` as explicit workspace
+The removed browser client added `fastdb-protocol` and `fastdb-browser` as explicit workspace
 members. Python and browser use the same request/typed-value protocol; the Python
 extension retains its existing PyO3 lifecycle and cancellation boundary. These
 two packages add no external registry/git package identities, versions or checksums
@@ -105,12 +108,12 @@ oracle checks include rows, transaction state, changes() and last_insert_rowid()
 This change uses public engine APIs and does not modify upstream sources. The scalar-error transaction and WASI FTS exceptions were subsequently approved
 and integrated; see the maintenance register below. See [browser client evidence](docs/v2-browser-client.md).
 
-The subsequent browser OPFS adapter implements the existing public engine `IO`
-and `File` traits and uses `Database::open_with_io`. Dedicated browser workers own
-exclusive database/WAL handles, map sync to flush, and return synchronous I/O
-completions to Rust. No core/storage-format change or new dependency is added.
-See [OPFS qualification](docs/v2-browser-opfs.md) and its remaining fault/platform
-gates; WASI FTS is now integrated and undergoing combined qualification.
+The historical browser OPFS adapter implemented the existing public engine `IO`
+and `File` traits and used `Database::open_with_io`. Dedicated browser workers owned
+exclusive database/WAL handles, mapped sync to flush, and returned synchronous I/O
+completions to Rust. That adapter added no core/storage-format change or dependency.
+See [OPFS qualification](docs/v2-browser-opfs.md) for the fault/platform gates at
+that stage. Neither that browser qualification nor WASI FTS is a current release gate.
 
 ## Approved core exception: first-commit FULL-mode WAL sync
 
@@ -146,14 +149,50 @@ This approval was separate from the later scalar-error and WASI FTS approvals. E
 automatically; preserve the physical-corruption and drop/rollback regressions
 when reviewing future upstream replacements.
 
-## Approved core exceptions: scalar read errors and WASI FTS
+## Approved core exception: checkpoint WAL barrier and failed-sync retry
+
+The user approved the exact six-file
+[checkpoint correction](docs/proposals/checkpoint-wal-sync.md) on 2026-09-25.
+The 2.1 candidate integrates upstream's
+[`cc26d08508cbe045472fa3015e2bce4a389b5e06`](https://github.com/tursodatabase/turso/commit/cc26d08508cbe045472fa3015e2bce4a389b5e06)
+checkpoint barrier plus the reviewed local failed-completion retry and automatic
+checkpoint cleanup. The combined core patch SHA-256 is
+`5154633cc2c1187efa0b3066c008ac46f1f999286fb48ccacf3a1a7743da7d88`.
+Isolated integration commit: `5f4133d732eb2a297bf32af2f7a3fd3c305be8c5`.
+It changes `core/storage/wal.rs`, `core/storage/pager.rs`, `core/vdbe/mod.rs`,
+`core/vdbe/vacuum.rs`, `core/mvcc/database/mod.rs` and
+`core/mvcc/database/checkpoint_state_machine.rs`.
+
+After selecting the backfill range under checkpoint locks, the engine syncs the
+WAL before writing database pages unless no frames need backfill or the effective
+mode is OFF. It retains the pending barrier until successful completion; a
+failed asynchronous completion cannot let a retry bypass WAL sync. Cleanup is
+limited to the completed failed barrier before database backfill begins.
+Automatic checkpoint failures also complete bookkeeping for the already
+published transaction instead of entering ordinary writer rollback. This
+exception changes no file format, SQL syntax or dependency version.
+
+Permanent [barrier and retry tests](tests/tests/checkpoint_barrier.rs) cover OFF,
+empty checkpoints, explicit PRAGMA, direct blocking and automatic checkpoint
+failure/retry, including immediate and deferred failed completions. The
+[crash-model tests](tests/tests/checkpoint_crash_atomicity.rs) require complete
+old/new state under NORMAL and preservation of acknowledged writes under FULL.
+The seven permanent regressions pass on the integrated source. The isolated
+candidate's affected checkpoint/VACUUM filters also pass; combined checks and
+exact-artifact qualification remain pending. See the review's immutable
+before/after evidence. Retain the
+tests on every upstream sync and release; remove or adapt the exception only
+when upstream supplies both the barrier and equivalent error/retry behavior.
+
+## Approved scalar read errors and historical WASI FTS approval
 
 The user explicitly approved both prepared proposals after reviewing the options.
 The exact scalar-error patch is isolated in `f26014f04de4077a49268fd94c37ff9ad6ad6425`;
 the exact opt-in WASI FTS core patch is isolated in
 `2ef619c0704025512d9f4d4f5290dec3940a7361`. The separately reviewed frontend WASI
-feature wiring is applied under `fastdb/frontend/Cargo.toml`. No dependency version
-or storage-format changes are introduced by these patches. Candidate evidence is
+feature wiring was applied under `fastdb/frontend/Cargo.toml` at that stage and
+removed with browser support below. These patches introduced no dependency version
+or storage-format changes. Candidate evidence is
 in the respective reviews; integrated acceptance is recorded separately.
 
 **Maintenance register:** [core exceptions](docs/core-exceptions.md) lists all
@@ -168,10 +207,13 @@ requested removing browser support to reduce overhead. Isolated commit
 `ae6777a17` reverts the WASI FTS core feature/cfg exception. The browser workspace
 member, WASI QuickJS bindgen wiring, browser source/build/probe code and browser
 release gates are removed. `fastdb-protocol` stays because Python depends on it.
-Five active core exceptions remain. Earlier browser sections above are historical,
-not current build instructions; see [removal evidence](docs/browser-removal.md).
+Five active core exceptions remained after removal. The approved 2.1 checkpoint
+barrier/retry correction brought the active count to six. The separately approved named-savepoint
+cancellation correction below brings the current count to seven. Earlier browser
+sections above are historical, not current build instructions; see
+[removal evidence](docs/browser-removal.md).
 
-Current Cargo.lock SHA-256: `eccecb92bd14841e0f0980680eb051f365db9454cbade2212a8ffdd80d3c6443`.
+Historical browser-removal Cargo.lock SHA-256: `eccecb92bd14841e0f0980680eb051f365db9454cbade2212a8ffdd80d3c6443`.
 The removal drops `fastdb-browser` and bindgen 0.72.1, without adding/upgrading any
 package identity. Native dependency declarations and notices are regenerated.
 
@@ -180,6 +222,29 @@ package identity. Native dependency declarations and notices are regenerated.
 The user requested PHP, Swift, C# and Go in place of browser support. The new
 `fastdb-c` member is a native ABI over the FastDB frontend and shared protocol;
 all wrapper code stays under `fastdb/bindings/`. No upstream core source or
-third-party Rust package changed. Current lock SHA-256:
+third-party Rust package changed in that addition. Historical client-addition lock SHA-256:
 `1f64d71cc6cb57e691be4a7bc9b5a39ef4d00721515831813d1442aca2941aaa`.
 See [client contracts and qualification](docs/native-language-clients.md).
+
+The 2.1 dependency updates and current lockfile identity are recorded in the
+[security review](docs/dependency-security.md) and its machine-readable receipt.
+The checkpoint exception itself does not change Cargo.lock.
+
+## Approved core exception: canceled-write savepoint recovery
+
+The user separately approved the exact three-core-file patch on 2026-09-25.
+Isolated commit `3ae0065e5` records the named-savepoint poison snapshot/restore
+and five engine lifecycle regressions. SHA-256 of the exact core diff:
+`4dea3c65be5cbb174721fb25eb164d29e9641681d7028b48bc6f77fd1958e122`.
+After a canceled unjournaled write is undone, COMMIT/root RELEASE can preserve
+earlier caller work. An earlier abandoned write still prevents commit when the
+chosen savepoint did not undo it. RELEASE without rollback is unchanged.
+
+The isolated candidate passes 41 lifecycle tests, 20 overlapping savepoint tests,
+ten deterministic frontend cancellation/scope cases in one regression, formatting
+and scoped core/frontend Clippy. Combined source and rebuilt package checks are
+recorded separately. No file-format, dependency or public API changes occur.
+The inspected upstream `64b8ef5742fc18937f9c89806c81e3f6475dc7a3` lacks this
+state; review/remove criteria and immutable evidence are in
+[the proposal](docs/proposals/cancellation-savepoint-poison.md) and the
+[exception register](docs/core-exceptions.md).

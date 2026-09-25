@@ -1,0 +1,240 @@
+{
+  "review_date": "2026-09-25",
+  "quickjs": {
+    "crate": "rquickjs-sys 0.13.0",
+    "bundled_version": "0.16.2",
+    "version_source": "quickjs/quickjs.h",
+    "advisory_endpoint": "https://api.github.com/repos/quickjs-ng/quickjs/security-advisories",
+    "advisories": [
+      {
+        "id": "GHSA-v647-xff9-jxf7",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-v647-xff9-jxf7",
+        "published_at": "2026-07-31T15:10:22Z",
+        "updated_at": "2026-07-31T15:10:22Z",
+        "severity": "low",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": "< 0.16.0",
+            "patched_versions": "0.16.0"
+          }
+        ]
+      },
+      {
+        "id": "GHSA-crgj-9jv8-xfhq",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-crgj-9jv8-xfhq",
+        "published_at": "2026-07-31T15:08:18Z",
+        "updated_at": "2026-07-31T15:08:18Z",
+        "severity": "low",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": "< 0.16.0",
+            "patched_versions": "0.16.0"
+          }
+        ]
+      },
+      {
+        "id": "GHSA-rxpx-wj25-jhqq",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-rxpx-wj25-jhqq",
+        "published_at": "2026-07-31T15:09:24Z",
+        "updated_at": "2026-07-31T15:09:24Z",
+        "severity": "high",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": ">= 0.15.1",
+            "patched_versions": "0.16.0"
+          }
+        ]
+      },
+      {
+        "id": "GHSA-3jf7-4qfx-xc2h",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-3jf7-4qfx-xc2h",
+        "published_at": "2026-07-31T15:06:44Z",
+        "updated_at": "2026-07-31T15:06:44Z",
+        "severity": "medium",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": "< 0.16.0",
+            "patched_versions": "0.16.0"
+          }
+        ]
+      },
+      {
+        "id": "GHSA-wm7w-r6qf-3c9w",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-wm7w-r6qf-3c9w",
+        "published_at": "2026-07-31T15:05:41Z",
+        "updated_at": "2026-07-31T15:05:41Z",
+        "severity": "medium",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "other",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": "<= 0.8.0",
+            "patched_versions": "0.16.0"
+          }
+        ]
+      },
+      {
+        "id": "GHSA-9wv5-5cgr-grj6",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-9wv5-5cgr-grj6",
+        "published_at": "2026-07-31T15:04:57Z",
+        "updated_at": "2026-07-31T15:04:57Z",
+        "severity": "high",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "other",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": "<= 0.8.0",
+            "patched_versions": "0.16.0"
+          }
+        ]
+      },
+      {
+        "id": "GHSA-jp52-chwg-2p9p",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-jp52-chwg-2p9p",
+        "published_at": "2026-07-31T15:04:09Z",
+        "updated_at": "2026-07-31T15:04:09Z",
+        "severity": "high",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "other",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": "<= 0.8.0",
+            "patched_versions": "0.16.0"
+          }
+        ]
+      },
+      {
+        "id": "GHSA-52gx-967m-hxp3",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-52gx-967m-hxp3",
+        "published_at": "2026-07-31T15:02:03Z",
+        "updated_at": "2026-07-31T15:02:23Z",
+        "severity": "high",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "",
+              "name": "quickjs-ng"
+            },
+            "vulnerable_version_range": "<= 0.15.1",
+            "patched_versions": "0.16.0"
+          },
+          {
+            "package": {
+              "ecosystem": "rust",
+              "name": "rquickjs"
+            },
+            "vulnerable_version_range": "<=0.12.1",
+            "patched_versions": ""
+          },
+          {
+            "package": {
+              "ecosystem": "rust",
+              "name": "rquickjs-sys"
+            },
+            "vulnerable_version_range": "<= 0.12.1",
+            "patched_versions": ""
+          }
+        ]
+      },
+      {
+        "id": "GHSA-r6vf-p8wr-4vg9",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-r6vf-p8wr-4vg9",
+        "published_at": "2026-06-04T15:07:57Z",
+        "updated_at": "2026-06-04T15:07:57Z",
+        "severity": "high",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "",
+              "name": ""
+            },
+            "vulnerable_version_range": "< 0.14.0",
+            "patched_versions": ""
+          }
+        ]
+      },
+      {
+        "id": "GHSA-m53g-qx47-3h38",
+        "url": "https://github.com/quickjs-ng/quickjs/security/advisories/GHSA-m53g-qx47-3h38",
+        "published_at": "2026-05-28T10:29:17Z",
+        "updated_at": "2026-05-28T12:33:09Z",
+        "severity": "critical",
+        "packages": [
+          {
+            "package": {
+              "ecosystem": "",
+              "name": "quickjs-ng/quickjs"
+            },
+            "vulnerable_version_range": "<0.14.1",
+            "patched_versions": "0.15.0"
+          }
+        ]
+      }
+    ]
+  },
+  "usearch": {
+    "version": "2.26.2",
+    "advisory_endpoint": "https://api.github.com/repos/unum-cloud/USearch/security-advisories",
+    "published_advisories_returned": 0,
+    "limit": "No published repository advisory is not proof of absence of vulnerabilities."
+  },
+  "sqlite": {
+    "crate": "libsqlite3-sys 0.38.2",
+    "bundled_version": "3.53.2",
+    "source_id": "d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24",
+    "version_source": "sqlite3/sqlite3.h",
+    "advisory_source": "https://sqlite.org/cves.html",
+    "relevant_fixes": [
+      {
+        "id": "CVE-2025-7709",
+        "fixed_version": "3.50.3"
+      },
+      {
+        "id": "CVE-2026-11822",
+        "fixed_version": "3.53.2"
+      },
+      {
+        "id": "CVE-2026-11824",
+        "fixed_version": "3.53.2"
+      }
+    ]
+  },
+  "node_package_audit": {
+    "advisories": {},
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0
+      },
+      "dependencies": 0,
+      "devDependencies": 1,
+      "optionalDependencies": 0,
+      "totalDependencies": 1
+    }
+  }
+}

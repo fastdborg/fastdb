@@ -38,6 +38,63 @@ const path = require('node:path');
 const { Database, AsyncDatabase, Record, Vector, isFastDBError } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
+  const cancellationFailures = [];
+  for (const [start, finish, name] of [
+    ['BEGIN', 'COMMIT', 'commit'],
+    ['SAVEPOINT caller', 'RELEASE caller', 'release'],
+  ]) {
+    const file = path.join(__dirname, 'cancelled-write-' + name + '.db');
+    const client = await AsyncDatabase.open(file);
+    let committed = false;
+    try {
+      for (const sql of [
+        'CREATE TABLE nums(n INTEGER)',
+        'CREATE TABLE sink(n INTEGER)',
+        'CREATE TABLE prior(n INTEGER)',
+        'INSERT INTO nums VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)',
+        start,
+        'INSERT INTO prior VALUES(99)',
+      ]) await client.execute(sql);
+      assert.deepEqual(await client.exactlyOne('SELECT last_insert_rowid()'), [1n]);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 50);
+      try {
+        // The deadline bounds a missed interrupt; successful completion is a failure.
+        await assert.rejects(client.execute(
+          'INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e,nums f,nums g,nums h,nums i',
+          {}, {signal: controller.signal, timeoutMs: 3000}), error => {
+          assert.equal(error.code, 'FDB_CANCELLED');
+          assert.deepEqual(error.transaction, {before: 'active', after: 'active'});
+          return true;
+        });
+        assert(controller.signal.aborted, 'AbortSignal must fire during the write');
+      } finally { clearTimeout(timer); }
+      // Rollback retains last_insert_rowid: this proves actual inserts occurred,
+      // rather than accepting cancellation before native execution started.
+      assert((await client.exactlyOne('SELECT last_insert_rowid()'))[0] > 1n,
+        'Cancellation must interrupt an in-flight native writer');
+      assert.deepEqual(await client.all('SELECT n FROM sink'), []);
+      assert.deepEqual(await client.all('SELECT n FROM prior'), [[99n]]);
+      await client.execute('INSERT INTO sink VALUES(7)');
+      assert.deepEqual((await client.execute(finish)).transaction,
+        {before: 'active', after: 'autocommit'});
+      assert.deepEqual(await client.all('SELECT n FROM prior'), [[99n]]);
+      assert.deepEqual(await client.all('SELECT n FROM sink'), [[7n]]);
+      committed = true;
+    } catch (error) {
+      cancellationFailures.push(new Error(finish + ' after a cancelled native write: ' + error.message, {cause: error}));
+    } finally { await client.close(); }
+    if (committed) {
+      const reopened = new Database(file);
+      try {
+        assert.deepEqual(reopened.all('SELECT n FROM prior'), [[99n]]);
+        assert.deepEqual(reopened.all('SELECT n FROM sink'), [[7n]]);
+      } finally { reopened.close(); }
+    }
+  }
+  if (cancellationFailures.length) {
+    throw new AggregateError(cancellationFailures, 'Cancelled native writes must preserve committable caller work');
+  }
   for(const client of [new Database(),await AsyncDatabase.open()]) {
     try {
       const people = client.collection('sdk_people');

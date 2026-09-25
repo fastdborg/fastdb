@@ -43,7 +43,7 @@ use crate::types::{IOCompletions, IOResult};
 use crate::util::IOExt as _;
 use crate::{
     bail_corrupt_error, io_yield_one, Buffer, Completion, CompletionError, IOContext, LimboError,
-    Result,
+    Result, SyncMode,
 };
 
 /// this contains the frame to rollback to and its associated checksum.
@@ -728,8 +728,16 @@ pub trait Wal: Debug + Send + Sync {
     fn finish_append_frames_commit(&self) -> Result<()>;
 
     fn should_checkpoint(&self) -> bool;
-    fn checkpoint(&self, pager: &Pager, mode: CheckpointMode)
-        -> Result<IOResult<CheckpointResult>>;
+    /// Checkpoint the WAL into the database file.
+    /// `sync_mode` controls the WAL durability barrier: unless it is
+    /// [SyncMode::Off], the WAL is fsynced before any frame is backfilled so
+    /// that a crash mid-backfill can always be healed by WAL recovery.
+    fn checkpoint(
+        &self,
+        pager: &Pager,
+        mode: CheckpointMode,
+        sync_mode: SyncMode,
+    ) -> Result<IOResult<CheckpointResult>>;
     fn install_durable_backfill_proof(
         &self,
         max_frame: u64,
@@ -767,6 +775,11 @@ pub trait Wal: Debug + Send + Sync {
     fn backfill_frame(&self) -> u64;
     fn rollback(&self, rollback_to: Option<RollbackTo>);
     fn abort_checkpoint(&self);
+    /// Whether the owned pre-backfill WAL barrier finished with an error.
+    fn failed_checkpoint_wal_sync(&self) -> bool;
+    /// Abort only a finished, failed pre-backfill WAL sync. Returns whether
+    /// this owned barrier was discarded; no database I/O exists in this state.
+    fn abort_failed_checkpoint_wal_sync(&self) -> bool;
     fn get_last_checksum(&self) -> (u32, u32);
 
     /// Return unique set of pages changed **after** frame_watermark position and until current WAL session max_frame_no
@@ -815,8 +828,11 @@ pub trait Wal: Debug + Send + Sync {
     /// method consumes that raw checkpoint-lock ownership: on success the guard
     /// is held by the checkpoint state machine, and on early failure it is
     /// released before returning.
-    fn vacuum_checkpoint_with_held_lock(&self, pager: &Pager)
-        -> Result<IOResult<CheckpointResult>>;
+    fn vacuum_checkpoint_with_held_lock(
+        &self,
+        pager: &Pager,
+        sync_mode: SyncMode,
+    ) -> Result<IOResult<CheckpointResult>>;
 
     /// Release the exclusive VACUUM lock acquired by `begin_vacuum_blocking_tx`.
     /// VACUUM calls this once done, after which new
@@ -2389,6 +2405,18 @@ impl WalCoordination for ShmWalCoordination {
 #[derive(Debug, Clone)]
 pub enum CheckpointState {
     Start,
+    /// Fsync the WAL before backfilling any frame into the database file.
+    /// Under `synchronous=NORMAL` commits do not fsync the WAL, so without
+    /// this durability barrier a crash mid-backfill could persist some
+    /// backfilled DB pages while recovery drops the unsynced WAL tail,
+    /// leaving a torn database that matches no committed prefix.
+    SyncWal,
+    /// Keep the barrier until its completion succeeds. Callers can observe an
+    /// I/O failure before reentering the state machine; they must not leave a
+    /// retry positioned after an unsuccessful durability barrier.
+    SyncWalPending {
+        completion: Completion,
+    },
     Processing,
     /// Determine the checkpoint result: update nBackfills, restart log if needed.
     DetermineResult,
@@ -3859,8 +3887,9 @@ impl Wal for WalFile {
         &self,
         pager: &Pager,
         mode: CheckpointMode,
+        sync_mode: SyncMode,
     ) -> Result<IOResult<CheckpointResult>> {
-        self.checkpoint_inner(pager, mode, CheckpointLockSource::Acquire)
+        self.checkpoint_inner(pager, mode, CheckpointLockSource::Acquire, sync_mode)
             .inspect_err(|e| {
                 tracing::debug!("WAL checkpoint failed: {e}");
                 let _ = self.checkpoint_guard.write().take();
@@ -3871,6 +3900,7 @@ impl Wal for WalFile {
     fn vacuum_checkpoint_with_held_lock(
         &self,
         pager: &Pager,
+        sync_mode: SyncMode,
     ) -> Result<IOResult<CheckpointResult>> {
         self.checkpoint_inner(
             pager,
@@ -3878,6 +3908,7 @@ impl Wal for WalFile {
                 upper_bound_inclusive: None,
             },
             CheckpointLockSource::HeldByCaller,
+            sync_mode,
         )
         .inspect_err(|e| {
             tracing::debug!("WAL checkpoint failed: {e}");
@@ -4033,6 +4064,23 @@ impl Wal for WalFile {
     fn abort_checkpoint(&self) {
         let _ = self.checkpoint_guard.write().take();
         self.reset_internal_states();
+    }
+
+    fn failed_checkpoint_wal_sync(&self) -> bool {
+        match &self.ongoing_checkpoint.read().state {
+            CheckpointState::SyncWalPending { completion } => {
+                completion.finished() && completion.get_error().is_some()
+            }
+            _ => false,
+        }
+    }
+
+    fn abort_failed_checkpoint_wal_sync(&self) -> bool {
+        let failed = self.failed_checkpoint_wal_sync();
+        if failed {
+            self.abort_checkpoint();
+        }
+        failed
     }
 
     fn try_begin_vacuum_checkpoint_lock(&self) -> Result<()> {
@@ -4702,6 +4750,7 @@ impl WalFile {
         pager: &Pager,
         mode: CheckpointMode,
         lock_source: CheckpointLockSource,
+        sync_mode: SyncMode,
     ) -> Result<IOResult<CheckpointResult>> {
         loop {
             let state = self.ongoing_checkpoint.read().state.clone();
@@ -4776,13 +4825,26 @@ impl WalFile {
                         .iter_latest_frames(oc_min_frame, oc_max_frame);
                     // sort by frame_id for read locality
                     to_checkpoint.sort_unstable_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0)));
+                    // Every frame we are about to backfill must be durable in
+                    // the WAL before it may be copied into the database file:
+                    // commits under synchronous=NORMAL do not fsync the WAL,
+                    // so the checkpoint owes that fsync itself. The barrier is
+                    // issued after the frame range is fixed (under the
+                    // checkpoint locks), so it covers exactly the frames that
+                    // will be backfilled. Skipped only under synchronous=OFF,
+                    // which forgoes crash durability entirely.
+                    let needs_wal_sync = !to_checkpoint.is_empty() && sync_mode != SyncMode::Off;
                     {
                         let mut oc = self.ongoing_checkpoint.write();
                         oc.pages_to_checkpoint = to_checkpoint;
                         oc.current_page = 0;
                         oc.inflight_writes.clear();
                         oc.inflight_reads.clear();
-                        oc.state = CheckpointState::Processing;
+                        oc.state = if needs_wal_sync {
+                            CheckpointState::SyncWal
+                        } else {
+                            CheckpointState::Processing
+                        };
                         oc.time = self.io.current_time_monotonic();
                     }
                     tracing::trace!(
@@ -4790,6 +4852,28 @@ impl WalFile {
                         oc_min_frame,
                         oc_max_frame,
                     );
+                }
+                // Durability barrier: fsync the WAL so every frame selected
+                // for backfill is on stable storage before any of them is
+                // copied into the database file. Without it, a crash during
+                // the backfill could persist some DB pages while recovery
+                // drops the unsynced WAL tail — a torn database that matches
+                // no committed prefix.
+                CheckpointState::SyncWal => {
+                    let c = self.sync(pager.get_sync_type())?;
+                    self.ongoing_checkpoint.write().state = CheckpointState::SyncWalPending {
+                        completion: c.clone(),
+                    };
+                    io_yield_one!(c);
+                }
+                CheckpointState::SyncWalPending { completion } => {
+                    if !completion.finished() {
+                        io_yield_one!(completion);
+                    }
+                    if let Some(error) = completion.get_error() {
+                        return Err(error.into());
+                    }
+                    self.ongoing_checkpoint.write().state = CheckpointState::Processing;
                 }
                 // For locality, reading is ordered by frame ID, and writing ordered by page ID.
                 // the more consecutive page ID's that we submit together, the fewer overall
@@ -6121,7 +6205,7 @@ pub mod test {
     ) -> CheckpointResult {
         let wal = pager.wal.as_ref().expect("wal should be present");
         loop {
-            match wal.checkpoint(pager, mode) {
+            match wal.checkpoint(pager, mode, SyncMode::Full) {
                 Ok(IOResult::IO(io)) => io.wait(db.io.as_ref()).unwrap(),
                 Ok(IOResult::Done(result)) => return result,
                 Err(err) => panic!("checkpoint should succeed: {err:?}"),
@@ -9306,7 +9390,7 @@ pub mod test {
         let p = conn1.pager.load();
         let w = p.wal.as_ref().unwrap();
         loop {
-            match w.checkpoint(&p, CheckpointMode::Restart) {
+            match w.checkpoint(&p, CheckpointMode::Restart, SyncMode::Full) {
                 Ok(IOResult::IO(io)) => {
                     io.wait(db.io.as_ref()).unwrap();
                 }
@@ -9334,7 +9418,7 @@ pub mod test {
         let p = conn1.pager.load();
         let w = p.wal.as_ref().unwrap();
         loop {
-            match w.checkpoint(&p, CheckpointMode::Restart) {
+            match w.checkpoint(&p, CheckpointMode::Restart, SyncMode::Full) {
                 Ok(IOResult::IO(io)) => {
                     io.wait(db.io.as_ref()).unwrap();
                 }
@@ -9503,7 +9587,7 @@ pub mod test {
         let result = {
             let pager = conn1.pager.load();
             let wal = pager.wal.as_ref().unwrap();
-            wal.checkpoint(&pager, CheckpointMode::Restart)
+            wal.checkpoint(&pager, CheckpointMode::Restart, SyncMode::Full)
         };
 
         assert!(
@@ -9861,7 +9945,7 @@ pub mod test {
         {
             let pager = conn1.pager.load();
             let wal = pager.wal.as_ref().unwrap();
-            let result = wal.checkpoint(&pager, CheckpointMode::Restart);
+            let result = wal.checkpoint(&pager, CheckpointMode::Restart, SyncMode::Full);
 
             assert!(
                 matches!(result, Err(LimboError::Busy)),
@@ -9969,7 +10053,7 @@ pub mod test {
             let pager = writer.pager.load();
             let wal = pager.wal.as_ref().unwrap();
             loop {
-                match wal.checkpoint(&pager, CheckpointMode::Full) {
+                match wal.checkpoint(&pager, CheckpointMode::Full, SyncMode::Full) {
                     Ok(IOResult::IO(io)) => {
                         // Drive any pending IO (should quickly become Busy or Done)
                         io.wait(db.io.as_ref()).unwrap();

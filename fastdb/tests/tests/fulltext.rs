@@ -154,18 +154,158 @@ fn text_index_transactions_validation_reopen_and_lifecycle() {
 }
 
 #[test]
+fn text_bulk_build_batches_rows_and_preserves_savepoint_rollback_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bulk-text.db");
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE articles");
+        q(&c, "CREATE TABLE prior(n INTEGER)");
+        q(&c, "BEGIN");
+        // Exercise multiple frontend batches and the final partial batch,
+        // nullable fields and stable document-to-rowid mapping.
+        for n in 0..1001 {
+            let body = match n % 3 {
+                0 => "",
+                1 => ",body:null",
+                _ => ",body:'secondary'",
+            };
+            q(&c, &format!("INSERT INTO articles {{id:type::record('articles','p{n:04}'),title:'common token{n}'{body}}}"));
+        }
+        q(&c, "COMMIT");
+        q(&c, "BEGIN");
+        q(&c, "INSERT INTO prior VALUES(9)");
+        q(&c, "SAVEPOINT build");
+        let create = "CREATE SEARCH INDEX articles_text ON articles(title,body) USING FULLTEXT";
+        q(&c, create);
+        for n in [0, 999, 1000] {
+            let rows = hits(&c, &format!("token{n}"), 10);
+            assert_eq!(rows.len(), 1);
+            assert!(
+                matches!(&rows[0][0], Value::Record(r) if r.key == fastdb::Key::String(format!("p{n:04}")))
+            );
+        }
+        assert_eq!(hits(&c, "common", 10000).len(), 1001);
+        assert_eq!(hits(&c, "secondary", 10000).len(), 333);
+        assert_eq!(
+            c.check_collection_integrity("articles", Default::default())
+                .unwrap()
+                .index_entries,
+            1001
+        );
+        q(&c, "ROLLBACK TO build");
+        q(&c, "RELEASE build");
+        assert!(c
+            .execute(
+                "SELECT * FROM search::text('articles_text','common',10)",
+                &Parameters::new()
+            )
+            .is_err());
+        q(&c, create);
+        q(&c, "COMMIT");
+        assert_eq!(
+            q(&c, "SELECT n FROM prior").rows,
+            vec![vec![Value::Integer(9)]]
+        );
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(hits(&c, "common", 10000).len(), 1001);
+    assert_eq!(hits(&c, "secondary", 10000).len(), 333);
+    assert_eq!(
+        c.check_collection_integrity("articles", Default::default())
+            .unwrap()
+            .index_entries,
+        1001
+    );
+}
+
+#[test]
+fn text_bulk_build_supports_one_and_sixteen_fields() {
+    for fields in [1, 16] {
+        let db = Database::open(":memory:").unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE articles");
+        q(&c, "BEGIN");
+        for n in 0..129 {
+            let mut members = vec![format!("id:type::record('articles','p{n:03}')")];
+            for field in 0..fields {
+                if field == 0 || n % 3 == 0 {
+                    members.push(format!("f{field}:'common token{n} field{field}'"));
+                } else if n % 3 == 1 {
+                    members.push(format!("f{field}:null"));
+                }
+            }
+            q(
+                &c,
+                &format!("INSERT INTO articles {{{}}}", members.join(",")),
+            );
+        }
+        q(&c, "COMMIT");
+        let columns = (0..fields)
+            .map(|n| format!("f{n}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        q(
+            &c,
+            &format!("CREATE SEARCH INDEX articles_text ON articles({columns}) USING FULLTEXT"),
+        );
+        assert_eq!(hits(&c, "common", 10000).len(), 129);
+        for n in [0, 127, 128] {
+            let rows = hits(&c, &format!("token{n}"), 10);
+            assert_eq!(rows.len(), 1);
+            assert!(
+                matches!(&rows[0][0], Value::Record(r) if r.key == fastdb::Key::String(format!("p{n:03}")))
+            );
+        }
+        assert_eq!(
+            hits(&c, &format!("field{}", fields - 1), 10000).len(),
+            if fields == 1 { 129 } else { 43 }
+        );
+        assert_eq!(
+            c.check_collection_integrity("articles", Default::default())
+                .unwrap()
+                .index_entries,
+            129
+        );
+    }
+}
+
+#[test]
 fn failed_text_builds_leave_no_orphans_and_query_inputs_are_explicit() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
-    q(&c, "INSERT INTO articles {id:articles:a,title:42}");
+    q(&c, "CREATE TABLE prior(n INTEGER)");
+    q(&c, "BEGIN");
+    for n in 0..128 {
+        q(
+            &c,
+            &format!(
+                "INSERT INTO articles {{id:type::record('articles','p{n:03}'),title:'valid'}}"
+            ),
+        );
+    }
+    q(&c, "INSERT INTO articles {id:articles:z_invalid,title:42}");
+    q(&c, "COMMIT");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO prior VALUES(9)");
     assert!(c
         .execute(
             "CREATE SEARCH INDEX articles_text ON articles(title) USING FULLTEXT",
             &Parameters::new()
         )
         .is_err());
+    q(&c, "COMMIT");
+    assert_eq!(
+        q(&c, "SELECT n FROM prior").rows,
+        vec![vec![Value::Integer(9)]]
+    );
     drop(db.connect().unwrap());
-    q(&c, "UPDATE articles SET title='hello world'");
+    q(
+        &c,
+        "UPDATE articles SET title='hello world' WHERE id=articles:z_invalid",
+    );
     q(
         &c,
         "CREATE SEARCH INDEX articles_text ON articles(title) USING FULLTEXT",

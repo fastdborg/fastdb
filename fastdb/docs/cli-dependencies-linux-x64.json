@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "458537ee9ecabbd1b4127df08d5f110d427ff88ac88860d5d2eaedb7db8163a6",
+  "lockfileSha256": "4fffaa23990bc8b514b0081b63da337223320efab2c9371ea4ea42cdf2521194",
   "packages": [
     {
       "name": "aead",
@@ -81,12 +81,12 @@
     },
     {
       "name": "aws-lc-rs",
-      "version": "1.16.3",
+      "version": "1.18.1",
       "licenseExpression": "ISC AND (Apache-2.0 OR ISC)"
     },
     {
       "name": "aws-lc-sys",
-      "version": "0.40.0",
+      "version": "0.45.0",
       "licenseExpression": "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
     },
     {
@@ -226,7 +226,7 @@
     },
     {
       "name": "crossbeam-epoch",
-      "version": "0.9.18",
+      "version": "0.9.20",
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
@@ -335,18 +335,23 @@
       "licenseExpression": "MIT/Apache-2.0"
     },
     {
+      "name": "fallible-streaming-iterator",
+      "version": "0.1.9",
+      "licenseExpression": "MIT/Apache-2.0"
+    },
+    {
       "name": "fastbloom",
       "version": "0.14.1",
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
       "name": "fastdb-cli",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "licenseExpression": "MIT"
     },
     {
@@ -356,7 +361,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "licenseExpression": "MIT"
     },
     {
@@ -487,6 +492,11 @@
     {
       "name": "hashbrown",
       "version": "0.17.1",
+      "licenseExpression": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "hashlink",
+      "version": "0.12.2",
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
@@ -730,6 +740,11 @@
       "licenseExpression": "MIT AND (MIT OR Apache-2.0)"
     },
     {
+      "name": "libsqlite3-sys",
+      "version": "0.38.2",
+      "licenseExpression": "MIT"
+    },
+    {
       "name": "link-cplusplus",
       "version": "1.0.12",
       "licenseExpression": "MIT OR Apache-2.0"
@@ -786,7 +801,7 @@
     },
     {
       "name": "memmap2",
-      "version": "0.9.5",
+      "version": "0.9.11",
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
@@ -1036,17 +1051,22 @@
     },
     {
       "name": "rquickjs-core",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "rquickjs-sys",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "rquickjs",
-      "version": "0.12.2",
+      "version": "0.13.0",
+      "licenseExpression": "MIT"
+    },
+    {
+      "name": "rusqlite",
+      "version": "0.40.2",
       "licenseExpression": "MIT"
     },
     {
@@ -1091,12 +1111,12 @@
     },
     {
       "name": "rustls-webpki",
-      "version": "0.103.13",
+      "version": "0.103.15",
       "licenseExpression": "ISC"
     },
     {
       "name": "rustls",
-      "version": "0.23.35",
+      "version": "0.23.45",
       "licenseExpression": "Apache-2.0 OR ISC OR MIT"
     },
     {
@@ -1528,6 +1548,11 @@
       "name": "uuid",
       "version": "1.17.0",
       "licenseExpression": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "vcpkg",
+      "version": "0.2.15",
+      "licenseExpression": "MIT/Apache-2.0"
     },
     {
       "name": "version_check",

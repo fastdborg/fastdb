@@ -7,6 +7,32 @@ fn define(c: &fastdb::Connection, name: &str, params: &str, returns: &str, body:
     q(c,&format!("CREATE OR REPLACE FUNCTION app::{name}({params}) RETURNS {returns} LANGUAGE JAVASCRIPT AS '{}'",body.replace('\'',"''")));
 }
 #[test]
+fn patched_runtime_preserves_rope_json_indentation() {
+    // GHSA-3jf7-4qfx-xc2h: QuickJS-NG 0.15.1 copied pointer bytes instead of
+    // the first ten characters when JSON.stringify's indentation was a rope.
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    define(
+        &c,
+        "rope_json",
+        "",
+        "string",
+        "const a='A'.repeat(10000); const b='B'.repeat(10000); return JSON.stringify({value:1},null,a+b);",
+    );
+    assert_eq!(
+        q(&c, "SELECT app::rope_json()").rows,
+        vec![vec![Value::String("{\nAAAAAAAAAA\"value\": 1\n}".into())]]
+    );
+    let info = q(&c, "INFO FOR FUNCTION app::rope_json");
+    let Value::Object(info) = &info.rows[0][0] else {
+        panic!("function info must be an object");
+    };
+    assert_eq!(
+        info.get("runtime"),
+        Some(&Value::String("quickjs-ng-0.16.2-rquickjs-0.13.0".into()))
+    );
+}
+#[test]
 fn typed_calls_select_writes_replacement_and_rollback() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();

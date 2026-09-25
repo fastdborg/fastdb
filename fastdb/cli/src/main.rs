@@ -2,6 +2,7 @@ mod cloud;
 mod input;
 #[cfg(unix)]
 mod signals;
+mod sqlite;
 use fastdb::{Database, ExecutionReport, Parameters, TransferFormat};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 fn output(
@@ -54,6 +55,9 @@ fn output_with_metrics(
     Ok(failed)
 }
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("sqlite") {
+        return sqlite::run(std::env::args().skip(2).collect());
+    }
     if std::env::args().nth(1).as_deref() == Some("cloud") {
         return cloud::run(std::env::args().skip(2).collect());
     }
@@ -146,7 +150,7 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
                 ));
             }
             "--help" | "-h" => {
-                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\n--write-buffer-limits ROWS BYTES caps each frontend collection-write buffer for SQL input and migrations.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.timeout MILLISECONDS SQL requests cooperative cancellation at its deadline.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
+                writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nSQLite adoption: fastdb-cli sqlite check SOURCE | sqlite import SOURCE DESTINATION\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\n--write-buffer-limits ROWS BYTES caps each frontend collection-write buffer for SQL input and migrations.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.timeout MILLISECONDS SQL requests cooperative cancellation at its deadline.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
                 io::stdout().lock().flush()?;
                 return Ok(std::process::ExitCode::SUCCESS);
             }

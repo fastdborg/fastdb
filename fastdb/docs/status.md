@@ -13,6 +13,12 @@ read the release record for Linux library requirements and performance limits.
 
 ## Post-release work
 
+The active target is **2.1.0 production qualification**, following
+[the finite checklist](v2.1-tasks.md): safe [SQLite adoption](sqlite-adoption.md),
+single-owner Linux [deployment](deployment.md), measured native build/resource
+limits, returned-I/O-error recovery and dependency maintenance. Candidate work
+does not change the published 2.0.0 artifacts. Graph-database APIs are outside scope.
+
 [Nested projection paths](nested-projections.md) add SurrealDB-style wildcard
 record fetching plus FastQL dot and negative array indexes. This work is separate
 from the published 2.0.0 artifacts.

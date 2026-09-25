@@ -926,6 +926,248 @@ fn test_explicit_tx_rollback_clears_unfinished_writer_poison() {
     );
 }
 
+fn savepoint_poison_connections(mvcc: bool) -> (Arc<Connection>, Arc<Connection>) {
+    let (conn, observer) = if mvcc {
+        let env = SameConnectionMvcc::new(":memory:savepoint-poison-mvcc");
+        (env.conn, env.observer)
+    } else {
+        let env = SameConnectionWal::new(":memory:savepoint-poison-wal");
+        (env.conn, env.observer)
+    };
+    for sql in [
+        "CREATE TABLE source(n INTEGER)",
+        "INSERT INTO source VALUES(1),(2),(3),(4)",
+        "CREATE TABLE sink(n INTEGER)",
+        "CREATE TABLE prior(n INTEGER)",
+    ] {
+        conn.execute(sql).unwrap();
+    }
+    (conn, observer)
+}
+
+fn cancel_plain_insert_after_two_rows(conn: &Arc<Connection>, target: &str) {
+    use crate::sync::atomic::{AtomicBool, Ordering};
+
+    // Observing last_insert_rowid does not introduce a SQL function/constraint
+    // that would make the compiler open a statement journal for this INSERT.
+    assert_ne!(conn.last_insert_rowid(), 2);
+    let mut stmt = conn
+        .prepare(format!("INSERT INTO {target} SELECT n FROM main.source"))
+        .unwrap();
+    assert!(!stmt
+        .get_program()
+        .needs_stmt_subtransactions
+        .load(Ordering::Relaxed));
+    let weak = Arc::downgrade(conn);
+    let fired = Arc::new(AtomicBool::new(false));
+    let observed = fired.clone();
+    conn.set_progress_handler(
+        1,
+        Some(Box::new(move || {
+            weak.upgrade().unwrap().last_insert_rowid() == 2
+                && !observed.swap(true, Ordering::SeqCst)
+        })),
+    );
+    let result = stmt.run_with_row_callback(|_| panic!("INSERT has no RETURNING rows"));
+    conn.set_progress_handler(0, None);
+    drop(stmt);
+    assert!(fired.load(Ordering::SeqCst));
+    assert!(matches!(result, Err(LimboError::Interrupt)), "{result:?}");
+    assert!(conn.tx_is_poisoned());
+    assert_eq!(
+        scalar_i64(conn, &format!("SELECT count(*) FROM {target}")),
+        2
+    );
+}
+
+#[test]
+fn test_named_savepoint_rollback_restores_poison_after_cancel() {
+    for mvcc in [false, true] {
+        for root_savepoint in [false, true] {
+            let (conn, observer) = savepoint_poison_connections(mvcc);
+            conn.execute(if root_savepoint {
+                "SAVEPOINT caller"
+            } else {
+                "BEGIN"
+            })
+            .unwrap();
+            conn.execute("INSERT INTO prior VALUES(9)").unwrap();
+            conn.execute("SAVEPOINT statement_boundary").unwrap();
+            cancel_plain_insert_after_two_rows(&conn, "sink");
+
+            conn.execute("ROLLBACK TO statement_boundary").unwrap();
+            assert!(!conn.tx_is_poisoned());
+            assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM sink"), 0);
+            assert_eq!(scalar_i64(&conn, "SELECT n FROM prior"), 9);
+            conn.execute("RELEASE statement_boundary").unwrap();
+            conn.execute("INSERT INTO sink VALUES(10)").unwrap();
+            conn.execute(if root_savepoint {
+                "RELEASE caller"
+            } else {
+                "COMMIT"
+            })
+            .unwrap();
+
+            assert_eq!(scalar_i64(&observer, "SELECT n FROM prior"), 9);
+            assert_eq!(scalar_i64(&observer, "SELECT n FROM sink"), 10);
+        }
+    }
+}
+
+#[test]
+fn test_named_savepoint_recovers_poison_from_lazy_attached_writer() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let main_path = directory.path().join("main.db");
+    let aux_path = directory.path().join("aux.db");
+    let io: Arc<dyn IO> = Arc::new(PlatformIO::new().unwrap());
+    let db = Database::open_file_with_flags(
+        io,
+        main_path.to_str().unwrap(),
+        OpenFlags::default(),
+        DatabaseOpts::new().with_attach(true),
+        None,
+    )
+    .unwrap();
+    let conn = db.connect().unwrap();
+    drive_attach(&conn, aux_path.to_str().unwrap(), "aux");
+    for sql in [
+        "CREATE TABLE source(n INTEGER)",
+        "INSERT INTO source VALUES(1),(2),(3),(4)",
+        "CREATE TABLE prior(n INTEGER)",
+        "CREATE TABLE aux.sink(n INTEGER)",
+    ] {
+        conn.execute(sql).unwrap();
+    }
+    let observer = db.connect().unwrap();
+    drive_attach(&observer, aux_path.to_str().unwrap(), "aux");
+    conn.execute("BEGIN").unwrap();
+    conn.execute("INSERT INTO prior VALUES(9)").unwrap();
+    conn.execute("SAVEPOINT boundary").unwrap();
+    // The attached pager has not joined this transaction. Its named frame
+    // must be materialized lazily when the INSERT starts its first write.
+    conn.with_all_attached_pagers_with_index(|pagers| {
+        assert!(!pagers.is_empty());
+        assert!(pagers.iter().all(|(_, pager)| !pager.holds_read_lock()));
+    });
+    cancel_plain_insert_after_two_rows(&conn, "aux.sink");
+    conn.execute("ROLLBACK TO boundary").unwrap();
+    assert!(!conn.tx_is_poisoned());
+    assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM aux.sink"), 0);
+    assert_eq!(scalar_i64(&conn, "SELECT n FROM prior"), 9);
+    conn.execute("RELEASE boundary").unwrap();
+    conn.execute("COMMIT").unwrap();
+    assert_eq!(scalar_i64(&observer, "SELECT n FROM prior"), 9);
+    assert_eq!(scalar_i64(&observer, "SELECT count(*) FROM aux.sink"), 0);
+    conn.execute("INSERT INTO aux.sink VALUES(10)").unwrap();
+    assert_eq!(scalar_i64(&observer, "SELECT n FROM aux.sink"), 10);
+    conn.close().unwrap();
+    observer.close().unwrap();
+    drop(conn);
+    drop(observer);
+    drop(db);
+
+    // Check each physical database as main, including recovery after every
+    // attached handle is gone, rather than depending on attached-PRAGMA routing.
+    for (path, query, expected) in [
+        (&main_path, "SELECT n FROM prior", 9),
+        (&aux_path, "SELECT n FROM sink", 10),
+    ] {
+        let io = Arc::new(PlatformIO::new().unwrap());
+        let reopened = Database::open_file(io, path.to_str().unwrap()).unwrap();
+        let connection = reopened.connect().unwrap();
+        assert_eq!(scalar_i64(&connection, query), expected);
+        assert_eq!(scalar_text(&connection, "PRAGMA integrity_check"), "ok");
+    }
+}
+
+#[test]
+fn test_named_savepoint_release_does_not_clear_abandoned_writer_poison() {
+    let env = SameConnectionWal::new(":memory:savepoint-release-poison");
+    env.setup_rows_table();
+    env.conn
+        .execute("INSERT INTO rows VALUES(10, 'ten')")
+        .unwrap();
+    env.conn.execute("BEGIN").unwrap();
+    env.conn
+        .execute("INSERT INTO rows VALUES(20, 'prior')")
+        .unwrap();
+    env.conn.execute("SAVEPOINT boundary").unwrap();
+    let writer = prepare_wal_update_yielding_on_table_read(&env, "abandoned");
+    drop(writer);
+    assert!(env.conn.tx_is_poisoned());
+
+    env.conn.execute("RELEASE boundary").unwrap();
+    assert!(env.conn.tx_is_poisoned());
+    expect_unfinished_write_commit_error(env.conn.execute("COMMIT"));
+    assert_eq!(
+        ids_from_query(&env.observer, "SELECT id FROM rows"),
+        vec![10]
+    );
+    assert_eq!(scalar_text(&env.observer, "SELECT v FROM rows"), "ten");
+}
+
+#[test]
+fn test_named_savepoint_after_poison_keeps_earlier_abandonment() {
+    for mvcc in [false, true] {
+        let (conn, observer) = savepoint_poison_connections(mvcc);
+        conn.execute("BEGIN").unwrap();
+        conn.execute("INSERT INTO prior VALUES(9)").unwrap();
+        cancel_plain_insert_after_two_rows(&conn, "sink");
+        conn.execute("SAVEPOINT too_late").unwrap();
+        conn.execute("INSERT INTO sink VALUES(99)").unwrap();
+        assert!(matches!(
+            conn.execute("ROLLBACK TO missing"),
+            Err(LimboError::TxError(_))
+        ));
+        assert!(conn.tx_is_poisoned());
+
+        conn.execute("ROLLBACK TO too_late").unwrap();
+        assert!(conn.tx_is_poisoned());
+        assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM sink"), 2);
+        conn.execute("RELEASE too_late").unwrap();
+        expect_unfinished_write_commit_error(conn.execute("COMMIT"));
+        assert_eq!(scalar_i64(&observer, "SELECT count(*) FROM prior"), 0);
+        assert_eq!(scalar_i64(&observer, "SELECT count(*) FROM sink"), 0);
+    }
+}
+
+#[test]
+fn test_nested_named_savepoints_restore_the_selected_poison_snapshot() {
+    for mvcc in [false, true] {
+        let (conn, observer) = savepoint_poison_connections(mvcc);
+        conn.execute("BEGIN").unwrap();
+        conn.execute("INSERT INTO prior VALUES(9)").unwrap();
+        conn.execute("SAVEPOINT boundary").unwrap();
+        cancel_plain_insert_after_two_rows(&conn, "sink");
+        // A same-name inner frame must restore its own poisoned snapshot.
+        conn.execute("SAVEPOINT boundary").unwrap();
+        conn.execute("SAVEPOINT nested").unwrap();
+        conn.execute("INSERT INTO sink VALUES(99)").unwrap();
+        conn.execute("ROLLBACK TO boundary").unwrap();
+        assert!(conn.tx_is_poisoned());
+        assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM sink"), 2);
+        assert!(matches!(
+            conn.execute("RELEASE nested"),
+            Err(LimboError::TxError(_))
+        ));
+        conn.execute("RELEASE boundary").unwrap();
+
+        // The earlier frame predates the abandoned write. It remains usable
+        // after ROLLBACK TO, including another rollback to that same boundary.
+        conn.execute("ROLLBACK TO boundary").unwrap();
+        assert!(!conn.tx_is_poisoned());
+        assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM sink"), 0);
+        conn.execute("INSERT INTO sink VALUES(77)").unwrap();
+        conn.execute("ROLLBACK TO boundary").unwrap();
+        assert!(!conn.tx_is_poisoned());
+        assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM sink"), 0);
+        conn.execute("RELEASE boundary").unwrap();
+        conn.execute("COMMIT").unwrap();
+        assert_eq!(scalar_i64(&observer, "SELECT n FROM prior"), 9);
+        assert_eq!(scalar_i64(&observer, "SELECT count(*) FROM sink"), 0);
+    }
+}
+
 #[test]
 fn test_unfinished_drop_abandon_first_rolls_back_only_drop() {
     let env = SameConnectionMvcc::new(":memory:unfinished-drop-first");

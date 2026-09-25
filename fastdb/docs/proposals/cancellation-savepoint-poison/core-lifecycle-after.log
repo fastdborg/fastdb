@@ -1,0 +1,49 @@
+   Compiling turso_core v0.7.2 (/tmp/fastdb-cancel-poison-review/core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 55.37s
+     Running unittests lib.rs (/tmp/fastdb-cancel-poison-target/debug/deps/turso_core-6c1dc3e32320ecc6)
+
+running 41 tests
+test vdbe::statement_lifecycle_tests::test_duplicate_insert_is_busy_while_returning_writer_is_active ... ok
+test vdbe::statement_lifecycle_tests::test_explicit_tx_rollback_clears_unfinished_writer_poison ... ok
+test vdbe::statement_lifecycle_tests::test_delete_is_busy_while_returning_writer_is_active ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_release_does_not_clear_abandoned_writer_poison ... ok
+test vdbe::statement_lifecycle_tests::test_drop_table_while_returning_active_is_table_locked ... ok
+test vdbe::statement_lifecycle_tests::test_busy_second_returning_writer_does_not_block_first_reset_commit ... ok
+test vdbe::statement_lifecycle_tests::test_mvcc_savepoint_is_busy_while_writer_suspended ... ok
+test vdbe::statement_lifecycle_tests::test_completed_writer_waits_for_sibling_mvcc_reader_to_commit ... ok
+test vdbe::statement_lifecycle_tests::test_first_writer_without_statement_savepoint_error_rolls_back_joined_writer ... ok
+test vdbe::statement_lifecycle_tests::test_insert_is_busy_while_delete_returning_writer_is_active ... ok
+test vdbe::statement_lifecycle_tests::test_mvcc_completed_writer_changes_lost_when_joining_writer_errors ... ok
+test vdbe::statement_lifecycle_tests::test_first_writer_without_statement_savepoint_resume_last_commits_joined_writer ... ok
+test vdbe::statement_lifecycle_tests::test_plain_insert_done_does_not_commit_while_returning_writer_active ... ok
+test vdbe::statement_lifecycle_tests::test_insert_select_is_busy_while_returning_writer_is_active ... ok
+test vdbe::statement_lifecycle_tests::test_mvcc_completed_writer_changes_lost_when_last_reader_abandoned ... ok
+test vdbe::statement_lifecycle_tests::test_mvcc_explicit_tx_unfinished_writer_poisons_transaction ... ok
+test vdbe::statement_lifecycle_tests::test_insert_is_busy_while_update_returning_writer_is_active ... ok
+test vdbe::statement_lifecycle_tests::test_first_writer_without_statement_savepoint_abandon_rolls_back_joined_writer ... ok
+test vdbe::statement_lifecycle_tests::test_suspended_read_does_not_finish_sibling_read_transaction ... ok
+test vdbe::statement_lifecycle_tests::test_rejected_insert_select_does_not_roll_back_active_returning_writer ... ok
+test vdbe::statement_lifecycle_tests::test_second_returning_writer_is_busy_and_first_can_commit_after_second_drop ... ok
+test vdbe::statement_lifecycle_tests::test_wal_begin_immediate_does_not_count_as_active_writer ... ok
+test vdbe::statement_lifecycle_tests::test_wal_returning_writer_can_commit_while_sibling_reader_is_active ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_after_poison_keeps_earlier_abandonment ... ok
+test vdbe::statement_lifecycle_tests::test_rejected_second_returning_and_drop_do_not_rollback_first_returning ... ok
+test vdbe::statement_lifecycle_tests::test_same_connection_select_does_not_commit_active_returning_writer ... ok
+test vdbe::statement_lifecycle_tests::test_second_writer_busy_does_not_invoke_busy_handler ... ok
+test vdbe::statement_lifecycle_tests::test_wal_dropping_one_reader_does_not_close_sibling_reader_transaction ... ok
+test vdbe::statement_lifecycle_tests::test_nested_named_savepoints_restore_the_selected_poison_snapshot ... ok
+test vdbe::statement_lifecycle_tests::test_wal_explicit_tx_unfinished_writer_poisons_transaction ... ok
+test vdbe::statement_lifecycle_tests::test_wal_savepoint_ops_are_busy_while_writer_suspended ... ok
+test vdbe::statement_lifecycle_tests::test_unfinished_drop_abandon_first_rolls_back_only_drop ... ok
+test vdbe::statement_lifecycle_tests::test_wal_savepoint_is_busy_while_autocommit_writer_suspended ... ok
+test vdbe::statement_lifecycle_tests::test_second_returning_writer_is_busy_and_first_can_commit_after_first_drop ... ok
+test vdbe::statement_lifecycle_tests::test_wal_dropping_reader_does_not_rollback_active_returning_writer ... ok
+test vdbe::statement_lifecycle_tests::test_suspended_read_does_not_finish_joined_returning_writer ... ok
+test vdbe::statement_lifecycle_tests::test_update_is_busy_while_returning_writer_is_active ... ok
+test vdbe::statement_lifecycle_tests::test_returning_owner_drop_does_not_commit_interrupted_drop_table ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_recovers_poison_from_lazy_attached_writer ... ok
+test vdbe::statement_lifecycle_tests::test_named_savepoint_rollback_restores_poison_after_cancel ... ok
+test vdbe::statement_lifecycle_tests::test_attached_only_returning_writer_defers_shared_auto_txn_commit ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 2118 filtered out; finished in 0.17s
+

@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
+from shipping_policy import check_manifest, check_profile, check_artifact
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -17,6 +18,7 @@ parser.add_argument("--node", action="append", required=True, help="Node executa
 parser.add_argument("--python", action="append", required=True, help="Python executable; repeat for each qualified runtime")
 parser.add_argument("--uv", default="uv")
 parser.add_argument("--v1-package", type=Path, required=True)
+parser.add_argument("--v2-package", type=Path, required=True, help="Immutable published 2.0.0 Node package")
 args = parser.parse_args()
 bundle = args.bundle.resolve()
 evidence = args.evidence.resolve()
@@ -40,6 +42,19 @@ for line in (bundle / "SHA256SUMS").read_text().splitlines():
 actual = {p.relative_to(bundle).as_posix() for p in bundle.rglob("*") if p.is_file() and p != bundle / "SHA256SUMS"}
 assert actual == checksums.keys(), "Unlisted or missing bundle files"
 manifest = json.loads((bundle / "manifest.json").read_text())
+check_manifest(manifest)
+receipts = {}
+for line in (bundle / "evidence/cargo-build.jsonl").read_text().splitlines():
+    receipt = json.loads(line)
+    if receipt.get("reason") == "compiler-artifact" and receipt["target"]["name"] in manifest["cargoArtifacts"]:
+        check_artifact(receipt["profile"])
+        receipts[receipt["target"]["name"]] = receipt["profile"]
+assert receipts == {name: value["profile"] for name, value in manifest["cargoArtifacts"].items()}, "Manifest does not match Cargo build receipts"
+with tarfile.open(bundle / "fastdb-source.tar.gz") as source:
+    source_cargo = source.extractfile("fastdb-source/Cargo.toml").read()
+    check_profile(source_cargo.decode())
+    assert hashlib.sha256(source_cargo).hexdigest() == manifest["sourceCargoTomlSha256"]
+    assert hashlib.sha256(source.extractfile("fastdb-source/.cargo/config.toml").read()).hexdigest() == manifest["sourceCargoConfigSha256"]
 version = manifest["version"]
 release = json.loads((ROOT / "fastdb/release.json").read_text())
 assert version == release["version"]
@@ -50,6 +65,8 @@ assert {'.'.join(v.split('.')[:2]) for v in python_versions} == set(release["req
 assert sha(bundle / "fastdb-source.tar.gz") == manifest["sourceArchiveSha256"]
 v1 = args.v1_package.resolve()
 assert json.loads((v1 / "package.json").read_text())["version"] == "1.0.0"
+v2 = args.v2_package.resolve()
+assert json.loads((v2 / "package.json").read_text())["version"] == "2.0.0"
 results = []
 
 
@@ -71,6 +88,10 @@ run("c-abi", ["python3", "fastdb/scripts/check-c-abi.py", str(bundle / "lib/libf
 run("cli", [str(bundle / "bin/fastdb-cli"), "--script"], input="SELECT geo::cell(geo::point(100,13),7);\n")
 cli = json.loads((evidence / "cli.log").read_text())
 assert cli["rows"] == [[{"type": "String", "value": "87658b314ffffff"}]]
+run("sqlite-adoption", ["python3", "fastdb/scripts/check-sqlite-adoption.py",
+                        str(bundle / "bin/fastdb-cli"), str(evidence / "sqlite-adoption.json")], env=base_env)
+sqlite_adoption = json.loads((evidence / "sqlite-adoption.json").read_text())
+assert sqlite_adoption["cliSha256"] == checksums["bin/fastdb-cli"]
 for name, file in [("cli-elf", bundle / "bin/fastdb-cli"), ("c-elf", bundle / "lib/libfastdb_c.so")]:
     run(name, ["python3", "fastdb/scripts/inspect-node-elf.py", str(file), str(evidence / f"{name}.json")])
 
@@ -101,6 +122,12 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
     run("node-upgrade-install", ["pnpm", "add", "--offline", "--ignore-scripts", str(bundle / "packages" / f"fastdb-node-{version}.tgz")], cwd=consumer)
     run("v1-upgrade-restore", [args.node[0], "fastdb/scripts/check-v2-upgrade.cjs", str(v1),
                               str(consumer / "node_modules/@fastdb/node"), str(evidence / "upgrade-fixture")])
+    installed_node = consumer / "node_modules/@fastdb/node"
+    for index, node in enumerate(args.node):
+        env = dict(base_env, FASTDB_OWNERSHIP_PACKAGE=str(installed_node))
+        run(f"node-ownership-{index}", [node, "--test", "fastdb/bindings/node/ownership.test.cjs"], env=env)
+        run(f"v2-upgrade-restore-{index}", [node, "fastdb/scripts/check-v21-upgrade.cjs", str(v2),
+                                          str(installed_node), str(evidence / f"v2-upgrade-fixture-{index}")])
 
     # Test the shipped .nupkg, never a previously cached same-version package.
     dotnet = temporary / "dotnet"
@@ -113,8 +140,9 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
     env = dict(base_env, NUGET_PACKAGES=str(temporary / "nuget-cache"), DOTNET_CLI_TELEMETRY_OPTOUT="1")
     run("nuget-package", ["dotnet", "run", "--", str(ROOT / "fastdb/bindings/fixtures/native-client.json")], cwd=dotnet, env=env)
 
-report = {"version": version, "bundleManifestSha256": sha(bundle / "manifest.json"),
+report = {"version": version, "buildProfile": manifest["buildProfile"], "rustProfilePolicy": manifest["rustProfilePolicy"], "bundleManifestSha256": sha(bundle / "manifest.json"),
           "bundleChecksumsSha256": sha(bundle / "SHA256SUMS"), "passed": results, "nodeVersions": node_versions, "pythonVersions": python_versions,
+          "sqliteAdoption": sqlite_adoption,
           "scope": "Exact Linux native artifacts on the recorded host; source/CI/publication remain separate gates"}
 (evidence / "verification.json").write_text(json.dumps(report, indent=2) + "\n")
 print(evidence)

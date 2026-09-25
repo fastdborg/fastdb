@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "458537ee9ecabbd1b4127df08d5f110d427ff88ac88860d5d2eaedb7db8163a6",
+  "lockfileSha256": "4fffaa23990bc8b514b0081b63da337223320efab2c9371ea4ea42cdf2521194",
   "packages": [
     {
       "name": "aead",
@@ -206,7 +206,7 @@
     },
     {
       "name": "crossbeam-epoch",
-      "version": "0.9.18",
+      "version": "0.9.20",
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
@@ -336,12 +336,12 @@
     },
     {
       "name": "fastdb-node",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "licenseExpression": "MIT"
     },
     {
@@ -351,7 +351,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "licenseExpression": "MIT"
     },
     {
@@ -671,7 +671,7 @@
     },
     {
       "name": "memmap2",
-      "version": "0.9.5",
+      "version": "0.9.11",
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
@@ -926,17 +926,17 @@
     },
     {
       "name": "rquickjs-core",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "rquickjs-sys",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "rquickjs",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "licenseExpression": "MIT"
     },
     {
