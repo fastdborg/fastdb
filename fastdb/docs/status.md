@@ -1,64 +1,47 @@
 # FastDB implementation status
 
-FastDB and FastQL V1 are released. See [release 1.0.0](release-1.0.0.md),
-[behavior history](contracts.md), and [engine provenance](../UPSTREAM.md).
-Cloud v0.2.0 is separate and outside this workstream.
+FastDB and FastQL **2.0.0 are released for Linux x64**. See the
+[release record](release-2.0.0.md), [public download receipt](release-2.0.0-download.json),
+[completed V2 checklist](v2-tasks.md) and [engine provenance](../UPSTREAM.md).
+Cloud v0.2.0 remains separate; it was not changed or deployed by this release.
 
-## Current release scope
+Release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go.
+Browser/WASM is removed. macOS, Windows, ARM and Apple mobile are outside V2.
+Packages are distributed in the GitHub Linux bundle, not language registries.
+The bundle uses the required development build profile with debug symbols stripped;
+read the release record for Linux library requirements and performance limits.
 
-Release embedded FastDB V2, V2 spatial and FastQL V2 with native **Rust,
-Node.js/TypeScript, Python, PHP, Swift, C# and Go** clients. The user explicitly clarified that
-browser/WASM is not needed for this release. Browser code, WASI build/probe wiring and the WASI-only core exception have
-been removed. Historical evidence is retained; its unfinished browser gates
-must not block native V2. See [the removal record](browser-removal.md). Follow [the current checklist](v2-tasks.md).
-The four additional [PHP, Swift, C# and Go clients](native-language-clients.md)
-now share a native C ABI with Linux development qualification. Final versioned
-packages and platform qualification remain open. The user confirmed Linux x64
-as the V2 binary platform; macOS and Windows are outside this release.
-No V2 artifact has been published.
-
-Implemented and qualified under the linked contracts:
+## Implemented V2 behavior
 
 - [Spatial point/radius indexes](v2-spatial.md) and [H3 cells](v2-cell-design.md).
 - [Record brace projections](v2-record-projections.md) and
   [indexed inverse relationships](v2-relations.md).
 - [Native full-text search](v2-fulltext.md) and [ANN search](v2-ann.md).
 - [Sandboxed JavaScript functions](v2-user-functions.md), including the approved
-  scalar-read transaction fix. Managed failures restore statement changes and
-  retain earlier caller work. This correction differs from V1's scalar-error
-  transaction-wide rollback behavior; inspect transaction reports.
+  correction preserving caller transactions after scalar read errors.
+- [Seven native clients](native-language-clients.md), CLI and FastQL editor parity.
+  Editor evidence does not imply a new marketplace publication.
 
-## Current evidence and remaining release work
+## Release verification
 
-[Combined integrated acceptance](v2-core-integration-evidence.md) passes **738
-Rust tests and 115 Node/application tests**, zero failures/ignored/skipped, plus
-formatting, Clippy and TypeScript. Scalar-error core commit `f26014f04` and native
-FTS/WAL fixes are integrated; the optional WASI feature commit `2ef619c07` was
-reverted in `ae6777a17`. Review [all core exceptions](core-exceptions.md)
-on every upstream sync before retaining, updating or removing local patches.
+Source `4d118ab1f819ff5deb32aa29dfe739ca9b086785` passes hosted scoped CI:
+738 Rust tests, 115 Node/application tests, three C ABI tests, formatting, Clippy
+and TypeScript. Exact installed packages pass Node 22/24, Python 3.10/3.12/3.14,
+PHP/Swift/C#/Go and Go race checks. A standalone Rust consumer passes from the
+extracted source archive. V1 upgrade, V2 writes/reopen, downgrade rejection and
+both V1/V2 backup restores pass. Public download and all 56 internal checksums
+are verified. Preserve a V1 backup before adopting V2 catalog features.
 
-The rebuilt [Python wheel](v2-python-scalar-evidence.md) passes eight installed
-checks on CPython 3.10, 3.12 and 3.14, including failed/cancelled JavaScript,
-nested savepoints, FTS integrity/drop and persistence. It remains a local
-Linux x86_64 development artifact.
+Review [all five maintained core exceptions](core-exceptions.md) on each upstream
+sync before retaining, adapting or removing them. The WASI-only exception was
+reverted and must not be reapplied for this native release.
 
-[Node installed-package checks](v2-node-package-evidence.md) cover Node 22/24;
-[standalone Rust checks](v2-rust-client-evidence.md) exercise direct V2 APIs.
-Those earlier artifacts predate the latest scalar fix and must be refreshed for
-final delivery. [V1 upgrade/restore](v2-upgrade-restore-evidence.md) passes after
-the approved FTS backing-storage fix. Final artifacts must repeat that rehearsal.
+## History and future work
 
-[FastQL editor evidence](v2-language-tooling-evidence.md) covers catalog/formatter
-parity and an installed VSIX. [Notice evidence](v2-notice-evidence.md) records
-collected texts and unresolved attribution. Finish native artifact versions,
-supported-platform qualification, complete notices, release records and delivery.
-V2-C and V2-R remain open; do not publish development artifacts as the final release.
-
-## Retained history
-
-The [V1 implementation log](v1-implementation-history.md) and individual V2
-milestone documents retain their exact source/artifact scopes. Browser source is archived outside the checkout; historical evidence is
-retained in [browser evidence](v2-browser-client.md) and
-[OPFS evidence](v2-browser-opfs.md). Its unexplained shutdown timeout remains a
-parked browser issue. Do not infer an active release requirement from historical
-checklists or pending-state descriptions. Preserve unrelated working-tree changes.
+[V1 release](release-1.0.0.md), [V1 implementation history](v1-implementation-history.md)
+and earlier V2 evidence retain their exact source/artifact scopes. The final
+release record supersedes their pending states. Historical browser evidence does
+not create a current gate; see [browser removal](browser-removal.md).
+Broader graph traversal, advanced geometry, changefeeds/sync and procedural
+scripting remain future proposals. Begin further implementation only under a
+new requested scope. Preserve unrelated working-tree changes.

@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "status": "preparing",
+  "status": "released",
   "engineBase": "046e9cbf67d22491e8ecc941ec2891b02a9f3cad",
   "clients": [
     "rust",
@@ -13,7 +13,9 @@
   ],
   "browser": false,
   "cloud": false,
-  "qualifiedBinaryPlatforms": [],
+  "qualifiedBinaryPlatforms": [
+    "x86_64-unknown-linux-gnu"
+  ],
   "binaryPlatformScope": [
     "x86_64-unknown-linux-gnu"
   ],
@@ -25,5 +27,7 @@
     "3.10",
     "3.12",
     "3.14"
-  ]
+  ],
+  "releaseSourceCommit": "4d118ab1f819ff5deb32aa29dfe739ca9b086785",
+  "releaseUrl": "https://github.com/fastdborg/fastdb/releases/tag/fastdb-v2.0.0"
 }

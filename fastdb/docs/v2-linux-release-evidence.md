@@ -1,5 +1,9 @@
 # Linux x64 V2 release qualification
 
+Final clean-source qualification and publication are complete. See
+[release 2.0.0](release-2.0.0.md) and its verified public-download receipt.
+The rehearsal below remains historical to its exact source and artifacts.
+
 The user confirmed Linux x64 as the V2 binary platform. Browser/WASM, macOS,
 Windows, ARM and cloud are outside this release. This record distinguishes the
 completed worktree rehearsal from final committed artifacts and publication.

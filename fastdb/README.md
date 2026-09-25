@@ -1,8 +1,8 @@
 # FastDB embedded database
 
-FastDB and FastQL [1.0.0 are released](docs/release-1.0.0.md).
-Active development targets [embedded V2](docs/v2-tasks.md), including spatial and
-FastQL V2. See [status](docs/status.md), [contracts](docs/contracts.md), and
+FastDB and FastQL [2.0.0 are released for Linux x64](docs/release-2.0.0.md).
+The [completed V2 checklist](docs/v2-tasks.md) covers indexed search, spatial and
+seven native clients. See [status](docs/status.md), [contracts](docs/contracts.md), and
 [engine provenance](UPSTREAM.md). Cloud is a separate workstream.
 
 From the repository root:
@@ -20,8 +20,7 @@ The Rust client entry point is `fastdb::Database::open(path)?.connect()?`. `exec
 
 V2 [full-text search](docs/v2-fulltext.md) provides managed multi-field text indexes
 and `search::text(index,query,limit)` with typed IDs and BM25 scores. Read its
-ranking, post-filter and memory contracts before using it; V2 artifacts are not
-yet published.
+ranking, post-filter and memory contracts before using it.
 
 The [INSERT conflict guide](docs/insert-conflicts.md) covers insertion recovery and replacement versus object UPSERT. The [UPDATE conflict guide](docs/update-conflicts.md) compares ABORT, ROLLBACK, FAIL, IGNORE and REPLACE, including retained changes on errors and transaction recovery.
 
@@ -33,7 +32,7 @@ A tested [offline backup and restore procedure](docs/backup-restore.md) preserve
 
 `INFO FOR DB` lists tables and views. `INFO FOR TABLE name` reports logical collection validation/indexes or native relational column and index metadata. `INFO FOR INDEX name` includes explicit relational index SQL and key details such as expressions, direction and collation. See [inspection contracts](docs/contracts.md#relational-inspection-details) for the prototype result shape.
 
-The [native Node client](bindings/node/README.md#local-package-smoke) includes an offline tarball-install smoke for local packaging qualification. Platform-specific release binaries remain pending.
+The [native Node client](bindings/node/README.md#local-package-smoke) includes an offline tarball-install smoke for local packaging qualification. Linux x64 binaries are included in the V2 release bundle.
 
 The [Rust client guide](docs/rust-client.md) describes local path dependencies and the standalone offline consumer smoke. Registry distribution remains pending.
 
@@ -72,7 +71,7 @@ and exit nonzero if any command failed.
 
 V2 development also includes [dense ANN search](docs/v2-ann.md), qualified under
 its documented native contract. Package versions are aligned to `2.0.0` for
-Linux x64 candidate qualification; publication remains pending.
+the published Linux x64 release.
 
 The [Python binding](bindings/python/README.md) embeds the same frontend at
 version `2.0.0`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is

@@ -18,7 +18,8 @@ file; it does not require a database server or Node/Python subprocess.
 | C# | `bindings/csharp/FastDB`, NuGet `FastDB.Embedded` | P/Invoke | .NET SDK 8.0.425, Linux x86_64 |
 | Go | `bindings/go` | cgo | Go 1.27.1, Linux x86_64 |
 
-These are development packages until final bundle qualification. V2 binary
+Final 2.0.0 packages are qualified and distributed in the
+[release bundle](release-2.0.0.md). V2 binary
 distribution is Linux x64 only. Registry publication, macOS/Windows/ARM and Apple
 mobile support are outside this release.
 The manifest language minimums are not a claim that every runtime between that
