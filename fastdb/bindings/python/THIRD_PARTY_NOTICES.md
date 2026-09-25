@@ -1,10 +1,10 @@
 # Third-party notices
 
-These notices supplement LICENSE.md and cover the components identified below. This file is not a complete dependency inventory; distribution notice qualification remains in progress.
+These notices supplement LICENSE.md and cover the components identified below. This file is not a complete dependency inventory; the release also includes checksum-verified crate notice collections and the pinned Rust runtime notices.
 
-## rquickjs 0.12.2
+## rquickjs 0.13.0
 
-Source: `rquickjs-0.12.2/LICENSE`. Source SHA-256: `976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70`.
+Source: `rquickjs-0.13.0/LICENSE`. Source SHA-256: `976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70`.
 
 MIT License
 
@@ -29,9 +29,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## QuickJS bundled in rquickjs-sys 0.12.2
+## QuickJS-NG 0.16.2 bundled in rquickjs-sys 0.13.0
 
-Source: `rquickjs-sys-0.12.2/quickjs/LICENSE`. Source SHA-256: `96f73f9d2a16c21a36b418f06073be26e7d6d5e7c1bc99756b21a4f2c74ef171`.
+Source: `rquickjs-sys-0.13.0/quickjs/LICENSE`. Source SHA-256: `96f73f9d2a16c21a36b418f06073be26e7d6d5e7c1bc99756b21a4f2c74ef171`.
 
 The MIT License (MIT)
 
@@ -596,9 +596,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## rquickjs-core 0.12.2 — LICENSE
+## rquickjs-core 0.13.0 — LICENSE
 
-Source at the crate-recorded commit: [635f9322ccc875e3f9851e7f75ec538cf3274fd5](https://raw.githubusercontent.com/DelSkayn/rquickjs/635f9322ccc875e3f9851e7f75ec538cf3274fd5/LICENSE). Source SHA-256: `976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70`.
+Source at the crate-recorded commit: [f3039c8d931417049ce6133b3ff4550ca38438a5](https://raw.githubusercontent.com/DelSkayn/rquickjs/f3039c8d931417049ce6133b3ff4550ca38438a5/LICENSE). Source SHA-256: `976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70`.
 
 MIT License
 

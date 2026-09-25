@@ -32,5 +32,5 @@ if $strip_debug; then
   # Strip only the package copy; retain the full Cargo artifact for diagnostics.
   strip --strip-debug fastdb/bindings/node/fastdb.node
 fi
-node --test fastdb/bindings/node/test.cjs fastdb/examples/node-task-tracker/test.cjs
+node --test fastdb/bindings/node/test.cjs fastdb/bindings/node/ownership.test.cjs fastdb/examples/node-task-tracker/test.cjs
 pnpm --dir fastdb/bindings/node run typecheck

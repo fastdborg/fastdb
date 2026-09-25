@@ -1,10 +1,10 @@
 # V2 ANN search
 
-The frontend now integrates USearch 2.26.2 without default SIMD/OpenMP features.
-No new core exception is involved. V2-A is qualified for the native contract
-below: 730 Rust and 113 Node/application tests pass, plus scoped lint/format,
-TypeScript and CLI checks. See [evidence](v2-ann-evidence.md). This is not a V2
-release; follow [the remaining checklist](v2-tasks.md).
+The frontend integrates USearch 2.26.2 without default SIMD/OpenMP features.
+No new core exception is involved. The native contract below is included in
+the published [2.0.0 release](release-2.0.0.md). Initial feature qualification is
+retained in [evidence](v2-ann-evidence.md); the release record contains combined
+acceptance and exact-artifact results.
 
 ```sql
 CREATE TABLE items;
@@ -61,13 +61,16 @@ ORDER BY distance,id;
   `usearch-2.26.2-f32-v1`. Identical IF NOT EXISTS definitions succeed; changed
   paths/dimensions/metrics reject. Field declarations must agree with dimensions.
 
-## Remaining platform and release gates
+## Platform and release qualification
 
 Focused recovery/cancellation/client checks, combined FastDB acceptance and
-end-to-end recall/timing evidence pass. Broader release benchmarks, platform/WASM
-capabilities, final artifacts and attribution remain V2-C/V2-R gates. The C++ dependency and its build flags must be
-included in release qualification. Native Rust APIs expose create_vector_index
-and search_vectors; SQL syntax is shared by CLI and existing Node clients.
+end-to-end recall/timing evidence pass. Linux x64 artifacts and dependency notices
+are published with 2.0.0, including the native C++ dependency. Browser/WASM is
+outside this release. These tests do not promise arbitrary dataset sizes or
+constant-memory search; follow [operating guidance](operations.md) and the
+candidate's measured workload envelope. Native Rust APIs expose
+create_vector_index and search_vectors; SQL syntax is shared by CLI and all
+seven native clients.
 
 Implementation sources: [USearch repository](https://github.com/unum-cloud/USearch),
 [buffer APIs](https://docs.rs/usearch/latest/usearch/struct.Index.html).

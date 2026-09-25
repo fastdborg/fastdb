@@ -1,7 +1,7 @@
-# Sandboxed JavaScript scalar functions (V2 development)
+# Sandboxed JavaScript scalar functions
 
-Implementation and qualification are in progress. This document is the current
-contract; it is not a release or supported-platform claim.
+This contract is implemented and qualified in the published native Linux x64
+[FastDB 2.0.0 release](release-2.0.0.md). Browser/WASM is outside this release.
 
 ```sql
 CREATE FUNCTION app::normalize_name(value string)
@@ -60,7 +60,7 @@ dispositions, so inspect the transaction report before retrying. This differs fr
 V1's transaction-wide rollback for these scalar read failures.
 
 Rust exposes `create_function` and `drop_function`; FastQL lifecycle and calls
-flow through the existing Rust and Node execution APIs. `INFO FOR FUNCTION`
+flow through all seven native clients' execution APIs. `INFO FOR FUNCTION`
 returns the source, signature, metadata version, runtime identifier and digest.
 Document export remains a document-only format; use migrations or database
 backups to transfer function definitions.

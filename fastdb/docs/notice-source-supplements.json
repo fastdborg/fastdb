@@ -85,10 +85,10 @@
     },
     {
       "package": "rquickjs-core",
-      "version": "0.12.2",
-      "sourceRevision": "635f9322ccc875e3f9851e7f75ec538cf3274fd5",
+      "version": "0.13.0",
+      "sourceRevision": "f3039c8d931417049ce6133b3ff4550ca38438a5",
       "cratePathInSource": "core",
-      "sourceUrl": "https://raw.githubusercontent.com/DelSkayn/rquickjs/635f9322ccc875e3f9851e7f75ec538cf3274fd5/LICENSE",
+      "sourceUrl": "https://raw.githubusercontent.com/DelSkayn/rquickjs/f3039c8d931417049ce6133b3ff4550ca38438a5/LICENSE",
       "sourceSha256": "976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70",
       "sourceFile": "notice-sources/976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70.txt"
     },
@@ -431,7 +431,7 @@
     },
     {
       "package": "fastdb",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "manifestPath": "fastdb/frontend/Cargo.toml",
       "licenseExpression": "MIT",
       "noticeFiles": [
@@ -443,7 +443,7 @@
     },
     {
       "package": "fastql-parser",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "manifestPath": "fastdb/parser/Cargo.toml",
       "licenseExpression": "MIT",
       "noticeFiles": [
@@ -455,7 +455,7 @@
     },
     {
       "package": "fastdb-cli",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "manifestPath": "fastdb/cli/Cargo.toml",
       "licenseExpression": "MIT",
       "noticeFiles": [
@@ -467,7 +467,7 @@
     },
     {
       "package": "fastdb-node",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "manifestPath": "fastdb/bindings/node/Cargo.toml",
       "licenseExpression": "MIT",
       "noticeFiles": [
@@ -479,7 +479,7 @@
     },
     {
       "package": "fastdb-python",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "manifestPath": "fastdb/bindings/python/Cargo.toml",
       "licenseExpression": "MIT",
       "noticeFiles": [
@@ -491,7 +491,7 @@
     },
     {
       "package": "fastdb-protocol",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "manifestPath": "fastdb/bindings/protocol/Cargo.toml",
       "licenseExpression": "MIT",
       "noticeFiles": [
@@ -503,7 +503,7 @@
     },
     {
       "package": "fastdb-c",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "manifestPath": "fastdb/bindings/c/Cargo.toml",
       "licenseExpression": "MIT",
       "noticeFiles": [

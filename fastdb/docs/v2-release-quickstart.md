@@ -1,6 +1,9 @@
-# FastDB 2.0.0 for Linux x64
+# FastDB 2.1.0 for Linux x64
 
 This bundle contains the embedded FastDB engine, FastQL V2 and native clients.
+Use one owning process per database file; see DEPLOYMENT.md and OPERATIONS.md.
+The supported target is a Linux application server embedding FastDB; no graph
+database API or separate network database daemon is promised.
 Verify its checksum file before use. The release record and manifest describe
 the exact source, build profile and tested platform. Back up V1 databases before
 opening them with V2. A database using V2 catalog features cannot be downgraded
@@ -16,13 +19,13 @@ distribution matrix. Alpine/musl and other architectures are outside this bundle
 Node.js 22 or newer:
 
 ```sh
-pnpm add /absolute/path/to/bundle/packages/fastdb-node-2.0.0.tgz
+pnpm add /absolute/path/to/bundle/packages/fastdb-node-2.1.0.tgz
 ```
 
 Python 3.10 or newer:
 
 ```sh
-python -m pip install /absolute/path/to/bundle/packages/fastdb_embedded-2.0.0-cp310-abi3-manylinux_2_35_x86_64.whl
+python -m pip install /absolute/path/to/bundle/packages/fastdb_embedded-2.1.0-cp310-abi3-manylinux_2_35_x86_64.whl
 ```
 
 The wheel tag expresses its build compatibility check. The release's actual
@@ -73,3 +76,14 @@ cancellation is cooperative and configured limits are not a total memory cap.
 Native component attribution is under `notices/`, with package-specific copies
 where the package embeds a native engine. The source archive includes provenance,
 the core exception maintenance register, release evidence and detailed contracts.
+
+## Adopt SQLite files
+
+```sh
+bin/fastdb-cli sqlite check application.sqlite
+bin/fastdb-cli sqlite import application.sqlite application.fastdb
+```
+
+The source is preserved and committed WAL data is included. Unsupported schemas
+are rejected before a destination is published. Tables remain relational. Read
+SQLITE-ADOPTION.md for the supported-schema boundary and migration procedure.

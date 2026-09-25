@@ -211,7 +211,7 @@ impl Connection {
                 ("language".into(), Value::String("javascript".into())),
                 (
                     "runtime".into(),
-                    Value::String("quickjs-rquickjs-0.12.2".into()),
+                    Value::String("quickjs-ng-0.16.2-rquickjs-0.13.0".into()),
                 ),
                 ("version".into(), Value::Integer(i64::from(d.version))),
                 ("digest".into(), Value::String(d.digest)),

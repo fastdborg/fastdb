@@ -1,6 +1,6 @@
 [package]
 name = "fastdb"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -14,7 +14,7 @@ thiserror.workspace = true
 turso_parser = { path = "../../sqlite/parser" }
 turso_ext = { path = "../../extensions/core" }
 
-rquickjs = { version = "=0.12.2", default-features = false, features = ["std"] }
+rquickjs = { version = "=0.13.0", default-features = false, features = ["std"] }
 
 stacker = "=0.1.22"
 

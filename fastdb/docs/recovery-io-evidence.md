@@ -24,3 +24,10 @@ Focused test passed. Full scoped check passed: 676 Rust tests, one known ignored
 trigger regression, 103 Node/application tests, formatting, Clippy and TypeScript.
 Logs: /tmp/fastdb-recovery-io.log and /tmp/fastdb-recovery-scoped.log.
 The trigger Interrupt-to-Busy exception remains separately pending review.
+
+## Production returned-error matrix
+
+The later [native returned-I/O-error qualification](native-io-errors-evidence.md)
+adds ENOSPC, EIO, partial-page writes and failed syncs at COMMIT/checkpoint,
+including FTS/ANN/spatial index consistency and subsequent writes. It also records
+failed-COMMIT ambiguity and the pinned checkpoint failure-status contract.

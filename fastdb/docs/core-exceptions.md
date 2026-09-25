@@ -2,9 +2,40 @@
 
 Required review checklist for every upstream sync. Baseline and full provenance
 are in [UPSTREAM.md](../UPSTREAM.md). The five active exceptions below are approved and
-integrated. The retired WASI exception is recorded separately. No equivalent upstream fix or upstream issue/PR has been verified for
-this register yet; do not infer that upstream still lacks a fix from that status.
+integrated. The retired WASI exception is recorded separately. The dated review
+below tracks upstream replacement candidates; no patch is removed from the
+existing pinned engine merely because a newer upstream revision contains a fix.
 No automatic removal or periodic monitoring is configured.
+
+## Release review: 2026-09-25
+
+Owner: FastDB maintainers. Review this register on every release and upstream
+sync; keep source links and run the named regressions before changing a patch.
+Inspected upstream main at
+[`64b8ef5742fc18937f9c89806c81e3f6475dc7a3`](https://github.com/tursodatabase/turso/commit/64b8ef5742fc18937f9c89806c81e3f6475dc7a3)
+(0.8.0-pre.13). No upstream merge is part of the current 2.1 candidate.
+
+- **First FULL commit:** upstream
+  [`fa8aeccfcf50feb715801a76478336dca72935fa`](https://github.com/tursodatabase/turso/commit/fa8aeccfcf50feb715801a76478336dca72935fa)
+  checks prepared frames as well as WAL dirtiness before FULL sync, matching the
+  central requirement of our patch. This is a concrete removal candidate on a
+  future sync; the FastDB regression has not been run against that upstream
+  replacement, and the existing pinned base still needs its local fix.
+- **FTS backing storage:** upstream
+  [`7e485be941a53b0fbf6d7f132c111787ca3814ce`](https://github.com/tursodatabase/turso/commit/7e485be941a53b0fbf6d7f132c111787ca3814ce)
+  contains backing-index integrity/lifecycle changes. Recheck physical-corruption
+  detection, root reclamation and upgrade/restore on an actual sync candidate;
+  source inspection alone does not establish all our required behaviors.
+- **Trigger interruption:** the inspected upstream `op_program` still combines
+  `StepResult::Interrupt | StepResult::Busy` into Busy. Retain the local patch.
+- **FTS cache isolation and scalar read errors:** upstream FTS and VDBE structures
+  have changed substantially. No behaviorally equivalent replacement has been
+  qualified. Retain both on the pinned base and test during a future sync.
+
+The review also found a separate upstream NORMAL-mode checkpoint durability fix,
+[`cc26d08508cbe045472fa3015e2bce4a389b5e06`](https://github.com/tursodatabase/turso/commit/cc26d08508cbe045472fa3015e2bce4a389b5e06).
+Its applicability to the pinned FastDB build is being tested separately; it is
+not the first-FULL-commit exception and must not be silently included in it.
 
 | Exception / local commit | Required behavior and regression | When to update or remove |
 |---|---|---|

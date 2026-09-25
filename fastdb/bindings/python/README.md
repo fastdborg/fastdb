@@ -1,7 +1,9 @@
-# FastDB for Python (V2 development)
+# FastDB for Python
 
-This package embeds the FastDB frontend. Qualification is in progress; no Python
-release has been published. Import `fastdb` from the `fastdb-embedded` distribution.
+This package embeds the FastDB frontend. The Linux x64 wheel ships in the
+[FastDB 2.0.0 release](https://github.com/fastdborg/fastdb/releases/tag/fastdb-v2.0.0),
+qualified on CPython 3.10.21, 3.12.3 and 3.14.7 on Ubuntu 24.04. Registry
+publication is separate. Import `fastdb` from the `fastdb-embedded` distribution.
 
 ```python
 from fastdb import Database, Record
@@ -34,7 +36,9 @@ collection integrity audits, and basic collection CRUD. Batches are not implicit
 transactional; a BatchError carries completed reports and the failing report.
 Document transfer excludes schema, functions and migration history.
 
-Build with the pinned Maturin version from pyproject.toml. A debug build is only
-for local qualification; release wheels, Python/platform coverage and notices
-remain part of V2 release qualification. This is a native embedded API, not a
-DB-API 2.0 adapter, async Python client, or cloud client.
+Build with the pinned Maturin version from pyproject.toml and the repository's
+documented build policy. The 2.0.0 wheel uses the required development profile
+with distributed debug symbols stripped; the release includes dependency
+notices and installed-wheel qualification. Use one owning process per database
+file; independent Python workers cannot open the same live file. This is a
+native embedded API, not a DB-API 2.0 adapter, async Python client, or cloud client.

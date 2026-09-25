@@ -5,6 +5,9 @@ The [completed V2 checklist](docs/v2-tasks.md) covers indexed search, spatial an
 seven native clients. See [status](docs/status.md), [contracts](docs/contracts.md), and
 [engine provenance](UPSTREAM.md). Cloud is a separate workstream.
 
+Production 2.1.0 is in qualification. Read the [deployment contract](docs/deployment.md),
+[operations guide](docs/operations.md) and [SQLite-file adoption guide](docs/sqlite-adoption.md).
+
 From the repository root:
 
 ```sh
@@ -70,11 +73,10 @@ retain their contracts; line and interactive modes continue after a failed comma
 and exit nonzero if any command failed.
 
 V2 development also includes [dense ANN search](docs/v2-ann.md), qualified under
-its documented native contract. Package versions are aligned to `2.0.0` for
-the published Linux x64 release.
+its documented native contract. The active package candidate is `2.1.0`; follow the [production checklist](docs/v2.1-tasks.md).
 
 The [Python binding](bindings/python/README.md) embeds the same frontend at
-version `2.0.0`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
+version `2.1.0`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
 removed from active development and excluded from this release. Linux installed-wheel checks are recorded in the
 [V2 client assessment](docs/v2-client-assessment.md).
 

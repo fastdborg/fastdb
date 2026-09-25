@@ -1,6 +1,6 @@
 # FastDB Node.js / TypeScript client
 
-This private package builds a native N-API addon backed by the checked FastDB Rust frontend. It does not expose the raw Turso connection. Local evidence covers Linux with Rust 1.88 and Node 22.0.0/22.23.2/24.19.0; release prebuilds, Windows/macOS qualification and additional Node versions remain pending.
+This package provides a native N-API addon backed by the FastDB Rust frontend. It does not expose the raw Turso connection. Linux x64 prebuilds are distributed in the GitHub release bundle. Node 22 and 24 are the tested runtime majors; other operating systems and architectures are outside this release. See [deployment](../../docs/deployment.md) for the single-owner process contract.
 
 Use this package in your Node.js backend. A browser UI calls your backend API;
 FastDB runs inside the server process and stores the database there. For request

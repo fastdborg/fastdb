@@ -6075,3 +6075,21 @@ TypeScript. Rust 1.88.0, Node 24.19.0, development profile. An initial full run
 exposed an OR FAIL regression from wrapping native alias-star INSERT sources;
 the guard was corrected and the focused regression, all seven projection tests
 and the full scoped check were rerun successfully. No upstream core changes.
+
+## 2026-09-25: production 2.1 preparation
+
+The combined development source based on `d442099b66ebe8920fa457e52b10255623a0e1f8`
+passes `bash fastdb/scripts/check.sh`: 750 Rust tests with zero failures or ignored
+tests, 121 Node/application tests, three C ABI tests, scoped formatting/Clippy
+and strict TypeScript. Rust 1.88.0, Node 24.19.0, Linux x64. Log:
+`/tmp/fastdb-v21-scoped-checks.log`. This includes SQLite adoption, process
+ownership, native returned-I/O failures and the dependency updates.
+
+The final SQLite target defensive-mode and backup busy-clock adjustments were
+followed by another successful run of all four permanent CLI adoption tests
+(`/tmp/fastdb-v21-sqlite-final-local.log`). The independent stock-SQLite harness
+passes all 14 fixture groups (`/tmp/fastdb-sqlite-adoption-harness.json`).
+
+These are development-source results, not final artifact qualification. The
+separately proposed NORMAL checkpoint correction is excluded from this source;
+its approval, integration and affected regression checks remain a release gate.

@@ -4,7 +4,7 @@ Generated from the pinned Cargo dependency inventory and checksummed source arch
 
 This is a partial notice collection. It supplements LICENSE.md and THIRD_PARTY_NOTICES.md. Inline attributions, unconventional filenames and other bundled components require further review before a complete distribution-notice claim.
 
-Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `458537ee9ecabbd1b4127df08d5f110d427ff88ac88860d5d2eaedb7db8163a6`.
+Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `4fffaa23990bc8b514b0081b63da337223320efab2c9371ea4ea42cdf2521194`.
 
 ## Packages without collected archive or supplemental texts
 
@@ -164,7 +164,7 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `458537ee9ecabbd1b4127df
 - `LICENSE-APACHE`: [source text a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2)
 - `LICENSE-MIT`: [source text 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab](#text-5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab)
 
-### crossbeam-epoch 0.9.18
+### crossbeam-epoch 0.9.20
 - `LICENSE-APACHE`: [source text a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2)
 - `LICENSE-MIT`: [source text 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab](#text-5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab)
 
@@ -264,16 +264,16 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `458537ee9ecabbd1b4127df
 - `LICENSE-APACHE`: [source text 7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996](#text-7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996)
 - `LICENSE-MIT`: [source text 7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2](#text-7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2)
 
-### fastdb-node 2.0.0
+### fastdb-node 2.1.0
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
-### fastdb 2.0.0
+### fastdb 2.1.0
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
 ### fastdivide 0.4.2
 - `LICENSE.txt`: [source text 97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9](#text-97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9)
 
-### fastql-parser 2.0.0
+### fastql-parser 2.1.0
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
 ### fastrand 2.3.0
@@ -510,7 +510,7 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `458537ee9ecabbd1b4127df
 - `COPYING`: [source text 01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f)
 - `LICENSE-MIT`: [source text 0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f)
 
-### memmap2 0.9.5
+### memmap2 0.9.11
 - `LICENSE-APACHE`: [source text 04ea4849dba9dcae07113850c6f1b1a69052c625210639914eee352023f750ad](#text-04ea4849dba9dcae07113850c6f1b1a69052c625210639914eee352023f750ad)
 - `LICENSE-MIT`: [source text 0d25d03b5ab49576178ad0cae7a2648d12c17ad0452fe49c07e55e4b59aa5257](#text-0d25d03b5ab49576178ad0cae7a2648d12c17ad0452fe49c07e55e4b59aa5257)
 
@@ -708,13 +708,13 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `458537ee9ecabbd1b4127df
 - `LICENSE-APACHE`: [source text a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2)
 - `LICENSE-MIT`: [source text 42d3bf7e7d4d49d72c0555d14ed99c3ee7ce9ce3cbffbc38bbafe8c103f50969](#text-42d3bf7e7d4d49d72c0555d14ed99c3ee7ce9ce3cbffbc38bbafe8c103f50969)
 
-### rquickjs-core 0.12.2
-- Repository source [https://raw.githubusercontent.com/DelSkayn/rquickjs/635f9322ccc875e3f9851e7f75ec538cf3274fd5/LICENSE](https://raw.githubusercontent.com/DelSkayn/rquickjs/635f9322ccc875e3f9851e7f75ec538cf3274fd5/LICENSE): [source text 976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70](#text-976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70)
+### rquickjs-core 0.13.0
+- Repository source [https://raw.githubusercontent.com/DelSkayn/rquickjs/f3039c8d931417049ce6133b3ff4550ca38438a5/LICENSE](https://raw.githubusercontent.com/DelSkayn/rquickjs/f3039c8d931417049ce6133b3ff4550ca38438a5/LICENSE): [source text 976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70](#text-976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70)
 
-### rquickjs-sys 0.12.2
+### rquickjs-sys 0.13.0
 - `quickjs/LICENSE`: [source text 96f73f9d2a16c21a36b418f06073be26e7d6d5e7c1bc99756b21a4f2c74ef171](#text-96f73f9d2a16c21a36b418f06073be26e7d6d5e7c1bc99756b21a4f2c74ef171)
 
-### rquickjs 0.12.2
+### rquickjs 0.13.0
 - `LICENSE`: [source text 976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70](#text-976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70)
 
 ### rust-stemmers 1.2.0

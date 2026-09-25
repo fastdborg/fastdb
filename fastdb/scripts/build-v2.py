@@ -10,23 +10,27 @@ import platform
 import shutil
 import subprocess
 import tarfile
+from shipping_policy import PROFILE, POLICY, build_environment, check_artifact, check_profile
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("output", type=Path)
 parser.add_argument("--development", action="store_true", help="Allow a worktree source snapshot; never publication eligible")
 args = parser.parse_args()
+check_profile((ROOT / "Cargo.toml").read_text())
+build_env = build_environment()
 out = args.output.resolve()
 if out.is_relative_to(ROOT) and not out.is_relative_to(ROOT / "dist"):
     raise SystemExit("Place bundles outside the checkout or under ignored dist/")
 
 
 def run(command, cwd=ROOT, **kwargs):
+    kwargs.setdefault("env", build_env)
     subprocess.run(command, cwd=cwd, check=True, **kwargs)
 
 
 def capture(command, cwd=ROOT):
-    return subprocess.check_output(command, cwd=cwd, text=True).strip()
+    return subprocess.check_output(command, cwd=cwd, env=build_env, text=True).strip()
 
 
 def sha(path):
@@ -83,8 +87,23 @@ for short, bundled in [("node", "bindings/node/THIRD_PARTY_CRATE_NOTICES.md"),
     copy(ROOT / audit, out / "evidence" / Path(audit).name)
     copy(ROOT / "fastdb" / bundled, out / "notices" / f"{short}-CRATE_NOTICES.md")
 
-run(["cargo", "build", "--locked", "-p", "fastdb-cli", "-p", "fastdb-node", "-p", "fastdb-c"])
-target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")).resolve() / "debug"
+build_command = ["cargo", "build", "--locked", "--profile", PROFILE, "--message-format=json-render-diagnostics",
+                 "-p", "fastdb-cli", "-p", "fastdb-node", "-p", "fastdb-c", "-p", "fastdb-python"]
+with (out / "evidence/cargo-build.jsonl").open("w") as log:
+    run(build_command, stdout=log)
+target_base = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
+target = (target_base if target_base.is_absolute() else ROOT / target_base).resolve() / PROFILE
+cargo_artifacts = {}
+for line in (out / "evidence/cargo-build.jsonl").read_text().splitlines():
+    message = json.loads(line)
+    if message.get("reason") == "compiler-artifact" and message["target"]["name"] in {"fastdb-cli", "fastdb_node", "fastdb_c", "_native"}:
+        check_artifact(message["profile"])
+        artifact = Path(message["executable"] or next(name for name in message["filenames"] if name.endswith(".so")))
+        if artifact.parent != target:
+            raise ValueError(f"Unexpected native artifact directory: {artifact}")
+        cargo_artifacts[message["target"]["name"]] = {"profile": message["profile"], "path": artifact.relative_to(target.parent).as_posix(), "sha256": sha(artifact)}
+if len(cargo_artifacts) != 4:
+    raise ValueError("Cargo did not report all four native artifacts")
 copy(target / "fastdb-cli", out / "bin/fastdb-cli")
 copy(target / "libfastdb_c.so", out / "lib/libfastdb_c.so")
 copy(ROOT / "fastdb/bindings/c/include/fastdb.h", out / "include/fastdb.h")
@@ -98,9 +117,10 @@ if not node.is_absolute():
     node = out / "packages" / node
 if node.resolve().parent != out / "packages" or not node.is_file():
     raise ValueError("pnpm returned an invalid package location")
-run(["maturin", "build", "--locked", "--strip", "--manifest-path", "fastdb/bindings/python/Cargo.toml", "--out", str(out / "packages")])
-run(["dotnet", "pack", "fastdb/bindings/csharp/FastDB/FastDB.csproj", "-c", "Debug", "-o", str(out / "packages")],
-    env=dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1"))
+python_command = ["maturin", "build", "--locked", "--profile", PROFILE, "--strip", "--manifest-path", "fastdb/bindings/python/Cargo.toml", "--out", str(out / "packages")]
+run(python_command)
+run(["dotnet", "pack", "fastdb/bindings/csharp/FastDB/FastDB.csproj", "-c", "Release", "-o", str(out / "packages")],
+    env=dict(build_env, DOTNET_CLI_TELEMETRY_OPTOUT="1"))
 
 for language in ["php", "swift", "go"]:
     package = ROOT / "fastdb/bindings" / language
@@ -113,7 +133,15 @@ for language in ["php", "swift", "go"]:
 
 for source, name in [("fastdb/docs/v2-release-quickstart.md", "README.md"),
                      ("fastdb/docs/backup-restore.md", "BACKUP.md"),
+                     ("fastdb/docs/deployment.md", "DEPLOYMENT.md"),
+                     ("fastdb/docs/operations.md", "OPERATIONS.md"),
+                     ("fastdb/docs/sqlite-adoption.md", "SQLITE-ADOPTION.md"),
+                     ("fastdb/docs/sqlite-notice.md", "notices/SQLITE.md"),
+                     ("fastdb/docs/dependency-security.md", "evidence/dependency-security.md"),
+                     ("fastdb/docs/dependency-security-rustsec.json", "evidence/dependency-security-rustsec.json"),
+                     ("fastdb/docs/dependency-security-native.json", "evidence/dependency-security-native.json"),
                      ("fastdb/docs/native-language-clients.md", "NATIVE-CLIENTS.md"),
+                     ("fastdb/docs/production-build.md", "BUILD-POLICY.md"),
                      ("fastdb/UPSTREAM.md", "UPSTREAM.md"), ("LICENSE.md", "LICENSE.md"),
                      ("fastdb/bindings/c/RUST-LIBRARY-NOTICES.html", "notices/RUST-LIBRARY-NOTICES.html"),
                      ("fastdb/docs/rust-runtime-notices.json", "evidence/rust-runtime-notices.json"),
@@ -136,7 +164,10 @@ manifest = {
     "sourceStatus": status.splitlines() if args.development else [],
     "sourceArchiveSha256": sha(out / "fastdb-source.tar.gz"),
     "lockfileSha256": sha(ROOT / "Cargo.lock"), "engineBase": release["engineBase"],
-    "buildProfile": "dev, distributed native copies stripped of debug symbols",
+    "buildProfile": PROFILE, "rustProfilePolicy": POLICY, "csharpConfiguration": "Release",
+    "cargoArtifacts": cargo_artifacts, "cargoBuildCommand": build_command, "pythonBuildCommand": python_command,
+    "sourceCargoTomlSha256": sha(ROOT / "Cargo.toml"), "sourceCargoConfigSha256": sha(ROOT / ".cargo/config.toml"),
+    "distributedSymbols": "native copies stripped; Cargo originals retained for diagnostics",
     "platform": platform.platform(), "architecture": platform.machine(), "libc": platform.libc_ver(),
     "rust": capture(["rustc", "-vV"]), "node": capture(["node", "--version"]),
     "pnpm": capture(["pnpm", "--version"]), "maturin": capture(["maturin", "--version"]),

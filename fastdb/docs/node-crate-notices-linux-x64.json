@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "5b5bfd46c5aa466e3b6d0444bd1e034c41afbf738e6b5b798f7e135fdf4eba50",
+  "inventorySha256": "b7eff33d726962b7de9efcb2cf244a954291aa37ec5d1b8d995ca5dac870c307",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -698,9 +698,9 @@
     },
     {
       "name": "crossbeam-epoch",
-      "version": "0.9.18",
+      "version": "0.9.20",
       "status": "archive_verified",
-      "archiveSha256": "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e",
+      "archiveSha256": "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f",
       "declaredLicenseFile": null,
       "noticeCandidates": [
         {
@@ -1714,12 +1714,12 @@
     },
     {
       "name": "fastdb-node",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1738,7 +1738,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -2836,9 +2836,9 @@
     },
     {
       "name": "memmap2",
-      "version": "0.9.5",
+      "version": "0.9.11",
       "status": "archive_verified",
-      "archiveSha256": "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f",
+      "archiveSha256": "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0",
       "declaredLicenseFile": null,
       "noticeCandidates": [
         {
@@ -3738,9 +3738,9 @@
     },
     {
       "name": "rquickjs-core",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "status": "archive_verified",
-      "archiveSha256": "16e4f499ac5b943d97ee6dbc44f23c2c10426f420f7d2f1793d6318911b6608c",
+      "archiveSha256": "7c6dbfedfbf458dc119c21ccd032c7527d185210b11a1ae796cd04106e6db280",
       "declaredLicenseFile": null,
       "noticeCandidates": [],
       "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
@@ -3769,9 +3769,9 @@
     },
     {
       "name": "rquickjs-sys",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "status": "archive_verified",
-      "archiveSha256": "a13ac243b86a74120814ef7e9e30ad5a2c1199b7b9963b1cf7c84e4cdc1cad99",
+      "archiveSha256": "53d0aaff245bed1c6f3c39e477fb6b98d710d9d298bfec7c8dfc589bed0e5cef",
       "declaredLicenseFile": null,
       "noticeCandidates": [
         {
@@ -3783,9 +3783,9 @@
     },
     {
       "name": "rquickjs",
-      "version": "0.12.2",
+      "version": "0.13.0",
       "status": "archive_verified",
-      "archiveSha256": "4e04e4eedfb060b503b5f0a2644abb890b0b3620d3fb674f9455f230014964e4",
+      "archiveSha256": "b7d96fb23e8ff51c8d4772ea84e44b5238543b7d81e9cc23c0219511a8f16482",
       "declaredLicenseFile": null,
       "noticeCandidates": [
         {
