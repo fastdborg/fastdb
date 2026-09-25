@@ -559,7 +559,13 @@ pub fn optimize_plan(
     Ok(())
 }
 
-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
+#[cfg(all(
+    feature = "fts",
+    any(
+        not(target_family = "wasm"),
+        all(target_os = "wasi", feature = "fts_wasi")
+    )
+))]
 /// Transform MATCH expressions to fts_match() function calls.
 fn transform_match_to_fts_match(
     where_clause: &mut [WhereTerm],
@@ -737,7 +743,13 @@ struct OptimizeTableAccessResult {
 pub fn optimize_select_plan(plan: &mut SelectPlan, resolver: &Resolver) -> Result<()> {
     let schema = resolver.schema();
     // Transform MATCH expressions to fts_match() for FTS optimizer recognition
-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
+    #[cfg(all(
+        feature = "fts",
+        any(
+            not(target_family = "wasm"),
+            all(target_os = "wasi", feature = "fts_wasi")
+        )
+    ))]
     transform_match_to_fts_match(&mut plan.where_clause, schema, &plan.table_references)?;
 
     unnest::unnest_exists_subqueries(plan)?;
@@ -836,7 +848,13 @@ fn optimize_delete_plan(plan: &mut DeletePlan, resolver: &Resolver) -> Result<()
     let schema = resolver.schema();
     let available_indexes =
         AvailableIndexes::for_table_references(resolver, &plan.table_references);
-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
+    #[cfg(all(
+        feature = "fts",
+        any(
+            not(target_family = "wasm"),
+            all(target_os = "wasi", feature = "fts_wasi")
+        )
+    ))]
     transform_match_to_fts_match(&mut plan.where_clause, schema, &plan.table_references)?;
 
     lift_common_subexpressions_from_binary_or_terms(&mut plan.where_clause)?;
@@ -883,7 +901,13 @@ fn optimize_update_plan(
         vec![plan.target_table.clone()],
         plan.from_tables.outer_query_refs().to_vec(),
     );
-    #[cfg(all(feature = "fts", not(target_family = "wasm")))]
+    #[cfg(all(
+        feature = "fts",
+        any(
+            not(target_family = "wasm"),
+            all(target_os = "wasi", feature = "fts_wasi")
+        )
+    ))]
     transform_match_to_fts_match(&mut plan.where_clause, schema, &target_tables)?;
     lift_common_subexpressions_from_binary_or_terms(&mut plan.where_clause)?;
     if let ConstantConditionEliminationResult::ImpossibleCondition =

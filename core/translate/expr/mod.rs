@@ -8,7 +8,13 @@ use super::collate::{get_collseq_from_expr_with_symbols, CollationSeq};
 use super::emitter::Resolver;
 use super::optimizer::Optimizable;
 use super::plan::TableReferences;
-#[cfg(all(feature = "fts", not(target_family = "wasm")))]
+#[cfg(all(
+    feature = "fts",
+    any(
+        not(target_family = "wasm"),
+        all(target_os = "wasi", feature = "fts_wasi")
+    )
+))]
 use crate::function::FtsFunc;
 #[cfg(feature = "json")]
 use crate::function::JsonFunc;

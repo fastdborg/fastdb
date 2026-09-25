@@ -2057,7 +2057,13 @@ pub fn translate_expr(
                         Ok(target_register)
                     }
                 },
-                #[cfg(all(feature = "fts", not(target_family = "wasm")))]
+                #[cfg(all(
+                    feature = "fts",
+                    any(
+                        not(target_family = "wasm"),
+                        all(target_os = "wasi", feature = "fts_wasi")
+                    )
+                ))]
                 Func::Fts(_) => {
                     // FTS functions are handled via index method pattern matching.
                     // If we reach here, no index matched, so translate as a regular function call.
