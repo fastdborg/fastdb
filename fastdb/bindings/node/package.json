@@ -1,6 +1,6 @@
 {
   "name": "@fastdb/node",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "main": "index.cjs",
   "types": "index.d.ts",
@@ -25,6 +25,7 @@
     "LICENSE.md",
     "README.md",
     "THIRD_PARTY_NOTICES.md",
-    "THIRD_PARTY_CRATE_NOTICES.md"
+    "THIRD_PARTY_CRATE_NOTICES.md",
+    "RUST-LIBRARY-NOTICES.html"
   ]
 }

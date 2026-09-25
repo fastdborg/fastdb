@@ -8,16 +8,6 @@ fn documented_future_statements_report_versions_without_changing_work() {
         c.execute(sql, &Parameters::new()).unwrap();
     }
     for (sql, version) in [
-        ("SELECT posts:p1 { title, author.* }", "V2"),
-        ("DEFINE RELATION authored ON posts FROM posts.author", "V2"),
-        (
-            "CREATE SEARCH INDEX titles ON posts(title) USING FULLTEXT",
-            "V2",
-        ),
-        (
-            "CREATE FUNCTION app::f() RETURNS string LANGUAGE JAVASCRIPT AS 'return 1'",
-            "V2",
-        ),
         ("DEFINE CHANGEFEED changes ON posts RETAIN '72h'", "V3"),
         ("SHOW CHANGES FOR changes AFTER $cursor LIMIT 10", "V3"),
         ("REMOVE CHANGEFEED changes", "V3"),

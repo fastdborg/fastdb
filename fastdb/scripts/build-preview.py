@@ -30,8 +30,11 @@ run(['cargo', 'build', '--locked', '-p', 'fastdb-cli', '-p', 'fastdb-node'] + ([
 shutil.copy2(root/f'target/{profile}/fastdb-cli', out/'fastdb-cli')
 shutil.copy2(root/f'target/{profile}/libfastdb_node.so', root/'fastdb/bindings/node/fastdb.node')
 packed = json.loads(subprocess.check_output(
-    ['npm', 'pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', str(out)],
-    cwd=root/'fastdb/bindings/node', text=True))[0]
+    ['pnpm', 'pack', '--json', '--pack-destination', str(out)],
+    cwd=root/'fastdb/bindings/node', text=True))
+node_package = (out / packed['filename']).resolve()
+if node_package.parent != out or not node_package.is_file():
+    raise SystemExit('pnpm did not produce a package in the candidate directory')
 (out/'tracker.cjs').write_text((root/'fastdb/examples/node-task-tracker/app.cjs').read_text().replace("require('../../bindings/node/index.cjs')", "require('@fastdb/node')"))
 
 run(['git', 'archive', '--format=tar.gz', '--prefix=fastdb-source/', '-o', str(out/'fastdb-source.tar.gz'), source])
@@ -46,8 +49,8 @@ for package in ['fastdb-cli', 'fastdb-node']:
     env = dict(os.environ, FASTDB_INVENTORY_PACKAGE=package)
     run(['node','fastdb/scripts/inventory-node-dependencies.cjs','x86_64-unknown-linux-gnu',str(inventory)], env=env)
     run(['python3','fastdb/scripts/audit-crate-notices.py',str(inventory),str(audit)])
-    run(['python3','fastdb/scripts/bundle-crate-notices.py',str(inventory),str(audit),str(out/f'{package}-CRATE_NOTICES.md')])
-manifest = {'preview': args.label, 'sourceCommit': source, 'buildProfile': profile, 'platform': platform.platform(), 'rust': run(['rustc','-vV']), 'node': run(['node','--version']).strip(), 'nodePackage': packed['filename'], 'publication': 'local candidate only'}
+    run(['python3','fastdb/scripts/bundle-crate-notices.py',str(inventory),str(audit),str(out/f'{package}-CRATE_NOTICES.md'),'--supplements','fastdb/docs/notice-source-supplements.json'])
+manifest = {'preview': args.label, 'sourceCommit': source, 'buildProfile': profile, 'platform': platform.platform(), 'rust': run(['rustc','-vV']), 'node': run(['node','--version']).strip(), 'packageManager': run(['pnpm','--version']).strip(), 'nodePackage': node_package.name, 'publication': 'local candidate only'}
 (out/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
 files = sorted(p for p in out.rglob('*') if p.is_file())
 (out/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+str(p.relative_to(out))+'\n' for p in files))

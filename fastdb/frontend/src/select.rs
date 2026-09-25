@@ -1957,6 +1957,28 @@ impl Scope {
         {
             return Err(unsupported("aggregate modifiers on document helpers"));
         }
+        if helper == "udf" {
+            let Some((definition, values)) = args.split_first_mut() else {
+                return Err(Error::Validation("function definition missing".into()));
+            };
+            for value in values.iter_mut() {
+                self.typed(value)?;
+            }
+            let tail = values
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            *expr = expression(&format!(
+                "__fastdb_user_function({definition}{})",
+                if tail.is_empty() {
+                    String::new()
+                } else {
+                    format!(",{tail}")
+                }
+            ))?;
+            return Ok(true);
+        }
         if helper == "doc_row" {
             let [arg] = args.as_slice() else {
                 return Err(Error::Validation(
@@ -2189,9 +2211,10 @@ impl Scope {
                 return Ok(());
             }
         }
-        if matches!(expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch") {
+        if matches!(expr, Expr::FunctionCall {name,..} if matches!(name.as_str(), "__fastdb_fetch" | "__fastdb_relation_fetch"))
+        {
             return Err(unsupported(
-                "record::fetch is allowed only as a top-level SELECT projection",
+                "fetch is allowed only as a top-level SELECT projection",
             ));
         }
         if (matches!(expr, Expr::Subquery(_))
@@ -2716,9 +2739,30 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
                 continue;
             }
         }
+        if token.text == "__fastdb_h_udf" {
+            if let Some(definition) = tokens.get(i + 2).filter(|t| t.kind == Kind::String) {
+                let d: crate::udf::Definition = serde_json::from_str(&definition.text)?;
+                out.push_str(&sql[copied..token.start]);
+                out.push_str(&d.name);
+                out.push('(');
+                copied = definition.end;
+                i += 3;
+                if tokens.get(i).is_some_and(|t| t.text == ",") {
+                    copied = tokens[i].end;
+                    i += 1;
+                }
+                continue;
+            }
+        }
         let public = match token.text.as_str() {
             "__fastdb_record_value" => Some("type::record"),
             "__fastdb_fetch" => Some("record::fetch"),
+            "__fastdb_relation_fetch" => Some("relation::fetch"),
+            "__fastdb_h_geo_cell" => Some("geo::cell"),
+            "__fastdb_h_geo_cell_center" => Some("geo::cell_center"),
+            "__fastdb_h_geo_point" => Some("geo::point"),
+            "__fastdb_h_geo_distance" => Some("geo::distance"),
+            "__fastdb_h_geo_within" => Some("geo::within"),
             "__fastdb_h_string_slugify" => Some("string::slugify"),
             "__fastdb_h_string_normalize" => Some("string::normalize"),
             "__fastdb_h_record_id" => Some("record::id"),
@@ -2833,6 +2877,93 @@ fn source(
     inspect_native: bool,
 ) -> Result<Source> {
     if let SelectTable::TableCall(name, args, alias) = table {
+        if name.db_name.is_none() && name.name.as_str() == "__fastdb_near" {
+            let [index, center, radius] = args.as_slice() else {
+                return Err(Error::Validation(
+                    "search::near expects index name, center point and radius in meters".into(),
+                ));
+            };
+            let mut consumed = std::collections::BTreeSet::new();
+            let index = crate::spatial::search_argument(index, params, &mut consumed)?;
+            let center = crate::spatial::search_argument(center, params, &mut consumed)?;
+            let radius = crate::spatial::search_argument(radius, params, &mut consumed)?;
+            let sql = connection.spatial_search_sql(&index, &center, &radius)?;
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
+                unreachable!()
+            };
+            let alias = alias
+                .clone()
+                .unwrap_or_else(|| As::As(Name::exact("near".into())));
+            return Ok(Source {
+                table: SelectTable::Select(select, Some(alias.clone())),
+                alias: alias.name().as_str().into(),
+                collection: None,
+                derived: Some(vec![("id".into(), true), ("distance_m".into(), false)]),
+                derived_logical: true,
+                derived_physical: None,
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed,
+            });
+        }
+        if name.db_name.is_none() && name.name.as_str() == "__fastdb_text" {
+            let [index, query, limit] = args.as_slice() else {
+                return Err(Error::Validation(
+                    "search::text expects index name, query and limit".into(),
+                ));
+            };
+            let mut consumed = std::collections::BTreeSet::new();
+            let index = crate::spatial::search_argument(index, params, &mut consumed)?;
+            let query = crate::spatial::search_argument(query, params, &mut consumed)?;
+            let limit = crate::spatial::search_argument(limit, params, &mut consumed)?;
+            let sql = connection.text_search_sql(&index, &query, &limit)?;
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
+                unreachable!()
+            };
+            let alias = alias
+                .clone()
+                .unwrap_or_else(|| As::As(Name::exact("text".into())));
+            return Ok(Source {
+                table: SelectTable::Select(select, Some(alias.clone())),
+                alias: alias.name().as_str().into(),
+                collection: None,
+                derived: Some(vec![("id".into(), true), ("score".into(), false)]),
+                derived_logical: true,
+                derived_physical: None,
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed,
+            });
+        }
+        if name.db_name.is_none() && name.name.as_str() == "__fastdb_vector" {
+            let [index, query, limit] = args.as_slice() else {
+                return Err(Error::Validation(
+                    "search::vector expects index name, query and limit".into(),
+                ));
+            };
+            let mut consumed = std::collections::BTreeSet::new();
+            let index = crate::spatial::search_argument(index, params, &mut consumed)?;
+            let query = crate::spatial::search_argument(query, params, &mut consumed)?;
+            let limit = crate::spatial::search_argument(limit, params, &mut consumed)?;
+            let sql = connection.vector_search_sql(&index, &query, &limit)?;
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
+                unreachable!()
+            };
+            let alias = alias
+                .clone()
+                .unwrap_or_else(|| As::As(Name::exact("vector".into())));
+            return Ok(Source {
+                table: SelectTable::Select(select, Some(alias.clone())),
+                alias: alias.name().as_str().into(),
+                collection: None,
+                derived: Some(vec![("id".into(), true), ("distance".into(), false)]),
+                derived_logical: true,
+                derived_physical: None,
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed,
+            });
+        }
         // Inspect iterator expressions without evaluating them. Source references
         // use NULL only in the metadata probe and are lowered in runtime scope.
         if !matches!(
@@ -3352,11 +3483,11 @@ fn indexed_filter(
             }
             if let Some((i, path)) = scope.field(field)? {
                 if i == source_index {
-                    if let Some(index) = scope.sources[i]
-                        .collection
-                        .as_ref()
-                        .and_then(|c| c.indexes.iter().find(|idx| idx.path == path))
-                    {
+                    if let Some(index) = scope.sources[i].collection.as_ref().and_then(|c| {
+                        c.indexes
+                            .iter()
+                            .find(|idx| idx.kind == crate::IndexKind::Scalar && idx.path == path)
+                    }) {
                         let key = Box::new(expression("i.key")?);
                         let filter = if not {
                             Expr::NotNull(key)
@@ -3397,11 +3528,11 @@ fn indexed_filter(
             if i != source_index {
                 continue;
             }
-            if let Some(index) = scope.sources[i]
-                .collection
-                .as_ref()
-                .and_then(|c| c.indexes.iter().find(|idx| idx.path == path))
-            {
+            if let Some(index) = scope.sources[i].collection.as_ref().and_then(|c| {
+                c.indexes
+                    .iter()
+                    .find(|idx| idx.kind == crate::IndexKind::Scalar && idx.path == path)
+            }) {
                 let key = Box::new(expression("i.key")?);
                 let filter = if membership {
                     Expr::InList {
@@ -3726,7 +3857,7 @@ pub(crate) fn expand_paths(sql: &str) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn expand_records(sql: &str) -> Result<String> {
+pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Result<String> {
     let tokens = fastql_parser::tokenize(sql)?;
     let mut out = String::new();
     let mut copied = 0;
@@ -3748,18 +3879,40 @@ pub(crate) fn expand_records(sql: &str) -> Result<String> {
                 tokens[i + 3].text.to_ascii_lowercase()
             );
             let mapped = match namespace.as_str() {
+                "search::near" => "__fastdb_near",
+                "search::text" => "__fastdb_text",
+                "search::vector" => "__fastdb_vector",
                 "type::record" => "__fastdb_record_value",
+                "geo::cell" => "__fastdb_h_geo_cell",
+                "geo::cell_center" => "__fastdb_h_geo_cell_center",
+                "geo::point" => "__fastdb_h_geo_point",
+                "geo::distance" => "__fastdb_h_geo_distance",
+                "geo::within" => "__fastdb_h_geo_within",
                 "string::slugify" => "__fastdb_h_string_slugify",
                 "string::normalize" => "__fastdb_h_string_normalize",
                 "record::id" => "__fastdb_h_record_id",
                 "record::fetch" => "__fastdb_fetch",
+                "relation::fetch" => "__fastdb_relation_fetch",
                 "record::table" => "__fastdb_h_record_table",
                 "array::new" => "__fastdb_h_array_new",
                 "array::append" => "__fastdb_h_array_append",
                 "doc::get" => "__fastdb_h_doc_get",
                 "doc::has" => "__fastdb_h_doc_has",
                 "doc::row" => "__fastdb_h_doc_row",
-                _ => return Err(unsupported("unknown function namespace")),
+                _ => {
+                    let connection =
+                        connection.ok_or_else(|| unsupported("unknown function namespace"))?;
+                    let definition = connection.user_function(&namespace)?;
+                    let json = serde_json::to_string(&definition)?.replace('\'', "''");
+                    out.push_str(&sql[copied..tokens[i].start]);
+                    out.push_str(&format!("__fastdb_h_udf('{json}'"));
+                    if tokens.get(i + 5).is_some_and(|t| t.text != ")") {
+                        out.push(',');
+                    }
+                    copied = tokens[i + 4].end;
+                    i += 5;
+                    continue;
+                }
             };
             out.push_str(&sql[copied..tokens[i].start]);
             out.push_str(mapped);
@@ -3826,6 +3979,7 @@ struct SelectOptions<'a> {
     snapshot: Option<Option<&'a crate::Document>>,
     guarded: bool,
     native_insert: Option<&'a Stmt>,
+    insert_source: bool,
     result_limits: Option<crate::ResultLimits>,
 }
 // A single-execution lowering result. Typed parameters may already be embedded
@@ -3834,6 +3988,7 @@ struct LoweredSelect {
     command: Cmd,
     typed: Vec<bool>,
     fetched: Vec<bool>,
+    inverse: std::collections::BTreeMap<usize, crate::relations::PreparedRelation>,
     names: Vec<String>,
     consumed: std::collections::BTreeSet<String>,
     ignore_unused: bool,
@@ -3873,20 +4028,45 @@ impl Connection {
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<crate::ProfiledQuery> {
-        let fastql_parser::Statement::Sql(sql) = fastql_parser::parse(sql)? else {
-            return Err(Error::Unsupported(
-                "profiling requires one SQL SELECT".into(),
-            ));
+        if crate::udf::has_calls(sql)? {
+            return self.atomic(|| self.profile_select_snapshot(sql, params, limits));
+        }
+        self.profile_select_snapshot(sql, params, limits)
+    }
+    fn profile_select_snapshot(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        limits: Option<crate::ResultLimits>,
+    ) -> Result<crate::ProfiledQuery> {
+        let sql = match fastql_parser::parse(sql)? {
+            fastql_parser::Statement::SelectRecordProjection { target, fields } => {
+                return self.profile_record_projection(&target, &fields, params, limits);
+            }
+            fastql_parser::Statement::Sql(sql) => sql,
+            _ => {
+                return Err(Error::Unsupported(
+                    "profiling requires one SQL SELECT".into(),
+                ))
+            }
         };
-        let expanded = expand_paths(&expand_records(&sql)?)?;
+        let expanded = expand_paths(&expand_records(Some(self), &sql)?)?;
         if !matches!(parsed(&expanded)?, Cmd::Stmt(Stmt::Select(_))) {
             return Err(Error::Unsupported(
                 "profiling requires one SQL SELECT".into(),
             ));
         }
-        let has_fetch = fastql_parser::tokenize(&expanded)?
-            .iter()
-            .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch");
+        let has_fetch = fastql_parser::tokenize(&expanded)?.iter().any(|t| {
+            t.kind == fastql_parser::Kind::Word
+                && matches!(
+                    t.text.as_str(),
+                    "__fastdb_fetch"
+                        | "__fastdb_relation_fetch"
+                        | "__fastdb_near"
+                        | "__fastdb_text"
+                        | "__fastdb_vector"
+                )
+        });
         let execute = || match self.lower_collection_select(
             &sql,
             &expanded,
@@ -3929,7 +4109,7 @@ impl Connection {
         )
     }
     pub(crate) fn validate_write_source(&self, sql: &str, params: &Parameters) -> Result<()> {
-        let expanded = expand_paths(&expand_records(sql)?)?;
+        let expanded = expand_paths(&expand_records(Some(self), sql)?)?;
         let plan = self.lower_collection_select(
             sql,
             &expanded,
@@ -3970,6 +4150,7 @@ impl Connection {
             SelectOptions {
                 trusted: true,
                 positional: true,
+                insert_source: true,
                 result_limits: self.write_buffer_limits,
                 ..Default::default()
             },
@@ -4078,11 +4259,31 @@ impl Connection {
         params: &Parameters,
         options: SelectOptions<'_>,
     ) -> Result<Option<QueryResult>> {
-        let expanded = expand_paths(&expand_records(sql)?)?;
+        if !options.guarded && crate::udf::has_calls(sql)? {
+            return self.atomic(|| {
+                self.collection_select_options(
+                    sql,
+                    params,
+                    SelectOptions {
+                        guarded: true,
+                        ..options
+                    },
+                )
+            });
+        }
+        let expanded = expand_paths(&expand_records(Some(self), sql)?)?;
         if !options.guarded
-            && fastql_parser::tokenize(&expanded)?
-                .iter()
-                .any(|t| t.kind == fastql_parser::Kind::Word && t.text == "__fastdb_fetch")
+            && fastql_parser::tokenize(&expanded)?.iter().any(|t| {
+                t.kind == fastql_parser::Kind::Word
+                    && matches!(
+                        t.text.as_str(),
+                        "__fastdb_fetch"
+                            | "__fastdb_relation_fetch"
+                            | "__fastdb_near"
+                            | "__fastdb_text"
+                            | "__fastdb_vector"
+                    )
+            })
         {
             return self.atomic(|| {
                 self.collection_select_options(
@@ -4379,7 +4580,7 @@ impl Connection {
                 if matches!(
                     table.as_ref(),
                     SelectTable::Table(..) | SelectTable::Select(..)
-                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree"))
+                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector"))
                 {
                     local.push(source(
                         self,
@@ -4606,6 +4807,7 @@ impl Connection {
             snapshot,
             guarded: _,
             native_insert,
+            insert_source,
             result_limits: _,
         } = options;
         // Validate user expressions before introducing any internal function or
@@ -4980,7 +5182,7 @@ impl Connection {
                                         table.as_ref(),
                                         SelectTable::Table(..) | SelectTable::Select(..)
                                     ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _)
-                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree"))
+                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector"))
                                     {
                                         resolved.push(source(
                                             self,
@@ -5347,6 +5549,7 @@ impl Connection {
                 command: cmd,
                 typed: vec![true; width],
                 fetched: vec![false; width],
+                inverse: Default::default(),
                 names: (1..=width).map(|i| format!("column{i}")).collect(),
                 consumed: scope.consumed.into_inner(),
                 ignore_unused,
@@ -5708,7 +5911,8 @@ impl Connection {
             };
         }
         expression_subqueries.extend(native_expression_subqueries);
-        let distinct = !sources.is_empty() && matches!(distinctness, Some(Distinctness::Distinct));
+        let explicit_distinct = matches!(distinctness, Some(Distinctness::Distinct));
+        let distinct = !sources.is_empty() && explicit_distinct;
         if distinct {
             *distinctness = None;
         }
@@ -5742,6 +5946,7 @@ impl Connection {
         let original_columns = columns.clone();
         let mut typed = Vec::new();
         let mut fetched = Vec::new();
+        let mut inverse = std::collections::BTreeMap::new();
         let mut names = Vec::new();
         let mut rewritten = Vec::new();
         for column in columns.iter() {
@@ -5811,11 +6016,13 @@ impl Connection {
                     } else {
                         public_expression_name(&expr)?
                     };
-                    let is_fetch = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch");
+                    let is_inverse = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_relation_fetch");
+                    let is_fetch = is_inverse
+                        || matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_fetch");
                     fetched.push(is_fetch);
                     if is_fetch {
                         if snapshot.is_some() {
-                            return Err(unsupported("record::fetch in RETURNING"));
+                            return Err(unsupported("fetch in RETURNING"));
                         }
                         let Expr::FunctionCall {
                             args,
@@ -5828,16 +6035,35 @@ impl Connection {
                         else {
                             unreachable!();
                         };
-                        if args.len() != 1
-                            || distinctness.is_some()
+                        if (if is_inverse {
+                            !(2..=4).contains(&args.len())
+                        } else {
+                            args.len() != 1
+                        }) || distinctness.is_some()
                             || filter_over.filter_clause.is_some()
                             || filter_over.over_clause.is_some()
                             || !order_by.is_empty()
                             || !within_group.is_empty()
                         {
                             return Err(unsupported(
-                                "record::fetch expects one unmodified reference",
+                                "fetch requires unmodified arguments (record: 1, relation: 2 to 4)",
                             ));
+                        }
+                        if is_inverse {
+                            if insert_source {
+                                return Err(unsupported("inverse fetch in INSERT SELECT"));
+                            }
+                            if explicit_distinct {
+                                return Err(unsupported("DISTINCT on inverse fetch"));
+                            }
+                            inverse.insert(
+                                names.len(),
+                                self.prepare_relation(
+                                    args,
+                                    params,
+                                    &mut scope.consumed.borrow_mut(),
+                                )?,
+                            );
                         }
                         expr = *args[0].clone();
                         scope.typed(&mut expr)?;
@@ -6287,6 +6513,7 @@ impl Connection {
                 command: cmd,
                 typed,
                 fetched,
+                inverse,
                 names,
                 consumed: scope.consumed.into_inner(),
                 ignore_unused,
@@ -6528,6 +6755,7 @@ impl Connection {
                 command: Cmd::Stmt(Stmt::Select(result)),
                 typed: vec![true; names.len()],
                 fetched: vec![false; names.len()],
+                inverse: Default::default(),
                 names,
                 consumed,
                 ignore_unused: options.ignore_unused,
@@ -6593,6 +6821,7 @@ impl Connection {
             command,
             typed: vec![true; width],
             fetched: vec![false; width],
+            inverse: Default::default(),
             names,
             consumed,
             ignore_unused: options.ignore_unused,
@@ -6610,6 +6839,7 @@ impl Connection {
             command: cmd,
             typed,
             fetched,
+            inverse,
             names,
             consumed,
             ignore_unused,
@@ -6658,6 +6888,7 @@ impl Connection {
                 command: Cmd::Stmt(insert),
                 typed: Vec::new(),
                 fetched: Vec::new(),
+                inverse: Default::default(),
                 names: Vec::new(),
                 consumed,
                 ignore_unused: false,
@@ -6669,6 +6900,7 @@ impl Connection {
             command: cmd,
             typed,
             fetched,
+            inverse,
             names,
             consumed,
             ignore_unused,
@@ -6676,6 +6908,97 @@ impl Connection {
             native_insert: false,
         })
     }
+    pub(crate) fn profile_record_projection(
+        &self,
+        target: &crate::Record,
+        fields: &[fastql_parser::RecordProjection],
+        params: &Parameters,
+        limits: Option<crate::ResultLimits>,
+    ) -> Result<crate::ProfiledQuery> {
+        if let Some(name) = params.keys().next() {
+            return Err(Error::Parameter(format!("unused binding {name}")));
+        }
+        self.atomic(|| {
+            let collection = self.catalog(&target.table)?;
+            let target = crate::normalized_id(target, &collection.name)?;
+            let mut columns = Vec::with_capacity(fields.len());
+            for field in fields {
+                let expression = if field.path.is_empty() {
+                    "doc::row(brace_source)".to_owned()
+                } else {
+                    crate::validate_path(&field.path)?;
+                    format!(
+                        "brace_source.{}",
+                        field
+                            .path
+                            .iter()
+                            .map(|part| quote(part))
+                            .collect::<Vec<_>>()
+                            .join(".")
+                    )
+                };
+                let name = field.alias.clone().unwrap_or_else(|| {
+                    if field.path.is_empty() {
+                        "document".into()
+                    } else {
+                        field.path.join(".")
+                    }
+                });
+                columns.push(format!("{expression} AS {}", quote(&name)));
+            }
+            let sql = format!(
+                "SELECT {} FROM {} AS brace_source WHERE brace_source.id=?1",
+                columns.join(","),
+                quote(&collection.name)
+            );
+            let bound = Parameters::from([("?1".into(), Value::Record(target))]);
+            let expanded = expand_paths(&expand_records(Some(self), &sql)?)?;
+            let plan = self
+                .lower_collection_select(&sql, &expanded, &bound, SelectOptions::default())?
+                .ok_or_else(|| {
+                    Error::Storage("record projection did not resolve a collection".into())
+                })?;
+            // The ID predicate produces zero or one row. Final output accounting
+            // includes embedded objects and every expanded reference occurrence.
+            let mut profile = self.execute_lowered_profiled(plan, &bound)?;
+            let mut budget = crate::budget::ResultBudget::new(limits, &profile.result.columns)?;
+            for row in &mut profile.result.rows {
+                let mut references = Vec::new();
+                let mut positions = Vec::new();
+                let mut fetched = vec![false; row.len()];
+                for (position, (field, value)) in fields.iter().zip(row.iter()).enumerate() {
+                    if field.expand {
+                        match value {
+                            Value::Record(_) => {
+                                references.push(value.clone());
+                                positions.push(position);
+                                fetched[position] = true;
+                            }
+                            Value::Object(_) | Value::Null => {}
+                            _ => {
+                                return Err(Error::Validation(
+                                    "brace wildcard requires an object, record or null".into(),
+                                ))
+                            }
+                        }
+                    }
+                }
+                budget.row_with_fetches(row, &fetched)?;
+                if !references.is_empty() {
+                    let (values, metrics) =
+                        self.fetch_records_profiled_with_budget(&references, Some(&mut budget))?;
+                    for (position, value) in positions.into_iter().zip(values) {
+                        row[position] = value;
+                    }
+                    profile.metrics.fetch_batches += metrics.batches;
+                    profile.metrics.fetch_rows_read += metrics.rows_read;
+                    profile.metrics.fetch_vm_steps += metrics.vm_steps;
+                }
+            }
+            Ok(profile)
+        })
+    }
+
     fn execute_lowered_select(
         &self,
         plan: LoweredSelect,
@@ -6701,6 +7024,7 @@ impl Connection {
             command: cmd,
             typed,
             fetched,
+            inverse,
             names,
             consumed,
             ignore_unused,
@@ -6785,25 +7109,47 @@ impl Connection {
         execution?;
         let mut metrics = crate::QueryMetrics::from_statement(&statement);
         if !native_insert && !explain && fetched.iter().any(|v| *v) {
-            let refs = rows
-                .iter()
-                .flat_map(|row| {
-                    row.iter()
-                        .zip(&fetched)
-                        .filter(|(_, fetch)| **fetch)
-                        .map(|(value, _)| value.clone())
-                })
-                .collect::<Vec<_>>();
-            let (values, fetch_metrics) =
-                self.fetch_records_profiled_with_budget(&refs, Some(&mut budget))?;
-            metrics.fetch_batches = fetch_metrics.batches;
-            metrics.fetch_rows_read = fetch_metrics.rows_read;
-            metrics.fetch_vm_steps = fetch_metrics.vm_steps;
-            let mut values = values.into_iter();
-            for row in &mut rows {
-                for (value, fetch) in row.iter_mut().zip(&fetched) {
+            let mut forward = Vec::new();
+            let mut reverse = Vec::new();
+            for row in &rows {
+                for (position, (value, fetch)) in row.iter().zip(&fetched).enumerate() {
                     if *fetch {
-                        *value = values.next().expect("matching fetch count");
+                        if inverse.contains_key(&position) {
+                            reverse.push((position, value.clone()));
+                        } else {
+                            forward.push(value.clone());
+                        }
+                    }
+                }
+            }
+            let mut forward_values = Vec::new();
+            if !forward.is_empty() {
+                let (values, counters) =
+                    self.fetch_records_profiled_with_budget(&forward, Some(&mut budget))?;
+                forward_values = values;
+                metrics.fetch_batches += counters.batches;
+                metrics.fetch_rows_read += counters.rows_read;
+                metrics.fetch_vm_steps += counters.vm_steps;
+            }
+            let mut reverse_values = Vec::new();
+            if !reverse.is_empty() {
+                let (values, counters) = self.fetch_relations(&reverse, &inverse, &mut budget)?;
+                reverse_values = values;
+                metrics.fetch_batches += counters.batches;
+                metrics.fetch_rows_read += counters.rows_read;
+                metrics.fetch_vm_steps += counters.vm_steps;
+            }
+            let mut forward_values = forward_values.into_iter();
+            let mut reverse_values = reverse_values.into_iter();
+            for row in &mut rows {
+                for (position, (value, fetch)) in row.iter_mut().zip(&fetched).enumerate() {
+                    if *fetch {
+                        *value = if inverse.contains_key(&position) {
+                            reverse_values.next()
+                        } else {
+                            forward_values.next()
+                        }
+                        .expect("matching fetch count");
                     }
                 }
             }
@@ -7159,7 +7505,7 @@ mod lowering_tests {
         )
         .unwrap();
         let sql = "SELECT flag,data,id FROM docs WHERE flag=$flag";
-        let expanded = expand_paths(&expand_records(sql).unwrap()).unwrap();
+        let expanded = expand_paths(&expand_records(None, sql).unwrap()).unwrap();
         let plan = c
             .lower_collection_select(sql, &expanded, &params, SelectOptions::default())
             .unwrap()
@@ -7179,7 +7525,7 @@ mod lowering_tests {
             ]]
         );
         let source = "SELECT data FROM docs WHERE flag=$flag";
-        let expanded = expand_paths(&expand_records(source).unwrap()).unwrap();
+        let expanded = expand_paths(&expand_records(None, source).unwrap()).unwrap();
         let Cmd::Stmt(insert) =
             parsed("INSERT INTO copied SELECT data FROM docs WHERE flag=$flag RETURNING hex(data)")
                 .unwrap()

@@ -1,0 +1,9 @@
+{
+  "rustVersion": "1.88.0",
+  "target": "x86_64-unknown-linux-gnu",
+  "componentUrl": "https://static.rust-lang.org/dist/2025-06-26/rustc-1.88.0-x86_64-unknown-linux-gnu.tar.xz",
+  "componentSha256": "b049fd57fce274d10013e2cf0e05f215f68f6580865abc52178f66ae9bf43fd8",
+  "sourcePath": "share/doc/rust/COPYRIGHT-library.html",
+  "fileSha256": "3d3f60160f5214efa0a7fd804102d02ce9ea6af04b5249a19eeb243450246ae9",
+  "scope": "Unmodified standard-library notice file from the installed pinned Rust compiler distribution; includes the standard library and its build dependencies, not a claim every listed component is linked."
+}

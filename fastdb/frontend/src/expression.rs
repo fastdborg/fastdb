@@ -259,6 +259,11 @@ impl Connection {
             return Ok(value);
         }
         match name.to_ascii_lowercase().as_str() {
+            "geo::cell" => crate::spatial::call("cell", &args),
+            "geo::cell_center" => crate::spatial::call("cell_center", &args),
+            "geo::point" => crate::spatial::call("point", &args),
+            "geo::distance" => crate::spatial::call("distance", &args),
+            "geo::within" => crate::spatial::call("within", &args),
             "string::slugify" => crate::bundled::call("slugify", &args),
             "string::normalize" => crate::bundled::call("normalize", &args),
             "type::record" => match args.as_slice() {
@@ -326,7 +331,10 @@ impl Connection {
                 )),
             },
             _ => {
-                if name.contains("::") || name.to_ascii_lowercase().starts_with("__fastdb_") {
+                if name.contains("::") {
+                    return self.call_user_function(name, &args);
+                }
+                if name.to_ascii_lowercase().starts_with("__fastdb_") {
                     return Err(Error::Unsupported(format!("document function {name}")));
                 }
                 let args_sql = (1..=args.len())

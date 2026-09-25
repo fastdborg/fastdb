@@ -9,6 +9,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
         let api = connection.engine._build_turso_ext();
         let result = [
             (
+                c"__fastdb_geo_distance",
+                geo_distance as turso_ext::ScalarFunction,
+                4,
+            ),
+            (
                 c"__fastdb_vector_field",
                 vector_field as turso_ext::ScalarFunction,
                 2,
@@ -122,7 +127,7 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             }
         });
         connection.engine._free_extension_ctx(api);
-        result
+        result.and_then(|_| crate::udf::register(connection))
     }
 }
 fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
@@ -272,7 +277,7 @@ fn sort_encoded(args: &[ExtValue]) -> ExtValue {
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
 
-fn decode_arg(arg: &ExtValue) -> Result<Value> {
+pub(crate) fn decode_arg(arg: &ExtValue) -> Result<Value> {
     if arg.value_type() == ValueType::Null {
         return Ok(Value::Null);
     }
@@ -442,6 +447,11 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             .ok_or_else(|| Error::Validation("helper name".into()))?;
         let args = args.iter().map(decode_arg).collect::<Result<Vec<_>>>()?;
         let value = match (name, args.as_slice()) {
+            ("geo_cell", _) => crate::spatial::call("cell", &args)?,
+            ("geo_cell_center", _) => crate::spatial::call("cell_center", &args)?,
+            ("geo_point", _) => crate::spatial::call("point", &args)?,
+            ("geo_distance", _) => crate::spatial::call("distance", &args)?,
+            ("geo_within", _) => crate::spatial::call("within", &args)?,
             ("string_slugify", _) => crate::bundled::call("slugify", &args)?,
             ("string_normalize", _) => crate::bundled::call("normalize", &args)?,
             ("array_new", _) => Value::Array(args),
@@ -571,6 +581,22 @@ fn vector_concat(args: &[ExtValue]) -> ExtValue {
             unreachable!("vector result");
         };
         Ok(ExtValue::from_blob(bytes))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_geo_distance")]
+fn geo_distance(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let args = args
+            .iter()
+            .map(|value| match value.value_type() {
+                ValueType::Integer => Ok(Value::Integer(value.to_integer().expect("integer"))),
+                ValueType::Float => Ok(Value::Number(value.to_float().expect("float"))),
+                _ => Err(Error::Storage("invalid spatial index coordinate".into())),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        scalar_result(&crate::spatial::distance_coordinates(&args)?)
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
@@ -1052,13 +1078,33 @@ mod vector_field_tests {
                     drop(statement);
                     let state = c.transaction_state();
                     let rows = sql("SELECT n FROM prior ORDER BY n").rows;
-                    assert_eq!(state, crate::TransactionState::Autocommit);
-                    assert_eq!(rows, vec![vec![Value::Integer(1)]]);
+                    // Both accessor forms report read-only scalar extension
+                    // errors. The approved engine fix preserves caller work.
+                    assert_eq!(
+                        state,
+                        if outer {
+                            crate::TransactionState::Active
+                        } else {
+                            crate::TransactionState::Autocommit
+                        }
+                    );
+                    let mut expected = vec![vec![Value::Integer(1)]];
+                    if outer {
+                        expected.push(vec![Value::Integer(2)]);
+                    }
+                    assert_eq!(rows, expected);
                     sql("INSERT INTO prior VALUES(3)");
                     assert_eq!(
                         sql("SELECT count(*) FROM prior").rows,
-                        vec![vec![Value::Integer(2)]]
+                        vec![vec![Value::Integer(if outer { 3 } else { 2 })]]
                     );
+                    if outer {
+                        sql("ROLLBACK");
+                        assert_eq!(
+                            sql("SELECT n FROM prior").rows,
+                            vec![vec![Value::Integer(1)]]
+                        );
+                    }
                     (error, state, rows)
                 };
                 assert_eq!(

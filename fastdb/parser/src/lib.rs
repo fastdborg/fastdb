@@ -67,8 +67,36 @@ impl Expr {
         }
     }
 }
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordProjection {
+    /// Empty path selects the whole document.
+    pub path: Vec<String>,
+    pub expand: bool,
+    pub alias: Option<String>,
+}
 #[derive(Debug, PartialEq)]
 pub enum Statement {
+    CreateFunction {
+        name: String,
+        parameters: Vec<(String, String)>,
+        returns: String,
+        source: String,
+        replace: bool,
+    },
+    DropFunction {
+        name: String,
+        if_exists: bool,
+    },
+    DefineRelation {
+        name: String,
+        target: String,
+        source: String,
+        path: Vec<String>,
+    },
+    DropRelation {
+        name: String,
+        if_exists: bool,
+    },
     PatchWhere {
         table: String,
         value: Expr,
@@ -99,6 +127,26 @@ pub enum Statement {
         check: Option<String>,
         overwrite: bool,
     },
+    CreateVectorIndex {
+        if_not_exists: bool,
+        table: String,
+        name: String,
+        path: Vec<String>,
+        dimensions: usize,
+        metric: String,
+    },
+    CreateFullTextIndex {
+        if_not_exists: bool,
+        table: String,
+        name: String,
+        paths: Vec<Vec<String>>,
+    },
+    CreateSpatialIndex {
+        if_not_exists: bool,
+        table: String,
+        name: String,
+        path: Vec<String>,
+    },
     CreateIndex {
         if_not_exists: bool,
         table: String,
@@ -118,6 +166,10 @@ pub enum Statement {
         returning: Option<String>,
     },
     SelectRecord(Record),
+    SelectRecordProjection {
+        target: Record,
+        fields: Vec<RecordProjection>,
+    },
     Patch {
         target: Record,
         value: Expr,
@@ -326,6 +378,21 @@ impl Parser<'_> {
         let name = t.text.clone();
         self.pos += 1;
         Ok(name)
+    }
+    fn function_name(&mut self) -> Result<String> {
+        let namespace = self.name()?;
+        if !self.eat(":") || !self.eat(":") {
+            return Err(self.error("expected namespace::function"));
+        }
+        Ok(format!("{}::{}", namespace, self.name()?).to_ascii_lowercase())
+    }
+    fn function_type(&mut self) -> Result<String> {
+        let mut kind = self.name()?.to_ascii_lowercase();
+        if self.tokens.get(self.pos).is_some_and(|t| t.text == "?") {
+            self.pos += 1;
+            kind.push('?');
+        }
+        Ok(kind)
     }
     fn end(&mut self) -> bool {
         self.eat(";");
@@ -749,6 +816,76 @@ pub fn parse(input: &str) -> Result<Statement> {
         pos: 0,
     };
     validate_delimiter_depth(&p.tokens)?;
+    if p.eat("CREATE") {
+        let replace = if p.eat("OR") {
+            if !p.eat("REPLACE") {
+                return Err(p.error("expected REPLACE"));
+            }
+            true
+        } else {
+            false
+        };
+        if p.eat("FUNCTION") {
+            let name = p.function_name()?;
+            if !p.eat("(") {
+                return Err(p.error("expected parameter list"));
+            }
+            let mut parameters = Vec::new();
+            if !p.eat(")") {
+                loop {
+                    parameters.push((p.name()?, p.function_type()?));
+                    if p.eat(")") {
+                        break;
+                    }
+                    if !p.eat(",") {
+                        return Err(p.error("expected comma"));
+                    }
+                    if parameters.len() >= 32 {
+                        return Err(p.error("at most 32 parameters"));
+                    }
+                }
+            }
+            if !p.eat("RETURNS") {
+                return Err(p.error("expected RETURNS"));
+            }
+            let returns = p.function_type()?;
+            if !p.eat("LANGUAGE") || !p.eat("JAVASCRIPT") || !p.eat("AS") {
+                return Err(p.error("expected LANGUAGE JAVASCRIPT AS"));
+            }
+            let source = match p.tokens.get(p.pos) {
+                Some(token) if token.kind == Kind::String => token.text.clone(),
+                _ => return Err(p.error("expected quoted JavaScript body")),
+            };
+            p.pos += 1;
+            if !p.end() {
+                return Err(p.error("unexpected function clause"));
+            }
+            return Ok(Statement::CreateFunction {
+                name,
+                parameters,
+                returns,
+                source,
+                replace,
+            });
+        }
+    }
+    p.pos = 0;
+    if p.eat("DROP") && p.eat("FUNCTION") {
+        let if_exists = if p.eat("IF") {
+            if !p.eat("EXISTS") {
+                return Err(p.error("expected EXISTS"));
+            }
+            true
+        } else {
+            false
+        };
+        let name = p.function_name()?;
+        if !p.end() {
+            return Err(p.error("unexpected DROP FUNCTION clause"));
+        }
+        return Ok(Statement::DropFunction { name, if_exists });
+    }
+    p.pos = 0;
     if p.eat("UPSERT") {
         let target = if p.tokens.get(p.pos + 1).is_some_and(|t| t.text == ":") {
             Some(p.record()?)
@@ -788,13 +925,51 @@ pub fn parse(input: &str) -> Result<Statement> {
         let scope = p.name()?.to_ascii_lowercase();
         let name = match scope.as_str() {
             "db" => None,
-            "table" | "index" => Some(p.name()?),
-            _ => return Err(p.error("expected DB, TABLE, or INDEX")),
+            "table" | "index" | "relation" => Some(p.name()?),
+            "function" => Some(p.function_name()?),
+            _ => return Err(p.error("expected DB, TABLE, INDEX, or RELATION")),
         };
         if !p.end() {
             return Err(p.error("unexpected INFO clause"));
         }
         return Ok(Statement::Info { scope, name });
+    }
+    p.pos = 0;
+    if p.eat("DEFINE") && p.eat("RELATION") {
+        let name = p.name()?;
+        if !p.eat("ON") {
+            return Err(p.error("expected ON"));
+        }
+        let target = p.name()?;
+        if !p.eat("FROM") {
+            return Err(p.error("expected FROM"));
+        }
+        let source = p.name()?;
+        if !p.eat(".") {
+            return Err(p.error("expected source field path"));
+        }
+        let path = p.path()?;
+        if !p.end() {
+            return Err(p.error("unexpected relation clause"));
+        }
+        return Ok(Statement::DefineRelation {
+            name,
+            target,
+            source,
+            path,
+        });
+    }
+    p.pos = 0;
+    if p.eat("DROP") && p.eat("RELATION") {
+        let if_exists = p.eat("IF");
+        if if_exists && !p.eat("EXISTS") {
+            return Err(p.error("expected EXISTS"));
+        }
+        let name = p.name()?;
+        if !p.end() {
+            return Err(p.error("unexpected DROP RELATION clause"));
+        }
+        return Ok(Statement::DropRelation { name, if_exists });
     }
     p.pos = 0;
     if p.eat("DEFINE") && p.eat("FIELD") {
@@ -872,6 +1047,97 @@ pub fn parse(input: &str) -> Result<Statement> {
             nullable,
             check,
             overwrite,
+        });
+    }
+    p.pos = 0;
+    if p.eat("CREATE") && p.eat("SEARCH") && p.eat("INDEX") {
+        let if_not_exists = p.eat("IF");
+        if if_not_exists && !(p.eat("NOT") && p.eat("EXISTS")) {
+            return Err(p.error("expected IF NOT EXISTS"));
+        }
+        let name = p.name()?;
+        if !p.eat("ON") {
+            return Err(p.error("expected ON"));
+        }
+        let table = p.name()?;
+        if !p.eat("(") {
+            return Err(p.error("expected ("));
+        }
+        let mut paths = vec![p.path()?];
+        while p.eat(",") {
+            paths.push(p.path()?);
+        }
+        if !(p.eat(")") && p.eat("USING")) {
+            return Err(p.error("expected USING search kind"));
+        }
+        if p.eat("VECTOR") {
+            if paths.len() != 1 || !(p.eat("WITH") && p.eat("(")) {
+                return Err(p.error("expected one VECTOR path and WITH options"));
+            }
+            let mut dimensions = None;
+            let mut metric = None;
+            loop {
+                let option = p.name()?.to_ascii_lowercase();
+                if !p.eat("=") {
+                    return Err(p.error("expected ="));
+                }
+                let token = p
+                    .tokens
+                    .get(p.pos)
+                    .ok_or_else(|| p.error("expected option value"))?;
+                match option.as_str() {
+                    "dimensions" if dimensions.is_none() => {
+                        if token.kind != Kind::Number {
+                            return Err(p.error("expected integer dimensions"));
+                        }
+                        dimensions = Some(
+                            token
+                                .text
+                                .parse::<usize>()
+                                .map_err(|_| p.error("expected integer dimensions"))?,
+                        );
+                    }
+                    "metric" if metric.is_none() && token.kind == Kind::String => {
+                        metric = Some(token.text.clone())
+                    }
+                    _ => {
+                        return Err(p.error("expected unique dimensions and string metric options"))
+                    }
+                }
+                p.pos += 1;
+                if !p.eat(",") {
+                    break;
+                }
+            }
+            if !(p.eat(")") && p.end()) {
+                return Err(p.error("expected end of VECTOR options"));
+            }
+            return Ok(Statement::CreateVectorIndex {
+                if_not_exists,
+                table,
+                name,
+                path: paths.remove(0),
+                dimensions: dimensions.ok_or_else(|| p.error("missing dimensions"))?,
+                metric: metric.ok_or_else(|| p.error("missing metric"))?,
+            });
+        }
+        if p.eat("FULLTEXT") && p.end() {
+            return Ok(Statement::CreateFullTextIndex {
+                if_not_exists,
+                table,
+                name,
+                paths,
+            });
+        }
+        if !(p.eat("SPATIAL") && p.end()) || paths.len() != 1 {
+            return Err(p.error("expected FULLTEXT paths or one SPATIAL path"));
+        }
+        let path = paths.remove(0);
+        return Ok(Statement::CreateSpatialIndex {
+            if_not_exists,
+            table,
+            name,
+            path,
         });
     }
     p.pos = 0;
@@ -1008,6 +1274,42 @@ pub fn parse(input: &str) -> Result<Statement> {
         let target = p.record()?;
         return match verb {
             "SELECT" => {
+                if p.eat("{") {
+                    let mut fields = Vec::new();
+                    loop {
+                        let mut path = Vec::new();
+                        let mut expand = false;
+                        if !p.eat("*") {
+                            path.push(p.name()?);
+                            while p.eat(".") {
+                                if p.eat("*") {
+                                    expand = true;
+                                    break;
+                                }
+                                path.push(p.name()?);
+                            }
+                        }
+                        let alias = if p.eat("AS") { Some(p.name()?) } else { None };
+                        fields.push(RecordProjection {
+                            path,
+                            expand,
+                            alias,
+                        });
+                        if p.eat("}") {
+                            break;
+                        }
+                        if !p.eat(",") {
+                            return Err(p.error("expected comma or closing projection brace"));
+                        }
+                        if p.eat("}") {
+                            break;
+                        }
+                    }
+                    if !p.end() {
+                        return Err(p.error("unexpected record projection clause"));
+                    }
+                    return Ok(Statement::SelectRecordProjection { target, fields });
+                }
                 if !p.end() {
                     return Ok(Statement::Sql(input.into()));
                 }

@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const packageDir = path.resolve(__dirname, '../bindings/node');
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 assert(fs.existsSync(path.join(packageDir, 'fastdb.node')), 'Build the addon with fastdb/scripts/check-node.sh first');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-package-'));
 const run = (command, args, cwd) => execFileSync(command, args, {
@@ -15,20 +15,20 @@ const run = (command, args, cwd) => execFileSync(command, args, {
   env: { ...process.env, NODE_PATH: '' },
 });
 try {
-  const [packed] = JSON.parse(run(npm, ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', temporary], packageDir));
+  const packed = JSON.parse(run(pnpm, ['pack', '--json', '--pack-destination', temporary], packageDir));
   assert.deepEqual(packed.files.map(file => file.path).sort(), [
-    'LICENSE.md', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs', 'native.cjs',
+    'LICENSE.md', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'RUST-LIBRARY-NOTICES.html', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs', 'native.cjs',
   ].sort());
-  assert(packed.files.find(file => file.path === 'fastdb.node').size > 0);
-  const generated = path.join(temporary, packed.filename);
+  assert(fs.statSync(path.join(packageDir, 'fastdb.node')).size > 0);
+  const generated = path.resolve(temporary, packed.filename);
   const supplied = process.env.FASTDB_PACKAGE_TARBALL;
   if (supplied) assert(fs.readFileSync(supplied).equals(fs.readFileSync(generated)), 'Supplied candidate differs from current package');
   if (process.env.FASTDB_PACKAGE_OUTPUT) fs.copyFileSync(generated, process.env.FASTDB_PACKAGE_OUTPUT, fs.constants.COPYFILE_EXCL);
   const consumer = path.join(temporary, 'consumer');
   fs.mkdirSync(consumer);
   fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'fastdb-package-smoke', version: '0.0.0', private: true }));
-  run(npm, ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', supplied || generated], consumer);
-  for (const notice of ['THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md']) {
+  run(pnpm, ['add', '--offline', '--ignore-scripts', supplied || generated], consumer);
+  for (const notice of ['THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'RUST-LIBRARY-NOTICES.html']) {
     assert.equal(fs.readFileSync(path.join(consumer, 'node_modules/@fastdb/node', notice), 'utf8'), fs.readFileSync(path.join(packageDir, notice), 'utf8'));
   }
   fs.writeFileSync(path.join(consumer, 'smoke.cjs'), `
@@ -204,6 +204,45 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
     assert(profile.metrics.vmSteps>0n);
     const batch = await client.executeBatch("SELECT 'first' AS text; SELECT 2 AS n;");
     assert.deepEqual(batch[1].result.rows,[[2n]]);
+  }
+  async function withV2(client, initialize = false) {
+    if (initialize) {
+      await client.execute('INSERT INTO v2_users {id:v2_users:u,name:\\'Alice\\'}');
+      await client.execute('INSERT INTO v2_posts {id:v2_posts:p,title:\\'Fast database\\',author:v2_users:u,p:geo::point(100,13),v:$v}', {$v:Vector.float32([1,0])});
+      await client.execute('CREATE INDEX v2_author ON v2_posts(author)');
+      await client.execute('DEFINE RELATION v2_authored ON v2_users FROM v2_posts.author');
+      await client.execute('CREATE SEARCH INDEX v2_text ON v2_posts(title) USING FULLTEXT');
+      await client.execute("CREATE SEARCH INDEX v2_vector ON v2_posts(v) USING VECTOR WITH (dimensions=2,metric='cosine')");
+      await client.execute('CREATE SEARCH INDEX v2_spatial ON v2_posts(p) USING SPATIAL');
+      await client.execute("CREATE FUNCTION app::pkg_upper(v string) RETURNS string LANGUAGE JAVASCRIPT AS 'return v.toUpperCase();'");
+    }
+    const projected = await client.exactlyOne('SELECT v2_posts:p {title,author.* AS writer}');
+    assert.equal(projected[0],'Fast database');
+    assert.equal(projected[1].name,'Alice');
+    const inverse = await client.exactlyOne("SELECT relation::fetch(v2_users:u,'v2_authored',20)");
+    assert.deepEqual(inverse[0].map(row=>row.id),[new Record('v2_posts','p')]);
+    const queries = [
+      "SELECT id FROM search::text('v2_text','database',20)",
+      "SELECT id FROM search::vector('v2_vector',vector32('[1,0]'),1)",
+      "SELECT id FROM search::near('v2_spatial',geo::point(100,13),1)",
+    ];
+    for (const query of queries) assert.deepEqual(await client.all(query),[[new Record('v2_posts','p')]]);
+    assert.deepEqual(await client.exactlyOne('SELECT geo::cell(p,7) FROM v2_posts'),['87658b314ffffff']);
+    assert.deepEqual(await client.exactlyOne("SELECT app::pkg_upper('hello')"),['HELLO']);
+    await client.execute('BEGIN');
+    try {
+      await client.execute("UPDATE v2_posts SET title='changed',p=geo::point(0,0),v=vector32('[0,1]')");
+      assert.deepEqual(await client.all(queries[0]),[]);
+      assert.deepEqual(await client.all(queries[2]),[]);
+    } finally { await client.execute('ROLLBACK'); }
+    for (const query of queries) assert.deepEqual(await client.all(query),[[new Record('v2_posts','p')]]);
+    await client.execute('BEGIN');
+    try {
+      await client.execute('DROP INDEX v2_text');
+      assert.deepEqual(await client.all('PRAGMA integrity_check'),[['ok']]);
+    } finally { await client.execute('ROLLBACK'); }
+    assert.deepEqual(await client.all(queries[0]),[[new Record('v2_posts','p')]]);
+    assert.deepEqual(await client.all('PRAGMA integrity_check'),[['ok']]);
   }
   async function withVectorFields(client) {
     await client.execute('BEGIN');
@@ -619,6 +658,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual(db.exactlyOne('SELECT $v AS v', {$v: vector})[0], vector);
     }
     await withVectorFields(db);
+    await withV2(db, true);
     await withDirectJson(db);
     await withMaximumDepth(db,true);
     await withCompositeCounts(db);
@@ -634,6 +674,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual((await worker.exactlyOne('SELECT $v AS v', {$v: vector}))[0], vector);
     }
     await withVectorFields(worker);
+    await withV2(worker);
     await withDirectJson(worker);
     await withMaximumDepth(worker);
     const row = await worker.exactlyOne('SELECT id,value FROM docs');
@@ -721,6 +762,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
   await assert.rejects(worker.all('SELECT 1'), error=>isFastDBError(error) && error.code==='FDB_CLOSED' && !Object.hasOwn(error,'transaction'));
   const reopened = new Database(file);
   try {
+    await withV2(reopened);
     assert.equal(reopened.exactlyOne('SELECT value FROM docs')[0], 9223372036854775807n);
     assert.equal(reopened.checkCollectionIntegrity('docs').indexEntries, 1n);
     assert.deepEqual(reopened.execute('SELECT payload FROM depth_docs').rows,[[deepPayload]]);
@@ -848,7 +890,7 @@ async function open() {
 void open;
 `);
   run(process.execPath, [path.join(packageDir, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs', 'smoke.ts'], consumer);
-  console.log(`Node package smoke passed: ${process.platform}/${process.arch}, Node ${process.versions.node}, ${packed.entryCount} files, ${packed.size} packed bytes`);
+  console.log(`Node package smoke passed: ${process.platform}/${process.arch}, Node ${process.versions.node}, ${packed.files.length} files, ${fs.statSync(generated).size} packed bytes`);
 } finally {
   fs.rmSync(temporary, { recursive: true, force: true });
 }

@@ -11,6 +11,55 @@ fn setup() -> (Database, fastdb::Connection) {
     (db, c)
 }
 #[test]
+fn caller_storage_preserves_catalog_indexes_and_rollback_across_reopen() {
+    // A file-shaped path with a memory backend ensures every open, including
+    // catalog initialization and WAL access, uses the supplied storage.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("custom-storage.db");
+    let io = std::sync::Arc::new(turso_core::MemoryIO::new());
+    {
+        let db = Database::open_with_io(path.to_str().unwrap(), io.clone()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE users");
+        q(&c, "DEFINE FIELD name ON users TYPE string REQUIRED");
+        q(&c, "CREATE UNIQUE INDEX users_name ON users(name)");
+        q(&c, "INSERT INTO users {id:users:u1,name:'Alice'}");
+        q(&c, "BEGIN");
+        q(&c, "UPDATE users:u1 {name:'Rolled back'}");
+        q(&c, "ROLLBACK");
+        q(&c, "PRAGMA wal_checkpoint(TRUNCATE)");
+    }
+    assert!(!path.exists());
+    let db = Database::open_with_io(path.to_str().unwrap(), io).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        q(&c, "SELECT name FROM users WHERE name='Alice'").rows,
+        vec![vec![Value::String("Alice".into())]]
+    );
+    assert_eq!(
+        c.execute(
+            "INSERT INTO users {id:users:u2,name:'Alice'}",
+            &Parameters::new()
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_CONSTRAINT"
+    );
+    assert_eq!(
+        c.execute("INSERT INTO users {id:users:u2}", &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_VALIDATION"
+    );
+    let audit = c
+        .check_collection_integrity("users", Default::default())
+        .unwrap();
+    assert_eq!(
+        (audit.documents, audit.indexes, audit.index_entries),
+        (1, 1, 1)
+    );
+}
+#[test]
 fn upsert_inserts_or_shallow_patches_only_its_id() {
     let (_db, c) = setup();
     q(
@@ -565,4 +614,35 @@ fn missing_catalog_cannot_hide_persisted_collection_storage() {
         .expect("orphan storage must reject reconnect");
     assert_eq!(error.code(), "FDB_STORAGE");
     assert!(error.to_string().contains("orphan managed storage"));
+}
+
+#[test]
+fn reopening_rejects_missing_indexes_and_unexpected_managed_dependencies() {
+    for mutation in [
+        "DROP INDEX docs_n",
+        "CREATE INDEX unexpected ON __fastdb_catalog(metadata)",
+        "CREATE INDEX unexpected ON __fastdb_c_646f6373(doc)",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("dependencies.db");
+        let path = path.to_str().unwrap();
+        {
+            let db = Database::open(path).unwrap();
+            let c = db.connect().unwrap();
+            q(&c, "CREATE TABLE docs");
+            q(&c, "CREATE INDEX docs_n ON docs(n)");
+            q(&c, "INSERT INTO docs {n:1}");
+        }
+        {
+            let engine = turso_core::Database::open_file(
+                turso_core::Database::io_for_path(path).unwrap(),
+                path,
+            )
+            .unwrap();
+            engine.connect().unwrap().execute(mutation).unwrap();
+        }
+        let db = Database::open(path).unwrap();
+        let error = db.connect().err().expect(mutation);
+        assert_eq!(error.code(), "FDB_STORAGE", "{mutation}");
+    }
 }

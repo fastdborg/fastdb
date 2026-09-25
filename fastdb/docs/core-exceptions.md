@@ -10,7 +10,7 @@ No automatic removal or periodic monitoring is configured.
 |---|---|---|
 | Trigger interruption `ded389aea` | `OpProgram` preserves interruption versus contention; keep the FastDB after-write trigger cancellation regression and affected native trigger suite. [Review](trigger-interrupt-review.md). | Upstream propagates Interrupt correctly through subprograms, with saved state and unchanged Busy handling. |
 | FTS cache isolation `fb246a8e4` | `test_fts_cache_preserves_connection_snapshots`: no uncommitted membership/score leaks; existing reader snapshot survives writer commit. [Review](proposals/fts-cache-snapshot.md). | Upstream directory caching is scoped to the owning pager or otherwise proves equivalent isolation and rollback behavior. |
-| First FULL commit WAL sync `fe2ccd404` | Native first-commit sync probe and FULL/NORMAL/OFF controls; browser flush-fault matrix. [Review](proposals/wal-first-commit-sync.md). | Upstream flushes prepared frames before publishing/acknowledging FULL commits, including the first commit. |
+| First FULL commit WAL sync `fe2ccd404` | Native first-commit sync probe and FULL/NORMAL/OFF controls. The historical browser flush-fault matrix is supporting evidence, not a current gate. [Review](proposals/wal-first-commit-sync.md). | Upstream flushes prepared frames before publishing/acknowledging FULL commits, including the first commit. |
 | FTS backing storage `12109384a` | `test_fts_backing_storage_integrity`, `test_drop_table_frees_backing_and_ordinary_indexes`, `test_fts_backing_storage_physical_corruption`; upgrade/restore rehearsal. [Review](proposals/fts-integrity.md). | Upstream excludes backing trees only from inappropriate logical counts, retains physical checks, and reclaims all backing roots on teardown/rollback. Existing orphan pages still need separate handling. |
 | Scalar read errors `f26014f04` | `scalar_read_error_preserves_transactions_and_named_savepoints`, FastDB user-function tests and Node cancellation/transaction tests. [Review](proposals/udf-error-transaction.md). | Upstream read-only extension failures preserve caller transactions, savepoints and changes(), while autocommit cleanup and writer rollback controls pass. |
 
@@ -34,7 +34,8 @@ requested future browser work. See [the removal record](browser-removal.md).
 - [ ] If upstream is only partially equivalent, retain the necessary portion and
   document its revised scope. Materially new core behavior needs separate review.
 - [ ] Run the affected upstream tests and combined FastDB acceptance. For storage
-  changes include upgrade/restore and faults; for WASI include installed browsers.
+  changes include native upgrade/restore and fault checks. Browser/WASI checks
+  are outside the active native scope.
 - [ ] Update this register, UPSTREAM.md, proposal status and release provenance in
   the sync commit. Preserve the regression even when the local patch is removed.
 

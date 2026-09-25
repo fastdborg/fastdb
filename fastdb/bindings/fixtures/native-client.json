@@ -1,0 +1,809 @@
+[
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT $v AS x,$v AS x",
+      "parameters": {
+        "$v": {
+          "type": "Object",
+          "value": {
+            "largest": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "smallest": {
+              "type": "Integer",
+              "value": "-9223372036854775808"
+            },
+            "negative_zero": {
+              "type": "Number",
+              "value": "8000000000000000"
+            },
+            "tiny": {
+              "type": "Number",
+              "value": "0000000000000001"
+            },
+            "nothing": {
+              "type": "Null"
+            },
+            "truth": {
+              "type": "Boolean",
+              "value": false
+            },
+            "text": {
+              "type": "String",
+              "value": "Unicode ภาษาไทย α\u0000 quote\""
+            },
+            "binary": {
+              "type": "Binary",
+              "value": [
+                0,
+                255,
+                1
+              ]
+            },
+            "empty_array": {
+              "type": "Array",
+              "value": []
+            },
+            "empty_object": {
+              "type": "Object",
+              "value": {}
+            },
+            "record": {
+              "type": "Record",
+              "value": {
+                "table": "docs",
+                "key": {
+                  "type": "String",
+                  "value": "α"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rows": [
+      [
+        {
+          "type": "Object",
+          "value": {
+            "largest": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "smallest": {
+              "type": "Integer",
+              "value": "-9223372036854775808"
+            },
+            "negative_zero": {
+              "type": "Number",
+              "value": "8000000000000000"
+            },
+            "tiny": {
+              "type": "Number",
+              "value": "0000000000000001"
+            },
+            "nothing": {
+              "type": "Null"
+            },
+            "truth": {
+              "type": "Boolean",
+              "value": false
+            },
+            "text": {
+              "type": "String",
+              "value": "Unicode ภาษาไทย α\u0000 quote\""
+            },
+            "binary": {
+              "type": "Binary",
+              "value": [
+                0,
+                255,
+                1
+              ]
+            },
+            "empty_array": {
+              "type": "Array",
+              "value": []
+            },
+            "empty_object": {
+              "type": "Object",
+              "value": {}
+            },
+            "record": {
+              "type": "Record",
+              "value": {
+                "table": "docs",
+                "key": {
+                  "type": "String",
+                  "value": "α"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "Object",
+          "value": {
+            "largest": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "smallest": {
+              "type": "Integer",
+              "value": "-9223372036854775808"
+            },
+            "negative_zero": {
+              "type": "Number",
+              "value": "8000000000000000"
+            },
+            "tiny": {
+              "type": "Number",
+              "value": "0000000000000001"
+            },
+            "nothing": {
+              "type": "Null"
+            },
+            "truth": {
+              "type": "Boolean",
+              "value": false
+            },
+            "text": {
+              "type": "String",
+              "value": "Unicode ภาษาไทย α\u0000 quote\""
+            },
+            "binary": {
+              "type": "Binary",
+              "value": [
+                0,
+                255,
+                1
+              ]
+            },
+            "empty_array": {
+              "type": "Array",
+              "value": []
+            },
+            "empty_object": {
+              "type": "Object",
+              "value": {}
+            },
+            "record": {
+              "type": "Record",
+              "value": {
+                "table": "docs",
+                "key": {
+                  "type": "String",
+                  "value": "α"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "columns": [
+      "x",
+      "x"
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO docs {id:docs:a,n:1,data:$v}",
+      "parameters": {
+        "$v": {
+          "type": "Object",
+          "value": {
+            "largest": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "smallest": {
+              "type": "Integer",
+              "value": "-9223372036854775808"
+            },
+            "negative_zero": {
+              "type": "Number",
+              "value": "8000000000000000"
+            },
+            "tiny": {
+              "type": "Number",
+              "value": "0000000000000001"
+            },
+            "nothing": {
+              "type": "Null"
+            },
+            "truth": {
+              "type": "Boolean",
+              "value": false
+            },
+            "text": {
+              "type": "String",
+              "value": "Unicode ภาษาไทย α\u0000 quote\""
+            },
+            "binary": {
+              "type": "Binary",
+              "value": [
+                0,
+                255,
+                1
+              ]
+            },
+            "empty_array": {
+              "type": "Array",
+              "value": []
+            },
+            "empty_object": {
+              "type": "Object",
+              "value": {}
+            },
+            "record": {
+              "type": "Record",
+              "value": {
+                "table": "docs",
+                "key": {
+                  "type": "String",
+                  "value": "α"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE UNIQUE INDEX docs_n ON docs(n)",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "BEGIN",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO docs {id:docs:b,n:2}",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SAVEPOINT nested",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO docs {id:docs:c,n:3}",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "ROLLBACK TO nested",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "RELEASE nested",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n FROM docs ORDER BY n",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "1"
+        }
+      ],
+      [
+        {
+          "type": "Integer",
+          "value": "2"
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO docs {n:2}",
+      "parameters": {}
+    },
+    "error": "FDB_CONSTRAINT",
+    "transaction": {
+      "before": "active",
+      "after": "active"
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "ROLLBACK",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n FROM docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "1"
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT data FROM docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Object",
+          "value": {
+            "largest": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "smallest": {
+              "type": "Integer",
+              "value": "-9223372036854775808"
+            },
+            "negative_zero": {
+              "type": "Number",
+              "value": "8000000000000000"
+            },
+            "tiny": {
+              "type": "Number",
+              "value": "0000000000000001"
+            },
+            "nothing": {
+              "type": "Null"
+            },
+            "truth": {
+              "type": "Boolean",
+              "value": false
+            },
+            "text": {
+              "type": "String",
+              "value": "Unicode ภาษาไทย α\u0000 quote\""
+            },
+            "binary": {
+              "type": "Binary",
+              "value": [
+                0,
+                255,
+                1
+              ]
+            },
+            "empty_array": {
+              "type": "Array",
+              "value": []
+            },
+            "empty_object": {
+              "type": "Object",
+              "value": {}
+            },
+            "record": {
+              "type": "Record",
+              "value": {
+                "table": "docs",
+                "key": {
+                  "type": "String",
+                  "value": "α"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT 1",
+      "parameters": {}
+    },
+    "error": "FDB_CANCELLED",
+    "timeout_ms": 0,
+    "transaction": {
+      "before": "autocommit",
+      "after": "autocommit"
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT $bad",
+      "parameters": {
+        "$bad": {
+          "type": "Integer",
+          "value": "9223372036854775808"
+        }
+      }
+    },
+    "error": "FDB_STORAGE"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO places {id:places:a,title:'coffee database',point:geo::point(100,13),v:vector32('[1,0]')}",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX texts ON places(title) USING FULLTEXT",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX vectors ON places(v) USING VECTOR WITH (dimensions=2,metric='cosine')",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX nearby ON places(point) USING SPATIAL",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::text('texts','coffee',10)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "places",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::vector('vectors',vector32('[1,0]'),1)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "places",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::near('nearby',geo::point(100,13),1)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "places",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT geo::cell(point,7) FROM places",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "String",
+          "value": "87658b314ffffff"
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE FUNCTION app::fail() RETURNS integer LANGUAGE JAVASCRIPT AS 'throw Error(\"fixture\");'",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "BEGIN",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO docs {id:docs:b,n:2}",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT app::fail()",
+      "parameters": {}
+    },
+    "error": "FDB_VALIDATION",
+    "transaction": {
+      "before": "active",
+      "after": "active"
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n FROM docs ORDER BY n",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "1"
+        }
+      ],
+      [
+        {
+          "type": "Integer",
+          "value": "2"
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "COMMIT",
+      "parameters": {}
+    }
+  },
+  {
+    "reopen": true
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT data FROM docs WHERE n=1",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Object",
+          "value": {
+            "largest": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "smallest": {
+              "type": "Integer",
+              "value": "-9223372036854775808"
+            },
+            "negative_zero": {
+              "type": "Number",
+              "value": "8000000000000000"
+            },
+            "tiny": {
+              "type": "Number",
+              "value": "0000000000000001"
+            },
+            "nothing": {
+              "type": "Null"
+            },
+            "truth": {
+              "type": "Boolean",
+              "value": false
+            },
+            "text": {
+              "type": "String",
+              "value": "Unicode ภาษาไทย α\u0000 quote\""
+            },
+            "binary": {
+              "type": "Binary",
+              "value": [
+                0,
+                255,
+                1
+              ]
+            },
+            "empty_array": {
+              "type": "Array",
+              "value": []
+            },
+            "empty_object": {
+              "type": "Object",
+              "value": {}
+            },
+            "record": {
+              "type": "Record",
+              "value": {
+                "table": "docs",
+                "key": {
+                  "type": "String",
+                  "value": "α"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::text('texts','coffee',10)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "places",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "BEGIN",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO docs {id:docs:c,n:3}",
+      "parameters": {}
+    }
+  },
+  {
+    "reopen": true
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n FROM docs ORDER BY n",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "1"
+        }
+      ],
+      [
+        {
+          "type": "Integer",
+          "value": "2"
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "DROP INDEX texts",
+      "parameters": {}
+    }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "PRAGMA integrity_check",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "String",
+          "value": "ok"
+        }
+      ]
+    ]
+  },
+  {
+    "request": {
+      "op": "integrity",
+      "table": "docs",
+      "max_documents": 100,
+      "max_encoded_bytes": 100000
+    },
+    "result_subset": {
+      "documents": 2,
+      "index_entries": 2
+    }
+  },
+  {
+    "request": {
+      "op": "state"
+    },
+    "result": "autocommit"
+  },
+  {
+    "request": {
+      "op": "vector",
+      "encoding": "float32",
+      "components": [
+        1,
+        2,
+        3
+      ]
+    },
+    "result_subset": {
+      "type": "Vector"
+    }
+  }
+]

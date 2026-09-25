@@ -47,6 +47,13 @@ lock: 275/264 declarations and 187/184 collected notice texts respectively, with
 four external notice gaps in each. Native platform/artifact qualification and
 complete attribution remain release requirements.
 
-Native-only scoped acceptance is running in
-`/tmp/fastdb-native-only-acceptance.log`; do not infer a final pass from the earlier
-738 Rust / 115 Node results on the preceding source.
+The standalone Rust consumer passed both V1 and V2 API fixtures after removal;
+341 registry/git identities matched the workspace lockfile. See
+`/tmp/fastdb-native-only-rust-consumer.log`.
+
+Native-only scoped acceptance completed successfully: 738 Rust tests and 115
+Node tests, no failures or ignored/skipped tests, with formatting, Clippy and
+TypeScript checks. Log: `/tmp/fastdb-native-only-acceptance.log`. The rebuilt
+Python wheel passed eight tests on each of CPython 3.10, 3.12 and 3.14.
+These checks precede the subsequent PHP/Swift/C#/Go client additions; see
+[native language clients](native-language-clients.md) for their separate scope.

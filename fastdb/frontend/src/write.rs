@@ -10,6 +10,18 @@ struct WriteSource {
     from: Option<FromClause>,
 }
 
+pub(crate) fn is_data_write(connection: &Connection, sql: &str) -> Result<bool> {
+    let normalized = crate::update::normalize(sql)?;
+    let sql = normalized.as_ref().map_or(sql, |value| value.sql.as_str());
+    let expanded = expand_paths(&expand_records(Some(connection), sql)?)?;
+    Ok(matches!(
+        parsed(&expanded),
+        Ok(Cmd::Stmt(
+            Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. }
+        ))
+    ))
+}
+
 fn unsupported(message: &str) -> Error {
     Error::Unsupported(message.into())
 }
@@ -139,8 +151,11 @@ fn validate_value_expression(expr: &Expr, select_projection: bool) -> Result<()>
                 return Err(unsupported("aggregate/window VALUES expressions"));
             }
             let function = name.as_str().to_ascii_lowercase();
-            if function == "__fastdb_fetch" {
-                return Err(unsupported("record::fetch in document write expression"));
+            if matches!(
+                function.as_str(),
+                "__fastdb_fetch" | "__fastdb_relation_fetch"
+            ) {
+                return Err(unsupported("fetch in document write expression"));
             }
             if !select_projection && aggregate_function(&function, args.len()) {
                 return Err(unsupported("aggregate document write expressions"));
@@ -332,7 +347,7 @@ impl Connection {
                 | Statement::Delete { .. } => true,
                 Statement::Sql(sql) => {
                     let valid = matches!(
-                        parsed(&expand_paths(&expand_records(&sql)?)?)?,
+                        parsed(&expand_paths(&expand_records(Some(self), &sql)?)?)?,
                         Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. })
                     );
                     native_sql = Some(sql);
@@ -384,9 +399,10 @@ impl Connection {
             return Ok(QueryResult::command(documents.len() as i64));
         };
         crate::guard::internal_names(&projection)?;
-        let Cmd::Stmt(Stmt::Select(select)) = parsed(&expand_paths(&expand_records(&format!(
-            "SELECT {projection}"
-        ))?)?)?
+        let Cmd::Stmt(Stmt::Select(select)) = parsed(&expand_paths(&expand_records(
+            Some(self),
+            &format!("SELECT {projection}"),
+        )?)?)?
         else {
             return Err(unsupported("RETURNING projection"));
         };
@@ -495,6 +511,7 @@ impl Connection {
     ) -> Result<Option<QueryResult>> {
         let normalized = crate::update::normalize(sql)?;
         let expanded = expand_paths(&expand_records(
+            Some(self),
             normalized.as_ref().map_or(sql, |n| n.sql.as_str()),
         )?)?;
         let Ok(Cmd::Stmt(mut statement)) = parsed(&expanded) else {
@@ -1883,6 +1900,7 @@ mod insert_source_oracle_tests {
                         result,
                         c.transaction_state(),
                         c.run("SELECT n,v FROM items ORDER BY n", &[]).unwrap(),
+                        c.run("SELECT changes(),last_insert_rowid()", &[]).unwrap(),
                     );
                     if mode != 0 {
                         assert_eq!(

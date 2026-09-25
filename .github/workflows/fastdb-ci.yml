@@ -19,6 +19,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -28,7 +29,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.19.0
+      - name: Install pnpm
+        run: npm install --global pnpm@11.23.0
       - name: Install Node declaration checker
-        run: npm ci --prefix fastdb/bindings/node --ignore-scripts
+        run: pnpm --dir fastdb/bindings/node install --frozen-lockfile --ignore-scripts
       - name: FastDB checks
         run: fastdb/scripts/check.sh

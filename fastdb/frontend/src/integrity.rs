@@ -113,8 +113,16 @@ impl Connection {
             for index in &c.indexes {
                 let mut seen = std::collections::BTreeSet::new();
                 let mut failure = None;
-                let mut statement =
-                    self.prepare(format!("SELECT id,\"key\" FROM {}", quote(&index.storage)))?;
+                if index.kind == crate::IndexKind::FullText
+                    && self.text_count(index)? as u64 != report.documents
+                {
+                    return Err(Error::Storage("stale full-text document count".into()));
+                }
+                let mut statement = self.prepare(format!(
+                    "SELECT id,{} FROM {}",
+                    index.key_columns(),
+                    quote(&index.storage)
+                ))?;
                 let execution = crate::parser_stack(|| {
                     statement.run_with_row_callback(|row| {
                         let check = (|| -> Result<()> {
@@ -151,18 +159,18 @@ impl Connection {
                                 return Err(Error::Storage("invalid document lookup".into()));
                             };
                             let doc = crate::decode_document(body).map_err(stored)?;
-                            let expected = crate::index_scalar(
-                                crate::path_value(&doc, &index.path)
-                                    .map_err(stored)?
-                                    .unwrap_or(&Value::Null),
-                            )
-                            .map_err(stored)?;
-                            if count(&self.run("SELECT ?1 IS ?2", &[expected, key.clone()])?)? != 1
-                            {
-                                return Err(Error::Storage(format!(
-                                    "stale entry in index {}",
-                                    index.name
-                                )));
+                            let expected = index.document_keys(&doc).map_err(stored)?;
+                            let actual = std::iter::once(key).chain(values).collect::<Vec<_>>();
+                            for (expected, actual) in expected.into_iter().zip(actual) {
+                                if count(
+                                    &self.run("SELECT ?1 IS ?2", &[expected, actual.clone()])?,
+                                )? != 1
+                                {
+                                    return Err(Error::Storage(format!(
+                                        "stale entry in index {}",
+                                        index.name
+                                    )));
+                                }
                             }
                             seen.insert(id.clone());
                             Ok(())
@@ -187,6 +195,9 @@ impl Connection {
                         "missing entries in index {}",
                         index.name
                     )));
+                }
+                if index.kind == crate::IndexKind::Vector {
+                    self.audit_vector_index(index)?;
                 }
                 report.index_entries = report
                     .index_entries

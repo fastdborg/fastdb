@@ -1,3 +1,5 @@
+> Historical V1 acceptance contract. V1 is released; the [release record](release-1.0.0.md) supersedes pending/publication language below. Active work is [V2](v2-tasks.md).
+
 # Embedded V1 release contract and remaining work
 
 This is the stable-release target, not a claim that V1 is complete. The parent

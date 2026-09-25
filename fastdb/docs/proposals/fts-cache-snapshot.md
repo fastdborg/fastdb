@@ -54,11 +54,11 @@ rejection, stale-field/count auditing and cancellation of build/write with prior
 transaction work preserved (`/tmp/fastdb-v2-fts-review-unit.log`). This is focused
 evidence, not a full scoped acceptance run.
 
-The active checkout passes the new parser regression, package-scoped formatting,
+At review time, the active checkout passed the new parser regression, package-scoped formatting,
 Clippy with warnings denied for all five FastDB packages/all targets, and Node
-test-file syntax checking. The new Node full-text behavior test has not yet been
-executed against a rebuilt addon. Full active runtime acceptance remains pending
-core integration.
+test-file syntax checking. Node behavior and full runtime acceptance were deferred until the approved core
+integration. Current combined acceptance is recorded in
+[the V2-F evidence](../v2-fulltext-evidence.md).
 
 The user approved integration on 2026-09-25. The active core now includes the
 reviewed fix and the native index-method suite includes the snapshot regression.
@@ -69,4 +69,5 @@ failures/ignored, including the new snapshot regression. The command filtered ou
 import warning in upstream sync code was not changed.
 
 The isolated commit contains the core fix, native regression, this review record
-and the provenance entry. V2-F remains open until managed/client acceptance passes.
+and the provenance entry. It is commit `fb246a8e4`. Managed/client acceptance
+has now passed; see [V2-F evidence](../v2-fulltext-evidence.md).

@@ -1,0 +1,147 @@
+diff --git a/core/storage/pager.rs b/core/storage/pager.rs
+index 117f37c57..2c069f084 100644
+--- a/core/storage/pager.rs
++++ b/core/storage/pager.rs
+@@ -4307,11 +4307,15 @@ impl Pager {
+                     let pending = self.commit_info.read().completions.first().cloned();
+                     let sync_c = match pending {
+                         Some(c) => Some(c),
+-                        // Skip the fsync when the WAL is not dirty (no frames
+-                        // appended since the last successful fsync).
++                        // Prepared frames are not published to the WAL index
++                        // until WalCommitDone, so is_dirty() does not yet cover
++                        // their writes. FULL must sync them before publication.
+                         // NORMAL mode skips fsync on WAL commit (but still
+                         // fsyncs on checkpoint and wal restart).
+-                        None if sync_mode == SyncMode::Full && wal.is_dirty() => {
++                        None if sync_mode == SyncMode::Full
++                            && (wal.is_dirty()
++                                || !self.commit_info.read().prepared_frames.is_empty()) =>
++                        {
+                             let sync_c = wal.sync(self.get_sync_type())?;
+                             self.commit_info.write().completions.push(sync_c.clone());
+                             Some(sync_c)
+diff --git a/tests/integration/wal/test_wal.rs b/tests/integration/wal/test_wal.rs
+index e0d335653..e5617a6ce 100644
+--- a/tests/integration/wal/test_wal.rs
++++ b/tests/integration/wal/test_wal.rs
+@@ -350,3 +350,119 @@ fn test_wal_write_lock_released_on_conn_drop() {
+         .execute("CREATE TABLE t (id integer primary key)")
+         .unwrap();
+ }
++
++mod prepared_commit_sync {
++    // Read-only engine API probe: records whether a FULL commit syncs its WAL writes.
++    use std::sync::{Arc, Mutex};
++    use turso_core::io::clock::{MonotonicInstant, WallClockInstant};
++    use turso_core::io::{FileId, FileSyncType};
++    use turso_core::{Buffer, Clock, Completion, File, MemoryIO, OpenFlags, IO};
++    struct TracedIo {
++        inner: MemoryIO,
++        events: Arc<Mutex<Vec<&'static str>>>,
++    }
++    struct TracedFile {
++        inner: Arc<dyn File>,
++        wal: bool,
++        events: Arc<Mutex<Vec<&'static str>>>,
++    }
++    impl Clock for TracedIo {
++        fn current_time_monotonic(&self) -> MonotonicInstant {
++            self.inner.current_time_monotonic()
++        }
++        fn current_time_wall_clock(&self) -> WallClockInstant {
++            self.inner.current_time_wall_clock()
++        }
++    }
++    impl IO for TracedIo {
++        fn open_file(
++            &self,
++            path: &str,
++            flags: OpenFlags,
++            direct: bool,
++        ) -> turso_core::Result<Arc<dyn File>> {
++            Ok(Arc::new(TracedFile {
++                inner: self.inner.open_file(path, flags, direct)?,
++                wal: path.ends_with("-wal"),
++                events: self.events.clone(),
++            }))
++        }
++        fn remove_file(&self, path: &str) -> turso_core::Result<()> {
++            self.inner.remove_file(path)
++        }
++        fn file_id(&self, path: &str) -> turso_core::Result<FileId> {
++            self.inner.file_id(path)
++        }
++    }
++    impl File for TracedFile {
++        fn lock_file(&self, exclusive: bool) -> turso_core::Result<()> {
++            self.inner.lock_file(exclusive)
++        }
++        fn unlock_file(&self) -> turso_core::Result<()> {
++            self.inner.unlock_file()
++        }
++        fn pread(&self, pos: u64, c: Completion) -> turso_core::Result<Completion> {
++            self.inner.pread(pos, c)
++        }
++        fn pwrite(
++            &self,
++            pos: u64,
++            b: Arc<Buffer>,
++            c: Completion,
++        ) -> turso_core::Result<Completion> {
++            if self.wal {
++                self.events.lock().unwrap().push("write");
++            }
++            self.inner.pwrite(pos, b, c)
++        }
++        fn sync(&self, c: Completion, kind: FileSyncType) -> turso_core::Result<Completion> {
++            if self.wal {
++                self.events.lock().unwrap().push("sync");
++            }
++            self.inner.sync(c, kind)
++        }
++        fn size(&self) -> turso_core::Result<u64> {
++            self.inner.size()
++        }
++        fn truncate(&self, length: u64, c: Completion) -> turso_core::Result<Completion> {
++            self.inner.truncate(length, c)
++        }
++    }
++    #[test]
++    fn full_commit_syncs_prepared_frames_after_reopen() {
++        let events = Arc::new(Mutex::new(Vec::new()));
++        let io = Arc::new(TracedIo {
++            inner: MemoryIO::new(),
++            events: events.clone(),
++        });
++        {
++            let db = turso_core::Database::open_file(io.clone(), "probe.db").unwrap();
++            let c = db.connect().unwrap();
++            c.execute("CREATE TABLE items(n INTEGER)").unwrap();
++            c.execute("INSERT INTO items VALUES(1)").unwrap();
++            c.execute("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
++        }
++        let db = turso_core::Database::open_file(io, "probe.db").unwrap();
++        let c = db.connect().unwrap();
++        c.execute("PRAGMA synchronous=FULL").unwrap();
++        c.execute("PRAGMA wal_autocheckpoint=0").unwrap();
++        let mut failures = 0;
++        for value in 2..=4 {
++            events.lock().unwrap().clear();
++            c.execute(format!("INSERT INTO items VALUES({value})"))
++                .unwrap();
++            let trace = events.lock().unwrap().clone();
++            println!(
++                "commit {value}, mode {:?}, WAL events: {trace:?}",
++                c.get_sync_mode()
++            );
++            if trace.last() != Some(&"sync") {
++                failures += 1;
++            }
++        }
++        assert_eq!(
++            failures, 0,
++            "FULL must sync after the commit's final WAL write"
++        );
++    }
++}

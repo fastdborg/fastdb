@@ -113,7 +113,9 @@ test('validation, rollback and error transaction reports pass through frontend',
   assert.deepEqual(db.all('SELECT * FROM docs'), []);
   db.execute('BEGIN');
   db.execute('INSERT INTO docs {value:2}');
-  assert.throws(() => db.execute('SELECT array::append(1,2)'), error => error.transaction.after === 'autocommit');
+  assert.throws(() => db.execute('SELECT array::append(1,2)'), error => error.transaction.after === 'active');
+  assert.deepEqual(db.all('SELECT value FROM docs'), [[2n]]);
+  db.execute('ROLLBACK');
   assert.deepEqual(db.all('SELECT * FROM docs'), []);
   db.close();
 });
@@ -232,7 +234,9 @@ test('async worker reports errors, transfers data and closes active transactions
     assert.equal((await db.importDocuments('docs',data,'ndjson')).imported,1);
     await db.execute('BEGIN');
     await db.execute('INSERT INTO docs {id:docs:p2}');
-    await assert.rejects(db.execute('SELECT array::append(1,2)'), e => e.transaction.after === 'autocommit');
+    await assert.rejects(db.execute('SELECT array::append(1,2)'), e => e.transaction.after === 'active');
+    assert.equal((await db.all('SELECT * FROM docs')).length,2);
+    await db.execute('ROLLBACK');
     await db.execute('BEGIN');
     await db.execute('INSERT INTO docs {id:docs:p3}');
     await db.close();
@@ -1322,7 +1326,7 @@ test('duplicate projection names preserve positional values in both clients', as
   }
 });
 
-test('nested USING runtime errors report outer rollback in both clients', async () => {
+test('nested USING runtime errors preserve prior work in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
     const db = await open();
@@ -1332,9 +1336,11 @@ test('nested USING runtime errors report outer rollback in both clients', async 
       await db.execute('BEGIN');
       await db.execute('INSERT INTO copied {k:98,v:[]}');
       await assert.rejects(async () => db.execute(insert), error => {
-        assert.deepEqual(error.transaction, { before: 'active', after: 'autocommit' });
+        assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
         return true;
       });
+      assert.deepEqual((await db.execute('SELECT k FROM copied ORDER BY k')).rows, [[98n],[99n]]);
+      await db.execute('ROLLBACK');
       assert.deepEqual((await db.execute('SELECT k FROM copied ORDER BY k')).rows, [[99n]]);
       await db.execute('BEGIN');
       await db.execute('UPDATE docs SET v=array::new() WHERE k=2');
@@ -3453,4 +3459,249 @@ test('collection SDK supports typed CRUD, merge, rollback and native-table rejec
       assert.equal((await db.all('SELECT * FROM native')).length,1);
     } finally { await db.close(); }
   }
+});
+
+test('V2 spatial points and radius predicates preserve values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute('INSERT INTO places {id:places:a,location:geo::point(180,0)}');
+      const point = {type: 'Point', coordinates: [180, 0]};
+      assert.deepEqual(await db.exactlyOne('SELECT location FROM places'), [point]);
+      assert.deepEqual(await db.all('SELECT geo::distance(location,$point),geo::within(location,$point,0) FROM places', {$point: point}), [[0, true]]);
+      await db.execute('BEGIN');
+      await db.execute('UPDATE places SET location=geo::point(0,0)');
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.exactlyOne('SELECT location FROM places'), [point]);
+      await assert.rejects(async () => db.execute('UPDATE places SET location=geo::point(181,0)'), /geo:/);
+      assert.deepEqual(await db.exactlyOne('SELECT location FROM places'), [point]);
+    } finally { await db.close(); }
+  }
+});
+
+test('V2 indexed spatial search works in both clients with rollback and inspection', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute('INSERT INTO places {id:places:a,location:geo::point(180,0)}');
+      await db.execute('CREATE SEARCH INDEX locations ON places(location) USING SPATIAL');
+      const sql = 'SELECT id,distance_m FROM search::near($index,$point,$radius) ORDER BY distance_m,id';
+      const params = {$index: 'locations', $point: {type: 'Point', coordinates: [-180,0]}, $radius: 0};
+      const rows = await db.all(sql, params);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0][0].key, 'a');
+      assert.equal(rows[0][1], 0);
+      await db.execute('BEGIN');
+      await db.execute('UPDATE places SET location=geo::point(0,0)');
+      assert.deepEqual(await db.all(sql, params), []);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all(sql, params), rows);
+      await assert.rejects(async () => db.execute("UPDATE places {location:{type:'Point',coordinates:[181,0]}}"));
+      assert.deepEqual(await db.all(sql, params), rows);
+      await db.checkCollectionIntegrity('places');
+      await db.execute('DROP INDEX locations');
+      await assert.rejects(async () => db.all(sql, params), /spatial index/);
+    } finally { await db.close(); }
+  }
+});
+
+test('V2 H3 aggregation and cell centers preserve values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open(':memory:')]) {
+    const db = await open();
+    try {
+      await db.execute('INSERT INTO places {id:places:a,location:geo::point(40,45)}');
+      await db.execute('INSERT INTO places {id:places:b,location:geo::point(40,45)}');
+      assert.deepEqual(await db.all('SELECT geo::cell(location,$r),count(*) FROM places GROUP BY geo::cell(location,$r)', {$r:2}), [['822d57fffffffff',2n]]);
+      const [center] = await db.exactlyOne('SELECT geo::cell_center($cell)', {$cell:'822d57fffffffff'});
+      assert.equal(center.type, 'Point');
+      assert.deepEqual(await db.exactlyOne('SELECT geo::cell($point,2)', {$point:center}), ['822d57fffffffff']);
+      await assert.rejects(async () => db.execute('UPDATE places SET location=geo::cell_center($bad)', {$bad:'822D57FFFFFFFFF'}));
+      assert.deepEqual(await db.exactlyOne('SELECT geo::cell(location,2) FROM places LIMIT 1'), ['822d57fffffffff']);
+    } finally { await db.close(); }
+  }
+});
+
+test('V2 record brace projections preserve cardinality, types and limits in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open(':memory:')]) {
+    const db = await open();
+    try {
+      await db.execute("INSERT INTO users {id:users:u1,name:'Alice'}");
+      await db.execute("INSERT INTO posts {id:posts:p1,title:'Hello',author:users:u1,profile:{city:'Bangkok'}}");
+      const sql='SELECT posts:p1 {title,author.* AS writer,profile.*,profile.city AS city}';
+      const result=await db.execute(sql);
+      assert.deepEqual(result.columns,['title','writer','profile','city']);
+      assert.equal(result.rows[0][1].name,'Alice');
+      assert.deepEqual(result.rows[0][1].id,new Record('users','u1'));
+      assert.deepEqual(result.rows[0][2],{city:'Bangkok'});
+      assert.equal(result.rows[0][3],'Bangkok');
+      const missing=await db.execute('SELECT posts:missing {title,author.* AS writer}');
+      assert.deepEqual(missing.columns,['title','writer']);
+      assert.deepEqual(missing.rows,[]);
+      const profile=await db.profileSelect(sql);
+      assert.deepEqual(profile.result.rows,result.rows);
+      await assert.rejects(async () => db.selectWithLimits(sql,{maxRows:0n,maxPayloadBytes:10000n}),e=>e.code==='FDB_LIMIT');
+      await db.execute('BEGIN');
+      await db.execute("UPDATE users:u1 {name:'Pending'}");
+      assert.equal((await db.exactlyOne('SELECT posts:p1 {author.*}'))[0].name,'Pending');
+      await db.execute('ROLLBACK');
+      assert.equal((await db.exactlyOne('SELECT posts:p1 {author.*}'))[0].name,'Alice');
+    } finally { await db.close(); }
+  }
+});
+
+test('V2 inverse relationships preserve indexed pages, transactions and bounds in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open(':memory:')]) {
+    const db = await open();
+    try {
+      await db.execute("INSERT INTO users {id:users:u1,name:'Alice'}");
+      await db.execute("INSERT INTO posts {id:posts:a,author:users:u1,title:'A'}");
+      await db.execute("INSERT INTO posts {id:posts:b,author:users:u1,title:'B'}");
+      await db.execute('CREATE INDEX authors ON posts(author)');
+      await db.execute('DEFINE RELATION authored ON users FROM posts.author');
+      const sql="SELECT relation::fetch(id,'authored',1,$after) AS posts FROM users WHERE id=users:u1";
+      const first=await db.exactlyOne(sql,{$after:null});
+      assert.deepEqual(first[0].map(p=>p.id),[new Record('posts','a')]);
+      const second=await db.exactlyOne(sql,{$after:first[0][0].id});
+      assert.deepEqual(second[0].map(p=>p.id),[new Record('posts','b')]);
+      assert.deepEqual(await db.exactlyOne(sql,{$after:second[0][0].id}),[[]]);
+      const profile=await db.profileSelect("SELECT relation::fetch(users:u1,'authored'),relation::fetch(users:u1,'authored')");
+      assert.equal(profile.metrics.fetchBatches,1n);
+      assert.deepEqual(profile.result.rows[0][0],profile.result.rows[0][1]);
+      await assert.rejects(async()=>db.selectWithLimits(sql,{maxRows:1n,maxPayloadBytes:5n},{$after:null}),e=>e.code==='FDB_LIMIT');
+      await assert.rejects(async()=>db.execute('DROP INDEX authors'),/dependent relations/);
+      await db.execute('BEGIN');
+      await db.execute('UPDATE posts:a {author:users:u2}');
+      assert.deepEqual((await db.exactlyOne(sql,{$after:null}))[0].map(p=>p.id),[new Record('posts','b')]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.exactlyOne(sql,{$after:null}),first);
+      const [info]=await db.exactlyOne('INFO FOR RELATION authored');
+      assert.equal(info.index,'authors');
+      await db.execute('DROP RELATION authored');
+      await db.execute('DROP INDEX authors');
+      await db.checkCollectionIntegrity('posts');
+    } finally { await db.close(); }
+  }
+});
+
+test('V2 full-text search preserves typed ranked hits and rollback in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open(':memory:')]) {
+    const db = await open();
+    try {
+      await db.execute("INSERT INTO articles {id:articles:b,title:'Fast database',body:'atomic transactions'}");
+      await db.execute("INSERT INTO articles {id:articles:a,title:'Fast database',body:'atomic transactions'}");
+      await db.execute('CREATE SEARCH INDEX articles_text ON articles(title,body) USING FULLTEXT');
+      const sql = 'SELECT id,score FROM search::text($index,$query,$limit) ORDER BY score DESC,id';
+      const params = {$index:'articles_text',$query:'database',$limit:1};
+      const rows = await db.all(sql,params);
+      assert.deepEqual(rows.map(row=>row[0]),[new Record('articles','a')]);
+      assert.ok(Number.isFinite(rows[0][1]) && rows[0][1]>0);
+      await assert.rejects(async()=>db.all(sql,{...params,$query:'fast AND NOT database'}),
+        e=>e.code==='FDB_VALIDATION' && /negative-only/.test(e.message));
+      assert.deepEqual((await db.all(sql,{...params,$query:'+fast -absent'})).map(row=>row[0]),
+        [new Record('articles','a')]);
+      await db.execute('BEGIN');
+      await db.execute("UPDATE articles SET title='empty'");
+      assert.deepEqual(await db.all(sql,params),[]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all(sql,params),rows);
+      await assert.rejects(async()=>db.execute('UPDATE articles {body:42}'),e=>e.code==='FDB_VALIDATION');
+      assert.deepEqual(await db.all(sql,params),rows);
+      const profile = await db.profileSelect(sql,params);
+      assert.deepEqual(profile.result.rows,rows);
+      await assert.rejects(async()=>db.selectWithLimits(sql,{maxRows:0n,maxPayloadBytes:10000n},params),e=>e.code==='FDB_LIMIT');
+      await db.checkCollectionIntegrity('articles');
+      const [info] = await db.exactlyOne('INFO FOR INDEX articles_text');
+      assert.equal(info.kind,'fulltext');
+      assert.deepEqual(info.paths,[['title'],['body']]);
+      await db.execute('DROP INDEX articles_text');
+      await assert.rejects(async()=>db.all(sql,params),e=>e.code==='FDB_NOT_FOUND');
+    } finally { await db.close(); }
+  }
+});
+
+test('V2 ANN search preserves typed ranked hits, rollback and bounds in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [() => new Database(), () => AsyncDatabase.open(':memory:')]) {
+    const db = await open();
+    try {
+      await db.execute("INSERT INTO items {id:items:b,v:vector32('[1,0]')}");
+      await db.execute("INSERT INTO items {id:items:a,v:vector32('[1,0]')}");
+      await db.execute("CREATE SEARCH INDEX embeddings ON items(v) USING VECTOR WITH (dimensions=2,metric='cosine')");
+      const sql="SELECT id,distance FROM search::vector('embeddings',vector32($query),$limit) ORDER BY distance,id";
+      const params={$query:'[1,0]',$limit:1};
+      const rows=await db.all(sql,params);
+      assert.deepEqual(rows,[[new Record('items','a'),0]]);
+      await db.execute('BEGIN');await db.execute('DELETE FROM items WHERE id=items:a');
+      assert.deepEqual((await db.all(sql,params))[0][0],new Record('items','b'));
+      await db.execute('ROLLBACK');assert.deepEqual(await db.all(sql,params),rows);
+      await assert.rejects(async()=>db.execute("UPDATE items {v:vector32('[0,0]')}"),e=>e.code==='FDB_VALIDATION');
+      assert.deepEqual((await db.profileSelect(sql,params)).result.rows,rows);
+      await assert.rejects(async()=>db.selectWithLimits(sql,{maxRows:0n,maxPayloadBytes:10000n},params),e=>e.code==='FDB_LIMIT');
+      await db.checkCollectionIntegrity('items');
+      const [info]=await db.exactlyOne('INFO FOR INDEX embeddings');
+      assert.equal(info.kind,'vector');assert.equal(info.metric,'cosine');assert.equal(info.dimensions,2n);
+      await db.execute('DROP INDEX embeddings');
+      await assert.rejects(async()=>db.all(sql,params),e=>e.code==='FDB_NOT_FOUND');
+    } finally {await db.close();}
+  }
+});
+
+test('V2 JavaScript functions persist typed values and roll back failed writes in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-udf-'));
+  try {
+    for (const asynchronous of [false, true]) {
+      const file = path.join(dir, asynchronous ? 'async.db' : 'sync.db');
+      const open = () => asynchronous ? AsyncDatabase.open(file) : new Database(file);
+      let db = await open();
+      try {
+        await db.execute("CREATE FUNCTION app::identity(v any) RETURNS any LANGUAGE JAVASCRIPT AS 'return v;'");
+        const value = { large: 9223372036854775807n, nested: [true, null, 1.5, 'text'] };
+        assert.deepEqual(await db.exactlyOne('SELECT app::identity($v)', { $v:value }), [value]);
+        await db.execute("CREATE FUNCTION app::normalize(v string) RETURNS string LANGUAGE JAVASCRIPT AS 'return v.trim().toLowerCase();'");
+        await db.execute("INSERT INTO docs {name:app::normalize(' ALICE '),n:1}");
+        await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+        await db.execute("CREATE FUNCTION app::late(n integer) RETURNS integer LANGUAGE JAVASCRIPT AS 'if(n===2n)throw Error(\"late\");return n+10n;'");
+        await db.execute('BEGIN');
+        await db.execute('INSERT INTO docs {n:2}');
+        await assert.rejects(async () => db.execute('UPDATE docs SET n=app::late(n)'), error => {
+          assert.equal(error.code, 'FDB_VALIDATION');
+          assert.deepEqual(error.transaction, { before:'active', after:'active' });
+          return true;
+        });
+        assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n], [2n]]);
+        await db.checkCollectionIntegrity('docs');
+        await db.execute('ROLLBACK');
+        const info = (await db.exactlyOne('INFO FOR FUNCTION app::normalize'))[0];
+        assert.match(info.digest, /^[0-9a-f]{64}$/);
+        await db.close();
+        db = await open();
+        assert.deepEqual(await db.exactlyOne("SELECT app::normalize(' BOB ')"), ['bob']);
+        await db.execute('DROP FUNCTION app::normalize');
+        await assert.rejects(async () => db.execute("SELECT app::normalize('x')"), { code:'FDB_NOT_FOUND' });
+      } finally { await db.close(); }
+    }
+  } finally { fs.rmSync(dir, { recursive:true, force:true }); }
+});
+
+test('V2 JavaScript worker cancellation preserves prior transaction work', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const db = await AsyncDatabase.open();
+  try {
+    await db.execute("CREATE FUNCTION app::runaway() RETURNS any LANGUAGE JAVASCRIPT AS 'while(true){}'");
+    await db.execute('CREATE TABLE docs');
+    await db.execute('BEGIN');
+    await db.execute('INSERT INTO docs {n:1}');
+    await assert.rejects(db.execute('SELECT app::runaway()', {}, { timeoutMs:5 }), error => {
+      assert.equal(error.code, 'FDB_CANCELLED');
+      assert.deepEqual(error.transaction, { before:'active', after:'active' });
+      return true;
+    });
+    assert.deepEqual(await db.all('SELECT n FROM docs'), [[1n]]);
+    await db.execute('ROLLBACK');
+  } finally { await db.close(); }
 });
