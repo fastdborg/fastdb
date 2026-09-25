@@ -2598,6 +2598,15 @@ impl Program {
                     self.rollback_current_txn(pager);
                     self.connection.set_changes(0);
                 }
+                // A scalar extension error in a read-only statement has no
+                // partial writes to undo. Keep the caller's explicit transaction
+                // and named savepoints; autocommit readers still release their
+                // transaction. Writer cleanup retains its existing journal rules.
+                Some(LimboError::ExtensionError(_)) if !unfinished_writer => {
+                    if must_rollback_tx_if_needed {
+                        self.rollback_current_txn(pager);
+                    }
+                }
                 // Foreign key constraint errors: ON CONFLICT does NOT apply to FK violations.
                 // FK errors always behave like ABORT: rollback statement,
                 // rollback transaction in autocommit mode.
