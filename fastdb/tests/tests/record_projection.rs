@@ -541,3 +541,34 @@ fn projection_cycles_are_finite_and_reference_expansion_is_bounded() {
         })]]
     );
 }
+
+#[test]
+fn bracket_identifiers_adjacent_to_sql_keywords_are_not_array_paths() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(
+        &c,
+        "INSERT INTO users {id:users:a,\"0\":7,rows:[11],\"select\":[13]}",
+    );
+    for sql in [
+        "SELECT[0]FROM users",
+        "SELECT DISTINCT[0]FROM users",
+        "SELECT ALL[0]FROM users",
+        "SELECT[0]FROM users ORDER BY[0]",
+        "SELECT[0]FROM users GROUP BY[0]",
+    ] {
+        assert_eq!(q(&c, sql).rows, vec![vec![Value::Integer(7)]], "{sql}");
+    }
+    assert_eq!(
+        q(
+            &c,
+            "WITH u AS(SELECT rows AS \"0\" FROM users)SELECT[0]FROM u"
+        )
+        .rows,
+        vec![vec![Value::Array(vec![Value::Integer(11)])]]
+    );
+    assert_eq!(
+        q(&c, "SELECT rows[0],\"select\"[0] FROM users").rows,
+        vec![vec![Value::Integer(11), Value::Integer(13)]]
+    );
+}

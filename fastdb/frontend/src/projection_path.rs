@@ -200,7 +200,7 @@ pub(crate) fn expand(sql: &str) -> Result<String> {
     let mut copied = 0;
     let mut i = 0;
     while i < tokens.len() {
-        if !name(&tokens[i]) {
+        if !name(&tokens[i]) || !path_root(&tokens, i) {
             i += 1;
             continue;
         }
@@ -292,6 +292,56 @@ pub(crate) fn expand(sql: &str) -> Result<String> {
     }
     out.push_str(&sql[copied..]);
     Ok(out)
+}
+
+fn path_root(tokens: &[Token], index: usize) -> bool {
+    let token = &tokens[index];
+    if token.kind != Kind::Word {
+        return true;
+    }
+    // A bracketed SQL identifier needs no preceding whitespace: SELECT[0],
+    // FROM[0] and DISTINCT[0] are not array operations on those keywords.
+    use turso_parser::{lexer::Lexer, token::TokenType};
+    let Some(Ok(native)) = Lexer::new(token.text.as_bytes()).next() else {
+        return false;
+    };
+    if native.token_type.fallback_id_if_ok() != TokenType::TK_ID {
+        return false;
+    }
+    if !turso_parser::lexer::is_quotable_keyword(token.text.as_bytes()) {
+        return true;
+    }
+    // Contextual keywords can still name fields, e.g. SELECT rows[0]. Only
+    // consider them at expression starts, so ORDER BY[0], LIMIT 1 OFFSET[0]
+    // and WITH[0] retain their SQL clause/identifier meanings.
+    index.checked_sub(1).is_some_and(|previous| {
+        let previous = &tokens[previous];
+        match previous.kind {
+            Kind::Symbol => matches!(
+                previous.text.as_str(),
+                "(" | "," | "+" | "-" | "*" | "/" | "%" | "=" | "<" | ">" | "!" | "|" | "&" | "~"
+            ),
+            Kind::Word => matches!(
+                previous.text.to_ascii_uppercase().as_str(),
+                "SELECT"
+                    | "DISTINCT"
+                    | "ALL"
+                    | "WHERE"
+                    | "HAVING"
+                    | "ON"
+                    | "AND"
+                    | "OR"
+                    | "NOT"
+                    | "WHEN"
+                    | "THEN"
+                    | "ELSE"
+                    | "BY"
+                    | "LIMIT"
+                    | "OFFSET"
+            ),
+            _ => false,
+        }
+    })
 }
 
 /// Star resolution happens after parsing, so detect even spaced/commented
