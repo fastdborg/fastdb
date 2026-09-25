@@ -4,7 +4,8 @@ Current status: explicitly approved by the user and integrated in isolated commi
 `2ef619c0704025512d9f4d4f5290dec3940a7361`. The original review and candidate-only evidence below are retained
 as history. Subsequent pending/unintegrated wording describes that earlier state.
 Track upstream replacement/removal in [the maintenance register](../core-exceptions.md).
-Combined-source acceptance is in progress; approval is not release certification.
+Combined-source acceptance now passes; see [integrated evidence](../v2-core-integration-evidence.md).
+Final release qualification remains open.
 
 
 Status: qualified proposal ready for review; not approved or integrated. Active core

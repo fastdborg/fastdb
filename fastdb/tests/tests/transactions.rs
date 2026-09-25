@@ -39,7 +39,7 @@ fn validation_errors_preserve_outer_work_and_report_active_state() {
     );
 }
 #[test]
-fn engine_abort_reports_loss_of_outer_transaction_and_connection_recovers() {
+fn returning_scalar_error_preserves_outer_work_and_connection_recovers() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     q(&c, "CREATE TABLE posts");
@@ -53,14 +53,15 @@ fn engine_abort_reports_loss_of_outer_transaction_and_connection_recovers() {
     assert!(report.result.is_err());
     assert_eq!(
         (report.transaction_before, report.transaction_after),
-        (State::Active, State::Autocommit)
+        (State::Active, State::Active)
     );
     assert_eq!(
         c.execute("SELECT n FROM posts", &Parameters::new())
             .unwrap()
             .rows,
-        vec![vec![Value::Integer(1)]]
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
     );
+    q(&c, "ROLLBACK");
     q(&c, "BEGIN");
     q(&c, "INSERT INTO posts {n:3}");
     q(&c, "COMMIT");

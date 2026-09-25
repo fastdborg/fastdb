@@ -120,10 +120,15 @@ fn bundled_output_overflow_matches_native_transaction_disposition() {
         assert_eq!(report.transaction_before, fastdb::TransactionState::Active);
         assert_eq!(
             report.transaction_after,
-            fastdb::TransactionState::Autocommit,
+            fastdb::TransactionState::Active,
             "logical={logical}"
         );
         assert_eq!(q(&c, "SELECT id,slug FROM posts ORDER BY id").rows, before);
+        assert_eq!(
+            q(&c, "SELECT n FROM prior").rows,
+            vec![vec![Value::Integer(9)]]
+        );
+        q(&c, "ROLLBACK");
         assert!(q(&c, "SELECT n FROM prior").rows.is_empty());
         if logical {
             c.check_collection_integrity("posts", Default::default())

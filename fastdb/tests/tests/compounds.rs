@@ -515,17 +515,16 @@ fn set_insert_sources_validate_and_restore_indexes_atomically() {
     );
     assert!(report.result.is_err());
     assert_eq!(report.transaction_before, fastdb::TransactionState::Active);
-    // The pinned engine aborts the outer transaction on this scalar-function error.
-    assert_eq!(
-        report.transaction_after,
-        fastdb::TransactionState::Autocommit
-    );
+    // Failed source evaluation preserves the caller transaction and prior writes.
+    assert_eq!(report.transaction_after, fastdb::TransactionState::Active);
     assert_eq!(
         c.check_collection_integrity("docs", Default::default())
             .unwrap()
             .documents,
-        0
+        4
     );
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT n FROM docs").rows.is_empty());
 }
 
 #[test]
@@ -735,7 +734,7 @@ fn pinned_correlated_unordered_union_pagination_is_not_materialization_equivalen
 }
 
 #[test]
-fn rejected_composite_membership_reports_rollback_and_allows_retry() {
+fn rejected_composite_membership_preserves_prior_work_and_allows_retry() {
     for composite in [
         Value::Array(vec![Value::Integer(1)]),
         Value::Object(std::collections::BTreeMap::from([(
@@ -771,7 +770,12 @@ fn rejected_composite_membership_reports_rollback_and_allows_retry() {
                 .contains("expected scalar or record index value"),
             "{error}"
         );
-        assert_eq!(c.transaction_state(), fastdb::TransactionState::Autocommit);
+        assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            q(&c, "SELECT n FROM sink").rows,
+            vec![vec![Value::Integer(9)]]
+        );
+        q(&c, "ROLLBACK");
         assert!(q(&c, "SELECT n FROM sink").rows.is_empty());
         assert_eq!(
             q(&c, "SELECT k FROM docs WHERE n=2").rows,
