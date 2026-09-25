@@ -1,23 +1,25 @@
 # FastDB implementation status
 
-FastDB and FastQL **2.0.0 are released for Linux x64**. See the
-[release record](release-2.0.0.md), [public download receipt](release-2.0.0-download.json),
-[completed V2 checklist](v2-tasks.md) and [engine provenance](../UPSTREAM.md).
+FastDB and FastQL **2.1.0 are released for Linux x64**. See the
+[release record](release-2.1.0.md), [public download receipt](release-2.1.0-download.json),
+[completed production checklist](v2.1-tasks.md) and [engine provenance](../UPSTREAM.md).
 Cloud v0.2.0 remains separate; it was not changed or deployed by this release.
 
 Release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go.
 Browser/WASM is removed. macOS, Windows, ARM and Apple mobile are outside V2.
 Packages are distributed in the GitHub Linux bundle, not language registries.
-The bundle uses the required development build profile with debug symbols stripped;
-read the release record for Linux library requirements and performance limits.
+The immutable 2.0.0 bundle used the development build profile with debug symbols
+stripped. The 2.1.0 release uses optimized `fastdb-production`, retaining
+assertions and overflow checks; see [the build policy](production-build.md).
 
-## Post-release work
+## Current release
 
-The active target is **2.1.0 production qualification**, following
-[the finite checklist](v2.1-tasks.md): safe [SQLite adoption](sqlite-adoption.md),
-single-owner Linux [deployment](deployment.md), measured native build/resource
-limits, returned-I/O-error recovery and dependency maintenance. Candidate work
-does not change the published 2.0.0 artifacts. Graph-database APIs are outside scope.
+Production 2.1.0 is complete: source, hosted CI, exact seven-client artifacts,
+both measured workloads and independent public download verification pass.
+Read [the operating envelope](production-envelope.md),
+[release evidence](release-2.1.0.md), [SQLite adoption](sqlite-adoption.md),
+[deployment](deployment.md) and [operations](operations.md). Immutable 2.0.0
+artifacts remain unchanged. Graph-database APIs are outside scope.
 
 [Nested projection paths](nested-projections.md) add SurrealDB-style wildcard
 record fetching plus FastQL dot and negative array indexes. This work is separate
@@ -36,7 +38,18 @@ from the published 2.0.0 artifacts.
 
 ## Release verification
 
-Source `4d118ab1f819ff5deb32aa29dfe739ca9b086785` passes hosted scoped CI:
+The 2.1.0 artifact source `587c3b4afae7382920fcdec64e91b1a97eda6f5a` passes
+759 Rust, 121 Node/application and five C ABI tests, formatting, Clippy and
+TypeScript, plus [exact-source hosted CI 36159249358](https://github.com/fastdborg/fastdb/actions/runs/36159249358).
+All 20 installed verification groups pass, including Node 22/24, Python
+3.10/3.12/3.14, PHP/Swift/C#/Go, ownership, SQLite adoption and immutable V1/V2
+upgrade/restore. The production-profile Rust consumer passes from the exact
+builder source archive with 332 pinned dependency identities. Both workloads
+and public download/checksum verification also pass; see
+[qualification](release-2.1.0-qualification.json) and
+[the download receipt](release-2.1.0-download.json).
+
+The historical 2.0.0 release source `4d118ab1f819ff5deb32aa29dfe739ca9b086785` passes hosted scoped CI:
 738 Rust tests, 115 Node/application tests, three C ABI tests, formatting, Clippy
 and TypeScript. Exact installed packages pass Node 22/24, Python 3.10/3.12/3.14,
 PHP/Swift/C#/Go and Go race checks. A standalone Rust consumer passes from the
@@ -44,7 +57,7 @@ extracted source archive. V1 upgrade, V2 writes/reopen, downgrade rejection and
 both V1/V2 backup restores pass. Public download and all 56 internal checksums
 are verified. Preserve a V1 backup before adopting V2 catalog features.
 
-Review [all five maintained core exceptions](core-exceptions.md) on each upstream
+Review [all seven maintained core exceptions](core-exceptions.md) on each upstream
 sync before retaining, adapting or removing them. The WASI-only exception was
 reverted and must not be reapplied for this native release.
 

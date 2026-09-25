@@ -6123,3 +6123,21 @@ also passes on this exact integrated commit.
 
 These source results do not replace the remaining optimized installed-artifact,
 upgrade/restore, workload and public-download qualification gates.
+
+## Production 2.1.0 exact-artifact and public-release qualification — 2026-09-25
+
+Artifact source `587c3b4afae7382920fcdec64e91b1a97eda6f5a` passes 759 Rust, 121 Node/application and five
+C ABI tests, formatting, Clippy and TypeScript;
+[hosted CI 36159249358](https://github.com/fastdborg/fastdb/actions/runs/36159249358)
+passes on that exact source. All 20 installed groups and the exact-archive
+production-profile Rust consumer pass, with 332 pinned package identities.
+Both unchanged production workloads pass; measured results and limitations
+are in [the operating envelope](production-envelope.md).
+
+Published archive: `fastdb-2.1.0-linux-x64.tar.gz`, 71,581,011 bytes, SHA-256
+`94d8988ff82cb1649edf4065bd447f11e78ad26a5e558587b3736444ffd2e686`. Anonymous HTTPS retrieval verifies the archive, all
+internal checksums and annotated tag/source association. See the
+[release record](release-2.1.0.md), [qualification receipt](release-2.1.0-qualification.json)
+and [download receipt](release-2.1.0-download.json). Documentation-only
+qualification updates occur after the tagged build source; historical
+V1/2.0 and failed-candidate evidence retain their original scopes.

@@ -101,16 +101,16 @@ measured and its success checked before closing.
 
 - [x] Encode the shipping profile and artifact provenance policy.
 - [x] Add a reproducible exact-package workload and reject mislabeled evidence.
-- [ ] Build and verify a clean production candidate with all seven clients.
-- [ ] Measure 1,000 documents / 32 dimensions and 5,000 documents / 128 dimensions,
+- [x] Build and verify a clean production candidate with all seven clients.
+- [x] Measure 1,000 documents / 32 dimensions and 5,000 documents / 128 dimensions,
   each at one and four connections, 5,000 mixed operations and 1,000 concurrent
   rounds where multiple connections are configured, on the supported host.
-- [ ] Select and publish a supported envelope from those measurements, including
+- [x] Select and publish a supported envelope from those measurements, including
   FTS corpus/match limits, ANN dimensions, connection count, observed resource
   peaks and explicit operating headroom; reduce scope or fix code if it fails.
 
-Those corpus sizes are proposed experiments, not measured limits. No latency,
-memory cap or universal scale claim exists until the exact-artifact evidence is
-recorded. The harness rejects more than 10,000 documents, 256 dimensions, eight
+Both configurations passed on the exact 2.1.0 artifacts. The
+[measured envelope](production-envelope.md) records results and supported
+scope; this is not a universal latency, memory or scale guarantee. The harness rejects more than 10,000 documents, 256 dimensions, eight
 connections, 50,000 mixed operations, 10,000 concurrent rounds or three samples per connection count to keep
 maintainer experiments finite; those caps are not a production support promise.
