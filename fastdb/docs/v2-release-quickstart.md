@@ -9,9 +9,10 @@ the exact source, build profile and tested platform. Back up V1 databases before
 opening them with V2. A database using V2 catalog features cannot be downgraded
 to V1; follow BACKUP.md for restore procedures.
 
-Built and tested on Ubuntu 24.04 x86_64 under WSL2 (glibc 2.39). ELF inspection
-requires glibc 2.38 for the CLI and 2.35 for the shared client library, plus
-libstdc++ providing GLIBCXX_3.4.29. These symbol floors are not a tested
+The target baseline is Ubuntu 24.04 x86_64 under WSL2 (glibc 2.39). Install the
+distribution's libc6, libgcc-s1 and libstdc++6 packages. The candidate's exact ELF
+symbol requirements and installed-runtime results must be recorded in its
+qualification evidence before publication. Symbol floors are not a tested
 distribution matrix. Alpine/musl and other architectures are outside this bundle.
 
 ## Install a client
@@ -25,7 +26,7 @@ pnpm add /absolute/path/to/bundle/packages/fastdb-node-2.1.0.tgz
 Python 3.10 or newer:
 
 ```sh
-python -m pip install /absolute/path/to/bundle/packages/fastdb_embedded-2.1.0-cp310-abi3-manylinux_2_35_x86_64.whl
+python -m pip install /absolute/path/to/bundle/packages/fastdb_embedded-2.1.0-cp310-abi3-*.whl
 ```
 
 The wheel tag expresses its build compatibility check. The release's actual
