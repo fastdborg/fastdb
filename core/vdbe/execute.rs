@@ -4356,6 +4356,7 @@ pub fn op_savepoint(
                         name: name.clone(),
                         starts_transaction,
                         deferred_fk_violations,
+                        poisoned_tx: conn.tx_is_poisoned(),
                         main_schema_snapshot,
                         temp_schema_snapshot,
                         staged_schema_snapshot,
@@ -4491,6 +4492,10 @@ pub fn op_savepoint(
                 }
                 *conn.database_schemas().write() = info.staged_schema_snapshot;
                 conn.bump_prepare_context_generation();
+                // Every pager/MVCC rollback succeeded. Restore the marker from
+                // this boundary instead of clearing poison from an earlier
+                // abandoned write that ROLLBACK TO did not undo.
+                conn.poisoned_tx.store(info.poisoned_tx, Ordering::SeqCst);
             }
 
             // Invalidate cached schema cookies on ALL pagers whose pages may

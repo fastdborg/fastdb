@@ -125,6 +125,9 @@ pub(crate) struct NamedSavepointFrame {
     pub(crate) name: String,
     pub(crate) starts_transaction: bool,
     pub(crate) deferred_fk_violations: isize,
+    /// Rollback-only state at SAVEPOINT begin. ROLLBACK TO can undo an
+    /// abandoned writer after this boundary, but must retain earlier poison.
+    pub(crate) poisoned_tx: bool,
     /// Snapshot of `conn.schema` taken at SAVEPOINT begin. Used by
     /// ROLLBACK TO to restore the in-memory main schema without re-
     /// reading sqlite_schema from disk — disk reparse from inside a
@@ -148,8 +151,9 @@ pub(crate) struct NamedSavepointFrame {
 }
 
 /// Info returned by `rollback_named_savepoint_frame` so callers can
-/// restore in-memory schema state after the pager has rolled back.
+/// restore in-memory transaction and schema state after the pager has rolled back.
 pub(crate) struct RollbackFrameInfo {
+    pub(crate) poisoned_tx: bool,
     pub(crate) main_schema_snapshot: Arc<Schema>,
     pub(crate) temp_schema_snapshot: Option<Arc<Schema>>,
     pub(crate) staged_schema_snapshot: HashMap<usize, Arc<Schema>>,
@@ -4714,6 +4718,7 @@ impl Connection {
             .rposition(|savepoint| savepoint.name == name)?;
         let frame = &savepoints[target_idx];
         let info = RollbackFrameInfo {
+            poisoned_tx: frame.poisoned_tx,
             main_schema_snapshot: frame.main_schema_snapshot.clone(),
             temp_schema_snapshot: frame.temp_schema_snapshot.clone(),
             staged_schema_snapshot: frame.staged_schema_snapshot.clone(),
