@@ -17,6 +17,9 @@ and its artifacts are unchanged.
 - [Native build policy](production-build.md): an optimized named Rust profile
   retaining assertions and overflow checks, with artifact provenance checks and
   a reproducible application workload. Measurements are a remaining gate.
+- [Full-text construction](fulltext-build-evidence.md): bounded initial insert
+  batches reduce repeated index commits while preserving validation, transaction
+  rollback and persisted document mapping.
 - [Deployment](deployment.md) and [operations](operations.md): one owning Linux
   process per file, multiple connections inside it, error/commit reconciliation,
   checkpoint-status handling, maintenance backups and restore drills.

@@ -1,0 +1,28 @@
+Progress: resolved 0, reused 1, downloaded 0, added 0
+Packages: +1
++
+Packages are hard linked from the content-addressable store to the virtual store.
+  Content-addressable store is at: /home/tan/.local/share/pnpm/store/v11
+  Virtual store is at:             node_modules/.pnpm
+Progress: resolved 1, reused 1, downloaded 0, added 1, done
+
+dependencies:
++ @fastdb/node 2.1.0
+
+Done in 762ms using pnpm v11.23.0
+Benchmark: 5000 documents, 128 dimensions, 1 connections, sample 1
+[1 connections +0.000s] load installed package
+[1 connections +0.007s] setup: open/create
+[1 connections +0.055s] setup: seed begin
+[1 connections +0.150s] setup: seed 100/5000
+[1 connections +0.487s] setup: seed 500/5000
+[1 connections +0.889s] setup: seed 1000/5000
+[1 connections +1.310s] setup: seed 1500/5000
+[1 connections +1.704s] setup: seed 2000/5000
+[1 connections +2.075s] setup: seed 2500/5000
+[1 connections +2.461s] setup: seed 3000/5000
+[1 connections +2.889s] setup: seed 3500/5000
+[1 connections +3.277s] setup: seed 4000/5000
+[1 connections +3.706s] setup: seed 4500/5000
+[1 connections +4.155s] setup: seed 5000/5000
+[1 connections +4.155s] setup: text index begin

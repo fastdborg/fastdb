@@ -22,6 +22,19 @@ const percentile = (values, p) => [...values].sort((a,b) => a-b)[Math.max(0, Mat
 const summarize = values => ({count: values.length, minMs: Math.min(...values), p50Ms: percentile(values, .5),
   p95Ms: percentile(values, .95), maxMs: Math.max(...values), totalMs: values.reduce((a,b) => a+b, 0)});
 
+function progressReporter(connectionCount) {
+  const started = performance.now(), reported = new Map();
+  return (phase, done, total) => {
+    if (total !== undefined) {
+      const decile = Math.floor(done * 10 / total);
+      if (reported.get(phase) === decile && done !== total) return;
+      reported.set(phase, decile);
+    }
+    const count = total === undefined ? '' : ` ${done}/${total}`;
+    process.stderr.write(`[${connectionCount} connections +${((performance.now()-started)/1000).toFixed(3)}s] ${phase}${count}\n`);
+  };
+}
+
 function parse() {
   if (process.argv.includes('--help')) {
     console.log('Usage: node bench-production.cjs --bundle DIR --output FILE [--rows 1000] [--dimensions 32] [--operations 5000] [--connections 1,4] [--concurrent-rounds 1000] [--samples 1] [--rehearsal]\nLinux x64 only. Installs the exact bundle package offline with pnpm. Rehearsal accepts historical dev bundles and is never production evidence.');
@@ -45,8 +58,11 @@ function parse() {
   return options;
 }
 
-async function concurrentWorkload(config, file, revisions, api, corpus) {
-  if (config.connectionCount < 2) return {skipped: 'Requires at least two connections: one writer and one reader'};
+async function concurrentWorkload(config, file, revisions, api, corpus, progress) {
+  if (config.connectionCount < 2) {
+    progress('concurrency skipped: requires a writer and reader');
+    return {skipped: 'Requires at least two connections: one writer and one reader'};
+  }
   const {AsyncDatabase} = api, {record, vector, text, point} = corpus;
   const clients = [];
   const summary = values => values.length ? summarize(values) : {count:0};
@@ -111,11 +127,13 @@ async function concurrentWorkload(config, file, revisions, api, corpus) {
     throw new Error('Unreachable transaction retry exhaustion');
   }
   try {
+    progress('concurrency: open workers');
     for (let i = 0; i < config.connectionCount; i++) {
       const client = await AsyncDatabase.open(file); clients.push(client);
       await client.execute('PRAGMA synchronous=FULL');
     }
     const writer = clients[0];
+    progress('concurrency: contention probe');
     // A separate finite probe guarantees that the documented Busy path and
     // retry after lock release run even if the measured workload has no Busy.
     await writer.execute('BEGIN IMMEDIATE');
@@ -142,6 +160,7 @@ async function concurrentWorkload(config, file, revisions, api, corpus) {
     const initial = {memory:memory(),files:files(file)};
     const series = [];
     let peakWalBytes = initial.files.walBytes;
+    progress('concurrency: rounds begin');
     const started = performance.now();
     for (let round = 0; round < config['concurrent-rounds']; round++) {
       const n = (Math.imul(round,7919) >>> 0) % config.rows;
@@ -182,13 +201,16 @@ async function concurrentWorkload(config, file, revisions, api, corpus) {
       if (failure) throw failure.reason;
       peakWalBytes = Math.max(peakWalBytes,size(file+'-wal'));
       if (round%25===0) series.push({round:round+1,elapsedMs:performance.now()-started,...memory(),...files(file)});
+      progress('concurrency: rounds',round+1,config['concurrent-rounds']);
     }
     const elapsedMs = performance.now()-started;
     const after = {memory:memory(),files:files(file)};
+    progress('concurrency: integrity');
     const auditStarted = performance.now();
     const audit = await writer.checkCollectionIntegrity('items',{},options);
     assert.equal(audit.documents,BigInt(config.rows));
     const auditMs = performance.now()-auditStarted;
+    progress('concurrency: checkpoint');
     const checkpointStarted = performance.now();
     assert.deepEqual(await writer.all('PRAGMA wal_checkpoint(TRUNCATE)',{},options),[[0n,0n,0n]]);
     return {connectionCount:config.connectionCount,writerCount:1,readerCount:config.connectionCount-1,
@@ -204,6 +226,8 @@ async function concurrentWorkload(config, file, revisions, api, corpus) {
 }
 
 async function child(config) {
+  const progress = progressReporter(config.connectionCount);
+  progress('load installed package');
   const {Database, AsyncDatabase, Record, Vector} = require(config.package);
   const file = path.join(config.directory, 'application.db');
   const revisions = new Uint32Array(config.rows);
@@ -223,10 +247,12 @@ async function child(config) {
   };
   let setup;
   try {
+    progress('setup: open/create');
     let db = new Database(file);
     clients.push(db);
     db.execute('PRAGMA synchronous=FULL');
     db.execute('CREATE TABLE items');
+    progress('setup: seed begin');
     const seed = timed(() => {
       for (let offset = 0; offset < config.rows; offset += 100) {
         db.execute('BEGIN');
@@ -235,6 +261,7 @@ async function child(config) {
             {$id: record(n), $n: BigInt(n), $body: text(n), $v: vector(n), $point: point(n)});
         }
         db.execute('COMMIT');
+        progress('setup: seed',Math.min(config.rows,offset+100),config.rows);
       }
     });
     const indexes = {};
@@ -242,12 +269,18 @@ async function child(config) {
       ['text', 'CREATE SEARCH INDEX items_text ON items(body) USING FULLTEXT'],
       ['vector', `CREATE SEARCH INDEX items_vector ON items(v) USING VECTOR WITH (dimensions=${config.dimensions},metric='l2')`],
       ['spatial', 'CREATE SEARCH INDEX items_location ON items(location) USING SPATIAL'],
-    ]) indexes[name] = {...timed(() => db.execute(statement)), memory: memory(), files: files(file)};
+    ]) {
+      progress(`setup: ${name} index begin`);
+      indexes[name] = {...timed(() => db.execute(statement)), memory: memory(), files: files(file)};
+      progress(`setup: ${name} index complete`);
+    }
+    progress('setup: checkpoint');
     const initialCheckpoint = timed(() => db.all('PRAGMA wal_checkpoint(TRUNCATE)'));
     assert.deepEqual(initialCheckpoint.value, [[0n,0n,0n]]);
     setup = {seedMs: seed.ms, indexes, checkpoint: initialCheckpoint, memory: memory(), files: files(file)};
     db.close(); clients.pop();
 
+    progress('open measured connections');
     const openStart = performance.now();
     for (let i = 0; i < config.connectionCount; i++) {
       const connection = new Database(file);
@@ -286,7 +319,11 @@ async function child(config) {
       }
       return result.ms;
     }
-    const cold = clients.map((connection, i) => Object.fromEntries(['read','text','vector','spatial'].map(kind => [kind, operation(connection,kind,i)])));
+    const cold = clients.map((connection, i) => Object.fromEntries(['read','text','vector','spatial'].map(kind => {
+      progress(`cold: connection ${i+1} ${kind}`);
+      return [kind, operation(connection,kind,i)];
+    })));
+    progress('verify index plans');
     const plans = {};
     for (const kind of ['text','vector','spatial']) plans[kind] = db.all('EXPLAIN QUERY PLAN ' + sql[kind],
       kind === 'text' ? {$query:'common'} : kind === 'vector' ? {$v:vector(0)} : {$point:point(0)});
@@ -297,23 +334,28 @@ async function child(config) {
     let peakWalBytes = before.files.walBytes;
     const series = [];
     const mix = ['read','read','read','read','write','write','text','text','vector','spatial'];
+    progress('serial mix begin');
     const start = performance.now();
     for (let i = 0; i < config.operations; i++) {
       const kind = mix[i % mix.length], n = (Math.imul(i, 7919) >>> 0) % config.rows;
       counters[kind].push(operation(clients[i % clients.length], kind, n, i % 10 === 7));
       peakWalBytes = Math.max(peakWalBytes, size(file+'-wal'));
       if (i % 100 === 0) series.push({operations: i+1, elapsedMs: performance.now()-start, ...memory(), ...files(file)});
+      progress('serial mix',i+1,config.operations);
     }
     const elapsedMs = performance.now()-start;
     const after = {memory: memory(), files: files(file)};
+    progress('serial integrity');
     assert.equal(db.exactlyOne('SELECT count(*) FROM items')[0], BigInt(config.rows));
     const audit = timed(() => db.checkCollectionIntegrity('items'));
     assert.equal(audit.value.documents, BigInt(config.rows));
+    progress('serial checkpoint');
     const checkpoint = timed(() => db.all('PRAGMA wal_checkpoint(TRUNCATE)'));
     assert.deepEqual(checkpoint.value, [[0n,0n,0n]]);
     const afterCheckpoint = {memory: memory(), files: files(file)};
     while (clients.length) clients.pop().close();
 
+    progress('cancellation/retry');
     worker = await AsyncDatabase.open(file);
     await worker.execute('CREATE TABLE cancellation_input(n)');
     await worker.execute('INSERT INTO cancellation_input VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)');
@@ -328,11 +370,17 @@ async function child(config) {
     await worker.execute('ROLLBACK');
     await worker.execute('DROP TABLE cancellation_input');
     await worker.close(); worker = undefined;
-    const concurrent = await concurrentWorkload(config,file,revisions,{AsyncDatabase},{record,vector,text,point});
+    const concurrent = await concurrentWorkload(config,file,revisions,{AsyncDatabase},{record,vector,text,point},progress);
+    progress('reopen: integrity');
     db = new Database(file); clients.push(db);
     const reopenStart = performance.now();
     assert.equal(db.checkCollectionIntegrity('items').documents, BigInt(config.rows));
-    for (let n = 0; n < config.rows; n++) assert.deepEqual(db.exactlyOne(sql.read, {$id: record(n)}), [BigInt(n), BigInt(revisions[n])]);
+    progress('reopen: verify documents');
+    for (let n = 0; n < config.rows; n++) {
+      assert.deepEqual(db.exactlyOne(sql.read, {$id: record(n)}), [BigInt(n), BigInt(revisions[n])]);
+      progress('reopen: documents',n+1,config.rows);
+    }
+    progress('correctness passed');
     return {connectionCount: config.connectionCount, setup, openMs, cold, plans, before, after, afterCheckpoint, peakWalBytes,
       elapsedMs, operationsPerSecond: config.operations/(elapsedMs/1000), operations: config.operations,
       latency: Object.fromEntries(Object.entries(counters).map(([key, values]) => [key, summarize(values)])),
@@ -383,7 +431,7 @@ async function main() {
       const config = {...options, package:installed, directory, connectionCount};
       const configPath = path.join(directory,'config.json'); fs.writeFileSync(configPath, encode(config));
       process.stderr.write(`Benchmark: ${options.rows} documents, ${options.dimensions} dimensions, ${connectionCount} connections, sample ${sample+1}\n`);
-      const result = execFileSync(process.execPath, [__filename,'--child',configPath], {encoding:'utf8',timeout:1200000,maxBuffer:32*1024*1024});
+      const result = execFileSync(process.execPath, [__filename,'--child',configPath], {encoding:'utf8',stdio:['ignore','pipe','inherit'],timeout:1200000,maxBuffer:32*1024*1024});
       samples.push({sample, ...JSON.parse(result)});
       fs.writeFileSync(output+'.partial', encode(samples));
     }
@@ -400,6 +448,7 @@ async function main() {
         'Cold means newly opened FastDB connections after a checkpoint. OS filesystem cache is not evicted; this is not disk-cold latency.',
         '40% document reads, 20% indexed updates, 20% FTS (half corpus-wide), 10% ANN, 10% spatial. FULL synchronous; the pinned core automatically checkpoints above 1000 unbackfilled WAL frames. No checkpoint-threshold PRAGMA override is used.',
         'Per-operation latency includes frontend, engine and Node transport; assertions follow timing. Sustained throughput includes assertions and resource sampling.',
+        'Lightweight phase/progress logs go to stderr. Individual operation timers exclude logging; overall setup/workload/reopen timers include progress logging.',
         'Linux peak RSS includes startup, corpus/index construction and Node overhead. WAL peak is sampled after every operation, so transient within-operation peaks may be missed.',
         'ANN recall is against exact generated-data distances; this synthetic distribution does not establish recall for application embeddings.',
         'Cancellation tests the native VM deadline and successful retry; ANN/FTS native-call preemption and hard cancellation bounds are not claimed.',

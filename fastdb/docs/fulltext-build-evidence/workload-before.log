@@ -1,0 +1,41 @@
+Progress: resolved 0, reused 1, downloaded 0, added 0
+Packages: +1
++
+Packages are hard linked from the content-addressable store to the virtual store.
+  Content-addressable store is at: /home/tan/.local/share/pnpm/store/v11
+  Virtual store is at:             node_modules/.pnpm
+Progress: resolved 1, reused 1, downloaded 0, added 1, done
+
+dependencies:
++ @fastdb/node 2.1.0
+
+Done in 859ms using pnpm v11.23.0
+Benchmark: 5000 documents, 128 dimensions, 1 connections, sample 1
+<ref *1> Error: spawnSync /home/tan/.nvm/versions/node/v24.19.0/bin/node ETIMEDOUT
+    at Object.spawnSync (node:internal/child_process:1160:20)
+    at spawnSync (node:child_process:928:24)
+    at execFileSync (node:child_process:971:15)
+    at main (/home/tan/Sites/fastdb/turso/fastdb/scripts/bench-production.cjs:386:22)
+    at Object.<anonymous> (/home/tan/Sites/fastdb/turso/fastdb/scripts/bench-production.cjs:412:1)
+    at Module._compile (node:internal/modules/cjs/loader:1872:14)
+    at Object..js (node:internal/modules/cjs/loader:2003:10)
+    at Module.load (node:internal/modules/cjs/loader:1594:32)
+    at Module._load (node:internal/modules/cjs/loader:1396:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19) {
+  errno: -110,
+  code: 'ETIMEDOUT',
+  syscall: 'spawnSync /home/tan/.nvm/versions/node/v24.19.0/bin/node',
+  path: '/home/tan/.nvm/versions/node/v24.19.0/bin/node',
+  spawnargs: [
+    '/home/tan/Sites/fastdb/turso/fastdb/scripts/bench-production.cjs',
+    '--child',
+    '/tmp/fastdb-production-bench-mkzwFt/1-0/config.json'
+  ],
+  error: [Circular *1],
+  status: null,
+  signal: 'SIGTERM',
+  output: [ null, '', '' ],
+  pid: 2488426,
+  stdout: '',
+  stderr: ''
+}

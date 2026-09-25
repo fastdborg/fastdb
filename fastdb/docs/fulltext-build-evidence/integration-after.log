@@ -1,0 +1,17 @@
+   Compiling fastdb v2.1.0 (/home/tan/Sites/fastdb/turso/fastdb/frontend)
+   Compiling fastdb-tests v2.1.0 (/home/tan/Sites/fastdb/turso/fastdb/tests)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.45s
+     Running tests/fulltext.rs (target/debug/deps/fulltext-a954c71403fc6299)
+
+running 8 tests
+test text_query_grammar_preserves_exclusions_and_rejects_negative_only_subclauses ... ok
+test text_replacement_upsert_and_failed_insert_select_keep_indexes_atomic ... ok
+test text_index_recovers_committed_wal_after_process_exit ... ok
+test failed_text_builds_leave_no_orphans_and_query_inputs_are_explicit ... ok
+test text_index_transactions_validation_reopen_and_lifecycle ... ok
+test text_bulk_build_supports_one_and_sixteen_fields ... ok
+test text_search_ranks_all_ties_before_limit_and_uses_native_index ... ok
+test text_bulk_build_batches_rows_and_preserves_savepoint_rollback_and_reopen ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.63s
+

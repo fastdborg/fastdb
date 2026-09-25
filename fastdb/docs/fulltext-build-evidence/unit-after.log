@@ -1,0 +1,10 @@
+   Compiling fastdb v2.1.0 (/home/tan/Sites/fastdb/turso/fastdb/frontend)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.04s
+     Running unittests src/lib.rs (target/debug/deps/fastdb-7a84f7836d55336d)
+
+running 2 tests
+test fulltext::tests::text_metadata_and_owned_schema_cannot_be_weakened ... ok
+test fulltext::tests::text_audit_detects_stale_fields_counts_and_missing_entries ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 90 filtered out; finished in 0.43s
+

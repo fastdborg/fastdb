@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s
+     Running unittests src/lib.rs (target/debug/deps/fastdb-7a84f7836d55336d)
+
+running 1 test
+test interrupt::tests::interrupted_text_build_and_write_preserve_indexes_and_prior_work ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.46s
+
