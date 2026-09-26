@@ -103,3 +103,27 @@ VM/deadline cancellation. Ordinary engine errors retain their existing handling.
 A raw-engine regression proves retained crossing reads, an active caller transaction,
 prior writes still visible after interruption, and explicit ROLLBACK restoring the
 original rows. Frontend tests also cover result-budget and linked-fetch failure.
+
+## Checked frontend read adapter
+
+`Connection::select_metered` accepts checked native/collection SELECTs and direct
+record SELECTs, result limits and optional read/VM work limits. Its result retains
+`ReadWork` alongside the success or error outcome. A connection-local scope shares
+one meter across primary statements and forward/inverse linked target statements.
+The meter is attached only for those statement executions. Catalog discovery,
+preparation probes and savepoint cleanup remain outside it. A callback failure is
+reset before detachment; cleanup failures remain explicit rollback errors. Calls
+on a connection must remain serialized, as for existing frontend APIs.
+
+Direct records use a checked primary-key lookup with LIMIT 1, preserving the
+existing document result shape while avoiding an unnecessary next-index boundary
+visit. Read/result-budget failures retain visits and permit later operations.
+Tests prove failed-expression retention, metadata exclusion despite additional
+catalog entries, direct-record missing/found behavior, result limits, zero VM
+budget, mutation rejection, native/collection forward fetches, inverse fetches,
+and preservation of prior transaction work across budget failures.
+
+This adapter is a prerequisite for cloud receipts, not proof of complete billing
+coverage. Physical counter coverage for spills/materialization/search still needs
+qualification. Logical writes, DDL/import attribution, internal execution retries,
+durable receipts and organization settlement remain separate release gates.

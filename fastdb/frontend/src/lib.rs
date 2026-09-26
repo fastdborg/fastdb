@@ -21,6 +21,8 @@ pub use wal_replication::WalPosition;
 pub use wire_json::decode_wire_json;
 mod links;
 pub use interrupt::{CancellationToken, InterruptHandle};
+mod meter;
+pub use meter::{MeteredRead, ReadWork, ReadWorkLimits};
 mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
@@ -280,6 +282,7 @@ impl Database {
             next_subquery_id: std::sync::atomic::AtomicU64::new(0),
             write_buffer_limits: None,
             ann_cache: Default::default(),
+            read_meter: Default::default(),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -294,6 +297,7 @@ pub struct Connection {
     next_subquery_id: std::sync::atomic::AtomicU64,
     write_buffer_limits: Option<ResultLimits>,
     ann_cache: std::sync::Mutex<Option<ann::Cache>>,
+    read_meter: std::sync::Mutex<Option<Arc<turso_core::execution_meter::ExecutionMeter>>>,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
@@ -1155,17 +1159,24 @@ impl Connection {
         let mut budget = budget::ResultBudget::new(limits, &columns)?;
         let mut rows = Vec::new();
         let mut failure = None;
-        let execution = parser_stack(|| {
-            stmt.run_with_row_callback(|row| {
-                let output: Vec<_> = row.get_values().cloned().map(from_engine).collect();
-                if let Err(error) = budget.row(&output) {
-                    failure = Some(error);
-                    return Err(turso_core::LimboError::Interrupt);
-                }
-                rows.push(output);
-                Ok(())
+        let execution = self.meter_statement(&mut stmt, |stmt| {
+            parser_stack(|| {
+                stmt.run_with_row_callback(|row| {
+                    let output: Vec<_> = row.get_values().cloned().map(from_engine).collect();
+                    if let Err(error) = budget.row(&output) {
+                        failure = Some(error);
+                        return Err(turso_core::LimboError::Interrupt);
+                    }
+                    rows.push(output);
+                    Ok(())
+                })
+                .map_err(Error::from)
             })
         });
+        let execution = match execution {
+            Err(error @ Error::Rollback { .. }) => return Err(error),
+            outcome => outcome,
+        };
         if let Some(error) = failure {
             return Err(error);
         }
