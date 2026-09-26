@@ -188,3 +188,17 @@ grow. The selected integration set passes 164 distinct tests (163 in the broad
 run plus one additional object-write regression), and the final frontend library
 suite passes 92 tests. Runtime binaries and cloud serving paths are not changed
 by this frontend-only milestone.
+
+## Shared maintenance attribution
+
+`ExecutionMeter::without_row_mutations()` creates a view sharing the original
+atomic counters and immutable limits. The view suppresses logical mutation events
+only; completed reads, physical writes and VM steps still contribute. All budget
+exhaustion is shared in both directions and cannot be bypassed by switching views.
+The existing connection lifecycle guard and serialization requirement apply.
+This is an attribution API, not an authorization or read-only boundary.
+
+Twenty selected engine regressions pass, including a new maintenance-view test
+proving shared snapshots, zero logical mutation allowance for internal writes,
+physical work retention and read/VM/mutation exhaustion propagation. This isolated
+core change is a continuation of the approved counter/budget exception.

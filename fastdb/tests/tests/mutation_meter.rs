@@ -259,3 +259,56 @@ fn pending_io_does_not_repeat_mutation_events() {
     c.set_execution_meter(None).unwrap();
     assert_eq!(count(&c, "SELECT * FROM items"), 64);
 }
+
+#[test]
+fn maintenance_views_share_work_and_exhaustion_without_logical_mutations() {
+    let c = open(":memory:");
+    c.execute("CREATE TABLE items(n INTEGER)").unwrap();
+    c.execute("INSERT INTO items VALUES(1),(2),(3)").unwrap();
+    let root = Arc::new(ExecutionMeter::with_limits(ExecutionLimits {
+        max_row_mutations: Some(0),
+        ..Default::default()
+    }));
+    let maintenance = Arc::new(root.without_row_mutations());
+    c.set_execution_meter(Some(maintenance.clone())).unwrap();
+    c.execute("UPDATE items SET n=n+1").unwrap();
+    c.set_execution_meter(None).unwrap();
+    assert_eq!(root.snapshot(), maintenance.snapshot());
+    assert_eq!(root.snapshot().row_mutations, 0);
+    assert_eq!(root.snapshot().rows_read, 3);
+    assert!(root.snapshot().rows_written >= 3);
+    assert!(root.snapshot().vm_steps > 0);
+    c.set_execution_meter(Some(root.clone())).unwrap();
+    assert!(c.execute("INSERT INTO items VALUES(9)").is_err());
+    c.set_execution_meter(None).unwrap();
+    assert_eq!(root.snapshot().row_mutations, 1);
+    let exhausted = root.snapshot();
+    c.set_execution_meter(Some(maintenance.clone())).unwrap();
+    assert!(c.execute("UPDATE items SET n=0").is_err());
+    c.set_execution_meter(None).unwrap();
+    assert_eq!(root.snapshot(), exhausted);
+    for limits in [
+        ExecutionLimits {
+            max_rows_read: Some(1),
+            ..Default::default()
+        },
+        ExecutionLimits {
+            max_vm_steps: Some(1),
+            ..Default::default()
+        },
+    ] {
+        let root = Arc::new(ExecutionMeter::with_limits(limits));
+        let maintenance = Arc::new(root.without_row_mutations());
+        c.set_execution_meter(Some(maintenance.clone())).unwrap();
+        assert!(c.execute("UPDATE items SET n=0").is_err());
+        c.set_execution_meter(None).unwrap();
+        let exhausted = root.snapshot();
+        assert_eq!(exhausted, maintenance.snapshot());
+        assert!(exhausted.read_budget_exhausted || exhausted.vm_budget_exhausted);
+        assert_eq!(exhausted.row_mutations, 0);
+        c.set_execution_meter(Some(root.clone())).unwrap();
+        assert!(c.execute("SELECT * FROM items").is_err());
+        c.set_execution_meter(None).unwrap();
+        assert_eq!(root.snapshot(), exhausted);
+    }
+}

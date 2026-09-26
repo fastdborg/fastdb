@@ -4,7 +4,10 @@
 //! All programs started on an attached connection contribute, including internal
 //! programs. Existing statement metrics and their coverage are unchanged.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExecutionSnapshot {
@@ -41,6 +44,12 @@ pub struct ExecutionLimits {
 /// It cannot be reset; use a fresh instance for a new execution scope.
 #[derive(Debug, Default)]
 pub struct ExecutionMeter {
+    state: Arc<ExecutionState>,
+    suppress_row_mutations: bool,
+}
+
+#[derive(Debug, Default)]
+struct ExecutionState {
     rows_read: AtomicU64,
     rows_written: AtomicU64,
     row_mutations: AtomicU64,
@@ -66,10 +75,24 @@ impl ExecutionMeter {
 
     pub fn with_limits(limits: ExecutionLimits) -> Self {
         Self {
-            max_vm_steps: limits.max_vm_steps,
-            max_rows_read: limits.max_rows_read,
-            max_row_mutations: limits.max_row_mutations,
-            ..Self::default()
+            state: Arc::new(ExecutionState {
+                max_vm_steps: limits.max_vm_steps,
+                max_rows_read: limits.max_rows_read,
+                max_row_mutations: limits.max_row_mutations,
+                ..ExecutionState::default()
+            }),
+            suppress_row_mutations: false,
+        }
+    }
+
+    /// Share counters and all budget exhaustion with this meter, but suppress
+    /// logical mutation events for internal physical maintenance. Read, physical
+    /// write and VM work still accumulate. This is attribution, not a read-only
+    /// authorization boundary. Serialize scope replacement with execution.
+    pub fn without_row_mutations(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            suppress_row_mutations: true,
         }
     }
 
@@ -77,45 +100,55 @@ impl ExecutionMeter {
     /// consistent final snapshot; concurrent observations are provisional.
     pub fn snapshot(&self) -> ExecutionSnapshot {
         ExecutionSnapshot {
-            rows_read: self.rows_read.load(Ordering::Relaxed),
-            rows_written: self.rows_written.load(Ordering::Relaxed),
-            row_mutations: self.row_mutations.load(Ordering::Relaxed),
-            vm_steps: self.vm_steps.load(Ordering::Relaxed),
-            vm_budget_exhausted: self.vm_budget_exhausted.load(Ordering::Relaxed),
-            read_budget_exhausted: self.read_budget_exhausted.load(Ordering::Relaxed),
-            mutation_budget_exhausted: self.mutation_budget_exhausted.load(Ordering::Relaxed),
+            rows_read: self.state.rows_read.load(Ordering::Relaxed),
+            rows_written: self.state.rows_written.load(Ordering::Relaxed),
+            row_mutations: self.state.row_mutations.load(Ordering::Relaxed),
+            vm_steps: self.state.vm_steps.load(Ordering::Relaxed),
+            vm_budget_exhausted: self.state.vm_budget_exhausted.load(Ordering::Relaxed),
+            read_budget_exhausted: self.state.read_budget_exhausted.load(Ordering::Relaxed),
+            mutation_budget_exhausted: self.state.mutation_budget_exhausted.load(Ordering::Relaxed),
         }
     }
 
     pub(crate) fn record_rows_read(&self, count: u64) -> bool {
         let previous = self
+            .state
             .rows_read
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 Some(value.saturating_add(count))
             })
             .expect("unconditional update");
         if self
+            .state
             .max_rows_read
             .is_some_and(|limit| previous.saturating_add(count) > limit)
         {
-            self.read_budget_exhausted.store(true, Ordering::Relaxed);
+            self.state
+                .read_budget_exhausted
+                .store(true, Ordering::Relaxed);
             return false;
         }
         true
     }
 
     pub(crate) fn record_row_mutation(&self) -> bool {
+        if self.suppress_row_mutations {
+            return !self.is_budget_exhausted();
+        }
         let previous = self
+            .state
             .row_mutations
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 Some(value.saturating_add(1))
             })
             .expect("unconditional update");
         if self
+            .state
             .max_row_mutations
             .is_some_and(|limit| previous.saturating_add(1) > limit)
         {
-            self.mutation_budget_exhausted
+            self.state
+                .mutation_budget_exhausted
                 .store(true, Ordering::Relaxed);
             return false;
         }
@@ -123,13 +156,13 @@ impl ExecutionMeter {
     }
 
     pub(crate) fn is_budget_exhausted(&self) -> bool {
-        self.read_budget_exhausted.load(Ordering::Relaxed)
-            || self.vm_budget_exhausted.load(Ordering::Relaxed)
-            || self.mutation_budget_exhausted.load(Ordering::Relaxed)
+        self.state.read_budget_exhausted.load(Ordering::Relaxed)
+            || self.state.vm_budget_exhausted.load(Ordering::Relaxed)
+            || self.state.mutation_budget_exhausted.load(Ordering::Relaxed)
     }
 
     pub(crate) fn record_rows_written(&self, count: u64) {
-        saturating_add(&self.rows_written, count);
+        saturating_add(&self.state.rows_written, count);
     }
 
     /// Reserve before dispatch, so a shared meter cannot overrun its VM limit.
@@ -137,17 +170,20 @@ impl ExecutionMeter {
         if self.is_budget_exhausted() {
             return false;
         }
-        let result = self
-            .vm_steps
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |steps| {
-                if self.max_vm_steps.is_some_and(|limit| steps >= limit) {
-                    None
-                } else {
-                    Some(steps.saturating_add(1))
-                }
-            });
+        let result =
+            self.state
+                .vm_steps
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |steps| {
+                    if self.state.max_vm_steps.is_some_and(|limit| steps >= limit) {
+                        None
+                    } else {
+                        Some(steps.saturating_add(1))
+                    }
+                });
         if result.is_err() {
-            self.vm_budget_exhausted.store(true, Ordering::Relaxed);
+            self.state
+                .vm_budget_exhausted
+                .store(true, Ordering::Relaxed);
             return false;
         }
         true

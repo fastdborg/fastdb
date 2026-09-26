@@ -279,3 +279,8 @@ and interrupted writers must be finalized before meter replacement. Five focused
 mutation regressions and the adjacent write/read/lifecycle suites pass. Retained
 events survive rollback and are not committed billable writes; managed hidden
 index and virtual-table attribution remain open. See the metering proposal.
+
+The execution meter additionally supports a shared maintenance view suppressing
+only logical mutation events. Reads, physical writes, VM work and all exhaustion
+remain shared. The mutation-meter regression verifies scope switching cannot
+bypass an exhausted budget. This is part of the approved metering exception.
