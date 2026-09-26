@@ -703,6 +703,8 @@ pub struct ProgramState {
     once: SmallVec<[u32; 4]>,
     pub execution_state: ProgramExecutionState,
     execution_meter: Option<Arc<crate::execution_meter::ExecutionMeter>>,
+    /// Completed rows in an incremental, metered Count opcode.
+    metered_count: Option<u64>,
     /// Per-execution statement deadline derived from the connection query timeout.
     /// `None` means no timeout.
     pub query_deadline: Option<crate::MonotonicInstant>,
@@ -825,6 +827,7 @@ impl ProgramState {
             once: SmallVec::<[u32; 4]>::new(),
             execution_state: ProgramExecutionState::Init,
             execution_meter: None,
+            metered_count: None,
             query_deadline: None,
             parameters: Vec::new(),
             commit_state: CommitState::Ready,
@@ -946,6 +949,7 @@ impl ProgramState {
         self.ended_coroutine.clear();
         self.once.clear();
         self.execution_state = ProgramExecutionState::Init;
+        self.metered_count = None;
         self.query_deadline = None;
         self.current_collation = None;
         #[cfg(feature = "json")]
@@ -1037,11 +1041,17 @@ impl ProgramState {
     }
 
     #[inline]
-    pub fn record_rows_read(&mut self, count: u64) {
+    pub fn record_rows_read(&mut self, count: u64) -> Result<()> {
         self.metrics.rows_read = self.metrics.rows_read.saturating_add(count);
-        if let Some(meter) = &self.execution_meter {
-            meter.record_rows_read(count);
+        if self
+            .execution_meter
+            .as_ref()
+            .is_some_and(|meter| !meter.record_rows_read(count))
+        {
+            self.interrupt();
+            return Err(LimboError::Interrupt);
         }
+        Ok(())
     }
 
     #[inline]

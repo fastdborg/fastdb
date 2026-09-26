@@ -1415,7 +1415,7 @@ pub fn op_vfilter(
         state.pc = pc_if_empty.as_offset_int();
     } else {
         // VFilter positions to the first row if any exist, which counts as a read
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1559,7 +1559,7 @@ pub fn op_vnext(
     };
     if has_more {
         // Increment metrics for row read from virtual table (including materialized views)
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
         state.pc = pc_if_next.as_offset_int();
     } else {
         state.pc += 1;
@@ -1708,7 +1708,7 @@ pub fn op_rewind(
         state.pc = pc_if_empty.as_offset_int();
     } else {
         // Rewind positions to the first row, which is effectively a read
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1738,7 +1738,7 @@ pub fn op_last(
         state.pc = pc_if_empty.as_offset_int();
     } else {
         // Last positions to the last row, which is effectively a read
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1828,7 +1828,7 @@ pub fn op_column(
                     }
                 };
                 if matches!(found, SeekResult::Found) {
-                    state.record_rows_read(1);
+                    state.record_rows_read(1)?;
                 }
                 state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
                 state.metrics.search_count = state.metrics.search_count.saturating_add(1);
@@ -2871,7 +2871,7 @@ pub fn op_next(
     };
     if !is_empty {
         // Increment metrics for row read
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
         state.metrics.btree_next = state.metrics.btree_next.saturating_add(1);
         state.metrics.search_count = state.metrics.search_count.saturating_add(1);
         // Track if this is a full table scan or index scan
@@ -2919,7 +2919,7 @@ pub fn op_prev(
     };
     if !is_empty {
         // Increment metrics for row read
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
         state.metrics.btree_prev = state.metrics.btree_prev.saturating_add(1);
         state.metrics.search_count = state.metrics.search_count.saturating_add(1);
         // Track if this is a full table scan or index scan
@@ -5010,7 +5010,7 @@ pub fn op_row_id(
                     )
                 };
                 if matches!(found, SeekResult::Found) {
-                    state.record_rows_read(1);
+                    state.record_rows_read(1)?;
                 }
                 *state.active_op_state.row_id() = OpRowIdState::GetRowid;
             }
@@ -5188,7 +5188,7 @@ pub fn op_seek_rowid(
         state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
     }
     if found {
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
     }
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
@@ -5658,7 +5658,7 @@ pub fn seek_internal(
     // Count only completed, successful positioning. I/O resumptions and
     // absent keys are not visits to a row or index entry.
     if matches!(result, Ok(SeekInternalResult::Found)) {
-        state.record_rows_read(1);
+        state.record_rows_read(1)?;
     }
     result
 }
@@ -13903,6 +13903,33 @@ pub fn op_count(
         insn
     );
 
+    // A metered count must expose progress before counting the whole tree. One
+    // cursor advance per dispatch bounds read overshoot and allows VM/deadline
+    // cancellation between rows. Retain the phase across I/O; polling an unfinished
+    // completion never repeats a completed visit.
+    if *exact && state.execution_meter.is_some() {
+        let is_empty = {
+            let started = state.metered_count.is_some();
+            let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Count");
+            let cursor = cursor.as_btree_mut();
+            if started {
+                return_if_io!(cursor.next());
+            } else {
+                return_if_io!(cursor.rewind());
+            }
+            cursor.is_empty()
+        };
+        if is_empty {
+            state.registers[*target_reg].set_int(state.metered_count.unwrap_or(0) as i64);
+            state.metered_count = None;
+            state.pc += 1;
+        } else {
+            state.record_rows_read(1)?;
+            state.metered_count = Some(state.metered_count.unwrap_or(0).saturating_add(1));
+        }
+        return Ok(InsnFunctionStepResult::Step);
+    }
+
     let count = {
         let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Count");
         let cursor = cursor.as_btree_mut();
@@ -13914,7 +13941,7 @@ pub fn op_count(
     // For optimized COUNT(*) queries, the count represents rows that would be read
     // SQLite tracks this differently (as pages read), but for consistency we track as rows
     if *exact {
-        state.record_rows_read(count as u64);
+        state.record_rows_read(count as u64)?;
     }
 
     state.pc += 1;
@@ -15196,7 +15223,7 @@ pub fn op_hash_build(
     }
 
     state.active_op_state.clear();
-    state.record_rows_read(1);
+    state.record_rows_read(1)?;
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

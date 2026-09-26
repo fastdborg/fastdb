@@ -43,10 +43,29 @@ interrupted physical writes with rollback, EXPLAIN modes, and deterministic queu
 I/O polls/resumption using the existing upstream I/O test harness. Adjacent profile,
 deadline, cross-thread interrupt, result-limit and transaction regressions pass.
 
-Read budgets are still required: one opcode can report a batch of reads (notably
-Count), so a VM budget is not a row-quota substitute. Complete cursor coverage,
-managed-write/linked-fetch attribution, internal-work exclusion, DDL accounting
-and durable cloud settlement remain required before paid activation.
+A third isolated patch adds optional read budgets. Each completed instrumented
+visit is retained, then an over-budget event interrupts immediately. The scope is
+sticky: subsequent statements cannot resume work after exhaustion. In a serialized
+execution the maximum overshoot is one counted visit, including zero-budget
+execution that reaches an existing row. Missing rows and empty scans count zero.
+Sharing a meter across concurrent VMs permits one crossing visit per active VM;
+cloud admission must serialize each execution and include the documented bound.
+The approved cloud plan explicitly permits documented bounded overshoot. Counts
+are never clipped, and the ledger must settle the actual retained value.
+
+With a meter attached, exact Count opcodes advance one row per VM dispatch rather
+than reporting the whole count after an uninterruptible batch. The phase survives
+I/O and resets with the statement. VM/deadline cancellation remains available
+between advances. Default unmetered Count retains its optimized path. Tests cover
+exact/short/zero read budgets for table scans, covering and deferred index reads,
+Count results/reset/empty input, interrupted writes, and partial Count reads on
+injected I/O failure. Waiting for pending I/O never repeats completed reads.
+
+This bounds the existing instrumented visits; it does not establish complete
+billable coverage or bound arbitrary work inside virtual-table extensions.
+Complete cursor coverage (including hash joins), managed-write/linked-fetch
+attribution, internal-work exclusion, DDL accounting and durable cloud settlement
+remain required before paid activation.
 Hash joins, sort/materialized paths, virtual/search indexes and suspended-I/O
 edge cases require their own broader accounting audit; this patch does not claim
 complete billable counters for all paths.

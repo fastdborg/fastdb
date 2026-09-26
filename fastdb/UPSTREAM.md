@@ -256,7 +256,9 @@ The user approved a narrowly scoped counter/budget exception for Cloud 0.3.0 on
 successful cursor seeks and executed deferred table lookups. A second isolated
 change adds opt-in retained execution counters and a VM-step budget; counters
 survive errors/rollback and are physical work rather than committed billable
-mutations. Read budgets and checked frontend attribution remain open. Neither
-patch enables paid billing. See [the design and regression contract](docs/proposals/execution-metering.md)
+mutations. A third isolated change adds read budgets with one counted-visit
+overshoot per serialized execution and incremental metered Count execution.
+Complete cursor coverage and checked frontend attribution remain open. These
+patches do not enable paid billing. See [the design and regression contract](docs/proposals/execution-metering.md)
 and [the exception register](docs/core-exceptions.md). Work is on the separate
 `feat/cloud-metering` branch based on released FastDB 2.1.0.
