@@ -702,6 +702,7 @@ pub struct ProgramState {
     /// Indicate whether an [Insn::Once] instruction at a given program counter position has already been executed, well, once.
     once: SmallVec<[u32; 4]>,
     pub execution_state: ProgramExecutionState,
+    execution_meter: Option<Arc<crate::execution_meter::ExecutionMeter>>,
     /// Per-execution statement deadline derived from the connection query timeout.
     /// `None` means no timeout.
     pub query_deadline: Option<crate::MonotonicInstant>,
@@ -823,6 +824,7 @@ impl ProgramState {
             ended_coroutine: vec![],
             once: SmallVec::<[u32; 4]>::new(),
             execution_state: ProgramExecutionState::Init,
+            execution_meter: None,
             query_deadline: None,
             parameters: Vec::new(),
             commit_state: CommitState::Ready,
@@ -1037,11 +1039,31 @@ impl ProgramState {
     #[inline]
     pub fn record_rows_read(&mut self, count: u64) {
         self.metrics.rows_read = self.metrics.rows_read.saturating_add(count);
+        if let Some(meter) = &self.execution_meter {
+            meter.record_rows_read(count);
+        }
     }
 
     #[inline]
     pub fn record_rows_written(&mut self, count: u64) {
         self.metrics.rows_written = self.metrics.rows_written.saturating_add(count);
+        if let Some(meter) = &self.execution_meter {
+            meter.record_rows_written(count);
+        }
+    }
+
+    #[inline]
+    fn take_vm_step(&mut self) -> bool {
+        if self
+            .execution_meter
+            .as_ref()
+            .is_some_and(|meter| !meter.take_vm_step())
+        {
+            self.interrupt();
+            return false;
+        }
+        self.metrics.vm_steps = self.metrics.vm_steps.saturating_add(1);
+        true
     }
 
     pub(crate) fn metrics(&self) -> StatementMetrics {
@@ -1537,6 +1559,9 @@ impl Program {
         query_mode: QueryMode,
         waker: Option<&Waker>,
     ) -> Result<StepResult> {
+        if matches!(state.execution_state, ProgramExecutionState::Init) {
+            state.execution_meter = self.connection.execution_meter.read().clone();
+        }
         state.execution_state = ProgramExecutionState::Running;
         let result = match query_mode {
             QueryMode::Normal => self.normal_step(state, pager, waker),
@@ -1572,7 +1597,9 @@ impl Program {
             return Ok(StepResult::Interrupt);
         }
 
-        state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+        if !state.take_vm_step() {
+            return Ok(StepResult::Interrupt);
+        }
 
         let mut explain_state = state.explain_state.write();
 
@@ -1676,7 +1703,9 @@ impl Program {
             }
 
             // FIXME: do we need this?
-            state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+            if !state.take_vm_step() {
+                return Ok(StepResult::Interrupt);
+            }
 
             if state.pc as usize >= self.insns.len() {
                 return Ok(StepResult::Done);
@@ -1807,7 +1836,10 @@ impl Program {
                 state.pre_op_registers = Some(state.registers.clone());
             }
             // Always increment VM steps for every loop iteration
-            state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+            if !state.take_vm_step() {
+                self.abort(pager, None, state)?;
+                return Ok(StepResult::Interrupt);
+            }
 
             match insn_function(self, state, insn, pager) {
                 Ok(InsnFunctionStepResult::Step) => {

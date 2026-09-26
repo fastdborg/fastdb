@@ -16,6 +16,7 @@ pub mod alloc;
 pub mod busy;
 #[cfg(feature = "cli_only")]
 pub mod dbpage;
+pub mod execution_meter;
 #[cfg(any(feature = "fuzz", feature = "bench"))]
 pub mod functions;
 pub mod index_method;
@@ -2216,6 +2217,7 @@ impl Database {
             yield_instance_id_counter: AtomicU64::new(1),
             view_transaction_states: AllViewsTxState::new(),
             metrics: RwLock::new(ConnectionMetrics::new()),
+            execution_meter: RwLock::new(None),
             nestedness: AtomicI32::new(0),
             compiling_triggers: RwLock::new(Vec::new()),
             executing_triggers: RwLock::new(Vec::new()),

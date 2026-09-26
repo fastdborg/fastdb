@@ -253,7 +253,10 @@ state; review/remove criteria and immutable evidence are in
 
 The user approved a narrowly scoped counter/budget exception for Cloud 0.3.0 on
 2026-09-26. The first isolated change corrects missing row-visit counts after
-successful cursor seeks and executed deferred table lookups. It does not change
-SQL results or enable paid billing. See [the design and regression contract](docs/proposals/execution-metering.md)
+successful cursor seeks and executed deferred table lookups. A second isolated
+change adds opt-in retained execution counters and a VM-step budget; counters
+survive errors/rollback and are physical work rather than committed billable
+mutations. Read budgets and checked frontend attribution remain open. Neither
+patch enables paid billing. See [the design and regression contract](docs/proposals/execution-metering.md)
 and [the exception register](docs/core-exceptions.md). Work is on the separate
 `feat/cloud-metering` branch based on released FastDB 2.1.0.

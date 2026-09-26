@@ -20,9 +20,33 @@ covering/non-covering indexes and the forty-row indexed join (eighty visits).
 Existing scan-reduction and result-equivalence checks remain in that suite.
 The private cloud has a separate native diagnostic reproducer and runtime suite.
 
-This is only the first part of the approved metering design. Complete failed-query
-counters, an optional execution budget, managed-write/linked-fetch attribution,
-DDL accounting and durable cloud settlement remain required before paid activation.
+A second isolated patch adds `execution_meter::ExecutionMeter`, attached through
+`Connection::set_execution_meter`. Each program captures the optional Arc when
+execution starts. Completed row-read/write events update it directly, so snapshots
+survive statement errors, interruption, reset, rollback and drop. It preserves
+physical write work on rollback; those counters must never be described as
+committed logical mutations. All programs, including internal programs, contribute.
+The existing statement and connection profiling APIs remain unchanged.
+
+An optional VM-step budget reserves each dispatch atomically before execution.
+Zero interrupts before dispatch, exactly enough permits completion, and exhaustion
+uses the existing interrupt/abort path. The budget spans sequential statements;
+replacing a meter while a root statement is active is rejected. Callers must
+serialize replacement with execution and detach before unmetered cleanup. Final
+snapshots require quiescent execution; concurrent field reads are provisional.
+Waiting on unfinished I/O does not consume additional VM steps. Parsing, planning
+and work within an opcode are not bounded by this facility.
+
+`fastdb-tests --test execution_meter` covers memory/file-backed failure retention,
+partial-result drop, reset/rebinding, explicit rollback, zero and exact VM limits,
+interrupted physical writes with rollback, EXPLAIN modes, and deterministic queued
+I/O polls/resumption using the existing upstream I/O test harness. Adjacent profile,
+deadline, cross-thread interrupt, result-limit and transaction regressions pass.
+
+Read budgets are still required: one opcode can report a batch of reads (notably
+Count), so a VM budget is not a row-quota substitute. Complete cursor coverage,
+managed-write/linked-fetch attribution, internal-work exclusion, DDL accounting
+and durable cloud settlement remain required before paid activation.
 Hash joins, sort/materialized paths, virtual/search indexes and suspended-I/O
 edge cases require their own broader accounting audit; this patch does not claim
 complete billable counters for all paths.
