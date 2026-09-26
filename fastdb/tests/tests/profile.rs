@@ -143,3 +143,63 @@ fn profiles_count_successful_seeks_and_deferred_table_visits() {
         }
     }
 }
+
+#[test]
+fn hash_join_counts_table_visits_once() {
+    for on_disk in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hash-profile.db");
+        let db = Database::open(if on_disk {
+            file.to_str().unwrap()
+        } else {
+            ":memory:"
+        })
+        .unwrap();
+        let c = db.connect().unwrap();
+        q(&c, "CREATE TABLE hash_left(n INTEGER)");
+        q(&c, "CREATE TABLE hash_right(n INTEGER)");
+        for modulus in [100, 10] {
+            q(&c, "BEGIN");
+            q(&c, "DELETE FROM hash_left");
+            q(&c, "DELETE FROM hash_right");
+            for n in 0..100 {
+                q(
+                    &c,
+                    &format!("INSERT INTO hash_left VALUES({})", n % modulus),
+                );
+                q(
+                    &c,
+                    &format!("INSERT INTO hash_right VALUES({})", n % modulus),
+                );
+            }
+            q(&c, "COMMIT");
+            let sql = "SELECT count(*) FROM hash_left a JOIN hash_right b ON a.n=b.n";
+            let explain = q(&c, &format!("EXPLAIN {sql}"));
+            let opcodes: Vec<_> = explain.rows.iter().map(|row| row[1].clone()).collect();
+            assert!(
+                opcodes.contains(&Value::String("HashBuild".into())),
+                "{opcodes:?}"
+            );
+            assert!(
+                opcodes.contains(&Value::String("HashProbe".into())),
+                "{opcodes:?}"
+            );
+            let profile = c.profile_select(sql, &Parameters::new()).unwrap();
+            assert_eq!(
+                profile.result.rows,
+                vec![vec![Value::Integer(10000 / modulus)]]
+            );
+            assert_eq!(profile.result.rows, q(&c, sql).rows);
+            // Two 100-row table scans; hash copies/probes do not reposition
+            // either source cursor. Duplicate matches still visit each source
+            // row once. Any spilled source seeks would be extra visits.
+            assert_eq!(profile.metrics.btree_seeks, 0, "{:?}", profile.metrics);
+            assert_eq!(profile.metrics.fullscan_steps, 198);
+            assert_eq!(
+                profile.metrics.rows_read, 200,
+                "disk={on_disk}; modulus={modulus}; {:?}",
+                profile.metrics
+            );
+        }
+    }
+}

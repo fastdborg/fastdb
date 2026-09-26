@@ -444,3 +444,46 @@ fn metered_count_retains_partial_reads_on_io_failure() {
         .unwrap();
     assert_eq!(meter.snapshot(), failed);
 }
+
+#[test]
+fn hash_join_read_budget_uses_source_visits_not_hash_copies() {
+    let c = connection(":memory:");
+    c.execute("CREATE TABLE hash_left(n INTEGER)").unwrap();
+    c.execute("CREATE TABLE hash_right(n INTEGER)").unwrap();
+    c.execute("BEGIN").unwrap();
+    for n in 0..100 {
+        c.execute(format!("INSERT INTO hash_left VALUES({n})"))
+            .unwrap();
+        c.execute(format!("INSERT INTO hash_right VALUES({n})"))
+            .unwrap();
+    }
+    c.execute("COMMIT").unwrap();
+    let sql = "SELECT count(*) FROM hash_left a JOIN hash_right b ON a.n=b.n";
+    let mut hash_build = false;
+    c.prepare(format!("EXPLAIN {sql}"))
+        .unwrap()
+        .run_with_row_callback(|row| {
+            hash_build |= row.get_values().nth(1).unwrap().to_string() == "HashBuild";
+            Ok(())
+        })
+        .unwrap();
+    assert!(hash_build);
+    let mut query = c.prepare(sql).unwrap();
+    for limit in [200, 199] {
+        let meter = read_meter(limit);
+        c.set_execution_meter(Some(meter.clone())).unwrap();
+        let result = query.run_with_row_callback(|row| {
+            assert_eq!(row.get_values().next().unwrap().to_string(), "100");
+            Ok(())
+        });
+        if limit == 200 {
+            result.unwrap();
+        } else {
+            assert!(matches!(result, Err(LimboError::Interrupt)));
+        }
+        assert_eq!(meter.snapshot().rows_read, 200);
+        assert_eq!(meter.snapshot().read_budget_exhausted, limit == 199);
+        c.set_execution_meter(None).unwrap();
+        query.reset().unwrap();
+    }
+}

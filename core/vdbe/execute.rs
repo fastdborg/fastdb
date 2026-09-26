@@ -15223,7 +15223,9 @@ pub fn op_hash_build(
     }
 
     state.active_op_state.clear();
-    state.record_rows_read(1)?;
+    // HashBuild copies keys/payload already read into registers and takes the
+    // rowid from the positioned cursor. Rewind/Next (or a seek) already charged
+    // the source visit; inserting it into the hash table is not another read.
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

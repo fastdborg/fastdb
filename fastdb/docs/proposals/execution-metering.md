@@ -74,3 +74,20 @@ Retain this exception until upstream counts successful cursor positioning and
 actually performed deferred table reads equivalently and these regressions pass
 without the patch. Review counter and budget changes separately from upstream
 merges; preserve ancestry and maintain an isolated commit.
+
+
+## Hash-build duplicate accounting
+
+A fourth isolated correction removes the read event from HashBuild. That opcode
+copies keys/payload already read into registers and uses the currently positioned
+source rowid; it does not advance or seek the source cursor. Its Rewind/Next/seek
+already recorded the visit. A verified non-spilling 100-by-100 hash join reported
+300 visits with zero B-tree seeks and 198 full-scan steps; the correct total is
+200 (two initial positions plus 198 advances).
+
+Memory and file-backed regressions assert the HashBuild/HashProbe plan, unchanged
+results for unique and duplicate keys (100 and 1,000 matches), zero source seeks,
+and exactly 200 visits. A retained-meter regression succeeds at a 200-read budget
+and interrupts at 199 with the crossing 200th visit retained. Hash-grace spill
+paths, temporary/materialized traversal and virtual/search indexes still need
+broader attribution qualification; this correction is not evidence for those paths.
