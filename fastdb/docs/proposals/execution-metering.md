@@ -91,3 +91,15 @@ and exactly 200 visits. A retained-meter regression succeeds at a 200-read budge
 and interrupts at 199 with the crossing 200th visit retained. Hash-grace spill
 paths, temporary/materialized traversal and virtual/search indexes still need
 broader attribution qualification; this correction is not evidence for those paths.
+
+
+## Read-budget interruption and caller transactions
+
+Frontend integration exposed a distinction between engine error and cooperative
+interruption cleanup: a read-budget error could roll back prior work in an
+explicit transaction. The fifth isolated correction routes an Interrupt from an
+already-interrupting program through the existing cooperative abort path, matching
+VM/deadline cancellation. Ordinary engine errors retain their existing handling.
+A raw-engine regression proves retained crossing reads, an active caller transaction,
+prior writes still visible after interruption, and explicit ROLLBACK restoring the
+original rows. Frontend tests also cover result-budget and linked-fetch failure.

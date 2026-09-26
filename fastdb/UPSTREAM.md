@@ -264,3 +264,9 @@ coverage and checked frontend attribution remain open. These
 patches do not enable paid billing. See [the design and regression contract](docs/proposals/execution-metering.md)
 and [the exception register](docs/core-exceptions.md). Work is on the separate
 `feat/cloud-metering` branch based on released FastDB 2.1.0.
+
+
+Read-budget integration additionally routes a budget-requested interrupt through
+the existing cooperative cleanup path, preserving prior explicit-transaction work
+for interrupted readers. This is an isolated continuation of the approved metering
+exception with raw-engine and checked-frontend transaction regressions.

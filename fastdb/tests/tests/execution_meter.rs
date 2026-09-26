@@ -487,3 +487,38 @@ fn hash_join_read_budget_uses_source_visits_not_hash_copies() {
         query.reset().unwrap();
     }
 }
+
+#[test]
+fn read_budget_interrupt_preserves_prior_explicit_transaction_work() {
+    let c = connection(":memory:");
+    c.execute("BEGIN").unwrap();
+    c.execute("INSERT INTO input VALUES(6)").unwrap();
+    let meter = read_meter(1);
+    c.set_execution_meter(Some(meter.clone())).unwrap();
+    assert!(matches!(
+        run(&c, "SELECT n FROM input"),
+        Err(LimboError::Interrupt)
+    ));
+    assert_eq!(meter.snapshot().rows_read, 2);
+    c.set_execution_meter(None).unwrap();
+    assert!(!c.get_auto_commit());
+    let mut rows = 0;
+    c.prepare("SELECT n FROM input")
+        .unwrap()
+        .run_with_row_callback(|_| {
+            rows += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(rows, 6);
+    c.execute("ROLLBACK").unwrap();
+    let mut rows = 0;
+    c.prepare("SELECT n FROM input")
+        .unwrap()
+        .run_with_row_callback(|_| {
+            rows += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(rows, 5);
+}

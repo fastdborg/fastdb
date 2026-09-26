@@ -1886,6 +1886,13 @@ impl Program {
                     state.metrics.insn_executed = state.metrics.insn_executed.saturating_add(1);
                     return Ok(StepResult::Row);
                 }
+                Err(LimboError::Interrupt) if state.is_interrupted() => {
+                    // Read-budget crossings are cooperative cancellation, like
+                    // VM/deadline interruption. Treating them as ordinary errors
+                    // would roll back an explicit transaction even for a reader.
+                    self.abort(pager, None, state)?;
+                    return Ok(StepResult::Interrupt);
+                }
                 Err(LimboError::Busy) => {
                     // Instruction blocked - will retry at same PC
                     return Ok(StepResult::Busy);
