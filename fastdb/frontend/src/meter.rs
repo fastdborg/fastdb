@@ -1,4 +1,4 @@
-//! Retained work for checked SELECT execution and linked target statements.
+//! Retained work for checked customer statements.
 use crate::{Connection, Error, Parameters, QueryResult, Result, ResultLimits};
 use serde::Serialize;
 use std::sync::Arc;
@@ -26,12 +26,38 @@ pub struct MeteredRead {
     pub work: ReadWork,
 }
 
+/// Limits shared by customer reads and row mutations within one checked write.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriteWorkLimits {
+    pub max_rows_read: Option<u64>,
+    pub max_row_mutations: Option<u64>,
+    pub max_vm_steps: Option<u64>,
+}
+
+/// Attempted work survives rollback. `row_mutations` is never a committed-write
+/// receipt: the caller must resolve the enclosing transaction separately.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WriteWork {
+    pub rows_read: u64,
+    pub row_mutations: u64,
+    pub vm_steps: u64,
+    pub read_budget_exhausted: bool,
+    pub mutation_budget_exhausted: bool,
+    pub vm_budget_exhausted: bool,
+}
+
+#[derive(Debug)]
+pub struct MeteredWrite {
+    pub outcome: Result<QueryResult>,
+    pub work: WriteWork,
+}
+
 struct Scope<'a>(&'a Connection);
 impl Drop for Scope<'_> {
     fn drop(&mut self) {
         // Statement locals unwind before this scope, including after a panic.
         let _ = self.0.engine.set_execution_meter(None);
-        *self.0.read_meter.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.0.work_meter.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -61,7 +87,7 @@ impl Connection {
         }));
         let outcome = crate::parser_stack(|| {
             {
-                let mut slot = self.read_meter.lock().unwrap_or_else(|e| e.into_inner());
+                let mut slot = self.work_meter.lock().unwrap_or_else(|e| e.into_inner());
                 if slot.is_some() {
                     return Err(Error::Unsupported("nested metered execution".into()));
                 }
@@ -87,6 +113,62 @@ impl Connection {
                 vm_budget_exhausted: snapshot.vm_budget_exhausted,
             },
         }
+    }
+
+    /// Execute a checked data write with retained work and atomic result limits.
+    /// Shares one meter across source reads and primary document mutations;
+    /// catalog, rollback and managed physical index maintenance are excluded.
+    /// Retained mutations include rolled-back attempts. Successful execution in
+    /// a caller transaction is still pending that transaction's final outcome.
+    /// Virtual/search/materialized and internal index-maintenance read coverage
+    /// require further qualification before this can serve as billing evidence.
+    pub fn write_metered(
+        &self,
+        sql: &str,
+        params: &Parameters,
+        result_limits: ResultLimits,
+        work_limits: WriteWorkLimits,
+    ) -> MeteredWrite {
+        let meter = Arc::new(ExecutionMeter::with_limits(ExecutionLimits {
+            max_rows_read: work_limits.max_rows_read,
+            max_row_mutations: work_limits.max_row_mutations,
+            max_vm_steps: work_limits.max_vm_steps,
+        }));
+        let outcome = crate::parser_stack(|| {
+            {
+                let mut slot = self.work_meter.lock().unwrap_or_else(|e| e.into_inner());
+                if slot.is_some() {
+                    return Err(Error::Unsupported("nested metered execution".into()));
+                }
+                *slot = Some(meter.clone());
+            }
+            let _scope = Scope(self);
+            self.write_with_result_limits(sql, params, result_limits)
+        });
+        let snapshot = meter.snapshot();
+        MeteredWrite {
+            outcome,
+            work: WriteWork {
+                rows_read: snapshot.rows_read,
+                row_mutations: snapshot.row_mutations,
+                vm_steps: snapshot.vm_steps,
+                read_budget_exhausted: snapshot.read_budget_exhausted,
+                mutation_budget_exhausted: snapshot.mutation_budget_exhausted,
+                vm_budget_exhausted: snapshot.vm_budget_exhausted,
+            },
+        }
+    }
+
+    pub(crate) fn run_customer(
+        &self,
+        sql: &str,
+        params: &[crate::EngineValue],
+    ) -> Result<Vec<Vec<crate::EngineValue>>> {
+        let mut statement = self.prepare(sql)?;
+        for (i, value) in params.iter().enumerate() {
+            statement.bind_at(std::num::NonZeroUsize::new(i + 1).unwrap(), value.clone())?;
+        }
+        self.meter_statement(&mut statement, crate::collect_rows)
     }
 
     fn metered_record(
@@ -127,7 +209,7 @@ impl Connection {
         execute: impl FnOnce(&mut turso_core::Statement) -> Result<T>,
     ) -> Result<T> {
         let meter = self
-            .read_meter
+            .work_meter
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();

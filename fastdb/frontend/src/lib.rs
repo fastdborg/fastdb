@@ -22,7 +22,7 @@ pub use wire_json::decode_wire_json;
 mod links;
 pub use interrupt::{CancellationToken, InterruptHandle};
 mod meter;
-pub use meter::{MeteredRead, ReadWork, ReadWorkLimits};
+pub use meter::{MeteredRead, MeteredWrite, ReadWork, ReadWorkLimits, WriteWork, WriteWorkLimits};
 mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
@@ -282,7 +282,7 @@ impl Database {
             next_subquery_id: std::sync::atomic::AtomicU64::new(0),
             write_buffer_limits: None,
             ann_cache: Default::default(),
-            read_meter: Default::default(),
+            work_meter: Default::default(),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -297,7 +297,7 @@ pub struct Connection {
     next_subquery_id: std::sync::atomic::AtomicU64,
     write_buffer_limits: Option<ResultLimits>,
     ann_cache: std::sync::Mutex<Option<ann::Cache>>,
-    read_meter: std::sync::Mutex<Option<Arc<turso_core::execution_meter::ExecutionMeter>>>,
+    work_meter: std::sync::Mutex<Option<Arc<turso_core::execution_meter::ExecutionMeter>>>,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
@@ -481,7 +481,7 @@ impl Connection {
         })
     }
     fn documents(&self, collection: &Collection) -> Result<Vec<Document>> {
-        self.run(
+        self.run_customer(
             &format!("SELECT doc FROM {}", quote(&collection.storage)),
             &[],
         )?
@@ -495,7 +495,7 @@ impl Connection {
     }
     fn get_in(&self, c: &Collection, record: &Record) -> Result<Option<Document>> {
         let id = normalized_id(record, &c.name)?;
-        self.run(
+        self.run_customer(
             &format!("SELECT doc FROM {} WHERE id = ?1", quote(&c.storage)),
             &[EngineValue::Blob(Value::Record(id).encode()?)],
         )?
@@ -670,7 +670,7 @@ impl Connection {
         self.atomic(|| {
             let c = self.collection_for_write(table)?;
             if !doc.contains_key("id") {
-                let rows = self.run("SELECT uuid7_str()", &[])?;
+                let rows = self.run_customer("SELECT uuid7_str()", &[])?;
                 let Some(EngineValue::Text(key)) = rows.first().and_then(|r| r.first()) else {
                     return Err(Error::Storage("UUID generator returned non-text".into()));
                 };
@@ -692,7 +692,7 @@ impl Connection {
                 }
                 self.delete_unique_conflicts(&c, &doc)?;
             }
-            self.run(
+            self.run_customer(
                 &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
                 &[
                     EngineValue::Blob(doc["id"].encode()?),
@@ -722,7 +722,7 @@ impl Connection {
     fn replace_document(&self, c: &Collection, doc: &Document) -> Result<()> {
         self.validate_candidate(c, doc)?;
         let id = EngineValue::Blob(doc["id"].encode()?);
-        self.run(
+        self.run_customer(
             &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
             &[EngineValue::Blob(value::encode_document(doc)?), id.clone()],
         )?;
@@ -766,7 +766,7 @@ impl Connection {
         for index in &c.indexes {
             self.delete_index_entry(index, &id)?;
         }
-        self.run(
+        self.run_customer(
             &format!("DELETE FROM {} WHERE id = ?1", quote(&c.storage)),
             &[id],
         )?;
@@ -785,7 +785,7 @@ impl Connection {
                     "scalar lookup requires a scalar index".into(),
                 ));
             }
-            let rows = self.run(
+            let rows = self.run_customer(
                 &format!(
                     "SELECT c.doc FROM {} AS i JOIN {} AS c ON c.id = i.id WHERE i.key = ?1",
                     quote(&index.storage),

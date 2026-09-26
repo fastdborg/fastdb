@@ -161,3 +161,30 @@ The selected integration suites pass 167 distinct tests (the broad run contains
 166; the final five-test mutation suite adds the queued-I/O regression), and the
 final frontend library run passes 92 tests. No runtime artifact is rebuilt by
 this engine-only milestone.
+
+## Checked frontend write adapter
+
+`Connection::write_metered` wraps the existing checked data-write and atomic
+result-limit path. `WriteWorkLimits` shares read, mutation and VM limits across
+source SELECTs, native DML, primary document storage operations, document lookups,
+conflict lookups and CHECK expression execution. `WriteWork` retains attempted
+reads/mutations on errors and after rollback. It intentionally has no
+`committedWrites` field: a successful call within a caller transaction remains
+pending that transaction's outcome.
+
+Customer execution uses explicit statement scopes; catalog queries and savepoint
+cleanup stay outside them. Managed physical index maintenance also remains outside
+them at this stage, preventing extra logical mutation charges. Its read/VM work
+needs a shared budget scope that suppresses only logical mutation attribution
+before complete billable write coverage can be claimed. Virtual/search/materialized
+paths and DDL/import policy remain separate qualification requirements.
+
+Five `metered_writes` tests cover memory/file native and document mutations,
+no-op updates, multiple replacement victims, scalar hidden-index exclusion,
+source SELECTs, direct record UPSERT/UPDATE/DELETE, rejected DDL/transaction/read
+statements, read/mutation/VM/result limits, late constraint failure, index rollback,
+prior caller transaction preservation, and stable work counts as catalog entries
+grow. The selected integration set passes 164 distinct tests (163 in the broad
+run plus one additional object-write regression), and the final frontend library
+suite passes 92 tests. Runtime binaries and cloud serving paths are not changed
+by this frontend-only milestone.
