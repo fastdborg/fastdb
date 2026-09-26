@@ -4501,13 +4501,16 @@ impl Connection {
 
     /// Attach a meter to programs started after this call. Callers must serialize
     /// changes with statement execution on this connection. Replacement is denied
-    /// while a root statement is active; already prepared idle statements use the
-    /// meter attached when they first step. Detach before unmetered cleanup.
+    /// while a root statement or writer remains active; reset/drop an interrupted
+    /// writer before replacement. Already prepared idle statements use the meter
+    /// attached when they first step. Detach before unmetered cleanup.
     pub fn set_execution_meter(
         &self,
         meter: Option<Arc<crate::execution_meter::ExecutionMeter>>,
     ) -> Result<()> {
-        if self.n_active_root_statements.load(Ordering::SeqCst) != 0 {
+        if self.n_active_root_statements.load(Ordering::SeqCst) != 0
+            || self.n_active_writes.load(Ordering::SeqCst) != 0
+        {
             return Err(LimboError::StatementsInProgress("change execution meter"));
         }
         *self.execution_meter.write() = meter;

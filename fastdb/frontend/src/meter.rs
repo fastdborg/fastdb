@@ -56,6 +56,7 @@ impl Connection {
     ) -> MeteredRead {
         let meter = Arc::new(ExecutionMeter::with_limits(ExecutionLimits {
             max_rows_read: work_limits.max_rows_read,
+            max_row_mutations: None,
             max_vm_steps: work_limits.max_vm_steps,
         }));
         let outcome = crate::parser_stack(|| {

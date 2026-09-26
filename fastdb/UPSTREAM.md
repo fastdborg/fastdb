@@ -270,3 +270,12 @@ Read-budget integration additionally routes a budget-requested interrupt through
 the existing cooperative cleanup path, preserving prior explicit-transaction work
 for interrupted readers. This is an isolated continuation of the approved metering
 exception with raw-engine and checked-frontend transaction regressions.
+
+Retained ordinary B-tree row mutation events and an optional mutation budget are
+another isolated continuation of the approved exception. Replacement deletions
+are distinct from update mechanics; internal CDC inserts are excluded without
+changing SQL change counts. Trigger budget cancellation preserves caller work,
+and interrupted writers must be finalized before meter replacement. Five focused
+mutation regressions and the adjacent write/read/lifecycle suites pass. Retained
+events survive rollback and are not committed billable writes; managed hidden
+index and virtual-table attribution remain open. See the metering proposal.

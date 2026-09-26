@@ -156,6 +156,7 @@ pub fn translate_create_materialized_view(
         cursor_id: view_cursor_id,
         table_name: normalized_view_name.clone(),
         is_part_of_update: false,
+        is_replace: false,
     });
     program.emit_insn(Insn::Next {
         cursor_id: view_cursor_id,
@@ -577,6 +578,7 @@ pub fn translate_drop_view(
         cursor_id: sqlite_schema_cursor_id,
         table_name: "sqlite_schema".to_string(),
         is_part_of_update: false,
+        is_replace: false,
     });
 
     program.preassign_label_to_next_insn(skip_delete_label);
@@ -662,6 +664,7 @@ pub fn translate_drop_view(
             cursor_id: sqlite_schema_cursor_id,
             table_name: "sqlite_schema".to_string(),
             is_part_of_update: false,
+            is_replace: false,
         });
         program.emit_insn(Insn::Goto {
             target_pc: dbsp_skip_delete_label,
@@ -692,6 +695,7 @@ pub fn translate_drop_view(
             cursor_id: sqlite_schema_cursor_id,
             table_name: "sqlite_schema".to_string(),
             is_part_of_update: false,
+            is_replace: false,
         });
 
         program.preassign_label_to_next_insn(dbsp_skip_delete_label);

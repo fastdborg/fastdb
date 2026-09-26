@@ -127,3 +127,37 @@ This adapter is a prerequisite for cloud receipts, not proof of complete billing
 coverage. Physical counter coverage for spills/materialization/search still needs
 qualification. Logical writes, DDL/import attribution, internal execution retries,
 durable receipts and organization settlement remain separate release gates.
+
+## Retained row mutations and mutation budgets
+
+The next isolated continuation adds `row_mutations` and an optional
+`max_row_mutations` limit. Ordinary B-tree inserts, matched updates (including
+no-op updates) and deletes emit one event. Moving an updated row emits one event;
+REPLACE emits a separate event for each conflicting row removed. Trigger writes
+share the meter. SQL `changes()` and `total_changes()` retain their existing
+semantics. Index opcodes, schema/ephemeral rows, internal sequence maintenance
+and change-capture inserts do not add mutation events.
+
+The crossing event is retained and interrupts immediately, with at most one
+extra event per serialized VM. Exhaustion is sticky. Trigger budget failures
+propagate through cooperative cancellation, undoing the interrupted statement
+while preserving prior caller transaction work. Reset/drop an interrupted writer
+before replacing or detaching its meter; the API rejects replacement while a
+root statement or writer remains active. Waiting on pending I/O cannot repeat a
+completed event.
+
+These are completed mutation events, **not committed writes**. Rollback preserves
+the diagnostic count. Cloud must verify transaction outcome before reporting
+committed writes and must separately exclude managed-document index maintenance,
+which uses ordinary hidden SQL tables. Virtual-table writes, materialized-view
+attribution and DDL/import billing remain unqualified. This patch does not expose
+a checked write adapter or enable cloud paid billing.
+
+Five `mutation_meter` regressions cover memory/file operation counts, conflict
+replacement, no-op/rowid updates, RETURNING, index/temporary-work exclusion,
+zero/exact/short budgets, explicit rollback retention, trigger rollback and caller
+transaction preservation, change-capture modes, and deterministic queued I/O.
+The selected integration suites pass 167 distinct tests (the broad run contains
+166; the final five-test mutation suite adds the queued-I/O regression), and the
+final frontend library run passes 92 tests. No runtime artifact is rebuilt by
+this engine-only milestone.

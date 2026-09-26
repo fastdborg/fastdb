@@ -10177,6 +10177,14 @@ pub fn op_insert(
                         state.record_statement_change();
                     }
                 }
+                // Count an update once even when its physical rewrite was skipped.
+                // Index/schema/ephemeral writes never enter this phase; internal
+                // sequence writes explicitly suppress all change counts.
+                if !flag.has(InsertFlags::SKIP_ALL_CHANGE_COUNTS)
+                    && !flag.has(InsertFlags::SKIP_ROW_MUTATION)
+                {
+                    state.record_row_mutation()?;
+                }
                 let schema = program.connection.schema.read();
                 let dependent_views = schema.get_dependent_materialized_views(table_name);
                 if !dependent_views.is_empty() {
@@ -10304,6 +10312,7 @@ pub fn op_delete(
             cursor_id,
             table_name,
             is_part_of_update,
+            is_replace,
         },
         insn
     );
@@ -10356,6 +10365,14 @@ pub fn op_delete(
                 }
                 // Increment metrics for row write (DELETE is a write operation)
                 state.record_rows_written(1);
+                let root_page = state.get_cursor(*cursor_id).as_btree_mut().root_page();
+                if (!is_part_of_update || *is_replace)
+                    && root_page != 1
+                    && !table_name.is_empty()
+                    && table_name != SQLITE_SEQUENCE_TABLE_NAME
+                {
+                    state.record_row_mutation()?;
+                }
                 let schema = program.connection.schema.read();
                 let dependent_views = schema.get_dependent_materialized_views(table_name);
                 if dependent_views.is_empty() {

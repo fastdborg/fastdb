@@ -1063,6 +1063,19 @@ impl ProgramState {
     }
 
     #[inline]
+    pub(crate) fn record_row_mutation(&mut self) -> Result<()> {
+        if self
+            .execution_meter
+            .as_ref()
+            .is_some_and(|meter| !meter.record_row_mutation())
+        {
+            self.interrupt();
+            return Err(LimboError::Interrupt);
+        }
+        Ok(())
+    }
+
+    #[inline]
     fn take_vm_step(&mut self) -> bool {
         if self
             .execution_meter
@@ -1886,9 +1899,15 @@ impl Program {
                     state.metrics.insn_executed = state.metrics.insn_executed.saturating_add(1);
                     return Ok(StepResult::Row);
                 }
-                Err(LimboError::Interrupt) if state.is_interrupted() => {
-                    // Read-budget crossings are cooperative cancellation, like
-                    // VM/deadline interruption. Treating them as ordinary errors
+                Err(LimboError::Interrupt)
+                    if state.is_interrupted()
+                        || state
+                            .execution_meter
+                            .as_ref()
+                            .is_some_and(|meter| meter.is_budget_exhausted()) =>
+                {
+                    // Budget crossings, including propagation from a trigger,
+                    // are cooperative cancellation. Treating them as ordinary errors
                     // would roll back an explicit transaction even for a reader.
                     self.abort(pager, None, state)?;
                     return Ok(StepResult::Interrupt);

@@ -272,6 +272,7 @@ fn read_meter(limit: u64) -> Arc<ExecutionMeter> {
     Arc::new(ExecutionMeter::with_limits(
         turso_core::execution_meter::ExecutionLimits {
             max_rows_read: Some(limit),
+            max_row_mutations: None,
             max_vm_steps: None,
         },
     ))

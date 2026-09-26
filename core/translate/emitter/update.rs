@@ -728,6 +728,7 @@ fn emit_replace_delete<'a>(
         cursor_id: target_table_cursor_id,
         table_name: table_name.to_string(),
         is_part_of_update: true,
+        is_replace: true,
     });
 
     prepared_fk_actions.fire_prepared_fk_delete_actions(
@@ -2300,6 +2301,7 @@ fn emit_update_insns<'a>(
                     cursor_id: target_table_cursor_id,
                     table_name: table_name.to_string(),
                     is_part_of_update: true,
+                    is_replace: false,
                 });
             }
 
