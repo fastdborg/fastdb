@@ -649,7 +649,7 @@ impl Connection {
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        self.run(
+        self.run_index_maintenance(
             &format!("INSERT INTO {} VALUES ({slots})", quote(&index.storage)),
             &values,
         )?;

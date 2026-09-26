@@ -202,3 +202,21 @@ Twenty selected engine regressions pass, including a new maintenance-view test
 proving shared snapshots, zero logical mutation allowance for internal writes,
 physical work retention and read/VM/mutation exhaustion propagation. This isolated
 core change is a continuation of the approved counter/budget exception.
+
+## Frontend maintenance scopes
+
+Managed scalar index inserts/deletes, full-text backing SQL/count updates and
+vector entry/redo-log writes now execute in maintenance views. Their instrumented
+read and VM work shares the customer scope without extra logical mutations.
+Catalog and transaction cleanup remain unmetered. Scalar tests compare indexed
+and unindexed document updates, interrupt after the primary mutation during
+maintenance, verify data/index restoration, and check exact read/VM boundaries.
+Full-text and vector insert/update/delete cases verify one logical mutation and
+index integrity after both success and cancellation.
+
+The combined selected regressions pass 167 distinct tests (153 in the broad run,
+one added metered-write case and 13 ANN/full-text tests); the frontend library
+passes 92 tests. These results do not establish complete extension work accounting:
+ANN graph reconstruction/checkpoint reads and in-memory work, full-text internals,
+other search/materialized paths and DDL/import policy still need qualification.
+No cloud runtime artifact is rebuilt by this milestone.

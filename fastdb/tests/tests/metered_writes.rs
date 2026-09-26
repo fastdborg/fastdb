@@ -277,3 +277,110 @@ fn object_writes_share_lookup_and_mutation_budgets() {
     assert_eq!(r.work.row_mutations, 1);
     assert_eq!(c.execute("SELECT docs:a", &p).unwrap().rows.len(), 1);
 }
+
+#[test]
+fn index_maintenance_consumes_shared_reads_and_vm_budget() {
+    let c = Database::open(":memory:").unwrap().connect().unwrap();
+    let p = Parameters::new();
+    for sql in [
+        "CREATE TABLE plain",
+        "CREATE TABLE indexed",
+        "CREATE INDEX indexed_n ON indexed(n)",
+        "INSERT INTO plain {id:plain:a,n:1}",
+        "INSERT INTO indexed {id:indexed:a,n:1}",
+    ] {
+        c.execute(sql, &p).unwrap();
+    }
+    let plain = c.write_metered(
+        "UPDATE plain:a {n:1}",
+        &p,
+        limits(),
+        WriteWorkLimits::default(),
+    );
+    plain.outcome.unwrap();
+    let indexed = c.write_metered("UPDATE indexed:a {n:1}", &p, limits(), budget(1));
+    indexed.outcome.unwrap();
+    assert_eq!(plain.work.row_mutations, 1);
+    assert_eq!(indexed.work.row_mutations, 1);
+    assert!(
+        indexed.work.rows_read > plain.work.rows_read,
+        "{:#?} vs {:#?}",
+        indexed.work,
+        plain.work
+    );
+    assert!(indexed.work.vm_steps > plain.work.vm_steps);
+    for work_limits in [
+        WriteWorkLimits {
+            max_rows_read: Some(plain.work.rows_read),
+            ..Default::default()
+        },
+        WriteWorkLimits {
+            max_vm_steps: Some(indexed.work.vm_steps - 1),
+            ..Default::default()
+        },
+    ] {
+        let r = c.write_metered("UPDATE indexed:a {n:2}", &p, limits(), work_limits);
+        assert!(r.outcome.is_err());
+        assert_eq!(r.work.row_mutations, 1, "budget fails after primary write");
+        assert!(r.work.read_budget_exhausted || r.work.vm_budget_exhausted);
+        assert_eq!(
+            c.execute("SELECT n FROM indexed WHERE n=1", &p)
+                .unwrap()
+                .rows
+                .len(),
+            1
+        );
+        assert!(c
+            .execute("SELECT n FROM indexed WHERE n=2", &p)
+            .unwrap()
+            .rows
+            .is_empty());
+    }
+    let exact = c.write_metered(
+        "UPDATE indexed:a {n:1}",
+        &p,
+        limits(),
+        WriteWorkLimits {
+            max_rows_read: Some(indexed.work.rows_read),
+            max_row_mutations: Some(1),
+            max_vm_steps: Some(indexed.work.vm_steps),
+        },
+    );
+    exact.outcome.unwrap();
+    assert_eq!(exact.work.rows_read, indexed.work.rows_read);
+    assert_eq!(exact.work.vm_steps, indexed.work.vm_steps);
+}
+
+#[test]
+fn search_index_maintenance_does_not_add_logical_writes() {
+    for ddl in [
+        "CREATE SEARCH INDEX docs_search ON docs(title) USING FULLTEXT",
+        "CREATE SEARCH INDEX docs_search ON docs(v) USING VECTOR WITH (metric='l2',dimensions=2)",
+    ] {
+        let c = Database::open(":memory:").unwrap().connect().unwrap();
+        let p = Parameters::new();
+        c.execute("CREATE TABLE docs", &p).unwrap();
+        c.execute(ddl, &p).unwrap();
+        for sql in [
+            "INSERT INTO docs {id:docs:a,title:'hello',v:vector32('[1,2]')}",
+            "UPDATE docs:a {title:'changed',v:vector32('[2,3]')}",
+        ] {
+            let r = c.write_metered(sql, &p, limits(), budget(1));
+            r.outcome.unwrap_or_else(|e| panic!("{ddl}: {sql}: {e}"));
+            assert_eq!(r.work.row_mutations, 1);
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap();
+        }
+        let failed = c.write_metered("DELETE FROM docs:a", &p, limits(), budget(0));
+        assert!(failed.outcome.is_err());
+        assert_eq!(failed.work.row_mutations, 1);
+        assert_eq!(c.execute("SELECT docs:a", &p).unwrap().rows.len(), 1);
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+        let r = c.write_metered("DELETE FROM docs:a", &p, limits(), budget(1));
+        r.outcome.unwrap();
+        assert_eq!(r.work.row_mutations, 1);
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+    }
+}

@@ -117,10 +117,11 @@ impl Connection {
 
     /// Execute a checked data write with retained work and atomic result limits.
     /// Shares one meter across source reads and primary document mutations;
-    /// catalog, rollback and managed physical index maintenance are excluded.
+    /// catalog and rollback are excluded. Managed index SQL contributes read/VM
+    /// work but does not add logical mutations.
     /// Retained mutations include rolled-back attempts. Successful execution in
     /// a caller transaction is still pending that transaction's final outcome.
-    /// Virtual/search/materialized and internal index-maintenance read coverage
+    /// Virtual/search/materialized coverage
     /// require further qualification before this can serve as billing evidence.
     pub fn write_metered(
         &self,
@@ -164,11 +165,28 @@ impl Connection {
         sql: &str,
         params: &[crate::EngineValue],
     ) -> Result<Vec<Vec<crate::EngineValue>>> {
+        self.run_attributed(sql, params, false)
+    }
+
+    pub(crate) fn run_index_maintenance(
+        &self,
+        sql: &str,
+        params: &[crate::EngineValue],
+    ) -> Result<Vec<Vec<crate::EngineValue>>> {
+        self.run_attributed(sql, params, true)
+    }
+
+    fn run_attributed(
+        &self,
+        sql: &str,
+        params: &[crate::EngineValue],
+        maintenance: bool,
+    ) -> Result<Vec<Vec<crate::EngineValue>>> {
         let mut statement = self.prepare(sql)?;
         for (i, value) in params.iter().enumerate() {
             statement.bind_at(std::num::NonZeroUsize::new(i + 1).unwrap(), value.clone())?;
         }
-        self.meter_statement(&mut statement, crate::collect_rows)
+        self.meter_statement_attributed(&mut statement, maintenance, crate::collect_rows)
     }
 
     fn metered_record(
@@ -208,6 +226,15 @@ impl Connection {
         statement: &mut turso_core::Statement,
         execute: impl FnOnce(&mut turso_core::Statement) -> Result<T>,
     ) -> Result<T> {
+        self.meter_statement_attributed(statement, false, execute)
+    }
+
+    fn meter_statement_attributed<T>(
+        &self,
+        statement: &mut turso_core::Statement,
+        maintenance: bool,
+        execute: impl FnOnce(&mut turso_core::Statement) -> Result<T>,
+    ) -> Result<T> {
         let meter = self
             .work_meter
             .lock()
@@ -215,6 +242,11 @@ impl Connection {
             .clone();
         let Some(meter) = meter else {
             return execute(statement);
+        };
+        let meter = if maintenance {
+            Arc::new(meter.without_row_mutations())
+        } else {
+            meter
         };
         self.engine.set_execution_meter(Some(meter))?;
         let result = execute(statement);
