@@ -248,3 +248,12 @@ The inspected upstream `64b8ef5742fc18937f9c89806c81e3f6475dc7a3` lacks this
 state; review/remove criteria and immutable evidence are in
 [the proposal](docs/proposals/cancellation-savepoint-poison.md) and the
 [exception register](docs/core-exceptions.md).
+
+## Approved core exception: execution metering
+
+The user approved a narrowly scoped counter/budget exception for Cloud 0.3.0 on
+2026-09-26. The first isolated change corrects missing row-visit counts after
+successful cursor seeks and executed deferred table lookups. It does not change
+SQL results or enable paid billing. See [the design and regression contract](docs/proposals/execution-metering.md)
+and [the exception register](docs/core-exceptions.md). Work is on the separate
+`feat/cloud-metering` branch based on released FastDB 2.1.0.

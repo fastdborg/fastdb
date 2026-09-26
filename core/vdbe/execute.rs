@@ -1809,7 +1809,7 @@ pub fn op_column(
                 rowid,
                 table_cursor_id,
             } => {
-                {
+                let found = {
                     let table_cursor = state.get_cursor(table_cursor_id);
                     // MaterializedView cursors shouldn't go through deferred seek logic
                     // but if we somehow get here, handle it appropriately
@@ -1817,15 +1817,18 @@ pub fn op_column(
                         Cursor::MaterializedView(mv_cursor) => {
                             // Seek to the rowid in the materialized view
                             return_if_io!(mv_cursor
-                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }))
                         }
                         _ => {
                             // Regular btree cursor
                             let table_cursor = table_cursor.as_btree_mut();
                             return_if_io!(table_cursor
-                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }))
                         }
                     }
+                };
+                if matches!(found, SeekResult::Found) {
+                    state.record_rows_read(1);
                 }
                 state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
                 state.metrics.search_count = state.metrics.search_count.saturating_add(1);
@@ -4999,12 +5002,15 @@ pub fn op_row_id(
                 rowid,
                 table_cursor_id,
             } => {
-                {
+                let found = {
                     let table_cursor = state.get_cursor(table_cursor_id);
                     let table_cursor = table_cursor.as_btree_mut();
                     return_if_io!(
                         table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })
-                    );
+                    )
+                };
+                if matches!(found, SeekResult::Found) {
+                    state.record_rows_read(1);
                 }
                 *state.active_op_state.row_id() = OpRowIdState::GetRowid;
             }
@@ -5113,11 +5119,11 @@ pub fn op_seek_rowid(
         crate::bail_corrupt_error!("Unresolved label: {target_pc:?}");
     }
     invalidate_deferred_seeks_for_cursor(state, *cursor_id);
-    let (pc, did_seek) = {
+    let (pc, did_seek, found) = {
         let cursor = get_cursor!(state, *cursor_id);
 
         // Handle MaterializedView cursor
-        let (pc, did_seek) = match cursor {
+        let (pc, did_seek, found) = match cursor {
             Cursor::MaterializedView(mv_cursor) => {
                 let rowid = match state.registers[*src_reg].get_value() {
                     Value::Numeric(Numeric::Integer(rowid)) => Some(*rowid),
@@ -5134,9 +5140,9 @@ pub fn op_seek_rowid(
                         } else {
                             state.pc + 1
                         };
-                        (pc, true)
+                        (pc, true, matches!(seek_result, SeekResult::Found))
                     }
-                    None => (target_pc.as_offset_int(), false),
+                    None => (target_pc.as_offset_int(), false, false),
                 }
             }
             Cursor::BTree(btree_cursor) => {
@@ -5168,18 +5174,21 @@ pub fn op_seek_rowid(
                         } else {
                             state.pc + 1
                         };
-                        (pc, true)
+                        (pc, true, matches!(seek_result, SeekResult::Found))
                     }
-                    None => (target_pc.as_offset_int(), false),
+                    None => (target_pc.as_offset_int(), false, false),
                 }
             }
             _ => panic!("SeekRowid on non-btree/materialized-view cursor"),
         };
-        (pc, did_seek)
+        (pc, did_seek, found)
     };
     // Increment btree_seeks metric for SeekRowid operation after cursor is dropped
     if did_seek {
         state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
+    }
+    if found {
+        state.record_rows_read(1);
     }
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
@@ -5645,6 +5654,11 @@ pub fn seek_internal(
     );
     if !matches!(result, Ok(SeekInternalResult::IO(..))) {
         state.seek_state = OpSeekState::Start;
+    }
+    // Count only completed, successful positioning. I/O resumptions and
+    // absent keys are not visits to a row or index entry.
+    if matches!(result, Ok(SeekInternalResult::Found)) {
+        state.record_rows_read(1);
     }
     result
 }

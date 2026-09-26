@@ -1,7 +1,7 @@
 # Maintained engine exceptions
 
 Required review checklist for every upstream sync. Baseline and full provenance
-are in [UPSTREAM.md](../UPSTREAM.md). The seven active exceptions below are approved and
+are in [UPSTREAM.md](../UPSTREAM.md). The eight active exceptions below are approved and
 integrated. The retired WASI exception is recorded separately. The dated review
 below tracks upstream replacement candidates; no patch is removed from the
 existing pinned engine merely because a newer upstream revision contains a fix.
@@ -50,6 +50,8 @@ first-FULL-commit exception and must not be silently included in it.
 | Scalar read errors `f26014f04` | `scalar_read_error_preserves_transactions_and_named_savepoints`, FastDB user-function tests and Node cancellation/transaction tests. [Review](proposals/udf-error-transaction.md). | Upstream read-only extension failures preserve caller transactions, savepoints and changes(), while autocommit cleanup and writer rollback controls pass. |
 | Checkpoint WAL barrier `5f4133d73` | `checkpoint_barrier` and `checkpoint_crash_atomicity`: NORMAL backfill follows successful WAL sync; failed returned/immediate/deferred completions cannot skip the barrier; automatic failures preserve published writes; FULL recovery preserves acknowledged writes. [Review](proposals/checkpoint-wal-sync.md). | Upstream includes the barrier from `cc26d08508cbe045472fa3015e2bce4a389b5e06` and equivalent pending-completion, retry and automatic-checkpoint cleanup. Retain all regressions and recheck checkpoint/VACUUM callers before removing the local companion. |
 | Named-savepoint cancellation recovery `3ae0065e5` | `cancelled_plain_native_writes_undo_rows_and_preserve_caller_work` plus five core lifecycle regressions: rollback restores the selected prior poison state, allowing COMMIT/root RELEASE after canceled rows are undone; pre-existing poison and unrecovered abandonment still reject commit. [Review](proposals/cancellation-savepoint-poison.md). | Upstream restores transaction safety state after successful named-savepoint rollback, including prior poison, nested/same-name boundaries and mirrored rollback. Remove only when the frontend, lifecycle and savepoint regressions pass without this local patch. |
+
+| Execution row counters (2026-09-26, approved Cloud 0.3.0 dependency) | Successful rowid/index seeks and executed deferred table reads count exactly once; missing rows do not count. Memory/file-backed `fastdb-tests --test profile` regressions. [Review](proposals/execution-metering.md). | Upstream includes equivalent completed-position counters and the full seek regression passes without this patch. Broader budgeting/failure accounting remains in progress. |
 
 The canceled-write recovery fix was separately approved on 2026-09-25 after the
 first optimized package matrix exposed stale poison at COMMIT/root RELEASE.

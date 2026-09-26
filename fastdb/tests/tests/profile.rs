@@ -78,3 +78,68 @@ fn native_profiles_bind_values_and_reject_writes_before_execution() {
     );
     assert_eq!(profile.metrics.fetch_batches, 1);
 }
+
+#[test]
+fn profiles_count_successful_seeks_and_deferred_table_visits() {
+    for on_disk in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("seek-profile.db");
+        let db = Database::open(if on_disk {
+            path.to_str().unwrap()
+        } else {
+            ":memory:"
+        })
+        .unwrap();
+        let c = db.connect().unwrap();
+        q(
+            &c,
+            "CREATE TABLE seek_items(id INTEGER PRIMARY KEY, n INTEGER, payload TEXT)",
+        );
+        q(&c, "BEGIN");
+        for n in 0..40 {
+            q(
+                &c,
+                &format!("INSERT INTO seek_items VALUES({n},{n},'value-{n}')"),
+            );
+        }
+        q(&c, "COMMIT");
+        q(&c, "CREATE INDEX seek_items_n ON seek_items(n)");
+        let cases = [
+            ("SELECT payload FROM seek_items WHERE id=17", 1),
+            ("SELECT payload FROM seek_items WHERE id=100", 0),
+            (
+                "SELECT payload FROM seek_items WHERE id>=17 ORDER BY id LIMIT 1",
+                1,
+            ),
+            (
+                "SELECT payload FROM seek_items WHERE id<=17 ORDER BY id DESC LIMIT 1",
+                1,
+            ),
+            (
+                "SELECT n FROM seek_items INDEXED BY seek_items_n WHERE n=17 LIMIT 1",
+                1,
+            ),
+            (
+                "SELECT payload FROM seek_items INDEXED BY seek_items_n WHERE n=17 LIMIT 1",
+                2,
+            ),
+            (
+                "SELECT payload FROM seek_items INDEXED BY seek_items_n WHERE n=100 LIMIT 1",
+                0,
+            ),
+            (
+                "SELECT count(*) FROM seek_items a JOIN seek_items b ON a.id=b.id WHERE a.n>=0",
+                80,
+            ),
+        ];
+        for (sql, expected) in cases {
+            let profile = c.profile_select(sql, &Parameters::new()).unwrap();
+            assert_eq!(profile.result.rows, q(&c, sql).rows, "{sql}");
+            assert_eq!(
+                profile.metrics.rows_read, expected,
+                "{sql}; disk={on_disk}; {:?}",
+                profile.metrics
+            );
+        }
+    }
+}
