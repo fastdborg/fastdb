@@ -12,6 +12,9 @@ use std::sync::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExecutionSnapshot {
     pub rows_read: u64,
+    /// Visits to the engine schema B-tree. Included in `rows_read` by default;
+    /// separate when constructed with `with_schema_read_limit`.
+    pub schema_rows_read: u64,
     /// Physical row-write events, including work subsequently rolled back.
     pub rows_written: u64,
     /// Completed row mutation events, including no-op updates and replacement
@@ -21,6 +24,7 @@ pub struct ExecutionSnapshot {
     pub vm_steps: u64,
     pub vm_budget_exhausted: bool,
     pub read_budget_exhausted: bool,
+    pub schema_budget_exhausted: bool,
     pub mutation_budget_exhausted: bool,
 }
 
@@ -51,6 +55,9 @@ pub struct ExecutionMeter {
 #[derive(Debug, Default)]
 struct ExecutionState {
     rows_read: AtomicU64,
+    schema_rows_read: AtomicU64,
+    separate_schema_reads: bool,
+    max_schema_rows_read: Option<u64>,
     rows_written: AtomicU64,
     row_mutations: AtomicU64,
     vm_steps: AtomicU64,
@@ -59,6 +66,7 @@ struct ExecutionState {
     max_row_mutations: Option<u64>,
     vm_budget_exhausted: AtomicBool,
     read_budget_exhausted: AtomicBool,
+    schema_budget_exhausted: AtomicBool,
     mutation_budget_exhausted: AtomicBool,
 }
 
@@ -85,6 +93,29 @@ impl ExecutionMeter {
         }
     }
 
+    /// Keep engine schema B-tree visits separate from other row visits and
+    /// optionally bound them. `limits.max_rows_read` then applies only to the
+    /// remaining visits. Default constructors retain their all-rows semantics.
+    /// Schema visits have the same one-crossing-visit interruption contract.
+    /// This classifies the engine catalog, not application catalog tables or
+    /// arbitrary extension/temporary work; it is not billable attribution alone.
+    pub fn with_schema_read_limit(
+        limits: ExecutionLimits,
+        max_schema_rows_read: Option<u64>,
+    ) -> Self {
+        Self {
+            state: Arc::new(ExecutionState {
+                max_vm_steps: limits.max_vm_steps,
+                max_rows_read: limits.max_rows_read,
+                max_row_mutations: limits.max_row_mutations,
+                separate_schema_reads: true,
+                max_schema_rows_read,
+                ..ExecutionState::default()
+            }),
+            suppress_row_mutations: false,
+        }
+    }
+
     /// Share counters and all budget exhaustion with this meter, but suppress
     /// logical mutation events for internal physical maintenance. Read, physical
     /// write and VM work still accumulate. This is attribution, not a read-only
@@ -101,6 +132,8 @@ impl ExecutionMeter {
     pub fn snapshot(&self) -> ExecutionSnapshot {
         ExecutionSnapshot {
             rows_read: self.state.rows_read.load(Ordering::Relaxed),
+            schema_rows_read: self.state.schema_rows_read.load(Ordering::Relaxed),
+            schema_budget_exhausted: self.state.schema_budget_exhausted.load(Ordering::Relaxed),
             rows_written: self.state.rows_written.load(Ordering::Relaxed),
             row_mutations: self.state.row_mutations.load(Ordering::Relaxed),
             vm_steps: self.state.vm_steps.load(Ordering::Relaxed),
@@ -110,7 +143,29 @@ impl ExecutionMeter {
         }
     }
 
-    pub(crate) fn record_rows_read(&self, count: u64) -> bool {
+    pub(crate) fn record_rows_read(&self, count: u64, is_schema: bool) -> bool {
+        if is_schema {
+            let previous = self
+                .state
+                .schema_rows_read
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                    Some(value.saturating_add(count))
+                })
+                .expect("unconditional update");
+            if self.state.separate_schema_reads {
+                if self
+                    .state
+                    .max_schema_rows_read
+                    .is_some_and(|limit| previous.saturating_add(count) > limit)
+                {
+                    self.state
+                        .schema_budget_exhausted
+                        .store(true, Ordering::Relaxed);
+                    return false;
+                }
+                return !self.is_budget_exhausted();
+            }
+        }
         let previous = self
             .state
             .rows_read
@@ -157,6 +212,7 @@ impl ExecutionMeter {
 
     pub(crate) fn is_budget_exhausted(&self) -> bool {
         self.state.read_budget_exhausted.load(Ordering::Relaxed)
+            || self.state.schema_budget_exhausted.load(Ordering::Relaxed)
             || self.state.vm_budget_exhausted.load(Ordering::Relaxed)
             || self.state.mutation_budget_exhausted.load(Ordering::Relaxed)
     }

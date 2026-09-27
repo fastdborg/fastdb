@@ -1041,12 +1041,23 @@ impl ProgramState {
     }
 
     #[inline]
-    pub fn record_rows_read(&mut self, count: u64) -> Result<()> {
+    pub(crate) fn record_cursor_rows_read(
+        &mut self,
+        program: &Program,
+        cursor_id: CursorID,
+        count: u64,
+    ) -> Result<()> {
         self.metrics.rows_read = self.metrics.rows_read.saturating_add(count);
+        // Use the compiler's catalog identity, not the cursor's physical root:
+        // ephemeral trees can also occupy root page 1 in their own pager.
+        let is_schema = self.execution_meter.is_some()
+            && matches!(program.cursor_ref.get(cursor_id),
+                Some((_, CursorType::BTreeTable(table)))
+                    if table.root_page == 1 && table.name == crate::schema::SCHEMA_TABLE_NAME);
         if self
             .execution_meter
             .as_ref()
-            .is_some_and(|meter| !meter.record_rows_read(count))
+            .is_some_and(|meter| !meter.record_rows_read(count, is_schema))
         {
             self.interrupt();
             return Err(LimboError::Interrupt);

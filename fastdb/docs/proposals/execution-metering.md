@@ -220,3 +220,46 @@ passes 92 tests. These results do not establish complete extension work accounti
 ANN graph reconstruction/checkpoint reads and in-memory work, full-text internals,
 other search/materialized paths and DDL/import policy still need qualification.
 No cloud runtime artifact is rebuilt by this milestone.
+
+## Separate engine schema visits (2026-09-27)
+
+DDL exposed a remaining attribution gap: a five-row ordinary CREATE INDEX reports
+seven retained reads, and subsequent five-row CREATE TABLE AS SELECT reports eight.
+These are five source visits plus two/three engine schema visits, not extra customer
+rows. CTAS already reports five logical mutation attempts; index construction reports
+zero. Fixed subtraction is unsafe as the catalog grows or execution fails.
+
+`ExecutionMeter::with_schema_read_limit(limits, max_schema_rows_read)` opts into
+separate schema visits. Its `rows_read`/ordinary read budget excludes engine schema
+visits; `schema_rows_read` and the additional budget retain those separately. Default
+constructors still include schema visits in `rows_read`, with a diagnostic schema
+subtotal. Statement metrics retain their existing all-rows behavior. No SQL results,
+changes() behavior, storage format, or default execution limits change.
+
+At the existing successful-position/advance/count sites, the compiler's cursor
+identity (BTreeTable, sqlite_schema, root 1) determines schema work. Physical root 1
+alone is insufficient because temporary pagers can reuse page numbers. Aliases
+normalize to the same schema definition; application catalog tables remain ordinary
+reads. The exact same visits update legacy statement metrics. Deferred reads use the
+actual table cursor, not the referring index. Counting still occurs only after I/O
+completion. The opt-in schema limit retains one crossing visit per serialized VM;
+exhaustion is sticky across programs and maintenance views and uses cooperative
+cancellation. Detach the meter before transaction cleanup as with other budgets.
+
+This is engine attribution, not a checked DDL billing API. Frontend logical catalogs,
+managed index builders, extension work and temporary/materialized work still require
+separate policy/coverage. Cloud does not activate this mode in this patch. No claim
+of all-DDL accounting or paid readiness follows from it.
+
+Regression: `fastdb-tests --test schema_meter` covers memory/file index build and
+CTAS, default totals and statement metrics, catalog cursor modes/aliases, independent
+read/schema/mutation limits, failed unique builds, empty/no-op schema work, sticky
+maintenance views, rollback preserving prior caller writes, and queued I/O resumption.
+
+Local qualification passed: 30 focused metering/profile regressions (including six
+new schema tests); full FastDB scoped checks with 803 Rust, 121 Node and five C ABI
+tests, formatting, Clippy and Node types; 41 upstream statement-lifecycle regressions.
+The initial inventory failed because schema visits were mixed with source reads;
+the separated mode fixes that attribution without changing default totals. Two
+intermediate compile attempts caught missing program-parameter renames; corrected
+before all successful runs. No Cloud runtime rebuild or hosted activation occurred.

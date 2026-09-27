@@ -284,3 +284,12 @@ The execution meter additionally supports a shared maintenance view suppressing
 only logical mutation events. Reads, physical writes, VM work and all exhaustion
 remain shared. The mutation-meter regression verifies scope switching cannot
 bypass an exhausted budget. This is part of the approved metering exception.
+
+The approved metering exception additionally provides opt-in engine schema-read
+attribution and an independent schema-visit budget. Legacy counters/budgets retain
+all-row semantics. Compiler catalog identity is used at existing completed cursor
+visits, including deferred table reads and incremental Count; physical root-page
+numbers alone do not classify temporary tables. Schema exhaustion uses existing
+cooperative cancellation and shared maintenance state. Regressions are in
+`fastdb/tests/tests/schema_meter.rs`; design and remaining frontend/Cloud limits are
+in `docs/proposals/execution-metering.md`. This foundation does not enable billing.
