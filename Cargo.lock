@@ -2077,6 +2077,7 @@ dependencies = [
  "rusqlite",
  "rustyline",
  "serde_json",
+ "sha2",
  "signal-hook",
  "tempfile",
  "uuid",

@@ -2,19 +2,24 @@ use reqwest::{blocking::Client, Method, Url};
 use serde_json::{json, Value};
 use std::io::{self, IsTerminal, Read, Write};
 use std::time::Duration;
+mod imports;
+mod journal;
+mod requests;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const LIMIT: usize = 64 * 1024;
-const HELP: &str = "fastdb cloud whoami\nfastdb cloud db create NAME\nfastdb cloud db list\nfastdb cloud db show UUID\nfastdb cloud db delete UUID\nfastdb cloud db access UUID\nfastdb cloud db read UUID < query.sql\n\nSet FASTDB_API_KEY. FASTDB_CLOUD_URL defaults to https://cloud.fastdb.org.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request.\nAccess needs query and databases:read scopes; read needs only query.\nRead submits stdin once without a replay receipt; another read may see newer data. JSON output goes to stdout.";
+const HELP: &str = "fastdb cloud whoami\nfastdb cloud organizations\nfastdb cloud --organization ORG db create NAME\nfastdb cloud --organization ORG db list\nfastdb cloud --organization ORG db show UUID\nfastdb cloud --organization ORG db delete UUID\nfastdb cloud --organization ORG db access UUID\nfastdb cloud --organization ORG db read UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db query UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db retry JOURNAL\n\nSet FASTDB_API_KEY to an organization key. FASTDB_ORGANIZATION_ID can supply ORG.\nFASTDB_CLOUD_URL defaults to https://cloud.fastdb.org. JSON output goes to stdout.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request in this session.\nRead needs read scope; query/access need read and query. Management needs manage.\nOne-shot read/query journals retain SQL and request identity for process-safe retry.";
 
 struct Cloud {
     http: Client,
     origin: Url,
     key: String,
+    organization: Option<String>,
 }
 struct Failure {
     message: String,
     uncertain: bool,
+    status: Option<u16>,
 }
 impl Cloud {
     fn new(endpoint: &str, key: String) -> Result<Self> {
@@ -37,7 +42,7 @@ impl Cloud {
                     .into(),
             );
         }
-        if !key.starts_with("fdbk_")
+        if !(key.starts_with("fdbk_") || key.starts_with("fdbo_"))
             || key.len() != 69
             || !key[5..].bytes().all(|b| b.is_ascii_hexdigit())
         {
@@ -50,7 +55,12 @@ impl Cloud {
             .connect_timeout(Duration::from_secs(15))
             .build()
             .map_err(|_| "Cannot initialize HTTPS client")?;
-        Ok(Self { http, origin, key })
+        Ok(Self {
+            http,
+            origin,
+            key,
+            organization: None,
+        })
     }
     fn request(
         &self,
@@ -61,6 +71,7 @@ impl Cloud {
         let failure = |message: &str, uncertain| Failure {
             message: message.into(),
             uncertain,
+            status: None,
         };
         let url = self
             .origin
@@ -77,6 +88,17 @@ impl Cloud {
                 .header("content-type", "application/json")
                 .body(encoded);
         }
+        self.response(request)
+    }
+    fn response(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> std::result::Result<Value, Failure> {
+        let failure = |message: &str, uncertain| Failure {
+            message: message.into(),
+            uncertain,
+            status: None,
+        };
         let response = request
             .send()
             .map_err(|_| failure("Cloud request could not be acknowledged", true))?;
@@ -106,6 +128,7 @@ impl Cloud {
                     message.replace(&self.key, "[redacted]")
                 ),
                 uncertain: status.is_server_error() || status.is_redirection(),
+                status: Some(status.as_u16()),
             });
         }
         Ok(value)
@@ -117,34 +140,26 @@ impl Cloud {
         );
         Ok(())
     }
-    fn read(&self, id: &str) -> Result<std::process::ExitCode> {
-        let path = format!("{}/read", database_path(id)?);
-        let mut sql = String::new();
-        io::stdin()
-            .take((LIMIT + 1) as u64)
-            .read_to_string(&mut sql)?;
-        if sql.len() > LIMIT {
-            return Err("Cloud input exceeds 64 KiB".into());
-        }
-        let statements =
-            fastql_parser::split_script(&sql).map_err(|_| "Invalid SQL/FastQL script")?;
-        if statements.is_empty() {
-            return Err("Read requires SQL on stdin".into());
-        }
-        if statements.len() > 32 {
-            return Err("Cloud batches allow at most 32 statements".into());
-        }
-        // Server-side native enforcement is authoritative. Do not infer read
-        // safety from a SQL prefix or fetch sequence metadata before submission.
-        let body = json!({ "statements": statements.iter().map(|statement| json!({ "sql": statement.sql })).collect::<Vec<_>>() });
-        let result = self
-            .request(Method::POST, &path, Some(&body))
-            .map_err(|error| error.message)?;
-        self.output(&result)?;
-        Ok(std::process::ExitCode::SUCCESS)
+    fn organization(&self) -> Result<&str> {
+        self.organization
+            .as_deref()
+            .ok_or_else(|| "Select --organization UUID or set FASTDB_ORGANIZATION_ID".into())
+    }
+    fn collection_path(&self) -> Result<String> {
+        Ok(format!(
+            "/v1/organizations/{}/databases",
+            self.organization()?
+        ))
+    }
+    fn database_path(&self, id: &str) -> Result<String> {
+        Ok(format!(
+            "{}/{}",
+            self.collection_path()?,
+            canonical_uuid(id)?
+        ))
     }
     fn access(&self, id: &str) -> Result<std::process::ExitCode> {
-        let path = database_path(id)?;
+        let path = self.database_path(id)?;
         let interactive = io::stdin().is_terminal();
         let mut stdin = io::stdin().lock();
         let mut reader: Box<dyn crate::input::Input + '_> =
@@ -230,12 +245,7 @@ impl Cloud {
                 if statements.len() > 32 {
                     return Err("Cloud batches allow at most 32 statements".into());
                 }
-                let info = self
-                    .request(Method::GET, &path, None)
-                    .map_err(|error| error.message)?;
-                let sequence = info["sequence"]
-                    .as_u64()
-                    .ok_or("Missing database sequence")?;
+                let sequence = requests::sequence(self, id)?;
                 pending_uncertain = false;
                 pending = Some(
                     json!({ "requestId": uuid::Uuid::new_v4().to_string(), "expectedSequence": sequence,
@@ -247,7 +257,20 @@ impl Cloud {
                 writeln!(prompt, "No request to retry")?;
                 continue;
             };
-            match self.request(Method::POST, &(path.clone() + "/query"), Some(request)) {
+            let response = self
+                .request(Method::POST, &(path.clone() + "/query"), Some(request))
+                .and_then(|reply| {
+                    if requests::confirmed(request, &reply) {
+                        Ok(reply)
+                    } else {
+                        Err(Failure {
+                            message: "Unconfirmed response identity; use .retry".into(),
+                            uncertain: true,
+                            status: None,
+                        })
+                    }
+                });
+            match response {
                 Ok(result) => {
                     self.output(&result)?;
                     pending = None;
@@ -264,36 +287,55 @@ impl Cloud {
         }
     }
 }
-fn database_path(id: &str) -> Result<String> {
-    let id = uuid::Uuid::parse_str(id).map_err(|_| "Invalid database UUID")?;
-    if id.get_version_num() != 4 {
-        return Err("Expected a version 4 database UUID".into());
+fn canonical_uuid(value: &str) -> Result<String> {
+    let id = uuid::Uuid::parse_str(value).map_err(|_| "Invalid UUID")?;
+    if id.get_version_num() != 4 || id.to_string() != value {
+        return Err("Expected a canonical lowercase version 4 UUID".into());
     }
-    Ok(format!("/v1/databases/{id}"))
+    Ok(id.to_string())
 }
-pub fn run(args: Vec<String>) -> Result<std::process::ExitCode> {
+pub fn run(mut args: Vec<String>) -> Result<std::process::ExitCode> {
     if args.is_empty() || args == ["--help"] || args == ["help"] {
         println!("{HELP}");
+        println!("{}", imports::HELP);
         return Ok(std::process::ExitCode::SUCCESS);
     }
-    let cloud = Cloud::new(
+    let mut cloud = Cloud::new(
         &std::env::var("FASTDB_CLOUD_URL").unwrap_or_else(|_| "https://cloud.fastdb.org".into()),
         std::env::var("FASTDB_API_KEY")
             .map_err(|_| "Set FASTDB_API_KEY before using cloud commands")?,
     )?;
+    let selected = if args.first().map(String::as_str) == Some("--organization") {
+        if args.len() < 3 {
+            return Err(HELP.into());
+        }
+        let org = args.remove(1);
+        args.remove(0);
+        Some(org)
+    } else {
+        std::env::var("FASTDB_ORGANIZATION_ID").ok()
+    };
+    cloud.organization = selected.as_deref().map(canonical_uuid).transpose()?;
     let parts: Vec<_> = args.iter().map(String::as_str).collect();
+    if parts.first() == Some(&"import") {
+        return imports::run(&cloud, &parts[1..]);
+    }
     let (method, path, body) = match parts.as_slice() {
         ["whoami"] => (Method::GET, "/v1/whoami".into(), None),
-        ["db", "list"] => (Method::GET, "/v1/databases".into(), None),
+        ["organizations"] => (Method::GET, "/v1/organizations".into(), None),
+        ["db", "list"] => (Method::GET, cloud.collection_path()?, None),
         ["db", "create", name] => (
             Method::POST,
-            "/v1/databases".into(),
+            cloud.collection_path()?,
             Some(json!({ "name": name })),
         ),
-        ["db", "show", id] => (Method::GET, database_path(id)?, None),
-        ["db", "delete", id] => (Method::DELETE, database_path(id)?, None),
+        ["db", "show", id] => (Method::GET, cloud.database_path(id)?, None),
+        ["db", "delete", id] => (Method::DELETE, cloud.database_path(id)?, None),
         ["db", "access", id] => return cloud.access(id),
-        ["db", "read", id] => return cloud.read(id),
+        ["db", operation @ ("read" | "query"), id, journal] => {
+            return requests::start(&cloud, operation, id, journal)
+        }
+        ["db", "retry", journal] => return requests::retry(&cloud, journal),
         _ => return Err(HELP.into()),
     };
     let result = cloud
