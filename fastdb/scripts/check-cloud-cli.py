@@ -6,11 +6,17 @@ import os
 import subprocess
 import sys
 import threading
+import tempfile
+from pathlib import Path
 import uuid
 
 binary = sys.argv[1]
-key = 'fdbk_' + 'a' * 64
+key = 'fdbo_' + 'a' * 64
 database = str(uuid.uuid4())
+organization = str(uuid.uuid4())
+base = f"/v1/organizations/{organization}/databases"
+receipts = {}
+sequence = 7
 requests = []
 mode = 'normal'
 query_attempts = []
@@ -25,19 +31,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         value = json.loads(body) if body else None
         requests.append((self.command, self.path, value))
         status = 200
-        result = {'id': database, 'sequence': 7, 'url': 'https://untrusted.example/query'}
-        if mode == 'large':
+        result = {'id': database, 'sequence': sequence, 'url': 'https://untrusted.example/query'}
+        if self.path not in ['/v1/whoami', '/v1/organizations'] and not self.path.startswith(base):
+            status, result = 403, {'error': 'wrong organization'}
+        elif mode == 'large':
             result = {'data': 'x' * (600 * 1024)}
         elif mode == 'redirect':
             status = 307
             result = {'error': f'echo {key}'}
         elif self.path == '/v1/whoami':
-            result = {'user': {'email': 'synthetic@example.test'}, 'echo': key}
+            result = {'organizationId': organization, 'scopes': ['read', 'query', 'manage'], 'echo': key}
+        elif self.path == '/v1/organizations':
+            result = {'organizations': [{'id': organization}]}
         elif self.path.endswith('/read'):
             if mode == 'read-failed':
                 status, result = 503, {'error': 'read unavailable'}
             else:
-                result = {'sequence': 7, 'results': []}
+                result = {'requestId': value['requestId'], 'sequence': value['expectedSequence']+1, 'results': []}
         elif self.path.endswith('/query'):
             query_attempts.append(value)
             if mode == 'retry' and len(query_attempts) == 1:
@@ -45,7 +55,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif mode == 'unresolved':
                 status, result = (503 if len(query_attempts) == 1 else 409), {'error': 'unknown outcome'}
             else:
-                result = {'sequence': 8, 'results': []}
+                result = {'requestId': value['requestId'], 'sequence': value['expectedSequence']+1, 'results': []}
+        if self.path.endswith(('/read', '/query')) and mode in ['lost', 'replay', 'wrong-reply']:
+            saved = receipts.get(value['requestId'])
+            if saved:
+                assert saved[0] == value, 'request identity changed on replay'
+                result = saved[1]
+            else:
+                receipts[value['requestId']] = (value, result)
+            if mode == 'lost': status, result = 503, {'error': 'lost committed response '+key}
+            if mode == 'wrong-reply': result = {**result, 'requestId': str(uuid.uuid4())}
         self.send_response(status)
         if status == 307:
             self.send_header('Location', 'https://untrusted.example/')
@@ -62,7 +81,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
-env = {**os.environ, 'FASTDB_API_KEY': key, 'FASTDB_CLOUD_URL': f'http://127.0.0.1:{server.server_port}'}
+env = {**os.environ, 'FASTDB_API_KEY': key, 'FASTDB_CLOUD_URL': f'http://127.0.0.1:{server.server_port}', 'FASTDB_ORGANIZATION_ID': organization}
 def run(args, sql='', success=True, settings=None):
     result = subprocess.run([binary, 'cloud', *args], input=sql, text=True, capture_output=True,
                             env=settings or env, timeout=20)
@@ -73,10 +92,10 @@ try:
     assert 'whoami' in run(['--help']).stdout
     assert '[redacted]' in run(['whoami']).stdout
     for args, method, path in [
-        (['db', 'list'], 'GET', '/v1/databases'),
-        (['db', 'create', 'example'], 'POST', '/v1/databases'),
-        (['db', 'show', database], 'GET', f'/v1/databases/{database}'),
-        (['db', 'delete', database], 'DELETE', f'/v1/databases/{database}'),
+        (['db', 'list'], 'GET', base),
+        (['db', 'create', 'example'], 'POST', base),
+        (['db', 'show', database], 'GET', f'{base}/{database}'),
+        (['db', 'delete', database], 'DELETE', f'{base}/{database}'),
     ]:
         run(args)
         assert requests[-1][:2] == (method, path)
@@ -86,21 +105,43 @@ try:
     assert len({q['requestId'] for q in query_attempts}) == 2
     run(['db', 'access', database], 'SELECT 1; SELECT 2;\n.quit\n')
     assert len(query_attempts[-1]['statements']) == 2
-    before = len(requests)
-    result = run(['db', 'read', database], 'SELECT 1; SELECT 2;')
-    assert len(requests) == before + 1, 'read must not prefetch sequence or retry'
-    method, path, body = requests[-1]
-    assert method == 'POST' and path == f'/v1/databases/{database}/read'
-    assert set(body) == {'statements'} and len(body['statements']) == 2
-    assert json.loads(result.stdout)['sequence'] == 7
-    for sql in ['', 'x' * (64 * 1024 + 1), 'SELECT 1;' * 33]:
-        before = len(requests)
-        run(['db', 'read', database], sql, success=False)
-        assert len(requests) == before
-    mode = 'read-failed'
-    before = len(requests)
-    run(['db', 'read', database], 'SELECT 1;', success=False)
-    assert len(requests) == before + 1, 'failed read must not retry automatically'
+    with tempfile.TemporaryDirectory() as directory:
+        directory=Path(directory)
+        journal=directory/'read.json'
+        before=len(requests)
+        result=run(['db','read',database,str(journal)],'SELECT 1; SELECT 2;')
+        assert len(requests)==before+2, 'tracked read gets sequence then submits once'
+        method, path, body=requests[-1]
+        assert method=='POST' and path==f'{base}/{database}/read'
+        assert set(body)=={'statements','requestId','expectedSequence'} and len(body['statements'])==2
+        assert json.loads(result.stdout)['sequence']==8
+        assert journal.stat().st_mode&0o077==0 and key not in journal.read_text()
+        assert json.loads(journal.read_text())['request']==body
+        before=len(requests);run(['db','read',database,str(journal)],'SELECT 99;',success=False)
+        assert len(requests)==before, 'existing journal must never be overwritten or submit new SQL'
+        for sql in ['', 'x'*(64*1024+1), 'SELECT 1;'*33]:
+            before=len(requests);run(['db','read',database,str(directory/'invalid.json')],sql,success=False)
+            assert len(requests)==before
+        for operation in ['read','query']:
+            journal=directory/(operation+'-lost.json');mode='lost'
+            result=run(['db',operation,database,str(journal)],'SELECT 2;',success=False)
+            original=json.loads(journal.read_text());assert json.loads(result.stdout)['outcome']=='unresolved'
+            sequence=50;mode='replay';before=len(requests)
+            result=run(['db','retry',str(journal)])
+            assert len(requests)==before+1 and requests[-1][2]==original['request']
+            assert json.loads(result.stdout)['sequence']==original['request']['expectedSequence']+1
+            assert json.loads(journal.read_text())==original
+            before=len(requests)
+            run(['db','retry',str(journal)],success=False,settings={**env,'FASTDB_ORGANIZATION_ID':str(uuid.uuid4())})
+            run(['db','retry',str(journal)],success=False,settings={**env,'FASTDB_CLOUD_URL':'http://127.0.0.1:1'})
+            assert len(requests)==before
+            mode='wrong-reply';run(['db','retry',str(journal)],success=False)
+        mode='read-failed';before=len(requests)
+        run(['db','read',database,str(directory/'failed.json')],'SELECT 1;',success=False)
+        assert len(requests)==before+2, 'failed read must not retry automatically'
+        (directory/'huge.json').write_text('x'*(70*1024));before=len(requests)
+        run(['db','retry',str(directory/'huge.json')],success=False);assert len(requests)==before
+    sequence=7
     query_attempts.clear()
     mode = 'retry'
     result = run(['db', 'access', database], 'INSERT INTO t VALUES (1);\n.retry\n.quit\n', success=False)
@@ -110,6 +151,9 @@ try:
     mode = 'unresolved'
     run(['db', 'access', database], 'INSERT INTO t VALUES (2);\n.retry\nINSERT INTO t VALUES (3);\n.quit\n', success=False)
     assert len(query_attempts) == 2 and query_attempts[0] == query_attempts[1]
+    query_attempts.clear();mode='wrong-reply'
+    run(['db','access',database],'SELECT 1;\n.retry\nSELECT 2;\n.quit\n',success=False)
+    assert len(query_attempts)==2 and query_attempts[0]==query_attempts[1], 'unconfirmed replies cannot clear interactive pending work'
     mode = 'redirect'
     before = len(requests)
     run(['whoami'], success=False)
@@ -118,7 +162,15 @@ try:
     run(['whoami'], success=False)
     for endpoint in ['http://example.test', 'https://user:pass@example.test', 'https://example.test/?key=bad']:
         run(['whoami'], success=False, settings={**env, 'FASTDB_CLOUD_URL': endpoint})
+    mode='normal'
+    before=len(requests)
+    run(['db','list'],success=False,settings={k:v for k,v in env.items() if k!='FASTDB_ORGANIZATION_ID'})
+    run(['db','list'],success=False,settings={**env,'FASTDB_ORGANIZATION_ID':'../metadata'})
     run(['db', 'show', '../metadata'], success=False)
+    assert len(requests)==before
+    run(['--organization',organization,'db','show',database],settings={**env,'FASTDB_ORGANIZATION_ID':str(uuid.uuid4())})
+    assert requests[-1][1]==f'{base}/{database}'
+    assert json.loads(run(['organizations']).stdout)['organizations'][0]['id']==organization
     print('Cloud CLI management, interactive batching, stable retries, redaction and endpoint checks passed')
 finally:
     server.shutdown()

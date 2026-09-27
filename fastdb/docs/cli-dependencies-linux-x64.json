@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "4fffaa23990bc8b514b0081b63da337223320efab2c9371ea4ea42cdf2521194",
+  "lockfileSha256": "f674744f3ed6cd476be0c564be868ba99de0cf644771cdfed4fa170760b6860d",
   "packages": [
     {
       "name": "aead",
