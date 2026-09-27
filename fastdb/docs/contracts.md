@@ -452,6 +452,17 @@ PRAGMA fields retain their pinned-engine names and values: these include column 
 
 Collection INFO remains logical and does not reveal physical storage names. All INFO reads share the existing statement snapshot/savepoint; a persistent test covers reopen and index drop/rollback visibility. These are additive prototype result fields, not a finalized V1 inspection protocol or complete schema-dependency authorization.
 
+The Cloud0.3 development dependency adds `Connection::info_metered` for parsed
+logical INFO only. It retains catalog-row visits and VM dispatches, with optional
+catalog/VM limits, on both success and error. This is infrastructure accounting;
+INFO does not visit customer data rows or perform logical customer mutations.
+Catalog SELECTs and inspection PRAGMAs share the meter; transaction setup and
+cleanup are excluded, so interruption preserves a caller's pending transaction.
+Result limits validate the assembled INFO value, not its intermediate decoding
+allocations. Serialize operations on the connection. Existing `info` and checked
+data-read/write APIs retain their meanings. This additive API is not a claim that
+all DDL, index methods or cloud billing paths have complete accounting coverage.
+
 
 ## Managed equality and membership candidates
 
@@ -1447,3 +1458,75 @@ which can change engine statement-journal eligibility. See
 [browser/client evidence](v2-browser-client.md) for control/fix results and the
 conflict oracle. The pending user-function scalar-error bug and ambiguous
 FDB_ROLLBACK cleanup outcomes remain separate limitations.
+
+Development checked-creation API: `Connection::create_metered` returns retained
+`CreateWork` for table/collection creation, ordinary scalar-index construction and
+CTAS, with independent `CreateWorkLimits` for data visits, engine schema visits,
+logical mutation attempts and VM work. Unsupported statement families return None
+without executing. Managed physical CREATE statements share the meter without
+logical mutation charges; frontend catalog operations/cleanup remain excluded.
+The operation is atomic, including result-limit failures. A successful CTAS within
+a caller transaction still requires that transaction's commit before its mutation
+attempts become committed writes. General DDL/search billing coverage is not implied.
+
+### Checked logical schema work (development)
+
+`schema_metered` accepts logical field definition/replacement/removal, relation
+creation/removal and function creation/replacement/removal, retaining validation
+reads and VM work on both success and failure. These operations have no logical
+customer row mutations. Field replacement checks existing documents; failed
+validation or an exhausted budget restores the old definition and preserves prior
+caller transaction work. Other valid statement families return `None` without
+execution. Logical catalog I/O, cleanup, preparation and JavaScript compilation
+remain outside the engine counters; zero measured work is not zero resource cost.
+The existing materialized validation scan does not gain an intermediate allocation
+bound. These development adapters do not establish full query billing coverage.
+
+### Checked DDL and search-index construction (development)
+
+`ddl_metered` covers main-schema ordinary table/index drops and ALTER TABLE.
+Collection drops use the existing logical guards. DROP TABLE performs a bounded
+count inside its atomic scope, retains those reads, rejects insufficient mutation
+allowance before destruction, and adds removed-row attempts only after completion.
+Those attempts require authoritative commit before becoming writes. Native DROP
+COLUMN row rewrites count as mutations; index/catalog writes do not. Native
+identifier spelling is preserved. Virtual/attached schemas and other families
+return None without execution. Caller work and old schema survive budget failures.
+
+`create_metered` also covers managed full-text, spatial and vector builds with
+source and instrumented maintenance reads/VM work, suppressing index mutations.
+Graph/analyzer CPU and intermediate allocations remain outside engine counters.
+Views, full search execution, materialized/spill attribution and complete billing
+qualification remain separate work.
+
+Checked table drops reserve their own row mutations before executing native
+foreign-key cascades. Counting and execution share remaining read/schema/VM
+budgets while retaining both phases after failure. Unqualified temporary shadows
+remain outside checked main DDL; explicit main targets cannot count a shadow's
+rows. These adapters do not enable the engine's disabled attachment feature.
+
+
+### Cloud development: checked ordinary views and EXPLAIN
+
+The development Cloud dependency extends ddl_metered to ordinary main-schema view
+creation/removal and adds explain_metered with the same DdlWorkLimits/MeteredDdl
+shape. Vector-search explanations return None without execution because ANN
+lowering materializes candidates outside qualified work; their compatibility path
+remains available without checked coverage. Views do not execute their defining
+SELECT; checked EXPLAIN/EXPLAIN QUERY PLAN do
+not execute explained statements. Engine steps for emitting explanation output are
+retained and bounded. Parsing/planning and frontend catalog work remain excluded.
+Schema and result/VM budget failures preserve caller work; temp/materialized view
+DDL remains outside this adapter. Native/public results and managed guards retain
+their existing semantics. This is development coverage, not an embedded release.
+
+### Cloud development: ANN candidate reads
+
+Checked execution now attaches its shared read/VM meter to the stored ID/vector
+rowid lookups performed during ANN SQL lowering. Candidate visits are retained
+even if outer filters return no rows or a later failure rolls back the operation.
+Cold graph loading and redo replay do not add customer candidate reads. Graph
+traversal, distance/reranking CPU and frontend preparation remain outside these
+counters, so read/VM limits do not bound all ANN work. Direct unmetered calls and
+search ranking remain unchanged. This is partial development instrumentation,
+not complete search billing qualification or a new embedded release.

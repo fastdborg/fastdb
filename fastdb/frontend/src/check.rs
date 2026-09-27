@@ -566,7 +566,7 @@ impl Connection {
                     statement
                         .bind_at(NonZeroUsize::new(i + 1).expect("one-based binding"), value)?;
                 }
-                let rows = crate::collect_rows(&mut statement)?;
+                let rows = self.meter_statement(&mut statement, crate::collect_rows)?;
                 Ok(matches!(
                     rows.first().and_then(|row| row.first()),
                     Some(EngineValue::Numeric(turso_core::Numeric::Integer(1)))

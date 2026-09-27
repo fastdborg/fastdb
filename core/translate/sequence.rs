@@ -624,6 +624,7 @@ pub(crate) fn emit_backing_table_compaction(
         table_name: seq_name.to_string(),
         // Sequence compaction is internal bookkeeping, not a SQL row change.
         is_part_of_update: true,
+        is_replace: false,
     });
     program.preassign_label_to_next_insn(skip_delete_label);
     program.emit_insn(Insn::Next {
@@ -698,6 +699,7 @@ pub(crate) fn emit_sqlite_sequence_sync(
         table_name: SQLITE_SEQUENCE_TABLE_NAME.to_string(),
         // sqlite_sequence maintenance is excluded from changes().
         is_part_of_update: true,
+        is_replace: false,
     });
     program.preassign_label_to_next_insn(skip_delete_label);
     program.emit_insn(Insn::Next {
@@ -974,6 +976,7 @@ pub(crate) fn emit_drop_sequence_cleanup(
         cursor_id: sqlite_schema_cursor_id,
         table_name: "sqlite_schema".to_string(),
         is_part_of_update: false,
+        is_replace: false,
     });
     program.preassign_label_to_next_insn(skip_delete_label);
     program.emit_insn(Insn::Next {

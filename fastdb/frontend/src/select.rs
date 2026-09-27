@@ -7166,45 +7166,58 @@ impl Connection {
         };
         let mut reference_count = 0;
         let mut failure = None;
-        let execution = crate::parser_stack(|| {
-            statement.run_with_row_callback(|row| {
-                let result = (|| -> Result<()> {
-                    if fetches_per_row
-                        > crate::links::MAX_FETCH_REFERENCES.saturating_sub(reference_count)
-                    {
-                        return Err(Error::Limit("fetch reference count exceeds 16384".into()));
-                    }
-                    reference_count += fetches_per_row;
-                    let mut output = Vec::new();
-                    for (i, value) in row.get_values().enumerate() {
-                        if !native_insert && !explain && typed[i] {
-                            output.push(match value {
-                                turso_core::Value::Blob(b) => Value::decode(b)?,
-                                turso_core::Value::Null => Value::Null,
-                                _ => return Err(Error::Storage("invalid typed projection".into())),
-                            });
-                        } else {
-                            output.push(crate::from_engine(value.clone()));
+        let execution = self.meter_statement(&mut statement, |statement| {
+            crate::parser_stack(|| {
+                statement
+                    .run_with_row_callback(|row| {
+                        let result = (|| -> Result<()> {
+                            if fetches_per_row
+                                > crate::links::MAX_FETCH_REFERENCES.saturating_sub(reference_count)
+                            {
+                                return Err(Error::Limit(
+                                    "fetch reference count exceeds 16384".into(),
+                                ));
+                            }
+                            reference_count += fetches_per_row;
+                            let mut output = Vec::new();
+                            for (i, value) in row.get_values().enumerate() {
+                                if !native_insert && !explain && typed[i] {
+                                    output.push(match value {
+                                        turso_core::Value::Blob(b) => Value::decode(b)?,
+                                        turso_core::Value::Null => Value::Null,
+                                        _ => {
+                                            return Err(Error::Storage(
+                                                "invalid typed projection".into(),
+                                            ))
+                                        }
+                                    });
+                                } else {
+                                    output.push(crate::from_engine(value.clone()));
+                                }
+                            }
+                            budget.row_with_fetches(
+                                &output,
+                                if native_insert || explain {
+                                    &[]
+                                } else {
+                                    &fetched
+                                },
+                            )?;
+                            rows.push(output);
+                            Ok(())
+                        })();
+                        if let Err(error) = result {
+                            failure = Some(error);
+                            return Err(turso_core::LimboError::Interrupt);
                         }
-                    }
-                    budget.row_with_fetches(
-                        &output,
-                        if native_insert || explain {
-                            &[]
-                        } else {
-                            &fetched
-                        },
-                    )?;
-                    rows.push(output);
-                    Ok(())
-                })();
-                if let Err(error) = result {
-                    failure = Some(error);
-                    return Err(turso_core::LimboError::Interrupt);
-                }
-                Ok(())
+                        Ok(())
+                    })
+                    .map_err(Error::from)
             })
         });
+        if let Err(error @ Error::Rollback { .. }) = execution {
+            return Err(error);
+        }
         if let Some(error) = failure {
             return Err(error);
         }

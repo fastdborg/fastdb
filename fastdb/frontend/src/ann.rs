@@ -318,14 +318,14 @@ impl Connection {
         Ok(result)
     }
     fn ann_append(&self, index: &Index, node: i64, value: EngineValue) -> Result<()> {
-        self.run(
+        self.run_index_maintenance(
             &format!(
                 "INSERT INTO {} (token,node,value) VALUES (uuid7_str(),?1,?2)",
                 quote(&index.ann_log())
             ),
             &[EngineValue::from_i64(node), value],
         )?;
-        let rows = self.run(
+        let rows = self.run_index_maintenance(
             &format!("SELECT count(*) FROM {}", quote(&index.ann_log())),
             &[],
         )?;
@@ -334,7 +334,7 @@ impl Connection {
                 graph.compact().map_err(native)?;
                 snapshot(graph)
             })?;
-            self.run(
+            self.run_index_maintenance(
                 &format!(
                     "UPDATE {} SET generation=uuid7_str(),graph=?1,digest=?2 WHERE slot=1",
                     quote(&index.ann_state())
@@ -344,7 +344,7 @@ impl Connection {
                     EngineValue::Blob(Sha256::digest(&bytes).to_vec()),
                 ],
             )?;
-            self.run(&format!("DELETE FROM {}", quote(&index.ann_log())), &[])?;
+            self.run_index_maintenance(&format!("DELETE FROM {}", quote(&index.ann_log())), &[])?;
         }
         Ok(())
     }
@@ -354,7 +354,7 @@ impl Connection {
             .get("id")
             .ok_or_else(|| stored("missing record id"))?
             .encode()?;
-        let rows = self.run(
+        let rows = self.run_index_maintenance(
             &format!(
                 "INSERT INTO {} VALUES (?1,?2) RETURNING rowid",
                 quote(&index.storage)
@@ -367,7 +367,7 @@ impl Connection {
         Ok(())
     }
     pub(crate) fn delete_vector_entry(&self, index: &Index, id: &EngineValue) -> Result<()> {
-        let rows = self.run(
+        let rows = self.run_index_maintenance(
             &format!(
                 "DELETE FROM {} WHERE id=?1 RETURNING rowid,\"key\"",
                 quote(&index.storage)
@@ -431,7 +431,7 @@ impl Connection {
                 self.ann_boundary()?;
                 let key=index.document_keys(&doc)?.remove(0);
                 let id=doc.get("id").ok_or_else(||stored("missing id"))?.encode()?;
-                let rows=self.run(&format!("INSERT INTO {} VALUES (?1,?2) RETURNING rowid",quote(&index.storage)),&[key,EngineValue::Blob(id)])?;
+                let rows=self.run_index_maintenance(&format!("INSERT INTO {} VALUES (?1,?2) RETURNING rowid",quote(&index.storage)),&[key,EngineValue::Blob(id)])?;
                 if let Some(value)=crate::path_value(&doc,&index.path)? { if !matches!(value,Value::Null) {
                     let values=index.config()?.components(value)?;
                     graph.add(integer(&rows[0][0])? as u64,&values).map_err(native)?;
@@ -439,7 +439,7 @@ impl Connection {
             }
             let bytes=snapshot(&graph)?;
             let digest=Sha256::digest(&bytes).to_vec();
-            self.run(&format!("INSERT INTO {} VALUES (1,uuid7_str(),?1,?2)",quote(&index.ann_state())),&[EngineValue::Blob(bytes),EngineValue::Blob(digest)])?;
+            self.run_index_maintenance(&format!("INSERT INTO {} VALUES (1,uuid7_str(),?1,?2)",quote(&index.ann_state())),&[EngineValue::Blob(bytes),EngineValue::Blob(digest)])?;
             collection.indexes.push(index.clone()); self.save_catalog(&collection)
         })
     }
@@ -546,7 +546,10 @@ impl Connection {
                 })?;
                 let mut ordered = Vec::new();
                 for node in hits.keys {
-                    let records = self.run(
+                    // Candidate records are customer index reads, even though
+                    // SQL lowering fetches them before the outer hit query runs.
+                    // Graph loading/replay/traversal remain outside this meter.
+                    let records = self.run_customer(
                         &format!(
                             "SELECT id,\"key\" FROM {} WHERE rowid=?1",
                             quote(&index.storage)

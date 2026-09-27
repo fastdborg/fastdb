@@ -702,6 +702,9 @@ pub struct ProgramState {
     /// Indicate whether an [Insn::Once] instruction at a given program counter position has already been executed, well, once.
     once: SmallVec<[u32; 4]>,
     pub execution_state: ProgramExecutionState,
+    execution_meter: Option<Arc<crate::execution_meter::ExecutionMeter>>,
+    /// Completed rows in an incremental, metered Count opcode.
+    metered_count: Option<u64>,
     /// Per-execution statement deadline derived from the connection query timeout.
     /// `None` means no timeout.
     pub query_deadline: Option<crate::MonotonicInstant>,
@@ -823,6 +826,8 @@ impl ProgramState {
             ended_coroutine: vec![],
             once: SmallVec::<[u32; 4]>::new(),
             execution_state: ProgramExecutionState::Init,
+            execution_meter: None,
+            metered_count: None,
             query_deadline: None,
             parameters: Vec::new(),
             commit_state: CommitState::Ready,
@@ -944,6 +949,7 @@ impl ProgramState {
         self.ended_coroutine.clear();
         self.once.clear();
         self.execution_state = ProgramExecutionState::Init;
+        self.metered_count = None;
         self.query_deadline = None;
         self.current_collation = None;
         #[cfg(feature = "json")]
@@ -1035,13 +1041,63 @@ impl ProgramState {
     }
 
     #[inline]
-    pub fn record_rows_read(&mut self, count: u64) {
+    pub(crate) fn record_cursor_rows_read(
+        &mut self,
+        program: &Program,
+        cursor_id: CursorID,
+        count: u64,
+    ) -> Result<()> {
         self.metrics.rows_read = self.metrics.rows_read.saturating_add(count);
+        // Use the compiler's catalog identity, not the cursor's physical root:
+        // ephemeral trees can also occupy root page 1 in their own pager.
+        let is_schema = self.execution_meter.is_some()
+            && matches!(program.cursor_ref.get(cursor_id),
+                Some((_, CursorType::BTreeTable(table)))
+                    if table.root_page == 1 && table.name == crate::schema::SCHEMA_TABLE_NAME);
+        if self
+            .execution_meter
+            .as_ref()
+            .is_some_and(|meter| !meter.record_rows_read(count, is_schema))
+        {
+            self.interrupt();
+            return Err(LimboError::Interrupt);
+        }
+        Ok(())
     }
 
     #[inline]
     pub fn record_rows_written(&mut self, count: u64) {
         self.metrics.rows_written = self.metrics.rows_written.saturating_add(count);
+        if let Some(meter) = &self.execution_meter {
+            meter.record_rows_written(count);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn record_row_mutation(&mut self) -> Result<()> {
+        if self
+            .execution_meter
+            .as_ref()
+            .is_some_and(|meter| !meter.record_row_mutation())
+        {
+            self.interrupt();
+            return Err(LimboError::Interrupt);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn take_vm_step(&mut self) -> bool {
+        if self
+            .execution_meter
+            .as_ref()
+            .is_some_and(|meter| !meter.take_vm_step())
+        {
+            self.interrupt();
+            return false;
+        }
+        self.metrics.vm_steps = self.metrics.vm_steps.saturating_add(1);
+        true
     }
 
     pub(crate) fn metrics(&self) -> StatementMetrics {
@@ -1537,6 +1593,9 @@ impl Program {
         query_mode: QueryMode,
         waker: Option<&Waker>,
     ) -> Result<StepResult> {
+        if matches!(state.execution_state, ProgramExecutionState::Init) {
+            state.execution_meter = self.connection.execution_meter.read().clone();
+        }
         state.execution_state = ProgramExecutionState::Running;
         let result = match query_mode {
             QueryMode::Normal => self.normal_step(state, pager, waker),
@@ -1572,7 +1631,9 @@ impl Program {
             return Ok(StepResult::Interrupt);
         }
 
-        state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+        if !state.take_vm_step() {
+            return Ok(StepResult::Interrupt);
+        }
 
         let mut explain_state = state.explain_state.write();
 
@@ -1676,7 +1737,9 @@ impl Program {
             }
 
             // FIXME: do we need this?
-            state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+            if !state.take_vm_step() {
+                return Ok(StepResult::Interrupt);
+            }
 
             if state.pc as usize >= self.insns.len() {
                 return Ok(StepResult::Done);
@@ -1807,7 +1870,10 @@ impl Program {
                 state.pre_op_registers = Some(state.registers.clone());
             }
             // Always increment VM steps for every loop iteration
-            state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+            if !state.take_vm_step() {
+                self.abort(pager, None, state)?;
+                return Ok(StepResult::Interrupt);
+            }
 
             match insn_function(self, state, insn, pager) {
                 Ok(InsnFunctionStepResult::Step) => {
@@ -1843,6 +1909,19 @@ impl Program {
                     // Instruction completed (ResultRow already incremented PC)
                     state.metrics.insn_executed = state.metrics.insn_executed.saturating_add(1);
                     return Ok(StepResult::Row);
+                }
+                Err(LimboError::Interrupt)
+                    if state.is_interrupted()
+                        || state
+                            .execution_meter
+                            .as_ref()
+                            .is_some_and(|meter| meter.is_budget_exhausted()) =>
+                {
+                    // Budget crossings, including propagation from a trigger,
+                    // are cooperative cancellation. Treating them as ordinary errors
+                    // would roll back an explicit transaction even for a reader.
+                    self.abort(pager, None, state)?;
+                    return Ok(StepResult::Interrupt);
                 }
                 Err(LimboError::Busy) => {
                     // Instruction blocked - will retry at same PC

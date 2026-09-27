@@ -168,7 +168,7 @@ impl Connection {
             self.run(&index.table_ddl(), &[])?;
             self.run(&index.index_ddl(), &[])?;
             self.run(&index.text_stats_ddl(), &[])?;
-            self.run(&format!("INSERT INTO {} VALUES (1,0)", quote(&index.text_stats())), &[])?;
+            self.run_index_maintenance(&format!("INSERT INTO {} VALUES (1,0)", quote(&index.text_stats())), &[])?;
             for documents in self.documents(&c)?.chunks(BUILD_BATCH_ROWS) {
                 self.insert_text_build_batch(&index, documents)?;
             }
@@ -195,7 +195,7 @@ impl Connection {
         }
         // One statement shares an FTS cursor, amortizing its Tantivy commit.
         // Keep batches below its internal mid-insert flush/reentry path.
-        self.run(
+        self.run_index_maintenance(
             &format!(
                 "INSERT INTO {} VALUES {}",
                 quote(&index.storage),
@@ -206,7 +206,7 @@ impl Connection {
         self.change_text_count(index, documents.len() as i64)
     }
     pub(crate) fn change_text_count(&self, index: &Index, delta: i64) -> Result<()> {
-        let rows = self.run(
+        let rows = self.run_index_maintenance(
             &format!(
                 "UPDATE {} SET count=count+?1 WHERE slot=1 RETURNING count",
                 quote(&index.text_stats())
@@ -243,7 +243,7 @@ impl Connection {
         } else {
             ""
         };
-        let rows = self.run(
+        let rows = self.run_index_maintenance(
             &format!(
                 "DELETE FROM {} WHERE id=?1{returning}",
                 quote(&index.storage)

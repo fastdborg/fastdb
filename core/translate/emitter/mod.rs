@@ -1410,7 +1410,8 @@ fn emit_cdc_insns_v1(
         record_reg,
         flag: InsertFlags::new()
             .skip_last_rowid()
-            .skip_statement_change_count(),
+            .skip_statement_change_count()
+            .skip_row_mutation(),
         table_name: "".to_string(),
     });
     Ok(())
@@ -1537,7 +1538,8 @@ fn emit_cdc_insns_v2(
         record_reg,
         flag: InsertFlags::new()
             .skip_last_rowid()
-            .skip_statement_change_count(),
+            .skip_statement_change_count()
+            .skip_row_mutation(),
         table_name: "".to_string(),
     });
     Ok(())
@@ -1624,7 +1626,8 @@ pub fn emit_cdc_commit_insns(
         record_reg,
         flag: InsertFlags::new()
             .skip_last_rowid()
-            .skip_statement_change_count(),
+            .skip_statement_change_count()
+            .skip_row_mutation(),
         table_name: "".to_string(),
     });
     Ok(())

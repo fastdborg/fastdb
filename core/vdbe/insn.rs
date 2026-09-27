@@ -181,6 +181,7 @@ impl InsertFlags {
     pub const EPHEMERAL_TABLE_INSERT: u8 = 0x04; // Flag indicating that this is an insert into an ephemeral table
     pub const SKIP_LAST_ROWID: u8 = 0x08; // Flag indicating that last_insert_rowid() must not be updated
     pub const SKIP_STATEMENT_CHANGE_COUNT: u8 = 0x10; // Flag indicating that changes() must not count this insert
+    pub const SKIP_ROW_MUTATION: u8 = 0x40; // Internal maintenance, excluded from retained row mutation events
     pub const SKIP_ALL_CHANGE_COUNTS: u8 = 0x20; // Flag indicating that neither changes() nor total_changes() must count this insert
 
     pub fn new() -> Self {
@@ -213,6 +214,11 @@ impl InsertFlags {
 
     pub fn skip_statement_change_count(mut self) -> Self {
         self.0 |= InsertFlags::SKIP_STATEMENT_CHANGE_COUNT;
+        self
+    }
+
+    pub fn skip_row_mutation(mut self) -> Self {
+        self.0 |= InsertFlags::SKIP_ROW_MUTATION;
         self
     }
 
@@ -1193,6 +1199,9 @@ pub enum Insn {
         table_name: String,
         /// Whether the DELETE is part of an UPDATE statement. If so, it doesn't count towards the change counter.
         is_part_of_update: bool,
+        /// Conflict deletion performed by REPLACE: a separate row mutation,
+        /// although SQLite-compatible change counters suppress it.
+        is_replace: bool,
     },
 
     /// If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry

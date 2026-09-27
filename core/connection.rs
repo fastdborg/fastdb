@@ -437,6 +437,7 @@ pub struct Connection {
     pub(crate) view_transaction_states: AllViewsTxState,
     /// Connection-level metrics aggregation
     pub metrics: RwLock<ConnectionMetrics>,
+    pub(crate) execution_meter: RwLock<Option<Arc<crate::execution_meter::ExecutionMeter>>>,
     /// Greater than zero if connection executes a program within a program
     /// This is necessary in order for connection to not "finalize" transaction (commit/abort) when program ends
     /// (because parent program is still pending and it will handle "finalization" instead)
@@ -4496,6 +4497,24 @@ impl Connection {
     /// Get a reference to the busy handler.
     pub fn get_busy_handler(&self) -> crate::sync::RwLockReadGuard<'_, BusyHandler> {
         self.busy_handler.read()
+    }
+
+    /// Attach a meter to programs started after this call. Callers must serialize
+    /// changes with statement execution on this connection. Replacement is denied
+    /// while a root statement or writer remains active; reset/drop an interrupted
+    /// writer before replacement. Already prepared idle statements use the meter
+    /// attached when they first step. Detach before unmetered cleanup.
+    pub fn set_execution_meter(
+        &self,
+        meter: Option<Arc<crate::execution_meter::ExecutionMeter>>,
+    ) -> Result<()> {
+        if self.n_active_root_statements.load(Ordering::SeqCst) != 0
+            || self.n_active_writes.load(Ordering::SeqCst) != 0
+        {
+            return Err(LimboError::StatementsInProgress("change execution meter"));
+        }
+        *self.execution_meter.write() = meter;
+        Ok(())
     }
 
     /// Sets a progress handler invoked approximately every `ops` VM steps.

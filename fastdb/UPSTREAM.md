@@ -248,3 +248,56 @@ The inspected upstream `64b8ef5742fc18937f9c89806c81e3f6475dc7a3` lacks this
 state; review/remove criteria and immutable evidence are in
 [the proposal](docs/proposals/cancellation-savepoint-poison.md) and the
 [exception register](docs/core-exceptions.md).
+
+## Approved core exception: execution metering
+
+The user approved a narrowly scoped counter/budget exception for Cloud 0.3.0 on
+2026-09-26. The first isolated change corrects missing row-visit counts after
+successful cursor seeks and executed deferred table lookups. A second isolated
+change adds opt-in retained execution counters and a VM-step budget; counters
+survive errors/rollback and are physical work rather than committed billable
+mutations. A third isolated change adds read budgets with one counted-visit
+overshoot per serialized execution and incremental metered Count execution.
+A fourth correction removes duplicate HashBuild charges for already-positioned
+source rows, with memory/file and budget-boundary regressions. Complete cursor
+coverage and checked frontend attribution remain open. These
+patches do not enable paid billing. See [the design and regression contract](docs/proposals/execution-metering.md)
+and [the exception register](docs/core-exceptions.md). Work is on the separate
+`feat/cloud-metering` branch based on released FastDB 2.1.0.
+
+
+Read-budget integration additionally routes a budget-requested interrupt through
+the existing cooperative cleanup path, preserving prior explicit-transaction work
+for interrupted readers. This is an isolated continuation of the approved metering
+exception with raw-engine and checked-frontend transaction regressions.
+
+Retained ordinary B-tree row mutation events and an optional mutation budget are
+another isolated continuation of the approved exception. Replacement deletions
+are distinct from update mechanics; internal CDC inserts are excluded without
+changing SQL change counts. Trigger budget cancellation preserves caller work,
+and interrupted writers must be finalized before meter replacement. Five focused
+mutation regressions and the adjacent write/read/lifecycle suites pass. Retained
+events survive rollback and are not committed billable writes; managed hidden
+index and virtual-table attribution remain open. See the metering proposal.
+
+The execution meter additionally supports a shared maintenance view suppressing
+only logical mutation events. Reads, physical writes, VM work and all exhaustion
+remain shared. The mutation-meter regression verifies scope switching cannot
+bypass an exhausted budget. This is part of the approved metering exception.
+
+The approved metering exception additionally provides opt-in engine schema-read
+attribution and an independent schema-visit budget. Legacy counters/budgets retain
+all-row semantics. Compiler catalog identity is used at existing completed cursor
+visits, including deferred table reads and incremental Count; physical root-page
+numbers alone do not classify temporary tables. Schema exhaustion uses existing
+cooperative cancellation and shared maintenance state. Regressions are in
+`fastdb/tests/tests/schema_meter.rs`; design and remaining frontend/Cloud limits are
+in `docs/proposals/execution-metering.md`. This foundation does not enable billing.
+
+The same approved exception counts successful initial index-method positioning
+after query_start completes I/O. Next already records later results. Empty
+results do not count, and default profiling and retained read budgets receive
+the same event. `fastdb/tests/tests/index_method_meter.rs` covers score-only
+versus deferred table lookups, memory/file databases, exact/crossing/sticky limits,
+caller preservation, queued I/O and managed FTS materialization. Native extension
+posting/traversal work before cursor output remains outside this correction.

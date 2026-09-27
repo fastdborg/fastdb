@@ -1929,6 +1929,7 @@ pub fn translate_drop_table(
         cursor_id: sqlite_schema_cursor_id_0,
         table_name: SQLITE_TABLEID.to_string(),
         is_part_of_update: false,
+        is_replace: false,
     });
 
     program.preassign_label_to_next_insn(next_label);
@@ -2039,6 +2040,7 @@ pub fn translate_drop_table(
                     cursor_id: temp_cursor,
                     table_name: SQLITE_TABLEID.to_string(),
                     is_part_of_update: false,
+                    is_replace: false,
                 });
                 program.preassign_label_to_next_insn(temp_next_label);
                 program.emit_insn(Insn::Next {
@@ -2259,6 +2261,7 @@ pub fn translate_drop_table(
             cursor_id: sqlite_schema_cursor_id_1,
             table_name: SQLITE_TABLEID.to_string(),
             is_part_of_update: false,
+            is_replace: false,
         });
         program.emit_insn(Insn::Insert {
             cursor: sqlite_schema_cursor_id_1,
@@ -2327,6 +2330,7 @@ pub fn translate_drop_table(
             cursor_id: seq_cursor_id,
             table_name: SQLITE_SEQUENCE_TABLE_NAME.to_string(),
             is_part_of_update: false,
+            is_replace: false,
         });
 
         program.preassign_label_to_next_insn(continue_loop_label);
@@ -2381,6 +2385,7 @@ pub fn translate_drop_table(
             cursor_id: ver_cursor_id,
             table_name: crate::translate::pragma::TURSO_CDC_VERSION_TABLE_NAME.to_string(),
             is_part_of_update: false,
+            is_replace: false,
         });
 
         program.preassign_label_to_next_insn(continue_ver_label);
@@ -2926,6 +2931,7 @@ pub fn translate_drop_type(
         cursor_id: types_cursor_id,
         table_name: TURSO_TYPES_TABLE_NAME.to_string(),
         is_part_of_update: false,
+        is_replace: false,
     });
 
     program.preassign_label_to_next_insn(skip_delete_label);

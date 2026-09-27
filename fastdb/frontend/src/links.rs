@@ -145,7 +145,7 @@ impl Connection {
                                 value,
                             )?;
                         }
-                        visit_target_rows(&mut statement, |row| {
+                        visit_target_rows(self, &mut statement, |row| {
                             let EngineValue::Blob(id) = &row[0] else {
                                 return Err(Error::Storage("invalid fetched id".into()));
                             };
@@ -236,7 +236,7 @@ impl Connection {
                         let names = (0..statement.num_columns())
                             .map(|i| statement.get_column_name(i).into_owned())
                             .collect::<Vec<_>>();
-                        visit_target_rows(&mut statement, |row| {
+                        visit_target_rows(self, &mut statement, |row| {
                             let doc = names
                                 .iter()
                                 .cloned()
@@ -321,19 +321,27 @@ fn charge_result_target(
 // Preserve frontend budget/decoding errors while interrupting engine iteration.
 // The caller drops the statement before its enclosing atomic scope cleans up.
 pub(crate) fn visit_target_rows(
+    connection: &Connection,
     statement: &mut turso_core::Statement,
     mut visit: impl FnMut(Vec<EngineValue>) -> Result<()>,
 ) -> Result<()> {
     let mut failure = None;
-    let execution = crate::parser_stack(|| {
-        statement.run_with_row_callback(|row| {
-            if let Err(error) = visit(row.get_values().cloned().collect()) {
-                failure = Some(error);
-                return Err(turso_core::LimboError::Interrupt);
-            }
-            Ok(())
+    let execution = connection.meter_statement(statement, |statement| {
+        crate::parser_stack(|| {
+            statement
+                .run_with_row_callback(|row| {
+                    if let Err(error) = visit(row.get_values().cloned().collect()) {
+                        failure = Some(error);
+                        return Err(turso_core::LimboError::Interrupt);
+                    }
+                    Ok(())
+                })
+                .map_err(Error::from)
         })
     });
+    if let Err(error @ Error::Rollback { .. }) = execution {
+        return Err(error);
+    }
     if let Some(error) = failure {
         return Err(error);
     }
@@ -615,7 +623,7 @@ mod tests {
             let error = c
                 .atomic(|| {
                     let mut statement = c.prepare("SELECT fetch_target_tick(n) FROM targets")?;
-                    visit_target_rows(&mut statement, |row| {
+                    visit_target_rows(&c, &mut statement, |row| {
                         budget.charge(&from_engine(row[0].clone())).map(|_| ())
                     })
                 })
@@ -627,7 +635,7 @@ mod tests {
             let mut values = Vec::new();
             c.atomic(|| {
                 let mut statement = c.prepare("SELECT fetch_target_tick(n) FROM targets")?;
-                visit_target_rows(&mut statement, |row| {
+                visit_target_rows(&c, &mut statement, |row| {
                     values.push(from_engine(row[0].clone()));
                     Ok(())
                 })
@@ -656,7 +664,7 @@ mod tests {
             let error = c
                 .atomic(|| {
                     let mut statement = c.prepare("SELECT fetch_target_tick(n) FROM targets")?;
-                    visit_target_rows(&mut statement, |row| {
+                    visit_target_rows(&c, &mut statement, |row| {
                         let value = from_engine(row[0].clone());
                         let Value::Integer(n) = value else {
                             panic!("integer fixture")

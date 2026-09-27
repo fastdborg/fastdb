@@ -21,6 +21,12 @@ pub use wal_replication::WalPosition;
 pub use wire_json::decode_wire_json;
 mod links;
 pub use interrupt::{CancellationToken, InterruptHandle};
+mod meter;
+pub use meter::{
+    CreateWork, CreateWorkLimits, DdlWork, DdlWorkLimits, InfoWork, InfoWorkLimits, MeteredCreate,
+    MeteredDdl, MeteredInfo, MeteredRead, MeteredSchema, MeteredWrite, ReadWork, ReadWorkLimits,
+    SchemaWork, SchemaWorkLimits, WriteWork, WriteWorkLimits,
+};
 mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
@@ -280,6 +286,9 @@ impl Database {
             next_subquery_id: std::sync::atomic::AtomicU64::new(0),
             write_buffer_limits: None,
             ann_cache: Default::default(),
+            work_meter: Default::default(),
+            meter_catalog_reads: Default::default(),
+            meter_schema_changes: Default::default(),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -294,6 +303,9 @@ pub struct Connection {
     next_subquery_id: std::sync::atomic::AtomicU64,
     write_buffer_limits: Option<ResultLimits>,
     ann_cache: std::sync::Mutex<Option<ann::Cache>>,
+    work_meter: std::sync::Mutex<Option<Arc<turso_core::execution_meter::ExecutionMeter>>>,
+    meter_catalog_reads: std::sync::atomic::AtomicBool,
+    meter_schema_changes: std::sync::atomic::AtomicBool,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
@@ -333,7 +345,26 @@ impl Connection {
                 value.clone(),
             )?;
         }
-        collect_rows(&mut statement)
+        // Managed schema changes emit trusted CREATE/DROP statements for physical
+        // storage/indexes. Charge their schema/VM work, never logical mutations.
+        if self
+            .meter_schema_changes
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && (sql.starts_with("CREATE ") || sql.starts_with("DROP "))
+        {
+            return self.meter_schema_statement(&mut statement, collect_rows);
+        }
+        // INFO opts catalog reads into its infrastructure meter. Transaction
+        // setup/cleanup must remain outside the exhausted execution budget.
+        if self
+            .meter_catalog_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && (sql.starts_with("SELECT ") || sql.starts_with("PRAGMA "))
+        {
+            self.meter_statement(&mut statement, collect_rows)
+        } else {
+            collect_rows(&mut statement)
+        }
     }
     fn atomic<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         self.savepoint(f, |_| true)
@@ -477,7 +508,7 @@ impl Connection {
         })
     }
     fn documents(&self, collection: &Collection) -> Result<Vec<Document>> {
-        self.run(
+        self.run_customer(
             &format!("SELECT doc FROM {}", quote(&collection.storage)),
             &[],
         )?
@@ -491,7 +522,7 @@ impl Connection {
     }
     fn get_in(&self, c: &Collection, record: &Record) -> Result<Option<Document>> {
         let id = normalized_id(record, &c.name)?;
-        self.run(
+        self.run_customer(
             &format!("SELECT doc FROM {} WHERE id = ?1", quote(&c.storage)),
             &[EngineValue::Blob(Value::Record(id).encode()?)],
         )?
@@ -645,7 +676,7 @@ impl Connection {
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        self.run(
+        self.run_index_maintenance(
             &format!("INSERT INTO {} VALUES ({slots})", quote(&index.storage)),
             &values,
         )?;
@@ -666,7 +697,7 @@ impl Connection {
         self.atomic(|| {
             let c = self.collection_for_write(table)?;
             if !doc.contains_key("id") {
-                let rows = self.run("SELECT uuid7_str()", &[])?;
+                let rows = self.run_customer("SELECT uuid7_str()", &[])?;
                 let Some(EngineValue::Text(key)) = rows.first().and_then(|r| r.first()) else {
                     return Err(Error::Storage("UUID generator returned non-text".into()));
                 };
@@ -688,7 +719,7 @@ impl Connection {
                 }
                 self.delete_unique_conflicts(&c, &doc)?;
             }
-            self.run(
+            self.run_customer(
                 &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
                 &[
                     EngineValue::Blob(doc["id"].encode()?),
@@ -718,7 +749,7 @@ impl Connection {
     fn replace_document(&self, c: &Collection, doc: &Document) -> Result<()> {
         self.validate_candidate(c, doc)?;
         let id = EngineValue::Blob(doc["id"].encode()?);
-        self.run(
+        self.run_customer(
             &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
             &[EngineValue::Blob(value::encode_document(doc)?), id.clone()],
         )?;
@@ -762,7 +793,7 @@ impl Connection {
         for index in &c.indexes {
             self.delete_index_entry(index, &id)?;
         }
-        self.run(
+        self.run_customer(
             &format!("DELETE FROM {} WHERE id = ?1", quote(&c.storage)),
             &[id],
         )?;
@@ -781,7 +812,7 @@ impl Connection {
                     "scalar lookup requires a scalar index".into(),
                 ));
             }
-            let rows = self.run(
+            let rows = self.run_customer(
                 &format!(
                     "SELECT c.doc FROM {} AS i JOIN {} AS c ON c.id = i.id WHERE i.key = ?1",
                     quote(&index.storage),
@@ -1155,17 +1186,23 @@ impl Connection {
         let mut budget = budget::ResultBudget::new(limits, &columns)?;
         let mut rows = Vec::new();
         let mut failure = None;
-        let execution = parser_stack(|| {
-            stmt.run_with_row_callback(|row| {
-                let output: Vec<_> = row.get_values().cloned().map(from_engine).collect();
-                if let Err(error) = budget.row(&output) {
-                    failure = Some(error);
-                    return Err(turso_core::LimboError::Interrupt);
-                }
-                rows.push(output);
-                Ok(())
+        let execution = self.meter_statement(&mut stmt, |stmt| {
+            parser_stack(|| {
+                stmt.run_with_row_callback(|row| {
+                    let output: Vec<_> = row.get_values().cloned().map(from_engine).collect();
+                    if let Err(error) = budget.row(&output) {
+                        failure = Some(error);
+                        return Err(turso_core::LimboError::Interrupt);
+                    }
+                    rows.push(output);
+                    Ok(())
+                })
+                .map_err(Error::from)
             })
         });
+        if let Err(error @ Error::Rollback { .. }) = execution {
+            return Err(error);
+        }
         if let Some(error) = failure {
             return Err(error);
         }

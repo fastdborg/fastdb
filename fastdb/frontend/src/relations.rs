@@ -356,7 +356,7 @@ impl Connection {
                         EngineValue::Blob(after.clone()),
                     )?;
                 }
-                crate::links::visit_target_rows(&mut statement, |row| {
+                crate::links::visit_target_rows(self, &mut statement, |row| {
                     let value = Value::Object(crate::decode_document(&row[0])?);
                     target_budget.charge(&value)?;
                     values.push(value);

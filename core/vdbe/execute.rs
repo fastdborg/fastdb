@@ -1379,7 +1379,7 @@ pub fn op_vcreate(
 }
 
 pub fn op_vfilter(
-    _program: &Program,
+    program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Arc<Pager>,
@@ -1415,7 +1415,7 @@ pub fn op_vfilter(
         state.pc = pc_if_empty.as_offset_int();
     } else {
         // VFilter positions to the first row if any exist, which counts as a read
-        state.record_rows_read(1);
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1540,7 +1540,7 @@ pub fn op_vupdate(
 }
 
 pub fn op_vnext(
-    _program: &Program,
+    program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Arc<Pager>,
@@ -1559,7 +1559,7 @@ pub fn op_vnext(
     };
     if has_more {
         // Increment metrics for row read from virtual table (including materialized views)
-        state.record_rows_read(1);
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.pc = pc_if_next.as_offset_int();
     } else {
         state.pc += 1;
@@ -1672,7 +1672,7 @@ pub fn op_open_pseudo(
 }
 
 pub fn op_rewind(
-    _program: &Program,
+    program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Arc<Pager>,
@@ -1708,7 +1708,7 @@ pub fn op_rewind(
         state.pc = pc_if_empty.as_offset_int();
     } else {
         // Rewind positions to the first row, which is effectively a read
-        state.record_rows_read(1);
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1738,7 +1738,7 @@ pub fn op_last(
         state.pc = pc_if_empty.as_offset_int();
     } else {
         // Last positions to the last row, which is effectively a read
-        state.record_rows_read(1);
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1809,7 +1809,7 @@ pub fn op_column(
                 rowid,
                 table_cursor_id,
             } => {
-                {
+                let found = {
                     let table_cursor = state.get_cursor(table_cursor_id);
                     // MaterializedView cursors shouldn't go through deferred seek logic
                     // but if we somehow get here, handle it appropriately
@@ -1817,15 +1817,18 @@ pub fn op_column(
                         Cursor::MaterializedView(mv_cursor) => {
                             // Seek to the rowid in the materialized view
                             return_if_io!(mv_cursor
-                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }))
                         }
                         _ => {
                             // Regular btree cursor
                             let table_cursor = table_cursor.as_btree_mut();
                             return_if_io!(table_cursor
-                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }))
                         }
                     }
+                };
+                if matches!(found, SeekResult::Found) {
+                    state.record_cursor_rows_read(program, table_cursor_id, 1)?;
                 }
                 state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
                 state.metrics.search_count = state.metrics.search_count.saturating_add(1);
@@ -2868,7 +2871,7 @@ pub fn op_next(
     };
     if !is_empty {
         // Increment metrics for row read
-        state.record_rows_read(1);
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.metrics.btree_next = state.metrics.btree_next.saturating_add(1);
         state.metrics.search_count = state.metrics.search_count.saturating_add(1);
         // Track if this is a full table scan or index scan
@@ -2916,7 +2919,7 @@ pub fn op_prev(
     };
     if !is_empty {
         // Increment metrics for row read
-        state.record_rows_read(1);
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.metrics.btree_prev = state.metrics.btree_prev.saturating_add(1);
         state.metrics.search_count = state.metrics.search_count.saturating_add(1);
         // Track if this is a full table scan or index scan
@@ -4946,7 +4949,7 @@ pub enum OpRowIdState {
 }
 
 pub fn op_row_id(
-    _program: &Program,
+    program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Arc<Pager>,
@@ -4999,12 +5002,15 @@ pub fn op_row_id(
                 rowid,
                 table_cursor_id,
             } => {
-                {
+                let found = {
                     let table_cursor = state.get_cursor(table_cursor_id);
                     let table_cursor = table_cursor.as_btree_mut();
                     return_if_io!(
                         table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })
-                    );
+                    )
+                };
+                if matches!(found, SeekResult::Found) {
+                    state.record_cursor_rows_read(program, table_cursor_id, 1)?;
                 }
                 *state.active_op_state.row_id() = OpRowIdState::GetRowid;
             }
@@ -5096,7 +5102,7 @@ pub fn op_idx_row_id(
 }
 
 pub fn op_seek_rowid(
-    _program: &Program,
+    program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Arc<Pager>,
@@ -5113,11 +5119,11 @@ pub fn op_seek_rowid(
         crate::bail_corrupt_error!("Unresolved label: {target_pc:?}");
     }
     invalidate_deferred_seeks_for_cursor(state, *cursor_id);
-    let (pc, did_seek) = {
+    let (pc, did_seek, found) = {
         let cursor = get_cursor!(state, *cursor_id);
 
         // Handle MaterializedView cursor
-        let (pc, did_seek) = match cursor {
+        let (pc, did_seek, found) = match cursor {
             Cursor::MaterializedView(mv_cursor) => {
                 let rowid = match state.registers[*src_reg].get_value() {
                     Value::Numeric(Numeric::Integer(rowid)) => Some(*rowid),
@@ -5134,9 +5140,9 @@ pub fn op_seek_rowid(
                         } else {
                             state.pc + 1
                         };
-                        (pc, true)
+                        (pc, true, matches!(seek_result, SeekResult::Found))
                     }
-                    None => (target_pc.as_offset_int(), false),
+                    None => (target_pc.as_offset_int(), false, false),
                 }
             }
             Cursor::BTree(btree_cursor) => {
@@ -5168,18 +5174,21 @@ pub fn op_seek_rowid(
                         } else {
                             state.pc + 1
                         };
-                        (pc, true)
+                        (pc, true, matches!(seek_result, SeekResult::Found))
                     }
-                    None => (target_pc.as_offset_int(), false),
+                    None => (target_pc.as_offset_int(), false, false),
                 }
             }
             _ => panic!("SeekRowid on non-btree/materialized-view cursor"),
         };
-        (pc, did_seek)
+        (pc, did_seek, found)
     };
     // Increment btree_seeks metric for SeekRowid operation after cursor is dropped
     if did_seek {
         state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
+    }
+    if found {
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
     }
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
@@ -5645,6 +5654,11 @@ pub fn seek_internal(
     );
     if !matches!(result, Ok(SeekInternalResult::IO(..))) {
         state.seek_state = OpSeekState::Start;
+    }
+    // Count only completed, successful positioning. I/O resumptions and
+    // absent keys are not visits to a row or index entry.
+    if matches!(result, Ok(SeekInternalResult::Found)) {
+        state.record_cursor_rows_read(program, cursor_id, 1)?;
     }
     result
 }
@@ -10163,6 +10177,14 @@ pub fn op_insert(
                         state.record_statement_change();
                     }
                 }
+                // Count an update once even when its physical rewrite was skipped.
+                // Index/schema/ephemeral writes never enter this phase; internal
+                // sequence writes explicitly suppress all change counts.
+                if !flag.has(InsertFlags::SKIP_ALL_CHANGE_COUNTS)
+                    && !flag.has(InsertFlags::SKIP_ROW_MUTATION)
+                {
+                    state.record_row_mutation()?;
+                }
                 let schema = program.connection.schema.read();
                 let dependent_views = schema.get_dependent_materialized_views(table_name);
                 if !dependent_views.is_empty() {
@@ -10290,6 +10312,7 @@ pub fn op_delete(
             cursor_id,
             table_name,
             is_part_of_update,
+            is_replace,
         },
         insn
     );
@@ -10342,6 +10365,14 @@ pub fn op_delete(
                 }
                 // Increment metrics for row write (DELETE is a write operation)
                 state.record_rows_written(1);
+                let root_page = state.get_cursor(*cursor_id).as_btree_mut().root_page();
+                if (!is_part_of_update || *is_replace)
+                    && root_page != 1
+                    && !table_name.is_empty()
+                    && table_name != SQLITE_SEQUENCE_TABLE_NAME
+                {
+                    state.record_row_mutation()?;
+                }
                 let schema = program.connection.schema.read();
                 let dependent_views = schema.get_dependent_materialized_views(table_name);
                 if dependent_views.is_empty() {
@@ -11505,6 +11536,10 @@ pub fn op_index_method_query(
     if !has_rows {
         state.pc = pc_if_empty.as_offset_int();
     } else {
+        // query_start positions the method cursor on its first result, just as
+        // Rewind does for a B-tree. Count only after I/O completes; subsequent
+        // positions are recorded by Next. Internal extension work is separate.
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -13889,6 +13924,33 @@ pub fn op_count(
         insn
     );
 
+    // A metered count must expose progress before counting the whole tree. One
+    // cursor advance per dispatch bounds read overshoot and allows VM/deadline
+    // cancellation between rows. Retain the phase across I/O; polling an unfinished
+    // completion never repeats a completed visit.
+    if *exact && state.execution_meter.is_some() {
+        let is_empty = {
+            let started = state.metered_count.is_some();
+            let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Count");
+            let cursor = cursor.as_btree_mut();
+            if started {
+                return_if_io!(cursor.next());
+            } else {
+                return_if_io!(cursor.rewind());
+            }
+            cursor.is_empty()
+        };
+        if is_empty {
+            state.registers[*target_reg].set_int(state.metered_count.unwrap_or(0) as i64);
+            state.metered_count = None;
+            state.pc += 1;
+        } else {
+            state.record_cursor_rows_read(program, *cursor_id, 1)?;
+            state.metered_count = Some(state.metered_count.unwrap_or(0).saturating_add(1));
+        }
+        return Ok(InsnFunctionStepResult::Step);
+    }
+
     let count = {
         let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Count");
         let cursor = cursor.as_btree_mut();
@@ -13900,7 +13962,7 @@ pub fn op_count(
     // For optimized COUNT(*) queries, the count represents rows that would be read
     // SQLite tracks this differently (as pages read), but for consistency we track as rows
     if *exact {
-        state.record_rows_read(count as u64);
+        state.record_cursor_rows_read(program, *cursor_id, count as u64)?;
     }
 
     state.pc += 1;
@@ -15182,7 +15244,9 @@ pub fn op_hash_build(
     }
 
     state.active_op_state.clear();
-    state.record_rows_read(1);
+    // HashBuild copies keys/payload already read into registers and takes the
+    // rowid from the positioned cursor. Rewind/Next (or a seek) already charged
+    // the source visit; inserting it into the hash table is not another read.
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
