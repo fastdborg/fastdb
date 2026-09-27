@@ -1,5 +1,26 @@
 # Cloud CLI (0.3 protocol)
 
+## Candidate package
+
+From a clean committed engine checkout, with Rust 1.88.0, Node 24, Python 3.12+
+and the locked Cargo cache available:
+
+```sh
+CARGO_BUILD_JOBS=2 python3 fastdb/scripts/build-cloud-cli.py /tmp/fastdb-cloud-cli-0.3.0
+```
+
+The output directory must be new. The builder verifies the CLI dependency/notice
+records, uses the checked `fastdb-production` profile, tests the stripped binary
+against both synthetic Cloud protocol harnesses, and packages source, notices,
+checksums and build evidence. The embedded CLI version remains 2.1.0; this separate
+candidate targets Cloud protocol 0.3.0 and does not replace published V2 artifacts.
+`SOURCE_DATE_EPOCH` defaults to the source commit timestamp; an explicit nonnegative
+value is honored and recorded for reproducible builds. The candidate still needs
+acceptance against the native Cloud service and release qualification before
+publication. It does not fall back to the old 0.2 database routes.
+
+## Connecting
+
 Set `FASTDB_API_KEY` to an organization key (`fdbo_…`). Credentials are accepted
 only through the environment. `FASTDB_CLOUD_URL` defaults to
 `https://cloud.fastdb.org`; another endpoint must be an HTTPS origin, with HTTP

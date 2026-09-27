@@ -48,7 +48,9 @@ def main():
     if capture("git", "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("CLI candidate requires clean committed source")
     commit = capture("git", "rev-parse", "HEAD")
-    epoch = capture("git", "show", "-s", "--format=%ct", commit)
+    epoch = str(int(env.get("SOURCE_DATE_EPOCH") or capture("git", "show", "-s", "--format=%ct", commit)))
+    if int(epoch) < 0:
+        raise ValueError("SOURCE_DATE_EPOCH must be nonnegative")
     env["SOURCE_DATE_EPOCH"] = epoch
     cli = tomllib.loads((ROOT / "fastdb/cli/Cargo.toml").read_text())["package"]
     inventory = "fastdb/docs/cli-dependencies-linux-x64.json"
@@ -90,6 +92,7 @@ def main():
     for source, destination in (
         ("LICENSE.md", "LICENSE.md"), ("fastdb/docs/cloud-cli.md", "CLOUD-CLI.md"),
         (notices, "notices/CRATE-NOTICES.md"),
+        ("fastdb/bindings/node/THIRD_PARTY_NOTICES.md", "notices/THIRD_PARTY_NOTICES.md"),
         ("fastdb/bindings/node/RUST-LIBRARY-NOTICES.html", "notices/RUST-LIBRARY-NOTICES.html"),
         (inventory, "evidence/dependencies.json"), (audit, "evidence/crate-notices.json"),
     ):
