@@ -347,9 +347,11 @@ test('sync and async SELECT profiles preserve typed values and bigint counters',
     try {
       await db.execute('CREATE TABLE docs');
       await db.execute('BEGIN');
-      for (let n = 0; n < 40; n++) {
+      // Counted index probes are real work. Keep ten matches in a selective
+      // 400-row fixture so their lookup cost remains below a full scan.
+      for (let n = 0; n < 400; n++) {
         await db.execute('INSERT INTO docs (id,bucket,data,flag) VALUES ($id,$bucket,$data,$flag)', {
-          $id: new Record('docs', BigInt(n)), $bucket: BigInt(n % 4),
+          $id: new Record('docs', BigInt(n)), $bucket: BigInt(n % 40),
           $data: new Uint8Array([0, 255]), $flag: true,
         });
       }
@@ -361,7 +363,7 @@ test('sync and async SELECT profiles preserve typed values and bigint counters',
       assert.equal(scan.result.rows.length, 10);
       for (const value of Object.values(scan.metrics)) assert.equal(typeof value, 'bigint');
       assert.equal(scan.metrics.rowsWritten, 0n);
-      assert.ok(scan.metrics.fullscanSteps >= 39n);
+      assert.ok(scan.metrics.fullscanSteps >= 399n);
       await db.execute('CREATE INDEX docs_bucket ON docs(bucket)');
       const indexed = await db.profileSelect(sql, parameters);
       assert.deepEqual(indexed.result, scan.result);
@@ -376,7 +378,7 @@ test('sync and async SELECT profiles preserve typed values and bigint counters',
         assert.equal(error.transaction.after, 'active');
         return true;
       });
-      assert.equal((await db.execute('SELECT count(*) FROM docs')).rows[0][0], 40n);
+      assert.equal((await db.execute('SELECT count(*) FROM docs')).rows[0][0], 400n);
       await db.execute('ROLLBACK');
     } finally {
       await db.close();
