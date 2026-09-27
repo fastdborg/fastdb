@@ -11536,6 +11536,10 @@ pub fn op_index_method_query(
     if !has_rows {
         state.pc = pc_if_empty.as_offset_int();
     } else {
+        // query_start positions the method cursor on its first result, just as
+        // Rewind does for a B-tree. Count only after I/O completes; subsequent
+        // positions are recorded by Next. Internal extension work is separate.
+        state.record_cursor_rows_read(program, *cursor_id, 1)?;
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)

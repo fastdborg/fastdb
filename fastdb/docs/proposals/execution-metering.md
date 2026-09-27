@@ -3,6 +3,38 @@
 Approved by the user on 2026-09-26 for Cloud 0.3.0. This work does not reopen the
 completed native 2.1.0 release or change its historical acceptance record.
 
+## Initial index-method positioning continuation (2026-09-27)
+
+The approved successful-positioning correction also applies to IndexMethodQuery.
+Its first successful query_start previously advanced without a read event, while
+Next counted subsequent hits. One score-only FTS result reported zero reads;
+five scored hits with deferred table lookups reported nine rather than ten.
+The patch records exactly one successful first position after I/O completion.
+Empty results and unfinished I/O do not add visits. Default statement profiling
+and retained execution meters share the corrected event and budget interruption.
+
+`index_method_meter` independently checks one index visit per score-only result,
+two visits when the actual table payload is read, and managed FTS's three phases:
+index results, source-table lookups and materialized-hit visits. Five managed
+matches count fifteen visits even with limit one: stable ordering scans all five
+materialized hits before limiting output. The tests assert actual index-method
+plans, empty/missing results, memory/file operation, exact and short budgets,
+sticky failure, caller rollback preservation, and repeated queued I/O polls.
+All four counter regressions fail on the unmodified base. Two earlier fixture
+assumptions were corrected before that red run: native score access uses Column,
+and managed LIMIT does not avoid the materialized-hit scan.
+
+This counts cursor positions exposed by the index method. Tantivy posting/search
+work and fast-field collection occur inside query_start before the first exposed
+position and remain unqualified. The change does not certify complete search
+attribution or make a VM/read limit a bound on all extension CPU or memory.
+Keep it in an isolated continuation of the registered counter exception, with
+the named regression and the upstream index-method suite. Validation passed four
+focused cases,833 scoped Rust tests,121 Node tests,5 C ABI tests and31 upstream
+index-method tests, plus scoped formatting/Clippy and Node types. The first full
+script completed its Rust checks but could not find Node on PATH; the remaining
+Node/type/C ABI components were then run successfully with the corrected PATH.
+
 The released counters undercount seek-based reads. A forty-row indexed self-join
 returned forty matches but reported rows_read=39 and btree_seeks=41. B-tree seeks
 cannot simply be added to rows_read: missing keys and deferred-but-unused work

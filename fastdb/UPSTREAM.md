@@ -293,3 +293,11 @@ numbers alone do not classify temporary tables. Schema exhaustion uses existing
 cooperative cancellation and shared maintenance state. Regressions are in
 `fastdb/tests/tests/schema_meter.rs`; design and remaining frontend/Cloud limits are
 in `docs/proposals/execution-metering.md`. This foundation does not enable billing.
+
+The same approved exception counts successful initial index-method positioning
+after query_start completes I/O. Next already records later results. Empty
+results do not count, and default profiling and retained read budgets receive
+the same event. `fastdb/tests/tests/index_method_meter.rs` covers score-only
+versus deferred table lookups, memory/file databases, exact/crossing/sticky limits,
+caller preservation, queued I/O and managed FTS materialization. Native extension
+posting/traversal work before cursor output remains outside this correction.
