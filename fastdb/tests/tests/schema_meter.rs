@@ -352,3 +352,38 @@ fn failed_unique_build_retains_reads_and_empty_build_needs_no_data_allowance() {
     }
     assert_eq!(meter.snapshot(), failed);
 }
+
+#[test]
+fn native_ddl_distinguishes_schema_changes_from_row_rewrites() {
+    for (sql, reads, mutations) in [
+        ("DROP INDEX source_n", 0, 0),
+        ("DROP INDEX IF EXISTS missing", 0, 0),
+        // Destroying the tree has no per-row events. The checked frontend must
+        // account for the removed rows independently inside its atomic scope.
+        ("DROP TABLE source", 0, 0),
+        ("ALTER TABLE source RENAME TO renamed", 0, 0),
+        ("ALTER TABLE source RENAME COLUMN n TO renamed", 0, 0),
+        (
+            "ALTER TABLE source ADD COLUMN added INTEGER DEFAULT 7",
+            0,
+            0,
+        ),
+        (
+            "ALTER TABLE source ALTER COLUMN extra TO renamed TEXT",
+            0,
+            0,
+        ),
+        ("ALTER TABLE source DROP COLUMN extra", 5, 5),
+    ] {
+        let c = open(":memory:");
+        c.execute("CREATE TABLE source(n INTEGER, extra TEXT)")
+            .unwrap();
+        c.execute("INSERT INTO source(n) VALUES(1),(2),(3),(4),(5)")
+            .unwrap();
+        c.execute("CREATE INDEX source_n ON source(n)").unwrap();
+        let work = measure(&c, sql, true);
+        assert_eq!(work.rows_read, reads, "{sql}: {work:?}");
+        assert_eq!(work.row_mutations, mutations, "{sql}: {work:?}");
+        assert!(work.vm_steps > 0);
+    }
+}

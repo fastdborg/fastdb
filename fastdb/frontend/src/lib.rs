@@ -22,7 +22,11 @@ pub use wire_json::decode_wire_json;
 mod links;
 pub use interrupt::{CancellationToken, InterruptHandle};
 mod meter;
-pub use meter::{MeteredRead, MeteredWrite, ReadWork, ReadWorkLimits, WriteWork, WriteWorkLimits};
+pub use meter::{
+    CreateWork, CreateWorkLimits, DdlWork, DdlWorkLimits, InfoWork, InfoWorkLimits, MeteredCreate,
+    MeteredDdl, MeteredInfo, MeteredRead, MeteredSchema, MeteredWrite, ReadWork, ReadWorkLimits,
+    SchemaWork, SchemaWorkLimits, WriteWork, WriteWorkLimits,
+};
 mod migration;
 pub use migration::{Migration, MigrationReport};
 mod path;
@@ -283,6 +287,8 @@ impl Database {
             write_buffer_limits: None,
             ann_cache: Default::default(),
             work_meter: Default::default(),
+            meter_catalog_reads: Default::default(),
+            meter_schema_changes: Default::default(),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -298,6 +304,8 @@ pub struct Connection {
     write_buffer_limits: Option<ResultLimits>,
     ann_cache: std::sync::Mutex<Option<ann::Cache>>,
     work_meter: std::sync::Mutex<Option<Arc<turso_core::execution_meter::ExecutionMeter>>>,
+    meter_catalog_reads: std::sync::atomic::AtomicBool,
+    meter_schema_changes: std::sync::atomic::AtomicBool,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
@@ -337,7 +345,26 @@ impl Connection {
                 value.clone(),
             )?;
         }
-        collect_rows(&mut statement)
+        // Managed schema changes emit trusted CREATE/DROP statements for physical
+        // storage/indexes. Charge their schema/VM work, never logical mutations.
+        if self
+            .meter_schema_changes
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && (sql.starts_with("CREATE ") || sql.starts_with("DROP "))
+        {
+            return self.meter_schema_statement(&mut statement, collect_rows);
+        }
+        // INFO opts catalog reads into its infrastructure meter. Transaction
+        // setup/cleanup must remain outside the exhausted execution budget.
+        if self
+            .meter_catalog_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && (sql.starts_with("SELECT ") || sql.starts_with("PRAGMA "))
+        {
+            self.meter_statement(&mut statement, collect_rows)
+        } else {
+            collect_rows(&mut statement)
+        }
     }
     fn atomic<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         self.savepoint(f, |_| true)
@@ -1173,10 +1200,9 @@ impl Connection {
                 .map_err(Error::from)
             })
         });
-        let execution = match execution {
-            Err(error @ Error::Rollback { .. }) => return Err(error),
-            outcome => outcome,
-        };
+        if let Err(error @ Error::Rollback { .. }) = execution {
+            return Err(error);
+        }
         if let Some(error) = failure {
             return Err(error);
         }

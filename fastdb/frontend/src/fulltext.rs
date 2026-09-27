@@ -168,7 +168,7 @@ impl Connection {
             self.run(&index.table_ddl(), &[])?;
             self.run(&index.index_ddl(), &[])?;
             self.run(&index.text_stats_ddl(), &[])?;
-            self.run(&format!("INSERT INTO {} VALUES (1,0)", quote(&index.text_stats())), &[])?;
+            self.run_index_maintenance(&format!("INSERT INTO {} VALUES (1,0)", quote(&index.text_stats())), &[])?;
             for documents in self.documents(&c)?.chunks(BUILD_BATCH_ROWS) {
                 self.insert_text_build_batch(&index, documents)?;
             }

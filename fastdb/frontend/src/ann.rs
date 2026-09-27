@@ -431,7 +431,7 @@ impl Connection {
                 self.ann_boundary()?;
                 let key=index.document_keys(&doc)?.remove(0);
                 let id=doc.get("id").ok_or_else(||stored("missing id"))?.encode()?;
-                let rows=self.run(&format!("INSERT INTO {} VALUES (?1,?2) RETURNING rowid",quote(&index.storage)),&[key,EngineValue::Blob(id)])?;
+                let rows=self.run_index_maintenance(&format!("INSERT INTO {} VALUES (?1,?2) RETURNING rowid",quote(&index.storage)),&[key,EngineValue::Blob(id)])?;
                 if let Some(value)=crate::path_value(&doc,&index.path)? { if !matches!(value,Value::Null) {
                     let values=index.config()?.components(value)?;
                     graph.add(integer(&rows[0][0])? as u64,&values).map_err(native)?;
@@ -439,7 +439,7 @@ impl Connection {
             }
             let bytes=snapshot(&graph)?;
             let digest=Sha256::digest(&bytes).to_vec();
-            self.run(&format!("INSERT INTO {} VALUES (1,uuid7_str(),?1,?2)",quote(&index.ann_state())),&[EngineValue::Blob(bytes),EngineValue::Blob(digest)])?;
+            self.run_index_maintenance(&format!("INSERT INTO {} VALUES (1,uuid7_str(),?1,?2)",quote(&index.ann_state())),&[EngineValue::Blob(bytes),EngineValue::Blob(digest)])?;
             collection.indexes.push(index.clone()); self.save_catalog(&collection)
         })
     }
@@ -546,7 +546,10 @@ impl Connection {
                 })?;
                 let mut ordered = Vec::new();
                 for node in hits.keys {
-                    let records = self.run(
+                    // Candidate records are customer index reads, even though
+                    // SQL lowering fetches them before the outer hit query runs.
+                    // Graph loading/replay/traversal remain outside this meter.
+                    let records = self.run_customer(
                         &format!(
                             "SELECT id,\"key\" FROM {} WHERE rowid=?1",
                             quote(&index.storage)

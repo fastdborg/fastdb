@@ -7215,10 +7215,9 @@ impl Connection {
                     .map_err(Error::from)
             })
         });
-        let execution = match execution {
-            Err(error @ Error::Rollback { .. }) => return Err(error),
-            outcome => outcome,
-        };
+        if let Err(error @ Error::Rollback { .. }) = execution {
+            return Err(error);
+        }
         if let Some(error) = failure {
             return Err(error);
         }

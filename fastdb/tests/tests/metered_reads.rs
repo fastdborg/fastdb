@@ -1,3 +1,4 @@
+use fastdb::InfoWorkLimits;
 use fastdb::{Database, Parameters, ReadWorkLimits, ResultLimits, TransactionState, Value};
 
 fn limits() -> ResultLimits {
@@ -236,4 +237,140 @@ fn inverse_fetch_and_native_forward_targets_share_the_statement_budget() {
             .outcome
             .is_ok());
     }
+}
+
+#[test]
+fn info_meter_retains_catalog_work_without_visiting_customer_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    for path in [
+        ":memory:".to_string(),
+        dir.path().join("info.db").to_str().unwrap().to_string(),
+    ] {
+        let c = setup(&path);
+        let p = Parameters::new();
+        for sql in [
+            "CREATE INDEX input_n ON input(n)",
+            "CREATE INDEX docs_n ON docs(n)",
+            "CREATE TABLE refs",
+            "CREATE INDEX refs_target ON refs(target)",
+            "DEFINE RELATION referenced ON docs FROM refs.target",
+            "CREATE FUNCTION app::hello() RETURNS string LANGUAGE JAVASCRIPT AS 'return \"hello\";'",
+        ] { c.execute(sql, &p).unwrap(); }
+        for sql in [
+            "INFO FOR DB",
+            "INFO FOR TABLE input",
+            "INFO FOR INDEX input_n",
+            "INFO FOR TABLE docs",
+            "INFO FOR INDEX docs_n",
+            "INFO FOR RELATION referenced",
+            "INFO FOR FUNCTION app::hello",
+        ] {
+            let expected = c.execute(sql, &p).unwrap();
+            let result = c.info_metered(sql, &p, limits(), InfoWorkLimits::default());
+            assert_eq!(result.outcome.unwrap().rows, expected.rows, "{sql}");
+            assert!(result.work.catalog_rows_read > 0, "{sql}");
+            assert!(result.work.vm_steps > 0, "{sql}");
+            let exact = c.info_metered(
+                sql,
+                &p,
+                limits(),
+                InfoWorkLimits {
+                    max_catalog_rows_read: Some(result.work.catalog_rows_read),
+                    max_vm_steps: None,
+                },
+            );
+            assert!(exact.outcome.is_ok(), "{sql}: {:?}", exact.outcome);
+            let stopped = c.info_metered(
+                sql,
+                &p,
+                limits(),
+                InfoWorkLimits {
+                    max_catalog_rows_read: Some(result.work.catalog_rows_read - 1),
+                    max_vm_steps: None,
+                },
+            );
+            assert!(stopped.outcome.is_err(), "{sql}");
+            assert!(stopped.work.catalog_budget_exhausted);
+            assert_eq!(
+                stopped.work.catalog_rows_read,
+                result.work.catalog_rows_read
+            );
+        }
+        let before = c.info_metered("INFO FOR DB", &p, limits(), InfoWorkLimits::default());
+        c.execute("INSERT INTO input SELECT n+10 FROM input", &p)
+            .unwrap();
+        let after = c.info_metered("INFO FOR DB", &p, limits(), InfoWorkLimits::default());
+        assert_eq!(before.outcome.unwrap().rows, after.outcome.unwrap().rows);
+        assert_eq!(before.work.catalog_rows_read, after.work.catalog_rows_read);
+        assert_eq!(
+            c.select_metered("SELECT n FROM input", &p, limits(), reads(10))
+                .work
+                .rows_read,
+            10,
+            "later customer execution must still exclude catalog lookups"
+        );
+    }
+}
+
+#[test]
+fn info_failure_budgets_and_rejected_statements_preserve_caller_transaction() {
+    let c = setup(":memory:");
+    let p = Parameters::new();
+    c.execute("BEGIN", &p).unwrap();
+    c.execute("INSERT INTO input VALUES(99)", &p).unwrap();
+    let stopped = c.info_metered(
+        "INFO FOR DB",
+        &p,
+        limits(),
+        InfoWorkLimits {
+            max_catalog_rows_read: None,
+            max_vm_steps: Some(0),
+        },
+    );
+    assert!(stopped.outcome.is_err());
+    assert!(stopped.work.vm_budget_exhausted);
+    assert_eq!(stopped.work.vm_steps, 0);
+    assert_eq!(stopped.work.catalog_rows_read, 0);
+    let small = c.info_metered(
+        "INFO FOR DB",
+        &p,
+        ResultLimits {
+            max_payload_bytes: 1,
+            ..limits()
+        },
+        InfoWorkLimits::default(),
+    );
+    assert_eq!(small.outcome.unwrap_err().code(), "FDB_LIMIT");
+    assert!(small.work.catalog_rows_read > 0);
+    let missing = c.info_metered(
+        "INFO FOR TABLE absent",
+        &p,
+        limits(),
+        InfoWorkLimits::default(),
+    );
+    assert_eq!(missing.outcome.unwrap_err().code(), "FDB_NOT_FOUND");
+    assert!(missing.work.catalog_rows_read > 0);
+    for sql in [
+        "DELETE FROM input",
+        "SELECT n FROM input",
+        "INFO FOR DB; DELETE FROM input",
+    ] {
+        let rejected = c.info_metered(sql, &p, limits(), InfoWorkLimits::default());
+        assert!(rejected.outcome.is_err());
+        assert_eq!(rejected.work.catalog_rows_read, 0);
+        assert_eq!(rejected.work.vm_steps, 0);
+    }
+    let mut params = Parameters::new();
+    params.insert("unused".into(), Value::Integer(1));
+    assert!(c
+        .info_metered("INFO FOR DB", &params, limits(), InfoWorkLimits::default())
+        .outcome
+        .is_err());
+    assert_eq!(c.transaction_state(), TransactionState::Active);
+    assert_eq!(c.execute("SELECT n FROM input", &p).unwrap().rows.len(), 6);
+    c.execute("COMMIT", &p).unwrap();
+    assert!(c
+        .info_metered("INFO FOR DB", &p, limits(), InfoWorkLimits::default())
+        .outcome
+        .is_ok());
 }
