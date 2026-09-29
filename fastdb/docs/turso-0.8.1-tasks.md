@@ -13,6 +13,8 @@ source/deployment and release publication are excluded.
 - [x] Verify old databases, FTS migration, rollback, cancellation and recovery.
 - [x] Run scoped formatting, Clippy, native tests and binding smoke checks.
 - [x] Record exact provenance, exception decisions and test evidence; audit CI.
+- [x] Install latest stable Go/.NET and Linux Swift; run remaining native SDK checks.
+- [x] Include the previous-release database fixture in Git and rerun its CI regression.
 
 Upstream tag object: `664022bdc83c2c1a5d245605388843693e3d0142`.
 Release commit: `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.
@@ -40,6 +42,11 @@ all-features, release or browser qualification. Lockfile SHA-256:
 | pnpm-packed Node consumer installation, offline | Passed (`/tmp/fastdb-upgrade-node-package3.log`); development addon only, not release packaging qualification |
 | Node declaration checking | Passed (`/tmp/fastdb-upgrade-types2.log`) |
 | C ABI / Python / PHP | 5 tests / 8 tests / 42 contract steps passed |
+| Go 1.27.1, race detector enabled | 42 native contract steps passed (`/tmp/fastdb-upgrade-go.log`) |
+| C#, .NET SDK 10.0.401, runtime 8.0.31 | 42 native contract steps passed (`/tmp/fastdb-upgrade-dotnet8.log`) |
+| Same C# net8.0 assembly, runtime 10.0.12 | 42 native contract steps passed (`/tmp/fastdb-upgrade-dotnet10.log`) |
+| Swift 6.4.0, Ubuntu 24.04 x86_64 | 42 native contract steps passed (`/tmp/fastdb-upgrade-swift.log`) |
+| Turso upgrade regression after tracking migration fixture | All six passed (`/tmp/fastdb-upgrade-fixture-followup.log`) |
 | Raw engine probes | WAL first-write sync, FTS integrity/drop lifecycle, and 18 scalar-error transaction scenarios passed |
 | FastDB package identity check | Eight crate identities remain consistent; engine manifest points to the new SHA with development status |
 
@@ -67,9 +74,41 @@ uses `cargo test --locked -p turso_core --lib statement_lifecycle_tests`.
 Core receipts are `/tmp/fastdb-upgrade-core-{fts2,trigger,integrity2,external_apis,
 savepoint,first_full,lifecycle2}.log`.
 
-Go, Swift and .NET toolchains were unavailable here. Their adapters are unchanged;
-C ABI/protocol checks cover the shared boundary, but do not substitute for those
-language runtime tests. Binary release qualification/publication is separate.
+The remaining native SDK checks were completed on 2026-09-30 against the same
+upgraded debug `libfastdb_c.so`. The adapters required no changes. Go and .NET
+archives were verified against the official release metadata checksums; the
+Swift 6.4.0 Ubuntu 24.04 archive passed PGP signature verification. Swift reports
+`Swift version 6.4 (swift-6.4-RELEASE)`. Its missing `libncurses6` prerequisite was
+extracted from Ubuntu's package into the user-local Swift toolchain library path.
+
+Go, Swift and .NET are installed under the user's home directory; their PATH and
+DOTNET_ROOT configuration is loaded by `.profile` and `.zshrc` from
+`~/.config/fastdb/native-toolchains.sh`. The C# project retains its `net8.0`
+target. Both its supported .NET 8 runtime and the latest .NET 10 runtime were
+exercised explicitly. Go/Swift copies of the C header match the canonical header.
+Binary release qualification/publication is separate.
+
+Additional native SDK commands (from the repository root with the installed
+compilers on PATH):
+
+```sh
+export FASTDB_NATIVE_DIR="$PWD/target/debug"
+export LD_LIBRARY_PATH="$FASTDB_NATIVE_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export FASTDB_LIBRARY="$PWD/target/debug/libfastdb_c.so"
+export FASTDB_FIXTURE="$PWD/fastdb/bindings/fixtures/native-client.json"
+export CGO_ENABLED=1 CGO_LDFLAGS="-L$PWD/target/debug"
+(cd fastdb/bindings/go && go test -race -v ./...)
+DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet run --project fastdb/bindings/csharp/Tests -- "$FASTDB_FIXTURE"
+dotnet --fx-version 10.0.12 fastdb/bindings/csharp/Tests/bin/Debug/net8.0/Tests.dll "$FASTDB_FIXTURE"
+(cd fastdb/bindings/swift && swift test -j 2 -Xlinker "-L$FASTDB_NATIVE_DIR" -Xlinker -rpath -Xlinker "$FASTDB_NATIVE_DIR")
+cargo test --locked -p fastdb-tests --test turso_081
+```
+
+The first PR CI run failed because the root `*.db` ignore rule excluded the
+migration fixture from Git. The follow-up tracks that exact immutable fixture
+(SHA-256 unchanged from its receipt) with a directory-local ignore exception,
+so a fresh checkout includes the `include_bytes!` input. All six upgrade tests
+passed again locally after this correction.
 
 ## Dependency and workflow review
 
@@ -94,7 +133,8 @@ approved [the exact FTS cursor patch](proposals/turso-081-fts-savepoint.md).
 - Ancestry-preserving upstream merge: `8b3ef9a43e0e94bac05d3a26a305ee64324329af`.
 - Separately approved FTS core fix and raw regression:
   `8b1e54e2796e71b39f8061f178f685bfdd25c3d2`.
-- The tested combined source is the latter commit. Subsequent receipt-only
-  changes do not alter the tested implementation. Both original FastDB ancestry
+- The tested combined implementation is the latter commit. Follow-ups record
+  SDK evidence and include the previously ignored immutable migration fixture;
+  they do not alter the engine or client implementation. Both original FastDB ancestry
   and the exact upstream release commit are ancestors; merge the sync PR with
   a merge commit, never squash/rebase-merge it.
