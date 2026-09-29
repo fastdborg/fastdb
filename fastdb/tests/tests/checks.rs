@@ -219,9 +219,12 @@ fn adding_checks_upgrades_legacy_metadata_atomically() {
     let db = Database::open(path).expect("open");
     let c = db.connect().expect("connect");
     q(&c, "CREATE TABLE users");
-    let engine =
-        turso_core::Database::open_file(turso_core::Database::io_for_path(path).expect("io"), path)
-            .expect("engine");
+    let engine = turso_core::Database::open_file(
+        turso_core::Database::io_for_path(path).expect("io"),
+        path,
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .expect("engine");
     let raw = engine.connect().expect("raw connection");
     raw.execute("UPDATE __fastdb_catalog SET metadata=json_remove(metadata,'$.version')")
         .expect("legacy fixture");

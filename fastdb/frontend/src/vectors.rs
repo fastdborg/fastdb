@@ -223,7 +223,9 @@ fn converted32(
         return Err(Error::Validation("vector components must be finite".into()));
     }
     let vector = vector_convert(Vector::from_f32(values.to_vec()), kind)?;
-    let crate::EngineValue::Blob(bytes) = vector_serialize(vector) else {
+    let crate::EngineValue::Blob(bytes) =
+        vector_serialize(vector).map_err(turso_core::LimboError::from)?
+    else {
         unreachable!("serialized vector blob");
     };
     let value = Value::Vector(bytes);
@@ -245,10 +247,14 @@ pub(crate) fn concat(
     };
     let a = parse_vector(&left, None)?;
     let b = parse_vector(&right, None)?;
-    let crate::EngineValue::Blob(a_bytes) = vector_serialize(parse_vector(&left, None)?) else {
+    let crate::EngineValue::Blob(a_bytes) =
+        vector_serialize(parse_vector(&left, None)?).map_err(turso_core::LimboError::from)?
+    else {
         unreachable!("vector blob");
     };
-    let crate::EngineValue::Blob(b_bytes) = vector_serialize(parse_vector(&right, None)?) else {
+    let crate::EngineValue::Blob(b_bytes) =
+        vector_serialize(parse_vector(&right, None)?).map_err(turso_core::LimboError::from)?
+    else {
         unreachable!("vector blob");
     };
     dimensions(&a_bytes)?;
@@ -269,5 +275,5 @@ pub(crate) fn concat(
         dimensions(&bytes)?;
         return Ok(crate::EngineValue::Blob(bytes));
     }
-    Ok(vector_serialize(vector_concat(&a, &b)?))
+    Ok(vector_serialize(vector_concat(&a, &b)?).map_err(turso_core::LimboError::from)?)
 }

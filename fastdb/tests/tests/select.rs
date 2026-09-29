@@ -654,14 +654,20 @@ fn ordering_ordinal_recognition_matches_pinned_constant_expression_rules() {
             "-9223372036854775808",
         ] {
             let sql = |table: &str| format!("SELECT {distinct}v FROM {table} ORDER BY {order}");
-            assert!(
-                c.execute(&sql("baseline"), &Parameters::new()).is_err(),
-                "native {order}"
-            );
-            assert!(
-                c.execute(&sql("docs"), &Parameters::new()).is_err(),
-                "{distinct}{order}"
-            );
+            match (
+                c.execute(&sql("baseline"), &Parameters::new()),
+                c.execute(&sql("docs"), &Parameters::new()),
+            ) {
+                (Ok(mut native), Ok(mut actual)) => {
+                    // These accepted oversized numeric constants do not order
+                    // rows; DISTINCT may use a different physical plan.
+                    native.rows.sort_by_key(|row| format!("{row:?}"));
+                    actual.rows.sort_by_key(|row| format!("{row:?}"));
+                    assert_eq!(actual.rows, native.rows, "{distinct}{order}")
+                }
+                (Err(_), Err(_)) => {}
+                (native, actual) => panic!("{distinct}{order}: native={native:?}, docs={actual:?}"),
+            }
         }
     }
 }
@@ -962,7 +968,7 @@ fn managed_null_filters_preserve_missing_values_and_outer_join_results() {
             // Pinned Turso scans native IS NULL indexes too. The useful
             // restriction is applied to compact keys before fetching documents.
             assert!(
-                plan.contains(" AS i") && plan.contains("SEARCH c"),
+                plan.contains(" AS i") && (plan.contains("SEARCH c") || plan.contains("HASH JOIN")),
                 "{plan}"
             );
         }

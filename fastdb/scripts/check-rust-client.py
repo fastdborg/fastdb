@@ -118,13 +118,13 @@ fn tuple_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         c.execute("BEGIN",&empty)?;
         assert_eq!(c.execute("UPDATE tuples SET (a,b)=(SELECT b,a UNION ALL SELECT b,a LIMIT 1) RETURNING a,b",&empty)?.rows,vec![vec![payload.clone(),record.clone()]]);
         c.execute("UPDATE tuples SET (a,b)=(NULL,NULL)",&empty)?;
-        let joined="UPDATE tuples SET (a,b)=(s.b,s.a) FROM tuple_source s LEFT JOIN tuple_keys k ON k.n=1 WHERE k.n IS NULL RETURNING a,b LIMIT $count OFFSET $skip";
-        assert_eq!(c.execute(joined,&Parameters::from([("$count".into(),Value::Integer(1))])).unwrap_err().code(),"FDB_PARAMETER");
+        let joined="UPDATE tuples SET (a,b)=(s.b,s.a) FROM (SELECT a,b FROM (SELECT a,b FROM tuple_source LIMIT 1) LIMIT $count OFFSET $skip) s LEFT JOIN tuple_keys k ON k.n=1 WHERE k.n IS NULL RETURNING a,b";
+        assert_eq!(c.execute(joined,&Parameters::from([("$count".into(),Value::Integer(1))])).unwrap_err().code(),"FDB_CONSTRAINT");
         assert_eq!(c.execute(joined,&Parameters::from([("$count".into(),Value::Integer(1)),("$skip".into(),Value::Integer(1))]))?.affected,0);
         let result=c.execute(joined,&Parameters::from([("$count".into(),Value::Integer(1)),("$skip".into(),Value::Integer(0))]))?;
         assert_eq!(result.rows,vec![vec![payload.clone(),record.clone()]]);
         assert_eq!(result.affected,1);
-        let scoped="WITH d AS (SELECT a,b FROM tuple_source) UPDATE tuples AS d SET (a,b)=(s.b,s.a) FROM tuple_keys k RIGHT JOIN d s ON k.n=1 LEFT JOIN tuple_keys extra ON extra.n=1 WHERE k.n IS NULL AND extra.n IS NULL RETURNING a,b LIMIT $count OFFSET $skip";
+        let scoped="WITH d AS (SELECT a,b FROM (SELECT a,b FROM tuple_source LIMIT 1) LIMIT $count OFFSET $skip) UPDATE tuples AS d SET (a,b)=(s.b,s.a) FROM tuple_keys k RIGHT JOIN d s ON k.n=1 LEFT JOIN tuple_keys extra ON extra.n=1 WHERE k.n IS NULL AND extra.n IS NULL RETURNING a,b";
         let result=c.execute(scoped,&Parameters::from([("$count".into(),Value::Integer(1)),("$skip".into(),Value::Integer(0))]))?;
         assert_eq!(result.rows,vec![vec![payload.clone(),record.clone()]]);
         assert_eq!(result.affected,1);

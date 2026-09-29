@@ -338,6 +338,7 @@ fn run_checkpoint_crash_scenario(sync_pragma: &str) -> TestResult<()> {
         OpenFlags::default(),
         DatabaseOpts::new(),
         None,
+        std::sync::Arc::new(turso_core::SqliteDialect),
     )?;
     let conn = db.connect()?;
 
@@ -389,6 +390,7 @@ fn run_checkpoint_crash_scenario(sync_pragma: &str) -> TestResult<()> {
     let recovered_db = Database::open_file(
         Arc::new(turso_core::PlatformIO::new()?),
         db_path.to_str().unwrap(),
+        std::sync::Arc::new(turso_core::SqliteDialect),
     )?;
     let recovered = recovered_db.connect()?;
 

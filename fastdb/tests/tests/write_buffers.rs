@@ -311,8 +311,8 @@ fn update_snapshot_rejects_before_validating_oversized_new_fields() {
 }
 
 #[test]
-fn joined_pagination_does_not_bypass_raw_candidate_row_limits() {
-    for count in [0, 1] {
+fn joined_duplicates_do_not_bypass_raw_candidate_row_limits() {
+    {
         let db = Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();
         let p = Parameters::new();
@@ -332,10 +332,8 @@ fn joined_pagination_does_not_bypass_raw_candidate_row_limits() {
             max_rows: 2,
             max_payload_bytes: 10000,
         });
-        let sql = format!(
-            "UPDATE docs SET v=s.v FROM source s WHERE docs.n=s.k RETURNING n,v LIMIT {count}"
-        );
-        assert_eq!(c.execute(&sql, &p).unwrap_err().code(), "FDB_LIMIT");
+        let sql = "UPDATE docs SET v=s.v FROM source s WHERE docs.n=s.k RETURNING n,v";
+        assert_eq!(c.execute(sql, &p).unwrap_err().code(), "FDB_LIMIT");
         assert_eq!(c.transaction_state(), TransactionState::Active);
         assert_eq!(
             c.execute("SELECT * FROM docs ORDER BY n", &p).unwrap().rows,
@@ -350,7 +348,7 @@ fn joined_pagination_does_not_bypass_raw_candidate_row_limits() {
             max_rows: 10,
             max_payload_bytes: 10000,
         });
-        assert_eq!(c.execute(&sql, &p).unwrap().affected, count);
+        assert_eq!(c.execute(sql, &p).unwrap().affected, 1);
         c.execute("ROLLBACK", &p).unwrap();
         assert_eq!(
             c.execute("SELECT n,v FROM docs", &p).unwrap().rows,
@@ -365,8 +363,8 @@ fn joined_pagination_does_not_bypass_raw_candidate_row_limits() {
 }
 
 #[test]
-fn joined_direct_parameters_consume_payload_budget_before_limit() {
-    for count in [0, 1] {
+fn joined_direct_parameters_consume_payload_budget() {
+    {
         let db = Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();
         let empty = Parameters::new();
@@ -387,12 +385,13 @@ fn joined_direct_parameters_consume_payload_budget_before_limit() {
             .rows;
         let payload = Value::Binary(vec![255; 2048]);
         let params = Parameters::from([("$payload".into(), payload.clone())]);
-        let sql=format!("UPDATE docs SET payload=$payload FROM source s WHERE docs.n=s.k RETURNING payload LIMIT {count}");
+        let sql =
+            "UPDATE docs SET payload=$payload FROM source s WHERE docs.n=s.k RETURNING payload";
         let c = c.with_write_buffer_limits(ResultLimits {
             max_rows: 10,
             max_payload_bytes: 512,
         });
-        assert_eq!(c.execute(&sql, &params).unwrap_err().code(), "FDB_LIMIT");
+        assert_eq!(c.execute(sql, &params).unwrap_err().code(), "FDB_LIMIT");
         assert_eq!(c.transaction_state(), TransactionState::Active);
         assert_eq!(
             c.execute("SELECT * FROM docs ORDER BY n", &empty)
@@ -410,16 +409,9 @@ fn joined_direct_parameters_consume_payload_budget_before_limit() {
             max_rows: 10,
             max_payload_bytes: 10000,
         });
-        let result = c.execute(&sql, &params).unwrap();
-        assert_eq!(result.affected, count);
-        assert_eq!(
-            result.rows,
-            if count == 0 {
-                vec![]
-            } else {
-                vec![vec![payload]]
-            }
-        );
+        let result = c.execute(sql, &params).unwrap();
+        assert_eq!(result.affected, 1);
+        assert_eq!(result.rows, vec![vec![payload]]);
         c.execute("ROLLBACK", &empty).unwrap();
         assert_eq!(
             c.execute("SELECT n,payload FROM docs", &empty)

@@ -34,11 +34,14 @@ impl CloseLoop {
             // SEMI/ANTI-JOIN: emit Goto -> outer_next right after the body.
             // For semi-join: after body runs (one match found), skip inner's Next.
             // For anti-join: after body runs (inner exhausted), move to next outer row.
-            let is_semi_or_anti = table
-                .join_info
-                .as_ref()
-                .is_some_and(|ji| ji.is_semi_or_anti());
-            if is_semi_or_anti {
+            let is_hash_anti = matches!(table.op, Operation::HashJoin(ref hj) if
+                hj.join_type == HashJoinType::LeftAnti);
+            let uses_nested_semi_or_anti = !is_hash_anti
+                && table
+                    .join_info
+                    .as_ref()
+                    .is_some_and(|ji| ji.is_semi_or_anti());
+            if uses_nested_semi_or_anti {
                 let sa_meta = t_ctx.meta_semi_anti_joins[table_index]
                     .as_ref()
                     .expect("semi/anti-join must have SemiAntiJoinMetadata");
@@ -84,15 +87,25 @@ impl CloseLoop {
                                     )
                                 })
                             };
+                            // An unconstrained scan is a full scan no matter
+                            // what it steps: the table, a covering index, or
+                            // the prebuilt ephemeral copy an UPDATE scans.
+                            // SQLite tags any WHERE loop without a constraint;
+                            // constrained loops go through Operation::Search.
+                            let fullscan = true;
                             if *iter_dir == IterationDirection::Backwards {
                                 program.emit_insn(Insn::Prev {
                                     cursor_id: iteration_cursor_id,
                                     pc_if_prev: loop_labels.loop_start,
+                                    fullscan,
+                                    is_index: false,
                                 });
                             } else {
                                 program.emit_insn(Insn::Next {
                                     cursor_id: iteration_cursor_id,
                                     pc_if_next: loop_labels.loop_start,
+                                    fullscan,
+                                    is_index: false,
                                 });
                             }
                         }
@@ -114,11 +127,15 @@ impl CloseLoop {
                                         program.emit_insn(Insn::Prev {
                                             cursor_id: *cursor_id,
                                             pc_if_prev: loop_labels.loop_start,
+                                            fullscan: false,
+                                            is_index: false,
                                         });
                                     } else {
                                         program.emit_insn(Insn::Next {
                                             cursor_id: *cursor_id,
                                             pc_if_next: loop_labels.loop_start,
+                                            fullscan: false,
+                                            is_index: false,
                                         });
                                     }
                                 } else {
@@ -141,6 +158,7 @@ impl CloseLoop {
                                 });
                             }
                         }
+                        Scan::RecursiveCteInput => {}
                     }
                     program.preassign_label_to_next_insn(loop_labels.loop_end);
                 }
@@ -184,11 +202,15 @@ impl CloseLoop {
                                 program.emit_insn(Insn::Prev {
                                     cursor_id: iteration_cursor_id,
                                     pc_if_prev: loop_labels.loop_start,
+                                    fullscan: false,
+                                    is_index: false,
                                 });
                             } else {
                                 program.emit_insn(Insn::Next {
                                     cursor_id: iteration_cursor_id,
                                     pc_if_next: loop_labels.loop_start,
+                                    fullscan: false,
+                                    is_index: false,
                                 });
                             }
                         }
@@ -209,6 +231,8 @@ impl CloseLoop {
                                 program.emit_insn(Insn::Next {
                                     cursor_id: iteration_cursor_id,
                                     pc_if_next: loop_labels.loop_start,
+                                    fullscan: false,
+                                    is_index: false,
                                 });
                             }
 
@@ -218,6 +242,8 @@ impl CloseLoop {
                             program.emit_insn(Insn::Next {
                                 cursor_id: ephemeral_cursor_id,
                                 pc_if_next: outer_loop_start,
+                                fullscan: false,
+                                is_index: false,
                             });
                         }
                     }
@@ -228,6 +254,8 @@ impl CloseLoop {
                     program.emit_insn(Insn::Next {
                         cursor_id: index_cursor_id.unwrap(),
                         pc_if_next: loop_labels.loop_start,
+                        fullscan: false,
+                        is_index: false,
                     });
                     program.preassign_label_to_next_insn(loop_labels.loop_end);
                 }
@@ -256,18 +284,13 @@ impl CloseLoop {
                     program.emit_insn(Insn::Next {
                         cursor_id: probe_cursor_id,
                         pc_if_next: loop_labels.loop_start,
+                        fullscan: false,
+                        is_index: false,
                     });
                     program.preassign_label_to_next_insn(loop_labels.loop_end);
 
-                    // Outer joins: emit unmatched build rows with NULLs for the probe side.
-                    // This runs BEFORE grace so that in-memory partitions (with valid
-                    // matched_bits from the main probe) are scanned while still available.
-                    // At runtime, the scan skips spilled partitions — those are handled
-                    // per-partition inside the grace loop where matched_bits are still live.
-                    if matches!(
-                        hash_join_op.join_type,
-                        HashJoinType::LeftOuter | HashJoinType::FullOuter
-                    ) {
+                    // Scan in-memory unmatched rows before grace processing starts.
+                    if hash_join_op.join_type.keeps_unmatched_build_rows() {
                         if let Some(hash_ctx) = t_ctx
                             .hash_table_contexts
                             .get(&hash_join_op.build_table_idx)
@@ -285,10 +308,7 @@ impl CloseLoop {
                         }
                     }
 
-                    // Grace hash join processing: process spilled partition pairs.
-                    // At runtime, this is a no-op if the build side didn't spill.
-                    // For LEFT/FULL OUTER, each grace partition gets its own unmatched
-                    // scan before eviction (so matched_bits are still live).
+                    // Process spilled partition pairs. This does nothing without a spill.
                     if let Some(hash_ctx) = t_ctx
                         .hash_table_contexts
                         .get(&hash_join_op.build_table_idx)
@@ -329,7 +349,7 @@ impl CloseLoop {
             // SEMI/ANTI-JOIN: after loop_end (inner loop exhausted).
             // Semi-join: no match found -> skip outer row (Goto -> next_outer).
             // Anti-join: no match found -> run body (Goto -> label_body, jumps backward).
-            if is_semi_or_anti {
+            if uses_nested_semi_or_anti {
                 let sa_meta = t_ctx.meta_semi_anti_joins[table_index]
                     .as_ref()
                     .expect("semi/anti-join must have SemiAntiJoinMetadata");
@@ -350,13 +370,8 @@ impl CloseLoop {
 
             // OUTER JOIN: may still need to emit NULLs for the right table.
             // Outer hash join probes are handled above via check_outer / unmatched scan.
-            let is_outer_hash_join_probe = matches!(
-                table.op,
-                Operation::HashJoin(ref hj) if matches!(
-                    hj.join_type,
-                    HashJoinType::LeftOuter | HashJoinType::FullOuter
-                )
-            );
+            let is_outer_hash_join_probe = matches!(table.op, Operation::HashJoin(ref hj) if
+                matches!(hj.join_type, HashJoinType::LeftOuter | HashJoinType::FullOuter));
             if let Some(join_info) = table.join_info.as_ref() {
                 if join_info.is_outer() && !is_outer_hash_join_probe {
                     let lj_meta = t_ctx.meta_left_joins[table_index].as_ref().unwrap();
@@ -493,6 +508,28 @@ pub(super) fn emit_autoindex(
         pc_if_empty: label_ephemeral_build_loop_start,
     });
     program.preassign_label_to_next_insn(label_ephemeral_build_loop_start);
+    let label_ephemeral_build_loop_next = program.allocate_label();
+    if let Some(filter) = &index.where_clause {
+        let filter_passed = program.allocate_label();
+        // The table's planned operation reads from the new index. While that
+        // index is being built, expressions must read the source cursor.
+        program.set_cursor_override(table_ref_id, table_cursor_id);
+        let result = translate_condition_expr(
+            program,
+            table_references,
+            filter,
+            ConditionMetadata {
+                jump_if_condition_is_true: false,
+                jump_target_when_true: filter_passed,
+                jump_target_when_false: label_ephemeral_build_loop_next,
+                jump_target_when_null: label_ephemeral_build_loop_next,
+            },
+            resolver,
+        );
+        program.clear_cursor_override(table_ref_id);
+        result?;
+        program.preassign_label_to_next_insn(filter_passed);
+    }
     // Emit all columns from source table that are needed in the ephemeral index.
     // Also reserve a register for the rowid if the source table has rowids.
     let num_regs_to_reserve = index.columns.len() + table_has_rowid as usize;
@@ -502,7 +539,10 @@ pub(super) fn emit_autoindex(
         if let Some(columns) = table_columns {
             if let Some(column_def) = columns.get(col.pos_in_table) {
                 if column_def.is_virtual_generated() {
-                    crate::translate::expr::emit_table_column(
+                    // Override the table cursor to the base table, because generated
+                    // columns may need to read from it to compute their expression.
+                    program.set_cursor_override(table_ref_id, table_cursor_id);
+                    let result = crate::translate::expr::emit_table_column(
                         program,
                         table_cursor_id,
                         table_ref_id,
@@ -511,7 +551,9 @@ pub(super) fn emit_autoindex(
                         col.pos_in_table,
                         reg,
                         resolver,
-                    )?;
+                    );
+                    program.clear_cursor_override(table_ref_id);
+                    result?;
                     continue;
                 }
             }
@@ -526,17 +568,22 @@ pub(super) fn emit_autoindex(
     }
     let record_reg = program.alloc_register();
     program.emit_insn(Insn::MakeRecord {
-        start_reg: to_u16(ephemeral_cols_start_reg),
-        count: to_u16(num_regs_to_reserve),
-        dest_reg: to_u16(record_reg),
+        start_reg: to_u32(ephemeral_cols_start_reg),
+        count: to_u32(num_regs_to_reserve),
+        dest_reg: to_u32(record_reg),
         index_name: Some(index.name.clone()),
         affinity_str: affinity_str.map(|s| (**s).clone()),
     });
     // Skip bloom filter for non-binary collations since it uses binary hashing.
+    // Also skip it when any seek key component comes from a NULL-matching `IS`:
+    // the probe treats a NULL key as "definitely absent", which would skip rows
+    // whose key IS NULL, so such a seek never probes — and then building the
+    // filter would be wasted work on every row.
     let use_bloom_filter = index.columns.iter().take(num_seek_keys).all(|col| {
         col.collation
             .is_none_or(|coll| matches!(coll, CollationSeq::Binary | CollationSeq::Unset))
-    }) && seek_def.start.op.eq_only();
+    }) && seek_def.start.op.eq_only()
+        && (0..num_seek_keys).all(|i| !seek_def.is_null_matching_key_component(i));
     if use_bloom_filter {
         program.emit_insn(Insn::FilterAdd {
             cursor_id: index_cursor_id,
@@ -548,12 +595,15 @@ pub(super) fn emit_autoindex(
         cursor_id: index_cursor_id,
         record_reg,
         unpacked_start: Some(ephemeral_cols_start_reg),
-        unpacked_count: Some(num_regs_to_reserve as u16),
+        unpacked_count: Some(num_regs_to_reserve as u32),
         flags: IdxInsertFlags::new().use_seek(false),
     });
+    program.preassign_label_to_next_insn(label_ephemeral_build_loop_next);
     program.emit_insn(Insn::Next {
         cursor_id: table_cursor_id,
         pc_if_next: label_ephemeral_build_loop_start,
+        fullscan: false,
+        is_index: false,
     });
     program.preassign_label_to_next_insn(label_ephemeral_build_end);
     Ok(AutoIndexResult { use_bloom_filter })

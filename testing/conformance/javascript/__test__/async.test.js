@@ -116,6 +116,9 @@ test.serial("Database.exec() after close()", async (t) => {
 //   - rows is an Array<Row>. By default rows match Statement.all() object
 //     rows; pass { raw: true } to receive arrays.
 //   - rowsAffected is the per-statement change count (0 for SELECT).
+//   - lastInsertRowid is present only on entries whose statement inserted
+//     a row (Turso drivers; the serverless driver also reports rowsRead,
+//     rowsWritten, and queryDurationMs per statement).
 // ==========================================================================
 
 // Assert the ResultSet invariants shared by every batch entry, regardless
@@ -126,7 +129,13 @@ const assertResultSetShape = (t, rs) => {
   t.is(rs.columnTypes.length, rs.columns.length, "columnTypes parallels columns");
   t.true(Array.isArray(rs.rows), "rows is an array");
   t.is(typeof rs.rowsAffected, "number", "rowsAffected is a number");
-  t.false("lastInsertRowid" in rs, "batch ResultSet does not expose lastInsertRowid");
+  if ("lastInsertRowid" in rs) {
+    t.is(
+      typeof rs.lastInsertRowid,
+      "number",
+      "lastInsertRowid, present only for statements that inserted, is a number",
+    );
+  }
   t.is(rs.toJSON, undefined, "batch ResultSet does not expose toJSON");
 };
 
@@ -143,10 +152,14 @@ test.serial("Database.batch() [returns one ResultSet per statement, in order]", 
   t.is(results.length, 3, "one ResultSet per input statement");
   results.forEach((rs) => assertResultSetShape(t, rs));
 
-  // INSERT: no result rows, one row affected.
+  // INSERT: no result rows, one row affected. Turso drivers report the
+  // inserted rowid per statement.
   t.deepEqual(results[0].columns, []);
   t.deepEqual(results[0].rows, []);
   t.is(results[0].rowsAffected, 1);
+  if (process.env.PROVIDER === "turso" || process.env.PROVIDER === "serverless") {
+    t.is(typeof results[0].lastInsertRowid, "number", "INSERT entry reports its rowid");
+  }
 
   // SELECT: rows surfaced, nothing affected.
   t.deepEqual(results[1].columns, ["id", "name"]);
@@ -422,7 +435,7 @@ test.serial("Database.transactionAsync().deferred() [batch]", async (t) => {
   const db = t.context.db;
 
   const insertMany = db.transactionAsync(async (tx) => {
-    t.is(db.inTransaction, true);
+    t.is(db.inTransaction, process.env.PROVIDER !== "serverless");
     return await tx.batch([
       { sql: "INSERT INTO users(name, email) VALUES (?, ?)", args: ["Joey", "joey@example.org"] },
       { sql: "INSERT INTO users(name, email) VALUES (?, ?)", args: ["Sally", "sally@example.org"] },
@@ -512,11 +525,17 @@ test.serial("Database.inTransaction property", async (t) => {
   t.false(db.inTransaction, "autocommit after a one-shot query");
 
   // 3. The transaction() helper reports in-transaction inside its callback and
-  //    autocommit once it completes.
+  //    autocommit once it completes. The serverless driver runs the
+  //    transaction on its own dedicated session, so the connection itself
+  //    stays in autocommit.
   let insideTxn;
   const txn = db.transactionAsync(async (tx) => { insideTxn = db.inTransaction; });
   await txn();
-  t.true(insideTxn, "in a transaction inside the transactionAsync() callback");
+  if (process.env.PROVIDER === "serverless") {
+    t.false(insideTxn, "serverless transactionAsync() runs on a dedicated session");
+  } else {
+    t.true(insideTxn, "in a transaction inside the transactionAsync() callback");
+  }
   t.false(db.inTransaction, "autocommit after transactionAsync() completes");
 
   // 4. inTransaction must reflect the real transaction state, so it also tracks
@@ -573,10 +592,13 @@ test.serial("Database.transactionAsync()", async (t) => {
   const db = t.context.db;
 
   const insertMany = db.transactionAsync(async (tx, users) => {
-    t.is(db.inTransaction, true);
-    // statements of the transaction must be prepared from its handle: the
-    // wrapper owns the connection lock for the whole transaction, so
-    // database-level statements would wait for it instead of joining it
+    // the serverless driver runs the transaction on a dedicated session,
+    // so the connection itself stays in autocommit inside the callback
+    t.is(db.inTransaction, process.env.PROVIDER !== "serverless");
+    // statements of the transaction must be prepared from its handle:
+    // database-level statements never join the transaction — on the native
+    // driver they wait on the connection lock, on the serverless driver
+    // they run in autocommit on the connection's own stream
     const insert = await tx.prepare(
       "INSERT INTO users(name, email) VALUES (:name, :email)"
     );
@@ -626,7 +648,7 @@ test.serial("Database.transaction() [deprecated]", async (t) => {
 test.serial("Database.transactionAsync().immediate()", async (t) => {
   const db = t.context.db;
   const insertMany = db.transactionAsync(async (tx, users) => {
-    t.is(db.inTransaction, true);
+    t.is(db.inTransaction, process.env.PROVIDER !== "serverless");
     const insert = await tx.prepare(
       "INSERT INTO users(name, email) VALUES (:name, :email)"
     );
@@ -827,7 +849,7 @@ test.serial("Statement.get() [raw]", async (t) => {
   t.deepEqual(await stmt.raw().get(1), [1, "Alice", "alice@example.org"]);
 });
 
-test.serial("Database.all() preserves positional values for duplicate column names", async (t) => {
+test.serial("Database.all() collapses duplicate column names", async (t) => {
   const db = t.context.db;
 
   await db.exec("DROP TABLE IF EXISTS role; DROP TABLE IF EXISTS org_unit");
@@ -838,9 +860,12 @@ test.serial("Database.all() preserves positional values for duplicate column nam
 
   t.deepEqual(Object.keys(row), ["path"]);
   t.is(row.path, "/");
-  t.is(row[0], "/Employee");
-  t.is(row[1], "/");
+  t.is(row[0], undefined);
+  t.is(row[1], undefined);
   t.deepEqual(row, { path: "/" });
+
+  const stmt = await db.prepare("SELECT role.path, org_unit.path FROM role JOIN org_unit");
+  t.deepEqual(await stmt.raw().get(), ["/Employee", "/"]);
 });
 
 test.serial("Statement.get() values", async (t) => {

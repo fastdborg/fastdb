@@ -39,12 +39,12 @@ test.serial('prepare() method creates statement', async t => {
   const stmt = await client.prepare('SELECT * FROM test_users WHERE name = ?');
   
   const row = await stmt.get(['John Doe']);
-  t.is(row[1], 'John Doe');
-  t.is(row[2], 'john@example.com');
+  t.is(row.name, 'John Doe');
+  t.is(row.email, 'john@example.com');
   
   const rows = await stmt.all(['John Doe']);
   t.is(rows.length, 1);
-  t.is(rows[0][1], 'John Doe');
+  t.is(rows[0].name, 'John Doe');
 });
 
 test.serial('Statement.run()', async t => {
@@ -66,7 +66,7 @@ test.serial('statement iterate() method works', async t => {
   }
   
   t.true(rows.length >= 1);
-  t.is(rows[0][1], 'John Doe');
+  t.is(rows[0].name, 'John Doe');
 });
 
 test.serial('batch() method executes multiple statements', async t => {
@@ -88,11 +88,79 @@ test.serial('batch() method executes multiple statements', async t => {
   t.is(countRow.count, 3);
 });
 
+test.serial('batch() returns per-statement details and statistics', async t => {
+  await client.exec('DROP TABLE IF EXISTS test_batch_details');
+
+  const results = await client.batch([
+    'CREATE TABLE test_batch_details (id INTEGER PRIMARY KEY, name TEXT)',
+    { sql: 'INSERT INTO test_batch_details (name) VALUES (?)', args: ['Alice'] },
+    { sql: 'INSERT INTO test_batch_details (name) VALUES (?)', args: ['Bob'] },
+    'SELECT name FROM test_batch_details ORDER BY id',
+  ]);
+
+  t.is(results.length, 4);
+  t.is(results[1].rowsAffected, 1);
+  t.is(results[1].lastInsertRowid, 1);
+  t.is(results[2].lastInsertRowid, 2);
+  t.deepEqual(results[3].rows.map(row => row.name), ['Alice', 'Bob']);
+  // Server-side execution statistics are reported per statement.
+  for (const result of results) {
+    t.is(typeof result.rowsRead, 'number');
+    t.is(typeof result.rowsWritten, 'number');
+    t.is(typeof result.queryDurationMs, 'number');
+  }
+  t.true(results[1].rowsWritten >= 1);
+});
+
+test.serial('batch() failure reports the failing statement and completed results', async t => {
+  await client.exec('DROP TABLE IF EXISTS test_batch_fail');
+  await client.exec('CREATE TABLE test_batch_fail (x)');
+
+  const error = await t.throwsAsync(() =>
+    client.batch([
+      { sql: 'INSERT INTO test_batch_fail VALUES (?)', args: [1] },
+      { sql: 'INSERT INTO test_batch_missing VALUES (?)', args: [2] },
+      { sql: 'INSERT INTO test_batch_fail VALUES (?)', args: [3] },
+    ])
+  );
+  t.is(error.batchIndex, 1);
+  // One entry per statement: the completed first statement's ResultSet,
+  // null for the failing statement and the skipped statement after it.
+  t.is(error.batchResults.length, 3);
+  t.is(error.batchResults[0].rowsAffected, 1);
+  t.is(error.batchResults[1], null);
+  t.is(error.batchResults[2], null);
+
+  // Execution stopped at the failure: the first statement committed, the
+  // third never ran.
+  const countRow = await client.get('SELECT COUNT(*) as count FROM test_batch_fail');
+  t.is(countRow.count, 1);
+});
+
+test.serial('atomic batch() failure rolls back and reports the failing statement', async t => {
+  await client.exec('DROP TABLE IF EXISTS test_batch_atomic');
+  await client.exec('CREATE TABLE test_batch_atomic (x)');
+
+  const error = await t.throwsAsync(() =>
+    client.batch(
+      [
+        { sql: 'INSERT INTO test_batch_atomic VALUES (?)', args: [1] },
+        { sql: 'INSERT INTO test_batch_missing VALUES (?)', args: [2] },
+      ],
+      'immediate'
+    )
+  );
+  t.is(error.batchIndex, 1);
+  t.is(error.batchResults.length, 2);
+
+  const countRow = await client.get('SELECT COUNT(*) as count FROM test_batch_atomic');
+  t.is(countRow.count, 0);
+});
+
 test.serial('get() method queries a single value', async t => {
   const row = await client.get('SELECT 42 AS answer');
 
   t.is(row.answer, 42);
-  t.is(row[0], 42);
 });
 
 test.serial('get() method queries a single row', async t => {
@@ -109,10 +177,6 @@ test.serial('get() method queries a single row', async t => {
     ["three", 0.5],
   ]);
 
-  // Positional access is also available
-  t.is(r[0], 1);
-  t.is(r[1], "two");
-  t.is(r[2], 0.5);
 });
 
 test.serial('error handling works correctly', async t => {
@@ -162,4 +226,92 @@ test.serial('transactionAsync.concurrent uses BEGIN CONCURRENT', async t => {
     Transaction.prototype.exec = originalExec;
     await localClient.close();
   }
+});
+
+const withTimeout = (promise, timeoutMs, label) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
+
+// Each transactionAsync runs on its own dedicated stream, so all callbacks
+// can be open at the same time. The barrier resolves only once every
+// callback has been entered — if transactions were serialized on the
+// connection (the pre-dedicated-session behavior), the first callback
+// would wait on the barrier forever and the test would time out.
+test.serial('transactionAsync transactions run in parallel', async t => {
+  const N = 3;
+  let entered = 0;
+  let releaseBarrier;
+  const allEntered = new Promise(resolve => { releaseBarrier = resolve; });
+
+  const txn = client.transactionAsync(async (tx, i) => {
+    if (++entered === N) releaseBarrier();
+    await withTimeout(allEntered, 5000, 'all transaction callbacks open at once');
+    const row = await tx.get('SELECT ? AS i', [i]);
+    return row.i;
+  });
+
+  const results = await Promise.all(Array.from({ length: N }, (_, i) => txn(i)));
+  t.deepEqual(results.sort(), [0, 1, 2]);
+});
+
+// Statements on the connection are not blocked by an open transactionAsync
+// window; they run on the connection's own stream, outside the transaction,
+// so they must not observe its uncommitted writes. Under a connection-level
+// lock this await would deadlock the transaction.
+test.serial('connection statements proceed while transactionAsync is open', async t => {
+  await client.exec('DROP TABLE IF EXISTS txn_parallel');
+  await client.exec('CREATE TABLE txn_parallel (id INTEGER PRIMARY KEY, v TEXT)');
+
+  let uncommittedCount;
+  await withTimeout(client.transactionAsync(async tx => {
+    await tx.run('INSERT INTO txn_parallel (v) VALUES (?)', ['inside']);
+    const rows = await client.all('SELECT COUNT(*) AS n FROM txn_parallel');
+    uncommittedCount = rows[0].n;
+  })(), 5000, 'connection statement inside transactionAsync callback');
+
+  t.is(uncommittedCount, 0);
+  const rows = await client.all('SELECT COUNT(*) AS n FROM txn_parallel');
+  t.is(rows[0].n, 1);
+});
+
+// Two transactions with overlapping open windows commit and roll back
+// independently. The write sections are kept disjoint on purpose — the
+// overlap under test is the callback windows, not the server's write lock.
+test.serial('rollback of a parallel transactionAsync leaves the other intact', async t => {
+  await client.exec('DROP TABLE IF EXISTS txn_writers');
+  await client.exec('CREATE TABLE txn_writers (v TEXT)');
+
+  let entered = 0;
+  let releaseBarrier;
+  const bothOpen = new Promise(resolve => { releaseBarrier = resolve; });
+  let releaseOkDone;
+  const okDone = new Promise(resolve => { releaseOkDone = resolve; });
+
+  const ok = client.transactionAsync(async tx => {
+    if (++entered === 2) releaseBarrier();
+    await withTimeout(bothOpen, 5000, 'both transaction callbacks open');
+    await tx.run("INSERT INTO txn_writers (v) VALUES ('kept')");
+  });
+  const failing = client.transactionAsync(async tx => {
+    if (++entered === 2) releaseBarrier();
+    await withTimeout(bothOpen, 5000, 'both transaction callbacks open');
+    await withTimeout(okDone, 5000, 'parallel transaction commits first');
+    await tx.run("INSERT INTO txn_writers (v) VALUES ('discarded')");
+    throw new Error('boom');
+  });
+
+  const [, err] = await Promise.all([
+    ok().then(releaseOkDone),
+    failing().then(() => null, e => e),
+  ]);
+  t.is(err.message, 'boom');
+
+  const rows = await client.all('SELECT v FROM txn_writers ORDER BY v');
+  t.deepEqual(rows.map(r => r.v), ['kept']);
 });

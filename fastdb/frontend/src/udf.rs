@@ -341,7 +341,7 @@ fn run(
         polls += 1;
         let cancelled = engine
             .upgrade()
-            .is_some_and(|e| e.is_interrupted() || e.should_interrupt_for_progress(1000));
+            .is_some_and(|e| e.is_interrupted() || e.should_interrupt_for_progress(0, 1000));
         let reason = if cancelled {
             2
         } else if polls > 1000 || Instant::now() >= deadline {

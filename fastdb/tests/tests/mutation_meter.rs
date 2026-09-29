@@ -5,10 +5,14 @@ use turso_core::{
 };
 
 fn open(path: &str) -> Arc<Connection> {
-    Database::open_file(Database::io_for_path(path).unwrap(), path)
-        .unwrap()
-        .connect()
-        .unwrap()
+    Database::open_file(
+        Database::io_for_path(path).unwrap(),
+        path,
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap()
+    .connect()
+    .unwrap()
 }
 fn count(c: &Arc<Connection>, sql: &str) -> usize {
     let mut rows = 0;
@@ -219,7 +223,12 @@ fn pending_io_does_not_repeat_mutation_events() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queued-mutations.db");
     let io = Arc::new(queued_io::QueuedIo::new());
-    let db = Database::open_file(io.clone(), path.to_str().unwrap()).unwrap();
+    let db = Database::open_file(
+        io.clone(),
+        path.to_str().unwrap(),
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let c = db.connect().unwrap();
     c.execute("CREATE TABLE items(id INTEGER PRIMARY KEY,payload BLOB)")
         .unwrap();

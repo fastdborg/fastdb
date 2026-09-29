@@ -78,7 +78,7 @@ fn crash_writer_child() {
                         ]);
                         let sql = if slot % 8 == 0 {
                             marker("joined", batch);
-                            "WITH target AS (SELECT $id AS id,$name AS name,$payload AS payload), copies AS (SELECT * FROM target UNION ALL SELECT * FROM target) UPDATE items AS target SET (name,payload)=(s.name,s.payload) FROM copies s WHERE target.id=s.id LIMIT 1"
+                            "WITH target AS (SELECT $id AS id,$name AS name,$payload AS payload), copies AS (SELECT * FROM target UNION ALL SELECT * FROM target) UPDATE items AS target SET (name,payload)=(s.name,s.payload) FROM copies s WHERE target.id=s.id"
                         } else {
                             "UPDATE items SET (name,payload)=(VALUES($name,$payload)) WHERE id=$id"
                         };

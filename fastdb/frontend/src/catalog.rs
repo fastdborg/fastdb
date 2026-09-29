@@ -45,7 +45,7 @@ pub(crate) const fn legacy_version() -> u32 {
     1
 }
 pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
-    if !matches!(collection.version, 1..=3) {
+    if !matches!(collection.version, 1..=4) {
         return Err(Error::Storage(format!(
             "unsupported collection metadata version {}",
             collection.version
@@ -61,6 +61,18 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
     {
         return Err(Error::Storage(
             "search indexes require catalog version 3 and cannot be unique".into(),
+        ));
+    }
+    if collection.version < 4
+        && collection.indexes.iter().any(|index| {
+            index
+                .fulltext
+                .as_ref()
+                .is_some_and(|config| config.storage_version == 2)
+        })
+    {
+        return Err(Error::Storage(
+            "FTS storage version 2 requires catalog version 4".into(),
         ));
     }
     for field in &collection.fields {
@@ -319,13 +331,25 @@ impl Connection {
                     let stats = index.text_stats();
                     let dir = index.text_directory();
                     let dir_index = format!("{dir}_key");
-                    for name in [&stats, &dir, &dir_index] {
+                    let legacy = index
+                        .fulltext
+                        .as_ref()
+                        .is_some_and(|c| c.storage_version == 1);
+                    let names = if legacy {
+                        vec![&stats, &dir, &dir_index]
+                    } else {
+                        vec![&dir, &dir_index]
+                    };
+                    for name in names {
                         if !storage.insert(name.clone()) {
                             return Err(Error::Storage("multiple full-text storage owners".into()));
                         }
                     }
-                    schema.schema_object(&stats, "table", &stats, &index.text_stats_ddl())?;
-                    schema.managed_dependencies(&stats, None)?;
+                    if legacy {
+                        schema.schema_object(&stats, "table", &stats, &index.text_stats_ddl())?;
+                        schema.managed_dependencies(&stats, None)?;
+                        self.text_count(index)?;
+                    }
                     schema.schema_object(&dir, "table", &dir, &index.text_directory_ddl())?;
                     schema.schema_object(
                         &dir_index,
@@ -334,7 +358,6 @@ impl Connection {
                         &index.text_directory_index_ddl(),
                     )?;
                     schema.managed_dependencies(&dir, Some(&dir_index))?;
-                    self.text_count(index)?;
                 }
             }
         }
@@ -496,6 +519,44 @@ impl Connection {
             return Ok(None);
         };
         match stmt {
+            Stmt::Reindex { name: Some(name) }
+                if name
+                    .db_name
+                    .as_ref()
+                    .is_none_or(|db| db.as_str().eq_ignore_ascii_case("main")) =>
+            {
+                for mut collection in self.collections()? {
+                    if let Some(position) = collection.indexes.iter().position(|index| {
+                        index.name.eq_ignore_ascii_case(name.name.as_str())
+                            && index.kind == crate::IndexKind::FullText
+                    }) {
+                        return self.atomic(|| {
+                            let index = &mut collection.indexes[position];
+                            let legacy = index
+                                .fulltext
+                                .as_ref()
+                                .is_some_and(|config| config.storage_version == 1);
+                            self.run(&format!("DROP INDEX {}", quote(&index.name)), &[])?;
+                            self.run(&index.text_index_ddl(), &[])?;
+                            if legacy {
+                                self.run(
+                                    &format!("DROP TABLE {}", quote(&index.text_stats())),
+                                    &[],
+                                )?;
+                            }
+                            index
+                                .fulltext
+                                .as_mut()
+                                .expect("fulltext config")
+                                .storage_version = 2;
+                            self.save_catalog(&collection)?;
+                            self.validate_storage_schema()?;
+                            Ok(Some(QueryResult::command(0)))
+                        });
+                    }
+                }
+                Ok(None)
+            }
             Stmt::DropTable {
                 tbl_name,
                 if_exists,

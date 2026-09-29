@@ -82,39 +82,30 @@ fn window_results_flow_through_validated_insert_select() {
 }
 
 #[test]
-fn unsupported_frames_match_native_errors_and_local_order_is_rejected() {
+fn supported_frames_and_lag_match_native_and_local_aggregate_order_is_rejected() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     q(&c, "CREATE TABLE samples");
     q(&c, "CREATE TABLE baseline(value INTEGER)");
-    let projection = "sum(value) OVER (ORDER BY value ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)";
-    let actual = c
-        .execute(
-            &format!("SELECT {projection} FROM samples"),
-            &Parameters::new(),
-        )
-        .unwrap_err();
-    let native = c
-        .execute(
-            &format!("SELECT {projection} FROM baseline"),
-            &Parameters::new(),
-        )
-        .unwrap_err();
-    assert_eq!(actual.to_string(), native.to_string());
-    let actual = c
-        .execute(
-            "SELECT lag(value) OVER (ORDER BY value) FROM samples",
-            &Parameters::new(),
-        )
-        .unwrap_err();
-    let native = c
-        .execute(
-            "SELECT lag(value) OVER (ORDER BY value) FROM baseline",
-            &Parameters::new(),
-        )
-        .unwrap_err();
-    assert_eq!(actual.to_string(), native.to_string());
-
+    q(&c, "INSERT INTO samples(value) VALUES(1),(2),(3)");
+    q(&c, "INSERT INTO baseline VALUES(1),(2),(3)");
+    for projection in [
+        "sum(value) OVER (ORDER BY value ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
+        "lag(value) OVER (ORDER BY value)",
+    ] {
+        assert_eq!(
+            q(
+                &c,
+                &format!("SELECT {projection} FROM samples ORDER BY value")
+            )
+            .rows,
+            q(
+                &c,
+                &format!("SELECT {projection} FROM baseline ORDER BY value")
+            )
+            .rows
+        );
+    }
     assert!(c
         .execute(
             "SELECT sum(value ORDER BY value) OVER () FROM samples",

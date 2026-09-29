@@ -99,11 +99,7 @@ fn cte_scope_native_sources_and_materialized_references_are_preserved() {
         .rows,
         vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
     );
-    let recursive=c.execute("WITH RECURSIVE a(n) AS (VALUES (1) UNION ALL SELECT n+1 FROM a WHERE n<2) SELECT sum(n) FROM a",&Parameters::new()).unwrap_err();
-    assert_eq!(recursive.code(), "FDB_ENGINE");
-    assert!(recursive
-        .to_string()
-        .contains("Recursive CTEs are not yet supported"));
+    assert_eq!(q(&c, "WITH RECURSIVE a(n) AS (VALUES (1) UNION ALL SELECT n+1 FROM a WHERE n<2) SELECT sum(n) FROM a").rows, vec![vec![Value::Integer(3)]]);
 }
 #[test]
 fn cte_insert_sources_validate_atomically_and_reject_unsupported_definitions() {

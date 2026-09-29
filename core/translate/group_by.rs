@@ -26,7 +26,7 @@ use crate::{
     util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
-        insn::Insn,
+        insn::{Insn, SorterOpenData},
         BranchOffset,
     },
     Result,
@@ -189,12 +189,20 @@ impl EmitGroupBy {
                 .try_collect()?;
 
             program.emit_insn(Insn::SorterOpen {
-                cursor_id: sort_cursor,
-                columns: column_count,
-                order_collations_nulls,
-                comparators,
+                data: Box::new(SorterOpenData {
+                    cursor_id: sort_cursor,
+                    columns: column_count,
+                    order_collations_nulls,
+                    comparators,
+                }),
             });
-            emit_explain!(program, false, "USE SORTER FOR GROUP BY".to_owned());
+            emit_explain!(
+                program,
+                false,
+                crate::translate::eqp::EqpDetail::GroupBy {
+                    method: crate::translate::eqp::EqpSortMethod::Sorter,
+                }
+            );
             let pseudo_cursor = group_by_create_pseudo_table(program, column_count);
             GroupByRowSource::Sorter {
                 pseudo_cursor,
@@ -370,10 +378,18 @@ fn collect_agg_leaf_columns(aggregates: &[Aggregate], plan: &SelectPlan) -> Resu
                     .iter()
                     .find(|s| s.internal_id == *subquery_id)
                     .is_some_and(|s| s.correlated);
-                if is_correlated && !leaf_columns.iter().any(|e| exprs_are_equivalent(e, expr)) {
-                    leaf_columns.push(expr.clone());
+                if is_correlated {
+                    if !leaf_columns.iter().any(|e| exprs_are_equivalent(e, expr)) {
+                        leaf_columns.push(expr.clone());
+                    }
+                    Ok(WalkControl::SkipChildren)
+                } else {
+                    // A non-correlated subquery is materialized once and probed
+                    // per row (e.g. the LHS of `x IN (SELECT ...)`), so the
+                    // probe's column references must be carried through the
+                    // sorter like any other aggregate input.
+                    Ok(WalkControl::Continue)
                 }
-                Ok(WalkControl::SkipChildren)
             }
             _ => Ok(WalkControl::Continue),
         }
@@ -491,14 +507,16 @@ fn collect_result_columns<'a>(
                 if plan.aggregates.iter().any(|a| a.original_expr == *expr) {
                     return Ok(WalkControl::SkipChildren);
                 }
-                // Skip children of GROUP BY expressions — their leaf columns
-                // are already covered by the GROUP BY key and don't need
-                // separate materialization in the sorter.
+                // GROUP BY uses this expression to form groups, but ORDER BY or HAVING
+                // may need its value afterward. We add it to result_columns so that
+                // value is read back even when the expression isn't selected, and skip
+                // its children because we reuse the expression's computed value.
                 if plan
                     .group_by
                     .as_ref()
                     .is_some_and(|gb| gb.exprs.iter().any(|ge| exprs_are_equivalent(ge, expr)))
                 {
+                    result_columns.push(expr);
                     return Ok(WalkControl::SkipChildren);
                 }
             }

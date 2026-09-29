@@ -23,7 +23,9 @@ use crate::translate::emitter::Resolver;
 use crate::translate::schema::{emit_schema_entry, SchemaEntryType, SQLITE_TABLEID};
 use crate::util::{escape_sql_string_literal, normalize_ident};
 use crate::vdbe::builder::{CursorType, ProgramBuilder};
-use crate::vdbe::insn::{to_u16, CmpInsFlags, Cookie, InsertFlags, Insn, RegisterOrLiteral};
+use crate::vdbe::insn::{
+    to_u32, AddSequenceData, CmpInsFlags, Cookie, InsertFlags, Insn, RegisterOrLiteral,
+};
 use crate::Result;
 use turso_parser::ast;
 
@@ -128,9 +130,9 @@ pub fn emit_sequence_backing_table(
 
     let record_reg = program.alloc_register();
     program.emit_insn(Insn::MakeRecord {
-        start_reg: to_u16(base_reg),
+        start_reg: to_u32(base_reg),
         count: 7,
-        dest_reg: to_u16(record_reg),
+        dest_reg: to_u32(record_reg),
         index_name: None,
         affinity_str: None,
     });
@@ -153,6 +155,7 @@ pub fn emit_sequence_backing_table(
     program.emit_insn(Insn::ParseSchema {
         db: database_id,
         where_clause: Some(format!("name = '{escaped}'")),
+        trigger_target_database_id: None,
     });
 
     Ok(())
@@ -276,9 +279,9 @@ pub fn emit_disk_read_nextval(
 
     let record_reg = program.alloc_register();
     program.emit_insn(Insn::MakeRecord {
-        start_reg: to_u16(col_base),
+        start_reg: to_u32(col_base),
         count: 7,
-        dest_reg: to_u16(record_reg),
+        dest_reg: to_u32(record_reg),
         index_name: None,
         affinity_str: None,
     });
@@ -509,9 +512,9 @@ pub fn emit_disk_advance_past(
 
     let record_reg = program.alloc_register();
     program.emit_insn(Insn::MakeRecord {
-        start_reg: to_u16(col_base),
+        start_reg: to_u32(col_base),
         count: 7,
-        dest_reg: to_u16(record_reg),
+        dest_reg: to_u32(record_reg),
         index_name: None,
         affinity_str: None,
     });
@@ -558,7 +561,7 @@ pub fn emit_disk_advance_past(
     // engine's actual watermark, regressing the SQLite-compatibility
     // row even though the engine's autoinc state is unchanged. Repro
     // covered by `mvcc-autoinc-explicit-low-rowid-preserves-sqlite-sequence`
-    // in `testing/sqltests/turso-tests/mvcc_sequence.sqltest`.
+    // in `sqlite/conformance/turso-sqltests/mvcc_sequence.sqltest`.
     emit_autoincrement_sqlite_sequence_sync(program, resolver, database_id, seq_name, value_reg)?;
 
     program.preassign_label_to_next_insn(done_seek_label);
@@ -630,6 +633,8 @@ pub(crate) fn emit_backing_table_compaction(
     program.emit_insn(Insn::Next {
         cursor_id,
         pc_if_next: loop_top_label,
+        fullscan: false,
+        is_index: false,
     });
     program.preassign_label_to_next_insn(skip_label);
 }
@@ -705,6 +710,8 @@ pub(crate) fn emit_sqlite_sequence_sync(
     program.emit_insn(Insn::Next {
         cursor_id: sseq_cursor,
         pc_if_next: loop_top_label,
+        fullscan: false,
+        is_index: false,
     });
     program.preassign_label_to_next_insn(insert_label);
 
@@ -722,9 +729,9 @@ pub(crate) fn emit_sqlite_sequence_sync(
     });
     let record_reg = program.alloc_register();
     program.emit_insn(Insn::MakeRecord {
-        start_reg: to_u16(col_base),
-        count: to_u16(2),
-        dest_reg: to_u16(record_reg),
+        start_reg: to_u32(col_base),
+        count: to_u32(2),
+        dest_reg: to_u32(record_reg),
         index_name: None,
         affinity_str: None,
     });
@@ -828,7 +835,7 @@ pub fn translate_create_sequence(
     // persistent SQLite-compatibility metadata corruption. Reject the
     // namespace at CREATE time. Covered by
     // `create-sequence-rejects-autoincrement-internal-prefix` in
-    // `testing/sqltests/turso-tests/sequence.sqltest`.
+    // `sqlite/conformance/turso-sqltests/sequence.sqltest`.
     if normalized_name.starts_with(AUTOINCREMENT_SEQ_PREFIX) {
         bail_parse_error!(
             "sequence name \"{}\" is reserved for internal AUTOINCREMENT use",
@@ -879,13 +886,15 @@ pub fn translate_create_sequence(
 
     // Add the fully-configured Sequence to the in-memory schema
     program.emit_insn(Insn::AddSequence {
-        db: database_id,
-        name: normalized_name,
-        start: seq.start_value,
-        increment: seq.increment_by,
-        min_value: seq.min_value,
-        max_value: seq.max_value,
-        cycle: seq.cycle,
+        data: Box::new(AddSequenceData {
+            db: database_id,
+            name: normalized_name,
+            start: seq.start_value,
+            increment: seq.increment_by,
+            min_value: seq.min_value,
+            max_value: seq.max_value,
+            cycle: seq.cycle,
+        }),
     });
 
     // Bump schema version so other connections detect the change
@@ -982,6 +991,8 @@ pub(crate) fn emit_drop_sequence_cleanup(
     program.emit_insn(Insn::Next {
         cursor_id: sqlite_schema_cursor_id,
         pc_if_next: loop_start_label,
+        fullscan: false,
+        is_index: false,
     });
     program.preassign_label_to_next_insn(end_loop_label);
 

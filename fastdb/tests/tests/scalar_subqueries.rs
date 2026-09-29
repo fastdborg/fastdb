@@ -1358,6 +1358,7 @@ fn native_membership_local_cte_names_match_pinned_scope_resolution() {
         let raw_db = turso_core::Database::open_file(
             turso_core::Database::io_for_path(":memory:").unwrap(),
             ":memory:",
+            std::sync::Arc::new(turso_core::SqliteDialect),
         )
         .unwrap();
         let raw = raw_db.connect().unwrap();

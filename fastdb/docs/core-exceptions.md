@@ -1,11 +1,36 @@
 # Maintained engine exceptions
 
 Required review checklist for every upstream sync. Baseline and full provenance
-are in [UPSTREAM.md](../UPSTREAM.md). The eight active exceptions below are approved and
-integrated. The retired WASI exception is recorded separately. The dated review
+are in [UPSTREAM.md](../UPSTREAM.md). The current sync decisions below identify retained, retired and newly approved
+exceptions. The retired WASI exception is recorded separately. The dated review
 below tracks upstream replacement candidates; no patch is removed from the
 existing pinned engine merely because a newer upstream revision contains a fix.
 No automatic removal or periodic monitoring is configured.
+
+## Upstream sync: Turso 0.8.1 (2026-09-30)
+
+Candidate upstream commit: `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.
+This section supersedes the 0.7.2 retention decisions below for current source;
+the prior release record remains historical evidence.
+
+| Existing exception | 0.8.1 decision | Replacement or adaptation |
+|---|---|---|
+| Trigger interruption | Retain | Upstream still merges Interrupt with Busy in subprogram execution; preserve the distinction and saved subprogram state. |
+| FTS cache isolation | Remove old patch, retain regression | Upstream replaces the monolithic FTS implementation with snapshot-aware segment/directory state. The old pager-identity patch no longer applies; public concurrent FTS snapshot tests pass. Native index-method suite: 131 passed, including the retained isolation regression. |
+| First FULL WAL commit | Remove old patch, retain regression | Upstream prepared-frame/dirty-WAL `need_fsync` logic supplies the barrier. Native first-FULL regression passed; the raw sync probe also confirms the write barrier. |
+| FTS backing integrity/root reclamation | Retain necessary remainder | Upstream supplies part of the backing-store lifecycle; local logical-count exclusion and DROP TABLE index ordering remain needed; native integrity suite: 36 passed. |
+| Scalar read errors | Adapt | Preserve the read-only ExtensionError cleanup exception through the new VDBE dispatch/abort implementation. Native external API suite: 14 passed; scalar-error transaction probe passed. |
+| Checkpoint WAL barrier | Retain pending-completion companion | Upstream supplies the main pre-backfill barrier and broader cleanup. Retain explicit failed-completion observation/retry and published automatic-commit cleanup. FastDB checkpoint_barrier: 5 passed; checkpoint_crash_atomicity: 2 passed. |
+| Named-savepoint cancellation recovery | Adapt | Keep named-frame prior-poison state and recovery after successful rollback in the new connection/savepoint implementation. Native statement lifecycle: 46 passed; savepoint integration filter: 12 passed. |
+| Execution counters and budgets | Adapt | Attach meters in both normal and explain dispatch paths; preserve completed cursor visits, cooperative budget interruption, mutation/schema classification and incremental Count. New window-generated ephemeral deletes exclude logical mutations. Full scoped metering/profile suites passed. |
+
+New approved exception: [FTS savepoint cursor pins](proposals/turso-081-fts-savepoint.md).
+The user approved its focused patch on 2026-09-30. Backing cursors register only
+after allocation in a stable Box; rollback invalidates them before truncating
+new pages. Existing fulltext suite: 8 passed; new public 0.8.1 suite: 6 passed.
+The exact isolated patch and its safety invariant are in the review record.
+Broader current-source regression results are tracked in the
+[upgrade checklist](turso-0.8.1-tasks.md); pending checks are not release evidence.
 
 ## Release review: 2026-09-25
 

@@ -9,10 +9,14 @@ use turso_core::{
 mod queued_io;
 
 fn open(path: &str) -> Arc<Connection> {
-    Database::open_file(Database::io_for_path(path).unwrap(), path)
-        .unwrap()
-        .connect()
-        .unwrap()
+    Database::open_file(
+        Database::io_for_path(path).unwrap(),
+        path,
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap()
+    .connect()
+    .unwrap()
 }
 
 fn fixture(c: &Arc<Connection>) {
@@ -263,7 +267,12 @@ fn index_build_io_resumption_does_not_duplicate_source_or_schema_visits() {
     let path = path.to_str().unwrap();
     let io = Arc::new(queued_io::QueuedIo::new());
     {
-        let db = Database::open_file(io.clone(), path).unwrap();
+        let db = Database::open_file(
+            io.clone(),
+            path,
+            std::sync::Arc::new(turso_core::SqliteDialect),
+        )
+        .unwrap();
         let c = db.connect().unwrap();
         c.execute("CREATE TABLE source(n INTEGER, payload BLOB)")
             .unwrap();
@@ -275,7 +284,12 @@ fn index_build_io_resumption_does_not_duplicate_source_or_schema_visits() {
         c.execute("COMMIT").unwrap();
         c.execute("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
     }
-    let db = Database::open_file(io.clone(), path).unwrap();
+    let db = Database::open_file(
+        io.clone(),
+        path,
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let c = db.connect().unwrap();
     let mut statement = c.prepare("CREATE INDEX source_n ON source(n)").unwrap();
     let meter = Arc::new(ExecutionMeter::with_schema_read_limit(

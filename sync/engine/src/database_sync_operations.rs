@@ -79,6 +79,7 @@ const SQLITE_SCHEMA_TABLE: &str = "sqlite_schema";
 const TURSO_INTERNAL_PREFIX: &str = "__turso_internal_";
 const TURSO_CDC_TABLE_NAME: &str = "turso_cdc";
 const TURSO_CDC_VERSION_TABLE_NAME: &str = "turso_cdc_version";
+const CDC_COMMIT_CHANGE_TYPE: i64 = 2;
 
 #[derive(prost::Message, Clone, PartialEq, Eq)]
 struct PortableLogicalTxn {
@@ -327,6 +328,17 @@ pub(crate) fn is_logically_replayable_table(name: &str) -> bool {
         && name != TURSO_SYNC_TABLE_NAME
         && name != TURSO_CDC_TABLE_NAME
         && name != TURSO_CDC_VERSION_TABLE_NAME
+}
+
+/// SQL form of [`is_logically_replayable_table`] over a `table_name` column.
+/// GLOB is used instead of LIKE because `_` is a wildcard for LIKE but a plain
+/// character for GLOB, and every prefix here contains underscores.
+fn logically_replayable_table_filter() -> String {
+    format!(
+        "table_name NOT GLOB '{SQLITE_INTERNAL_PREFIX}*' \
+         AND table_name NOT GLOB '{TURSO_INTERNAL_PREFIX}*' \
+         AND table_name NOT IN ('{TURSO_SYNC_TABLE_NAME}', '{TURSO_CDC_TABLE_NAME}', '{TURSO_CDC_VERSION_TABLE_NAME}')"
+    )
 }
 
 fn sqlite_schema_change_name(change: &DatabaseTapeRowChange) -> Result<Option<String>> {
@@ -1427,7 +1439,26 @@ fn decode_recovery_ops_to_logical_txn(
 
     let mut ops = header_ops;
     append_schema_ops(schema_deltas, &mut ops)?;
-    ops.extend(row_ops);
+    // Every row delete in a transaction is applied before every row upsert.
+    //
+    // MVCC coalesces a transaction to one final version per rowid, and a row
+    // whose primary key changed arrives as a delete of its old key followed by
+    // an upsert of its new image. Applying those pairs row by row breaks as soon
+    // as two rows exchange keys inside one transaction: the second row's delete
+    // targets the key the first row's upsert just took, so it removes the row
+    // that was just written and the replica silently ends up one row short.
+    //
+    // Draining the deletes first applies the transaction as a set difference,
+    // which is also what lets both upserts land without tripping the unique
+    // index on an intermediate state — the remote needed a temporary key to make
+    // the same swap statement by statement. A rowid appears at most once per
+    // coalesced transaction, so no upsert can depend on a delete of its own row
+    // running later.
+    let (row_deletes, row_upserts): (Vec<_>, Vec<_>) = row_ops
+        .into_iter()
+        .partition(|op| op.op_type == LogicalOpType::DeleteRow as i32);
+    ops.extend(row_deletes);
+    ops.extend(row_upserts);
 
     Ok(LogicalTxnData {
         end_offset: portable_txn.end_offset,
@@ -2417,7 +2448,7 @@ fn convert_to_args(
                 value: value.as_str().to_string(),
             },
             Value::Blob(value) => server_proto::Value::Blob {
-                value: value.into(),
+                value: Bytes::copy_from_slice(&value),
             },
         })
         .collect()
@@ -2466,13 +2497,41 @@ pub async fn has_table<Ctx>(
     Ok(count > 0)
 }
 
+/// Counts local changes above `change_id` which the next push will send to the remote.
+/// Rows the push loop drops - COMMIT markers and changes to internal tables like
+/// `turso_sync_last_change_id` - must not be counted, otherwise callers see pending
+/// work which no push can ever clear.
+///
+/// COMMIT markers are dropped by `change_type != COMMIT`, which also drops the CDC v2
+/// records that store a NULL change type. `sqlite_schema` rows are always counted even
+/// though push drops the ones which describe internal objects: telling those apart needs
+/// the row payload decoded, so this can overcount DDL on internal tables.
 pub async fn count_local_changes<Ctx>(
     coro: &Coro<Ctx>,
     conn: &Arc<turso_core::Connection>,
+    opts: &DatabaseSyncEngineOpts,
     change_id: i64,
 ) -> Result<i64> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM turso_cdc WHERE change_id > ?")?;
+    let ignored_placeholders = vec!["?"; opts.tables_ignore.len()].join(", ");
+    let ignored_filter = if opts.tables_ignore.is_empty() {
+        String::new()
+    } else {
+        format!(" AND table_name NOT IN ({ignored_placeholders})")
+    };
+    let mut stmt = conn.prepare(format!(
+        "SELECT COUNT(*) FROM {TURSO_CDC_TABLE_NAME} \
+         WHERE change_id > ? \
+           AND change_type != {CDC_COMMIT_CHANGE_TYPE} \
+           AND (table_name = '{SQLITE_SCHEMA_TABLE}' OR ({})){ignored_filter}",
+        logically_replayable_table_filter(),
+    ))?;
     stmt.bind_at(1.try_into().unwrap(), Value::from_i64(change_id))?;
+    for (i, table) in opts.tables_ignore.iter().enumerate() {
+        stmt.bind_at(
+            (i + 2).try_into().unwrap(),
+            Value::Text(Text::new(table.clone())),
+        )?;
+    }
 
     let count = match run_stmt_expect_one_row(coro, &mut stmt).await? {
         Some(row) => row[0]
@@ -3047,20 +3106,39 @@ async fn send_push_batch<IO: SyncEngineIo, Ctx>(
                             .push(step(replay_info.query.clone(), convert_to_args(values)))
                     }
                     DatabaseTapeRowChangeType::Insert { after } => {
+                        if generator.upsert_needs_null_safe_predelete(&replay_info, after) {
+                            // ON CONFLICT cannot resolve a key with a NULL
+                            // component, so remove the remote row by its
+                            // NULL-safe identity before inserting the new image.
+                            let delete_info = generator
+                                .delete_query(ctx.coro, &change.table_name, false)
+                                .await?;
+                            let delete_values = generator.replay_delete_values(
+                                &delete_info,
+                                change.id,
+                                after.clone(),
+                                None,
+                            )?;
+                            sql_over_http_requests.push(step(
+                                delete_info.query.clone(),
+                                convert_to_args(delete_values),
+                            ));
+                        }
                         let values = generator.replay_values(
                             &replay_info,
                             replay_info.change_type,
                             change.id,
                             after.clone(),
                             None,
+                            None,
                         );
                         sql_over_http_requests
                             .push(step(replay_info.query.clone(), convert_to_args(values)));
                     }
                     DatabaseTapeRowChangeType::Update {
+                        before,
                         after,
                         updates: Some(updates),
-                        ..
                     } => {
                         let values = generator.replay_values(
                             &replay_info,
@@ -3068,6 +3146,7 @@ async fn send_push_batch<IO: SyncEngineIo, Ctx>(
                             change.id,
                             after.clone(),
                             Some(updates.clone()),
+                            Some(before.clone()),
                         );
                         sql_over_http_requests
                             .push(step(replay_info.query.clone(), convert_to_args(values)));
@@ -3082,6 +3161,7 @@ async fn send_push_batch<IO: SyncEngineIo, Ctx>(
                             replay_info.change_type,
                             change.id,
                             after.clone(),
+                            None,
                             None,
                         );
                         sql_over_http_requests
@@ -3138,18 +3218,55 @@ pub async fn apply_transformation<IO: SyncEngineIo, Ctx>(
     changes: &[DatabaseTapeRowChange],
     generator: &DatabaseReplayGenerator,
 ) -> Result<Vec<DatabaseRowTransformResult>> {
+    let mut transformed = Vec::new();
     let mut mutations = Vec::new();
+    // break changes at DDL boundaries and apply transformation callback only of DML operations
+    // e.g. for sequence like that:
+    // 1. INSERT INTO t1
+    // 2. INSERT INTO t2
+    // 3. CREATE TABLE t3
+    // 4. INSERT INTO t3
+    // 5. CREATE TABLE t4
+    // 6. CREATE TABLE t5
+    // We will invoke transform callback for operations [1, 2] and then for operation [4]
+
+    let flush_mutations = async |mutations: &mut Vec<DatabaseRowMutation>,
+                                 transformed: &mut Vec<DatabaseRowTransformResult>|
+           -> Result<()> {
+        if mutations.is_empty() {
+            return Ok(());
+        }
+        let mutations_cnt = mutations.len();
+        let completion = ctx.io.transform(std::mem::take(mutations))?;
+        let transformed_part = wait_all_results(ctx.coro, &completion, None).await?;
+        if transformed_part.len() != mutations_cnt {
+            return Err(Error::DatabaseSyncEngineError(format!(
+                "unexpected result from custom transformation: mismatch in shapes: {} != {}",
+                transformed_part.len(),
+                mutations_cnt,
+            )));
+        }
+        tracing::info!("apply_transformation: got {:?}", transformed_part);
+        transformed.extend(transformed_part);
+        Ok(())
+    };
+
     for change in changes {
         let replay_info = generator.replay_info(ctx.coro, change).await?;
-        mutations.push(generator.create_mutation(&replay_info, change)?);
+        if !replay_info.is_ddl_replay {
+            mutations.push(generator.create_mutation(&replay_info, change)?);
+        } else {
+            flush_mutations(&mut mutations, &mut transformed).await?;
+            transformed.push(DatabaseRowTransformResult::Keep);
+        }
     }
-    let completion = ctx.io.transform(mutations)?;
-    let transformed = wait_all_results(ctx.coro, &completion, None).await?;
+    flush_mutations(&mut mutations, &mut transformed).await?;
+
     if transformed.len() != changes.len() {
         return Err(Error::DatabaseSyncEngineError(format!(
-            "unexpected result from custom transformation: mismatch in shapes: {} != {}",
+            "unexpected result from apply_transformation: mismatch in shapes: {} != {}",
             transformed.len(),
-            changes.len()
+            changes.len(),
         )));
     }
     tracing::info!("apply_transformation: got {:?}", transformed);
@@ -3851,6 +3968,7 @@ mod tests {
         collections::BTreeMap,
         sync::{Arc, Mutex},
     };
+    use turso_core::SqliteDialect;
 
     use bytes::{Bytes, BytesMut};
     use prost::Message;
@@ -3865,12 +3983,15 @@ mod tests {
         database_sync_engine_io::{DataCompletion, DataPollResult, SyncEngineIo},
         database_sync_operations::{
             apply_logical_transactions_file_without_commit_excluding_client_txns_with_table_map_and_stats,
-            detect_remote_pull_protocol, ensure_incremental_page_stream, ensure_page_stream,
-            is_logically_replayable_table, logical_txn_to_tape_operations, pull_pages_v1,
-            pull_updates_v1, should_push_change, should_replay_local_change, wait_proto_message,
+            count_local_changes, detect_remote_pull_protocol, ensure_incremental_page_stream,
+            ensure_page_stream, is_logically_replayable_table, logical_txn_to_tape_operations,
+            logically_replayable_table_filter, pull_pages_v1, pull_updates_v1, should_push_change,
+            should_replay_local_change, update_last_change_id, wait_proto_message,
             wal_pull_to_file_v1, PullUpdatesV1Result, SyncEngineIoStats, SyncOperationCtx,
         },
-        database_tape::{run_stmt_once, DatabaseReplaySessionOpts, DatabaseTape},
+        database_tape::{
+            run_stmt_expect_one_row, run_stmt_once, DatabaseReplaySessionOpts, DatabaseTape,
+        },
         server_proto,
         server_proto::{
             PageData, PageSetRawEncodingProto, PullUpdatesApplyMode, PullUpdatesReqProtoBody,
@@ -4223,8 +4344,12 @@ mod tests {
     fn max_local_change_id_reads_cdc_high_water_mark() {
         let temp_file = NamedTempFile::new().unwrap();
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
-        let db = turso_core::Database::open_file(io.clone(), temp_file.path().to_str().unwrap())
-            .unwrap();
+        let db = turso_core::Database::open_file(
+            io.clone(),
+            temp_file.path().to_str().unwrap(),
+            Arc::new(SqliteDialect),
+        )
+        .unwrap();
         let db = Arc::new(DatabaseTape::new(db));
 
         let mut gen = genawaiter::sync::Gen::new({
@@ -4502,14 +4627,106 @@ mod tests {
         assert_eq!(txns[0].ops[0].op_type, LogicalOpType::Schema as i32);
         assert_eq!(txns[0].ops[0].schema_name, "t");
         assert_eq!(txns[0].ops[0].stable_table_id, 0);
-        assert_eq!(txns[0].ops[1].op_type, LogicalOpType::UpsertRow as i32);
+        // Row deletes are drained before row upserts, so the frame's
+        // upsert-then-delete order is inverted here on purpose.
+        assert_eq!(txns[0].ops[1].op_type, LogicalOpType::DeleteRow as i32);
         assert_eq!(txns[0].ops[1].table_name, "t");
         assert_eq!(txns[0].ops[1].rowid, 1);
-        assert_eq!(txns[0].ops[1].record, row_record);
-        assert_eq!(txns[0].ops[2].op_type, LogicalOpType::DeleteRow as i32);
+        assert_eq!(txns[0].ops[1].record, primary_key_record);
+        assert_eq!(txns[0].ops[2].op_type, LogicalOpType::UpsertRow as i32);
         assert_eq!(txns[0].ops[2].table_name, "t");
         assert_eq!(txns[0].ops[2].rowid, 1);
-        assert_eq!(txns[0].ops[2].record, primary_key_record);
+        assert_eq!(txns[0].ops[2].record, row_record);
+    }
+
+    /// A transaction that swaps the primary keys of two rows arrives as
+    /// interleaved (delete old key, upsert new image) pairs. Replaying it in that
+    /// order lets the second row's delete remove the row the first row's upsert
+    /// just wrote, so the decoder has to group all deletes ahead of all upserts.
+    #[test]
+    fn raw_mvcc_log_decoder_orders_row_deletes_before_upserts() {
+        let table_id = -42;
+        let text = turso_core::Value::build_text;
+        let first_new_image = record(&[text("b"), text("2"), text("left")]);
+        let second_new_image = record(&[text("a"), text("1"), text("right")]);
+        let first_old_key = record(&[text("a"), text("1")]);
+        let second_old_key = record(&[text("b"), text("2")]);
+
+        let portable_txn = super::PortableLogicalTxn {
+            end_offset: 104,
+            commit_ts: 77,
+            string_table: vec![Bytes::from_static(b"t")],
+            object_map: vec![super::PortableObjectMap {
+                mv_table_id: table_id,
+                name_ref: 0,
+            }],
+            meta: vec![],
+        };
+        let portable_payload = portable_txn.encode_length_delimited_to_vec();
+
+        // Exactly what the MVCC writer emits for
+        //   BEGIN;
+        //     UPDATE t SET x='tmp' WHERE x='a' AND y='1';
+        //     UPDATE t SET x='a', y='1' WHERE x='b' AND y='2';
+        //     UPDATE t SET x='b', y='2' WHERE x='tmp';
+        //   COMMIT;
+        // on `CREATE TABLE t(x, y, z, PRIMARY KEY (x, y))`: one delete+upsert
+        // pair per rowid, coalesced to the transaction's final image.
+        let mut recovery_payload = Vec::new();
+        append_test_table_delete(&mut recovery_payload, table_id, 1, &first_old_key);
+        append_test_table_upsert(&mut recovery_payload, table_id, 1, &first_new_image);
+        append_test_table_delete(&mut recovery_payload, table_id, 2, &second_old_key);
+        append_test_table_upsert(&mut recovery_payload, table_id, 2, &second_new_image);
+
+        let salt = 0x0123_4567_89ab_cdefu64;
+        let log_header = raw_mvcc_log_header(salt);
+        let initial_crc = crc32c::crc32c(&salt.to_le_bytes());
+        let (frame, _) =
+            raw_mvcc_log_frame_with_crc(77, &portable_payload, &recovery_payload, 4, initial_crc);
+        let end_offset = (log_header.len() + frame.len()) as u64;
+        let header = PullUpdatesRespProtoBody {
+            protocol: 0,
+            server_revision: format!("g1:o{end_offset}"),
+            db_size: 0,
+            raw_encoding: None,
+            zstd_encoding: None,
+            stream_kind: PullUpdatesStreamKind::MvccLogicalLog as i32,
+            apply_mode: PullUpdatesApplyMode::Incremental as i32,
+            mvcc_log: Some(server_proto::MvccLogicalLogMetadataProto {
+                format: "lml3".to_string(),
+                checkpoint_transition: false,
+                ranges: vec![server_proto::MvccLogicalLogRangeProto {
+                    generation: 1,
+                    start_offset: 0,
+                    end_offset,
+                    starts_with_header: true,
+                    crc_seed: None,
+                }],
+            }),
+        };
+        let mut body = log_header;
+        body.extend_from_slice(&frame);
+
+        let txns = decode_raw_mvcc_log_for_test(header, body).unwrap();
+        assert_eq!(txns.len(), 1);
+        let ops = &txns[0].ops;
+        assert_eq!(ops.len(), 4);
+        let kinds = ops.iter().map(|op| op.op_type).collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                LogicalOpType::DeleteRow as i32,
+                LogicalOpType::DeleteRow as i32,
+                LogicalOpType::UpsertRow as i32,
+                LogicalOpType::UpsertRow as i32,
+            ],
+            "row deletes must precede row upserts"
+        );
+        // Order within each group is the frame's order.
+        assert_eq!(ops[0].record, first_old_key);
+        assert_eq!(ops[1].record, second_old_key);
+        assert_eq!(ops[2].record, first_new_image);
+        assert_eq!(ops[3].record, second_new_image);
     }
 
     #[test]
@@ -5188,8 +5405,12 @@ mod tests {
         ];
         std::fs::write(txns_temp.path(), encoded_logical_txns(&txns)).unwrap();
 
-        let db =
-            turso_core::Database::open_file(io.clone(), db_temp.path().to_str().unwrap()).unwrap();
+        let db = turso_core::Database::open_file(
+            io.clone(),
+            db_temp.path().to_str().unwrap(),
+            Arc::new(SqliteDialect),
+        )
+        .unwrap();
         let db = Arc::new(DatabaseTape::new(db));
         let txns_file = io
             .open_file(
@@ -5360,23 +5581,7 @@ mod tests {
 
     #[test]
     fn push_change_filter_skips_internal_sqlite_schema_objects() {
-        let opts = DatabaseSyncEngineOpts {
-            remote_url: None,
-            client_name: "test-client".to_string(),
-            tables_ignore: Vec::new(),
-            use_transform: false,
-            wal_pull_batch_size: 0,
-            long_poll_timeout: None,
-            protocol_version_hint: crate::types::DatabaseSyncEngineProtocolVersion::V1,
-            bootstrap_if_empty: false,
-            reserved_bytes: 0,
-            db_opts: turso_core::DatabaseOpts::default(),
-            partial_sync_opts: None,
-            remote_encryption_key: None,
-            push_operations_threshold: None,
-            pull_bytes_threshold: None,
-            logical_mvcc_pull: Some(true),
-        };
+        let opts = push_test_opts();
         let internal_schema_change = DatabaseTapeRowChange {
             change_id: 1,
             change_time: 77,
@@ -5452,6 +5657,166 @@ mod tests {
 
         assert!(!should_push_change(&rootpage_only_schema_update, &opts).unwrap());
         assert!(!should_replay_local_change(&rootpage_only_schema_update).unwrap());
+    }
+
+    #[test]
+    fn count_local_changes_counts_only_changes_which_push_will_send() {
+        let db_temp = NamedTempFile::new().unwrap();
+        let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
+        let db = turso_core::Database::open_file(
+            io.clone(),
+            db_temp.path().to_str().unwrap(),
+            Arc::new(SqliteDialect),
+        )
+        .unwrap();
+        let db = Arc::new(DatabaseTape::new(db));
+
+        let mut gen = genawaiter::sync::Gen::new({
+            let db = db.clone();
+            move |coro| async move {
+                let coro: Coro<()> = coro.into();
+                let opts = push_test_opts();
+                let conn = db.connect(&coro).await.unwrap();
+
+                conn.execute("CREATE TABLE t(x)").unwrap();
+                conn.execute("INSERT INTO t VALUES (1)").unwrap();
+                conn.execute("INSERT INTO t VALUES (2), (3)").unwrap();
+                let after_writes = count_local_changes(&coro, &conn, &opts, 0).await.unwrap();
+
+                update_last_change_id(&coro, &conn, "client-a", 1, 0)
+                    .await
+                    .unwrap();
+                let after_first_high_water_mark =
+                    count_local_changes(&coro, &conn, &opts, 0).await.unwrap();
+
+                update_last_change_id(&coro, &conn, "client-a", 2, 3)
+                    .await
+                    .unwrap();
+                let after_second_high_water_mark =
+                    count_local_changes(&coro, &conn, &opts, 0).await.unwrap();
+
+                let ignore_t = DatabaseSyncEngineOpts {
+                    tables_ignore: vec!["t".to_string()],
+                    ..push_test_opts()
+                };
+                let with_ignored_table = count_local_changes(&coro, &conn, &ignore_t, 0)
+                    .await
+                    .unwrap();
+
+                let mut stmt = conn.prepare("SELECT COUNT(*) FROM turso_cdc").unwrap();
+                let cdc_rows = run_stmt_expect_one_row(&coro, &mut stmt)
+                    .await
+                    .unwrap()
+                    .unwrap()[0]
+                    .as_int()
+                    .unwrap();
+                (
+                    after_writes,
+                    after_first_high_water_mark,
+                    after_second_high_water_mark,
+                    with_ignored_table,
+                    cdc_rows,
+                )
+            }
+        });
+        let (
+            after_writes,
+            after_first_high_water_mark,
+            after_second_high_water_mark,
+            with_ignored_table,
+            cdc_rows,
+        ) = loop {
+            match gen.resume_with(Ok(())) {
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
+                genawaiter::GeneratorState::Complete(result) => break result,
+            }
+        };
+
+        assert_eq!(after_writes, 4);
+        assert_eq!(after_second_high_water_mark, after_first_high_water_mark);
+        assert_eq!(
+            with_ignored_table,
+            after_second_high_water_mark - 3,
+            "the three rows written to t must drop out"
+        );
+        assert!(cdc_rows > after_second_high_water_mark);
+    }
+
+    #[test]
+    fn sql_table_name_filter_agrees_with_is_logically_replayable_table() {
+        let names = [
+            "t",
+            "items",
+            "turso_data",
+            "sqlite_schema",
+            "sqlite_sequence",
+            "turso_sync_last_change_id",
+            "turso_cdc",
+            "turso_cdc_version",
+            "__turso_internal_mvcc_meta",
+            "sqliteXschema",
+            "__tursoXinternalXmvcc",
+        ];
+
+        let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
+        let db = turso_core::Database::open_file(io.clone(), ":memory:", Arc::new(SqliteDialect))
+            .unwrap();
+        let db = Arc::new(DatabaseTape::new(db));
+
+        let mut gen = genawaiter::sync::Gen::new({
+            let db = db.clone();
+            move |coro| async move {
+                let coro: Coro<()> = coro.into();
+                let conn = db.connect(&coro).await.unwrap();
+                let mut stmt = conn
+                    .prepare(format!(
+                        "SELECT {} FROM (SELECT ? AS table_name)",
+                        logically_replayable_table_filter()
+                    ))
+                    .unwrap();
+                let mut matched = Vec::new();
+                for name in names {
+                    stmt.reset().unwrap();
+                    stmt.bind_at(1.try_into().unwrap(), turso_core::Value::build_text(name))
+                        .unwrap();
+                    let row = run_stmt_expect_one_row(&coro, &mut stmt).await.unwrap();
+                    matched.push(row.unwrap()[0].as_int().unwrap() == 1);
+                }
+                matched
+            }
+        });
+        let matched = loop {
+            match gen.resume_with(Ok(())) {
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
+                genawaiter::GeneratorState::Complete(result) => break result,
+            }
+        };
+
+        let expected = names
+            .iter()
+            .map(|name| is_logically_replayable_table(name))
+            .collect::<Vec<_>>();
+        assert_eq!(matched, expected);
+    }
+
+    fn push_test_opts() -> DatabaseSyncEngineOpts {
+        DatabaseSyncEngineOpts {
+            remote_url: None,
+            client_name: "test-client".to_string(),
+            tables_ignore: Vec::new(),
+            use_transform: false,
+            wal_pull_batch_size: 0,
+            long_poll_timeout: None,
+            protocol_version_hint: crate::types::DatabaseSyncEngineProtocolVersion::V1,
+            bootstrap_if_empty: false,
+            reserved_bytes: 0,
+            db_opts: turso_core::DatabaseOpts::default(),
+            partial_sync_opts: None,
+            remote_encryption_key: None,
+            push_operations_threshold: None,
+            pull_bytes_threshold: None,
+            logical_mvcc_pull: Some(true),
+        }
     }
 
     fn page_header(stream_kind: i32, apply_mode: i32) -> PullUpdatesRespProtoBody {

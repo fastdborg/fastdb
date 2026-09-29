@@ -101,7 +101,12 @@ fn io_stop_child() {
         operation: std::env::var("FASTDB_IO_STOP_OP").unwrap(),
     });
     let db = Database {
-        engine: turso_core::Database::open_file(io, &path).unwrap(),
+        engine: turso_core::Database::open_file(
+            io,
+            &path,
+            std::sync::Arc::new(turso_core::SqliteDialect),
+        )
+        .unwrap(),
         manual_wal: false,
     };
     let c = db.connect().unwrap();

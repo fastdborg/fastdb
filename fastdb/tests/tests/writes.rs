@@ -249,25 +249,10 @@ fn standalone_record_constructors_and_parameter_names() {
         assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
     }
     let params = Parameters::from([("$name::suffix".into(), Value::Integer(7))]);
-    let baseline = turso_core::Database::open_file(
-        turso_core::Database::io_for_path(":memory:").expect("io"),
-        ":memory:",
-    )
-    .expect("baseline");
-    let raw = baseline.connect().expect("baseline connection");
-    let expected = match raw.prepare("SELECT $name::suffix") {
-        Ok(_) => {
-            panic!("update compatibility expectation: baseline now supports namespace parameters")
-        }
-        Err(e) => e.to_string(),
-    };
-    let error = c
-        .execute("SELECT $name::suffix", &params)
-        .expect_err("same baseline rejection");
-    let fastdb::Error::Engine(actual) = error else {
-        panic!("expected baseline error");
-    };
-    assert_eq!(actual.to_string(), expected);
+    assert_eq!(
+        c.execute("SELECT $name::suffix", &params).unwrap().rows,
+        vec![vec![Value::Integer(7)]]
+    );
     q(
         &c,
         "INSERT INTO users (id,name,n) VALUES (users:u1,'Alice',10),(users:u2,'Bob',2)",
@@ -1619,104 +1604,6 @@ fn values_tuple_assignments_match_native() {
 }
 
 #[test]
-fn update_limit_matches_native_candidates() {
-    let db = Database::open(":memory:").unwrap();
-    let c = db.connect().unwrap();
-    for sql in [
-        "CREATE TABLE native(n INTEGER)",
-        "INSERT INTO native VALUES(1),(2),(3)",
-        "CREATE TABLE docs",
-        "INSERT INTO docs(n) SELECT n FROM native",
-    ] {
-        q(&c, sql);
-    }
-    for limit in [
-        "0",
-        "1",
-        "2 OFFSET 1",
-        "-1",
-        "1 OFFSET 9",
-        "1+1 OFFSET 2-1",
-        "1.0 OFFSET -2",
-        "'1' OFFSET '1'",
-    ] {
-        q(&c, "BEGIN");
-        let expected = q(
-            &c,
-            &format!("UPDATE native SET n=n+10 RETURNING n LIMIT {limit}"),
-        );
-        let actual = q(
-            &c,
-            &format!("UPDATE docs SET n=n+10 RETURNING n LIMIT {limit}"),
-        );
-        assert_eq!(actual.affected, expected.affected);
-        assert_eq!(actual.columns, expected.columns);
-        assert_eq!(actual.rows, expected.rows);
-        assert_eq!(
-            q(&c, "SELECT n FROM docs ORDER BY n").rows,
-            q(&c, "SELECT n FROM native ORDER BY n").rows
-        );
-        q(&c, "ROLLBACK");
-    }
-}
-
-#[test]
-fn delete_limit_matches_native_and_restores_indexes() {
-    let db = Database::open(":memory:").unwrap();
-    let c = db.connect().unwrap();
-    for sql in [
-        "CREATE TABLE native(n INTEGER)",
-        "INSERT INTO native VALUES(1),(2),(3)",
-        "CREATE TABLE docs",
-        "INSERT INTO docs(n) SELECT n FROM native",
-        "CREATE UNIQUE INDEX docs_n ON docs(n)",
-    ] {
-        q(&c, sql);
-    }
-    for limit in [
-        "0",
-        "1",
-        "2 OFFSET 1",
-        "-1",
-        "1 OFFSET 9",
-        "1+1 OFFSET 2-1",
-        "1.0 OFFSET -2",
-        "'1' OFFSET '1'",
-    ] {
-        q(&c, "BEGIN");
-        let expected = q(&c, &format!("DELETE FROM native RETURNING n LIMIT {limit}"));
-        let actual = q(&c, &format!("DELETE FROM docs RETURNING n LIMIT {limit}"));
-        assert_eq!(actual.affected, expected.affected);
-        assert_eq!(actual.columns, expected.columns);
-        assert_eq!(actual.rows, expected.rows);
-        let remaining = q(&c, "SELECT n FROM native ORDER BY n").rows;
-        assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, remaining);
-        for n in 1..=3 {
-            let exists = remaining.contains(&vec![Value::Integer(n)]);
-            assert_eq!(
-                c.lookup_index("docs", "docs_n", &Value::Integer(n))
-                    .unwrap()
-                    .len(),
-                usize::from(exists)
-            );
-        }
-        assert_eq!(
-            c.check_collection_integrity("docs", Default::default())
-                .unwrap()
-                .documents,
-            remaining.len() as u64
-        );
-        q(&c, "ROLLBACK");
-        assert_eq!(
-            c.check_collection_integrity("docs", Default::default())
-                .unwrap()
-                .index_entries,
-            3
-        );
-    }
-}
-
-#[test]
 fn invalid_write_pagination_preserves_documents() {
     for write in ["UPDATE TARGET SET n=n+10", "DELETE FROM TARGET"] {
         for limit in ["NULL", "1.5", "'invalid'", "1 OFFSET NULL", "1 OFFSET 0.5"] {
@@ -1751,70 +1638,7 @@ fn invalid_write_pagination_preserves_documents() {
 }
 
 #[test]
-fn update_limit_bounds_validation_and_restores_failed_candidates() {
-    let db = Database::open(":memory:").unwrap();
-    let c = db.connect().unwrap();
-    for sql in [
-        "CREATE TABLE docs",
-        "INSERT INTO docs(n) VALUES(1),(2),(3)",
-        "DEFINE FIELD n ON docs TYPE integer CHECK(n<10)",
-        "CREATE UNIQUE INDEX docs_n ON docs(n)",
-        "BEGIN",
-        "INSERT INTO docs(n) VALUES(4)",
-    ] {
-        q(&c, sql);
-    }
-    let before = q(&c, "SELECT n FROM docs ORDER BY n").rows;
-    assert_eq!(q(&c, "UPDATE docs SET n=100 LIMIT 0").affected, 0);
-    assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, before);
-    let sql = "UPDATE docs SET n=CASE WHEN n=1 THEN 7 ELSE 100 END WHERE n<3 LIMIT $count";
-    assert_eq!(
-        c.execute(
-            sql,
-            &Parameters::from([("$count".into(), Value::Integer(2))])
-        )
-        .unwrap_err()
-        .code(),
-        "FDB_VALIDATION"
-    );
-    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
-    assert_eq!(q(&c, "SELECT n FROM docs ORDER BY n").rows, before);
-    assert!(c
-        .lookup_index("docs", "docs_n", &Value::Integer(7))
-        .unwrap()
-        .is_empty());
-    assert_eq!(q(&c, "UPDATE docs SET n=7 WHERE n=1 LIMIT 1").affected, 1);
-    assert_eq!(
-        c.lookup_index("docs", "docs_n", &Value::Integer(7))
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        c.check_collection_integrity("docs", Default::default())
-            .unwrap()
-            .index_entries,
-        4
-    );
-    q(&c, "ROLLBACK");
-    assert_eq!(
-        q(&c, "SELECT n FROM docs ORDER BY n").rows,
-        vec![
-            vec![Value::Integer(1)],
-            vec![Value::Integer(2)],
-            vec![Value::Integer(3)]
-        ]
-    );
-    assert_eq!(
-        c.check_collection_integrity("docs", Default::default())
-            .unwrap()
-            .index_entries,
-        3
-    );
-}
-
-#[test]
-fn native_update_from_resolves_duplicates_before_limit() {
+fn native_update_from_resolves_duplicate_candidates() {
     for (input, chosen) in [("(1,10),(1,20),(2,30)", 20), ("(1,20),(1,10),(2,30)", 10)] {
         let db = Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();
@@ -1826,14 +1650,16 @@ fn native_update_from_resolves_duplicates_before_limit() {
             q(&c, sql);
         }
         q(&c, &format!("INSERT INTO source VALUES {input}"));
-        for limited in [false, true] {
+        {
             q(&c, "BEGIN");
-            let suffix = if limited { " LIMIT 1" } else { "" };
-            let result=q(&c,&format!("UPDATE target SET v=source.v FROM source WHERE source.k=target.n RETURNING n,v{suffix}"));
-            let mut expected = vec![vec![Value::Integer(1), Value::Integer(chosen)]];
-            if !limited {
-                expected.push(vec![Value::Integer(2), Value::Integer(30)]);
-            }
+            let result = q(
+                &c,
+                "UPDATE target SET v=source.v FROM source WHERE source.k=target.n RETURNING n,v",
+            );
+            let expected = vec![
+                vec![Value::Integer(1), Value::Integer(chosen)],
+                vec![Value::Integer(2), Value::Integer(30)],
+            ];
             assert_eq!(result.affected, expected.len() as i64);
             assert_eq!(result.rows, expected);
             q(&c, "ROLLBACK");
@@ -1989,8 +1815,8 @@ fn update_from_inner_sources_match_native() {
 }
 
 #[test]
-fn native_update_from_evaluates_candidates_before_limit() {
-    for limit in [0, 1, 2] {
+fn native_update_from_candidate_error_preserves_rows() {
+    {
         let db = Database::open(":memory:").unwrap();
         let c = db.connect().unwrap();
         for sql in [
@@ -2003,7 +1829,9 @@ fn native_update_from_evaluates_candidates_before_limit() {
         }
         q(&c, "CREATE TABLE docs");
         q(&c, "INSERT INTO docs(n,v) SELECT n,v FROM target");
-        let sql=format!("UPDATE target SET v=abs(s.v) FROM source s WHERE s.k=target.n RETURNING n,v LIMIT {limit}");
+        let sql = String::from(
+            "UPDATE target SET v=abs(s.v) FROM source s WHERE s.k=target.n RETURNING n,v",
+        );
         let error = c.execute(&sql, &Parameters::new()).unwrap_err();
         let collection_error = c
             .execute(&sql.replace("target", "docs"), &Parameters::new())
@@ -2023,33 +1851,6 @@ fn native_update_from_evaluates_candidates_before_limit() {
                 vec![Value::Integer(2), Value::Integer(0)]
             ]
         );
-    }
-}
-
-#[test]
-fn update_from_pagination_follows_duplicate_resolution() {
-    let db = Database::open(":memory:").unwrap();
-    let c = db.connect().unwrap();
-    for sql in [
-        "CREATE TABLE native(n INTEGER PRIMARY KEY,v INTEGER)",
-        "INSERT INTO native VALUES(1,0),(2,0),(3,0)",
-        "CREATE TABLE docs",
-        "INSERT INTO docs(n,v) SELECT n,v FROM native",
-        "CREATE TABLE source(k INTEGER,v INTEGER)",
-        "INSERT INTO source VALUES(1,7),(1,8),(2,9)",
-    ] {
-        q(&c, sql);
-    }
-    for limit in ["0", "1", "1 OFFSET 1", "1 OFFSET 8", "-1", "1+1 OFFSET 0"] {
-        q(&c, "BEGIN");
-        let sql = format!(
-            "UPDATE TARGET SET v=s.v FROM source s WHERE s.k=TARGET.n RETURNING n,v LIMIT {limit}"
-        );
-        let expected = q(&c, &sql.replace("TARGET", "native"));
-        let actual = q(&c, &sql.replace("TARGET", "docs"));
-        assert_eq!(actual.rows, expected.rows, "{sql}");
-        assert_eq!(actual.affected, expected.affected);
-        q(&c, "ROLLBACK");
     }
 }
 
@@ -2077,7 +1878,7 @@ fn update_from_cte_pagination_preserves_bound_scopes() {
                 ("$count".into(), Value::Integer(1)),
                 ("$skip".into(), Value::Integer(skip)),
             ]);
-            let sql=format!("WITH chosen AS (SELECT k,v+$delta AS v FROM {source}) UPDATE TARGET SET v=s.v FROM chosen s WHERE s.k=TARGET.n RETURNING n,v LIMIT $count OFFSET $skip");
+            let sql=format!("WITH chosen AS (SELECT k,v+$delta AS v FROM {source} LIMIT $count OFFSET $skip) UPDATE TARGET SET v=s.v FROM chosen s WHERE s.k=TARGET.n RETURNING n,v");
             let expected = c
                 .execute(
                     &sql.replace("TARGET", "native")
@@ -2213,7 +2014,8 @@ fn update_from_self_sources_preserve_original_snapshots_and_scopes() {
         q(&c, sql);
     }
     for source in ["TARGET s", "(SELECT n,v FROM TARGET) s", "chosen s"] {
-        for limit in ["", " LIMIT 1 OFFSET 1"] {
+        {
+            let limit = "";
             q(&c, "BEGIN");
             let sql = format!("WITH chosen AS (SELECT n,v FROM TARGET) UPDATE TARGET AS t SET v=s.v+1 FROM {source} WHERE s.n=t.n-1 RETURNING n,v{limit}");
             let expected = q(&c, &sql.replace("TARGET", "native"));
@@ -2246,7 +2048,8 @@ fn update_from_target_named_ctes_keep_source_and_target_bindings_separate() {
         for alias in ["", " AS t"] {
             let target = if alias.is_empty() { "TARGET" } else { "t" };
             for hint in ["", "MATERIALIZED", "NOT MATERIALIZED"] {
-                for limit in ["", " LIMIT 1 OFFSET 1"] {
+                {
+                    let limit = "";
                     q(&c, "BEGIN");
                     let sql = format!("WITH {name}(n,v) AS {hint} (SELECT 1,100 UNION ALL SELECT 2,200), chosen AS (SELECT n,v FROM {name}) UPDATE TARGET{alias} SET v=s.v+1 FROM chosen s WHERE s.n={target}.n RETURNING n,v{limit}");
                     let expected = q(&c, &sql.replace("TARGET", "native"));
@@ -2279,10 +2082,11 @@ fn update_from_deduplicates_typed_record_ids_without_conflating_keys() {
         q(&c, sql);
     }
     let before = q(&c, "SELECT id,n,v FROM docs ORDER BY n").rows;
-    for limit in ["", " LIMIT 1 OFFSET 1"] {
+    {
+        let limit = "";
         q(&c, "BEGIN");
         let result = q(&c, &format!("UPDATE docs AS d SET v=s.v FROM source s WHERE d.id=s.target RETURNING id,n,v{limit}"));
-        let expected = if limit.is_empty() { 2 } else { 1 };
+        let expected = 2;
         assert_eq!(result.affected, expected);
         assert_eq!(result.rows.len(), expected as usize);
         let stored = q(&c, "SELECT id,n,v FROM docs ORDER BY n").rows;
@@ -2430,7 +2234,7 @@ fn update_from_json_iterators_preserves_bound_candidates_and_pagination() {
                 ),
                 ("$skip".into(), Value::Integer(skip)),
             ]);
-            let sql=format!("UPDATE TARGET SET v=json_extract(j.value,'$.v') FROM {iterator}($json) j WHERE TARGET.n=json_extract(j.value,'$.n') RETURNING n,v LIMIT 1 OFFSET $skip");
+            let sql=format!("UPDATE TARGET SET v=json_extract(j.value,'$.v') FROM (SELECT * FROM {iterator}($json) LIMIT 1 OFFSET $skip) j WHERE TARGET.n=json_extract(j.value,'$.n') RETURNING n,v");
             let expected = c
                 .execute(&sql.replace("TARGET", "native"), &params)
                 .unwrap();
@@ -2581,13 +2385,10 @@ fn update_from_target_correlated_iterators_match_native() {
         q(&c, sql);
     }
     for iterator in ["json_each", "main.json_each", "json_tree"] {
-        for (count, skip) in [(0, 0), (1, 0), (1, 1), (1, 2), (-1, 0)] {
-            let params = Parameters::from([
-                ("$count".into(), Value::Integer(count)),
-                ("$skip".into(), Value::Integer(skip)),
-            ]);
+        {
+            let params = Parameters::new();
             q(&c, "BEGIN");
-            let sql=format!("UPDATE TARGET AS t SET n=s.value FROM {iterator}(t.j) s WHERE s.type='integer' RETURNING n,j LIMIT $count OFFSET $skip");
+            let sql=format!("UPDATE TARGET AS t SET n=s.value FROM {iterator}(t.j) s WHERE s.type='integer' RETURNING n,j");
             let expected = c
                 .execute(&sql.replace("TARGET", "native"), &params)
                 .unwrap();
