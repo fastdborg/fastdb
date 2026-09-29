@@ -2,6 +2,7 @@
 
 Status: user approved the focused core fix on 2026-09-30.
 Approved patch SHA-256: `8de9b128f9d6bbb85d1cd9a12b1f3eedc15092ff667b969afa9fab3f431dec7c`.
+Isolated integration commit: `8b1e54e2796e71b39f8061f178f685bfdd25c3d2`.
 Upstream base: `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.
 
 ## Gap and failure

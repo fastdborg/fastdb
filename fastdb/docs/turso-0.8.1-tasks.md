@@ -88,3 +88,13 @@ The old database fixture comes from the actual published FastDB 2.1.0 binary;
 [its receipt](../tests/fixtures/README.md) records both archive and database hashes.
 The user selected upstream rejection of trailing DML LIMIT and separately
 approved [the exact FTS cursor patch](proposals/turso-081-fts-savepoint.md).
+
+## Committed source identity
+
+- Ancestry-preserving upstream merge: `8b3ef9a43e0e94bac05d3a26a305ee64324329af`.
+- Separately approved FTS core fix and raw regression:
+  `8b1e54e2796e71b39f8061f178f685bfdd25c3d2`.
+- The tested combined source is the latter commit. Subsequent receipt-only
+  changes do not alter the tested implementation. Both original FastDB ancestry
+  and the exact upstream release commit are ancestors; merge the sync PR with
+  a merge commit, never squash/rebase-merge it.
