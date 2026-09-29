@@ -2570,6 +2570,11 @@ impl Pager {
             "memory IO should complete immediately"
         );
 
+        // Release cursor page-stack pins before truncating pages allocated after
+        // the savepoint. Retained index-method cursors can still reference those
+        // pages even though their statements have finished.
+        self.invalidate_all_cursors();
+
         // Discard all dirty pages allocated after the savepoint. These pages
         // are never subjournaled (see subjournal_page_if_required), so the loop
         // above won't encounter them. We must clean them from dirty_pages before
@@ -2603,9 +2608,6 @@ impl Pager {
                     ))
                 })?;
         }
-
-        // saveAllCursors at sqlite3BtreeSavepoint (btree.c:4580).
-        self.invalidate_all_cursors();
 
         Ok(())
     }

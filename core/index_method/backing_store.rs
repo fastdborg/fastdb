@@ -318,14 +318,17 @@ impl BackingStore {
     pub fn open_cursor(&self) -> Result<Box<dyn CursorTrait>> {
         let connection = self.connection()?;
         let pager = connection.get_pager_from_database_index(&self.database_id)?;
-        let mut cursor = BTreeCursor::new(
+        let mut cursor = Box::new(BTreeCursor::new(
             pager,
             btree_root_page(&connection, self.database_id, self.root_page),
             self.index_info.num_cols,
-        );
+        ));
         cursor.index_info = Some(Arc::clone(&self.index_info));
+        // The stable allocation participates in pager rollback invalidation.
+        // Transaction-retained index cursors must release pins before truncation.
+        cursor.register_with_pager();
         let Some(binding) = &self.mvcc else {
-            return Ok(Box::new(cursor));
+            return Ok(cursor);
         };
         Ok(Box::new(MvCursor::new(
             Arc::clone(&binding.mv_store),
@@ -333,7 +336,7 @@ impl BackingStore {
             binding.tx_id,
             self.root_page,
             MvccCursorType::Index(Arc::clone(&self.index_info)),
-            Box::new(cursor),
+            cursor,
         )?))
     }
 

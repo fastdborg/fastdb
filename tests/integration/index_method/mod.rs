@@ -7009,3 +7009,37 @@ fn test_fts_cache_preserves_connection_snapshots(tmp_db: TempDatabase) {
     assert_eq!(limbo_exec_rows(&writer, query), committed);
     assert_eq!(limbo_exec_rows(&reader, query), committed);
 }
+
+// Retained FTS backing cursors must release pins before savepoint truncation.
+#[cfg(all(feature = "fts", not(target_family = "wasm")))]
+#[turso_macros::test]
+fn test_fts_bulk_build_savepoint_releases_page_pins(tmp_db: TempDatabase) {
+    let conn = tmp_db.connect_limbo();
+    conn.execute("CREATE TABLE savepoint_docs(id INTEGER PRIMARY KEY, body TEXT)")
+        .unwrap();
+    conn.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1001) INSERT INTO savepoint_docs SELECT x, 'common document ' || x FROM n").unwrap();
+    conn.execute("BEGIN").unwrap();
+    conn.execute("INSERT INTO savepoint_docs VALUES(2000,'prior work')")
+        .unwrap();
+    conn.execute("SAVEPOINT build").unwrap();
+    conn.execute("CREATE INDEX savepoint_fts ON savepoint_docs USING fts(body)")
+        .unwrap();
+    let query = "SELECT id FROM savepoint_docs WHERE fts_match(body,'common') LIMIT -1";
+    assert_eq!(limbo_exec_rows(&conn, query).len(), 1001);
+    conn.execute("ROLLBACK TO build").unwrap();
+    conn.execute("RELEASE build").unwrap();
+    conn.execute("COMMIT").unwrap();
+    assert_eq!(
+        limbo_exec_rows(&conn, "SELECT count(*) FROM savepoint_docs"),
+        vec![vec![rusqlite::types::Value::Integer(1002)]]
+    );
+    assert!(limbo_exec_rows(
+        &conn,
+        "SELECT name FROM sqlite_schema WHERE name='savepoint_fts'"
+    )
+    .is_empty());
+    assert_eq!(
+        limbo_exec_rows(&conn, "PRAGMA integrity_check"),
+        vec![vec![rusqlite::types::Value::Text("ok".into())]]
+    );
+}
