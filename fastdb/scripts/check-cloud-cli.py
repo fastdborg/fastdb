@@ -47,7 +47,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if mode == 'read-failed':
                 status, result = 503, {'error': 'read unavailable'}
             else:
-                result = {'requestId': value['requestId'], 'sequence': value['expectedSequence']+1, 'results': []}
+                result = {'requestId': value['requestId'], 'sequence': value['afterSequence']+(3 if mode == 'intervening' else 1), 'results': []}
         elif self.path.endswith('/query'):
             query_attempts.append(value)
             if mode == 'retry' and len(query_attempts) == 1:
@@ -55,7 +55,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif mode == 'unresolved':
                 status, result = (503 if len(query_attempts) == 1 else 409), {'error': 'unknown outcome'}
             else:
-                result = {'requestId': value['requestId'], 'sequence': value['expectedSequence']+1, 'results': []}
+                result = {'requestId': value['requestId'], 'sequence': value['afterSequence']+(3 if mode == 'intervening' else 1), 'results': []}
         if self.path.endswith(('/read', '/query')) and mode in ['lost', 'replay', 'wrong-reply']:
             saved = receipts.get(value['requestId'])
             if saved:
@@ -101,7 +101,7 @@ try:
         assert requests[-1][:2] == (method, path)
     run(['db', 'access', database], "SELECT 1;\nSELECT\n2;\n.quit\n")
     assert len(query_attempts) == 2
-    assert all(q['expectedSequence'] == 7 for q in query_attempts)
+    assert all(q['afterSequence'] == 7 for q in query_attempts)
     assert len({q['requestId'] for q in query_attempts}) == 2
     run(['db', 'access', database], 'SELECT 1; SELECT 2;\n.quit\n')
     assert len(query_attempts[-1]['statements']) == 2
@@ -113,7 +113,7 @@ try:
         assert len(requests)==before+2, 'tracked read gets sequence then submits once'
         method, path, body=requests[-1]
         assert method=='POST' and path==f'{base}/{database}/read'
-        assert set(body)=={'statements','requestId','expectedSequence'} and len(body['statements'])==2
+        assert set(body)=={'statements','requestId','afterSequence'} and len(body['statements'])==2
         assert json.loads(result.stdout)['sequence']==8
         assert journal.stat().st_mode&0o077==0 and key not in journal.read_text()
         assert json.loads(journal.read_text())['request']==body
@@ -129,7 +129,7 @@ try:
             sequence=50;mode='replay';before=len(requests)
             result=run(['db','retry',str(journal)])
             assert len(requests)==before+1 and requests[-1][2]==original['request']
-            assert json.loads(result.stdout)['sequence']==original['request']['expectedSequence']+1
+            assert json.loads(result.stdout)['sequence']==original['request']['afterSequence']+1
             assert json.loads(journal.read_text())==original
             before=len(requests)
             run(['db','retry',str(journal)],success=False,settings={**env,'FASTDB_ORGANIZATION_ID':str(uuid.uuid4())})
@@ -139,8 +139,16 @@ try:
         mode='read-failed';before=len(requests)
         run(['db','read',database,str(directory/'failed.json')],'SELECT 1;',success=False)
         assert len(requests)==before+2, 'failed read must not retry automatically'
+        legacy=json.loads((directory/'read.json').read_text());legacy['version']=1
+        legacy['request']['expectedSequence']=legacy['request'].pop('afterSequence')
+        (directory/'legacy.json').write_text(json.dumps(legacy));before=len(requests)
+        run(['db','retry',str(directory/'legacy.json')],success=False)
+        assert len(requests)==before, 'old journals must be reconciled before cutover, not translated'
         (directory/'huge.json').write_text('x'*(70*1024));before=len(requests)
         run(['db','retry',str(directory/'huge.json')],success=False);assert len(requests)==before
+    mode='intervening'
+    run(['db','access',database], 'SELECT 1;\n.quit\n')
+    mode='normal'
     sequence=7
     query_attempts.clear()
     mode = 'retry'

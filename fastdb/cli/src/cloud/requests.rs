@@ -8,7 +8,7 @@ const MAX_SEQUENCE: u64 = 9_007_199_254_740_990;
 
 fn validate_body(body: &Value) -> Result<()> {
     canonical_uuid(body["requestId"].as_str().ok_or("Missing request ID")?)?;
-    if body["expectedSequence"]
+    if body["afterSequence"]
         .as_u64()
         .is_none_or(|s| s > MAX_SEQUENCE)
         || body.as_object().map(|o| o.len()) != Some(3)
@@ -32,10 +32,11 @@ fn validate_body(body: &Value) -> Result<()> {
 }
 pub(super) fn confirmed(body: &Value, reply: &Value) -> bool {
     reply["requestId"] == body["requestId"]
-        && reply["sequence"].as_u64()
-            == body["expectedSequence"]
-                .as_u64()
-                .and_then(|n| n.checked_add(1))
+        && body["afterSequence"].as_u64().is_some_and(|after| {
+            reply["sequence"].as_u64().is_some_and(|sequence| {
+                sequence <= MAX_SEQUENCE + 1 && sequence > after && sequence - after <= 64
+            })
+        })
         && reply["results"].is_array()
 }
 pub(super) fn sequence(cloud: &Cloud, id: &str) -> Result<u64> {
@@ -55,7 +56,7 @@ fn dispatch(cloud: &Cloud, value: &Value) -> Result<ExitCode> {
         .as_str()
         .ok_or("Missing database UUID")?;
     let op = value["operation"].as_str().ok_or("Missing operation")?;
-    if value["version"] != 1
+    if value["version"] != 2
         || value["kind"] != "cloud-request"
         || value["origin"] != cloud.origin.as_str()
         || value["organizationId"] != cloud.organization()?
@@ -84,7 +85,7 @@ fn dispatch(cloud: &Cloud, value: &Value) -> Result<ExitCode> {
         Err(error) => {
             // The immutable journal can have earlier unknown dispatches. A new
             // rejection must never be presented as proof that they rolled back.
-            cloud.output(&json!({"error":error.message,"outcome":"unresolved","requestId":body["requestId"],"expectedSequence":body["expectedSequence"]}))?;
+            cloud.output(&json!({"error":error.message,"outcome":"unresolved","requestId":body["requestId"],"afterSequence":body["afterSequence"]}))?;
             Ok(ExitCode::FAILURE)
         }
     }
@@ -102,12 +103,12 @@ pub(super) fn start(cloud: &Cloud, operation: &str, id: &str, path: &str) -> Res
         return Err("Cloud input exceeds 64 KiB".into());
     }
     let statements = fastql_parser::split_script(&sql).map_err(|_| "Invalid SQL/FastQL script")?;
-    let mut body = json!({"requestId":uuid::Uuid::new_v4().to_string(),"expectedSequence":0,
+    let mut body = json!({"requestId":uuid::Uuid::new_v4().to_string(),"afterSequence":0,
         "statements":statements.iter().map(|s|json!({"sql":s.sql})).collect::<Vec<_>>()});
     validate_body(&body)?;
-    body["expectedSequence"] = json!(sequence(cloud, id)?);
+    body["afterSequence"] = json!(sequence(cloud, id)?);
     validate_body(&body)?;
-    let value = json!({"version":1,"kind":"cloud-request","origin":cloud.origin.as_str(),"organizationId":cloud.organization()?,
+    let value = json!({"version":2,"kind":"cloud-request","origin":cloud.origin.as_str(),"organizationId":cloud.organization()?,
         "databaseId":id,"operation":operation,"request":body});
     journal::save(path, &value)?;
     dispatch(cloud, &value)
