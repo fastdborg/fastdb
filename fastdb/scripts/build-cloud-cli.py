@@ -91,6 +91,7 @@ def main():
             run(sys.executable, "fastdb/scripts/" + script, str(binary), stdout=log, stderr=subprocess.STDOUT)
     for source, destination in (
         ("LICENSE.md", "LICENSE.md"), ("fastdb/docs/cloud-cli.md", "CLOUD-CLI.md"),
+        ("fastdb/docs/cloud-query-protocol-v2.md", "cloud-query-protocol-v2.md"),
         (notices, "notices/CRATE-NOTICES.md"),
         ("fastdb/bindings/node/THIRD_PARTY_NOTICES.md", "notices/THIRD_PARTY_NOTICES.md"),
         ("fastdb/bindings/node/RUST-LIBRARY-NOTICES.html", "notices/RUST-LIBRARY-NOTICES.html"),
