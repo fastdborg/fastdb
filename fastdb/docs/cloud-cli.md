@@ -6,7 +6,7 @@ From a clean committed engine checkout, with Rust 1.88.0, Node 24, Python 3.12+
 and the locked Cargo cache available:
 
 ```sh
-CARGO_BUILD_JOBS=2 python3 fastdb/scripts/build-cloud-cli.py /tmp/fastdb-cloud-cli-0.4.0
+/home/tan/Sites/fastdb/scripts/fastdb-heavy python3 fastdb/scripts/build-cloud-cli.py /home/tan/fastdb-cloud-cli-0.4.0-read-v2
 ```
 
 The output directory must be new. The builder verifies the CLI dependency/notice
@@ -14,6 +14,11 @@ records, uses the checked `fastdb-production` profile, tests the stripped binary
 against both synthetic Cloud protocol harnesses, and packages source, notices,
 checksums and build evidence. The embedded CLI version remains 2.1.0; this separate
 candidate targets Cloud protocol 0.4.0 and does not replace published V2 artifacts.
+The archive is `fastdb-cloud-cli-0.4.0-read-v2-linux-x64.tar.gz`; its manifest
+records read protocol version 2, read journal version 3 and query journal version 2.
+The original `fastdb-cloud-cli-0.4.0-linux-x64.tar.gz` uses the historical read
+format and is incompatible with current beta reads. Keep old uncertain journals
+for reconciliation rather than translating them.
 `SOURCE_DATE_EPOCH` defaults to the source commit timestamp; an explicit nonnegative
 value is honored and recorded for reproducible builds. The candidate still needs
 acceptance against the native Cloud service and release qualification before
@@ -62,25 +67,29 @@ fastdb cloud db retry write.json
 `read` needs `read` scope; `query` needs `read` and `query`. Both parse up to 32
 SQL/FastQL statements in at most 64 KiB of encoded request data. The server's native
 read endpoint enforces read-only execution; the CLI does not infer safety from a
-SQL prefix. Read and query requests both use durable request IDs and an immutable
-`afterSequence` lower bound. Independent operations can share this position;
-each committed response must advance it by at most 64 positions. A tracked read
-advances the receipt sequence without changing customer rows.
+SQL prefix. Read requests send `readVersion: 2`. Every read attempt executes a
+fresh snapshot, including a retry with the same correlation ID. `afterSequence`
+requires visibility of acknowledged writes; the returned sequence is a confirmed
+causal lower bound and may equal it. Reads do not allocate commit positions.
+Queries retain durable request IDs and replay; committed query responses advance
+their lower bound by at most 64 positions.
 
 Before submission, the CLI reads the database sequence, creates a fixed request ID,
 and atomically saves a new journal containing the endpoint, organization, database,
 operation, exact SQL statements and `afterSequence`. Query journals use version 2;
-old version-1 journals are rejected before dispatch. It syncs the file and parent
+read journals use version 3. Old read journals and version-1 query journals are
+rejected before dispatch. It syncs the file and parent
 directory before sending the data request. Existing journals are never overwritten.
 The journal defaults to owner-only permissions; it **contains SQL**, which can
 include sensitive values, but no API credential is added. Keep it out of source
 control. Choose a new journal only for an intentionally new operation.
 
 After any uncertain reply or process interruption, `db retry JOURNAL` replays the
-saved request without refreshing its sequence or reading new SQL. A successful
-read replay returns its retained rows even if later writes changed the database.
-The response ID must match and its sequence must be within the original retry
-window before the command reports success.
+saved request without refreshing its lower bound or reading new SQL. Read retries
+execute again and may return newer rows. Each attempt has its own quota hold; loss
+of metrics can leave the maximum reservation unknown. Writes replay their retained
+result without executing again. Response IDs and the versioned causal/replay
+position must validate before the command reports success.
 Mismatched endpoints/organizations, malformed journals and unconfirmed responses
 fail without silently creating a replacement request. A later rejection is not
 proof that an earlier dispatch rolled back. The journal remains on disk after
@@ -174,3 +183,26 @@ Linux x64 is the qualification target. Generic fault tests run with
 private Cloud suite separately exercises the compiled binary with native import,
 restart, queried rows and exactly-once usage. This source change is not a published
 CLI artifact; clean-source packaging and release qualification remain required.
+
+## Database service JWTs
+
+The CLI source accepts a database-scoped JWT in `FASTDB_API_KEY` for `db show`,
+`db read`, `db query`, `db retry`, and `db access`. Set `FASTDB_ORGANIZATION_ID` and
+use the database UUID; the CLI does not infer authority from token claims.
+Read-only tokens use `db read`. Interactive access needs both read and query.
+A database token survives removal of its creator; explicit revocation, expiry
+and database deletion prevent new requests. Already-authorized requests may finish.
+
+An organization credential with manage scope can run:
+
+```
+fastdb cloud db tokens DATABASE_UUID
+fastdb cloud db token-create DATABASE_UUID ISSUANCE_UUID NAME read|write EXPIRES_AT_MS
+fastdb cloud db token-revoke DATABASE_UUID TOKEN_UUID
+```
+
+Choose a fresh UUIDv4 for issuance and a future expiry in Unix milliseconds,
+no more than 90 days away. Retry uncertain creation with exactly the same values.
+Creation returns the secret once as JSON; protect that output. Listing never
+returns secrets. Dashboard Database → Settings → Manage database tokens provides
+30-day tokens. Previously published CLI archives do not include these additions.

@@ -11,7 +11,7 @@ fn validate_body(body: &Value) -> Result<()> {
     if body["afterSequence"]
         .as_u64()
         .is_none_or(|s| s > MAX_SEQUENCE)
-        || body.as_object().map(|o| o.len()) != Some(3)
+        || body.as_object().map(|o| o.len()) != Some(if body["readVersion"] == 2 { 4 } else { 3 })
     {
         return Err("Invalid request identity".into());
     }
@@ -34,7 +34,12 @@ pub(super) fn confirmed(body: &Value, reply: &Value) -> bool {
     reply["requestId"] == body["requestId"]
         && body["afterSequence"].as_u64().is_some_and(|after| {
             reply["sequence"].as_u64().is_some_and(|sequence| {
-                sequence <= MAX_SEQUENCE + 1 && sequence > after && sequence - after <= 64
+                sequence <= MAX_SEQUENCE + 1
+                    && if body["readVersion"] == 2 {
+                        reply["readVersion"] == 2 && sequence >= after
+                    } else {
+                        sequence > after && sequence - after <= 64
+                    }
             })
         })
         && reply["results"].is_array()
@@ -56,7 +61,7 @@ fn dispatch(cloud: &Cloud, value: &Value) -> Result<ExitCode> {
         .as_str()
         .ok_or("Missing database UUID")?;
     let op = value["operation"].as_str().ok_or("Missing operation")?;
-    if value["version"] != 2
+    if value["version"] != (if op == "read" { 3 } else { 2 })
         || value["kind"] != "cloud-request"
         || value["origin"] != cloud.origin.as_str()
         || value["organizationId"] != cloud.organization()?
@@ -69,7 +74,16 @@ fn dispatch(cloud: &Cloud, value: &Value) -> Result<ExitCode> {
     }
     let path = format!("{}/{op}", cloud.database_path(id)?);
     let body = &value["request"];
+    if (op == "read") != (body["readVersion"] == 2) {
+        return Err(
+            "Read journals require version 3 with readVersion 2; each retry runs a fresh snapshot"
+                .into(),
+        );
+    }
     validate_body(body)?;
+    if op == "read" {
+        eprintln!("Read retries execute again and may observe newer committed data.");
+    }
     eprintln!(
         "Request {}. Keep the journal and use db retry after an uncertain reply.",
         body["requestId"]
@@ -105,10 +119,13 @@ pub(super) fn start(cloud: &Cloud, operation: &str, id: &str, path: &str) -> Res
     let statements = fastql_parser::split_script(&sql).map_err(|_| "Invalid SQL/FastQL script")?;
     let mut body = json!({"requestId":uuid::Uuid::new_v4().to_string(),"afterSequence":0,
         "statements":statements.iter().map(|s|json!({"sql":s.sql})).collect::<Vec<_>>()});
+    if operation == "read" {
+        body["readVersion"] = json!(2);
+    }
     validate_body(&body)?;
     body["afterSequence"] = json!(sequence(cloud, id)?);
     validate_body(&body)?;
-    let value = json!({"version":2,"kind":"cloud-request","origin":cloud.origin.as_str(),"organizationId":cloud.organization()?,
+    let value = json!({"version":if operation == "read" { 3 } else { 2 },"kind":"cloud-request","origin":cloud.origin.as_str(),"organizationId":cloud.organization()?,
         "databaseId":id,"operation":operation,"request":body});
     journal::save(path, &value)?;
     dispatch(cloud, &value)
