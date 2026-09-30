@@ -202,7 +202,7 @@ impl Cloud {
                 if let Some(request) = pending {
                     eprintln!(
                         "Unresolved request {} at sequence {}; no new write was submitted",
-                        request["requestId"], request["expectedSequence"]
+                        request["requestId"], request["afterSequence"]
                     );
                     failed = true;
                 }
@@ -248,7 +248,7 @@ impl Cloud {
                 let sequence = requests::sequence(self, id)?;
                 pending_uncertain = false;
                 pending = Some(
-                    json!({ "requestId": uuid::Uuid::new_v4().to_string(), "expectedSequence": sequence,
+                    json!({ "requestId": uuid::Uuid::new_v4().to_string(), "afterSequence": sequence,
                     "statements": statements.iter().map(|statement| json!({"sql": statement.sql})).collect::<Vec<_>>() }),
                 );
                 buffer.clear();
@@ -276,7 +276,7 @@ impl Cloud {
                     pending = None;
                 }
                 Err(error) => {
-                    self.output(&json!({ "error": error.message, "uncertain": pending_uncertain || error.uncertain, "requestId": request["requestId"], "expectedSequence": request["expectedSequence"] }))?;
+                    self.output(&json!({ "error": error.message, "uncertain": pending_uncertain || error.uncertain, "requestId": request["requestId"], "afterSequence": request["afterSequence"] }))?;
                     pending_uncertain |= error.uncertain;
                     if !pending_uncertain {
                         pending = None;

@@ -1,5 +1,13 @@
 # Approved core exception: isolate FTS directory caches by pager
 
+Current status (2026-09-30): **retired in the Turso 0.8.1 sync**. Upstream's
+snapshot-aware FTS implementation replaces this old directory-cache patch.
+Retain `test_fts_cache_preserves_connection_snapshots` and the public concurrent
+FTS tests, but do not reapply the historical patch below. See the
+[current exception audit](../core-exception-audit-2026-09-30.md).
+
+## Historical approval and reproduction (0.7.2)
+
 Status: approved by the user and integrated into the active checkout, 2026-09-25.
 Required for V2-F. This is a transaction correctness fix, not FastQL syntax in core.
 

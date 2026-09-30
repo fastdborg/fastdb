@@ -12788,7 +12788,7 @@ pub fn op_insert(
                 if !flag.has(InsertFlags::SKIP_ALL_CHANGE_COUNTS)
                     && !flag.has(InsertFlags::SKIP_ROW_MUTATION)
                 {
-                    state.record_row_mutation()?;
+                    state.record_cursor_row_mutation(program, *cursor_id)?;
                 }
                 if state.active_op_state.insert().has_dependent_views {
                     if !has_rowid {
@@ -12974,7 +12974,7 @@ pub fn op_delete(
                     && !table_name.is_empty()
                     && table_name != SQLITE_SEQUENCE_TABLE_NAME
                 {
-                    state.record_row_mutation()?;
+                    state.record_cursor_row_mutation(program, *cursor_id)?;
                 }
                 let schema = program.connection.schema.read();
                 let dependent_views = schema.get_dependent_materialized_views(table_name);

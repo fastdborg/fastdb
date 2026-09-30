@@ -1396,10 +1396,8 @@ impl ProgramState {
         self.metrics.rows_read = self.metrics.rows_read.saturating_add(count);
         // Use the compiler's catalog identity, not the cursor's physical root:
         // ephemeral trees can also occupy root page 1 in their own pager.
-        let is_schema = self.execution_meter.is_some()
-            && matches!(program.cursor_ref.get(cursor_id),
-                Some((_, CursorType::BTreeTable(table)))
-                    if table.root_page == 1 && table.name == crate::schema::SCHEMA_TABLE_NAME);
+        let is_schema =
+            self.execution_meter.is_some() && Self::is_schema_cursor(program, cursor_id);
         if self
             .execution_meter
             .as_ref()
@@ -1420,7 +1418,24 @@ impl ProgramState {
     }
 
     #[inline]
-    pub(crate) fn record_row_mutation(&mut self) -> Result<()> {
+    fn is_schema_cursor(program: &Program, cursor_id: CursorID) -> bool {
+        matches!(program.cursor_ref.get(cursor_id),
+            Some((_, CursorType::BTreeTable(table)))
+                if table.root_page == 1 && table.name == crate::schema::SCHEMA_TABLE_NAME)
+    }
+
+    #[inline]
+    pub(crate) fn record_cursor_row_mutation(
+        &mut self,
+        program: &Program,
+        cursor_id: CursorID,
+    ) -> Result<()> {
+        // MVCC cursors expose a logical table ID from root_page(), including
+        // for sqlite_schema. Classify catalog mutations using the same compiler
+        // identity as reads; never charge them as customer row mutations.
+        if Self::is_schema_cursor(program, cursor_id) {
+            return Ok(());
+        }
         if self
             .execution_meter
             .as_ref()

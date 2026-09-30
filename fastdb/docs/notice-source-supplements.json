@@ -307,6 +307,24 @@
       "sourceUrl": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/AUTHORS",
       "sourceSha256": "141e25490cf9e0d3a05374171cb0a42c91a0cf0fb2041ba4c010f466e89b596d",
       "sourceFile": "notice-sources/141e25490cf9e0d3a05374171cb0a42c91a0cf0fb2041ba4c010f466e89b596d.txt"
+    },
+    {
+      "package": "aristo",
+      "version": "0.4.1",
+      "sourceRevision": "b6f9585a26a5ff2064134143aa10c813d2795546",
+      "cratePathInSource": "crates/aristo",
+      "sourceUrl": "https://raw.githubusercontent.com/aretta-ai/aristo/b6f9585a26a5ff2064134143aa10c813d2795546/LICENSE",
+      "sourceSha256": "e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55",
+      "sourceFile": "notice-sources/e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55.txt"
+    },
+    {
+      "package": "aristo-macros",
+      "version": "0.4.1",
+      "sourceRevision": "b6f9585a26a5ff2064134143aa10c813d2795546",
+      "cratePathInSource": "crates/aristo-macros",
+      "sourceUrl": "https://raw.githubusercontent.com/aretta-ai/aristo/b6f9585a26a5ff2064134143aa10c813d2795546/LICENSE",
+      "sourceSha256": "e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55",
+      "sourceFile": "notice-sources/e581d9bf9d912c35c1c4c975edd5bb696ef232e0e193fdcd518257b9dff41e55.txt"
     }
   ],
   "unresolvedSources": [

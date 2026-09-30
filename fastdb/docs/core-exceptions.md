@@ -7,6 +7,30 @@ below tracks upstream replacement candidates; no patch is removed from the
 existing pinned engine merely because a newer upstream revision contains a fix.
 No automatic removal or periodic monitoring is configured.
 
+## Follow-up audit (2026-09-30)
+
+Rechecked every `core/` deviation from 0.8.1 and fetched upstream main at
+`36da5b2e435cb07bba3bed2c7e7eef236b6b2e64`. The two retired overrides remain
+absent; all seven active exceptions still cover missing behavior. No additional
+core patch can be removed based on this comparison. Historical proposal pages
+now state their current retained/partial/retired status before their old review
+records. Full file inventory, replacement criteria, future sync hazards and
+fresh regression evidence are in the
+[follow-up audit](core-exception-audit-2026-09-30.md).
+
+## MVCC metering follow-up (2026-09-30)
+
+Default-on Cloud qualification exposed an outdated assumption in the retained
+execution-metering exception: MVCC cursors return a logical table ID from
+`root_page()`, so physical root 1 cannot identify catalog mutations. The Insert
+and Delete meter hooks now use the same compiler catalog identity as schema-read
+attribution. DDL catalog writes consume no customer mutation budget; inserted,
+copied and deleted customer rows still count. This adapts the existing approved
+exception without changing upstream change counters or transaction lifecycle.
+The regression is `mvcc_schema_writes_do_not_consume_customer_mutation_budgets`
+in `schema_meter.rs`; final milestone validation is recorded in the follow-up
+audit.
+
 ## Upstream sync: Turso 0.8.1 (2026-09-30)
 
 Candidate upstream commit: `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.

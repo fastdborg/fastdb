@@ -401,3 +401,50 @@ fn native_ddl_distinguishes_schema_changes_from_row_rewrites() {
         assert!(work.vm_steps > 0);
     }
 }
+
+#[test]
+fn mvcc_schema_writes_do_not_consume_customer_mutation_budgets() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = open(dir.path().join("schema-mvcc.db").to_str().unwrap());
+    c.execute("PRAGMA journal_mode=mvcc").unwrap();
+    for sql in [
+        "CREATE TABLE items(id INTEGER PRIMARY KEY, value TEXT)",
+        "CREATE INDEX items_value ON items(value)",
+        "ALTER TABLE items ADD COLUMN extra INTEGER",
+        "ALTER TABLE items RENAME COLUMN extra TO renamed",
+        "DROP INDEX items_value",
+        "ALTER TABLE items RENAME TO renamed_items",
+    ] {
+        let meter = Arc::new(ExecutionMeter::with_schema_read_limit(
+            ExecutionLimits {
+                max_row_mutations: Some(0),
+                ..Default::default()
+            },
+            None,
+        ));
+        c.set_execution_meter(Some(meter.clone())).unwrap();
+        let result = run(&c, sql);
+        c.set_execution_meter(None).unwrap();
+        assert!(result.is_ok(), "{sql}: {result:?}, {:?}", meter.snapshot());
+        assert_eq!(meter.snapshot().row_mutations, 0, "{sql}");
+        assert!(!meter.snapshot().mutation_budget_exhausted);
+    }
+    // A real inserted row must still count, including before the first checkpoint
+    // when the new table is represented solely by an MVCC table identity.
+    let work = measure(&c, "INSERT INTO renamed_items VALUES(1,'one',1)", true);
+    assert_eq!(work.row_mutations, 1);
+    let work = measure(
+        &c,
+        "CREATE TABLE copied AS SELECT * FROM renamed_items",
+        true,
+    );
+    assert_eq!(work.row_mutations, 1);
+    assert_eq!(work.rows_read, 1);
+    let work = measure(&c, "DELETE FROM copied WHERE id=1", true);
+    assert_eq!(work.row_mutations, 1);
+    assert_eq!(measure(&c, "DROP TABLE copied", true).row_mutations, 0);
+    assert_eq!(
+        measure(&c, "DROP TABLE renamed_items", true).row_mutations,
+        0
+    );
+}

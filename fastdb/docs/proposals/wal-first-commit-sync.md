@@ -1,5 +1,13 @@
 # Core review: sync prepared commit frames in FULL mode
 
+Current status (2026-09-30): **retired in the Turso 0.8.1 sync**. Upstream now
+includes prepared frames in the FULL-mode sync decision. Keep the first-commit
+sync regression; do not reapply the historical patch below. The separate
+checkpoint pending-completion fix remains necessary. See the
+[current exception audit](../core-exception-audit-2026-09-30.md).
+
+## Historical approval and reproduction (0.7.2)
+
 Status: approved by the user on 2026-09-25 and integrated unchanged in isolated
 commit `fe2ccd404e005a198fac5365712cacaa54d47a2c`. The commit's two-file diff
 matches the reviewed patch SHA-256 below. The integrated native sync probe and

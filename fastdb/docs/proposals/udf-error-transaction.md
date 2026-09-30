@@ -1,5 +1,13 @@
 # Proposed core exception: preserve transactions on scalar read errors
 
+Current status (2026-09-30): **approved, retained and adapted to Turso 0.8.1**.
+Read-only scalar extension failures still require the local cleanup exception to
+preserve caller transactions and savepoints. The earlier pending/release-gate
+wording below is historical; see the
+[current exception audit](../core-exception-audit-2026-09-30.md).
+
+## Historical approval and reproduction (0.7.2)
+
 Current status: explicitly approved by the user and integrated in isolated commit
 `f26014f04de4077a49268fd94c37ff9ad6ad6425`. The original review and candidate-only evidence below are retained
 as history. Subsequent pending/unintegrated wording describes that earlier state.
