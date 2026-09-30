@@ -1,5 +1,13 @@
 # Core review: FTS backing-storage integrity and cleanup
 
+Current status (2026-09-30): **partially retained on Turso 0.8.1**. The remaining
+implementation excludes backing indexes from logical row-count comparisons and
+includes their roots in DROP TABLE teardown. Upstream supplies other portions of
+the old patch. The historical three-file patch below is not the current diff;
+see the [current exception audit](../core-exception-audit-2026-09-30.md).
+
+## Historical approval and reproduction (0.7.2)
+
 Status: separately approved by the user on 2026-09-25 and integrated unchanged in
 isolated commit `12109384ad868dd673a572305d45a816baa2e545`. Its three-file diff
 matches the reviewed patch SHA-256 below. Integrated native storage and V1

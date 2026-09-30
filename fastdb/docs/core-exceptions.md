@@ -7,6 +7,17 @@ below tracks upstream replacement candidates; no patch is removed from the
 existing pinned engine merely because a newer upstream revision contains a fix.
 No automatic removal or periodic monitoring is configured.
 
+## Follow-up audit (2026-09-30)
+
+Rechecked every `core/` deviation from 0.8.1 and fetched upstream main at
+`36da5b2e435cb07bba3bed2c7e7eef236b6b2e64`. The two retired overrides remain
+absent; all seven active exceptions still cover missing behavior. No additional
+core patch can be removed based on this comparison. Historical proposal pages
+now state their current retained/partial/retired status before their old review
+records. Full file inventory, replacement criteria, future sync hazards and
+fresh regression evidence are in the
+[follow-up audit](core-exception-audit-2026-09-30.md).
+
 ## Upstream sync: Turso 0.8.1 (2026-09-30)
 
 Candidate upstream commit: `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.

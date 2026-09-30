@@ -5,6 +5,7 @@
 - Previous base: `v0.7.2`, commit `046e9cbf67d22491e8ecc941ec2891b02a9f3cad`.
 - Upgrade behavior and validation: [integration notes](docs/turso-0.8.1.md),
   [task checklist](docs/turso-0.8.1-tasks.md), [core exception review](docs/core-exceptions.md).
+- Follow-up override audit: [release and current-main comparison](docs/core-exception-audit-2026-09-30.md).
 - FastDB fork: `git@github.com:fastdborg/fastdb.git` (remote `origin`). Upstream ancestry is preserved; inspect current refs rather than relying on historical branch names.
 - Toolchain: upstream Rust 1.88; locally tested with 1.88.0 on Linux x86_64.
 - Engine dependency: in-workspace `turso_core` with default features plus `conn_raw_api` for engine WAL hooks and `fts` for V2 full-text search. V2 opens opt into index methods; managed search owns the public surface.
