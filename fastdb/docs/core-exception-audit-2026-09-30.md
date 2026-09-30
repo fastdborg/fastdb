@@ -24,7 +24,8 @@ There are 27 changed files under `core/` relative to the release, including one
 regression file. All changes map to the seven maintained exceptions below. No
 undocumented core implementation override was found. Neither the release nor
 the inspected main supplies an equivalent replacement for those seven. No core
-implementation change or upstream-main merge is warranted by this audit.
+implementation change or upstream-main merge was warranted by that comparison.
+The later runtime finding below requires an adaptation of the retained meter.
 
 ## Decisions
 
@@ -107,3 +108,25 @@ edited to suppress it. Documentation links and `git diff --check` also pass.
 
 The historical proposal pages now state their current status before the original
 approval evidence, preventing a future sync from reapplying retired patches.
+
+## Subsequent MVCC catalog-mutation correction
+
+Default-on Cloud customer journeys exposed catalog writes counted as billable
+customer mutations. The old Insert/Delete exclusion relied on cursor physical
+root 1; MVCC exposes a logical table identity instead. Both hooks now pass their
+compiler cursor identity to the existing meter, sharing the schema-read
+classifier. This adapts the approved execution-metering exception. Upstream
+change counts and transaction/view lifecycle remain unchanged.
+
+The new `schema_meter` regression covers CREATE TABLE/INDEX, column/table renames,
+ADD COLUMN and DROP with zero allowed customer mutations, then checks actual
+INSERT, CTAS and DELETE counts. Before the fix CREATE TABLE exhausted the zero
+mutation budget; after the fix the focused meter/0.8.1 suites passed 39 tests.
+The final full scoped command `cargo test --locked -p fastql-parser -p fastdb
+-p fastdb-cli -p fastdb-tests` completed successfully with 834 reported passing
+test executions, zero failures and zero ignored tests (including child-process
+reports). Changed Rust files pass rustfmt and `git diff --check`. The run used two
+build jobs/two test threads under the local 24GiB resource guard after diagnosing
+WSL OOMs from the earlier uncapped build. Its persistent log is
+`/home/tan/fastdb-mvcc-default-fastdb-scoped.log`. Final artifact regeneration and
+Cloud qualification remain separate gates.

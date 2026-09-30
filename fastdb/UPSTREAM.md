@@ -313,3 +313,10 @@ the same event. `fastdb/tests/tests/index_method_meter.rs` covers score-only
 versus deferred table lookups, memory/file databases, exact/crossing/sticky limits,
 caller preservation, queued I/O and managed FTS materialization. Native extension
 posting/traversal work before cursor output remains outside this correction.
+
+The Turso 0.8.1 MVCC follow-up adapts those same Insert/Delete mutation hooks to
+classify `sqlite_schema` through compiler catalog identity. MVCC cursor logical
+table IDs are not physical root pages. The focused `schema_meter` regression
+requires DDL to succeed with a zero customer-mutation budget, while INSERT,
+CREATE TABLE AS SELECT and DELETE still count their real customer rows. This
+changes only the existing execution-metering exception.
