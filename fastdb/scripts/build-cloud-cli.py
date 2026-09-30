@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Linux x64 CLI candidate for Cloud 0.3.0 without replacing V2 releases.
+"""Build a Linux x64 CLI candidate for Cloud 0.4.0 without replacing V2 releases.
 
 Requires a clean committed engine checkout and prepared CLI notice records.
 Publication and acceptance against the Cloud service remain separate steps.
@@ -98,12 +98,12 @@ def main():
     ):
         shutil.copy2(ROOT / source, out / destination)
     (out / "README.md").write_text(
-        "# FastDB CLI for Cloud 0.3.0\n\n"
+        "# FastDB CLI for Cloud 0.4.0\n\n"
         f"Linux x64 candidate from engine commit `{commit}`. The embedded CLI version is {cli['version']}.\n"
-        "This package adds Cloud 0.3.0 organization routing and resumable import/read/query journals.\n"
+        "This package supports Cloud 0.4.0 organization routing, version-2 query journals and resumable imports.\n"
         "It does not replace the published embedded 2.1.0 client release.\n\n"
         "Run `bin/fastdb-cli cloud --help`; see CLOUD-CLI.md for commands and recovery limits.\n"
-        "Use with Cloud 0.3.0; the old 0.2 database routes are not supported by this client.\n"
+        "Use with Cloud 0.4.0; the old 0.2 database routes are not supported by this client.\n"
         "Keep API keys in the environment. Recovery journals retain SQL and request identities.\n\n"
         "The binary uses the checked FastDB production profile with assertions and overflow checks.\n"
         "License and notice texts are included. Verify SHA256SUMS before use.\n"
@@ -112,7 +112,7 @@ def main():
     if capture("git", "rev-parse", "HEAD") != commit or capture("git", "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("Source changed during CLI packaging")
     manifest = {
-        "format": "fastdb-cloud-cli-v1", "cloudCompatibility": "0.3.0", "cliVersion": cli["version"],
+        "format": "fastdb-cloud-cli-v1", "cloudCompatibility": "0.4.0", "cliVersion": cli["version"],
         "sourceCommit": commit, "sourceSnapshot": False, "sourceDateEpoch": int(epoch),
         "sourceArchiveSha256": sha(out / "source.tar.gz"), "lockfileSha256": sha(ROOT / "Cargo.lock"),
         "buildProfile": PROFILE, "rustProfilePolicy": POLICY, "cargoBuildCommand": command,
@@ -127,7 +127,7 @@ def main():
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     packaged = sorted(path for path in out.rglob("*") if path.is_file())
     (out / "SHA256SUMS").write_text("".join(f"{sha(path)}  {path.relative_to(out).as_posix()}\n" for path in packaged))
-    archive = out / "fastdb-cloud-cli-0.3.0-linux-x64.tar.gz"
+    archive = out / "fastdb-cloud-cli-0.4.0-linux-x64.tar.gz"
     with archive.open("wb") as stream, gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=0) as zipped, tarfile.open(fileobj=zipped, mode="w") as tar:
         for path in sorted([*packaged, out / "SHA256SUMS"]):
             info = tar.gettarinfo(str(path), arcname=path.relative_to(out).as_posix())
