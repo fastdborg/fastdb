@@ -312,9 +312,12 @@ fn unsupported_catalog_version_is_rejected() {
     let db = Database::open(path).expect("open");
     let c = db.connect().expect("connect");
     q(&c, "CREATE TABLE users");
-    let engine =
-        turso_core::Database::open_file(turso_core::Database::io_for_path(path).expect("io"), path)
-            .expect("raw engine");
+    let engine = turso_core::Database::open_file(
+        turso_core::Database::io_for_path(path).expect("io"),
+        path,
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .expect("raw engine");
     let raw = engine.connect().expect("raw connection");
     raw.execute("UPDATE __fastdb_catalog SET metadata=json_set(metadata,'$.version',99)")
         .expect("future version fixture");
@@ -573,9 +576,12 @@ fn reopening_rejects_incompatible_physical_collection_storage() {
             .unwrap();
     }
     {
-        let engine =
-            turso_core::Database::open_file(turso_core::Database::io_for_path(path).unwrap(), path)
-                .unwrap();
+        let engine = turso_core::Database::open_file(
+            turso_core::Database::io_for_path(path).unwrap(),
+            path,
+            std::sync::Arc::new(turso_core::SqliteDialect),
+        )
+        .unwrap();
         let raw = engine.connect().unwrap();
         raw.execute("ALTER TABLE __fastdb_c_646f6373 ADD COLUMN extra TEXT")
             .unwrap();
@@ -601,9 +607,12 @@ fn missing_catalog_cannot_hide_persisted_collection_storage() {
             .unwrap();
     }
     {
-        let engine =
-            turso_core::Database::open_file(turso_core::Database::io_for_path(path).unwrap(), path)
-                .unwrap();
+        let engine = turso_core::Database::open_file(
+            turso_core::Database::io_for_path(path).unwrap(),
+            path,
+            std::sync::Arc::new(turso_core::SqliteDialect),
+        )
+        .unwrap();
         let raw = engine.connect().unwrap();
         raw.execute("DROP TABLE __fastdb_catalog").unwrap();
     }
@@ -637,6 +646,7 @@ fn reopening_rejects_missing_indexes_and_unexpected_managed_dependencies() {
             let engine = turso_core::Database::open_file(
                 turso_core::Database::io_for_path(path).unwrap(),
                 path,
+                std::sync::Arc::new(turso_core::SqliteDialect),
             )
             .unwrap();
             engine.connect().unwrap().execute(mutation).unwrap();

@@ -18,6 +18,7 @@ fn open(io: Arc<dyn turso_core::IO>, path: &str) -> Arc<Connection> {
         OpenFlags::default(),
         DatabaseOpts::new().with_index_method(true),
         None,
+        std::sync::Arc::new(turso_core::SqliteDialect),
     )
     .unwrap()
     .connect()

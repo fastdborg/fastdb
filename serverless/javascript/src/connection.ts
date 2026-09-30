@@ -4,6 +4,7 @@ import { Statement } from './statement.js';
 import { type QueryOptions } from './protocol.js';
 import { normalizeArgs, splitBindParameters } from './args.js';
 import { createExpandedRow } from './row.js';
+import { DatabaseError } from './error.js';
 
 export type { BatchMode } from './session.js';
 
@@ -40,14 +41,33 @@ function normalizeBatchOptions(options?: BatchMode | BatchOptions): { mode?: Bat
  * libsql-js batch ResultSet shape.
  */
 function toResultSet(result: any): any {
-  return {
+  const resultSet: any = {
     columns: result.columns ?? [],
     columnTypes: result.columnTypes ?? [],
     rows: result.rows ?? [],
     rowsAffected: result.rowsAffected ?? 0,
+    rowsRead: result.rowsRead,
+    rowsWritten: result.rowsWritten,
+    queryDurationMs: result.queryDurationMs,
   };
+  // Present only for statements that inserted, like the embedded driver.
+  if (result.lastInsertRowid !== undefined) {
+    resultSet.lastInsertRowid = result.lastInsertRowid;
+  }
+  return resultSet;
 }
 
+/** Shape the per-statement results carried by a batch error into the
+ * ResultSet shape, so `error.batchResults` matches what `batch()` would
+ * have returned. */
+function shapeBatchError(error: any): any {
+  if (error instanceof DatabaseError && Array.isArray(error.batchResults)) {
+    error.batchResults = error.batchResults.map((result: any) =>
+      result === null ? null : toResultSet(result),
+    );
+  }
+  return error;
+}
 
 /**
  * A connection to a Turso database.
@@ -67,6 +87,10 @@ function toResultSet(result: any): any {
  * If you call `all()` while another statement is in flight, the call automatically
  * waits for the previous one to finish — just like the native
  * `@tursodatabase/database` binding.
+ *
+ * The exception is `transactionAsync()`: each transaction runs on its own
+ * dedicated stream, so it does not block (and is not blocked by) statements
+ * on the connection itself.
  *
  * ## Parallel queries
  *
@@ -121,6 +145,8 @@ export class Connection {
    * request), so it reflects the connection's real transaction state — the
    * same as `sqlite3_get_autocommit()` on the native bindings — including
    * transactions opened with a raw `BEGIN`, not just via `transaction()`.
+   * A `transactionAsync()` transaction runs on its own dedicated session,
+   * so it is not reflected here.
    */
   get inTransaction(): boolean {
     return this.session.inTransaction;
@@ -250,22 +276,29 @@ export class Connection {
   /**
    * Executes a batch of SQL statements over this connection.
    *
+   * The batch is dispatched as a single request, so it always completes
+   * in one round-trip, and executes in order, stopping at the first
+   * statement that fails: the remaining statements are skipped and the
+   * thrown `DatabaseError` carries `batchIndex` (the zero-based index of
+   * the failing statement) and `batchResults` (one entry per input
+   * statement — the completed statement's `ResultSet`, or `null` for the
+   * failing statement and the statements that did not run; empty when
+   * the batch failed client-side before anything was sent).
+   *
    * By default, batch() is not transactional: each statement runs in its
    * own autocommit step, so a failure mid-batch leaves earlier successful
-   * statements committed. Pass a `mode` to make the batch atomic — the
-   * statements are wrapped in `BEGIN <mode>` / `COMMIT` (with `ROLLBACK`
-   * on failure) and dispatched as a single Hrana request, so the whole
-   * batch completes in one round-trip. When called from inside a
-   * `connection.transaction(...)` callback the `mode` argument is ignored
-   * and the surrounding transaction is reused.
+   * statements committed (their results are in `batchResults`). Pass a
+   * `mode` to make the batch atomic — the statements are wrapped in
+   * `BEGIN <mode>` / `COMMIT` (with `ROLLBACK` on failure) carried by the
+   * same request. When called from inside a `connection.transaction(...)`
+   * callback the `mode` argument is ignored and the surrounding
+   * transaction is reused.
    *
    * When `mode` is set, `batch()` owns the surrounding
    * `BEGIN`/`COMMIT`/`ROLLBACK`, so the `statements` array must not
    * contain its own transaction-control SQL (`BEGIN`, `COMMIT`,
-   * `ROLLBACK`, `SAVEPOINT`, `RELEASE`). The input is not validated
-   * for that — a user-supplied `COMMIT` will close the wrapper
-   * transaction mid-batch and leave earlier statements committed,
-   * defeating the all-or-nothing contract.
+   * `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`). Such input is rejected
+   * before the batch starts.
    *
    * @param statements - An array of SQL strings or `{ sql, args }` objects.
    * @param mode - When set, makes the batch atomic. Accepts the same
@@ -274,7 +307,9 @@ export class Connection {
    *   inside a transaction.
    * @returns An array of `ResultSet`s — one per input statement, in order —
    *   matching the libsql-js batch contract. Each `ResultSet` carries that
-   *   statement's `columns`, `columnTypes`, `rows`, and `rowsAffected`.
+   *   statement's `columns`, `columnTypes`, `rows`, `rowsAffected`, and
+   *   `lastInsertRowid`, plus the server-side execution statistics
+   *   `rowsRead`, `rowsWritten`, and `queryDurationMs`.
    *
    * @example
    * // Plain SQL strings (non-atomic).
@@ -327,6 +362,8 @@ export class Connection {
         raw,
       );
       return results.map((result: any) => toResultSet(result));
+    } catch (error) {
+      throw shapeBatchError(error);
     } finally {
       this.execLock.release();
     }
@@ -425,17 +462,24 @@ export class Connection {
   /**
    * Returns a function that executes the given function in a transaction.
    *
-   * The wrapper owns the connection for the whole BEGIN..COMMIT window: it
-   * acquires the connection's execution lock before BEGIN and releases it
-   * only after COMMIT/ROLLBACK, so no concurrent statement or transaction
-   * can interleave its own statements into the transaction's window. The
-   * callback receives a {@link Transaction} handle as its first argument,
-   * followed by the arguments the wrapped function was called with — all
-   * SQL inside the callback must go through that handle. Calls on the
-   * `Connection` itself (or statements prepared from it) queue on the lock
-   * until the transaction finishes, so awaiting them inside the callback
-   * deadlocks the transaction. Callbacks that do not declare the handle
-   * parameter are rejected.
+   * Each invocation runs the whole BEGIN..COMMIT window on its own
+   * dedicated session (a separate server stream), so it does not lock the
+   * connection: concurrent statements on the `Connection` proceed normally
+   * while the transaction is open. The callback receives a
+   * {@link Transaction} handle as its first argument, followed by the
+   * arguments the wrapped function was called with — all SQL of the
+   * transaction must go through that handle. Calls on the `Connection`
+   * itself (or statements prepared from it) execute on the connection's
+   * own stream, outside the transaction, and do not see its uncommitted
+   * changes. Callbacks that do not declare the handle parameter are
+   * rejected.
+   *
+   * Because the session is fresh, session-scoped side effects applied to
+   * the connection earlier — `PRAGMA` settings such as `foreign_keys`,
+   * attached databases, temp tables, and other per-connection state — are
+   * NOT present inside the transaction. Anything the transaction's SQL
+   * depends on must either be committed database state or be re-applied
+   * through the transaction handle inside the callback.
    *
    * @param fn - The function to wrap in a transaction; receives the
    *   transaction handle followed by the caller's arguments
@@ -470,10 +514,11 @@ export class Connection {
         if (!db.isOpen) {
           throw new TypeError("The database connection is not open");
         }
-        // own the session for the whole transaction: everything else
-        // queues on execLock until COMMIT/ROLLBACK releases it
-        await db.execLock.acquire();
-        const txn = new Transaction(db.session, db.defaultSafeIntegerMode);
+        // The transaction owns a dedicated session (server stream), so the
+        // connection is not locked for its duration: concurrent statements
+        // on the connection run on its own stream, outside the transaction.
+        const session = new Session(db.config);
+        const txn = new Transaction(session, db.defaultSafeIntegerMode);
         try {
           await txn.exec("BEGIN " + mode);
           try {
@@ -481,12 +526,18 @@ export class Connection {
             await txn.exec("COMMIT");
             return result;
           } catch (err) {
-            await txn.exec("ROLLBACK");
+            try {
+              await txn.exec("ROLLBACK");
+            } catch {
+              // The stream is dedicated to this transaction and is closed
+              // below, which discards the open transaction server-side —
+              // a failed ROLLBACK must not mask the original error.
+            }
             throw err;
           }
         } finally {
           txn.finish();
-          db.execLock.release();
+          await session.close();
         }
       };
     };
@@ -534,25 +585,26 @@ export class Connection {
 
 /**
  * A handle to an open transaction, passed as the first argument to the
- * callback of `Connection.transactionAsync()`. All SQL of the transaction
- * must go through this handle: the transaction wrapper holds the
- * connection's execution lock for the whole BEGIN..COMMIT window, so
- * `Connection` calls issued inside the callback wait for the transaction
- * to finish (and deadlock it if awaited), while the handle executes on the
- * already-owned session. Once the transaction commits or rolls back the
+ * callback of `Connection.transactionAsync()`. The transaction owns a
+ * dedicated, freshly created session (server stream) for its whole
+ * BEGIN..COMMIT window, so all SQL of the transaction must go through this
+ * handle: `Connection` calls issued inside the callback execute on the
+ * connection's own stream, outside the transaction, and do not see its
+ * uncommitted changes. Session-scoped state set up on the connection
+ * (`PRAGMA` settings, attached databases, temp tables) does not carry over
+ * to the fresh session. Once the transaction commits or rolls back the
  * handle is closed and every method throws.
  */
 export class Transaction {
   private session: Session;
   private defaultSafeIntegerMode: boolean;
   private active: boolean = true;
-  // Per-transaction execution gate. The wrapper already holds the connection's
-  // execLock for the whole transaction, so this never contends with other
-  // transactions or connection-level calls; it serializes native calls *within*
-  // this transaction — the same invariant the connection's execLock enforces on
-  // the session — so statements issued concurrently in the callback cannot
-  // interleave on the shared session. It also rejects use of a completed
-  // transaction.
+  // Per-transaction execution gate. The transaction owns a dedicated
+  // session, so this never contends with connection-level calls; it
+  // serializes requests *within* this transaction — each request must
+  // carry the baton of the previous response, so statements issued
+  // concurrently in the callback cannot interleave on the transaction's
+  // stream. It also rejects use of a completed transaction.
   private gate: Lock;
 
   constructor(session: Session, defaultSafeIntegerMode: boolean) {
@@ -673,14 +725,18 @@ export class Transaction {
     }
     const { raw } = normalizeBatchOptions(options);
     return await this.withGate(async () => {
-      const results = await this.session.batch(
-        statements,
-        undefined,
-        queryOptions,
-        this.defaultSafeIntegerMode,
-        raw,
-      );
-      return results.map((result: any) => toResultSet(result));
+      try {
+        const results = await this.session.batch(
+          statements,
+          undefined,
+          queryOptions,
+          this.defaultSafeIntegerMode,
+          raw,
+        );
+        return results.map((result: any) => toResultSet(result));
+      } catch (error) {
+        throw shapeBatchError(error);
+      }
     });
   }
 }

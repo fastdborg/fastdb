@@ -46,7 +46,7 @@ fn tokens_inner(sql: &str, native: bool) -> crate::Result<Vec<fastql_parser::Tok
         return Ok(fastql_parser::tokenize(sql)?);
     };
     let statement = match &mut cmd {
-        Cmd::Stmt(s) | Cmd::Explain(s) | Cmd::ExplainQueryPlan(s) => s,
+        Cmd::Stmt(s) | Cmd::Explain(s) | Cmd::ExplainQueryPlan { stmt: s, .. } => s,
     };
     match statement {
         Stmt::Select(s) => {
@@ -76,19 +76,16 @@ fn tokens_inner(sql: &str, native: bool) -> crate::Result<Vec<fastql_parser::Tok
             from(&mut s.from)?;
             optional(&mut s.where_clause)?;
             projections(&mut s.returning)?;
-            ordering(&mut s.order_by)?;
         }
         Stmt::Delete {
             with,
             where_clause,
             returning,
-            order_by,
             ..
         } => {
             ctes(with)?;
             optional(where_clause)?;
             projections(returning)?;
-            ordering(order_by)?;
         }
         Stmt::CreateView { select: s, .. }
         | Stmt::CreateTable {
@@ -109,7 +106,10 @@ fn tokens_inner(sql: &str, native: bool) -> crate::Result<Vec<fastql_parser::Tok
             }
             for constraint in constraints {
                 match &mut constraint.constraint {
-                    TableConstraint::Check(expr) => expression(expr)?,
+                    TableConstraint::Check { expr, source } => {
+                        *source = None;
+                        expression(expr)?;
+                    }
                     TableConstraint::PrimaryKey { columns, .. }
                     | TableConstraint::Unique { columns, .. } => ordering(columns)?,
                     TableConstraint::ForeignKey { .. } => {}
@@ -391,9 +391,13 @@ fn redact_cte_sources(
 fn column_definition(column: &mut ColumnDefinition) -> Result<()> {
     for constraint in &mut column.constraints {
         match &mut constraint.constraint {
-            ColumnConstraint::Default(expr)
-            | ColumnConstraint::Check(expr)
-            | ColumnConstraint::Generated { expr, .. } => expression(expr)?,
+            ColumnConstraint::Check { expr, source } => {
+                *source = None;
+                expression(expr)?;
+            }
+            ColumnConstraint::Default(expr) | ColumnConstraint::Generated { expr, .. } => {
+                expression(expr)?
+            }
             _ => {}
         }
     }

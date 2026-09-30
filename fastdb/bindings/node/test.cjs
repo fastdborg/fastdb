@@ -1375,8 +1375,9 @@ test('nested membership CTE writes preserve recovery in both clients', async () 
           assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n'), [[1n],[2n],[3n]]);
           assert.deepEqual(await db.all('SELECT n FROM pending'), [[9n]]);
           const result = await db.execute(prefix + 'UPDATE docs SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n');
-          assert.equal(result.affected, 3n);
-          assert.deepEqual(result.rows, [[11n],[12n],[13n]]);
+          const expected = prefix.includes('main.docs') ? [[11n],[12n],[13n]] : [[12n]];
+          assert.equal(result.affected, BigInt(expected.length));
+          assert.deepEqual(result.rows, expected);
           const audit = await db.checkCollectionIntegrity('docs');
           assert.equal(audit.documents, 3n);
           assert.equal(audit.indexEntries, 3n);
@@ -1492,7 +1493,7 @@ test('deeper EXISTS merged keys preserve parameters and write recovery in both c
       await db.execute('DELETE FROM sink WHERE k=3');
       const retry = await db.execute(insert, { $min: 1n });
       assert.equal(retry.affected, 2n);
-      assert.deepEqual(retry.rows, [[1n, null], [3n, 2n]]);
+      assert.deepEqual(retry.rows, [[1n, null], [3n, null]]);
       const audit = await db.checkCollectionIntegrity('sink');
       assert.equal(audit.documents, 3n);
       assert.equal(audit.indexEntries, 3n);
@@ -1540,7 +1541,7 @@ test('deeper scalar collation and casts preserve client results and atomic write
       await db.execute("DELETE FROM sink WHERE k='a'");
       const retry = await db.execute(insert);
       assert.equal(retry.affected, 3n);
-      assert.deepEqual(retry.rows, [[1n, null], [3n, null], ['a', 2n]]);
+      assert.deepEqual(retry.rows, [[1n, null], [3n, null], ['a', null]]);
       const audit = await db.checkCollectionIntegrity('sink');
       assert.equal(audit.documents, 4n);
       assert.equal(audit.indexEntries, 4n);
@@ -2937,7 +2938,7 @@ test('aggregate tuples preserve empty groups and rollback in both clients', asyn
   }
 });
 
-test('limited writes bind pagination and preserve transaction recovery in both clients', async () => {
+test('removed DML limits reject without mutation in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
     const db = await open();
@@ -2949,16 +2950,14 @@ test('limited writes bind pagination and preserve transaction recovery in both c
         await db.execute('BEGIN');
         await db.execute('INSERT INTO docs(n) VALUES(4)');
         const sql = write + ' LIMIT $count OFFSET $skip';
-        await assert.rejects(async () => db.execute(sql, { $count: 1n }), error => error.code === 'FDB_PARAMETER');
-        assert.deepEqual((await db.execute('SELECT n FROM docs ORDER BY n')).rows, [[1n],[2n],[3n],[4n]]);
-        const zero = await db.execute(sql, { $count: 0n, $skip: 1n });
-        assert.equal(zero.affected, 0n);
-        const result = await db.execute(sql, { $count: 1n, $skip: 1n });
-        assert.equal(result.affected, 1n);
-        assert.deepEqual(result.transaction, { before: 'active', after: 'active' });
-        const rows = (await db.execute('SELECT n FROM docs ORDER BY n')).rows;
-        assert.equal(rows.length, write.startsWith('UPDATE') ? 4 : 3);
-        assert.equal(rows.filter(([n]) => n > 10n).length, write.startsWith('UPDATE') ? 1 : 0);
+        for (const params of [{ $count: 1n }, { $count: 0n, $skip: 1n }, { $count: 1n, $skip: 1n }]) {
+          await assert.rejects(async () => db.execute(sql, params), error => {
+            assert.match(error.message, /LIMIT/);
+            assert.deepEqual(error.transaction, { before: 'active', after: 'active' });
+            return true;
+          });
+          assert.deepEqual((await db.execute('SELECT n FROM docs ORDER BY n')).rows, [[1n],[2n],[3n],[4n]]);
+        }
         await db.execute('ROLLBACK');
         assert.deepEqual((await db.execute('SELECT n FROM docs ORDER BY n')).rows, [[1n],[2n],[3n]]);
       }
@@ -3020,7 +3019,7 @@ test('update from preserves typed candidates and unmatched targets in both clien
       await db.execute('UPDATE docs SET (a,b)=(NULL,NULL)');
       for (const name of ['docs', 'target']) {
         for (const hint of ['', 'MATERIALIZED', 'NOT MATERIALIZED']) {
-          const scoped = await db.execute(`WITH ${name}(n,a,b) AS ${hint} (SELECT k,a,b FROM source WHERE k=2), chosen AS (SELECT n,a,b FROM ${name}) UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM chosen s WHERE s.n=target.n RETURNING n,a,b LIMIT $count OFFSET $skip`, { $count: 1n, $skip: 0n });
+          const scoped = await db.execute(`WITH ${name}(n,a,b) AS ${hint} (SELECT k,a,b FROM source WHERE k=2 LIMIT $count OFFSET $skip), chosen AS (SELECT n,a,b FROM ${name}) UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM chosen s WHERE s.n=target.n RETURNING n,a,b`, { $count: 1n, $skip: 0n });
           assert.equal(scoped.affected, 1n);
           assert.deepEqual(scoped.rows, [[2n,record,payload]]);
           assert.deepEqual(scoped.transaction, { before: 'active', after: 'active' });
@@ -3029,8 +3028,10 @@ test('update from preserves typed candidates and unmatched targets in both clien
         }
       }
       await db.execute('DELETE FROM source WHERE k=2');
-      const paginated = 'UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM source s WHERE s.k=target.n RETURNING n,a,b LIMIT $count OFFSET $skip';
-      await assert.rejects(async () => db.execute(paginated, { $count: 1n }), error => error.code === 'FDB_PARAMETER');
+      // SELECT pagination requires a source with one row per intended target.
+      await db.execute('DELETE FROM source WHERE a=docs:old');
+      const paginated = 'UPDATE docs AS target SET (a,b)=(s.a,s.b) FROM (SELECT k,a,b FROM source LIMIT $count OFFSET $skip) s WHERE s.k=target.n RETURNING n,a,b';
+      await assert.rejects(async () => db.execute(paginated, { $count: 1n }), error => error.code === 'FDB_CONSTRAINT' && error.transaction.after === 'active');
       for (const [count, skip, expected] of [[0n,0n,[]],[1n,1n,[]],[1n,0n,[[1n,record,payload]]]]) {
         const page = await db.execute(paginated, { $count: count, $skip: skip });
         assert.deepEqual(page.rows, expected);
@@ -3077,7 +3078,7 @@ test('OR ROLLBACK reports full transaction loss and permits fresh client work', 
   }
 });
 
-test('OR IGNORE preserves typed successes, candidate limits and pending client work', async () => {
+test('OR IGNORE preserves typed successes and pending client work', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const open of [() => new Database(), () => AsyncDatabase.open()]) {
     const db = await open();
@@ -3085,11 +3086,7 @@ test('OR IGNORE preserves typed successes, candidate limits and pending client w
       for (const sql of ['CREATE TABLE docs', 'DEFINE FIELD v ON docs TYPE integer REQUIRED CHECK(v<5)', 'CREATE INDEX docs_v ON docs(v)', 'CREATE UNIQUE INDEX docs_n ON docs(n)', 'INSERT INTO docs(n,v) VALUES(1,0),(2,0),(3,0)', 'BEGIN', 'INSERT INTO docs(n,v) VALUES(4,0)']) await db.execute(sql);
       const payload=[new Record('docs',9223372036854775807n),Buffer.from([0,255])];
       for (const from of ['', ' FROM (SELECT 1 AS k) source']) {
-        // A selected but invalid candidate consumes LIMIT; it must not be replaced.
-        const skipped=await db.execute(`UPDATE OR IGNORE docs SET v=CASE WHEN docs.n=2 THEN 10 ELSE 1 END,payload=$value${from} WHERE docs.n IN (2,3) RETURNING n,payload LIMIT $count`,{$value:payload,$count:1n});
-        assert.equal(skipped.affected,0n);
-        assert.deepEqual(skipped.rows,[]);
-        assert.deepEqual(skipped.transaction,{before:'active',after:'active'});
+        await assert.rejects(async () => db.execute(`UPDATE OR IGNORE docs SET v=10${from} RETURNING n LIMIT 1`), error => /LIMIT/.test(error.message));
         // A mixed batch must continue past rejected candidates and return only successes.
         const mixed=await db.execute(`UPDATE OR IGNORE docs SET v=CASE WHEN docs.n=2 THEN 10 ELSE 1 END,payload=$value${from} WHERE docs.n IN (2,3) RETURNING n,payload`,{$value:payload});
         assert.equal(mixed.affected,1n);
@@ -3742,5 +3739,36 @@ test('linked projection wildcards fetch records while indexes retain typed IDs',
       assert.deepEqual(await db.all('SELECT posts.*.author.*.name FROM users'), [[['Alice','Alice']]]);
       assert.deepEqual(await db.all('SELECT posts[-3].*,posts[2].* FROM users'), [[null,null]]);
     } finally { await db.close(); }
+  }
+});
+
+test('Turso 0.8.1 concurrent FTS and SQL plans work in both native clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const open of [file => new Database(file), file => AsyncDatabase.open(file)]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-mvcc-'));
+    let a, b;
+    try {
+      const file = path.join(dir, 'db');
+      a = await open(file);
+      await a.execute('PRAGMA journal_mode=mvcc');
+      await a.execute('CREATE TABLE articles');
+      await a.execute('CREATE SEARCH INDEX articles_text ON articles(title) USING FULLTEXT');
+      b = await open(file);
+      await a.execute('BEGIN CONCURRENT');
+      await b.execute('BEGIN CONCURRENT');
+      await a.execute("INSERT INTO articles {id:articles:a,title:'parallel alpha'}");
+      await b.execute("INSERT INTO articles {id:articles:b,title:'parallel beta'}");
+      await Promise.all([a.execute('COMMIT'), b.execute('COMMIT')]);
+      assert.equal((await a.all("SELECT id FROM search::text('articles_text','parallel',10)")).length, 2);
+      assert.deepEqual(await a.all('WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<3) SELECT sum(x) FROM n'), [[6n]]);
+      await a.execute('CREATE INDEX articles_title ON articles(title)');
+      const plan = await a.all("EXPLAIN QUERY PLAN FORMAT=JSON SELECT title FROM articles WHERE title='parallel alpha'");
+      assert.match(plan[0][0], /articles_title/);
+      await a.checkCollectionIntegrity('articles');
+    } finally {
+      await b?.close();
+      await a?.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 });

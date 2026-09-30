@@ -351,7 +351,9 @@ fn mixed_compound_comparison_writes_preserve_atomicity() {
         q(&c, sql);
     }
     let source = "FROM (SELECT n,v FROM docs) CROSS JOIN (SELECT m,label COLLATE BINARY AS label FROM labels WHERE m=1 UNION ALL SELECT m,label FROM labels WHERE m=2)";
-    let sql = format!("INSERT INTO copied (n) SELECT n {source} WHERE v IS label ORDER BY n");
+    let sql = format!(
+        "INSERT INTO copied (n) SELECT n {source} WHERE v COLLATE NOCASE IS label ORDER BY n"
+    );
     assert!(c.execute(&sql, &Parameters::new()).is_err());
     assert_eq!(
         q(&c, "SELECT n FROM copied").rows,
@@ -367,7 +369,9 @@ fn mixed_compound_comparison_writes_preserve_atomicity() {
     );
     q(
         &c,
-        &format!("INSERT INTO copied (n) SELECT n {source} WHERE v IS label AND n=1"),
+        &format!(
+            "INSERT INTO copied (n) SELECT n {source} WHERE v COLLATE NOCASE IS label AND n=1"
+        ),
     );
     assert_eq!(
         q(&c, "SELECT n FROM copied ORDER BY n").rows,

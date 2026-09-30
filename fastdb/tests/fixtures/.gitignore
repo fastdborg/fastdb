@@ -1,0 +1,2 @@
+# Keep the immutable previous-release migration control in fresh checkouts.
+!turso-072-fts.db

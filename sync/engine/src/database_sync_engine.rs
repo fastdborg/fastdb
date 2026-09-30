@@ -5,6 +5,7 @@ use std::{
         Arc, Mutex,
     },
 };
+use turso_core::SqliteDialect;
 
 use turso_core::{Buffer, Completion, DatabaseStorage, LimboError, OpenDbAsyncState, OpenFlags};
 
@@ -135,6 +136,19 @@ fn db_size_from_page(page: &[u8]) -> u32 {
 }
 fn is_memory(main_db_path: &str) -> bool {
     main_db_path == ":memory:"
+}
+pub fn sync_database_file_paths(main_db_path: &str) -> Vec<String> {
+    vec![
+        // Core opens the database and its WAL.
+        main_db_path.to_string(),
+        create_main_db_wal_path(main_db_path),
+        // Sync keeps rollback data, metadata, and downloaded changes separately.
+        create_revert_db_wal_path(main_db_path),
+        create_meta_path(main_db_path),
+        create_changes_path(main_db_path),
+        // MVCC may be selected only after the remote protocol is known.
+        create_main_db_log_path(main_db_path),
+    ]
 }
 fn create_main_db_wal_path(main_db_path: &str) -> String {
     format!("{main_db_path}-wal")
@@ -1288,17 +1302,17 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
         )?;
 
         // Use async database opening that yields on IO for large schemas
+        let main_db_options = turso_core::OpenOptions::new(Arc::new(SqliteDialect))
+            .storage(main_db_storage)
+            .flags(OpenFlags::Create)
+            .db_opts(opts.db_opts);
         let mut open_state = turso_core::OpenDbAsyncState::new();
         let main_db = loop {
-            match turso_core::Database::open_with_flags_async(
+            match turso_core::Database::open_async(
                 &mut open_state,
                 io.clone(),
                 main_db_path,
-                main_db_storage.clone(),
-                OpenFlags::Create,
-                opts.db_opts,
-                None,
-                None,
+                &main_db_options,
             )? {
                 turso_core::IOResult::Done(db) => break db,
                 turso_core::IOResult::IO(io_completion) => {
@@ -1326,18 +1340,18 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
         coro: &Coro<Ctx>,
     ) -> Result<Arc<turso_core::Connection>> {
         let db = {
+            let options = turso_core::OpenOptions::new(Arc::new(SqliteDialect))
+                .storage(self.db_file.clone())
+                .wal_path(self.revert_db_wal_path.clone())
+                .flags(OpenFlags::Create)
+                .db_opts(self.opts.db_opts);
             let mut state = OpenDbAsyncState::new();
             loop {
-                match turso_core::Database::open_with_flags_bypass_registry_async(
+                match turso_core::Database::do_open_async(
                     &mut state,
                     self.io.clone(),
                     &self.main_db_path,
-                    Some(&self.revert_db_wal_path),
-                    self.db_file.clone(),
-                    OpenFlags::Create,
-                    self.opts.db_opts,
-                    None,
-                    None,
+                    &options,
                 )? {
                     turso_core::IOResult::Done(db) => break db,
                     turso_core::IOResult::IO(io_completion) => {
@@ -1424,7 +1438,7 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
             WAL_FRAME_HEADER as u64 + WAL_FRAME_SIZE as u64 * main_wal_frames
         };
         Ok(SyncEngineStats {
-            cdc_operations: count_local_changes(coro, &main_conn, change_id).await?,
+            cdc_operations: count_local_changes(coro, &main_conn, &self.opts, change_id).await?,
             main_wal_size,
             revert_wal_size,
             last_pull_unix_time,
@@ -2152,7 +2166,8 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
             let (_, local_last_change_id) =
                 read_last_change_id(coro, &conn, &self.client_unique_id).await?;
             let pending_local_changes =
-                count_local_changes(coro, &conn, local_last_change_id.unwrap_or(0)).await?;
+                count_local_changes(coro, &conn, &self.opts, local_last_change_id.unwrap_or(0))
+                    .await?;
             if pending_local_changes != 0 {
                 return Err(Error::DatabaseSyncEngineError(format!(
                     "replace-base page apply with pending local CDC changes is not wired yet: {pending_local_changes} local changes need replay"
@@ -2556,9 +2571,36 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
                                         })?;
                                     }
                                 }
-                                (_, PullUpdatesV1Result::Pages { replace_base }, _) => {
+                                (
+                                    advertised_revision,
+                                    PullUpdatesV1Result::Pages { replace_base },
+                                    _,
+                                ) => {
+                                    // A second page snapshot means the remote still cannot serve a
+                                    // direct logical range from this revision: its logical log for
+                                    // that generation has no replayable prefix. Either the
+                                    // generation predates portable logical changes, or its first
+                                    // commits carry only internal recovery ops (`turso_sync_*`
+                                    // bookkeeping from a push whose user statements matched no
+                                    // row) and were written by a remote that predates marking such
+                                    // commits explicitly.
+                                    //
+                                    // Installing this snapshot here is not possible: the WAL
+                                    // sessions for the one we just applied are still open, and the
+                                    // apply path is a single linear pass. Retrying in place would
+                                    // also be pointless - the remote's answer only changes when its
+                                    // log state does. So fail cleanly and let the caller's next
+                                    // pull() re-enter apply from scratch: that retry succeeds once
+                                    // the remote rolls over to a new generation, without recreating
+                                    // the database.
                                     return Err(Error::DatabaseSyncEngineError(format!(
-                                        "replace-base follow-up logical pull unexpectedly returned a page stream: replace_base={replace_base}"
+                                        "remote cannot serve a logical MVCC range for {main_db_path} from revision {revision}: \
+                                         the replace-base follow-up pull returned another page snapshot \
+                                         (replace_base={replace_base}, advertised revision {advertised_revision:?}). \
+                                         The remote's logical log for that generation has no prefix this client can replay. \
+                                         This is safe to retry: pull again after the remote checkpoints to a new generation, \
+                                         or upgrade the remote to a build that marks internal-only commits explicitly.",
+                                        main_db_path = self.main_db_path,
                                     )));
                                 }
                             }
@@ -3206,9 +3248,10 @@ mod tests {
         replace_base_backup_path, resolve_local_replay_floor_change_id,
         resolve_remote_pull_protocol, should_replay_raw_pages_on_sql_conn,
         should_request_logical_pull, stream_kind_applies_remote_pages,
-        stream_kind_for_pull_updates_v1_result, synced_change_id_after_remote_apply,
-        use_pushed_change_hint_for_local_replay, DatabaseSyncEngine, DatabaseSyncEngineOpts,
-        ReplaceBaseApplyGuard, REPLACE_BASE_LOCAL_REPLAY_FAILURE_AFTER,
+        stream_kind_for_pull_updates_v1_result, sync_database_file_paths,
+        synced_change_id_after_remote_apply, use_pushed_change_hint_for_local_replay,
+        DatabaseSyncEngine, DatabaseSyncEngineOpts, ReplaceBaseApplyGuard,
+        REPLACE_BASE_LOCAL_REPLAY_FAILURE_AFTER,
     };
     use crate::{
         client_proto::{
@@ -3241,6 +3284,21 @@ mod tests {
     };
     use tempfile::NamedTempFile;
     use turso_core::SqliteDialect;
+
+    #[test]
+    fn sync_database_paths_include_core_sync_and_mvcc_files() {
+        assert_eq!(
+            sync_database_file_paths("replica.sqlite"),
+            vec![
+                "replica.sqlite",
+                "replica.sqlite-wal",
+                "replica.sqlite-wal-revert",
+                "replica.sqlite-info",
+                "replica.sqlite-changes",
+                "replica.db-log",
+            ]
+        );
+    }
 
     #[test]
     fn explicit_override_wins_over_persisted_protocol() {
@@ -3984,7 +4042,9 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let main_path = temp_file.path().to_str().unwrap().to_string();
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
-        let main_db = turso_core::Database::open_file(io.clone(), &main_path).unwrap();
+        let main_db =
+            turso_core::Database::open_file(io.clone(), &main_path, Arc::new(SqliteDialect))
+                .unwrap();
 
         let meta = DatabaseMetadata {
             version: DATABASE_METADATA_VERSION.to_string(),
@@ -4108,8 +4168,12 @@ mod tests {
         ];
         std::fs::write(changes_temp.path(), encoded_logical_txns(&txns)).unwrap();
 
-        let db =
-            turso_core::Database::open_file(io.clone(), db_temp.path().to_str().unwrap()).unwrap();
+        let db = turso_core::Database::open_file(
+            io.clone(),
+            db_temp.path().to_str().unwrap(),
+            Arc::new(SqliteDialect),
+        )
+        .unwrap();
         let db_file = db.db_file.clone();
         let db_io = db.io.clone();
         let main_tape = DatabaseTape::new_with_opts(
@@ -4197,9 +4261,10 @@ mod tests {
                     read_last_change_id(&coro, &conn, &engine.client_unique_id)
                         .await
                         .unwrap();
-                let pending_local_changes = count_local_changes(&coro, &conn, change_id.unwrap())
-                    .await
-                    .unwrap();
+                let pending_local_changes =
+                    count_local_changes(&coro, &conn, &engine.opts, change_id.unwrap())
+                        .await
+                        .unwrap();
                 let meta = engine.meta.lock().unwrap().clone();
                 (rows, meta, pull_gen, change_id, pending_local_changes)
             }
@@ -4279,8 +4344,12 @@ mod tests {
         }];
         std::fs::write(changes_temp.path(), encoded_logical_txns(&txns)).unwrap();
 
-        let db =
-            turso_core::Database::open_file(io.clone(), db_temp.path().to_str().unwrap()).unwrap();
+        let db = turso_core::Database::open_file(
+            io.clone(),
+            db_temp.path().to_str().unwrap(),
+            Arc::new(SqliteDialect),
+        )
+        .unwrap();
         let db_file = db.db_file.clone();
         let db_io = db.io.clone();
         let main_tape = DatabaseTape::new_with_opts(
@@ -4393,7 +4462,7 @@ mod tests {
                         .await
                         .unwrap();
                 let pending_local_changes =
-                    count_local_changes(&coro, &conn, synced_change_id.unwrap())
+                    count_local_changes(&coro, &conn, &engine.opts, synced_change_id.unwrap())
                         .await
                         .unwrap();
                 let meta = engine.meta.lock().unwrap().clone();
@@ -4442,7 +4511,9 @@ mod tests {
         let changes_path = changes_file.path().to_str().unwrap().to_string();
 
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
-        let remote_db = turso_core::Database::open_file(io.clone(), &remote_path).unwrap();
+        let remote_db =
+            turso_core::Database::open_file(io.clone(), &remote_path, Arc::new(SqliteDialect))
+                .unwrap();
         let remote_conn = remote_db.connect().unwrap();
         remote_conn
             .execute("CREATE TABLE items(id INTEGER PRIMARY KEY, value TEXT)")
@@ -4555,10 +4626,14 @@ mod tests {
 
                 drop(conn);
                 drop(engine);
-                let verify_db =
-                    turso_core::Database::open_file(io.clone(), &main_path).map_err(|error| {
-                        Error::DatabaseSyncEngineError(format!("test verify open failed: {error}"))
-                    })?;
+                let verify_db = turso_core::Database::open_file(
+                    io.clone(),
+                    &main_path,
+                    Arc::new(SqliteDialect),
+                )
+                .map_err(|error| {
+                    Error::DatabaseSyncEngineError(format!("test verify open failed: {error}"))
+                })?;
                 let verify_conn = verify_db.connect().map_err(|error| {
                     Error::DatabaseSyncEngineError(format!("test verify connect failed: {error}"))
                 })?;
@@ -4642,7 +4717,9 @@ mod tests {
         let remote_path = remote_file.path().to_str().unwrap().to_string();
 
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
-        let remote_db = turso_core::Database::open_file(io.clone(), &remote_path).unwrap();
+        let remote_db =
+            turso_core::Database::open_file(io.clone(), &remote_path, Arc::new(SqliteDialect))
+                .unwrap();
         let remote_conn = remote_db.connect().unwrap();
         remote_conn.execute("PRAGMA journal_mode = 'mvcc'").unwrap();
         assert!(remote_conn.mvcc_enabled());
@@ -4777,10 +4854,14 @@ mod tests {
                 // The conversion must survive a reopen: header version and
                 // logical log agree, so a fresh open comes up in MVCC mode
                 // with the same data.
-                let verify_db =
-                    turso_core::Database::open_file(io.clone(), &main_path).map_err(|error| {
-                        Error::DatabaseSyncEngineError(format!("test verify open failed: {error}"))
-                    })?;
+                let verify_db = turso_core::Database::open_file(
+                    io.clone(),
+                    &main_path,
+                    Arc::new(SqliteDialect),
+                )
+                .map_err(|error| {
+                    Error::DatabaseSyncEngineError(format!("test verify open failed: {error}"))
+                })?;
                 let verify_conn = verify_db.connect().map_err(|error| {
                     Error::DatabaseSyncEngineError(format!("test verify connect failed: {error}"))
                 })?;
@@ -4813,7 +4894,9 @@ mod tests {
         let remote_path = remote_file.path().to_str().unwrap().to_string();
 
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
-        let remote_db = turso_core::Database::open_file(io.clone(), &remote_path).unwrap();
+        let remote_db =
+            turso_core::Database::open_file(io.clone(), &remote_path, Arc::new(SqliteDialect))
+                .unwrap();
         let remote_conn = remote_db.connect().unwrap();
         remote_conn.execute("PRAGMA journal_mode = 'mvcc'").unwrap();
         remote_conn
@@ -4922,7 +5005,9 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let main_path = temp_file.path().to_str().unwrap().to_string();
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
-        let main_db = turso_core::Database::open_file(io.clone(), &main_path).unwrap();
+        let main_db =
+            turso_core::Database::open_file(io.clone(), &main_path, Arc::new(SqliteDialect))
+                .unwrap();
 
         let meta = DatabaseMetadata {
             version: DATABASE_METADATA_VERSION.to_string(),
@@ -4984,7 +5069,9 @@ mod tests {
         let main_path = main_file.path().to_str().unwrap().to_string();
 
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
-        let foreign_db = turso_core::Database::open_file(io.clone(), &main_path).unwrap();
+        let foreign_db =
+            turso_core::Database::open_file(io.clone(), &main_path, Arc::new(SqliteDialect))
+                .unwrap();
         let foreign_conn = foreign_db.connect().unwrap();
         foreign_conn
             .execute("CREATE TABLE orphaned(id INTEGER PRIMARY KEY)")
@@ -5034,6 +5121,180 @@ mod tests {
                 genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(result) => break result.unwrap(),
             }
+        }
+    }
+    /// Bootstraps a replica from a canned page stream, makes one local write,
+    /// then checkpoints twice: the first checkpoint folds the WAL frames and
+    /// truncates the WAL file to zero, the second one runs with an empty WAL.
+    fn bootstrap_and_checkpoint_twice(
+        io: Arc<dyn turso_core::IO>,
+        partial_sync_opts: Option<PartialSyncOpts>,
+        db_name: &str,
+    ) -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let main_path = temp_dir.path().join(db_name).to_string_lossy().to_string();
+        let remote_path = temp_dir
+            .path()
+            .join("remote.db")
+            .to_string_lossy()
+            .to_string();
+
+        let platform_io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
+        let remote_db = turso_core::Database::open_file(
+            platform_io.clone(),
+            &remote_path,
+            Arc::new(SqliteDialect),
+        )
+        .unwrap();
+        let remote_conn = remote_db.connect().unwrap();
+        remote_conn
+            .execute("CREATE TABLE items(id INTEGER PRIMARY KEY, value TEXT)")
+            .unwrap();
+        remote_conn
+            .execute("INSERT INTO items VALUES (1, 'remote-a')")
+            .unwrap();
+        let remote_wal_state = remote_conn.wal_state().unwrap();
+        remote_conn
+            .checkpoint(turso_core::CheckpointMode::Truncate {
+                upper_bound_inclusive: Some(remote_wal_state.max_frame),
+            })
+            .unwrap();
+        drop(remote_conn);
+        drop(remote_db);
+        let remote_bytes = std::fs::read(&remote_path).unwrap();
+        assert!(!remote_bytes.is_empty());
+
+        let bootstrap_response =
+            encoded_page_stream_response(&remote_bytes, "g1:o0", PullUpdatesProtocol::Pages);
+        let sync_io = Arc::new(QueuedSyncEngineIo {
+            responses: Mutex::new(vec![bootstrap_response].into_iter().collect()),
+            requests: Mutex::new(Vec::new()),
+        });
+        let sync_engine_io = SyncEngineIoStats::new(sync_io);
+
+        let mut opts = default_test_opts();
+        opts.remote_url = Some("https://example.com".to_string());
+        opts.bootstrap_if_empty = true;
+        opts.logical_mvcc_pull = Some(false);
+        opts.partial_sync_opts = partial_sync_opts;
+
+        let main_wal_path = create_main_db_wal_path(&main_path);
+        let mut gen = genawaiter::sync::Gen::new({
+            let io = io.clone();
+            move |coro| async move {
+                let coro: Coro<()> = coro.into();
+                let engine = DatabaseSyncEngine::create_db(
+                    &coro,
+                    io.clone(),
+                    sync_engine_io.clone(),
+                    &main_path,
+                    opts,
+                )
+                .await?;
+
+                let conn = engine.connect_rw(&coro).await?;
+                conn.execute("INSERT INTO items VALUES (2, 'local-b')")?;
+                drop(conn);
+
+                assert!(
+                    std::fs::metadata(&main_wal_path).unwrap().len() > 0,
+                    "local write must leave frames in the main WAL"
+                );
+                engine.checkpoint(&coro).await?;
+                assert_eq!(
+                    std::fs::metadata(&main_wal_path).unwrap().len(),
+                    0,
+                    "TRUNCATE checkpoint must leave an empty main WAL file"
+                );
+
+                engine.checkpoint(&coro).await
+            }
+        });
+
+        loop {
+            match gen.resume_with(Ok(())) {
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
+                genawaiter::GeneratorState::Complete(result) => break result,
+            }
+        }
+    }
+
+    /// Reported bug: on a partial-sync database `checkpoint()` succeeds while
+    /// the main WAL holds frames, and then fails with
+    /// `I/O error (pread): unexpected end of file` on every checkpoint that
+    /// runs while the WAL is empty. Linux-only, because `SparseLinuxIo` is.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn partial_sync_checkpoint_succeeds_when_main_wal_is_empty() {
+        let io: Arc<dyn turso_core::IO> = Arc::new(crate::sparse_io::SparseLinuxIo::new().unwrap());
+        // A prefix covering the whole remote database leaves no holes, so the
+        // failure does not depend on any page being unmaterialized.
+        let result = bootstrap_and_checkpoint_twice(
+            io,
+            Some(PartialSyncOpts {
+                bootstrap_strategy: Some(crate::types::PartialBootstrapStrategy::Prefix {
+                    length: usize::MAX / 2,
+                }),
+                segment_size: 128 * 1024,
+                prefetch: false,
+            }),
+            "partial.db",
+        );
+        assert!(
+            result.is_ok(),
+            "checkpoint on an empty WAL must not fail: {:?}",
+            result.err()
+        );
+    }
+
+    /// Control for [`partial_sync_checkpoint_succeeds_when_main_wal_is_empty`]:
+    /// the very same sequence over a full-sync replica, which always worked
+    /// because `PlatformIO` reports a short read at end of file.
+    #[test]
+    fn full_sync_checkpoint_succeeds_when_main_wal_is_empty() {
+        let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
+        let result = bootstrap_and_checkpoint_twice(io, None, "full.db");
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    /// `read_wal_salt` is the first read `checkpoint()` performs, and it is
+    /// written for a WAL file that may be shorter than one header: a short
+    /// read means "no salt". Every IO backend must report that short read
+    /// rather than an error, otherwise partial sync (the only user of
+    /// `SparseLinuxIo`) cannot checkpoint an empty WAL. Linux-only, because
+    /// `SparseLinuxIo` is.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn read_wal_salt_of_empty_wal_file_is_none_on_every_io() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let wal_path = temp_dir
+            .path()
+            .join("empty.db-wal")
+            .to_string_lossy()
+            .to_string();
+        std::fs::write(&wal_path, []).unwrap();
+
+        let platform_io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
+        let sparse_io: Arc<dyn turso_core::IO> =
+            Arc::new(crate::sparse_io::SparseLinuxIo::new().unwrap());
+
+        for (name, io) in [("PlatformIO", platform_io), ("SparseLinuxIo", sparse_io)] {
+            let mut gen = genawaiter::sync::Gen::new({
+                let io = io.clone();
+                let wal_path = wal_path.clone();
+                move |coro| async move {
+                    let coro: Coro<()> = coro.into();
+                    let wal = io.try_open(&wal_path)?.expect("wal file exists");
+                    super::read_wal_salt(&coro, &wal).await
+                }
+            });
+            let result = loop {
+                match gen.resume_with(Ok(())) {
+                    genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
+                    genawaiter::GeneratorState::Complete(result) => break result,
+                }
+            };
+            assert!(matches!(result, Ok(None)), "{name}: {result:?}");
         }
     }
 }

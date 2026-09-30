@@ -59,13 +59,21 @@ pub(super) fn resolve_qualified_on_ref(
         }));
     }
 
-    if let Table::BTree(btree) = table {
-        if parse_row_id(normalized_id, internal_id, || false)?.is_some() {
-            if !btree.has_rowid {
-                crate::bail_parse_error!("no such column: {}", normalized_id);
+    match table {
+        Table::BTree(btree) => {
+            if parse_row_id(normalized_id, internal_id, || false)?.is_some() {
+                if !btree.has_rowid {
+                    crate::bail_parse_error!("no such column: {}", normalized_id);
+                }
+                return Ok(Some(QualifiedMatch::RowId));
             }
-            return Ok(Some(QualifiedMatch::RowId));
         }
+        Table::Virtual(_) => {
+            if parse_row_id(normalized_id, internal_id, || false)?.is_some() {
+                return Ok(Some(QualifiedMatch::RowId));
+            }
+        }
+        _ => {}
     }
 
     Ok(None)
@@ -158,6 +166,15 @@ pub fn bind_and_rewrite_expr<'a>(
                                 *expr = row_id_expr;
                                 return Ok(WalkControl::Continue);
                             }
+                        } else if let Table::Virtual(_) = &joined_table.table {
+                            if let Some(row_id_expr) =
+                                parse_row_id(&normalized_id, joined_tables[0].internal_id, || {
+                                    joined_tables.len() != 1
+                                })?
+                            {
+                                *expr = row_id_expr;
+                                return Ok(WalkControl::Continue);
+                            }
                         }
                     }
 
@@ -175,11 +192,13 @@ pub fn bind_and_rewrite_expr<'a>(
                     if match_result.is_none() {
                         let mut matched_scope_depth = None;
                         for outer_ref in referenced_tables.outer_query_refs().iter() {
-                            // CTEs (FromClauseSubquery) in outer_query_refs are only for table
-                            // lookup (e.g., FROM cte1), not for column resolution. Columns from
-                            // CTEs should only be accessible when the CTE is explicitly in the
-                            // FROM clause, not as implicit outer references.
-                            if matches!(outer_ref.table, Table::FromClauseSubquery(_)) {
+                            // Definition-only entries let a FROM clause find a CTE by
+                            // name; the CTE's columns are visible only after a FROM
+                            // clause actually adds the table. Every other outer ref is
+                            // a real table in an enclosing scope, including CTEs and
+                            // the recursive self-reference, and its columns can be
+                            // referenced without qualification.
+                            if outer_ref.cte_definition_only {
                                 continue;
                             }
                             // Skip refs from deeper scopes once we found a match
@@ -606,7 +625,7 @@ pub fn bind_and_rewrite_expr<'a>(
                             referenced_tables.mark_column_used(tbl_id, col_idx);
                         } else {
                             return Err(LimboError::ParseError(format!(
-                                "no such column or database: {db_name_str}.{tbl_name_str}.{col_name_str}"
+                                "no such column: {db_name_str}.{tbl_name_str}.{col_name_str}"
                             )));
                         }
                     }

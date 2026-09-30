@@ -3,8 +3,9 @@
 This consolidates the V1 capability table in the parent FastQL.md against the
 current frontend and acceptance tests. It is a current support map, not a claim
 of complete SQLite compatibility or every possible composition of SQL clauses.
-The pinned ordinary relational route remains Turso v0.7.2; collection lowering is
-additive. Chronological notes in status.md and contracts.md may describe earlier
+The pinned ordinary relational route now uses Turso v0.8.1; collection lowering is
+additive. See [upgrade compatibility changes](turso-0.8.1.md), including rejection
+of trailing UPDATE/DELETE LIMIT. Chronological notes in status.md and contracts.md may describe earlier
 states superseded by later implementations.
 
 | V1 requirement | Current behavior | Acceptance evidence |

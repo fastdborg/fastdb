@@ -11,8 +11,12 @@ fn convert(v: EngineValue) -> Value {
 }
 #[test]
 fn ordinary_sql_matches_the_pinned_engine() {
-    let baseline = Baseline::open_file(Baseline::io_for_path(":memory:").expect("io"), ":memory:")
-        .expect("baseline");
+    let baseline = Baseline::open_file(
+        Baseline::io_for_path(":memory:").expect("io"),
+        ":memory:",
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .expect("baseline");
     let raw = baseline.connect().expect("baseline connection");
     let db = Database::open(":memory:").expect("fastdb");
     let c = db.connect().expect("fastdb connection");
@@ -52,8 +56,12 @@ fn ordinary_sql_matches_the_pinned_engine() {
 fn malformed_collection_sql_preserves_native_parse_errors_and_active_work() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
-    let baseline =
-        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let baseline = Baseline::open_file(
+        Baseline::io_for_path(":memory:").unwrap(),
+        ":memory:",
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let raw = baseline.connect().unwrap();
     for sql in [
         "CREATE TABLE docs",
@@ -104,8 +112,12 @@ fn malformed_collection_sql_preserves_native_parse_errors_and_active_work() {
 
 #[test]
 fn native_source_free_scalar_limit_parameter_matches_pinned_preparation() {
-    let baseline =
-        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let baseline = Baseline::open_file(
+        Baseline::io_for_path(":memory:").unwrap(),
+        ":memory:",
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let raw = baseline.connect().unwrap();
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
@@ -146,8 +158,12 @@ fn native_source_free_scalar_limit_parameter_matches_pinned_preparation() {
 
 #[test]
 fn experimental_table_features_retain_pinned_default_rejection() {
-    let baseline =
-        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let baseline = Baseline::open_file(
+        Baseline::io_for_path(":memory:").unwrap(),
+        ":memory:",
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let raw = baseline.connect().unwrap();
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
@@ -181,8 +197,12 @@ fn experimental_table_features_retain_pinned_default_rejection() {
 
 #[test]
 fn pinned_tuple_pagination_parameter_metadata_gap() {
-    let baseline =
-        Baseline::open_file(Baseline::io_for_path(":memory:").unwrap(), ":memory:").unwrap();
+    let baseline = Baseline::open_file(
+        Baseline::io_for_path(":memory:").unwrap(),
+        ":memory:",
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let raw = baseline.connect().unwrap();
     let mut create = raw
         .prepare("CREATE TABLE native(a INTEGER,b INTEGER)")

@@ -1,5 +1,9 @@
 # V2 full-text search
 
+Current source integrates [Turso 0.8.1](turso-0.8.1.md). Its explicit FTS migration,
+catalog version 4, concurrent transactions, and rejection of trailing DML LIMIT
+supersede the older descriptions below; published release artifacts are unchanged.
+
 Implemented and qualified for the documented native contract. The approved
 [cache isolation fix](proposals/fts-cache-snapshot.md) is integrated as
 `fb246a8e4`. Later V1 upgrade checks exposed backing-storage integrity and cleanup
@@ -36,8 +40,8 @@ ORDER BY h.score DESC, h.id;
 - `IF NOT EXISTS` accepts an identical managed definition on the same collection;
   it does not accept a different field list or search kind. `DROP INDEX`, table
   drop, builds, writes and catalog changes use statement savepoints.
-- Catalog version 3 persists the ordered paths and `tantivy-default-0.26`
-  tokenizer identity. The pinned engine uses Tantivy 0.26.1 with its default
+- Catalog version 4 persists the ordered paths and `tantivy-default-0.26`
+  tokenizer identity. The pinned engine uses Tantivy 0.26.2 with its default
   tokenizer: split on punctuation, lowercase and omit tokens of 40 bytes
   or longer. No stemming, accent folding or language-specific segmentation is promised.
 - Queries apply across all indexed text fields. Supported grammar: terms,
@@ -59,20 +63,18 @@ ORDER BY h.score DESC, h.id;
   top-k search. The materialized hit set prevents predicate/limit pushdown from
   changing this contract.
 - The native plan must select the FTS index or preparation fails. There is no
-  text-scan fallback. A transactional indexed-document count supplies a positive
-  native limit, avoiding the engine's implicit million-hit cap. All matching hits
-  are materialized before stable sorting and the public limit. Working memory
-  and search cost can grow with the corpus/matches. The pinned Tantivy collector
-  reserves scratch capacity proportional to the supplied document count, even
-  for a selective query; result limits only bound returned data. This implementation makes no constant-memory top-k claim.
+  text-scan fallback. Native LIMIT -1 retrieves every live indexed match without
+  a shared document counter. All matching hits are materialized before stable
+  sorting and the public limit. Working memory and search cost can grow with
+  corpus/match counts; result limits bound returned data, not collector memory.
 - Collection integrity checks compare source documents with managed text fields,
   IDs and the count. They do not prove every native Tantivy posting is intact.
-  Owned schema, native directory and counters are checked on connection open;
+  Owned schema and the native directory are checked on connection open;
   managed/internal storage cannot be accessed through public SQL.
 - All seven native clients and SQL/CLI share the parser and frontend. Browser/
   WASM support was removed from the active checkout and is not a release gate.
 
-## Known native issues and qualification
+## Historical native issues and qualification (0.7.2)
 
 Native `ORDER BY score DESC,id LIMIT n` can return arbitrary members of a score
 tie because it limits in the FTS method before ID sorting. The frontend avoids

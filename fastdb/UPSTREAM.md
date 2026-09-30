@@ -1,16 +1,21 @@
 # Engine provenance
 
 - Repository: https://github.com/tursodatabase/turso (remote `upstream`).
-- Baseline: release `v0.7.2`, full commit `046e9cbf67d22491e8ecc941ec2891b02a9f3cad`.
+- Baseline: release `v0.8.1`, full commit `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.
+- Previous base: `v0.7.2`, commit `046e9cbf67d22491e8ecc941ec2891b02a9f3cad`.
+- Upgrade behavior and validation: [integration notes](docs/turso-0.8.1.md),
+  [task checklist](docs/turso-0.8.1-tasks.md), [core exception review](docs/core-exceptions.md).
 - FastDB fork: `git@github.com:fastdborg/fastdb.git` (remote `origin`). Upstream ancestry is preserved; inspect current refs rather than relying on historical branch names.
 - Toolchain: upstream Rust 1.88; locally tested with 1.88.0 on Linux x86_64.
 - Engine dependency: in-workspace `turso_core` with default features plus `conn_raw_api` for engine WAL hooks and `fts` for V2 full-text search. V2 opens opt into index methods; managed search owns the public surface.
-- This release exposes `Connection::prepare`, `prepare_stmt`, and blocking statement execution. It predates the `postgres/frontend` directory in the plans; the same separate-frontend boundary is used without copying or modifying core.
+- This release exposes `Connection::prepare`, `prepare_stmt`, and blocking statement execution. FastDB retains its separate-frontend boundary and the explicitly registered core exceptions.
 
-Upstream evidence inspected through the GitHub check-runs API for this exact SHA:
-[Linux native Node DB bindings](https://github.com/tursodatabase/turso/actions/runs/30547750865/job/90892023910) succeeded;
-[Windows native Node DB bindings](https://github.com/tursodatabase/turso/actions/runs/30547750865/job/90892023935) succeeded.
-This supports the baseline only. Broad engine conformance and our combined build still require their own evidence; these upstream jobs are not FastDB tests.
+Upstream check-runs inspected for the exact 0.8.1 release commit:
+[Linux x64 Node 24 database bindings](https://github.com/tursodatabase/turso/actions/runs/36564600099/job/109396698178),
+[Linux x64 Node 24 sync bindings](https://github.com/tursodatabase/turso/actions/runs/36564600099/job/109396698143), and
+[Linux x64 .NET NativeAOT](https://github.com/tursodatabase/turso/actions/runs/36564670411/job/109404264594)
+succeeded. These support upstream packaging/API coverage only; they are not
+FastDB tests or evidence of full engine conformance on the combined fork.
 
 Local integration changes:
 
@@ -18,6 +23,12 @@ Local integration changes:
 2. FastDB implementation, tests, scripts, and documentation under `fastdb/`.
 3. Inherited workflow YAML files moved unchanged into `.github/upstream-workflows/` so GitHub cannot execute them. Only `.github/workflows/fastdb-ci.yml` remains active. Audit this directory on every upstream merge before pushing.
 4. Approved engine exceptions are recorded below; upstream parser, bindings and CLI implementation files remain unchanged. The frontend also directly depends on the pinned workspace parser/extension crates for AST lowering and statically linked pure accessors; registration uses the documented unsafe startup extension context API, which is freed before exposing the connection.
+
+The sections below preserve the original exception approvals and release
+history. Their old version/dependency statements describe those releases.
+For the current tree, the 0.8.1 exception table and upgrade checklist linked
+above are authoritative: the former FTS cache and first-FULL patches are
+retired, Tantivy is 0.26.2, and the approved backing-cursor fix is active.
 
 ## Approved core exception: trigger interruption
 

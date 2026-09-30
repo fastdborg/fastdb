@@ -216,6 +216,7 @@ enum NativeCorrelationMode {
     Native,
     NativeCte,
     ScalarPagination,
+    Exists,
     Membership,
     // Membership compares native values inside each arm before set operations.
     CompoundArm,
@@ -357,8 +358,19 @@ fn native_correlated_body(
     } else {
         mode
     };
-    let scalar_pagination = mode == NativeCorrelationMode::ScalarPagination;
     let mut inner = inner.clone();
+    let scalar_pagination = matches!(
+        mode,
+        NativeCorrelationMode::ScalarPagination | NativeCorrelationMode::Exists
+    );
+    if mode == NativeCorrelationMode::Exists {
+        // EXISTS counts qualifying source rows; DISTINCT and sorting do not
+        // change existence, even with OFFSET, in the native compiler.
+        inner.order_by.clear();
+        if let OneSelect::Select { distinctness, .. } = &mut inner.body.select {
+            *distinctness = None;
+        }
+    }
     if !inner.body.compounds.is_empty() {
         resolve_compound_expression_order_names(&mut inner);
         let direct_membership = mode == NativeCorrelationMode::Membership
@@ -561,7 +573,7 @@ fn native_correlated_body(
                     if scalar {
                         NativeCorrelationMode::ScalarPagination
                     } else {
-                        NativeCorrelationMode::Native
+                        NativeCorrelationMode::Exists
                     },
                 ) {
                     Ok(prepared) => prepared,
@@ -597,9 +609,13 @@ fn native_correlated_body(
                 } else {
                     let (prepared, affinity) = if scalar && !typed_projection {
                         match expression(&format!("__fastdb_pack({prepared})")) {
-                            Ok(prepared) => {
-                                (prepared, SubqueryAffinity::NativeScalar(scalar_collation))
-                            }
+                            Ok(prepared) => (
+                                prepared,
+                                SubqueryAffinity::NativeScalar({
+                                    let _ = scalar_collation;
+                                    "BINARY".into()
+                                }),
+                            ),
                             Err(error) => {
                                 nested_error = Some(error);
                                 return Ok(turso_core::WalkControl::SkipChildren);
@@ -1147,9 +1163,8 @@ fn qualify_correlated_using(
     }
     // Resolve only closed local source schemas here. Open collections and
     // other source forms need their own lexical scope resolution.
-    // The pinned planner keeps outer merged keys available to deeper query
-    // scopes even when this SELECT has a same-named local column. Local columns
-    // still take precedence in this SELECT's own expressions.
+    // Local columns shadow outer merged keys in this SELECT and its nested
+    // queries, matching 0.8.1 lexical correlation resolution.
     let mut inherited_using = using.clone();
     let mut using = using.clone();
     let mut local_aliases = Vec::new();
@@ -1174,6 +1189,11 @@ fn qualify_correlated_using(
             };
             local_aliases.push(local.alias.clone());
             using.bindings.retain(|name, _| {
+                !columns
+                    .iter()
+                    .any(|(column, _)| column.eq_ignore_ascii_case(name))
+            });
+            inherited_using.bindings.retain(|name, _| {
                 !columns
                     .iter()
                     .any(|(column, _)| column.eq_ignore_ascii_case(name))
@@ -2144,6 +2164,11 @@ impl Scope {
                             }
                         }
                     }
+                    let affinity_arm = if is_column {
+                        " UNION ALL SELECT CAST(NULL AS BLOB) WHERE 0"
+                    } else {
+                        ""
+                    };
                     let collation = outer_collation(lhs).unwrap_or(collation);
                     let key = format!("({key} COLLATE {})", quote(collation));
                     let negate = if *not { "NOT " } else { "" };
@@ -2152,7 +2177,7 @@ impl Scope {
                     // require encoding of the source values.
                     if direct_keys {
                         // Both sides use comparison keys; retain one native RHS.
-                        *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}) SELECT {key} {negate}IN {query} FROM __fastdb_member_lhs)"))?;
+                        *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}) SELECT {key} {negate}IN {query} FROM __fastdb_member_lhs)"))?;
                         return Ok(());
                     }
                     let local = if shared.is_empty() {
@@ -2165,7 +2190,7 @@ impl Scope {
                     } else {
                         shared.as_str()
                     };
-                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
+                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();
@@ -2368,8 +2393,15 @@ impl Scope {
                             quote(collation)
                         );
                         let raw = raw.as_str();
-                        let key =
-                            format!("(SELECT v FROM (SELECT __fastdb_unwrap({logical}) AS v))");
+                        // Document columns have BLOB affinity, unlike helper
+                        // expressions. A zero-row typed arm preserves that
+                        // metadata without casting or altering the value.
+                        let affinity_arm = if membership_column(value) {
+                            " UNION ALL SELECT CAST(NULL AS BLOB) WHERE 0"
+                        } else {
+                            ""
+                        };
+                        let key = format!("(SELECT v FROM (SELECT __fastdb_unwrap({logical}) AS v{affinity_arm}))");
                         let compare = |l: &str, r: &str| {
                             if on_left {
                                 format!("{r} {op} {l}")
@@ -2388,7 +2420,7 @@ impl Scope {
                                 compare(&key, raw)
                             )
                         } else {
-                            let value = format!("(SELECT v FROM (SELECT __fastdb_range_scalar({logical},{raw}) AS v))");
+                            let value = format!("(SELECT v FROM (SELECT __fastdb_range_scalar({logical},{raw}) AS v{affinity_arm}))");
                             // Keep the document operand's default collation when
                             // it precedes a native scalar with declared collation.
                             compare(
@@ -2466,7 +2498,15 @@ impl Scope {
                             && !native_column_collation(&left))
                         .then(|| self.derived_native_collation(column, true))
                         .flatten();
-                        let scalar = if let Some(collation) = expression_collation {
+                        let scalar = if !on_left
+                            && self
+                                .field(a)?
+                                .is_some_and(|(i, _)| self.sources[i].collection.is_some())
+                            && outer_collation(a).is_none()
+                            && outer_collation(b).is_none()
+                        {
+                            format!("({left} COLLATE BINARY) {op} {right}")
+                        } else if let Some(collation) = expression_collation {
                             format!(
                                 "({left} COLLATE {}) {op} ({right} COLLATE {})",
                                 quote(&collation),
@@ -3171,9 +3211,8 @@ fn source(
             .map(|i| (statement.get_column_name(i).into_owned(), false))
             .collect();
         let program = statement.get_program();
-        // Derived column metadata follows the compound's leftmost output.
-        // Expression emission can instead retain the rightmost arm context;
-        // keep both so membership and scalar comparisons do not conflate them.
+        // Turso 0.8.1 propagates the compound's leftmost output collation
+        // consistently into outer expressions and column metadata.
         let mut native_collations = std::collections::BTreeMap::new();
         for (i, column) in program.result_columns.iter().enumerate() {
             let mut value = column.expr.clone();
@@ -3203,46 +3242,9 @@ fn source(
                 .entry(statement.get_column_name(i).to_ascii_lowercase())
                 .or_insert_with(|| explicit.or(implicit).unwrap_or_else(|| "BINARY".into()));
         }
-        let mut native_expression_collations = std::collections::BTreeMap::new();
-        for (i, column) in program.result_columns.iter().enumerate() {
-            let mut pending = vec![(column.expr.clone(), &program.table_references)];
-            let mut implicit = None;
-            let mut explicit = None;
-            while let Some((mut value, tables)) = pending.pop() {
-                turso_core::walk_expr_mut(&mut value, &mut |expr| {
-                    match expr {
-                        Expr::Collate(_, name) => {
-                            explicit.get_or_insert_with(|| name.as_str().to_owned());
-                            return Ok(turso_core::WalkControl::SkipChildren);
-                        }
-                        Expr::Column { table, column, .. } => {
-                            if let Some((_, source)) = tables.find_table_by_internal_id(*table) {
-                                if let turso_core::schema::Table::FromClauseSubquery(derived) =
-                                    source
-                                {
-                                    if let Some(result) =
-                                        derived.plan.select_result_columns().get(*column)
-                                    {
-                                        pending.push((
-                                            result.expr.clone(),
-                                            derived.plan.select_table_references(),
-                                        ));
-                                    }
-                                } else if let Some(column) = source.get_column_at(*column) {
-                                    implicit.get_or_insert_with(|| column.collation().name());
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                    Ok(turso_core::WalkControl::Continue)
-                })?;
-            }
-            // Native duplicate-name lookup resolves the first projected column.
-            native_expression_collations
-                .entry(statement.get_column_name(i).to_ascii_lowercase())
-                .or_insert_with(|| explicit.or(implicit).unwrap_or_else(|| "BINARY".into()));
-        }
+        // Use the engine's resolved output metadata, rather than descending
+        // into a compound plan's final arm (the pre-0.8 emission workaround).
+        let native_expression_collations = native_collations.clone();
         // A name-based star expansion cannot address later duplicate columns.
         // Preserve the first public name for ordinary lookup and assign private
         // names to subsequent positions through a CTE column list.
@@ -3666,13 +3668,17 @@ fn replace_order_base(expr: &mut Expr, value: Expr) {
 // positions. usize parsing also matches the engine's range on this platform.
 fn projection_position(expr: &Expr) -> Option<usize> {
     match order_base(expr) {
-        Expr::Literal(Literal::Numeric(n)) => n.parse().ok(),
+        Expr::Literal(Literal::Numeric(n)) => {
+            n.parse::<i64>().ok().and_then(|n| usize::try_from(n).ok())
+        }
         Expr::Unary(UnaryOperator::Positive, inner) => match inner.as_ref() {
-            Expr::Literal(Literal::Numeric(n)) => n.parse().ok(),
+            Expr::Literal(Literal::Numeric(n)) => {
+                n.parse::<i64>().ok().and_then(|n| usize::try_from(n).ok())
+            }
             _ => None,
         },
         Expr::Unary(UnaryOperator::Negative, inner) => match inner.as_ref() {
-            Expr::Literal(Literal::Numeric(n)) if n.parse::<usize>().is_ok() => Some(0),
+            Expr::Literal(Literal::Numeric(n)) if n.parse::<i64>().is_ok() => Some(0),
             _ => None,
         },
         _ => None,
@@ -4871,11 +4877,14 @@ impl Connection {
         let Ok(mut cmd) = parsed(expanded) else {
             return Ok(None);
         };
-        let explain = matches!(cmd, Cmd::ExplainQueryPlan(_) | Cmd::Explain(_));
+        let explain = matches!(cmd, Cmd::ExplainQueryPlan { .. } | Cmd::Explain(_));
         let select = match &mut cmd {
             Cmd::Stmt(Stmt::Select(s))
             | Cmd::Explain(Stmt::Select(s))
-            | Cmd::ExplainQueryPlan(Stmt::Select(s)) => s,
+            | Cmd::ExplainQueryPlan {
+                stmt: Stmt::Select(s),
+                ..
+            } => s,
             _ => return Ok(None),
         };
         let tuple_projection = matches!(&select.body.select, OneSelect::Select { columns, .. }
@@ -5135,7 +5144,10 @@ impl Connection {
                     if let Cmd::Stmt(statement) = plan.command {
                         plan.command = match &cmd {
                             Cmd::Explain(_) => Cmd::Explain(statement),
-                            Cmd::ExplainQueryPlan(_) => Cmd::ExplainQueryPlan(statement),
+                            Cmd::ExplainQueryPlan { format, .. } => Cmd::ExplainQueryPlan {
+                                stmt: statement,
+                                format: *format,
+                            },
                             _ => Cmd::Stmt(statement),
                         };
                     }
@@ -5459,7 +5471,7 @@ impl Connection {
                                 // from a function expression with no affinity. Restore
                                 // a column boundary after decoding its comparison key.
                                 let values = if column {
-                                    format!("SELECT v FROM ({values}) AS __fastdb_member_values")
+                                    format!("SELECT v FROM ({values} UNION ALL SELECT CAST(NULL AS BLOB) WHERE 0) AS __fastdb_member_values")
                                 } else {
                                     values
                                 };
@@ -5781,7 +5793,7 @@ impl Connection {
                         &sources,
                         false,
                         params,
-                        NativeCorrelationMode::ScalarPagination,
+                        NativeCorrelationMode::Exists,
                     )?
                     .0,
                 );
@@ -5883,7 +5895,7 @@ impl Connection {
                         if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
                     let values = "SELECT __fastdb_unwrap(v) AS v FROM __fastdb_members";
                     let values = if column {
-                        format!("SELECT v FROM ({values}) AS __fastdb_member_values")
+                        format!("SELECT v FROM ({values} UNION ALL SELECT CAST(NULL AS BLOB) WHERE 0) AS __fastdb_member_values")
                     } else {
                         values.into()
                     };
@@ -5961,7 +5973,7 @@ impl Connection {
                         .trim()
                         .trim_end_matches(';')
                 ))?;
-                SubqueryAffinity::NativeScalar(collation)
+                SubqueryAffinity::NativeScalar("BINARY".into())
             };
         }
         expression_subqueries.extend(native_expression_subqueries);

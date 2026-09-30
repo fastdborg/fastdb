@@ -92,6 +92,10 @@ impl Error {
             Self::Engine(turso_core::LimboError::Busy) => "FDB_BUSY",
             Self::Engine(turso_core::LimboError::BusySnapshot) => "FDB_BUSY_SNAPSHOT",
             Self::Engine(
+                turso_core::LimboError::WriteWriteConflict
+                | turso_core::LimboError::CommitDependencyAborted,
+            ) => "FDB_WRITE_CONFLICT",
+            Self::Engine(
                 turso_core::LimboError::Constraint(_)
                 | turso_core::LimboError::ForeignKeyConstraint(_)
                 | turso_core::LimboError::Raise(..),
@@ -265,6 +269,7 @@ impl Database {
             turso_core::OpenFlags::default(),
             turso_core::DatabaseOpts::new().with_index_method(true),
             None,
+            Arc::new(turso_core::SqliteDialect),
         )?;
         let conn = engine.connect()?;
         if manual_wal {
@@ -476,7 +481,14 @@ impl Connection {
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
-        collection.version = if !collection.relations.is_empty()
+        collection.version = if collection.indexes.iter().any(|index| {
+            index
+                .fulltext
+                .as_ref()
+                .is_some_and(|config| config.storage_version == 2)
+        }) {
+            4
+        } else if !collection.relations.is_empty()
             || collection
                 .indexes
                 .iter()
@@ -664,6 +676,7 @@ impl Connection {
         })
     }
     fn insert_index(&self, index: &Index, doc: &Document) -> Result<()> {
+        index.require_current_text_storage()?;
         if index.kind == IndexKind::Vector {
             return self.insert_vector_entry(index, doc);
         }

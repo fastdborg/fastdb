@@ -300,7 +300,7 @@ impl Connection {
                 return Ok(None);
             }
             Ok(match crate::select::parsed(&expanded)? {
-                Cmd::Explain(_) | Cmd::ExplainQueryPlan(_) => Some(SchemaStatement::Native),
+                Cmd::Explain(_) | Cmd::ExplainQueryPlan { .. } => Some(SchemaStatement::Native),
                 _ => None,
             })
         });

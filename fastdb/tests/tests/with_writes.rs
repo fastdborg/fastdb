@@ -84,7 +84,7 @@ fn with_updates_and_deletes_preserve_candidates_and_atomic_indexes() {
 }
 
 #[test]
-fn pinned_same_name_cte_write_resolution_differs_from_candidate_select() {
+fn same_name_cte_write_resolution_matches_candidate_select() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
     q(&c, "CREATE TABLE native(n INTEGER)");
@@ -100,7 +100,7 @@ fn pinned_same_name_cte_write_resolution_differs_from_candidate_select() {
         .rows,
         vec![vec![Value::Integer(2)]]
     );
-    for (cte_name, expected) in [("native", vec![12]), ("target", vec![11, 12, 13])] {
+    for (cte_name, expected) in [("native", vec![12]), ("target", vec![12])] {
         q(&c, "BEGIN");
         let sql = format!("WITH {cte_name} AS (SELECT 2 AS n), chosen AS (SELECT n FROM {cte_name}) UPDATE native AS target SET n=n+10 WHERE n IN (SELECT n FROM chosen) RETURNING n");
         let result = q(&c, &sql);
@@ -121,9 +121,9 @@ fn pinned_same_name_cte_write_resolution_differs_from_candidate_select() {
         q(&c, "BEGIN");
         let result = q(&c, &format!("{prefix} {suffix}"));
         let expected = if suffix.starts_with("UPDATE") {
-            [11, 12, 13]
+            [12]
         } else {
-            [1, 2, 3]
+            [2]
         };
         assert_eq!(
             result.rows,
@@ -132,7 +132,7 @@ fn pinned_same_name_cte_write_resolution_differs_from_candidate_select() {
                 .map(|n| vec![Value::Integer(n)])
                 .collect::<Vec<_>>()
         );
-        assert_eq!(result.affected, 3);
+        assert_eq!(result.affected, 1);
         q(&c, "ROLLBACK");
         assert_eq!(
             q(&c, "SELECT n FROM native ORDER BY n").rows,
@@ -552,7 +552,7 @@ fn target_named_cte_constraint_failure_restores_rows_indexes_and_prior_work() {
             } else {
                 format!("SELECT n FROM {alias} WHERE n<$max")
             };
-            let sql = format!("WITH {alias} AS (SELECT 2 AS n), chosen AS ({chosen}) UPDATE docs AS {alias} SET n=CASE WHEN n=1 THEN 10 ELSE 20 END WHERE n IN (SELECT n FROM chosen) RETURNING n");
+            let sql = format!("WITH {alias} AS (SELECT n FROM main.docs WHERE n<4), chosen AS ({chosen}) UPDATE docs AS {alias} SET n=CASE WHEN n=1 THEN 10 ELSE 20 END WHERE n IN (SELECT n FROM chosen) RETURNING n");
             let params = Parameters::from([("$max".into(), Value::Integer(4))]);
             assert!(c.execute(&sql, &Parameters::new()).is_err());
             assert!(c.execute(&sql, &params).is_err());

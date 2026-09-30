@@ -15,6 +15,16 @@ pub struct ParameterInfo {
     pub names: Vec<String>,
 }
 
+/// Output format of an `EXPLAIN QUERY PLAN` statement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EqpFormat {
+    /// `FORMAT=TEXT`
+    #[default]
+    Text,
+    /// `FORMAT=JSON`
+    Json,
+}
+
 /// Statement or Explain statement
 // https://sqlite.org/syntax/sql-stmt.html
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,7 +32,7 @@ pub enum Cmd {
     /// `EXPLAIN` statement
     Explain(Stmt),
     /// `EXPLAIN QUERY PLAN` statement
-    ExplainQueryPlan(Stmt),
+    ExplainQueryPlan { stmt: Stmt, format: EqpFormat },
     /// statement
     Stmt(Stmt),
 }
@@ -59,10 +69,6 @@ pub struct Update {
     pub where_clause: Option<Box<Expr>>,
     /// `RETURNING`
     pub returning: Vec<ResultColumn>,
-    /// `ORDER BY`
-    pub order_by: Vec<SortedColumn>,
-    /// `LIMIT`
-    pub limit: Option<Limit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,10 +227,6 @@ pub enum Stmt {
         where_clause: Option<Box<Expr>>,
         /// `RETURNING`
         returning: Vec<ResultColumn>,
-        /// `ORDER BY`
-        order_by: Vec<SortedColumn>,
-        /// `LIMIT`
-        limit: Option<Limit>,
     },
     /// `DETACH DATABASE`: db name
     Detach {
@@ -622,6 +624,10 @@ pub struct Variable {
     pub name: Option<Box<str>>,
     /// Type of the source column, if known (e.g. from trigger NEW/OLD rewrite).
     pub col_type: Option<Box<str>>,
+    /// True for an explicit `?N` marker. Numbered markers carry no allocated
+    /// name; their "?N" spelling is derived from the index on demand.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub numbered: bool,
 }
 
 impl Variable {
@@ -630,6 +636,17 @@ impl Variable {
             index,
             name: None,
             col_type: None,
+            numbered: false,
+        }
+    }
+
+    /// An explicit `?N` marker.
+    pub fn numbered(index: NonZeroU32) -> Self {
+        Self {
+            index,
+            name: None,
+            col_type: None,
+            numbered: true,
         }
     }
 
@@ -642,6 +659,7 @@ impl Variable {
             } else {
                 Some(col_type.into())
             },
+            numbered: false,
         }
     }
 
@@ -650,7 +668,15 @@ impl Variable {
             index,
             name: Some(name.into()),
             col_type: None,
+            numbered: false,
         }
+    }
+
+    /// True for positional parameters — a bare `?` or an explicit `?N` —
+    /// and false for named ones (`:x`, `@x`, `$x`). Positional markers
+    /// carry no allocated name.
+    pub fn is_positional(&self) -> bool {
+        self.name.is_none()
     }
 }
 
@@ -783,6 +809,26 @@ pub enum Literal {
     CurrentTime,
     /// `CURRENT_TIMESTAMP`
     CurrentTimestamp,
+}
+
+pub fn blob_literal_hex(blob: &str) -> &str {
+    debug_assert!(blob.len() >= 3);
+    debug_assert!(matches!(blob.as_bytes()[0], b'x' | b'X'));
+    debug_assert_eq!(blob.as_bytes()[1], b'\'');
+    debug_assert_eq!(blob.as_bytes()[blob.len() - 1], b'\'');
+    &blob[2..blob.len() - 1]
+}
+
+/// Decodes the hex digits of a blob literal such as `X'0102'` into the bytes
+/// they stand for. The parser has already checked that the literal is valid hex.
+pub fn blob_literal_bytes(blob: &str) -> impl Iterator<Item = u8> + '_ {
+    blob_literal_hex(blob)
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let hex_byte = std::str::from_utf8(pair).expect("parser validated hex string");
+            u8::from_str_radix(hex_byte, 16).expect("parser validated hex digit")
+        })
 }
 
 /// Textual comparison operator in an expression
@@ -1193,6 +1239,14 @@ impl Name {
             quote: None,
         }
     }
+    /// Create a name parsed from a bracket-quoted identifier (`[name]`),
+    /// remembering the bracket quoting so the name renders back as written.
+    pub const fn bracketed(s: String) -> Self {
+        Self {
+            value: s,
+            quote: Some('['),
+        }
+    }
     /// Parse name from the string (e.g. handle quoting and handle escaped quotes)
     pub fn from_string(s: impl AsRef<str>) -> Self {
         let s = s.as_ref();
@@ -1218,7 +1272,7 @@ impl Name {
         } else if bytes[0] == b'[' {
             assert!(s.len() >= 2);
             assert!(bytes[bytes.len() - 1] == b']');
-            Name::exact(s[1..s.len() - 1].to_string())
+            Name::bracketed(s[1..s.len() - 1].to_string())
         } else {
             Name::exact(s.to_string())
         }
@@ -1238,6 +1292,14 @@ impl Name {
     pub fn as_ident(&self) -> String {
         // let's keep original quotes if they were set
         // (parser.rs tests validates that behaviour)
+        if self.quote == Some('[') {
+            // A `]` cannot be escaped inside a bracket-quoted identifier, so
+            // fall back to double quotes when the name contains one.
+            if !self.value.contains(']') {
+                return format!("[{}]", self.value);
+            }
+            return format!("\"{}\"", self.value.replace('"', "\"\""));
+        }
         if let Some(quote) = self.quote {
             let single = quote.to_string();
             let double = single.clone() + &single;
@@ -1247,7 +1309,12 @@ impl Name {
         }
         let value = self.value.as_bytes();
         let safe_char = |&c: &u8| c.is_ascii_alphanumeric() || c == b'_';
-        if !value.is_empty() && value.iter().all(safe_char) && !is_quotable_keyword(value) {
+        let starts_with_digit = value.first().is_some_and(|c| c.is_ascii_digit());
+        if !value.is_empty()
+            && !starts_with_digit
+            && value.iter().all(safe_char)
+            && !is_quotable_keyword(value)
+        {
             self.value.clone()
         } else {
             format!("\"{}\"", self.value.replace("\"", "\"\""))
@@ -1472,7 +1539,17 @@ pub enum ColumnConstraint {
     /// `UNIQUE`
     Unique(Option<ResolveType>),
     /// `CHECK`
-    Check(Box<Expr>),
+    Check {
+        /// constraint expression
+        expr: Box<Expr>,
+        /// The text between the CHECK parens exactly as the user wrote it,
+        /// whitespace-trimmed. SQLite reports an unnamed failed constraint
+        /// with this text. `None` when the constraint did not come from this
+        /// parser — the PostgreSQL frontend's translator builds these nodes
+        /// from its own AST — or after an ALTER TABLE rewrite changed the
+        /// expression out from under the captured text.
+        source: Option<String>,
+    },
     /// `DEFAULT`
     Default(Box<Expr>),
     /// `COLLATE`
@@ -1489,6 +1566,8 @@ pub enum ColumnConstraint {
     },
     /// `GENERATED`
     Generated {
+        /// Whether the constraint includes `GENERATED ALWAYS`.
+        generated_always: bool,
         /// expression
         expr: Box<Expr>,
         /// `STORED` / `VIRTUAL`
@@ -1539,7 +1618,17 @@ pub enum TableConstraint {
         conflict_clause: Option<ResolveType>,
     },
     /// `CHECK`
-    Check(Box<Expr>),
+    Check {
+        /// constraint expression
+        expr: Box<Expr>,
+        /// The text between the CHECK parens exactly as the user wrote it,
+        /// whitespace-trimmed. SQLite reports an unnamed failed constraint
+        /// with this text. `None` when the constraint did not come from this
+        /// parser — the PostgreSQL frontend's translator builds these nodes
+        /// from its own AST — or after an ALTER TABLE rewrite changed the
+        /// expression out from under the captured text.
+        source: Option<String>,
+    },
     /// `FOREIGN KEY`
     ForeignKey {
         /// columns
@@ -1607,13 +1696,29 @@ pub enum SortOrder {
 }
 
 /// `NULLS FIRST` or `NULLS LAST`
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum NullsOrder {
     /// `NULLS FIRST`
     First,
     /// `NULLS LAST`
     Last,
+}
+
+impl NullsOrder {
+    pub fn reverse(&self) -> Self {
+        match self {
+            NullsOrder::First => NullsOrder::Last,
+            NullsOrder::Last => NullsOrder::First,
+        }
+    }
+
+    pub fn default_for(order: SortOrder) -> Self {
+        match order {
+            SortOrder::Asc => NullsOrder::First,
+            SortOrder::Desc => NullsOrder::Last,
+        }
+    }
 }
 
 /// `REFERENCES` clause
@@ -1778,6 +1883,9 @@ pub enum PragmaName {
     CacheSize,
     /// set the cache spill behavior
     CacheSpill,
+    /// When ON, each INSERT, UPDATE and DELETE returns one row with the
+    /// number of rows it changed.
+    CountChanges,
     /// encryption cipher algorithm name for encrypted databases
     #[strum(serialize = "cipher")]
     #[cfg_attr(feature = "serde", serde(rename = "cipher"))]
@@ -1871,6 +1979,13 @@ pub enum PragmaName {
     /// last GC pass) at which MVCC runs an inline, non-blocking garbage
     /// collection pass on the commit path. -1 disables inline GC.
     MvccGcThreshold,
+    /// Sets or queries whether concurrent MVCC commits batch their logical-log
+    /// appends behind a single fsync.
+    MvccGroupCommit,
+    /// Sets or queries the number of visible FTS index segments a statement
+    /// flush may leave behind before the write path merges them. 0 disables
+    /// write-path merging.
+    FtsMergeThreshold,
     /// List all available types (built-in and custom)
     ListTypes,
     /// Deprecated no-op: control whether callback is invoked for empty result sets

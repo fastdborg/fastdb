@@ -10,6 +10,11 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct Config {
     pub additional_paths: Vec<Vec<String>>,
     pub tokenizer: String,
+    #[serde(default = "legacy_storage_version")]
+    pub storage_version: u32,
+}
+const fn legacy_storage_version() -> u32 {
+    1
 }
 const TOKENIZER: &str = "tantivy-default-0.26";
 // Stay below the pinned native FTS cursor's 1,000-document flush threshold.
@@ -21,6 +26,17 @@ fn invalid(message: &str) -> Error {
 }
 
 impl Index {
+    pub(crate) fn require_current_text_storage(&self) -> Result<()> {
+        if self
+            .fulltext
+            .as_ref()
+            .is_some_and(|config| config.storage_version == 1)
+        {
+            return Err(Error::Storage(format!("full-text index {} requires REINDEX {} for Turso 0.8.1; back up the database before upgrading", self.name, quote(&self.name))));
+        }
+        Ok(())
+    }
+
     pub(crate) fn paths(&self) -> impl Iterator<Item = &[String]> {
         std::iter::once(self.path.as_slice()).chain(
             self.fulltext
@@ -31,7 +47,9 @@ impl Index {
     pub(crate) fn validate_text_config(&self) -> Result<()> {
         match (&self.kind, &self.fulltext) {
             (IndexKind::FullText, Some(config))
-                if config.tokenizer == TOKENIZER && !self.unique =>
+                if config.tokenizer == TOKENIZER
+                    && matches!(config.storage_version, 1 | 2)
+                    && !self.unique =>
             {
                 // The native method generates its directory DDL from the index
                 // name without quoting. Reject names it cannot represent safely.
@@ -152,6 +170,7 @@ impl Connection {
             fulltext: Some(Config {
                 additional_paths: paths[1..].to_vec(),
                 tokenizer: TOKENIZER.into(),
+                storage_version: 2,
             }),
         };
         index.validate_text_config()?;
@@ -167,8 +186,7 @@ impl Connection {
             for path in index.paths() { crate::catalog::compatible_index(&c, path, index.kind)?; }
             self.run(&index.table_ddl(), &[])?;
             self.run(&index.index_ddl(), &[])?;
-            self.run(&index.text_stats_ddl(), &[])?;
-            self.run_index_maintenance(&format!("INSERT INTO {} VALUES (1,0)", quote(&index.text_stats())), &[])?;
+
             for documents in self.documents(&c)?.chunks(BUILD_BATCH_ROWS) {
                 self.insert_text_build_batch(&index, documents)?;
             }
@@ -206,6 +224,13 @@ impl Connection {
         self.change_text_count(index, documents.len() as i64)
     }
     pub(crate) fn change_text_count(&self, index: &Index, delta: i64) -> Result<()> {
+        if index
+            .fulltext
+            .as_ref()
+            .is_some_and(|config| config.storage_version == 2)
+        {
+            return Ok(());
+        }
         let rows = self.run_index_maintenance(
             &format!(
                 "UPDATE {} SET count=count+?1 WHERE slot=1 RETURNING count",
@@ -219,6 +244,23 @@ impl Connection {
         Ok(())
     }
     pub(crate) fn text_count(&self, index: &Index) -> Result<i64> {
+        if index
+            .fulltext
+            .as_ref()
+            .is_some_and(|config| config.storage_version == 2)
+        {
+            let rows = self.run(
+                &format!("SELECT count(*) FROM {}", quote(&index.storage)),
+                &[],
+            )?;
+            return match rows.as_slice() {
+                [row] => match row.as_slice() {
+                    [EngineValue::Numeric(turso_core::Numeric::Integer(n))] if *n >= 0 => Ok(*n),
+                    _ => Err(Error::Storage("invalid full-text count".into())),
+                },
+                _ => Err(Error::Storage("missing full-text count".into())),
+            };
+        }
         let rows = self.run(
             &format!(
                 "SELECT count FROM {} WHERE slot=1",
@@ -235,6 +277,7 @@ impl Connection {
         }
     }
     pub(crate) fn delete_index_entry(&self, index: &Index, id: &EngineValue) -> Result<()> {
+        index.require_current_text_storage()?;
         if index.kind == IndexKind::Vector {
             return self.delete_vector_entry(index, id);
         }
@@ -259,7 +302,13 @@ impl Connection {
         // Explicit DROP INDEX invokes the native method's directory/cache cleanup.
         if index.kind == IndexKind::FullText {
             self.run(&format!("DROP INDEX {}", quote(&index.name)), &[])?;
-            self.run(&format!("DROP TABLE {}", quote(&index.text_stats())), &[])?;
+            if index
+                .fulltext
+                .as_ref()
+                .is_some_and(|config| config.storage_version == 1)
+            {
+                self.run(&format!("DROP TABLE {}", quote(&index.text_stats())), &[])?;
+            }
         }
         if index.kind == IndexKind::Vector {
             for name in [index.ann_state(), index.ann_log()] {
@@ -298,13 +347,13 @@ impl Connection {
         if index.kind != IndexKind::FullText {
             return Err(invalid("search::text requires a full-text index"));
         }
-        // Supplying a positive document-count limit avoids the native method's
-        // implicit million-hit cutoff. Materialization prevents outer LIMIT and
-        // filters from cutting score ties before stable ID ordering.
-        let count = self.text_count(&index)?.max(1);
+        index.require_current_text_storage()?;
+        // Turso 0.8.1 treats a negative LIMIT as all live indexed documents.
+        // Materialize all hits before stable ID tie-breaking; no shared count
+        // row or table scan is needed to discover the native search limit.
         let query = format!("'{}'", query.replace('\'', "''"));
         let columns = index.key_columns();
-        let inner = format!("SELECT id,fts_score({columns},{query}) AS score FROM {} WHERE fts_match({columns},{query}) LIMIT {count}", quote(&index.storage));
+        let inner = format!("SELECT id,fts_score({columns},{query}) AS score FROM {} WHERE fts_match({columns},{query}) LIMIT -1", quote(&index.storage));
         let plan = self.run(&format!("EXPLAIN QUERY PLAN {inner}"), &[])?;
         if !plan.iter().any(|row| matches!(row.last(), Some(EngineValue::Text(t)) if t.as_str() == "QUERY INDEX METHOD fts")) {
             return Err(Error::Storage("full-text query did not select its native index".into()));
@@ -381,10 +430,12 @@ mod tests {
     fn text_metadata_and_owned_schema_cannot_be_weakened() {
         let (db, c, index) = setup();
         let catalog = c.catalog("docs").unwrap();
-        assert_eq!(catalog.version, 3);
+        assert_eq!(catalog.version, 4);
         let original = serde_json::to_value(catalog).unwrap();
         for (path, value) in [
             ("/version", serde_json::json!(2)),
+            ("/version", serde_json::json!(3)),
+            ("/indexes/0/fulltext/storage_version", serde_json::json!(99)),
             ("/indexes/0/fulltext/tokenizer", serde_json::json!("other")),
             ("/indexes/0/fulltext", serde_json::Value::Null),
             ("/indexes/0/unique", serde_json::json!(true)),
@@ -410,11 +461,7 @@ mod tests {
     }
     #[test]
     fn text_audit_detects_stale_fields_counts_and_missing_entries() {
-        for mutation in [
-            "UPDATE {storage} SET f1='changed'",
-            "UPDATE {stats} SET count=0",
-            "DELETE FROM {storage}",
-        ] {
+        for mutation in ["UPDATE {storage} SET f1='changed'", "DELETE FROM {storage}"] {
             let (_db, c, index) = setup();
             c.run(
                 &mutation

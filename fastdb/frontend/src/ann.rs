@@ -191,7 +191,7 @@ impl Connection {
         Ok(())
     }
     fn ann_boundary(&self) -> Result<()> {
-        if self.engine.is_interrupted() || self.engine.should_interrupt_for_progress(1000) {
+        if self.engine.is_interrupted() || self.engine.should_interrupt_for_progress(0, 1000) {
             return Err(Error::Engine(turso_core::LimboError::Interrupt));
         }
         Ok(())

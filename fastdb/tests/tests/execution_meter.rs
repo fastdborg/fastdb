@@ -13,7 +13,12 @@ fn run(c: &Arc<Connection>, sql: &str) -> turso_core::Result<()> {
 }
 
 fn connection(path: &str) -> Arc<Connection> {
-    let db = Database::open_file(Database::io_for_path(path).unwrap(), path).unwrap();
+    let db = Database::open_file(
+        Database::io_for_path(path).unwrap(),
+        path,
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let c = db.connect().unwrap();
     c.execute("CREATE TABLE input(n INTEGER)").unwrap();
     c.execute("INSERT INTO input VALUES (1),(2),(3),(4),(5)")
@@ -212,7 +217,12 @@ fn exact_completed_statement_budget_succeeds_and_one_less_interrupts() {
 fn queued_fixture(path: &str) -> Arc<queued_io::QueuedIo> {
     let io = Arc::new(queued_io::QueuedIo::new());
     {
-        let db = Database::open_file(io.clone(), path).unwrap();
+        let db = Database::open_file(
+            io.clone(),
+            path,
+            std::sync::Arc::new(turso_core::SqliteDialect),
+        )
+        .unwrap();
         let c = db.connect().unwrap();
         c.execute("CREATE TABLE input(n INTEGER PRIMARY KEY, payload BLOB)")
             .unwrap();
@@ -237,7 +247,12 @@ fn pending_io_polls_do_not_charge_additional_work() {
         ("SELECT n FROM input", 100),
         ("SELECT count(*) FROM input", 1),
     ] {
-        let db = Database::open_file(io.clone(), path).unwrap();
+        let db = Database::open_file(
+            io.clone(),
+            path,
+            std::sync::Arc::new(turso_core::SqliteDialect),
+        )
+        .unwrap();
         let c = db.connect().unwrap();
         let mut statement = c.prepare(sql).unwrap();
         let meter = Arc::new(ExecutionMeter::default());
@@ -423,7 +438,12 @@ fn metered_count_retains_partial_reads_on_io_failure() {
     let file = dir.path().join("meter-queued.db");
     let path = file.to_str().unwrap();
     let io = queued_fixture(path);
-    let db = Database::open_file(io.clone(), path).unwrap();
+    let db = Database::open_file(
+        io.clone(),
+        path,
+        std::sync::Arc::new(turso_core::SqliteDialect),
+    )
+    .unwrap();
     let c = db.connect().unwrap();
     let mut statement = c.prepare("SELECT count(*) FROM input").unwrap();
     io.fault_after(path, queued_io::QueuedIoOpKind::Pread, 2);

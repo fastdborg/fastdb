@@ -1,5 +1,9 @@
 # FastDB behavior contracts and implementation history
 
+Current source integrates [Turso 0.8.1](turso-0.8.1.md). Its explicit FTS migration,
+catalog version 4, concurrent transactions, and rejection of trailing DML LIMIT
+supersede the older descriptions below; published release artifacts are unchanged.
+
 FastDB/FastQL V1 are released; see [release 1.0.0](release-1.0.0.md) and
 [the accepted V1 query matrix](v1-query-matrix.md). This file grew cumulatively
 during V1 development. Early descriptions of alpha status, duplicate-column
@@ -78,8 +82,7 @@ engine errors can still abort a transaction independently.
 OR IGNORE skips candidates that fail document mutation validation or constraints.
 Each skipped candidate restores its document and all managed indexes; earlier
 successful candidates remain part of the statement. RETURNING and affected counts
-include only successful candidates. Candidate LIMIT applies before skips, so
-skipped rows do not cause additional candidates to be selected. Preparation,
+include only successful candidates. Preparation,
 buffer-limit and other execution errors still fail the statement; skipped
 candidates can consume the conservative write-buffer budget.
 
@@ -99,13 +102,10 @@ update even if a later replacement deletes that document. Validation and other
 execution failures restore the statement, including earlier conflict deletions.
 Collection fields have no SQL default substitution for missing required values.
 
-Collection UPDATE and DELETE accept LIMIT/OFFSET, including bound parameters.
-The limit applies to candidate selection before mutation and RETURNING reports
-only changed rows. LIMIT 0 changes no rows; a negative limit removes the count
-bound. Unordered writes do not guarantee which qualifying rows are selected.
-Missing pagination bindings report FDB_PARAMETER before candidate execution.
-The existing statement rollback and managed-index guarantees apply. Broader
-planner, expression and cancellation qualification remains open.
+Collection UPDATE and DELETE reject trailing ORDER BY/LIMIT/OFFSET, matching
+Turso 0.8.1. SELECT pagination remains supported. To bound mutations, use a
+SELECT/CTE that selects target IDs with an explicit ordering. Parser rejection
+occurs before writes and preserves caller transactions.
 
 ## Joined updates
 
@@ -152,14 +152,12 @@ plans; make matches unique when the assignment must be predictable. Unmatched
 targets remain unchanged. Scalar and tuple assignments retain the supported
 logical value types, evaluated-value validation and atomic managed-index updates.
 
-For joined updates, assignment candidates are evaluated and duplicate targets
-resolved before LIMIT/OFFSET. Consequently, a failing assignment in a later
-candidate can fail the statement even with LIMIT 0 or LIMIT 1. Pagination selects
-targets, not source matches; missing bindings report FDB_PARAMETER. Raw candidate
-row limits still count duplicate source matches and apply even with LIMIT 0. RETURNING
-reports only selected, changed targets. Host duplicate resolution and pagination
-poll cooperative cancellation, including OFFSET-discarded rows. Existing buffer
+For joined updates, assignments are evaluated before duplicate target resolution.
+RETURNING reports changed targets. Raw candidate buffer limits count duplicate
+source matches; duplicate resolution polls cooperative cancellation. These
 limits do not establish a total working-memory or hard execution-time bound.
+Trailing DML pagination is rejected; a limited SELECT source must uniquely
+identify the intended targets to provide a predictable bounded update.
 
 Statement validation/index failures restore document and index changes. Native
 engine errors can abort the enclosing transaction; inspect transaction reports

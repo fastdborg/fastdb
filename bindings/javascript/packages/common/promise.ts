@@ -1,7 +1,7 @@
 import { AsyncLock } from "./async-lock.js";
 import { bindParams } from "./bind.js";
 import { SqliteError } from "./sqlite-error.js";
-import { NativeDatabase, NativeStatement, QueryOptions, STEP_IO, STEP_ROW, STEP_DONE, DatabaseOpts } from "./types.js";
+import { NativeDatabase, NativeStatement, QueryOptions, STEP_IO, STEP_ROW, STEP_DONE, STEP_SLEEP, DatabaseOpts } from "./types.js";
 
 const convertibleErrorTypes = { TypeError };
 const CONVERTIBLE_ERROR_PREFIX = "[TURSO_CONVERT_TYPE]";
@@ -24,6 +24,15 @@ function createErrorByName(name, message) {
   }
 
   return new ErrorConstructor(message);
+}
+
+// The engine returned STEP_SLEEP: it wants the statement stepped again after a
+// delay (busy-handler backoff, or a yield with no pending I/O). Park the step
+// loop on a timer promise — unlike STEP_IO
+// there is no I/O completion coming to wake us up, so waiting on the IO
+// notifier would hang (WASM) or spin (native).
+function sleepBeforeRetry(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isQueryOptions(value) {
@@ -63,6 +72,20 @@ export interface BatchOptions {
   raw?: boolean;
 }
 
+type BatchStatement = string | {
+  sql: string;
+  args?: any[] | Record<string, any>;
+};
+
+const TRANSACTION_CONTROL_KEYWORDS = new Set([
+  "BEGIN",
+  "COMMIT",
+  "END",
+  "ROLLBACK",
+  "SAVEPOINT",
+  "RELEASE",
+]);
+
 export type BatchRow = Record<string, any> | any[];
 
 /**
@@ -78,6 +101,20 @@ export interface ResultSet {
   rows: Array<BatchRow>;
   /** Number of rows changed by the statement (0 for SELECT). */
   rowsAffected: number;
+  /** Rowid inserted by the statement, when the statement inserted one. */
+  lastInsertRowid?: number;
+  /** Rows read while executing the statement. The embedded engine does
+   * not report this per statement; the serverless driver reports the
+   * server's value. */
+  rowsRead?: number;
+  /** Rows written while executing the statement. The embedded engine
+   * does not report this per statement; the serverless driver reports
+   * the server's value. */
+  rowsWritten?: number;
+  /** Server-side execution time in milliseconds. The embedded engine
+   * does not report this per statement; the serverless driver reports
+   * the server's value. */
+  queryDurationMs?: number;
 }
 
 function normalizeBatchMode(mode: BatchMode): string {
@@ -111,6 +148,53 @@ function normalizeBatchOptions(options?: BatchMode | BatchOptions): { mode?: Bat
   };
 }
 
+function firstSqlKeyword(sql: string): string | undefined {
+  let offset = 0;
+  while (offset < sql.length) {
+    if (/\s/.test(sql[offset]) || sql[offset] === ";") {
+      offset++;
+      continue;
+    }
+    if (sql.startsWith("--", offset)) {
+      const newline = sql.indexOf("\n", offset + 2);
+      if (newline < 0) return undefined;
+      offset = newline + 1;
+      continue;
+    }
+    if (sql.startsWith("/*", offset)) {
+      const end = sql.indexOf("*/", offset + 2);
+      if (end < 0) return undefined;
+      offset = end + 2;
+      continue;
+    }
+    break;
+  }
+  return /^[A-Za-z]+/.exec(sql.slice(offset))?.[0].toUpperCase();
+}
+
+function batchInputError(index: number, cause: unknown): Error {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const error = new TypeError(`batch statement ${index} failed: ${message}`) as TypeError & {
+    batchIndex?: number;
+    batchResults?: Array<ResultSet | null>;
+  };
+  error.batchIndex = index;
+  error.batchResults = [];
+  return error;
+}
+
+function attachRollbackError(primary: unknown, rollback: unknown): Error {
+  const rollbackError = rollback instanceof Error ? rollback : new Error(String(rollback));
+  if (primary instanceof Error) {
+    (primary as Error & { rollbackError?: Error }).rollbackError = rollbackError;
+    return primary;
+  }
+  const error = new Error(String(primary)) as Error & { cause?: unknown; rollbackError?: Error };
+  error.cause = primary;
+  error.rollbackError = rollbackError;
+  return error;
+}
+
 /**
  * Builds a libSQL-style `ResultSet` for a single statement in a `batch()`.
  */
@@ -119,13 +203,20 @@ function makeResultSet(
   columnTypes: string[],
   rows: any[],
   rowsAffected: number,
+  lastInsertRowid?: number,
 ): ResultSet {
-  return {
+  const resultSet: ResultSet = {
     columns,
     columnTypes,
     rows,
     rowsAffected,
   };
+  // Only statements that inserted carry the key, so callers can use
+  // `"lastInsertRowid" in resultSet` to detect an insert.
+  if (lastInsertRowid !== undefined) {
+    resultSet.lastInsertRowid = lastInsertRowid;
+  }
+  return resultSet;
 }
 
 /**
@@ -411,10 +502,8 @@ class Database {
    * When `mode` is set, `batch()` owns the surrounding
    * `BEGIN`/`COMMIT`/`ROLLBACK`, so the `statements` array must not
    * contain its own transaction-control SQL (`BEGIN`, `COMMIT`,
-   * `ROLLBACK`, `SAVEPOINT`, `RELEASE`). The input is not validated
-   * for that — a user-supplied `COMMIT` will close the wrapper
-   * transaction mid-batch and leave earlier statements committed,
-   * defeating the all-or-nothing contract.
+   * `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`). Such input is rejected
+   * before the batch starts.
    *
    * @param statements - An array of SQL strings or `{ sql, args }` objects.
    * @param mode - When set, wraps the batch in `BEGIN <mode>` / `COMMIT`
@@ -422,7 +511,12 @@ class Database {
    *   transaction.
    * @returns An array of `ResultSet`s — one per input statement, in order —
    *   matching the libsql-js batch contract. Each `ResultSet` carries that
-   *   statement's `columns`, `columnTypes`, `rows`, and `rowsAffected`.
+   *   statement's `columns`, `columnTypes`, `rows`, `rowsAffected`, and
+   *   `lastInsertRowid`. Execution stops at the first statement that
+   *   fails: the thrown error carries `batchIndex` (the zero-based index
+   *   of the failing statement) and `batchResults` (one entry per
+   *   statement — the completed statement's `ResultSet`, or `null` for
+   *   the failing statement and the statements that did not run).
    *
    * @example
    * // Plain SQL strings (non-atomic).
@@ -454,7 +548,7 @@ class Database {
    * await txn.immediate();
    */
   async batch(
-    statements: Array<string | { sql: string; args?: any[] | Record<string, any> }>,
+    statements: BatchStatement[],
     options?: BatchMode | BatchOptions,
   ): Promise<ResultSet[]> {
     if (!Array.isArray(statements)) {
@@ -600,9 +694,13 @@ class Database {
     const exec = this.db.executor(sql, queryOptions);
     try {
       while (true) {
-        const stepResult = exec.stepSync();
+        const [stepResult, sleepMs] = exec.stepSync();
         if (stepResult === STEP_IO) {
           await this.io();
+          continue;
+        }
+        if (stepResult === STEP_SLEEP) {
+          await sleepBeforeRetry(sleepMs);
           continue;
         }
         if (stepResult === STEP_DONE) {
@@ -659,16 +757,20 @@ class Database {
 async function executeBatch(
   native: NativeDatabase,
   io: () => Promise<void>,
-  statements: Array<string | { sql: string; args?: any[] | Record<string, any> }>,
+  statements: BatchStatement[],
   options?: BatchMode | BatchOptions,
 ): Promise<ResultSet[]> {
   const runRawSql = async (sql: string) => {
     const exec = native.executor(sql);
     try {
       while (true) {
-        const stepResult = exec.stepSync();
+        const [stepResult, sleepMs] = exec.stepSync();
         if (stepResult === STEP_IO) {
           await io();
+          continue;
+        }
+        if (stepResult === STEP_SLEEP) {
+          await sleepBeforeRetry(sleepMs);
           continue;
         }
         if (stepResult === STEP_DONE) {
@@ -682,58 +784,112 @@ async function executeBatch(
 
   const { mode, raw } = normalizeBatchOptions(options);
   const wrap = mode != null && !native.inTransaction();
+  const normalizedStatements = statements.map((statement, index): BatchStatement => {
+    if (typeof statement === "string" || statement.args === undefined) {
+      return statement;
+    }
+    try {
+      const args = Array.isArray(statement.args)
+        ? statement.args.map(normalizeBatchBindValue)
+        : Object.fromEntries(
+          Object.entries(statement.args).map(([name, value]) => [name, normalizeBatchBindValue(value)]),
+        );
+      return { sql: statement.sql, args };
+    } catch (error) {
+      throw batchInputError(index, error);
+    }
+  });
+  if (wrap) {
+    for (let index = 0; index < normalizedStatements.length; index++) {
+      const statement = normalizedStatements[index];
+      const sql = typeof statement === "string" ? statement : statement.sql;
+      const keyword = firstSqlKeyword(sql);
+      if (keyword !== undefined && TRANSACTION_CONTROL_KEYWORDS.has(keyword)) {
+        throw batchInputError(index, new Error(`${keyword} is not allowed in an atomic batch`));
+      }
+    }
+  }
   if (wrap) {
     await runRawSql(`BEGIN ${normalizeBatchMode(mode!)}`);
   }
 
   const results: ResultSet[] = [];
-  try {
-    for (const statement of statements) {
-      const sql = typeof statement === "string" ? statement : statement.sql;
-      const args = typeof statement === "string" ? undefined : statement.args;
+  const executeStatement = async (
+    statement: BatchStatement,
+  ): Promise<ResultSet> => {
+    const sql = typeof statement === "string" ? statement : statement.sql;
+    const args = typeof statement === "string" ? undefined : statement.args;
 
-      let nativeStmt: NativeStatement;
-      try {
-        nativeStmt = native.prepare(sql);
-      } catch (err) {
-        throw convertError(err);
+    let nativeStmt: NativeStatement;
+    try {
+      nativeStmt = native.prepare(sql);
+    } catch (err) {
+      throw convertError(err);
+    }
+    try {
+      if (args !== undefined) {
+        bindParams(nativeStmt, [args]);
       }
-      try {
-        if (args !== undefined) {
-          bindParams(nativeStmt, [args]);
-        }
-        const cols = nativeStmt.columns();
-        const columnNames = cols.map((c) => c.name);
-        const columnTypes = cols.map((c) => c.type ?? "");
-        if (columnNames.length > 0) {
-          nativeStmt.raw(raw);
-        }
+      const cols = nativeStmt.columns();
+      const columnNames = cols.map((c) => c.name);
+      const columnTypes = cols.map((c) => c.type ?? "");
+      if (columnNames.length > 0) {
+        nativeStmt.raw(raw);
+      }
 
-        const totalChangesBefore = native.totalChanges();
-        const rows: any[] = [];
-        try {
-          while (true) {
-            const stepResult = await nativeStmt.stepSync();
-            if (stepResult === STEP_IO) {
-              await io();
-              continue;
-            }
-            if (stepResult === STEP_DONE) {
-              break;
-            }
-            rows.push(nativeStmt.row());
+      const totalChangesBefore = native.totalChanges();
+      const rowidBefore = native.lastInsertRowid();
+      const rows: any[] = [];
+      try {
+        while (true) {
+          const [stepResult, sleepMs] = await nativeStmt.stepSync();
+          if (stepResult === STEP_IO) {
+            await io();
+            continue;
           }
-          const rowsAffected = columnNames.length > 0
-            ? 0
-            : native.totalChanges() !== totalChangesBefore ? native.changes() : 0;
-          results.push(
-            makeResultSet(columnNames, columnTypes, rows, rowsAffected),
-          );
-        } finally {
-          nativeStmt.reset();
+          if (stepResult === STEP_SLEEP) {
+            await sleepBeforeRetry(sleepMs);
+            continue;
+          }
+          if (stepResult === STEP_DONE) {
+            break;
+          }
+          rows.push(nativeStmt.row());
         }
+        const rowsAffected = columnNames.length > 0
+          ? 0
+          : native.totalChanges() !== totalChangesBefore ? native.changes() : 0;
+        // The engine tracks the inserted rowid per connection, not per
+        // statement; a change across this statement means it inserted.
+        const rowidAfter = native.lastInsertRowid();
+        const lastInsertRowid = rowidAfter !== rowidBefore ? rowidAfter : undefined;
+        return makeResultSet(columnNames, columnTypes, rows, rowsAffected, lastInsertRowid);
       } finally {
-        nativeStmt.finalize();
+        nativeStmt.reset();
+      }
+    } finally {
+      nativeStmt.finalize();
+    }
+  };
+
+  try {
+    for (let index = 0; index < normalizedStatements.length; index++) {
+      try {
+        results.push(await executeStatement(normalizedStatements[index]));
+      } catch (err: any) {
+        // Identify the failing statement and carry the results of the
+        // statements that completed, matching the serverless driver:
+        // one entry per statement, null for the failing statement and
+        // the ones that never ran.
+        if (err instanceof Error) {
+          const batchErr = err as Error & { batchIndex?: number; batchResults?: Array<ResultSet | null> };
+          batchErr.batchIndex = index;
+          batchErr.batchResults = [
+            ...results.map((result) => result as ResultSet | null),
+            ...Array(normalizedStatements.length - results.length).fill(null),
+          ];
+        }
+        throw err;
       }
     }
 
@@ -742,11 +898,40 @@ async function executeBatch(
     }
   } catch (err) {
     if (wrap) {
-      try { await runRawSql("ROLLBACK"); } catch { /* ignore */ }
+      try {
+        await runRawSql("ROLLBACK");
+      } catch (rollbackError) {
+        throw attachRollbackError(err, rollbackError);
+      }
     }
     throw err;
   }
   return results;
+}
+
+function normalizeBatchBindValue(value: any): any {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError("Only finite numbers (not Infinity or NaN) can be passed as arguments");
+    }
+    return value;
+  }
+  if (typeof value === "bigint") {
+    if (value < -(1n << 63n) || value > (1n << 63n) - 1n) {
+      throw new TypeError("BigInt value is outside SQLite's signed 64-bit integer range");
+    }
+    return value;
+  }
+  if (
+    typeof value === "boolean" ||
+    typeof value === "string" ||
+    (ArrayBuffer.isView(value) && !(value instanceof DataView))
+  ) {
+    return value;
+  }
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return String(value);
 }
 
 /**
@@ -810,9 +995,13 @@ class Transaction {
       const exec = this.db.executor(sql, queryOptions);
       try {
         while (true) {
-          const stepResult = exec.stepSync();
+          const [stepResult, sleepMs] = exec.stepSync();
           if (stepResult === STEP_IO) {
             await this.ioStep();
+            continue;
+          }
+          if (stepResult === STEP_SLEEP) {
+            await sleepBeforeRetry(sleepMs);
             continue;
           }
           if (stepResult === STEP_DONE) {
@@ -917,7 +1106,7 @@ class Transaction {
    * @param statements - An array of SQL strings or `{ sql, args }` objects.
    */
   async batch(
-    statements: Array<string | { sql: string; args?: any[] | Record<string, any> }>,
+    statements: BatchStatement[],
     options?: BatchMode | BatchOptions,
   ): Promise<ResultSet[]> {
     this.assertActive();
@@ -1062,9 +1251,13 @@ class Statement {
     await this.execLock.acquire();
     try {
       while (true) {
-        const stepResult = await stmt.stepSync();
+        const [stepResult, sleepMs] = await stmt.stepSync();
         if (stepResult === STEP_IO) {
           await this.io();
+          continue;
+        }
+        if (stepResult === STEP_SLEEP) {
+          await sleepBeforeRetry(sleepMs);
           continue;
         }
         if (stepResult === STEP_DONE) {
@@ -1102,9 +1295,13 @@ class Statement {
     let row = undefined;
     try {
       while (true) {
-        const stepResult = await stmt.stepSync();
+        const [stepResult, sleepMs] = await stmt.stepSync();
         if (stepResult === STEP_IO) {
           await this.io();
+          continue;
+        }
+        if (stepResult === STEP_SLEEP) {
+          await sleepBeforeRetry(sleepMs);
           continue;
         }
         if (stepResult === STEP_DONE) {
@@ -1137,9 +1334,13 @@ class Statement {
     await this.execLock.acquire();
     try {
       while (true) {
-        const stepResult = await stmt.stepSync();
+        const [stepResult, sleepMs] = await stmt.stepSync();
         if (stepResult === STEP_IO) {
           await this.io();
+          continue;
+        }
+        if (stepResult === STEP_SLEEP) {
+          await sleepBeforeRetry(sleepMs);
           continue;
         }
         if (stepResult === STEP_DONE) {
@@ -1171,9 +1372,13 @@ class Statement {
     await this.execLock.acquire();
     try {
       while (true) {
-        const stepResult = await stmt.stepSync();
+        const [stepResult, sleepMs] = await stmt.stepSync();
         if (stepResult === STEP_IO) {
           await this.io();
+          continue;
+        }
+        if (stepResult === STEP_SLEEP) {
+          await sleepBeforeRetry(sleepMs);
           continue;
         }
         if (stepResult === STEP_DONE) {

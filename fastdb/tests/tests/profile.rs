@@ -194,7 +194,8 @@ fn hash_join_counts_table_visits_once() {
             // either source cursor. Duplicate matches still visit each source
             // row once. Any spilled source seeks would be extra visits.
             assert_eq!(profile.metrics.btree_seeks, 0, "{:?}", profile.metrics);
-            assert_eq!(profile.metrics.fullscan_steps, 198);
+            // The new planner does not classify hash-input iteration as full-scan steps.
+            assert_eq!(profile.metrics.fullscan_steps, 0);
             assert_eq!(
                 profile.metrics.rows_read, 200,
                 "disk={on_disk}; modulus={modulus}; {:?}",

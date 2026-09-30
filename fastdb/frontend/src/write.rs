@@ -694,7 +694,6 @@ impl Connection {
                             || matches!(join.operator, JoinOperator::TypedJoin(Some(kind)) if kind.intersects(JoinType::RIGHT | JoinType::NATURAL))
                     }))
                     || update.indexed.is_some()
-                    || !update.order_by.is_empty()
                 {
                     return Err(unsupported("this collection UPDATE clause"));
                 }
@@ -896,7 +895,6 @@ impl Connection {
                     &update.tbl_name,
                     WriteSource { with: update.with, from: update.from },
                     update.where_clause,
-                    update.limit,
                     &exprs,
                     params,
                 )?;
@@ -1005,14 +1003,12 @@ impl Connection {
                 indexed,
                 where_clause,
                 returning,
-                order_by,
-                limit,
             } => {
-                if indexed.is_some() || !order_by.is_empty() {
+                if indexed.is_some() {
                     return Err(unsupported("this collection DELETE clause"));
                 }
                 validate_returning(&returning)?;
-                let rows = self.write_candidates(&tbl_name, WriteSource { with, from: None }, where_clause, limit, &[], params)?;
+                let rows = self.write_candidates(&tbl_name, WriteSource { with, from: None }, where_clause, &[], params)?;
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in rows {
@@ -1056,24 +1052,9 @@ impl Connection {
         table: &QualifiedName,
         source: WriteSource,
         predicate: Option<Box<Expr>>,
-        mut limit: Option<Limit>,
         assignments: &[Expr],
         params: &Parameters,
     ) -> Result<Vec<Vec<Value>>> {
-        if let Some(limit) = &mut limit {
-            for value in std::iter::once(&mut limit.expr).chain(limit.offset.iter_mut()) {
-                let mut failure = None;
-                turso_core::walk_expr_mut(value, &mut |expr| {
-                    if failure.is_none() {
-                        failure = parameter(expr, params).err();
-                    }
-                    Ok(turso_core::WalkControl::Continue)
-                })?;
-                if let Some(error) = failure {
-                    return Err(error);
-                }
-            }
-        }
         for expr in assignments {
             safe_candidate_assignment(expr)?;
         }
@@ -1106,16 +1087,33 @@ impl Connection {
             self.validate_write_source(&select.to_string(), params)?;
         }
         let joined = source.from.is_some();
-        let joined_limit = if joined { limit.take() } else { None };
         let mut columns = vec![ResultColumn::TableStar(
             table.alias.as_ref().unwrap_or(&table.name).clone(),
         )];
         for (i, expr) in assignments.iter().enumerate() {
-            let expr = if parameter(expr, params)?.is_some() {
+            let mut expr = if parameter(expr, params)?.is_some() {
                 Expr::Literal(Literal::Null)
             } else {
                 expr.clone()
             };
+            // Native UPDATE evaluates assignment aggregates per target row.
+            // The candidate SELECT needs its own scalar scope so 0.8.1's
+            // outer-aggregate lifting cannot collapse the candidate rows.
+            let Cmd::Stmt(Stmt::Select(scalar_scope)) = parsed("SELECT NULL")? else {
+                unreachable!()
+            };
+            turso_core::walk_expr_mut(&mut expr, &mut |value| {
+                if matches!(value, Expr::Subquery(_) | Expr::Exists(_)) {
+                    let mut scalar = scalar_scope.clone();
+                    let OneSelect::Select { columns, .. } = &mut scalar.body.select else {
+                        unreachable!()
+                    };
+                    *columns = vec![ResultColumn::Expr(Box::new(value.clone()), None)];
+                    *value = Expr::Subquery(scalar);
+                    return Ok(turso_core::WalkControl::SkipChildren);
+                }
+                Ok(turso_core::WalkControl::Continue)
+            })?;
             columns.push(ResultColumn::Expr(
                 Box::new(expr),
                 Some(As::As(Name::exact(format!("__fastdb_set_{i}")))),
@@ -1250,24 +1248,8 @@ impl Connection {
             Ok(())
         }
         let mut with = source.with;
-        // Without FROM, the pinned write planner exposes its target before
-        // replanning CTE bodies. Joined updates resolve source CTEs first.
-        // In the former path, a same-named FROM binds the physical target
-        // rather than the CTE. Preserve that binding in the candidate SELECT.
-        if let Some(with) = with.as_mut().filter(|with| !with.recursive && !joined) {
-            let exposed = table.alias.as_ref().unwrap_or(&table.name);
-            if with
-                .ctes
-                .iter()
-                .any(|cte| cte.tbl_name.as_str().eq_ignore_ascii_case(exposed.as_str()))
-            {
-                let mut physical = table.clone();
-                physical.db_name = Some(Name::exact("main".into()));
-                for cte in &mut with.ctes {
-                    bind_target(&mut cte.select, &physical, exposed)?;
-                }
-            }
-        }
+        // Turso 0.8.1 resolves source CTEs before binding UPDATE/DELETE
+        // targets, including non-joined writes. Keep their lexical bindings.
         fn flatten(
             connection: &Connection,
             select: &mut Select,
@@ -1362,9 +1344,8 @@ impl Connection {
                 compounds: Vec::new(),
             },
             order_by: Vec::new(),
-            limit,
+            limit: None,
         };
-        let pagination_with = select.with.clone();
         let mut result = self
             .write_candidate_select(&Stmt::Select(select).to_string(), params, true)?
             .ok_or_else(|| unsupported("this collection write candidate query"))?;
@@ -1380,102 +1361,16 @@ impl Connection {
             budget.row(row)?;
         }
         if joined {
-            let rows = self.coalesce_update_candidates(result.rows)?;
-            return if let Some(limit) = joined_limit {
-                self.paginate_update_candidates(rows, pagination_with, limit, params)
-            } else {
-                Ok(rows)
-            };
+            return self.coalesce_update_candidates(result.rows);
         }
         Ok(result.rows)
-    }
-    fn paginate_update_candidates(
-        &self,
-        rows: Vec<Vec<Value>>,
-        with: Option<With>,
-        limit: Limit,
-        params: &Parameters,
-    ) -> Result<Vec<Vec<Value>>> {
-        // json_each receives one two-byte placeholder per candidate, with
-        // brackets replacing the final comma (or an empty two-byte array).
-        let position_bytes = rows
-            .len()
-            .checked_mul(2)
-            .and_then(|bytes| bytes.checked_add(1))
-            .map(|bytes| bytes.max(2))
-            .ok_or_else(|| Error::Limit("joined update position buffer overflow".into()))?;
-        if self
-            .write_buffer_limits
-            .is_some_and(|limits| position_bytes > limits.max_payload_bytes)
-        {
-            return Err(Error::Limit(
-                "joined update position buffer limit exceeded".into(),
-            ));
-        }
-        let mut indices = String::new();
-        for _ in &rows {
-            if self.engine.should_interrupt_for_progress(1) {
-                return Err(Error::Engine(turso_core::LimboError::Interrupt));
-            }
-            indices.push_str("0,");
-        }
-        indices.pop();
-        let Cmd::Stmt(Stmt::Select(mut select)) = parsed(&format!(
-            "SELECT __fastdb_h_array_new(key) FROM json_each('[{indices}]')"
-        ))?
-        else {
-            unreachable!("generated candidate pagination")
-        };
-        select.with = with;
-        select.limit = Some(limit);
-        let selected = self
-            .write_candidate_select(&Stmt::Select(select).to_string(), params, true)?
-            .ok_or_else(|| unsupported("joined update pagination"))?;
-        self.select_update_candidates(rows, selected.rows)
-    }
-    fn select_update_candidates(
-        &self,
-        rows: Vec<Vec<Value>>,
-        selected: Vec<Vec<Value>>,
-    ) -> Result<Vec<Vec<Value>>> {
-        let mut candidates = rows.into_iter();
-        let mut position = 0usize;
-        let mut output = Vec::new();
-        for row in selected {
-            let Some(Value::Array(index)) = row.first() else {
-                return Err(Error::Storage("invalid candidate pagination row".into()));
-            };
-            let [Value::Integer(index)] = index.as_slice() else {
-                return Err(Error::Storage("invalid candidate pagination index".into()));
-            };
-            let index = usize::try_from(*index)
-                .map_err(|_| Error::Storage("negative candidate index".into()))?;
-            let skip = index
-                .checked_sub(position)
-                .ok_or_else(|| Error::Storage("unordered candidate pagination".into()))?;
-            // Poll even for discarded OFFSET rows: nth() can otherwise drop a
-            // large candidate prefix without returning to the engine.
-            for offset in 0..=skip {
-                if self.engine.should_interrupt_for_progress(1) {
-                    return Err(Error::Engine(turso_core::LimboError::Interrupt));
-                }
-                let candidate = candidates
-                    .next()
-                    .ok_or_else(|| Error::Storage("candidate pagination exceeds rowset".into()))?;
-                if offset == skip {
-                    output.push(candidate);
-                }
-            }
-            position = index + 1;
-        }
-        Ok(output)
     }
     fn coalesce_update_candidates(&self, candidates: Vec<Vec<Value>>) -> Result<Vec<Vec<Value>>> {
         let mut positions = std::collections::BTreeMap::new();
         let mut key_budget = self.write_buffer_budget()?;
         let mut rows = Vec::new();
         for row in candidates {
-            if self.engine.should_interrupt_for_progress(1) {
+            if self.engine.should_interrupt_for_progress(0, 1) {
                 return Err(Error::Engine(turso_core::LimboError::Interrupt));
             }
             let Some(Value::Object(document)) = row.first() else {
@@ -1588,94 +1483,6 @@ mod candidate_cancellation_tests {
                 c.execute("ROLLBACK", &p).unwrap();
             }
         }
-    }
-
-    #[test]
-    fn cancelled_candidate_pagination_stops_during_offset_and_allows_retry() {
-        let db = crate::Database::open(":memory:").unwrap();
-        let c = db.connect().unwrap();
-        let rows = (0..5).map(|n| vec![Value::Integer(n)]).collect::<Vec<_>>();
-        let selected = vec![vec![Value::Array(vec![Value::Integer(4)])]];
-        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let observed = calls.clone();
-        c.engine.set_progress_handler(
-            1,
-            Some(Box::new(move || {
-                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 2
-            })),
-        );
-        let interrupted = c.select_update_candidates(rows.clone(), selected.clone());
-        c.engine.set_progress_handler(0, None);
-        assert_eq!(interrupted.unwrap_err().code(), "FDB_CANCELLED");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
-        assert_eq!(
-            c.select_update_candidates(rows, selected).unwrap(),
-            vec![vec![Value::Integer(4)]]
-        );
-        assert_eq!(
-            c.execute("SELECT 1", &Parameters::new()).unwrap().rows,
-            vec![vec![Value::Integer(1)]]
-        );
-    }
-
-    #[test]
-    fn cancelled_candidate_position_generation_allows_retry() {
-        let db = crate::Database::open(":memory:").unwrap();
-        let c = db.connect().unwrap();
-        let Cmd::Stmt(Stmt::Select(select)) = parsed("SELECT 1 LIMIT 1").unwrap() else {
-            unreachable!()
-        };
-        let limit = select.limit.unwrap();
-        let rows = vec![vec![Value::Integer(7)]; 5];
-        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let observed = calls.clone();
-        c.engine.set_progress_handler(
-            1,
-            Some(Box::new(move || {
-                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 2
-            })),
-        );
-        let interrupted =
-            c.paginate_update_candidates(rows.clone(), None, limit.clone(), &Parameters::new());
-        c.engine.set_progress_handler(0, None);
-        assert_eq!(interrupted.unwrap_err().code(), "FDB_CANCELLED");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
-        assert_eq!(
-            c.paginate_update_candidates(rows, None, limit, &Parameters::new())
-                .unwrap(),
-            vec![vec![Value::Integer(7)]]
-        );
-    }
-
-    #[test]
-    fn pagination_position_buffer_rejects_before_building_and_allows_retry() {
-        let db = crate::Database::open(":memory:").unwrap();
-        let c = db
-            .connect()
-            .unwrap()
-            .with_write_buffer_limits(crate::ResultLimits {
-                max_rows: 10,
-                max_payload_bytes: 4,
-            });
-        let rows = vec![vec![Value::Integer(1)], vec![Value::Integer(2)]];
-        let limit = Limit {
-            expr: Box::new(Expr::Literal(Literal::Numeric("1".into()))),
-            offset: None,
-        };
-        let error = c
-            .paginate_update_candidates(rows.clone(), None, limit.clone(), &Parameters::new())
-            .unwrap_err();
-        assert_eq!(error.code(), "FDB_LIMIT");
-        assert!(error.to_string().contains("position buffer"));
-        let c = c.with_write_buffer_limits(crate::ResultLimits {
-            max_rows: 10,
-            max_payload_bytes: 1000,
-        });
-        assert_eq!(
-            c.paginate_update_candidates(rows, None, limit, &Parameters::new())
-                .unwrap(),
-            vec![vec![Value::Integer(1)]]
-        );
     }
 
     #[test]

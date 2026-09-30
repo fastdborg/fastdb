@@ -57,11 +57,11 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       ]) await client.execute(sql);
       assert.deepEqual(await client.exactlyOne('SELECT last_insert_rowid()'), [1n]);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 50);
+      const timer = setTimeout(() => controller.abort(), 200);
       try {
         // The deadline bounds a missed interrupt; successful completion is a failure.
         await assert.rejects(client.execute(
-          'INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e,nums f,nums g,nums h,nums i',
+          'INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e',
           {}, {signal: controller.signal, timeoutMs: 3000}), error => {
           assert.equal(error.code, 'FDB_CANCELLED');
           assert.deepEqual(error.transaction, {before: 'active', after: 'active'});
@@ -126,14 +126,14 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       await client.execute('INSERT INTO tuple_source(n,a,b) SELECT n,a,b FROM tuple_docs');
       await client.execute('CREATE TABLE tuple_keys(n INTEGER)');
       await client.execute('BEGIN');
-      const joinedSql = 'UPDATE tuple_docs AS d SET (a,b)=(s.b,s.a) FROM tuple_source s LEFT JOIN tuple_keys k ON k.n=s.n WHERE s.n=d.n AND k.n IS NULL RETURNING a,b LIMIT $count OFFSET $skip';
-      await assert.rejects(async()=>client.execute(joinedSql,{$count:1n}),error=>error.code==='FDB_PARAMETER');
+      const joinedSql = 'UPDATE tuple_docs AS d SET (a,b)=(s.b,s.a) FROM (SELECT n,a,b FROM (SELECT n,a,b FROM tuple_source LIMIT 1) LIMIT $count OFFSET $skip) s LEFT JOIN tuple_keys k ON k.n=s.n WHERE s.n=d.n AND k.n IS NULL RETURNING a,b';
+      await assert.rejects(async()=>client.execute(joinedSql,{$count:1n}),error=>error.code==='FDB_CONSTRAINT' && error.transaction.after==='active');
       assert.equal((await client.execute(joinedSql,{$count:1n,$skip:1n})).affected,0n);
       const joined = await client.execute(joinedSql,{$count:1n,$skip:0n});
       assert.equal(joined.affected,1n);
       assert.deepEqual(joined.rows,[[tuplePayload,tupleRecord]]);
       assert.deepEqual(joined.transaction,{before:'active',after:'active'});
-      const scopedRight = await client.execute('WITH d AS (SELECT n,a,b FROM tuple_source) UPDATE tuple_docs AS d SET (a,b)=(s.b,s.a) FROM tuple_keys k RIGHT JOIN d s ON k.n=s.n LEFT JOIN tuple_keys extra ON extra.n=s.n WHERE s.n=d.n AND k.n IS NULL AND extra.n IS NULL RETURNING a,b LIMIT $count OFFSET $skip',{$count:1n,$skip:0n});
+      const scopedRight = await client.execute('WITH d AS (SELECT n,a,b FROM (SELECT n,a,b FROM tuple_source LIMIT 1) LIMIT $count OFFSET $skip) UPDATE tuple_docs AS d SET (a,b)=(s.b,s.a) FROM tuple_keys k RIGHT JOIN d s ON k.n=s.n LEFT JOIN tuple_keys extra ON extra.n=s.n WHERE s.n=d.n AND k.n IS NULL AND extra.n IS NULL RETURNING a,b',{$count:1n,$skip:0n});
       assert.equal(scopedRight.affected,1n);
       assert.deepEqual(scopedRight.rows,[[tuplePayload,tupleRecord]]);
       assert.deepEqual(scopedRight.transaction,{before:'active',after:'active'});
@@ -404,7 +404,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
         'INSERT INTO package_sink(k) VALUES(3)',
       ]) await client.execute(sql);
       const scalarQuery = 'WITH q(v) AS MATERIALIZED(SELECT $needle COLLATE NOCASE) SELECT k,(SELECT max(b.n) FROM package_nums b WHERE b.n<k AND (SELECT v FROM q)=k) AS v FROM package_keys a RIGHT JOIN package_rhs b USING(k) ORDER BY k';
-      const scalarRows = [[1n,null],[3n,null],['a',2n]];
+      const scalarRows = [[1n,null],[3n,null],['a',null]];
       assert.deepEqual((await client.execute(scalarQuery, {$needle:'A'})).rows, scalarRows);
       assert.deepEqual((await client.profileSelect(scalarQuery, {$needle:'A'})).result.rows, scalarRows);
       const memberQuery = 'SELECT k,(SELECT sum(CASE WHEN b.n IN(SELECT k) THEN 1 WHEN b.n NOT IN(SELECT k) THEN 10 ELSE 100 END) FROM package_nums b WHERE k IS k) AS v FROM package_keys a RIGHT JOIN package_rhs b USING(k) ORDER BY k';

@@ -1,5 +1,10 @@
 # Collection UPDATE FROM implementation design
 
+Turso 0.8.1 supersedes the DML pagination portions of this historical design:
+trailing UPDATE/DELETE LIMIT is rejected. Supported joins, candidate validation,
+duplicate resolution and atomic index maintenance remain. See the
+[current upgrade contract](turso-0.8.1.md).
+
 Status: initial single-source, inner-join and left-join collection UPDATE FROM is implemented,
 with encoded typed-ID duplicate resolution and initial LIMIT/OFFSET support after
 deduplication. A leading RIGHT join with ON or no constraint is normalized to a reversed LEFT

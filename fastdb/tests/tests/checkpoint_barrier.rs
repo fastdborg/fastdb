@@ -196,6 +196,7 @@ fn core_fixture(
         OpenFlags::default(),
         turso_core::DatabaseOpts::new(),
         None,
+        std::sync::Arc::new(turso_core::SqliteDialect),
     )
     .unwrap();
     let c = db.connect().unwrap();
@@ -255,6 +256,7 @@ fn failed_blocking_checkpoint_releases_state_and_retries_barrier() {
         let reopened = turso_core::Database::open_file(
             Arc::new(UnixIO::new().unwrap()),
             path.to_str().unwrap(),
+            std::sync::Arc::new(turso_core::SqliteDialect),
         )
         .unwrap();
         assert_eq!(
