@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "f674744f3ed6cd476be0c564be868ba99de0cf644771cdfed4fa170760b6860d",
+  "lockfileSha256": "16c3d2397f7d50bf03966506f42c13f77aa946516d02542966c5a51187bf1061",
   "packages": [
     {
       "name": "aead",
@@ -56,12 +56,12 @@
     },
     {
       "name": "aristo-macros",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "aristo",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "licenseExpression": "MIT"
     },
     {
@@ -1200,6 +1200,11 @@
       "licenseExpression": "Apache-2.0/MIT"
     },
     {
+      "name": "simdutf8",
+      "version": "0.1.5",
+      "licenseExpression": "MIT OR Apache-2.0"
+    },
+    {
       "name": "simsimd",
       "version": "6.5.3",
       "licenseExpression": "Apache-2.0"
@@ -1326,7 +1331,7 @@
     },
     {
       "name": "tantivy",
-      "version": "0.26.1",
+      "version": "0.26.2",
       "licenseExpression": "MIT"
     },
     {
@@ -1436,22 +1441,22 @@
     },
     {
       "name": "turso_core",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_ext",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_macros",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_parser",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {
