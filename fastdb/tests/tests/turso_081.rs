@@ -7,6 +7,61 @@ fn q(c: &Connection, sql: &str) -> QueryResult {
 }
 
 #[test]
+fn caller_managed_mvcc_bootstraps_and_recovers_its_published_log() {
+    use std::sync::Arc;
+    use turso_core::{
+        io::UnixIO,
+        mvcc::persistent_storage::{DurableStorage, Storage},
+        OpenFlags, IO,
+    };
+    fn open(path: &std::path::Path) -> (Database, Arc<Storage>) {
+        let io: Arc<dyn IO> = Arc::new(UnixIO::new().unwrap());
+        let file = io
+            .open_file(
+                &format!("{}-log", path.display()),
+                OpenFlags::default(),
+                false,
+            )
+            .unwrap();
+        let storage = Arc::new(Storage::new(file, io.clone(), None));
+        let db =
+            Database::open_with_manual_mvcc_and_io(path.to_str().unwrap(), io, storage.clone())
+                .unwrap();
+        (db, storage)
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("managed.db");
+    let (db, storage) = open(&path);
+    let c = db.connect().unwrap();
+    assert_eq!(storage.checkpoint_threshold(), -1);
+    q(&c, "CREATE TABLE articles");
+    q(&c, "PRAGMA wal_checkpoint(TRUNCATE)");
+    for invalid in ["", "bad\0tag", &"x".repeat(129)] {
+        assert!(c.set_commit_tag(Some(invalid)).is_err());
+    }
+    c.set_commit_tag(Some("request-proof")).unwrap();
+    q(&c, "INSERT INTO articles {id:articles:one,title:'durable'}");
+    let checkpoint = std::fs::read(&path).unwrap();
+    let log = std::fs::read(format!("{}-log", path.display())).unwrap();
+    assert_eq!(checkpoint[18..20], [255, 255]);
+    assert_eq!(storage.logical_log_offset(), log.len() as u64);
+    assert!(log
+        .windows(b"request-proof".len())
+        .any(|window| window == b"request-proof"));
+    c.set_commit_tag(None).unwrap();
+
+    let recovered = dir.path().join("recovered.db");
+    std::fs::write(&recovered, checkpoint).unwrap();
+    std::fs::write(format!("{}-log", recovered.display()), &log).unwrap();
+    let (restored, restored_storage) = open(&recovered);
+    assert_eq!(restored_storage.logical_log_offset(), log.len() as u64);
+    assert_eq!(
+        q(&restored.connect().unwrap(), "SELECT title FROM articles").rows,
+        vec![vec![Value::String("durable".into())]]
+    );
+}
+
+#[test]
 fn concurrent_document_writers_share_transactional_fulltext() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("concurrent.db");

@@ -271,6 +271,42 @@ impl Database {
             None,
             Arc::new(turso_core::SqliteDialect),
         )?;
+        Self::initialize(engine, manual_wal)
+    }
+
+    /// Open a caller-managed MVCC database with a custom commit durability hook.
+    ///
+    /// The caller must exclusively own this path, restore its complete published
+    /// checkpoint/log pair before opening, and fence all access after uncertain
+    /// publication. Never reopen a live path with a different storage adapter:
+    /// the engine registry shares existing handles. This enables MVCC before
+    /// catalog initialization, so the hook must also handle bootstrap writes.
+    /// Existing WAL databases must be drained
+    /// and migrated in isolation; this is not an online conversion API.
+    /// Automatic checkpointing is disabled. The caller owns checkpoint publication
+    /// and log retention, including the lifetime of snapshots and active readers.
+    pub fn open_with_manual_mvcc_and_io(
+        path: &str,
+        io: Arc<dyn turso_core::IO>,
+        storage: Arc<dyn turso_core::mvcc::persistent_storage::DurableStorage>,
+    ) -> Result<Self> {
+        storage.set_checkpoint_threshold(-1);
+        let engine = EngineDatabase::open(
+            io,
+            path,
+            turso_core::OpenOptions::new(Arc::new(turso_core::SqliteDialect))
+                .db_opts(turso_core::DatabaseOpts::new().with_index_method(true))
+                .durable_storage(storage),
+        )?;
+        let conn = engine.connect()?;
+        conn.wal_auto_actions_disable();
+        conn.set_portable_logical_changes_enabled(true);
+        conn.execute("PRAGMA journal_mode=mvcc")?;
+        conn.execute("PRAGMA mvcc_checkpoint_threshold=-1")?;
+        Self::initialize(engine, true)
+    }
+
+    fn initialize(engine: Arc<EngineDatabase>, manual_wal: bool) -> Result<Self> {
         let conn = engine.connect()?;
         if manual_wal {
             conn.wal_auto_actions_disable();
@@ -338,6 +374,23 @@ fn canonical(name: &str) -> Result<String> {
     Ok(name.to_ascii_lowercase())
 }
 impl Connection {
+    /// Attach a bounded host request identity to this connection's MVCC commits.
+    ///
+    /// The value is stored in the portable logical-log metadata under
+    /// `fastdb.commit_tag`. It does not alter SQL, authorize an operation, or
+    /// deduplicate requests. Set it on each request connection before its commit;
+    /// use `None` to clear it. Hosts must not use thread identity to associate
+    /// logical-log frames with requests because group commit can change threads.
+    pub fn set_commit_tag(&self, tag: Option<&str>) -> Result<()> {
+        if tag.is_some_and(|tag| tag.is_empty() || tag.len() > 128 || tag.contains('\0')) {
+            return Err(Error::Validation("invalid commit tag".into()));
+        }
+        self.engine.set_portable_logical_changes_enabled(true);
+        self.engine
+            .set_mvcc_log_meta("fastdb.commit_tag".into(), tag.map(str::to_owned));
+        Ok(())
+    }
+
     fn prepare(&self, sql: impl AsRef<str>) -> turso_core::Result<turso_core::Statement> {
         parser_stack(|| self.engine.prepare(sql))
     }
