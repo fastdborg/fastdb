@@ -55,6 +55,7 @@ type CteSources = std::collections::BTreeMap<String, Option<Source>>;
 enum SubqueryAffinity {
     None,
     MembershipColumn,
+    MembershipRows,
     // An empty source name keeps a correlated RHS local to its membership expression.
     NativeMembership(String, String),
     NativeScalar(String),
@@ -519,7 +520,7 @@ fn native_correlated_body(
                         let sql = Cmd::Stmt(Stmt::Select(prepared.clone())).to_string();
                         (
                             expression(&format!(
-                                "(WITH {name}(v) AS ({}) SELECT __fastdb_unwrap(v) FROM {name})",
+                                "(WITH {name}(v) AS ({}) SELECT __fastdb_equality_key(v) FROM {name})",
                                 sql.trim().trim_end_matches(';')
                             ))?,
                             if column {
@@ -681,9 +682,9 @@ fn native_correlated_body(
                 standalone_aliases: Default::default(),
             };
             if typed && mode == NativeCorrelationMode::CompoundArm {
-                if !scope.comparison_key(value)? {
+                if !scope.membership_key(value)? {
                     scope.lower(value)?;
-                    *value = expression(&format!("__fastdb_unwrap(__fastdb_pack({value}))"))?;
+                    *value = expression(&format!("__fastdb_equality_key(__fastdb_pack({value}))"))?;
                 }
             } else if typed {
                 scope.typed(value)?;
@@ -1818,20 +1819,43 @@ impl Scope {
         }
     }
     fn comparison_key(&self, expr: &mut Expr) -> Result<bool> {
+        self.comparison_key_mode(expr, false)
+    }
+    fn membership_key(&self, expr: &mut Expr) -> Result<bool> {
+        if let Expr::Parenthesized(values) = expr {
+            if values.len() > 1 {
+                let mut lowered = values.clone();
+                for value in &mut lowered {
+                    if !self.comparison_key_mode(value, true)? {
+                        return Ok(false);
+                    }
+                }
+                *values = lowered;
+                return Ok(true);
+            }
+        }
+        self.comparison_key_mode(expr, true)
+    }
+    fn comparison_key_mode(&self, expr: &mut Expr, composites: bool) -> Result<bool> {
+        let key = if composites {
+            "__fastdb_equality_key"
+        } else {
+            "__fastdb_unwrap"
+        };
         // Keep explicit collation and unary plus outside the conversion.
         // Plus preserves the scalar value while removing SQL affinity.
         match expr {
             Expr::Collate(value, _) | Expr::Unary(UnaryOperator::Positive, value) => {
-                return self.comparison_key(value);
+                return self.comparison_key_mode(value, composites);
             }
             Expr::Parenthesized(values) if values.len() == 1 => {
-                return self.comparison_key(&mut values[0]);
+                return self.comparison_key_mode(&mut values[0], composites);
             }
             _ => {}
         }
         if let Some((mut value, typed)) = self.standalone_alias(expr) {
             if typed {
-                *expr = expression(&format!("__fastdb_unwrap({value})"))?;
+                *expr = expression(&format!("{key}({value})"))?;
                 return Ok(true);
             }
             if native_alias_key(&mut value)? {
@@ -1842,11 +1866,16 @@ impl Scope {
         }
         if let Some((i, path)) = self.field(expr)? {
             // Direct IDs must remain column references for primary-key seeks.
-            *expr = self.accessor(i, &path, false)?;
+            *expr = if composites && !(path == ["id"] && self.sources[i].collection.is_some()) {
+                let value = self.accessor(i, &path, true)?;
+                expression(&format!("{key}({value})"))?
+            } else {
+                self.accessor(i, &path, false)?
+            };
             return Ok(true);
         }
         if self.preserved(expr)? {
-            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            *expr = expression(&format!("{key}({expr})"))?;
             return Ok(true);
         }
         let cast_type = match expr {
@@ -1868,7 +1897,7 @@ impl Scope {
                 | Expr::Like { .. }
         ) {
             self.typed(expr)?;
-            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            *expr = expression(&format!("{key}({expr})"))?;
             if let Some(type_name) = cast_type {
                 // The conversion returns the already-cast scalar (or its binary
                 // key). Repeating CAST preserves its affinity for IN coercion.
@@ -2146,6 +2175,15 @@ impl Scope {
                     }
                 }
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
+                if *column == SubqueryAffinity::MembershipRows {
+                    let mut value = *lhs.clone();
+                    if !self.membership_key(&mut value)? {
+                        return Err(unsupported("row membership with a collection subquery requires typed collection fields or scalar expressions on the left"));
+                    }
+                    let negate = if *not { "NOT " } else { "" };
+                    *expr = expression(&format!("{value} {negate}IN {query}"))?;
+                    return Ok(());
+                }
                 if let SubqueryAffinity::NativeMembership(collation, shared) = column {
                     let direct_keys = shared.is_empty()
                         && self.sources.iter().any(Source::logical)
@@ -2153,11 +2191,12 @@ impl Scope {
                     let mut value = *lhs.clone();
                     let is_column = membership_column(&value)
                         || matches!(order_base(&value), Expr::Cast { .. });
-                    if !self.comparison_key(&mut value)? {
+                    if !self.membership_key(&mut value)? {
                         self.lower(&mut value)?;
                         if direct_keys {
-                            value =
-                                expression(&format!("__fastdb_unwrap(__fastdb_pack({value}))"))?;
+                            value = expression(&format!(
+                                "__fastdb_equality_key(__fastdb_pack({value}))"
+                            ))?;
                         } else {
                             **lhs = value;
                             if shared.is_empty() {
@@ -2225,12 +2264,12 @@ impl Scope {
                     } else {
                         shared.as_str()
                     };
-                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
+                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_equality_key(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();
                 let negate = if *not { "NOT " } else { "" };
-                if self.comparison_key(&mut value)? {
+                if self.membership_key(&mut value)? {
                     *expr = expression(&format!("{value} {negate}IN {query}"))?;
                 } else if native_column_reference(&value) {
                     // The generated scalar wrapper introduces a new scope. Keep
@@ -2264,10 +2303,12 @@ impl Scope {
                     } else {
                         "+v"
                     };
-                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN (SELECT {key} FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT {key} FROM __fastdb_in_source) END)"))?;
+                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_equality_key(__fastdb_pack({value})) {negate}IN (SELECT {key} FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT {key} FROM __fastdb_in_source) END)"))?;
                 } else {
                     self.typed(&mut value)?;
-                    *expr = expression(&format!("__fastdb_unwrap({value}) {negate}IN {query}"))?;
+                    *expr = expression(&format!(
+                        "__fastdb_equality_key({value}) {negate}IN {query}"
+                    ))?;
                 }
                 return Ok(());
             }
@@ -2699,23 +2740,23 @@ impl Scope {
             }
             Expr::InList { lhs, rhs, not } => {
                 let mut value = *lhs.clone();
-                if self.comparison_key(&mut value)? {
+                if self.membership_key(&mut value)? {
                     // Use one collision-resistant scalar representation for the
                     // whole list, including native functions returning blobs.
                     **lhs = value;
                     for value in rhs.iter_mut() {
-                        if !self.comparison_key(value)? {
+                        if !self.membership_key(value)? {
                             self.typed(value)?;
-                            **value = expression(&format!("__fastdb_unwrap({value})"))?;
+                            **value = expression(&format!("__fastdb_equality_key({value})"))?;
                         }
                     }
                     return Ok(());
                 }
                 if native_column_reference(&value) {
                     for value in rhs.iter_mut() {
-                        if !self.comparison_key(value)? {
+                        if !self.membership_key(value)? {
                             self.typed(value)?;
-                            **value = expression(&format!("__fastdb_unwrap({value})"))?;
+                            **value = expression(&format!("__fastdb_equality_key({value})"))?;
                         }
                     }
                     if let Some(collation) = self.derived_native_collation(&value, false) {
@@ -2734,7 +2775,7 @@ impl Scope {
                     // IN ignores RHS affinity. Preserve the native LHS column's
                     // affinity for scalar values and encode only its BLOB values.
                     *expr = expression(&format!(
-                        "CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN ({list}) ELSE {value} {negate}IN ({list}) END"
+                        "CASE WHEN typeof({value})='blob' THEN __fastdb_equality_key(__fastdb_pack({value})) {negate}IN ({list}) ELSE {value} {negate}IN ({list}) END"
                     ))?;
                     return Ok(());
                 }
@@ -3869,7 +3910,13 @@ fn scalar_indexed_filter(
                         lhs: key,
                         rhs: keys
                             .into_iter()
-                            .map(|e| index_literal(e, &scope.params).map(Box::new))
+                            .map(|e| {
+                                let mut value = e.clone();
+                                if !scope.membership_key(&mut value)? {
+                                    return Err(unsupported("indexed membership key"));
+                                }
+                                Ok(Box::new(value))
+                            })
                             .collect::<Result<_>>()?,
                         not: false,
                     }
@@ -4029,7 +4076,7 @@ fn lower_set_operations(
             "SELECT {} FROM {table}",
             columns
                 .iter()
-                .map(|column| format!("__fastdb_unwrap({column})"))
+                .map(|column| format!("__fastdb_equality_key({column})"))
                 .collect::<Vec<_>>()
                 .join(",")
         )
@@ -4061,12 +4108,12 @@ fn lower_set_operations(
                 .join(",");
             let grouping = columns
                 .iter()
-                .map(|column| format!("__fastdb_unwrap(l.{column})"))
+                .map(|column| format!("__fastdb_equality_key(l.{column})"))
                 .collect::<Vec<_>>()
                 .join(",");
             let matching = columns
                 .iter()
-                .map(|column| format!("__fastdb_unwrap(l.{column}) IS k.{column}"))
+                .map(|column| format!("__fastdb_equality_key(l.{column}) IS k.{column}"))
                 .collect::<Vec<_>>()
                 .join(" AND ");
             definitions.push(format!("{result}({names}) AS MATERIALIZED (SELECT {outputs} FROM {candidates} l JOIN {key_table} k ON {matching} GROUP BY {grouping})"));
@@ -4096,7 +4143,7 @@ fn lower_distinct(
         *alias = Some(As::As(Name::exact(name.clone())));
         output.push(quote(&name));
         keys.push(if typed[i] {
-            format!("__fastdb_unwrap({})", quote(&name))
+            format!("__fastdb_equality_key({})", quote(&name))
         } else {
             quote(&name)
         });
@@ -5273,7 +5320,30 @@ impl Connection {
         let mut cte_logical = false;
         if let Some(mut with) = select.with.take() {
             if with.recursive {
-                return Ok(None);
+                select.with = Some(with);
+                return self
+                    .lower_recursive_collection_select(
+                        select,
+                        params,
+                        inherited_ctes,
+                        ignore_unused,
+                    )
+                    .map(|plan| {
+                        plan.map(|mut plan| {
+                            plan.explain = explain;
+                            if let Cmd::Stmt(statement) = plan.command {
+                                plan.command = match &cmd {
+                                    Cmd::Explain(_) => Cmd::Explain(statement),
+                                    Cmd::ExplainQueryPlan { format, .. } => Cmd::ExplainQueryPlan {
+                                        stmt: statement,
+                                        format: *format,
+                                    },
+                                    _ => Cmd::Stmt(statement),
+                                };
+                            }
+                            plan
+                        })
+                    });
             }
             let mut local_names = std::collections::BTreeSet::new();
             for cte in &with.ctes {
@@ -5773,6 +5843,55 @@ impl Connection {
                             )?
                         };
                         if let Some(mut plan) = plan {
+                            let row_width = match &*expr {
+                                Expr::InSelect { lhs, .. } => match lhs.as_ref() {
+                                    Expr::Parenthesized(values) if values.len() > 1 => {
+                                        Some(values.len())
+                                    }
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            if let Some(width) = row_width {
+                                if plan.typed.len() != width
+                                    || plan.typed.iter().any(|typed| !typed)
+                                    || plan.fetched.iter().any(|fetched| *fetched)
+                                {
+                                    return Err(unsupported("row membership requires matching widths and typed collection output columns without FETCH"));
+                                }
+                                let id = self
+                                    .next_subquery_id
+                                    .fetch_update(
+                                        std::sync::atomic::Ordering::Relaxed,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                        |id| id.checked_add(1),
+                                    )
+                                    .map_err(|_| {
+                                        Error::Limit(
+                                            "internal subquery identifiers exhausted".into(),
+                                        )
+                                    })?;
+                                let members = format!("__fastdb_members_{id}");
+                                let names = (0..width)
+                                    .map(|index| format!("v{index}"))
+                                    .collect::<Vec<_>>();
+                                let keys = names
+                                    .iter()
+                                    .map(|name| format!("__fastdb_equality_key({name}) AS {name}"))
+                                    .collect::<Vec<_>>()
+                                    .join(",");
+                                let sql = plan.command.to_string();
+                                let lowered = expression(&format!(
+                                    "(WITH {members}({}) AS ({}) SELECT {keys} FROM {members})",
+                                    names.join(","),
+                                    sql.trim().trim_end_matches(';')
+                                ))?;
+                                expression_subqueries.insert(
+                                    expr.to_string(),
+                                    (lowered, plan.consumed, SubqueryAffinity::MembershipRows),
+                                );
+                                return Ok(());
+                            }
                             let mut direct_local_scalar = false;
                             if !exists
                                 && !membership
@@ -5842,8 +5961,9 @@ impl Connection {
                                         )
                                     })?;
                                 let members = format!("__fastdb_members_{id}");
-                                let values =
-                                    format!("SELECT __fastdb_unwrap({output}) AS v FROM {members}");
+                                let values = format!(
+                                    "SELECT __fastdb_equality_key({output}) AS v FROM {members}"
+                                );
                                 // A field has typeless column affinity, which differs
                                 // from a function expression with no affinity. Restore
                                 // a column boundary after decoding its comparison key.
@@ -6270,7 +6390,7 @@ impl Connection {
                 if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
                     let column = matches!(&inner.body.select, OneSelect::Select { columns, .. }
                         if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
-                    let values = "SELECT __fastdb_unwrap(v) AS v FROM __fastdb_members";
+                    let values = "SELECT __fastdb_equality_key(v) AS v FROM __fastdb_members";
                     let values = if column {
                         format!("SELECT v FROM ({values} UNION ALL SELECT CAST(NULL AS BLOB) WHERE 0) AS __fastdb_member_values")
                     } else {
@@ -7038,6 +7158,189 @@ impl Connection {
         )
         .map(Some)
     }
+    fn lower_recursive_collection_select(
+        &self,
+        select: &Select,
+        params: &Parameters,
+        inherited: Option<&CteSources>,
+        ignore_unused: bool,
+    ) -> Result<Option<LoweredSelect>> {
+        let with = select.with.as_ref().expect("recursive WITH");
+        if with.ctes.len() != 1 {
+            return Ok(None);
+        }
+        let mut cte = with.ctes[0].clone();
+        if cte.select.with.is_some()
+            || cte.select.body.compounds.len() != 1
+            || cte.select.body.compounds[0].operator != CompoundOperator::UnionAll
+            || !cte.select.order_by.is_empty()
+            || cte.select.limit.is_some()
+        {
+            return Ok(None);
+        }
+        let mut scope = inherited.cloned().unwrap_or_default();
+        scope.insert(cte.tbl_name.as_str().to_ascii_lowercase(), None);
+        let mut initial = cte.select.clone();
+        initial.body.compounds.clear();
+        let sql = Cmd::Stmt(Stmt::Select(initial)).to_string();
+        let Some(mut seed) = self.lower_collection_select(
+            &sql,
+            &sql,
+            params,
+            SelectOptions {
+                trusted: true,
+                nested: true,
+                ctes: Some(&scope),
+                ..Default::default()
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        if seed.fetched.iter().any(|value| *value) {
+            return Err(unsupported("FETCH inside recursive collection CTEs"));
+        }
+        let names = if cte.columns.is_empty() {
+            seed.names.clone()
+        } else {
+            if cte.columns.len() != seed.typed.len() {
+                return Err(Error::Validation(
+                    "recursive CTE column count mismatch".into(),
+                ));
+            }
+            cte.columns
+                .iter()
+                .map(|column| column.col_name.as_str().to_owned())
+                .collect()
+        };
+        let physical = derived_physical_names(&names);
+        cte.columns = physical
+            .iter()
+            .map(|name| IndexedColumn {
+                col_name: Name::from_string(quote(name)),
+                collation_name: None,
+                order: None,
+            })
+            .collect();
+        let Cmd::Stmt(Stmt::Select(probe)) =
+            parsed(&format!("SELECT * FROM {}", quote(cte.tbl_name.as_str())))?
+        else {
+            unreachable!();
+        };
+        let OneSelect::Select {
+            from: Some(from), ..
+        } = probe.body.select
+        else {
+            unreachable!();
+        };
+        scope.insert(
+            cte.tbl_name.as_str().to_ascii_lowercase(),
+            Some(Source {
+                table: *from.select,
+                alias: cte.tbl_name.as_str().to_owned(),
+                collection: None,
+                derived: Some(names.iter().cloned().map(|name| (name, true)).collect()),
+                derived_logical: true,
+                derived_physical: Some(physical),
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed: seed.consumed.clone(),
+            }),
+        );
+        let recursive = Select {
+            with: None,
+            body: SelectBody {
+                select: cte.select.body.compounds[0].select.clone(),
+                compounds: Vec::new(),
+            },
+            order_by: Vec::new(),
+            limit: None,
+        };
+        let sql = Cmd::Stmt(Stmt::Select(recursive)).to_string();
+        let mut step = self
+            .lower_collection_select(
+                &sql,
+                &sql,
+                params,
+                SelectOptions {
+                    trusted: true,
+                    nested: true,
+                    ctes: Some(&scope),
+                    force_logical: true,
+                    ..Default::default()
+                },
+            )?
+            .ok_or_else(|| unsupported("recursive collection step"))?;
+        if step.typed.len() != seed.typed.len() || step.fetched.iter().any(|value| *value) {
+            return Err(unsupported(
+                "recursive collection CTEs require matching column counts without FETCH",
+            ));
+        }
+        for plan in [&mut seed, &mut step] {
+            let Cmd::Stmt(Stmt::Select(body)) = &mut plan.command else {
+                unreachable!();
+            };
+            if body.with.is_some()
+                || !body.body.compounds.is_empty()
+                || !body.order_by.is_empty()
+                || body.limit.is_some()
+            {
+                return Err(unsupported(
+                    "nested query preparation in a recursive collection CTE",
+                ));
+            }
+            let OneSelect::Select { columns, .. } = &mut body.body.select else {
+                return Err(unsupported("recursive collection CTE SELECT columns"));
+            };
+            for (column, typed) in columns.iter_mut().zip(&plan.typed) {
+                let ResultColumn::Expr(value, _) = column else {
+                    unreachable!();
+                };
+                if !typed {
+                    **value = expression(&format!("__fastdb_pack({value})"))?;
+                }
+            }
+        }
+        let Cmd::Stmt(Stmt::Select(seed_select)) = seed.command else {
+            unreachable!();
+        };
+        let Cmd::Stmt(Stmt::Select(step_select)) = step.command else {
+            unreachable!();
+        };
+        cte.select.body.select = seed_select.body.select;
+        cte.select.body.compounds[0].select = step_select.body.select;
+        let mut outer = select.clone();
+        outer.with = None;
+        let sql = Cmd::Stmt(Stmt::Select(outer)).to_string();
+        let mut result = self
+            .lower_collection_select(
+                &sql,
+                &sql,
+                params,
+                SelectOptions {
+                    trusted: true,
+                    nested: true,
+                    ctes: Some(&scope),
+                    force_logical: true,
+                    ignore_unused,
+                    ..Default::default()
+                },
+            )?
+            .ok_or_else(|| unsupported("recursive collection CTE output"))?;
+        let Cmd::Stmt(Stmt::Select(body)) = &mut result.command else {
+            unreachable!();
+        };
+        let mut prepared = with.clone();
+        prepared.ctes = vec![cte];
+        if let Some(generated) = body.with.take() {
+            prepared.ctes.extend(generated.ctes);
+        }
+        body.with = Some(prepared);
+        result.consumed.extend(seed.consumed);
+        result.consumed.extend(step.consumed);
+        Ok(Some(result))
+    }
+
     fn lower_compound(
         &self,
         select: &Select,

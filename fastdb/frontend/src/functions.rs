@@ -68,6 +68,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             ),
             (c"__fastdb_unwrap", unwrap as turso_ext::ScalarFunction, 1),
             (
+                c"__fastdb_equality_key",
+                equality_key as turso_ext::ScalarFunction,
+                1,
+            ),
+            (
                 c"__fastdb_sql_scalar",
                 sql_scalar as turso_ext::ScalarFunction,
                 1,
@@ -445,6 +450,28 @@ fn unwrap(args: &[ExtValue]) -> ExtValue {
         scalar_result(&decode_arg(v)?)
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+#[scalar(name = "__fastdb_equality_key")]
+fn equality_key(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("equality key arity".into()));
+        };
+        let value = decode_arg(value)?;
+        if matches!(value, Value::Array(_) | Value::Object(_) | Value::Vector(_)) {
+            value.encode_with_limit(Some(64 * 1024 * 1024))?;
+            return Ok(ExtValue::from_blob(crate::collections::identity(&value)?));
+        }
+        scalar_result(&value)
+    })();
+    result.unwrap_or_else(|error| {
+        let prefix = match &error {
+            Error::Limit(_) => "__fastdb_udf_limit:",
+            Error::Validation(_) => "__fastdb_udf_validation:",
+            _ => "",
+        };
+        ExtValue::error_with_message(format!("{prefix}{error}"))
+    })
 }
 #[scalar(name = "__fastdb_array_key")]
 fn array_key(args: &[ExtValue]) -> ExtValue {
