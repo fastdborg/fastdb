@@ -8,7 +8,7 @@ mod requests;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const LIMIT: usize = 64 * 1024;
-const HELP: &str = "fastdb cloud whoami\nfastdb cloud organizations\nfastdb cloud --organization ORG db create NAME\nfastdb cloud --organization ORG db list\nfastdb cloud --organization ORG db show UUID\nfastdb cloud --organization ORG db delete UUID\nfastdb cloud --organization ORG db access UUID\nfastdb cloud --organization ORG db read UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db query UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db retry JOURNAL\n\nSet FASTDB_API_KEY to an organization key. FASTDB_ORGANIZATION_ID can supply ORG.\nFASTDB_CLOUD_URL defaults to https://cloud.fastdb.org. JSON output goes to stdout.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request in this session.\nRead needs read scope; query/access need read and query. Management needs manage.\nOne-shot read/query journals retain SQL and request identity for process-safe retry.";
+const HELP: &str = "fastdb cloud whoami\nfastdb cloud organizations\nfastdb cloud --organization ORG db create NAME\nfastdb cloud --organization ORG db list\nfastdb cloud --organization ORG db show UUID\nfastdb cloud --organization ORG db delete UUID\nfastdb cloud --organization ORG db access UUID\nfastdb cloud --organization ORG db tokens UUID\nfastdb cloud --organization ORG db token-create UUID ISSUANCE_UUID NAME read|write EXPIRES_AT_MS\nfastdb cloud --organization ORG db token-revoke UUID TOKEN_UUID\nfastdb cloud --organization ORG db read UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db query UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db retry JOURNAL\n\nSet FASTDB_API_KEY to an organization key or database JWT (read/query/show/access only). FASTDB_ORGANIZATION_ID can supply ORG.\nFASTDB_CLOUD_URL defaults to https://cloud.fastdb.org. JSON output goes to stdout.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request in this session.\nRead needs read scope; query/access need read and query. Management needs manage.\nOne-shot journals retain SQL and request identity. Read retries run a fresh snapshot; queries replay their durable result.";
 
 struct Cloud {
     http: Client,
@@ -42,11 +42,20 @@ impl Cloud {
                     .into(),
             );
         }
-        if !(key.starts_with("fdbk_") || key.starts_with("fdbo_"))
-            || key.len() != 69
-            || !key[5..].bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err("Set FASTDB_API_KEY to a valid FastDB API key".into());
+        let opaque = (key.starts_with("fdbk_") || key.starts_with("fdbo_"))
+            && key.len() == 69
+            && key[5..].bytes().all(|b| b.is_ascii_hexdigit());
+        // This is only transport validation. The service verifies all JWT claims.
+        let jwt = key.len() <= 4096
+            && key.split('.').count() == 3
+            && key.split('.').all(|part| {
+                !part.is_empty()
+                    && part
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            });
+        if !opaque && !jwt {
+            return Err("Set FASTDB_API_KEY to a valid FastDB API key or database token".into());
         }
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -331,6 +340,37 @@ pub fn run(mut args: Vec<String>) -> Result<std::process::ExitCode> {
         ),
         ["db", "show", id] => (Method::GET, cloud.database_path(id)?, None),
         ["db", "delete", id] => (Method::DELETE, cloud.database_path(id)?, None),
+        ["db", "tokens", id] => (
+            Method::GET,
+            format!("{}/tokens", cloud.database_path(id)?),
+            None,
+        ),
+        ["db", "token-revoke", id, token] => (
+            Method::DELETE,
+            format!(
+                "{}/tokens/{}",
+                cloud.database_path(id)?,
+                canonical_uuid(token)?
+            ),
+            None,
+        ),
+        ["db", "token-create", id, issuance, name, access, expiry] => {
+            let scopes = match *access {
+                "read" => vec!["read"],
+                "write" => vec!["read", "query"],
+                _ => return Err("Token access must be read or write".into()),
+            };
+            let expires_at: u64 = expiry
+                .parse()
+                .map_err(|_| "Expiry must be Unix milliseconds")?;
+            (
+                Method::POST,
+                format!("{}/tokens", cloud.database_path(id)?),
+                Some(json!({
+                    "id": canonical_uuid(issuance)?, "name": name, "scopes": scopes, "expiresAt": expires_at
+                })),
+            )
+        }
         ["db", "access", id] => return cloud.access(id),
         ["db", operation @ ("read" | "query"), id, journal] => {
             return requests::start(&cloud, operation, id, journal)

@@ -95,7 +95,7 @@ version, source or checksum changes are needed. Lock SHA-256:
 - Frontend feature wiring SHA-256:
   `68adbabbe59c6c2b6b160aa3b12f046e8af17bef2aad6f790d1bddb9b9efa0a1`.
 - Candidate reactor passes the full shared fixture in Chromium and Firefox,
-  peak eight Rust workers and zero left active; see [runtime evidence](../v2-wasm-probe.md)
+  peak eight Rust workers and zero left active; see [runtime evidence](../browser-removal.md)
   for exact artifact hashes, tools, commands and logs.
 - The active-core reactor passes the base fixture in both browsers and fails the
   full-text control with `unknown module name 'fts'`, also leaving zero active

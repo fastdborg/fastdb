@@ -63,7 +63,7 @@ reverted and must not be reapplied for this native release.
 
 ## History and future work
 
-[V1 release](release-1.0.0.md), [V1 implementation history](v1-implementation-history.md)
+[V1 release](release-1.0.0.md), [V1 implementation history](status.md)
 and earlier V2 evidence retain their exact source/artifact scopes. The final
 release record supersedes their pending states. Historical browser evidence does
 not create a current gate; see [browser removal](browser-removal.md).

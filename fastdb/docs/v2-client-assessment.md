@@ -102,7 +102,7 @@ sysroot and C++17 (`/tmp/fastdb-wasm-probe-sdk.log`). QuickJS's C archive then
 compiled, but the Rust binding failed because rquickjs-sys 0.12.2 ships no
 `wasm32-wasip1-threads.rs` binding. This initial blocker is now resolved with a
 WASI-only rquickjs-sys bindgen feature and pinned bindgen 0.72.1. The subsequent
-[WASM runtime probe](v2-wasm-probe.md) also resolves C++ linkage with SDK 33 and
+[WASM runtime probe](browser-removal.md) also resolves C++ linkage with SDK 33 and
 passes ANN, H3, JavaScript and C++ error checks in Chromium and Firefox.
 
 Independently, `core/index_method/mod.rs` excludes the upstream FTS implementation
@@ -129,7 +129,7 @@ Next browser steps:
   linkage, including real-browser dependency checks.
 - [ ] Resolve browser FTS support explicitly; preserve the indexed-search contract.
 - [x] Build an in-memory FastDB frontend browser binding with explicit capabilities;
-  see [browser client evidence](v2-browser-client.md) for the shared protocol,
+  see [browser client evidence](browser-removal.md) for the shared protocol,
   installed-package checks and refreshed Python wheel.
 - [ ] Prove worker lifecycle, typed values, cancellation, transactions, persistence
   and catalog compatibility in a real browser before selecting release targets.
@@ -137,9 +137,9 @@ Next browser steps:
 The native Python target can progress independently. Browser support remains a
 required open V2-C item; these probes neither remove it nor claim browser parity.
 
-The later [browser client milestone](v2-browser-client.md) implements the shared
+The later [browser client milestone](browser-removal.md) implements the shared
 typed protocol and in-memory client, followed by an
-[initial OPFS adapter](v2-browser-opfs.md). Installed Chromium/Firefox checks now
+[initial OPFS adapter](browser-removal.md). Installed Chromium/Firefox checks now
 cover persistence, ANN/spatial reopen, exclusive ownership and abrupt-page-close
 WAL recovery. These supersede the earlier feasibility-only statements above.
 Subsequent [WAL/fault qualification](v2-wal-durability-evidence.md) and

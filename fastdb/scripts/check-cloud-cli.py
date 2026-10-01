@@ -44,10 +44,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif self.path == '/v1/organizations':
             result = {'organizations': [{'id': organization}]}
         elif self.path.endswith('/read'):
+            assert value['readVersion'] == 2
             if mode == 'read-failed':
                 status, result = 503, {'error': 'read unavailable'}
             else:
-                result = {'requestId': value['requestId'], 'sequence': value['afterSequence']+(3 if mode == 'intervening' else 1), 'results': []}
+                result = {'readVersion': 2, 'requestId': value['requestId'], 'sequence': sequence, 'results': []}
         elif self.path.endswith('/query'):
             query_attempts.append(value)
             if mode == 'retry' and len(query_attempts) == 1:
@@ -57,12 +58,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 result = {'requestId': value['requestId'], 'sequence': value['afterSequence']+(3 if mode == 'intervening' else 1), 'results': []}
         if self.path.endswith(('/read', '/query')) and mode in ['lost', 'replay', 'wrong-reply']:
-            saved = receipts.get(value['requestId'])
-            if saved:
-                assert saved[0] == value, 'request identity changed on replay'
-                result = saved[1]
-            else:
-                receipts[value['requestId']] = (value, result)
+            if self.path.endswith('/query'):
+                saved = receipts.get(value['requestId'])
+                if saved:
+                    assert saved[0] == value, 'request identity changed on replay'
+                    result = saved[1]
+                else:
+                    receipts[value['requestId']] = (value, result)
             if mode == 'lost': status, result = 503, {'error': 'lost committed response '+key}
             if mode == 'wrong-reply': result = {**result, 'requestId': str(uuid.uuid4())}
         self.send_response(status)
@@ -113,8 +115,8 @@ try:
         assert len(requests)==before+2, 'tracked read gets sequence then submits once'
         method, path, body=requests[-1]
         assert method=='POST' and path==f'{base}/{database}/read'
-        assert set(body)=={'statements','requestId','afterSequence'} and len(body['statements'])==2
-        assert json.loads(result.stdout)['sequence']==8
+        assert set(body)=={'statements','requestId','afterSequence','readVersion'} and len(body['statements'])==2
+        assert json.loads(result.stdout)['sequence']==7 and json.loads(result.stdout)['readVersion']==2
         assert journal.stat().st_mode&0o077==0 and key not in journal.read_text()
         assert json.loads(journal.read_text())['request']==body
         before=len(requests);run(['db','read',database,str(journal)],'SELECT 99;',success=False)
@@ -129,7 +131,7 @@ try:
             sequence=50;mode='replay';before=len(requests)
             result=run(['db','retry',str(journal)])
             assert len(requests)==before+1 and requests[-1][2]==original['request']
-            assert json.loads(result.stdout)['sequence']==original['request']['afterSequence']+1
+            assert json.loads(result.stdout)['sequence']==(50 if operation=='read' else original['request']['afterSequence']+1)
             assert json.loads(journal.read_text())==original
             before=len(requests)
             run(['db','retry',str(journal)],success=False,settings={**env,'FASTDB_ORGANIZATION_ID':str(uuid.uuid4())})
@@ -144,6 +146,11 @@ try:
         (directory/'legacy.json').write_text(json.dumps(legacy));before=len(requests)
         run(['db','retry',str(directory/'legacy.json')],success=False)
         assert len(requests)==before, 'old journals must be reconciled before cutover, not translated'
+        legacy_read=json.loads((directory/'read.json').read_text());legacy_read['version']=2
+        legacy_read['request'].pop('readVersion')
+        (directory/'old-read.json').write_text(json.dumps(legacy_read));before=len(requests)
+        run(['db','retry',str(directory/'old-read.json')],success=False)
+        assert len(requests)==before, 'old read replay journals must not silently rerun'
         (directory/'huge.json').write_text('x'*(70*1024));before=len(requests)
         run(['db','retry',str(directory/'huge.json')],success=False);assert len(requests)==before
     mode='intervening'
@@ -179,6 +186,22 @@ try:
     run(['--organization',organization,'db','show',database],settings={**env,'FASTDB_ORGANIZATION_ID':str(uuid.uuid4())})
     assert requests[-1][1]==f'{base}/{database}'
     assert json.loads(run(['organizations']).stdout)['organizations'][0]['id']==organization
+    issuance = str(uuid.uuid4())
+    expiry = 1900000000000
+    run(['db','token-create',database,issuance,'service','write',str(expiry)])
+    assert requests[-1] == ('POST',f'{base}/{database}/tokens',{'id':issuance,'name':'service','scopes':['read','query'],'expiresAt':expiry})
+    run(['db','tokens',database])
+    assert requests[-1][:2] == ('GET',f'{base}/{database}/tokens')
+    run(['db','token-revoke',database,issuance])
+    assert requests[-1][:2] == ('DELETE',f'{base}/{database}/tokens/{issuance}')
+    key = 'eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl'
+    env['FASTDB_API_KEY'] = key
+    run(['db','show',database])
+    run(['db','access',database],'SELECT 1;\n.quit\n')
+    before = len(requests)
+    for invalid in ['a.b', 'a..b', 'a.b.c.d', 'a.b.c\n', 'a.b.'+'x'*4096]:
+        run(['db','show',database],success=False,settings={**env,'FASTDB_API_KEY':invalid})
+    assert len(requests) == before
     print('Cloud CLI management, interactive batching, stable retries, redaction and endpoint checks passed')
 finally:
     server.shutdown()
