@@ -18,6 +18,7 @@ mod schema_rules;
 pub use field_rules::FieldOptions;
 mod analyzer;
 mod fulltext;
+mod mutation_result;
 mod reindex;
 pub use analyzer::FullTextOptions;
 mod functions;
@@ -50,6 +51,7 @@ mod relations;
 pub use profile::{ProfiledQuery, QueryMetrics};
 mod select;
 mod spatial;
+mod timeout;
 mod transaction;
 mod transfer;
 pub use transfer::TransferFormat;
@@ -346,6 +348,7 @@ impl Database {
             write_buffer_limits: None,
             ann_cache: Default::default(),
             work_meter: Default::default(),
+            cancellation: Default::default(),
             meter_catalog_reads: Default::default(),
             meter_schema_changes: Default::default(),
         };
@@ -363,15 +366,16 @@ pub struct Connection {
     write_buffer_limits: Option<ResultLimits>,
     ann_cache: std::sync::Mutex<Option<ann::Cache>>,
     work_meter: std::sync::Mutex<Option<Arc<turso_core::execution_meter::ExecutionMeter>>>,
+    cancellation: std::sync::Mutex<Option<Arc<interrupt::ActiveCancellation>>>,
     meter_catalog_reads: std::sync::atomic::AtomicBool,
     meter_schema_changes: std::sync::atomic::AtomicBool,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
-    documents: &mut Vec<Document>,
-    document: Document,
+    documents: &mut Vec<mutation_result::Snapshot>,
+    document: mutation_result::Snapshot,
 ) -> Result<()> {
-    budget.document(&document)?;
+    document.charge(budget)?;
     documents.push(document);
     Ok(())
 }
@@ -480,9 +484,10 @@ impl Connection {
             }
             // The callback has not run. Remove an opened frame, or accept the
             // pinned engine's exact missing-frame error if opening never happened.
-            let rollback = self
-                .run(&format!("ROLLBACK TO {name}"), &[])
-                .and_then(|_| self.run(&format!("RELEASE {name}"), &[]));
+            let rollback = self.cancellation_cleanup(|| {
+                self.run(&format!("ROLLBACK TO {name}"), &[])
+                    .and_then(|_| self.run(&format!("RELEASE {name}"), &[]))
+            });
             return match rollback {
                 Ok(_) => Err(cause),
                 Err(Error::Engine(turso_core::LimboError::TxError(message)))
@@ -511,12 +516,14 @@ impl Connection {
                 if self.engine.get_auto_commit() {
                     return Err(cause);
                 }
-                let rollback = if should_rollback {
-                    self.run(&format!("ROLLBACK TO {name}"), &[])
-                        .and_then(|_| self.run(&format!("RELEASE {name}"), &[]))
-                } else {
-                    self.run(&format!("RELEASE {name}"), &[])
-                };
+                let rollback = self.cancellation_cleanup(|| {
+                    if should_rollback {
+                        self.run(&format!("ROLLBACK TO {name}"), &[])
+                            .and_then(|_| self.run(&format!("RELEASE {name}"), &[]))
+                    } else {
+                        self.run(&format!("RELEASE {name}"), &[])
+                    }
+                });
                 match rollback {
                     Ok(_) => Err(cause),
                     Err(rollback) => Err(Error::Rollback {
@@ -966,10 +973,12 @@ impl Connection {
         params: &Parameters,
         limits: Option<ResultLimits>,
     ) -> Result<QueryResult> {
-        if udf::has_calls(sql)? || analyzer::has_calls(sql)? {
-            return self.atomic(|| self.execute_snapshot(sql, params, limits));
-        }
-        self.execute_snapshot(sql, params, limits)
+        self.with_statement_timeout(sql, |sql| {
+            if udf::has_calls(sql)? || analyzer::has_calls(sql)? {
+                return self.atomic(|| self.execute_snapshot(sql, params, limits));
+            }
+            self.execute_snapshot(sql, params, limits)
+        })
     }
     fn execute_snapshot(
         &self,
@@ -1007,18 +1016,21 @@ impl Connection {
                         })
                         .collect::<Result<Vec<_>>>()?
                 };
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
                 let mut candidates = Vec::new();
                 let mut budget = self.write_buffer_budget()?;
                 for before in sources {
                     let value = self.evaluate(value.clone(), params, Some(&before))?;
                     let document = mutation::apply(&mode, &before, value)?;
-                    budget.document(&document)?;
-                    candidates.push(document);
+                    let snapshot =
+                        mutation_result::Snapshot::after(document, capture.then_some(before));
+                    snapshot.charge(&mut budget)?;
+                    candidates.push(snapshot);
                 }
                 let mut output_budget = self.write_buffer_budget()?;
                 for document in &mut candidates {
-                    self.replace_document(&collection, document)?;
-                    output_budget.document(document)?;
+                    self.replace_document(&collection, &mut document.document)?;
+                    document.charge(&mut output_budget)?;
                 }
                 self.object_returning(&table, returning, candidates, params, limits)
             }),
@@ -1082,6 +1094,11 @@ impl Connection {
                 };
                 doc.insert("id".into(), Value::Record(record));
                 let doc = self.upsert(&table, doc)?;
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
+                let doc = mutation_result::Snapshot::after(
+                    doc,
+                    (capture && !before.is_empty()).then_some(before),
+                );
                 self.object_returning(&table, returning, vec![doc], params, limits)
             }),
             Statement::PatchWhere {
@@ -1096,6 +1113,7 @@ impl Connection {
                     .write_candidate_select(&query, params, false)?
                     .ok_or_else(|| Error::NotFound(table.clone()))?
                     .rows;
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
                 let mut candidates = Vec::new();
                 let mut candidate_budget = self.write_buffer_budget()?;
                 for row in rows {
@@ -1112,16 +1130,24 @@ impl Connection {
                     };
                     candidate_budget.document(&patch)?;
                     candidate_budget.value(&Value::Record(id.clone()))?;
-                    candidates.push((id.clone(), patch));
+                    let id = id.clone();
+                    let before = capture.then_some(before);
+                    if let Some(before) = &before {
+                        candidate_budget.document_fields(before)?;
+                    }
+                    candidates.push((id, patch, before));
                 }
                 let mut docs = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
-                for (id, patch) in candidates {
+                for (id, patch, before) in candidates {
                     retain_write_document(
                         &mut snapshot_budget,
                         &mut docs,
-                        self.patch(&id, patch)?
-                            .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
+                        mutation_result::Snapshot::after(
+                            self.patch(&id, patch)?
+                                .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
+                            before,
+                        ),
                     )?;
                 }
                 self.object_returning(&table, returning, docs, params, limits)
@@ -1266,7 +1292,8 @@ impl Connection {
                 value,
                 returning,
             } => self.atomic(|| {
-                let doc = self.insert(&table, object(value)?)?;
+                let doc =
+                    mutation_result::Snapshot::after(self.insert(&table, object(value)?)?, None);
                 self.object_returning(&table, returning, vec![doc], params, limits)
             }),
             Statement::SelectRecordProjection { target, fields } => self
@@ -1293,7 +1320,10 @@ impl Connection {
                 let Value::Object(patch) = self.evaluate(value, params, Some(&before))? else {
                     return Err(Error::Validation("expected object patch".into()));
                 };
-                let doc = self.patch(&target, patch)?;
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
+                let doc = self
+                    .patch(&target, patch)?
+                    .map(|doc| mutation_result::Snapshot::after(doc, capture.then_some(before)));
                 self.object_returning(
                     &target.table,
                     returning,
@@ -1303,7 +1333,9 @@ impl Connection {
                 )
             }),
             Statement::Delete { target, returning } => self.atomic(|| {
-                let doc = self.delete(&target)?;
+                let doc = self
+                    .delete(&target)?
+                    .map(mutation_result::Snapshot::deleted);
                 self.object_returning(
                     &target.table,
                     returning,

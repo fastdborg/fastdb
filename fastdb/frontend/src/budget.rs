@@ -71,6 +71,9 @@ impl ResultBudget {
     }
     pub(crate) fn document(&mut self, document: &crate::Document) -> Result<()> {
         self.row(&[])?;
+        self.document_fields(document)
+    }
+    pub(crate) fn document_fields(&mut self, document: &crate::Document) -> Result<()> {
         if self.limits.is_some() {
             for (key, value) in document {
                 self.add(key.len())?;

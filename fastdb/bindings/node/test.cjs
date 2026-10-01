@@ -4032,3 +4032,47 @@ test('analyzer inspection and managed rebuilds preserve typed results in both cl
     } finally { await db.close(); }
   }
 });
+
+test('mutation snapshots and diffs preserve typed values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const async of [false,true]) {
+    const db=async ? await AsyncDatabase.open(':memory:') : new Database();
+    try {
+      const id=new Record('docs','a');
+      const data={n:9223372036854775807n,bytes:Buffer.from([0,255]),ref:new Record('refs','a'),items:[true,null],vector:Vector.float32([1,2])};
+      const inserted=await db.execute('INSERT INTO docs {id:docs:a,data:$data} RETURNING doc::before() AS old,doc::after() AS new,doc::diff() AS diff',{$data:data});
+      assert.deepEqual(inserted.rows,[[null,{id,data},[{op:'add',path:'',value:{id,data}}]]]);
+      await db.execute('BEGIN');
+      const updated=await db.execute('UPDATE docs:a MERGE {data:{n:7}} RETURNING doc::before() AS old,doc::after() AS new,doc::diff() AS diff,$before,$after,$diff',{$before:1n,$after:true,$diff:null});
+      assert.deepEqual(updated.rows,[[{id,data},{id,data:{...data,n:7n}},[{op:'replace',path:'/data/n',value:7n}],1n,true,null]]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('DELETE FROM docs:a RETURNING doc::before() AS old,doc::after() AS new,doc::diff() AS diff'),[[{id,data},null,[{op:'remove',path:''}]]]);
+    } finally { await db.close(); }
+  }
+});
+
+test('statement TIMEOUT composes with client cancellation and preserves transactions', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  const long='WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<100000000) SELECT sum(v) FROM n';
+  for (const async of [false,true]) {
+    const db=async ? await AsyncDatabase.open(':memory:') : new Database();
+    try {
+      await db.execute('INSERT INTO docs {id:docs:a,n:1} TIMEOUT 1s');
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:b,n:2}');
+      await assert.rejects(async()=>db.execute('UPDATE docs SET n=10 RETURNING doc::diff() TIMEOUT 0ms'),error=>error.code==='FDB_CANCELLED');
+      await assert.rejects(async()=>db.execute(`${long} TIMEOUT 10ms`),error=>error.code==='FDB_CANCELLED');
+      assert.deepEqual(await db.all('SELECT n FROM docs ORDER BY n TIMEOUT 1s'),[[1n],[2n]]);
+      await db.execute('ROLLBACK');
+      assert.deepEqual(await db.all('SELECT n FROM docs'),[[1n]]);
+      if (db instanceof AsyncDatabase) {
+        const controller=new AbortController();
+        const pending=db.execute(`${long} TIMEOUT 5s`,{}, {signal:controller.signal});
+        const timer=setTimeout(()=>controller.abort(),25);
+        try { await assert.rejects(pending,error=>error.code==='FDB_CANCELLED'); }
+        finally { clearTimeout(timer); }
+        assert.deepEqual(await db.all('SELECT 42'),[[42n]]);
+      }
+    } finally { await db.close(); }
+  }
+});

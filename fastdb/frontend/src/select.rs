@@ -2909,6 +2909,9 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
             "__fastdb_h_doc_project" => Some("doc::project"),
             "__fastdb_h_doc_has" => Some("doc::has"),
             "__fastdb_h_doc_row" => Some("doc::row"),
+            "__fastdb_h_doc_before" => Some("doc::before"),
+            "__fastdb_h_doc_after" => Some("doc::after"),
+            "__fastdb_h_doc_diff" => Some("doc::diff"),
             _ => None,
         };
         if let Some(public) = public {
@@ -4056,6 +4059,9 @@ pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Resu
                 "array::distinct" => "__fastdb_h_array_distinct",
                 "array::flatten" => "__fastdb_h_array_flatten",
                 "array::unnest" => "__fastdb_unnest",
+                "doc::before" => "__fastdb_h_doc_before",
+                "doc::after" => "__fastdb_h_doc_after",
+                "doc::diff" => "__fastdb_h_doc_diff",
                 "doc::keys" => "__fastdb_h_object_keys",
                 "doc::values" => "__fastdb_h_object_values",
                 "doc::entries" => "__fastdb_h_object_entries",
@@ -4193,10 +4199,12 @@ impl Connection {
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<crate::ProfiledQuery> {
-        if crate::udf::has_calls(sql)? || crate::analyzer::has_calls(sql)? {
-            return self.atomic(|| self.profile_select_snapshot(sql, params, limits));
-        }
-        self.profile_select_snapshot(sql, params, limits)
+        self.with_statement_timeout(sql, |sql| {
+            if crate::udf::has_calls(sql)? || crate::analyzer::has_calls(sql)? {
+                return self.atomic(|| self.profile_select_snapshot(sql, params, limits));
+            }
+            self.profile_select_snapshot(sql, params, limits)
+        })
     }
     fn profile_select_snapshot(
         &self,
@@ -4216,6 +4224,7 @@ impl Connection {
             }
         };
         let expanded = expand_paths(&expand_records(Some(self), &sql)?)?;
+        crate::mutation_result::reject_outside_returning(&expanded)?;
         if !matches!(parsed(&expanded)?, Cmd::Stmt(Stmt::Select(_))) {
             return Err(Error::Unsupported(
                 "profiling requires one SQL SELECT".into(),
@@ -4349,7 +4358,7 @@ impl Connection {
         &self,
         table: &QualifiedName,
         columns: &[ResultColumn],
-        documents: Vec<crate::Document>,
+        documents: Vec<crate::mutation_result::Snapshot>,
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<QueryResult> {
@@ -4362,7 +4371,7 @@ impl Connection {
             let mut budget = crate::budget::ResultBudget::new(limits, &columns)?;
             let mut rows = Vec::new();
             for document in documents {
-                let row = vec![Value::Object(document)];
+                let row = vec![Value::Object(document.document)];
                 budget.row(&row)?;
                 rows.push(row);
             }
@@ -4372,6 +4381,38 @@ impl Connection {
                 affected,
             });
         }
+        let mut columns = columns.to_vec();
+        let original = columns
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut nonce = 0usize;
+        let (before_name, after_name) = loop {
+            let before = format!("$__fastdb_mutation_before_{nonce}");
+            let after = format!("$__fastdb_mutation_after_{nonce}");
+            if !params.contains_key(&before)
+                && !params.contains_key(&after)
+                && !original.contains(&before)
+                && !original.contains(&after)
+            {
+                break (before, after);
+            }
+            nonce += 1;
+        };
+        let mut rewritten = false;
+        for column in &mut columns {
+            if let ResultColumn::Expr(expr, alias) = column {
+                let label = public_expression_name(expr)?;
+                if crate::mutation_result::rewrite_expression(expr, &before_name, &after_name)? {
+                    if alias.as_ref().is_none_or(|alias| !alias.is_explicit()) {
+                        *alias = Some(As::As(Name::exact(label)));
+                    }
+                    rewritten = true;
+                }
+            }
+        }
+        let mut scoped_params = rewritten.then(|| params.clone());
         let projections = columns
             .iter()
             .map(ToString::to_string)
@@ -4393,14 +4434,38 @@ impl Connection {
         let metadata_only = documents.is_empty().then_some(None);
         let inputs = documents.into_iter().map(Some).chain(metadata_only);
         for snapshot in inputs {
+            if let Some(parameters) = &mut scoped_params {
+                let before = if sql.contains(&before_name) {
+                    snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.before())
+                        .cloned()
+                        .map(Value::Object)
+                        .unwrap_or(Value::Null)
+                } else {
+                    Value::Null
+                };
+                let after = if sql.contains(&after_name) {
+                    snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.after_document())
+                        .cloned()
+                        .map(Value::Object)
+                        .unwrap_or(Value::Null)
+                } else {
+                    Value::Null
+                };
+                parameters.insert(before_name.clone(), before);
+                parameters.insert(after_name.clone(), after);
+            }
             let row = self
                 .collection_select_options(
                     &sql,
-                    params,
+                    scoped_params.as_ref().unwrap_or(params),
                     SelectOptions {
                         trusted: true,
                         ignore_unused: true,
-                        snapshot: Some(snapshot.as_ref()),
+                        snapshot: Some(snapshot.as_ref().map(|snapshot| &snapshot.document)),
                         ..Default::default()
                     },
                 )?
@@ -4439,6 +4504,7 @@ impl Connection {
             });
         }
         let expanded = expand_paths(&expand_records(Some(self), sql)?)?;
+        crate::mutation_result::reject_outside_returning(&expanded)?;
         if !options.guarded
             // Native INSERT conflict policies (especially OR FAIL) must keep
             // their own statement boundary. Fetched native sources are rejected

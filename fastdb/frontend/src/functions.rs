@@ -452,6 +452,12 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             .ok_or_else(|| Error::Validation("helper name".into()))?;
         let args = args.iter().map(decode_arg).collect::<Result<Vec<_>>>()?;
         let value = match (name, args.as_slice()) {
+            ("doc_before" | "doc_after" | "doc_diff", _) => {
+                return Err(Error::Validation(
+                    "mutation snapshot helpers require collection RETURNING".into(),
+                ))
+            }
+            ("mutation_diff", _) => crate::mutation_result::call_diff(&args)?,
             ("search_analyze", _) => crate::analyzer::call(&args)?,
             ("geo_cell", _) => crate::spatial::call("cell", &args)?,
             ("geo_cell_center", _) => crate::spatial::call("cell_center", &args)?,
@@ -503,7 +509,10 @@ fn helper(args: &[ExtValue]) -> ExtValue {
         Ok(ExtValue::from_blob(value.encode()?))
     })();
     result.unwrap_or_else(|e| {
-        let prefix = if args.first().and_then(ExtValue::to_text) == Some("search_analyze") {
+        let prefix = if matches!(
+            args.first().and_then(ExtValue::to_text),
+            Some("search_analyze" | "mutation_diff" | "doc_before" | "doc_after" | "doc_diff")
+        ) {
             match e {
                 Error::Limit(_) => "__fastdb_udf_limit:",
                 Error::Validation(_) => "__fastdb_udf_validation:",

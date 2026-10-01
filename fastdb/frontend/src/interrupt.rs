@@ -1,6 +1,6 @@
 //! A cancellation-only handle that does not keep a database connection alive.
 use crate::{Connection, ExecutionReport, Parameters, QueryResult, Result};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 /// A sticky cancellation request scoped to executions that explicitly use it.
 /// Clones share the request; cancellation does not retain a connection.
@@ -33,10 +33,40 @@ impl CancellationToken {
     }
 }
 
-struct ProgressGuard<'a>(&'a turso_core::Connection);
+pub(crate) struct ActiveCancellation {
+    tokens: Vec<CancellationToken>,
+    delivered: Arc<AtomicBool>,
+    suspended: Arc<AtomicUsize>,
+}
+impl ActiveCancellation {
+    fn install(self: &Arc<Self>, connection: &turso_core::Connection) {
+        let active = self.clone();
+        connection.set_progress_handler(
+            1,
+            Some(Box::new(move || {
+                active.suspended.load(Ordering::SeqCst) == 0
+                    && active.tokens.iter().any(CancellationToken::is_cancelled)
+                    && !active.delivered.swap(true, Ordering::SeqCst)
+            })),
+        );
+    }
+}
+struct ProgressGuard<'a> {
+    connection: &'a Connection,
+    previous: Option<Arc<ActiveCancellation>>,
+}
 impl Drop for ProgressGuard<'_> {
     fn drop(&mut self) {
-        self.0.set_progress_handler(0, None);
+        if let Some(previous) = &self.previous {
+            previous.install(&self.connection.engine);
+        } else {
+            self.connection.engine.set_progress_handler(0, None);
+        }
+        *self
+            .connection
+            .cancellation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = self.previous.take();
     }
 }
 
@@ -161,24 +191,64 @@ impl Connection {
         self.with_cancellation(token, || self.migrate(migrations))
     }
 
+    pub(crate) fn cancellation_cleanup<T>(&self, operation: impl FnOnce() -> T) -> T {
+        struct Resume(Option<Arc<ActiveCancellation>>);
+        impl Drop for Resume {
+            fn drop(&mut self) {
+                if let Some(active) = &self.0 {
+                    active.suspended.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+        }
+        let active = self
+            .cancellation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(active) = &active {
+            active.suspended.fetch_add(1, Ordering::SeqCst);
+        }
+        let _resume = Resume(active);
+        operation()
+    }
+
     pub(crate) fn with_cancellation<T>(
         &self,
         token: &CancellationToken,
         operation: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
+        let previous = self
+            .cancellation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if token.is_cancelled() {
+            if let Some(previous) = &previous {
+                previous.delivered.store(true, Ordering::SeqCst);
+            }
             return Err(crate::Error::Engine(turso_core::LimboError::Interrupt));
         }
-        let token = token.clone();
-        let delivered = AtomicBool::new(false);
-        self.engine.set_progress_handler(
-            1,
-            Some(Box::new(move || {
-                // Deliver once so statement/savepoint cleanup can execute afterward.
-                token.is_cancelled() && !delivered.swap(true, Ordering::SeqCst)
-            })),
-        );
-        let _guard = ProgressGuard(&self.engine);
+        let mut tokens = previous
+            .as_ref()
+            .map_or_else(Vec::new, |active| active.tokens.clone());
+        tokens.push(token.clone());
+        let active = Arc::new(ActiveCancellation {
+            tokens,
+            suspended: previous.as_ref().map_or_else(
+                || Arc::new(AtomicUsize::new(0)),
+                |active| active.suspended.clone(),
+            ),
+            delivered: previous.as_ref().map_or_else(
+                || Arc::new(AtomicBool::new(false)),
+                |active| active.delivered.clone(),
+            ),
+        });
+        active.install(&self.engine);
+        *self.cancellation.lock().unwrap_or_else(|e| e.into_inner()) = Some(active);
+        let _guard = ProgressGuard {
+            connection: self,
+            previous,
+        };
         operation()
     }
 
