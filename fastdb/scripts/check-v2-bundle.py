@@ -19,6 +19,7 @@ parser.add_argument("--python", action="append", required=True, help="Python exe
 parser.add_argument("--uv", default="uv")
 parser.add_argument("--v1-package", type=Path, required=True)
 parser.add_argument("--v2-package", type=Path, required=True, help="Immutable published 2.0.0 Node package")
+parser.add_argument("--v21-package", type=Path, required=True, help="Immutable published 2.1.0 Node package")
 args = parser.parse_args()
 bundle = args.bundle.resolve()
 evidence = args.evidence.resolve()
@@ -67,6 +68,8 @@ v1 = args.v1_package.resolve()
 assert json.loads((v1 / "package.json").read_text())["version"] == "1.0.0"
 v2 = args.v2_package.resolve()
 assert json.loads((v2 / "package.json").read_text())["version"] == "2.0.0"
+v21 = args.v21_package.resolve()
+assert json.loads((v21 / "package.json").read_text())["version"] == "2.1.0"
 results = []
 
 
@@ -88,6 +91,35 @@ run("c-abi", ["python3", "fastdb/scripts/check-c-abi.py", str(bundle / "lib/libf
 run("cli", [str(bundle / "bin/fastdb-cli"), "--script"], input="SELECT geo::cell(geo::point(100,13),7);\n")
 cli = json.loads((evidence / "cli.log").read_text())
 assert cli["rows"] == [[{"type": "String", "value": "87658b314ffffff"}]]
+cli_v22 = """INSERT INTO writers {id:writers:alice,name:'Alice'};
+CREATE TABLE articles;
+DEFINE FIELD stamp ON articles TYPE integer DEFAULT 7 READONLY;
+DEFINE FIELD total ON articles TYPE integer VALUE (n*2);
+INSERT INTO articles {id:articles:a,title:'Typed SQL',author:writers:alice,tags:[1,2],n:1};
+CREATE INDEX articles_author ON articles(author);
+CREATE UNIQUE INDEX article_pair ON articles(n,title);
+CREATE SEARCH INDEX article_tags ON articles(tags) USING ARRAY;
+SELECT id,title,author.* AS writer FROM articles WHERE author=type::record('writers','alice') ORDER BY id;
+SELECT a.id,a.title,a.author.* AS writer FROM articles a WHERE a.author=type::record('writers','alice') ORDER BY a.id LIMIT 20;
+UPDATE articles:a PATCH [{op:'add',path:'/tags/-',value:3}] RETURNING n,total,tags;
+INSERT INTO articles(n,title) VALUES(1,'Typed SQL') ON CONFLICT(n,title) DO UPDATE SET n=2 RETURNING n,total;
+SELECT n FROM articles WHERE array::contains(tags,3);
+SELECT n FROM articles WHERE (n,tags) IN(SELECT n,tags FROM articles);
+WITH RECURSIVE r(n) AS (SELECT n FROM articles UNION ALL SELECT n+1 FROM r WHERE n<4) SELECT n FROM r;
+"""
+run("cli-v22", [str(bundle / "bin/fastdb-cli"), "--script"], input=cli_v22)
+cli_rows = [json.loads(line) for line in (evidence / "cli-v22.log").read_text().splitlines()]
+assert len(cli_rows) == 15 and all("error" not in result for result in cli_rows)
+def integer(value):
+    return {"type": "Integer", "value": str(value)}
+writer = {"type": "Object", "value": {"id": {"type": "Record", "value": {"table": "writers", "key": {"type": "String", "value": "alice"}}}, "name": {"type": "String", "value": "Alice"}}}
+assert cli_rows[8]["rows"] == cli_rows[9]["rows"]
+assert cli_rows[8]["columns"] == ["id", "title", "writer"]
+assert cli_rows[8]["rows"][0][2] == writer
+assert cli_rows[10]["rows"] == [[integer(1), integer(2), {"type": "Array", "value": [integer(1), integer(2), integer(3)]}]]
+assert cli_rows[11]["rows"] == [[integer(2), integer(4)]]
+assert cli_rows[12]["rows"] == cli_rows[13]["rows"] == [[integer(2)]]
+assert cli_rows[14]["rows"] == [[integer(2)], [integer(3)], [integer(4)]]
 run("sqlite-adoption", ["python3", "fastdb/scripts/check-sqlite-adoption.py",
                         str(bundle / "bin/fastdb-cli"), str(evidence / "sqlite-adoption.json")], env=base_env)
 sqlite_adoption = json.loads((evidence / "sqlite-adoption.json").read_text())
@@ -126,8 +158,9 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
     for index, node in enumerate(args.node):
         env = dict(base_env, FASTDB_OWNERSHIP_PACKAGE=str(installed_node))
         run(f"node-ownership-{index}", [node, "--test", "fastdb/bindings/node/ownership.test.cjs"], env=env)
-        run(f"v2-upgrade-restore-{index}", [node, "fastdb/scripts/check-v21-upgrade.cjs", str(v2),
-                                          str(installed_node), str(evidence / f"v2-upgrade-fixture-{index}")])
+        for previous, label in [(v2, "v2"), (v21, "v21")]:
+            run(f"{label}-upgrade-restore-{index}", [node, "fastdb/scripts/check-v22-upgrade.cjs", str(previous),
+                                                   str(installed_node), str(evidence / f"{label}-upgrade-fixture-{index}")])
 
     # Test the shipped .nupkg, never a previously cached same-version package.
     dotnet = temporary / "dotnet"

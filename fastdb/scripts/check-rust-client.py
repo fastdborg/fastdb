@@ -267,9 +267,53 @@ fn v2_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Standalone V2 API smoke passed: direct index/relation/function APIs, FastQL search/projections/H3, rollback, integrity and reopen");
     Ok(())
 }
+fn v22_consumer(file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let p=Parameters::new();
+    let db=Database::open(file)?;
+    let c=db.connect()?;
+    for sql in [
+        "CREATE TABLE docs",
+        "DEFINE FIELD stamp ON docs TYPE integer DEFAULT 7 READONLY",
+        "DEFINE FIELD total ON docs TYPE integer VALUE (n*2)",
+        "DEFINE FIELD tags ON docs TYPE array<integer>",
+        "INSERT INTO docs {id:docs:a,n:1,uid:'one',tags:[1],body:'Alpha beta',v:vector32('[1,0]')}",
+        "CREATE UNIQUE INDEX pair ON docs(n,uid)",
+        "CREATE SEARCH INDEX tags ON docs(tags) USING ARRAY",
+        "CREATE SEARCH INDEX words ON docs(body) USING FULLTEXT WITH(tokenizer='simple')",
+        "CREATE SEARCH INDEX vectors ON docs(v) USING VECTOR WITH(dimensions=2,metric='l2',quantization='f16')",
+        "UPDATE docs:a MERGE {body:'Alpha beta'}",
+        "INSERT INTO docs(n,uid,tags) VALUES(1,'one',array::new(2)) ON CONFLICT(n,uid) DO UPDATE SET n=2,tags=excluded.tags",
+        "UPDATE docs:a PATCH [{op:'add',path:'/tags/-',value:3}]",
+    ] {c.execute(sql,&p)?;}
+    assert_eq!(c.execute("SELECT n,total,stamp,tags FROM docs",&p)?.rows,vec![vec![Value::Integer(2),Value::Integer(4),Value::Integer(7),Value::Array(vec![Value::Integer(2),Value::Integer(3)])]]);
+    let id=Value::Record(Record {table:"docs".into(),key:Key::String("a".into())});
+    let ids=Parameters::from([("$ids".into(),Value::Array(vec![id.clone()]))]);
+    for sql in ["SELECT id FROM search::text('words','Alpha',1,$ids)","SELECT id FROM search::vector('vectors',vector32('[1,0]'),1,$ids)"] {
+        assert_eq!(c.execute(sql,&ids)?.rows,vec![vec![id.clone()]]);
+    }
+    assert_eq!(c.execute("SELECT id FROM docs WHERE array::contains(tags,3)",&p)?.rows,vec![vec![id.clone()]]);
+    assert_eq!(c.execute("SELECT DISTINCT tags FROM docs UNION SELECT tags FROM docs",&p)?.rows,vec![vec![Value::Array(vec![Value::Integer(2),Value::Integer(3)])]]);
+    assert_eq!(c.execute("SELECT n FROM docs WHERE (n,tags) IN(SELECT n,tags FROM docs)",&p)?.rows,vec![vec![Value::Integer(2)]]);
+    assert_eq!(c.execute("WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION ALL SELECT n+1 FROM r WHERE n<4) SELECT n FROM r",&p)?.rows,vec![vec![Value::Integer(2)],vec![Value::Integer(3)],vec![Value::Integer(4)]]);
+    assert_eq!(c.execute("UPDATE docs SET stamp=8",&p).unwrap_err().code(),"FDB_VALIDATION");
+    for index in ["pair","tags","words","vectors"] {c.execute(&format!("REINDEX {index}"),&p)?;}
+    c.execute("BEGIN",&p)?;
+    c.execute("UPDATE docs:a MERGE {n:3}",&p)?;
+    assert_eq!(c.execute("UPDATE docs SET n=8 TIMEOUT 0ms",&p).unwrap_err().code(),"FDB_CANCELLED");
+    c.execute("ROLLBACK",&p)?;
+    assert_eq!(c.lookup_compound_index("docs","pair",&[Value::Integer(2),Value::String("one".into())])?.len(),1);
+    c.check_collection_integrity("docs",Default::default())?;
+    drop(c);drop(db);
+    let c=Database::open(file)?.connect()?;
+    assert_eq!(c.execute("SELECT n,total FROM docs",&p)?.rows,vec![vec![Value::Integer(2),Value::Integer(4)]]);
+    c.check_collection_integrity("docs",Default::default())?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args().nth(1).expect("database path");
     v2_consumer(&format!("{file}.v2"))?;
+    v22_consumer(&format!("{file}.v22"))?;
     iterator_consumer(&format!("{file}.iterators"))?;
     tuple_consumer(&format!("{file}.tuples"))?;
     conflict_consumer(&format!("{file}.conflicts"))?;

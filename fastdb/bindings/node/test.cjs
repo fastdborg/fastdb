@@ -4143,3 +4143,25 @@ test('compound and array indexes support atomic conflict updates in both clients
     } finally { await db.close(); }
   }
 });
+
+test('composite sets, row membership and collection recursion preserve values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const value={items:[true,null,9223372036854775807n],ref:new Record('docs','b'),bytes:Buffer.from([0,255]),vector:Vector.float32([1,2])};
+      await db.execute('INSERT INTO docs {id:docs:a,n:1,payload:$value}',{$value:value});
+      await db.execute('INSERT INTO docs {id:docs:b,n:2,payload:$value}',{$value:value});
+      assert.deepEqual(await db.all('SELECT DISTINCT payload FROM docs'),[[value]]);
+      assert.deepEqual(await db.all('SELECT payload FROM docs UNION SELECT $value',{$value:value}),[[value]]);
+      assert.deepEqual(await db.all('SELECT n FROM docs WHERE (n,payload) IN((1,$value))',{$value:value}),[[1n]]);
+      assert.deepEqual(await db.all('SELECT n FROM docs WHERE (n,payload) IN(SELECT n,payload FROM docs WHERE n=2)'),[[2n]]);
+      const recursive='WITH RECURSIVE r(n,payload) AS (SELECT n,payload FROM docs WHERE n=1 UNION ALL SELECT n+1,payload FROM r WHERE n<$end) SELECT n,payload FROM r ORDER BY n';
+      assert.deepEqual(await db.all(recursive,{$end:3n}),[[1n,value],[2n,value],[3n,value]]);
+      await db.execute('BEGIN');
+      await db.execute('UPDATE docs:a MERGE {prior:true}');
+      await assert.rejects(async()=>db.all('WITH RECURSIVE r(n) AS (SELECT n FROM docs WHERE n=1 UNION ALL SELECT n+1 FROM r) SELECT sum(n) FROM r TIMEOUT 10ms'),e=>e.code==='FDB_CANCELLED');
+      assert.equal((await db.collection('docs').get('a')).prior,true);
+      await db.execute('ROLLBACK');
+    } finally { await db.close(); }
+  }
+});
