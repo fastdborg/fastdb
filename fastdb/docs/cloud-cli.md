@@ -122,9 +122,15 @@ request ID and sequence; do not treat it as proof of rollback or blindly resubmi
 No SQL or credentials are written to interactive history. Commands emit JSON to
 stdout; one-shot request recovery instructions go to stderr.
 
-This source targets the breaking 0.4 protocol. It is not a published replacement
-CLI artifact yet. Clean-source packaging, final artifact qualification and hosted
-release gates remain open. Generic HTTP checks run with
+The Linux x64 `fastdb-cloud-cli-0.4.0-read-v2-linux-x64.tar.gz` package is published
+on [the private Cloud 0.4.0 release](https://github.com/fastdborg/cloud/releases/tag/v0.4.0).
+Its clean source is commit `8074507a24625b51724387f37d8a2fd77efd55e7`.
+The shipping binary passes both HTTP harnesses, scoped CLI tests/Clippy, native
+owner/restart recovery and hosted fresh database-JWT reads/retry. A release
+download verifies the archive and all internal checksums. The immutable package
+records qualification as pending at build time; see the separate
+[delivery evidence](../../../cloud/docs/cloud-read-v2-cli.md).
+Generic HTTP checks run with
 `python3 fastdb/scripts/check-cloud-cli.py target/debug/fastdb-cli`; private service
 acceptance lives in the Cloud repository.
 
@@ -205,4 +211,5 @@ Choose a fresh UUIDv4 for issuance and a future expiry in Unix milliseconds,
 no more than 90 days away. Retry uncertain creation with exactly the same values.
 Creation returns the secret once as JSON; protect that output. Listing never
 returns secrets. Dashboard Database → Settings → Manage database tokens provides
-30-day tokens. Previously published CLI archives do not include these additions.
+30-day tokens. The read-v2 package includes these commands; the original Cloud
+0.4.0 archive remains historical.
