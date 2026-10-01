@@ -304,7 +304,7 @@ fn pack(args: &[ExtValue]) -> ExtValue {
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
-fn compare_values(a: &Value, b: &Value) -> Result<Option<std::cmp::Ordering>> {
+pub(crate) fn compare_values(a: &Value, b: &Value) -> Result<Option<std::cmp::Ordering>> {
     if matches!(a, Value::Null) || matches!(b, Value::Null) {
         return Ok(None);
     }

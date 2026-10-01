@@ -1,5 +1,6 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
 mod ann;
+mod array_predicate;
 mod budget;
 mod bundled;
 mod udf;
@@ -9,6 +10,7 @@ mod check;
 mod collections;
 mod deferred;
 mod expression;
+mod fetch_clause;
 mod fulltext;
 mod functions;
 mod guard;

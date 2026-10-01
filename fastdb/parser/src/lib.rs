@@ -898,6 +898,21 @@ pub fn validate_delimiter_depth(tokens: &[Token]) -> Result<()> {
     Ok(())
 }
 
+pub fn parse_expression(input: &str) -> Result<Expr> {
+    let tokens = tokenize(input)?;
+    validate_delimiter_depth(&tokens)?;
+    let mut parser = Parser {
+        input,
+        tokens,
+        pos: 0,
+    };
+    let expression = parser.expr(0)?;
+    if parser.pos != parser.tokens.len() {
+        return Err(parser.error("expected one expression"));
+    }
+    Ok(expression)
+}
+
 pub fn parse(input: &str) -> Result<Statement> {
     let mut p = Parser {
         input,

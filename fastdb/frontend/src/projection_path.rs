@@ -8,12 +8,35 @@ pub(crate) enum Part {
     Key(String),
     Index(i64),
     All,
+    Fetch(Vec<Vec<String>>),
+    Fields(Vec<String>),
+    Filter(String),
 }
 
 pub(crate) fn decode(encoded: &str) -> Result<Vec<Part>> {
     let parts: Vec<Part> = serde_json::from_str(encoded)?;
     if parts.len() > 64 {
         return Err(Error::Limit("projection path nesting exceeds 64".into()));
+    }
+    for part in &parts {
+        if let Part::Fetch(paths) = part {
+            if paths.is_empty()
+                || paths.len() > 1024
+                || paths.iter().any(|path| path.is_empty() || path.len() > 64)
+            {
+                return Err(Error::Limit("invalid FETCH path bounds".into()));
+            }
+        }
+        if let Part::Fields(fields) = part {
+            if fields.is_empty() || fields.len() > 1024 {
+                return Err(Error::Limit(
+                    "destructuring requires 1 to 1024 fields".into(),
+                ));
+            }
+        }
+        if let Part::Filter(source) = part {
+            crate::array_predicate::Predicate::prepare(source)?;
+        }
     }
     Ok(parts)
 }
@@ -24,40 +47,164 @@ pub(crate) fn project(
     connection: &crate::Connection,
     inputs: &[(Value, Vec<Part>)],
     budget: &mut crate::budget::ResultBudget,
+    parameters: &crate::Parameters,
 ) -> Result<(Vec<Value>, crate::links::FetchMetrics)> {
     use std::collections::BTreeMap;
-    struct Walker {
+    struct Walker<'a> {
         output_bytes: crate::links::FetchBudget,
         cache: BTreeMap<String, Value>,
         pending: BTreeMap<String, Value>,
         work: usize,
+        parameters: &'a crate::Parameters,
+        predicates: BTreeMap<String, std::sync::Arc<crate::array_predicate::Predicate>>,
+        predicate_bytes: crate::links::FetchBudget,
     }
-    impl Walker {
-        fn walk(&mut self, value: &Value, parts: &[Part]) -> Result<Value> {
-            self.work += 1;
+    impl Walker<'_> {
+        fn step(&mut self, amount: usize) -> Result<()> {
+            self.work = self.work.saturating_add(amount);
             if self.work > 1_000_000 {
                 return Err(Error::Limit(
                     "projection traversal work exceeds 1000000".into(),
                 ));
             }
+            Ok(())
+        }
+
+        fn reference(&mut self, value: &Value) -> Result<Option<Value>> {
+            let Value::Record(record) = value else {
+                unreachable!()
+            };
+            let mut record = record.clone();
+            record.table = crate::canonical(&record.table)?;
+            let key = serde_json::to_string(&record)?;
+            if let Some(document) = self.cache.get(&key) {
+                return Ok(Some(document.clone()));
+            }
+            self.pending.insert(key, value.clone());
+            if self.pending.len() + self.cache.len() > crate::links::MAX_FETCH_REFERENCES {
+                return Err(Error::Limit("projection references exceed 16384".into()));
+            }
+            Ok(None)
+        }
+
+        fn fetch(&mut self, value: &Value, paths: &[&[String]]) -> Result<Value> {
+            self.step(1)?;
+            if matches!(value, Value::Record(_)) {
+                return match self.reference(value)? {
+                    Some(document) => self.fetch(&document, paths),
+                    None => Ok(Value::Null),
+                };
+            }
+            if let Value::Array(values) = value {
+                return values
+                    .iter()
+                    .map(|value| self.fetch(value, paths))
+                    .collect::<Result<Vec<_>>>()
+                    .map(Value::Array);
+            }
+            let Value::Object(document) = value else {
+                return self.walk(value, &[]);
+            };
+            let mut children = BTreeMap::<&str, Vec<&[String]>>::new();
+            self.step(paths.len())?;
+            for path in paths {
+                if let Some((key, rest)) = path.split_first() {
+                    children.entry(key).or_default().push(rest);
+                }
+            }
+            if children.is_empty() {
+                return self.walk(value, &[]);
+            }
+            document
+                .iter()
+                .map(|(key, value)| {
+                    let value = match children.get(key.as_str()) {
+                        Some(paths) => self.fetch(value, paths)?,
+                        None => self.walk(value, &[])?,
+                    };
+                    Ok((key.clone(), value))
+                })
+                .collect::<Result<crate::Document>>()
+                .map(Value::Object)
+        }
+
+        fn walk(&mut self, value: &Value, parts: &[Part]) -> Result<Value> {
+            self.step(1)?;
             let Some((part, rest)) = parts.split_first() else {
                 self.output_bytes.charge(value)?;
                 return Ok(value.clone());
             };
-            if let Value::Record(record) = value {
-                let mut record = record.clone();
-                record.table = crate::canonical(&record.table)?;
-                let key = serde_json::to_string(&record)?;
-                if let Some(document) = self.cache.get(&key).cloned() {
-                    return self.walk(&document, parts);
+            if let Part::Filter(source) = part {
+                let Value::Array(values) = value else {
+                    return Ok(Value::Null);
+                };
+                let predicate = if let Some(predicate) = self.predicates.get(source) {
+                    predicate.clone()
+                } else {
+                    if self.predicates.len() >= 1024 {
+                        return Err(Error::Limit(
+                            "projection exceeds 1024 array predicates".into(),
+                        ));
+                    }
+                    let predicate =
+                        std::sync::Arc::new(crate::array_predicate::Predicate::prepare(source)?);
+                    self.predicates.insert(source.clone(), predicate.clone());
+                    predicate
+                };
+                let mut selected = Vec::new();
+                for value in values {
+                    self.step(predicate.nodes)?;
+                    if predicate.matches(value, self.parameters, &mut self.predicate_bytes)? {
+                        self.output_bytes.charge(value)?;
+                        selected.push(value.clone());
+                    }
                 }
-                self.pending.insert(key, value.clone());
-                if self.pending.len() + self.cache.len() > crate::links::MAX_FETCH_REFERENCES {
-                    return Err(Error::Limit("projection references exceed 16384".into()));
-                }
-                return Ok(Value::Null);
+                let selected = Value::Array(selected);
+                return if rest.is_empty() {
+                    Ok(selected)
+                } else {
+                    self.walk(&selected, rest)
+                };
+            }
+            if matches!(value, Value::Record(_)) {
+                return match self.reference(value)? {
+                    Some(document) => self.walk(&document, parts),
+                    None => Ok(Value::Null),
+                };
             }
             Ok(match (value, part) {
+                (Value::Object(object), Part::Fields(fields)) => {
+                    self.step(fields.len())?;
+                    let mut selected = crate::Document::new();
+                    for field in fields {
+                        if let Some(value) = object.get(field) {
+                            self.output_bytes.charge(value)?;
+                            selected.insert(field.clone(), value.clone());
+                        }
+                    }
+                    let selected = Value::Object(selected);
+                    if rest.is_empty() {
+                        selected
+                    } else {
+                        self.walk(&selected, rest)?
+                    }
+                }
+                (Value::Array(values), Part::Fields(_)) => Value::Array(
+                    values
+                        .iter()
+                        .map(|value| self.walk(value, parts))
+                        .collect::<Result<_>>()?,
+                ),
+                (_, Part::Fetch(paths)) => {
+                    let paths = paths.iter().map(Vec::as_slice).collect::<Vec<_>>();
+                    let value = self.fetch(value, &paths)?;
+                    value.validate()?;
+                    if rest.is_empty() {
+                        value
+                    } else {
+                        self.walk(&value, rest)?
+                    }
+                }
                 (Value::Object(object), Part::Key(key)) => {
                     self.walk(object.get(key).unwrap_or(&Value::Null), rest)?
                 }
@@ -108,6 +255,12 @@ pub(crate) fn project(
         cache: BTreeMap::new(),
         pending: BTreeMap::new(),
         work: 0,
+        parameters,
+        predicates: BTreeMap::new(),
+        predicate_bytes: crate::links::FetchBudget {
+            used: 0,
+            limit: crate::links::MAX_FETCH_BYTES,
+        },
     };
     let mut bytes = crate::links::FetchBudget {
         used: 0,
@@ -216,6 +369,25 @@ pub(crate) fn expand(sql: &str) -> Result<String> {
                 .filter(|t| t.start == tokens[end].end && sql.as_bytes()[t.start] == b'[')
             {
                 let literal = token.text.trim();
+                if literal
+                    .get(..5)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("WHERE"))
+                    && literal
+                        .as_bytes()
+                        .get(5)
+                        .is_some_and(u8::is_ascii_whitespace)
+                {
+                    let predicate = literal[5..].trim().to_owned();
+                    crate::array_predicate::Predicate::prepare(&predicate)?;
+                    special = true;
+                    parts.push(Part::Filter(predicate));
+                    end += 1;
+                    depth += 1;
+                    if depth > 64 {
+                        return Err(Error::Limit("projection path nesting exceeds 64".into()));
+                    }
+                    continue;
+                }
                 let index = if literal == "$" {
                     Some(-1)
                 } else {
@@ -241,6 +413,40 @@ pub(crate) fn expand(sql: &str) -> Result<String> {
             let mut next_end = end + 2;
             let part = if name(next) {
                 Part::Key(next.text.clone())
+            } else if next.kind == Kind::Symbol && next.text == "{" {
+                let mut fields = Vec::new();
+                let mut seen = std::collections::BTreeSet::new();
+                next_end += 1;
+                loop {
+                    let Some(field) = tokens.get(next_end).filter(|field| name(field)) else {
+                        return Err(Error::Validation(
+                            "destructuring requires named fields".into(),
+                        ));
+                    };
+                    if !seen.insert(field.text.clone()) {
+                        return Err(Error::Validation("duplicate destructured field".into()));
+                    }
+                    fields.push(field.text.clone());
+                    if fields.len() > 1024 {
+                        return Err(Error::Limit("destructuring exceeds 1024 fields".into()));
+                    }
+                    next_end += 1;
+                    match tokens
+                        .get(next_end)
+                        .filter(|token| token.kind == Kind::Symbol)
+                        .map(|token| token.text.as_str())
+                    {
+                        Some("}") => break,
+                        Some(",") => next_end += 1,
+                        _ => {
+                            return Err(Error::Validation(
+                                "destructuring expects comma or closing brace".into(),
+                            ))
+                        }
+                    }
+                }
+                special = true;
+                Part::Fields(fields)
             } else if next.text == "*" {
                 special = true;
                 Part::All

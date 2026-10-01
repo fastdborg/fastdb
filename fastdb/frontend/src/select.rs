@@ -2006,6 +2006,13 @@ impl Scope {
             return Ok(false);
         };
         let helper = helper.to_owned();
+        if helper == "doc_fetch_source" {
+            if !args.is_empty() || self.sources.len() != 1 || self.sources[0].collection.is_none() {
+                return Err(unsupported("FETCH requires one collection source"));
+            }
+            *expr = self.accessor(0, &[], true)?;
+            return Ok(true);
+        }
         if helper == "doc_omit_row" {
             if args.len() != 1 || self.sources.len() != 1 || self.sources[0].collection.is_none() {
                 return Err(unsupported("OMIT requires one collection source"));
@@ -3888,7 +3895,8 @@ fn lower_distinct(
 // longer paths as a temporary AST expression; Scope resolves it before SQL
 // preparation. This marker is never a registered engine function.
 pub(crate) fn expand_paths(sql: &str) -> Result<String> {
-    let expanded = crate::projection_path::expand(&crate::omit::expand(sql)?)?;
+    let expanded =
+        crate::projection_path::expand(&crate::omit::expand(&crate::fetch_clause::expand(sql)?)?)?;
     let sql = expanded.as_str();
     use fastql_parser::Kind;
     let tokens = fastql_parser::tokenize(sql)?;
@@ -6186,6 +6194,18 @@ impl Connection {
                                 .ok_or_else(|| unsupported("invalid projection path"))?
                                 .replace("''", "'");
                             let mut parts = crate::projection_path::decode(&encoded)?;
+                            for part in &parts {
+                                if let crate::projection_path::Part::Filter(source) = part {
+                                    let predicate =
+                                        crate::array_predicate::Predicate::prepare(source)?;
+                                    for name in predicate.parameters {
+                                        if !params.contains_key(&name) {
+                                            return Err(Error::Parameter(name));
+                                        }
+                                        scope.consumed.borrow_mut().insert(name);
+                                    }
+                                }
+                            }
                             if let Some((index, field)) = scope.projection_field(&base)? {
                                 let mut prefix = field[1..]
                                     .iter()
@@ -7321,7 +7341,8 @@ impl Connection {
                         .map(|(index, path)| (row[*index].clone(), path.clone()))
                 })
                 .collect::<Vec<_>>();
-            let (values, counters) = crate::projection_path::project(self, &inputs, &mut budget)?;
+            let (values, counters) =
+                crate::projection_path::project(self, &inputs, &mut budget, params)?;
             metrics.fetch_batches += counters.batches;
             metrics.fetch_rows_read += counters.rows_read;
             metrics.fetch_vm_steps += counters.vm_steps;
@@ -7501,27 +7522,54 @@ fn expand_stars(
                 }
             }
             _ => {
-                if let ResultColumn::Expr(expr, _) = column {
-                    if let Expr::FunctionCall { name, args, .. } = expr.as_ref() {
-                        if name.as_str() == "__fastdb_h_doc_project"
-                            && args.len() == 2
-                            && args[1].to_string() == "'[\"All\"]'"
-                        {
+                let mut column = column.clone();
+                if let ResultColumn::Expr(expr, alias) = &mut column {
+                    if let Expr::FunctionCall { name, args, .. } = expr.as_mut() {
+                        if name.as_str() == "__fastdb_h_doc_project" && args.len() == 2 {
                             if let Expr::Id(name) | Expr::Name(name) = args[0].as_ref() {
                                 if scope
                                     .sources
                                     .iter()
                                     .any(|source| source.alias.eq_ignore_ascii_case(name.as_str()))
                                 {
-                                    return Err(unsupported(
-                                        "result alias on a source wildcard; qualify the document field to expand it",
-                                    ));
+                                    let encoded = args[1].to_string();
+                                    let encoded = encoded
+                                        .strip_prefix('\'')
+                                        .and_then(|s| s.strip_suffix('\''))
+                                        .ok_or_else(|| unsupported("invalid projection path"))?
+                                        .replace("''", "'");
+                                    let parts = crate::projection_path::decode(&encoded)?;
+                                    if matches!(
+                                        parts.as_slice(),
+                                        [crate::projection_path::Part::All]
+                                    ) {
+                                        return Err(unsupported("result alias on a source wildcard; qualify the document field to expand it"));
+                                    }
+                                    if matches!(
+                                        parts.first(),
+                                        Some(crate::projection_path::Part::Filter(_))
+                                    ) {
+                                        return Err(unsupported("array predicate on a SQL source alias; qualify the array field"));
+                                    }
+                                    if matches!(
+                                        parts.first(),
+                                        Some(crate::projection_path::Part::Fields(_))
+                                    ) {
+                                        let source = name.as_str().to_owned();
+                                        args[0] = Box::new(expression(&format!(
+                                            "__fastdb_h_doc_row({})",
+                                            quote(&source)
+                                        ))?);
+                                        if alias.is_none() {
+                                            *alias = Some(As::As(Name::exact(source)))
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                expanded.push(column.clone());
+                expanded.push(column);
                 continue;
             }
         };

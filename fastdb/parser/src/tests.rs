@@ -349,3 +349,18 @@ fn javascript_function_ddl_keeps_source_and_typed_signatures() {
         assert!(parse(sql).is_err(), "{sql}");
     }
 }
+
+#[test]
+fn standalone_expression_parser_rejects_statements_and_trailing_delimiters() {
+    assert!(crate::parse_expression("active=true AND this.n >= $min").is_ok());
+    for input in [
+        "",
+        "this;",
+        "this; SELECT 1",
+        "this other",
+        "SELECT 1",
+        "this)",
+    ] {
+        assert!(crate::parse_expression(input).is_err(), "{input}");
+    }
+}

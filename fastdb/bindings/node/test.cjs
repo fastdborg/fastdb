@@ -5,6 +5,26 @@ const { Database, Record, Vector } = require('./index.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+test('whole-document FETCH replaces named links in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const writer = {id:new Record('writers','w1'),name:'Alice',large:9223372036854775807n,bytes:Buffer.from([0,255]),vector:Vector.float32([1,2]),next:new Record('writers','w1')};
+      await db.execute('INSERT INTO writers DOCUMENT $writer', {$writer:writer});
+      const article = {id:new Record('articles','a'), author:writer.id, editors:[writer.id,null,new Record('writers','missing')],value:null};
+      await db.execute('INSERT INTO articles DOCUMENT $article', {$article:article});
+      const result = await db.execute('SELECT * FROM articles WHERE author=$writer LIMIT 1 FETCH author,editors,absent', {$writer:writer.id});
+      assert.deepEqual(result.columns,['document']);
+      assert.deepEqual(result.rows,[[{...article,author:writer,editors:[writer,null,null]}]]);
+      assert.deepEqual(await db.collection('articles').get('a'),article);
+      await db.execute('BEGIN');
+      await db.execute("UPDATE writers:w1 MERGE {name:'Pending'}");
+      assert.equal((await db.exactlyOne('SELECT * FROM articles FETCH author'))[0].author.name,'Pending');
+      await db.execute('ROLLBACK');
+      assert.equal((await db.exactlyOne('SELECT * FROM articles FETCH author'))[0].author.name,'Alice');
+    } finally { await db.close(); }
+  }
+});
 test('typed array and object helpers agree in reads and writes in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
@@ -3871,5 +3891,22 @@ test('Turso 0.8.1 concurrent FTS and SQL plans work in both native clients', asy
       await a?.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  }
+});
+
+test('array predicates and field selection preserve typed values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const selected = {n:9223372036854775807n,bytes:Buffer.from([0,255]),ref:new Record('refs','a'),nil:null};
+      await db.execute('INSERT INTO docs {items:$items}', {$items:[{active:true,...selected},{active:false,n:1n},null]});
+      const result = await db.execute('SELECT items[WHERE active=true AND n>$min].{n,bytes,ref,nil,missing} AS picked FROM docs', {$min:9007199254740992n});
+      assert.deepEqual(result.columns,['picked']);
+      assert.deepEqual(result.rows,[[[selected]]]);
+      await db.execute('CREATE TABLE copies');
+      await db.execute('INSERT INTO copies(payload) SELECT items[WHERE active=true].{n,bytes,ref,nil} FROM docs');
+      assert.deepEqual(await db.all('SELECT payload FROM copies'), [[[selected]]]);
+      await assert.rejects(async () => db.execute('SELECT items[WHERE n=$missing] FROM docs'), error => error.code === 'FDB_PARAMETER');
+    } finally { await db.close(); }
   }
 });
