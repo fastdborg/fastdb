@@ -1,5 +1,60 @@
 use super::*;
 #[test]
+fn content_and_merge_keep_targets_parameters_and_returning() {
+    let Statement::MutateDocument {
+        table,
+        target,
+        mode,
+        value,
+        predicate,
+        returning,
+    } = parse("UPDATE docs CONTENT $body WHERE id=$id RETURNING id;").unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(table, "docs");
+    assert_eq!(target, None);
+    assert_eq!(mode, MutationMode::Content);
+    assert_eq!(value, Expr::Parameter("$body".into()));
+    assert_eq!(predicate, Some("id=$id".into()));
+    assert_eq!(returning, Some("id".into()));
+    assert!(matches!(
+        parse("UPDATE docs:one MERGE {nested:{n:1}} RETURNING *").unwrap(),
+        Statement::MutateDocument {
+            mode: MutationMode::Merge,
+            target: Some(_),
+            ..
+        }
+    ));
+    assert!(
+        matches!(parse("UPDATE docs {n:1} WHERE title='RETURNING' RETURNING n").unwrap(),Statement::PatchWhere{predicate:Some(p),..} if p=="title='RETURNING'")
+    );
+    assert!(matches!(
+        parse("UPDATE docs:one PATCH [{op:'remove',path:'/n'}] RETURNING id").unwrap(),
+        Statement::MutateDocument {
+            mode: MutationMode::Patch,
+            ..
+        }
+    ));
+    for sql in [
+        "UPDATE docs:one PATCH [] WHERE true",
+        "UPDATE docs:one CONTENT {} WHERE true",
+        "UPDATE docs CONTENT",
+        "UPDATE docs MERGE {} WHERE",
+        "UPDATE docs CONTENT {} RETURNING",
+        "UPDATE docs CONTENT {}; DELETE FROM docs",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    for sql in [
+        "UPDATE content SET merge=1",
+        "UPDATE docs AS content SET merge=2",
+        "UPDATE docs SET content=$content RETURNING merge",
+    ] {
+        assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
+    }
+}
+#[test]
 fn sql_is_preserved() {
     for sql in [
         "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
@@ -16,6 +71,32 @@ fn sql_is_preserved() {
             Statement::Sql(sql.into())
         );
     }
+}
+
+#[test]
+fn patch_arrays_do_not_change_sql_bracket_names() {
+    for sql in [
+        "UPDATE [docs] AS [patch] SET [items] = [other]",
+        "SELECT [patch], [a[0] FROM [docs]",
+        "SELECT [items] [PATCH] FROM [docs]",
+    ] {
+        assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
+    }
+    let Statement::MutateDocument {
+        value,
+        predicate,
+        returning,
+        ..
+    } = parse(
+        "UPDATE docs PATCH [{op:'add',path:'/bracket]',value:[1,[2]]}] WHERE [n]=1 RETURNING [id]",
+    )
+    .unwrap()
+    else {
+        panic!()
+    };
+    assert!(matches!(value, Expr::Array(_)));
+    assert_eq!(predicate, Some("[n]=1".into()));
+    assert_eq!(returning, Some("[id]".into()));
 }
 #[test]
 fn collection_and_records() {

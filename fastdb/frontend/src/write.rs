@@ -341,6 +341,7 @@ impl Connection {
             let mut native_sql = None;
             let valid = match fastql_parser::parse(sql)? {
                 Statement::Insert { .. }
+                | Statement::MutateDocument { .. }
                 | Statement::Upsert { .. }
                 | Statement::Patch { .. }
                 | Statement::PatchWhere { .. }

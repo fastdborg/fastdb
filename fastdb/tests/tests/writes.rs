@@ -10,6 +10,265 @@ fn setup() -> (Database, fastdb::Connection) {
     q(&c, "CREATE UNIQUE INDEX users_name ON users (name)");
     (db, c)
 }
+
+#[test]
+fn content_replaces_fields_and_merge_recurses_without_changing_ids() {
+    let (_db, c) = setup();
+    q(&c,"INSERT INTO users {id:users:u1,name:'Alice',obsolete:true,profile:{city:'Bangkok',country:'TH'},tags:[1,2]}");
+    let replaced = q(
+        &c,
+        "UPDATE users:u1 CONTENT {name:'Bob',profile:{city:'Paris'}} RETURNING *",
+    );
+    assert_eq!(replaced.affected, 1);
+    let Value::Object(doc) = &replaced.rows[0][0] else {
+        panic!()
+    };
+    assert!(!doc.contains_key("obsolete"));
+    assert!(!doc.contains_key("tags"));
+    assert_eq!(
+        doc["id"],
+        Value::Record(Record {
+            table: "users".into(),
+            key: Key::String("u1".into())
+        })
+    );
+    assert_eq!(
+        doc["profile"],
+        Value::Object(Document::from([(
+            "city".into(),
+            Value::String("Paris".into())
+        )]))
+    );
+    q(
+        &c,
+        "UPDATE users:u1 MERGE {profile:{country:'FR'},tags:[3],nullable:null}",
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT u.profile.city,u.profile.country,u.tags,u.nullable FROM users u"
+        )
+        .rows,
+        vec![vec![
+            Value::String("Paris".into()),
+            Value::String("FR".into()),
+            Value::Array(vec![Value::Integer(3)]),
+            Value::Null
+        ]]
+    );
+    q(&c, "UPDATE users:u1 {profile:{city:'Tokyo'}}");
+    assert_eq!(
+        q(&c, "SELECT u.profile.country FROM users u").rows,
+        vec![vec![Value::Null]]
+    );
+    let body = Value::Object(Document::from([
+        (
+            "id".into(),
+            Value::Record(Record {
+                table: "USERS".into(),
+                key: Key::String("u1".into()),
+            }),
+        ),
+        ("name".into(), Value::String("Bound".into())),
+        ("bytes".into(), Value::Binary(vec![0, 255])),
+        ("large".into(), Value::Integer(i64::MAX)),
+        ("vector".into(), Value::vector32(&[1.0, 2.0]).unwrap()),
+    ]));
+    let params = Parameters::from([("$body".into(), body)]);
+    let bound = c
+        .execute(
+            "UPDATE users CONTENT $body WHERE id=users:u1 RETURNING name,bytes,large,vector",
+            &params,
+        )
+        .unwrap();
+    assert_eq!(bound.rows[0][0], Value::String("Bound".into()));
+    assert_eq!(bound.rows[0][1], Value::Binary(vec![0, 255]));
+    assert_eq!(bound.rows[0][2], Value::Integer(i64::MAX));
+    assert_eq!(bound.rows[0][3], Value::vector32(&[1.0, 2.0]).unwrap());
+    assert_eq!(
+        q(
+            &c,
+            "UPDATE users:missing CONTENT {name:'Absent'} RETURNING *"
+        )
+        .affected,
+        0
+    );
+    c.check_collection_integrity("users", Default::default())
+        .unwrap();
+}
+
+#[test]
+fn content_and_merge_failures_restore_documents_indexes_and_prior_work() {
+    let (_db, c) = setup();
+    q(&c, "INSERT INTO users {id:users:u1,name:'Alice'}");
+    q(&c, "INSERT INTO users {id:users:u2,name:'Bob'}");
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO users {id:users:prior,name:'Prior'}");
+    let original = q(&c, "SELECT * FROM users ORDER BY id").rows;
+    for sql in [
+        "UPDATE users CONTENT {name:'same'} RETURNING *",
+        "UPDATE users MERGE {name:'same'} RETURNING *",
+        "UPDATE users:u1 CONTENT {profile:{x:1}}",
+        "UPDATE users:u1 CONTENT {id:users:other,name:'Changed'}",
+        "UPDATE users:u1 MERGE {id:users:other}",
+        "UPDATE users CONTENT 42",
+        "UPDATE users MERGE [1,2]",
+        "UPDATE users:u1 CONTENT {name:'Changed'} RETURNING record::fetch(id)",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+        assert_eq!(
+            c.transaction_state(),
+            fastdb::TransactionState::Active,
+            "{sql}"
+        );
+        assert_eq!(
+            q(&c, "SELECT * FROM users ORDER BY id").rows,
+            original,
+            "{sql}"
+        );
+        c.check_collection_integrity("users", Default::default())
+            .unwrap();
+    }
+    let error = c
+        .write_with_result_limits(
+            "UPDATE users:u1 CONTENT {name:'Changed'} RETURNING *",
+            &Parameters::new(),
+            fastdb::ResultLimits {
+                max_rows: 0,
+                max_payload_bytes: 1000,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), "FDB_LIMIT");
+    assert_eq!(q(&c, "SELECT * FROM users ORDER BY id").rows, original);
+    q(
+        &c,
+        "UPDATE users MERGE {name:upper(name)} WHERE id=users:u1",
+    );
+    assert_eq!(
+        c.lookup_index("users", "users_name", &Value::String("ALICE".into()))
+            .unwrap()
+            .len(),
+        1
+    );
+    q(&c, "ROLLBACK");
+    assert_eq!(
+        q(&c, "SELECT count(*) FROM users").rows,
+        vec![vec![Value::Integer(2)]]
+    );
+}
+#[test]
+fn content_and_merge_keep_every_index_atomic_across_rollback_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("content.db");
+    let probes=[
+        "SELECT id FROM docs WHERE uid=1",
+        "SELECT id FROM docs WHERE author=writers:one",
+        "SELECT id,score FROM search::text('docs_text','old',10) ORDER BY id",
+        "SELECT id,distance FROM search::vector('docs_vec',vector32('[1,0]'),2) ORDER BY distance,id",
+        "SELECT id FROM search::near('docs_geo',geo::point(0,0),100) ORDER BY id",
+    ];
+    {
+        let db = Database::open(file.to_str().unwrap()).unwrap();
+        let c = db.connect().unwrap();
+        q(&c,"INSERT INTO docs {id:docs:a,uid:1,title:'old alpha',author:writers:one,v:vector32('[1,0]'),location:geo::point(0,0)}");
+        q(&c,"INSERT INTO docs {id:docs:b,uid:2,title:'old beta',author:writers:two,v:vector32('[0,1]'),location:geo::point(2,2)}");
+        for sql in [
+            "CREATE UNIQUE INDEX docs_uid ON docs(uid)",
+            "CREATE INDEX docs_author ON docs(author)",
+            "CREATE SEARCH INDEX docs_text ON docs(title) USING FULLTEXT",
+            "CREATE SEARCH INDEX docs_vec ON docs(v) USING VECTOR WITH (metric='l2',dimensions=2)",
+            "CREATE SEARCH INDEX docs_geo ON docs(location) USING SPATIAL",
+            "CREATE TABLE prior(n INTEGER)",
+            "BEGIN",
+            "INSERT INTO prior VALUES(9)",
+        ] {
+            q(&c, sql);
+        }
+        let original = q(&c, "SELECT * FROM docs ORDER BY id").rows;
+        let expected = probes.map(|sql| q(&c, sql).rows);
+        assert!(c.execute("UPDATE docs CONTENT {uid:1,title:'changed',author:writers:other,v:vector32('[5,5]'),location:geo::point(1,1)}",&Parameters::new()).is_err());
+        for sql in [
+            "UPDATE docs CONTENT {uid:uid,title:'interrupted',author:author,v:v,location:location}",
+            "UPDATE docs MERGE {title:'interrupted'}",
+            "UPDATE docs PATCH [{op:'replace',path:'/title',value:'interrupted'}]",
+        ] {
+            let report = c.write_metered(
+                sql,
+                &Parameters::new(),
+                fastdb::ResultLimits {
+                    max_rows: 100,
+                    max_payload_bytes: 65536,
+                },
+                fastdb::WriteWorkLimits {
+                    max_row_mutations: Some(1),
+                    ..Default::default()
+                },
+            );
+            assert!(report.outcome.is_err(), "{sql}");
+            assert!(report.work.mutation_budget_exhausted, "{sql}");
+            assert_eq!(report.work.row_mutations, 2, "{sql}");
+            assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+            assert_eq!(q(&c, "SELECT * FROM docs ORDER BY id").rows, original);
+            for (probe, expected) in probes.iter().zip(&expected) {
+                assert_eq!(&q(&c, probe).rows, expected, "{probe}");
+            }
+            c.check_collection_integrity("docs", Default::default())
+                .unwrap();
+            assert_eq!(
+                q(&c, "SELECT n FROM prior").rows,
+                vec![vec![Value::Integer(9)]]
+            );
+        }
+        q(&c,"UPDATE docs:a MERGE {title:'fresh',author:writers:changed,v:vector32('[5,5]'),location:geo::point(1,1)}");
+        assert!(q(&c, probes[1]).rows.is_empty());
+        assert!(q(&c, probes[4]).rows.is_empty());
+        assert_eq!(
+            q(&c, "SELECT id FROM search::text('docs_text','fresh',10)")
+                .rows
+                .len(),
+            1
+        );
+        q(&c, "ROLLBACK");
+        for (probe, expected) in probes.iter().zip(&expected) {
+            assert_eq!(&q(&c, probe).rows, expected, "{probe}");
+        }
+        let reader = db.connect().unwrap();
+        q(&reader, "BEGIN");
+        for (probe, expected) in probes.iter().zip(&expected) {
+            assert_eq!(&q(&reader, probe).rows, expected, "{probe}");
+        }
+        q(&c,"UPDATE docs:a CONTENT {uid:1,title:'fresh',author:writers:changed,v:vector32('[5,5]'),location:geo::point(1,1)}");
+        for (probe, expected) in probes.iter().zip(&expected) {
+            assert_eq!(&q(&reader, probe).rows, expected, "{probe}");
+        }
+        q(&reader, "COMMIT");
+        assert_eq!(
+            q(
+                &reader,
+                "SELECT id FROM search::text('docs_text','fresh',10)"
+            )
+            .rows
+            .len(),
+            1
+        );
+        c.check_collection_integrity("docs", Default::default())
+            .unwrap();
+    }
+    let db = Database::open(file.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        q(&c, "SELECT id FROM search::text('docs_text','fresh',10)")
+            .rows
+            .len(),
+        1
+    );
+    assert!(q(&c, probes[1]).rows.is_empty());
+    assert!(q(&c, probes[4]).rows.is_empty());
+    c.check_collection_integrity("docs", Default::default())
+        .unwrap();
+}
+
 #[test]
 fn column_list_insert_and_multirow_updates_use_pre_update_values() {
     let (_db, c) = setup();

@@ -455,6 +455,19 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             ("string_slugify", _) => crate::bundled::call("slugify", &args)?,
             ("string_normalize", _) => crate::bundled::call("normalize", &args)?,
             ("array_new", _) => Value::Array(args),
+            (
+                "array_len"
+                | "array_distinct"
+                | "array_flatten"
+                | "object_keys"
+                | "object_values"
+                | "object_entries"
+                | "object_from_entries",
+                _,
+            ) => crate::collections::call(name, &args)?,
+            ("doc_omit", [Value::Object(document), Value::String(paths)]) => {
+                crate::omit::apply(document, paths)?
+            }
             ("array_append", [Value::Array(array), element]) => {
                 let mut array = array.clone();
                 array.push(element.clone());

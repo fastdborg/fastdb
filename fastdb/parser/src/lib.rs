@@ -75,7 +75,21 @@ pub struct RecordProjection {
     pub alias: Option<String>,
 }
 #[derive(Debug, PartialEq)]
+pub enum MutationMode {
+    Content,
+    Merge,
+    Patch,
+}
+#[derive(Debug, PartialEq)]
 pub enum Statement {
+    MutateDocument {
+        table: String,
+        target: Option<Record>,
+        mode: MutationMode,
+        value: Expr,
+        predicate: Option<String>,
+        returning: Option<String>,
+    },
     CreateFunction {
         name: String,
         parameters: Vec<(String, String)>,
@@ -214,6 +228,9 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut out = Vec::new();
     let mut i = 0;
     let mut object_depth: usize = 0;
+    let mut array_depth: usize = 0;
+    let mut paren_depth: usize = 0;
+    let mut patch_expression = false;
     while i < b.len() {
         if b[i].is_ascii_whitespace() {
             i += 1;
@@ -248,7 +265,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
         }
         let start = i;
         let (kind, text) = match b[i] {
-            b'[' if object_depth > 0 => {
+            b'[' if object_depth > 0 || array_depth > 0 || patch_expression => {
                 i += 1;
                 (Kind::Symbol, "[".into())
             }
@@ -326,6 +343,18 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
             }
         };
         if kind == Kind::Symbol {
+            if text == "[" {
+                array_depth += 1;
+            }
+            if text == "]" {
+                array_depth = array_depth.saturating_sub(1);
+            }
+            if text == "(" {
+                paren_depth += 1;
+            }
+            if text == ")" {
+                paren_depth = paren_depth.saturating_sub(1);
+            }
             if text == "{" {
                 object_depth += 1;
             }
@@ -339,6 +368,24 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
             start,
             end: i,
         });
+        if object_depth == 0 && array_depth == 0 && paren_depth == 0 {
+            let last = out.last().expect("just pushed token");
+            if last.kind == Kind::Word {
+                if last.text.eq_ignore_ascii_case("WHERE")
+                    || last.text.eq_ignore_ascii_case("RETURNING")
+                {
+                    patch_expression = false;
+                } else if last.text.eq_ignore_ascii_case("PATCH")
+                    && out.first().is_some_and(|t| {
+                        t.kind == Kind::Word && t.text.eq_ignore_ascii_case("UPDATE")
+                    })
+                    && (out.len() == 3
+                        || ((out.len() == 5 || out.len() == 6) && out[2].text == ":"))
+                {
+                    patch_expression = true;
+                }
+            }
+        }
     }
     Ok(out)
 }
@@ -429,6 +476,48 @@ impl Parser<'_> {
             return Err(self.error("unexpected trailing syntax"));
         }
         Ok(projection)
+    }
+    fn predicate(&mut self) -> Result<Option<String>> {
+        if !self.eat("WHERE") {
+            return Ok(None);
+        }
+        let start = self
+            .tokens
+            .get(self.pos)
+            .ok_or_else(|| self.error("expected WHERE predicate"))?
+            .start;
+        let mut end = self.tokens.len();
+        if end > self.pos
+            && self.tokens[end - 1].kind == Kind::Symbol
+            && self.tokens[end - 1].text == ";"
+        {
+            end -= 1;
+        }
+        let mut depth = 0;
+        for i in self.pos..end {
+            let token = &self.tokens[i];
+            if token.kind == Kind::Symbol {
+                match token.text.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth == 0
+                && i > self.pos
+                && token.kind == Kind::Word
+                && token.text.eq_ignore_ascii_case("RETURNING")
+            {
+                end = i;
+                break;
+            }
+        }
+        if end <= self.pos {
+            return Err(self.error("expected WHERE predicate"));
+        }
+        let text = self.input[start..self.tokens[end - 1].end].to_owned();
+        self.pos = end;
+        Ok(Some(text))
     }
     fn path(&mut self) -> Result<Vec<String>> {
         let mut path = vec![self.name()?];
@@ -1204,49 +1293,47 @@ pub fn parse(input: &str) -> Result<Statement> {
     p.pos = 0;
     if p.eat("UPDATE") {
         if let Ok(table) = p.name() {
+            let target = if p.tokens.get(p.pos).is_some_and(|t| t.text == ":")
+                && p.tokens.get(p.pos + 1).is_none_or(|t| t.text != ":")
+            {
+                p.pos = 1;
+                Some(p.record()?)
+            } else {
+                None
+            };
+            let mode = if p.eat("CONTENT") {
+                Some(MutationMode::Content)
+            } else if p.eat("MERGE") {
+                Some(MutationMode::Merge)
+            } else if p.eat("PATCH") {
+                Some(MutationMode::Patch)
+            } else {
+                None
+            };
+            if let Some(mode) = mode {
+                let value = p.expr(0)?;
+                let predicate = p.predicate()?;
+                if target.is_some() && predicate.is_some() {
+                    return Err(p.error("fixed mutation targets do not accept an additional WHERE"));
+                }
+                let returning = p.returning()?;
+                return Ok(Statement::MutateDocument {
+                    table,
+                    target,
+                    mode,
+                    value,
+                    predicate,
+                    returning,
+                });
+            }
+        }
+    }
+    p.pos = 0;
+    if p.eat("UPDATE") {
+        if let Ok(table) = p.name() {
             if p.tokens.get(p.pos).is_some_and(|t| t.text == "{") {
                 let value = p.expr(0)?;
-                let predicate = if p.eat("WHERE") {
-                    let start = p
-                        .tokens
-                        .get(p.pos)
-                        .ok_or_else(|| p.error("expected WHERE predicate"))?
-                        .start;
-                    let mut end = p.tokens.len();
-                    if end > p.pos
-                        && p.tokens[end - 1].kind == Kind::Symbol
-                        && p.tokens[end - 1].text == ";"
-                    {
-                        end -= 1;
-                    }
-                    let mut depth = 0;
-                    for i in p.pos..end {
-                        let token = &p.tokens[i];
-                        if token.kind == Kind::Symbol {
-                            match token.text.as_str() {
-                                "(" | "[" | "{" => depth += 1,
-                                ")" | "]" | "}" => depth -= 1,
-                                _ => {}
-                            }
-                        }
-                        if depth == 0
-                            && i > p.pos
-                            && token.kind == Kind::Word
-                            && token.text.eq_ignore_ascii_case("RETURNING")
-                        {
-                            end = i;
-                            break;
-                        }
-                    }
-                    if end <= p.pos {
-                        return Err(p.error("expected WHERE predicate"));
-                    }
-                    let text = input[start..p.tokens[end - 1].end].to_owned();
-                    p.pos = end;
-                    Some(text)
-                } else {
-                    None
-                };
+                let predicate = p.predicate()?;
                 let returning = p.returning()?;
                 return Ok(Statement::PatchWhere {
                     table,

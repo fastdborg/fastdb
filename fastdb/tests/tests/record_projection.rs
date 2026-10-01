@@ -10,6 +10,196 @@ fn setup(c: &fastdb::Connection) {
     q(c, "INSERT INTO users {id:users:u2,name:'Bob'}");
     q(c,"INSERT INTO posts {id:posts:p1,title:'Hello',author:users:u1,profile:{city:'Bangkok'},missing_author:users:none,tags:[1,2]}");
 }
+
+#[test]
+fn omit_returns_typed_documents_without_changing_sources() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    setup(&c);
+    q(&c, "UPDATE posts:p1 {embedding:[1,2],internal_notes:'private',profile:{city:'Bangkok',private:true},\"odd.key\":7}");
+    let kept = Value::Object(std::collections::BTreeMap::from([
+        ("integer".into(), Value::Integer(i64::MAX)),
+        ("binary".into(), Value::Binary(vec![0, 255])),
+        ("vector".into(), Value::vector32(&[1.0, 2.0]).unwrap()),
+        ("null".into(), Value::Null),
+        ("boolean".into(), Value::Boolean(true)),
+    ]));
+    c.execute(
+        "UPDATE posts:p1 {kept:$kept}",
+        &Parameters::from([("$kept".into(), kept.clone())]),
+    )
+    .unwrap();
+    let original = q(&c, "SELECT * FROM posts");
+    let Value::Object(mut expected) = original.rows[0][0].clone() else {
+        panic!()
+    };
+    expected.remove("embedding");
+    expected.remove("internal_notes");
+    expected.remove("odd.key");
+    let Value::Object(profile) = expected.get_mut("profile").unwrap() else {
+        panic!()
+    };
+    profile.remove("private");
+    let sql = "SELECT * OMIT embedding,internal_notes,profile.private,\"odd.key\",missing,author.name,tags.name FROM posts p WHERE p.title=$title ORDER BY p.id LIMIT 1 OFFSET 0";
+    let params = Parameters::from([("$title".into(), Value::String("Hello".into()))]);
+    let actual = c.execute(sql, &params).unwrap();
+    assert_eq!(actual.columns, vec!["document"]);
+    assert_eq!(actual.rows, vec![vec![Value::Object(expected)]]);
+    assert_eq!(
+        c.profile_select(sql, &params).unwrap().result.rows,
+        actual.rows
+    );
+    assert_eq!(q(&c, "SELECT * FROM posts").rows, original.rows);
+    let without_profile = q(&c, "SELECT * OMIT profile,profile.city,profile FROM posts");
+    let Value::Object(doc) = &without_profile.rows[0][0] else {
+        panic!()
+    };
+    assert!(!doc.contains_key("profile"));
+    assert!(matches!(&doc["author"], Value::Record(_)));
+    assert_eq!(doc["kept"], kept);
+    assert_eq!(
+        doc["tags"],
+        Value::Array(vec![Value::Integer(1), Value::Integer(2)])
+    );
+    assert!(q(&c, "SELECT * OMIT id FROM posts WHERE false")
+        .rows
+        .is_empty());
+    assert_eq!(
+        c.select_with_limits(
+            sql,
+            &params,
+            ResultLimits {
+                max_rows: 1,
+                max_payload_bytes: 1
+            }
+        )
+        .unwrap_err()
+        .code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(q(&c, "SELECT * FROM posts").rows, original.rows);
+}
+
+#[test]
+fn omit_rejects_ambiguous_forms_and_preserves_sql_names() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    setup(&c);
+    q(&c, "CREATE TABLE native(omit INTEGER)");
+    q(&c, "INSERT INTO native VALUES(7)");
+    assert_eq!(
+        q(&c, "SELECT omit FROM native").rows,
+        vec![vec![Value::Integer(7)]]
+    );
+    assert_eq!(
+        q(&c, "SELECT 1 AS omit").rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(
+        q(&c, "SELECT '*' omit FROM native").rows,
+        vec![vec![Value::String("*".into())]]
+    );
+    for sql in [
+        "SELECT * OMIT FROM posts",
+        "SELECT * OMIT title, FROM posts",
+        "SELECT title OMIT profile FROM posts",
+        "SELECT p.* OMIT title FROM posts p",
+        "SELECT *,title OMIT profile FROM posts",
+        "SELECT * OMIT title FROM posts p JOIN users u ON p.author=u.id",
+        "SELECT * OMIT omit FROM native",
+        "SELECT * OMIT tags[0] FROM posts",
+        "SELECT * OMIT profile.* FROM posts",
+        "SELECT * OMIT $field FROM posts",
+        "UPDATE posts:p1 {title:'bad'} RETURNING * OMIT profile",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    let depth = format!("SELECT * OMIT {} FROM posts", vec!["a"; 65].join("."));
+    assert_eq!(
+        c.execute(&depth, &Parameters::new()).unwrap_err().code(),
+        "FDB_LIMIT"
+    );
+    let width = format!("SELECT * OMIT {} FROM posts", vec!["a"; 1025].join(","));
+    assert_eq!(
+        c.execute(&width, &Parameters::new()).unwrap_err().code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(
+        q(&c, "SELECT title FROM posts").rows,
+        vec![vec![Value::String("Hello".into())]]
+    );
+}
+
+#[test]
+fn omit_preserves_index_use_snapshot_and_pending_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("omit.db");
+    let sql = "SELECT * OMIT secret FROM docs WHERE group_no=$group ORDER BY id LIMIT 3 OFFSET 1";
+    let params = Parameters::from([("$group".into(), Value::Integer(1))]);
+    {
+        let db = Database::open(file.to_str().unwrap()).unwrap();
+        let a = db.connect().unwrap();
+        let b = db.connect().unwrap();
+        q(&a, "BEGIN");
+        for n in 0..100 {
+            q(&a,&format!("INSERT INTO docs {{id:type::record('docs',{n}),group_no:{},secret:'private',name:'Old'}}",n%10));
+        }
+        q(&a, "COMMIT");
+        let scan = a.profile_select(sql, &params).unwrap();
+        q(&a, "CREATE INDEX docs_group ON docs(group_no)");
+        let indexed = a.profile_select(sql, &params).unwrap();
+        assert_eq!(indexed.result.rows, scan.result.rows);
+        assert_eq!(indexed.result.rows.len(), 3);
+        assert!(indexed.metrics.rows_read < scan.metrics.rows_read);
+        assert!(indexed.metrics.fullscan_steps < scan.metrics.fullscan_steps);
+        q(&a, "BEGIN");
+        assert_eq!(a.execute(sql, &params).unwrap().rows, indexed.result.rows);
+        q(&b, "UPDATE docs SET name='New'");
+        assert_eq!(a.execute(sql, &params).unwrap().rows, indexed.result.rows);
+        q(&a, "COMMIT");
+        assert_ne!(a.execute(sql, &params).unwrap().rows, indexed.result.rows);
+        q(&a, "BEGIN");
+        q(&a, "UPDATE docs SET secret='Pending'");
+        assert_eq!(
+            a.select_with_limits(
+                sql,
+                &params,
+                ResultLimits {
+                    max_rows: 0,
+                    max_payload_bytes: 1000
+                }
+            )
+            .unwrap_err()
+            .code(),
+            "FDB_LIMIT"
+        );
+        let token = fastdb::CancellationToken::new();
+        token.cancel();
+        assert_eq!(
+            a.execute_cancellable(sql, &params, &token)
+                .unwrap_err()
+                .code(),
+            "FDB_CANCELLED"
+        );
+        assert_eq!(a.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(
+            q(&a, "SELECT secret FROM docs LIMIT 1").rows,
+            vec![vec![Value::String("Pending".into())]]
+        );
+        q(&a, "COMMIT");
+        a.check_collection_integrity("docs", Default::default())
+            .unwrap();
+    }
+    let db = Database::open(file.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    let rows = c.execute(sql, &params).unwrap().rows;
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().all(|row| matches!(&row[0],Value::Object(doc) if !doc.contains_key("secret") && doc["name"]==Value::String("New".into()))));
+    assert_eq!(
+        q(&c, "SELECT secret FROM docs LIMIT 1").rows,
+        vec![vec![Value::String("Pending".into())]]
+    );
+}
 #[test]
 fn ordinary_reference_wildcard_aliases_match_fetch() {
     let db = Database::open(":memory:").unwrap();

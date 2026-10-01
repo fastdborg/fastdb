@@ -5,6 +5,81 @@ const { Database, Record, Vector } = require('./index.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+test('typed array and object helpers agree in reads and writes in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const value = {binary:Buffer.from([0,255]), integer:9223372036854775807n, null:null, record:new Record('docs','r'), vector:Vector.float32([1,2])};
+      await db.execute('INSERT INTO docs {id:docs:a,body:$v,items:array::new($v,$v,null,null)}', {$v:value});
+      const expected = [value,null];
+      assert.deepEqual(await db.exactlyOne('SELECT array::distinct(items),doc::from_entries(doc::entries(body)),doc::keys(body) FROM docs'),[expected,value,['binary','integer','null','record','vector']]);
+      assert.deepEqual((await db.execute('UPDATE docs:a MERGE {items:array::distinct(items)} RETURNING items')).rows,[[expected]]);
+      await assert.rejects(async () => db.execute("UPDATE docs:a CONTENT doc::from_entries(array::new(array::new('x',1),array::new('x',2)))"), e=>e.code==='FDB_VALIDATION');
+      assert.deepEqual((await db.collection('docs').get('a')).items,expected);
+    } finally { await db.close(); }
+  }
+});
+test('PATCH keeps typed array edits atomic in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute('INSERT INTO docs {id:docs:a,items:[1,2],n:1}');
+      await db.execute('CREATE UNIQUE INDEX docs_n ON docs(n)');
+      const typed = {large:9223372036854775807n, bytes:Buffer.from([0,255]), vector:Vector.float32([1,2]), ref:new Record('docs','b'), value:null};
+      const ops = [{op:'add',path:'/items/1',value:typed},{op:'move',from:'/items/0',path:'/items/-'},{op:'test',path:'/items/0',value:typed}];
+      const result = await db.execute('UPDATE docs:a PATCH $ops RETURNING items', {$ops:ops});
+      assert.deepEqual(result.rows, [[[typed,2n,1n]]]);
+      await db.execute('BEGIN');
+      await db.execute("UPDATE docs:a PATCH [{op:'add',path:'/prior',value:true}]");
+      const before = await db.collection('docs').get('a');
+      await assert.rejects(async () => db.execute("UPDATE docs:a PATCH [{op:'remove',path:'/items/0'},{op:'test',path:'/n',value:7}]"), e=>e.code==='FDB_VALIDATION');
+      assert.deepEqual(await db.collection('docs').get('a'), before);
+      await db.checkCollectionIntegrity('docs');
+      await db.execute('ROLLBACK');
+      assert.equal(Object.hasOwn(await db.collection('docs').get('a'),'prior'),false);
+    } finally { await db.close(); }
+  }
+});
+test('CONTENT replaces and MERGE recursively updates atomically in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute("INSERT INTO docs {id:docs:a,uid:1,old:true,profile:{city:'Paris',country:'FR'}}");
+      await db.execute("INSERT INTO docs {id:docs:b,uid:2}");
+      await db.execute('CREATE UNIQUE INDEX docs_uid ON docs(uid)');
+      const replacement = {uid:1n, bytes:Buffer.from([0,255]), large:9223372036854775807n, profile:{city:'Bangkok'}};
+      const result = await db.execute('UPDATE docs:a CONTENT $body RETURNING *', {$body:replacement});
+      assert.equal(result.affected,1n);
+      assert.deepEqual(result.rows, [[{id:new Record('docs','a'), ...replacement}]]);
+      await db.execute("UPDATE docs:a MERGE {profile:{country:'TH'},tags:[1,2]}");
+      assert.deepEqual((await db.collection('docs').get('a')).profile, {city:'Bangkok',country:'TH'});
+      await db.execute('BEGIN');
+      await db.execute("UPDATE docs:a MERGE {pending:true}");
+      const before = await db.all('SELECT * FROM docs ORDER BY id');
+      await assert.rejects(async () => db.execute('UPDATE docs CONTENT {uid:1}'), e => e.code==='FDB_CONSTRAINT');
+      assert.deepEqual(await db.all('SELECT * FROM docs ORDER BY id'), before);
+      await db.checkCollectionIntegrity('docs');
+      await db.execute('ROLLBACK');
+      assert.equal(Object.hasOwn(await db.collection('docs').get('a'),'pending'),false);
+    } finally { await db.close(); }
+  }
+});
+test('OMIT keeps typed document fields and stored data in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const id = new Record('docs','one');
+      const retained = {large:9223372036854775807n, bytes:Buffer.from([0,255]), vector:Vector.float32([1,2]), link:new Record('docs','other'), flag:true, value:null};
+      const document = {id, secret:'private', nested:{city:'Paris', secret:'hidden'}, retained};
+      await db.execute('INSERT INTO docs DOCUMENT $doc', {$doc:document});
+      const result = await db.execute('SELECT * OMIT secret,nested.secret FROM docs WHERE id=$id', {$id:id});
+      assert.deepEqual(result.columns, ['document']);
+      assert.deepEqual(result.rows, [[{id, nested:{city:'Paris'}, retained}]]);
+      assert.deepEqual(await db.collection('docs').get('one'), document);
+      await assert.rejects(async () => db.execute('SELECT id OMIT secret FROM docs'));
+    } finally { await db.close(); }
+  }
+});
 test('ordinary reference wildcard aliases preserve typed values in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {

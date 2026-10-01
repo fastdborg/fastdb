@@ -6,6 +6,7 @@ mod udf;
 pub use budget::ResultLimits;
 mod catalog;
 mod check;
+mod collections;
 mod deferred;
 mod expression;
 mod fulltext;
@@ -29,6 +30,9 @@ pub use meter::{
 };
 mod migration;
 pub use migration::{Migration, MigrationReport};
+mod mutation;
+mod omit;
+mod patch;
 mod path;
 mod profile;
 mod projection_path;
@@ -918,6 +922,43 @@ impl Connection {
             _ => Err(Error::Validation("expected a typed document object".into())),
         };
         match fastql_parser::parse(sql)? {
+            Statement::MutateDocument {
+                table,
+                target,
+                mode,
+                value,
+                predicate,
+                returning,
+            } => self.atomic(|| {
+                let collection = self.catalog(&table)?;
+                let sources = if let Some(target) = target {
+                    self.get(&target)?.into_iter().collect::<Vec<_>>()
+                } else {
+                    let suffix = predicate.map_or(String::new(), |p| format!(" WHERE {p}"));
+                    let query = format!("SELECT * FROM {}{suffix}", quote(&table));
+                    self.write_candidate_select(&query, params, false)?
+                        .ok_or_else(|| Error::NotFound(table.clone()))?
+                        .rows
+                        .into_iter()
+                        .map(|row| match row.into_iter().next() {
+                            Some(Value::Object(document)) => Ok(document),
+                            _ => Err(Error::Storage("expected candidate document".into())),
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                };
+                let mut candidates = Vec::new();
+                let mut budget = self.write_buffer_budget()?;
+                for before in sources {
+                    let value = self.evaluate(value.clone(), params, Some(&before))?;
+                    let document = mutation::apply(&mode, &before, value)?;
+                    budget.document(&document)?;
+                    candidates.push(document);
+                }
+                for document in &candidates {
+                    self.replace_document(&collection, document)?;
+                }
+                self.object_returning(&table, returning, candidates, params, limits)
+            }),
             Statement::CreateFunction {
                 name,
                 parameters,

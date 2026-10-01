@@ -2006,6 +2006,18 @@ impl Scope {
             return Ok(false);
         };
         let helper = helper.to_owned();
+        if helper == "doc_omit_row" {
+            if args.len() != 1 || self.sources.len() != 1 || self.sources[0].collection.is_none() {
+                return Err(unsupported("OMIT requires one collection source"));
+            }
+            self.typed(&mut args[0])?;
+            *expr = expression(&format!(
+                "__fastdb_helper('doc_omit',{},{})",
+                self.accessor(0, &[], true)?,
+                args[0]
+            ))?;
+            return Ok(true);
+        }
         if helper == "doc_project" {
             return Err(unsupported(
                 "paths are allowed only as top-level SELECT projections",
@@ -2850,6 +2862,13 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
             "__fastdb_h_record_table" => Some("record::table"),
             "__fastdb_h_array_new" => Some("array::new"),
             "__fastdb_h_array_append" => Some("array::append"),
+            "__fastdb_h_array_len" => Some("array::len"),
+            "__fastdb_h_array_distinct" => Some("array::distinct"),
+            "__fastdb_h_array_flatten" => Some("array::flatten"),
+            "__fastdb_h_object_keys" => Some("doc::keys"),
+            "__fastdb_h_object_values" => Some("doc::values"),
+            "__fastdb_h_object_entries" => Some("doc::entries"),
+            "__fastdb_h_object_from_entries" => Some("doc::from_entries"),
             "__fastdb_h_doc_get" => Some("doc::get"),
             "__fastdb_h_doc_project" => Some("doc::project"),
             "__fastdb_h_doc_has" => Some("doc::has"),
@@ -3869,7 +3888,7 @@ fn lower_distinct(
 // longer paths as a temporary AST expression; Scope resolves it before SQL
 // preparation. This marker is never a registered engine function.
 pub(crate) fn expand_paths(sql: &str) -> Result<String> {
-    let expanded = crate::projection_path::expand(sql)?;
+    let expanded = crate::projection_path::expand(&crate::omit::expand(sql)?)?;
     let sql = expanded.as_str();
     use fastql_parser::Kind;
     let tokens = fastql_parser::tokenize(sql)?;
@@ -3946,6 +3965,13 @@ pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Resu
                 "record::table" => "__fastdb_h_record_table",
                 "array::new" => "__fastdb_h_array_new",
                 "array::append" => "__fastdb_h_array_append",
+                "array::len" => "__fastdb_h_array_len",
+                "array::distinct" => "__fastdb_h_array_distinct",
+                "array::flatten" => "__fastdb_h_array_flatten",
+                "doc::keys" => "__fastdb_h_object_keys",
+                "doc::values" => "__fastdb_h_object_values",
+                "doc::entries" => "__fastdb_h_object_entries",
+                "doc::from_entries" => "__fastdb_h_object_from_entries",
                 "doc::get" => "__fastdb_h_doc_get",
                 "doc::has" => "__fastdb_h_doc_has",
                 "doc::row" => "__fastdb_h_doc_row",
@@ -6041,6 +6067,11 @@ impl Connection {
                 }
                 ResultColumn::Expr(expr, alias) => {
                     let mut expr = *expr.clone();
+                    if snapshot.is_some()
+                        && matches!(&expr, Expr::FunctionCall {name,..} if name.as_str() == "__fastdb_h_doc_omit_row")
+                    {
+                        return Err(unsupported("OMIT in RETURNING"));
+                    }
                     let field = scope.field(&expr)?.or(match &expr {
                         Expr::FunctionCall { name, args, .. }
                             if name.as_str() == "__fastdb_h_doc_project" =>

@@ -302,6 +302,14 @@ impl Connection {
                 )),
             },
             "array::new" => Ok(Value::Array(args)),
+            "array::len" | "array::distinct" | "array::flatten" | "doc::keys" | "doc::values"
+            | "doc::entries" | "doc::from_entries" => crate::collections::call(
+                &name
+                    .to_ascii_lowercase()
+                    .replace("doc::", "object_")
+                    .replace("::", "_"),
+                &args,
+            ),
             "array::append" => {
                 if args.len() != 2 {
                     return Err(Error::Validation(
