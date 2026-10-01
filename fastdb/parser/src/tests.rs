@@ -221,7 +221,10 @@ fn fulltext_index_declarations_preserve_ordered_paths() {
             if_not_exists: true,
             table: "posts".into(),
             name: "titles".into(),
-            paths: vec![vec!["title".into()], vec!["profile".into(), "body".into()]]
+            paths: vec![vec!["title".into()], vec!["profile".into(), "body".into()]],
+            tokenizer: None,
+            min_gram: None,
+            max_gram: None
         }
     );
     for sql in [
@@ -440,4 +443,25 @@ fn strict_schema_and_typed_array_modifiers_are_explicit() {
     ] {
         assert!(parse(sql).is_err(), "{sql}");
     }
+}
+
+#[test]
+fn stored_value_clauses_preserve_checks_and_native_generated_columns() {
+    let Statement::DefineField {
+        computed, check, ..
+    } = parse("DEFINE FIELD n ON docs TYPE integer VALUE (a + length(')')) CHECK(n>0)").unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(computed, Some("a + length(')')".into()));
+    assert_eq!(check, Some("n>0".into()));
+    for sql in [
+        "DEFINE FIELD n ON docs TYPE integer VALUE a+1",
+        "DEFINE FIELD n ON docs TYPE integer VALUE (a+1",
+        "DEFINE FIELD n ON docs TYPE integer CHECK(n>0) VALUE (a+1)",
+    ] {
+        assert!(parse(sql).is_err());
+    }
+    let sql = "CREATE TABLE native(a INTEGER,b INTEGER GENERATED ALWAYS AS (a+1) STORED)";
+    assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
 }

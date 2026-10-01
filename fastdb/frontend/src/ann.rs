@@ -422,26 +422,56 @@ impl Connection {
             }
             if !self.run("SELECT name FROM sqlite_schema WHERE name=?1 COLLATE NOCASE UNION ALL SELECT name FROM __fastdb_catalog WHERE name=?1",&[text(&name)])?.is_empty(){return Err(Error::AlreadyExists(name.clone()));}
             crate::catalog::compatible_index(&collection,&index.path,index.kind)?; index.validate_vector_config(&collection)?;
-            for ddl in [index.table_ddl(),index.index_ddl(),index.ann_state_ddl(),index.ann_log_ddl()] {self.run(&ddl,&[])?;}
-            let graph=index.config()?.graph()?;
-            // Build once, rather than checkpointing a growing graph every log batch.
-            let documents=self.documents(&collection)?;
-            graph.reserve_capacity_and_threads(documents.len().max(1),1).map_err(native)?;
-            for doc in documents {
-                self.ann_boundary()?;
-                let key=index.document_keys(&doc)?.remove(0);
-                let id=doc.get("id").ok_or_else(||stored("missing id"))?.encode()?;
-                let rows=self.run_index_maintenance(&format!("INSERT INTO {} VALUES (?1,?2) RETURNING rowid",quote(&index.storage)),&[key,EngineValue::Blob(id)])?;
-                if let Some(value)=crate::path_value(&doc,&index.path)? { if !matches!(value,Value::Null) {
-                    let values=index.config()?.components(value)?;
-                    graph.add(integer(&rows[0][0])? as u64,&values).map_err(native)?;
-                }}
-            }
-            let bytes=snapshot(&graph)?;
-            let digest=Sha256::digest(&bytes).to_vec();
-            self.run_index_maintenance(&format!("INSERT INTO {} VALUES (1,uuid7_str(),?1,?2)",quote(&index.ann_state())),&[EngineValue::Blob(bytes),EngineValue::Blob(digest)])?;
+            self.build_vector_storage(&index, &self.documents(&collection)?)?;
             collection.indexes.push(index.clone()); self.save_catalog(&collection)
         })
+    }
+    pub(crate) fn build_vector_storage(&self, index: &Index, documents: &[Document]) -> Result<()> {
+        for ddl in [
+            index.table_ddl(),
+            index.index_ddl(),
+            index.ann_state_ddl(),
+            index.ann_log_ddl(),
+        ] {
+            self.run(&ddl, &[])?;
+        }
+        let graph = index.config()?.graph()?;
+        graph
+            .reserve_capacity_and_threads(documents.len().max(1), 1)
+            .map_err(native)?;
+        for doc in documents {
+            self.ann_boundary()?;
+            let key = index.document_keys(doc)?.remove(0);
+            let id = doc
+                .get("id")
+                .ok_or_else(|| stored("missing id"))?
+                .encode()?;
+            let rows = self.run_index_maintenance(
+                &format!(
+                    "INSERT INTO {} VALUES (?1,?2) RETURNING rowid",
+                    quote(&index.storage)
+                ),
+                &[key, EngineValue::Blob(id)],
+            )?;
+            if let Some(value) = crate::path_value(doc, &index.path)? {
+                if !matches!(value, Value::Null) {
+                    let values = index.config()?.components(value)?;
+                    graph
+                        .add(integer(&rows[0][0])? as u64, &values)
+                        .map_err(native)?;
+                }
+            }
+        }
+        let bytes = snapshot(&graph)?;
+        let digest = Sha256::digest(&bytes).to_vec();
+        self.run_index_maintenance(
+            &format!(
+                "INSERT INTO {} VALUES (1,uuid7_str(),?1,?2)",
+                quote(&index.ann_state())
+            ),
+            &[EngineValue::Blob(bytes), EngineValue::Blob(digest)],
+        )?;
+        Ok(())
     }
     pub(crate) fn audit_vector_index(&self, index: &Index) -> Result<()> {
         *self

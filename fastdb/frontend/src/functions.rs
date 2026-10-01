@@ -452,6 +452,7 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             .ok_or_else(|| Error::Validation("helper name".into()))?;
         let args = args.iter().map(decode_arg).collect::<Result<Vec<_>>>()?;
         let value = match (name, args.as_slice()) {
+            ("search_analyze", _) => crate::analyzer::call(&args)?,
             ("geo_cell", _) => crate::spatial::call("cell", &args)?,
             ("geo_cell_center", _) => crate::spatial::call("cell_center", &args)?,
             ("geo_point", _) => crate::spatial::call("point", &args)?,
@@ -501,7 +502,18 @@ fn helper(args: &[ExtValue]) -> ExtValue {
         };
         Ok(ExtValue::from_blob(value.encode()?))
     })();
-    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+    result.unwrap_or_else(|e| {
+        let prefix = if args.first().and_then(ExtValue::to_text) == Some("search_analyze") {
+            match e {
+                Error::Limit(_) => "__fastdb_udf_limit:",
+                Error::Validation(_) => "__fastdb_udf_validation:",
+                _ => "",
+            }
+        } else {
+            ""
+        };
+        ExtValue::error_with_message(format!("{prefix}{e}"))
+    })
 }
 
 #[scalar(name = "__fastdb_count_value")]

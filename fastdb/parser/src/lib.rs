@@ -146,6 +146,7 @@ pub enum Statement {
         default: Option<Expr>,
         readonly: bool,
         flexible: bool,
+        computed: Option<String>,
         overwrite: bool,
     },
     CreateVectorIndex {
@@ -161,6 +162,9 @@ pub enum Statement {
         table: String,
         name: String,
         paths: Vec<Vec<String>>,
+        tokenizer: Option<String>,
+        min_gram: Option<usize>,
+        max_gram: Option<usize>,
     },
     CreateSpatialIndex {
         if_not_exists: bool,
@@ -1172,13 +1176,15 @@ pub fn parse(input: &str) -> Result<Statement> {
         };
         let readonly = p.eat("READONLY");
         let flexible = p.eat("FLEXIBLE");
-        let check = if p.eat("CHECK") {
+        let mut expression_clause = |name: &str| -> Result<Option<String>> {
+            if !p.eat(name) {
+                return Ok(None);
+            }
             if !p.eat("(") {
-                return Err(p.error("expected CHECK (expression)"));
+                return Err(p.error("expected parenthesized field expression"));
             }
             let start = p.tokens[p.pos - 1].end;
             let mut depth = 1usize;
-            let mut end = None;
             while let Some(token) = p.tokens.get(p.pos) {
                 if token.kind == Kind::Symbol {
                     if token.text == "(" {
@@ -1187,19 +1193,18 @@ pub fn parse(input: &str) -> Result<Statement> {
                     if token.text == ")" {
                         depth -= 1;
                         if depth == 0 {
-                            end = Some(token.start);
+                            let end = token.start;
                             p.pos += 1;
-                            break;
+                            return Ok(Some(input[start..end].trim().to_owned()));
                         }
                     }
                 }
                 p.pos += 1;
             }
-            let end = end.ok_or_else(|| p.error("unterminated CHECK expression"))?;
-            Some(input[start..end].trim().to_owned())
-        } else {
-            None
+            Err(p.error("unterminated field expression"))
         };
+        let computed = expression_clause("VALUE")?;
+        let check = expression_clause("CHECK")?;
         if !p.end() {
             return Err(p.error("unsupported field definition clause"));
         }
@@ -1214,6 +1219,7 @@ pub fn parse(input: &str) -> Result<Statement> {
             default,
             readonly,
             flexible,
+            computed,
             overwrite,
         });
     }
@@ -1289,12 +1295,67 @@ pub fn parse(input: &str) -> Result<Statement> {
                 metric: metric.ok_or_else(|| p.error("missing metric"))?,
             });
         }
-        if p.eat("FULLTEXT") && p.end() {
+        if p.eat("FULLTEXT") {
+            let mut tokenizer = None;
+            let mut min_gram = None;
+            let mut max_gram = None;
+            if p.eat("WITH") {
+                if !p.eat("(") {
+                    return Err(p.error("expected analyzer options"));
+                }
+                loop {
+                    let option = p.name()?.to_ascii_lowercase();
+                    if !p.eat("=") {
+                        return Err(p.error("expected ="));
+                    }
+                    let token = p
+                        .tokens
+                        .get(p.pos)
+                        .ok_or_else(|| p.error("expected option value"))?;
+                    match option.as_str() {
+                        "tokenizer" if tokenizer.is_none() && token.kind == Kind::String => {
+                            tokenizer = Some(token.text.clone())
+                        }
+                        "min_gram" | "max_gram" if token.kind == Kind::Number => {
+                            let value = token
+                                .text
+                                .parse::<usize>()
+                                .map_err(|_| p.error("expected integer ngram size"))?;
+                            let slot = if option == "min_gram" {
+                                &mut min_gram
+                            } else {
+                                &mut max_gram
+                            };
+                            if slot.replace(value).is_some() {
+                                return Err(p.error("duplicate analyzer option"));
+                            }
+                        }
+                        _ => {
+                            return Err(
+                                p.error("expected unique tokenizer, min_gram or max_gram option")
+                            )
+                        }
+                    }
+                    p.pos += 1;
+                    if !p.eat(",") {
+                        break;
+                    }
+                }
+                if !p.eat(")") {
+                    return Err(p.error("expected end of analyzer options"));
+                }
+            }
+            if !p.end() {
+                return Err(p.error("expected end of FULLTEXT index"));
+            }
             return Ok(Statement::CreateFullTextIndex {
                 if_not_exists,
                 table,
                 name,
                 paths,
+                tokenizer,
+                min_gram,
+                max_gram,
             });
         }
         if !(p.eat("SPATIAL") && p.end()) || paths.len() != 1 {

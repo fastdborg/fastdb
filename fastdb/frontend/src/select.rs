@@ -2855,6 +2855,19 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
                 continue;
             }
         }
+        if token.text == "__fastdb_h_search_analyze" {
+            if let Some(config) = tokens.get(i + 2).filter(|t| t.kind == Kind::String) {
+                out.push_str(&sql[copied..token.start]);
+                out.push_str("search::analyze(");
+                copied = config.end;
+                i += 3;
+                if tokens.get(i).is_some_and(|t| t.text == ",") {
+                    copied = tokens[i].end;
+                    i += 1;
+                }
+                continue;
+            }
+        }
         if token.text == "__fastdb_h_udf" {
             if let Some(definition) = tokens.get(i + 2).filter(|t| t.kind == Kind::String) {
                 let d: crate::udf::Definition = serde_json::from_str(&definition.text)?;
@@ -4003,6 +4016,24 @@ pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Resu
                 tokens[i].text.to_ascii_lowercase(),
                 tokens[i + 3].text.to_ascii_lowercase()
             );
+            if namespace == "search::analyze" {
+                let index = tokens
+                    .get(i + 5)
+                    .filter(|t| t.kind == fastql_parser::Kind::String)
+                    .ok_or_else(|| unsupported("search::analyze requires a literal index name"))?;
+                if tokens.get(i + 6).is_none_or(|t| t.text != ",") {
+                    return Err(unsupported("search::analyze expects index name and text"));
+                }
+                let connection = connection
+                    .ok_or_else(|| unsupported("analyzer lookup requires a connection"))?;
+                let config = serde_json::to_string(&connection.analyzer_options(&index.text)?)?
+                    .replace('\'', "''");
+                out.push_str(&sql[copied..tokens[i].start]);
+                out.push_str(&format!("__fastdb_h_search_analyze('{config}',"));
+                copied = tokens[i + 4].end;
+                i += 5;
+                continue;
+            }
             let mapped = match namespace.as_str() {
                 "search::near" => "__fastdb_near",
                 "search::text" => "__fastdb_text",
@@ -4162,7 +4193,7 @@ impl Connection {
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<crate::ProfiledQuery> {
-        if crate::udf::has_calls(sql)? {
+        if crate::udf::has_calls(sql)? || crate::analyzer::has_calls(sql)? {
             return self.atomic(|| self.profile_select_snapshot(sql, params, limits));
         }
         self.profile_select_snapshot(sql, params, limits)
@@ -4395,7 +4426,7 @@ impl Connection {
         params: &Parameters,
         options: SelectOptions<'_>,
     ) -> Result<Option<QueryResult>> {
-        if !options.guarded && crate::udf::has_calls(sql)? {
+        if !options.guarded && (crate::udf::has_calls(sql)? || crate::analyzer::has_calls(sql)?) {
             return self.atomic(|| {
                 self.collection_select_options(
                     sql,

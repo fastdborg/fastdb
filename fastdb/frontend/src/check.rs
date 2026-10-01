@@ -549,6 +549,9 @@ impl Connection {
         preserve_engine_errors: bool,
     ) -> Result<()> {
         crate::validate_document(collection, doc)?;
+        if preserve_engine_errors {
+            self.validate_computed_fields(collection, doc)?;
+        }
         for field in &collection.fields {
             let Some(sql) = &field.check else {
                 continue;

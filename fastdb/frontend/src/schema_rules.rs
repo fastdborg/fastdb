@@ -127,6 +127,7 @@ impl crate::Connection {
             crate::field_rules::validate_catalog(&collection)?;
             for document in self.documents(&collection)? {
                 self.validate_candidate(&collection, &document)?;
+                self.validate_computed_fields(&collection, &document)?;
             }
             self.save_catalog(&collection)
         })

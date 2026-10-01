@@ -901,6 +901,7 @@ impl Connection {
                 )?;
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
+                let mut output_budget = self.write_buffer_budget()?;
                 for row in rows {
                     let mutate = || -> Result<()> {
                     let mut values = row.into_iter();
@@ -944,14 +945,15 @@ impl Connection {
                     }
                     // Reject the next snapshot before validation and storage work.
                     // Earlier rows still belong to the operation savepoint.
-                    snapshot_budget.document(&document)?;
                     // validate_targets forbids changing the record identity.
+                    snapshot_budget.document(&document)?;
                     let collection = self.catalog(&id(&document)?.table)?;
                     if update.or_conflict == Some(ResolveType::Replace) {
-                        self.replace_conflicting_document(&collection, &document)?;
+                        self.replace_conflicting_document(&collection, &mut document)?;
                     } else {
-                        self.replace_document(&collection, &document)?;
+                        self.replace_document(&collection, &mut document)?;
                     }
+                    output_budget.document(&document)?;
                     documents.push(document);
                     Ok(())
                     };

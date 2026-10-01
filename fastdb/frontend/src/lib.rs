@@ -9,13 +9,17 @@ pub use budget::ResultLimits;
 mod catalog;
 mod check;
 mod collections;
+mod computed;
 mod deferred;
 mod expression;
 mod fetch_clause;
 mod field_rules;
 mod schema_rules;
 pub use field_rules::FieldOptions;
+mod analyzer;
 mod fulltext;
+mod reindex;
+pub use analyzer::FullTextOptions;
 mod functions;
 mod guard;
 mod integrity;
@@ -548,7 +552,14 @@ impl Connection {
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
-        collection.version = if collection.strict || !collection.field_policies.is_empty() {
+        collection.version = if collection.strict
+            || !collection.field_policies.is_empty()
+            || collection.indexes.iter().any(|index| {
+                index
+                    .fulltext
+                    .as_ref()
+                    .is_some_and(|config| config.is_custom())
+            }) {
             collection.version.max(5)
         } else if collection.indexes.iter().any(|index| {
             index
@@ -661,6 +672,7 @@ impl Connection {
             }
             for doc in self.documents(&c)? {
                 self.validate_candidate(&c, &doc)?;
+                self.validate_computed_fields(&c, &doc)?;
             }
             self.save_catalog(&c)
         })
@@ -812,6 +824,7 @@ impl Connection {
             }
             normalize_document_id(&c, &mut doc)?;
             field_rules::defaults(&c, &mut doc)?;
+            self.compute_fields(&c, &mut doc)?;
             self.validate_candidate(&c, &doc)?;
             if replace {
                 if let Some(Value::Record(record)) = doc.get("id") {
@@ -845,12 +858,16 @@ impl Connection {
                 return Ok(None);
             };
             doc.extend(patch);
-            self.replace_document(&c, &doc)?;
+            self.replace_document(&c, &mut doc)?;
             Ok(Some(doc))
         })
     }
-    fn replace_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+    fn replace_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        self.compute_fields(c, doc)?;
         self.validate_candidate(c, doc)?;
+        self.write_validated_document(c, doc)
+    }
+    fn write_validated_document(&self, c: &Collection, doc: &Document) -> Result<()> {
         if c.field_policies
             .iter()
             .any(|policy| policy.options.readonly)
@@ -874,10 +891,11 @@ impl Connection {
     }
     // Caller owns the statement savepoint. A failure restores conflicting
     // documents along with the target and all managed indexes.
-    fn replace_conflicting_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+    fn replace_conflicting_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        self.compute_fields(c, doc)?;
         self.validate_candidate(c, doc)?;
         self.delete_unique_conflicts(c, doc)?;
-        self.replace_document(c, doc)
+        self.write_validated_document(c, doc)
     }
     fn delete_unique_conflicts(&self, c: &Collection, doc: &Document) -> Result<()> {
         for index in c.indexes.iter().filter(|index| index.unique) {
@@ -948,7 +966,7 @@ impl Connection {
         params: &Parameters,
         limits: Option<ResultLimits>,
     ) -> Result<QueryResult> {
-        if udf::has_calls(sql)? {
+        if udf::has_calls(sql)? || analyzer::has_calls(sql)? {
             return self.atomic(|| self.execute_snapshot(sql, params, limits));
         }
         self.execute_snapshot(sql, params, limits)
@@ -997,8 +1015,10 @@ impl Connection {
                     budget.document(&document)?;
                     candidates.push(document);
                 }
-                for document in &candidates {
+                let mut output_budget = self.write_buffer_budget()?;
+                for document in &mut candidates {
                     self.replace_document(&collection, document)?;
+                    output_budget.document(document)?;
                 }
                 self.object_returning(&table, returning, candidates, params, limits)
             }),
@@ -1127,6 +1147,7 @@ impl Connection {
                 default,
                 readonly,
                 flexible,
+                computed,
                 overwrite,
             } => {
                 let (element_type, element_nullable) = if kind == "array" {
@@ -1166,6 +1187,7 @@ impl Connection {
                     },
                     FieldOptions {
                         default,
+                        computed,
                         readonly,
                         flexible,
                         element_type,
@@ -1191,8 +1213,21 @@ impl Connection {
                 table,
                 name,
                 paths,
+                tokenizer,
+                min_gram,
+                max_gram,
             } => {
-                self.create_fulltext_index(&table, &name, paths, if_not_exists)?;
+                self.create_fulltext_index_with_options(
+                    &table,
+                    &name,
+                    paths,
+                    FullTextOptions {
+                        tokenizer: tokenizer.unwrap_or_else(|| "default".into()),
+                        min_gram,
+                        max_gram,
+                    },
+                    if_not_exists,
+                )?;
                 Ok(QueryResult::command(0))
             }
             Statement::CreateSpatialIndex {

@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct FieldOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computed: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub readonly: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -24,6 +26,7 @@ pub(crate) fn is_false(value: &bool) -> bool {
 impl FieldOptions {
     pub(crate) fn is_empty(&self) -> bool {
         self.default.is_none()
+            && self.computed.is_none()
             && !self.readonly
             && !self.flexible
             && self.element_type.is_none()
@@ -57,6 +60,7 @@ pub(crate) fn matches_kind(kind: &FieldType, value: &Value) -> Result<bool> {
 }
 
 pub(crate) fn validate_options(field: &Field, options: &FieldOptions) -> Result<()> {
+    crate::computed::validate_options(options)?;
     if !options.is_empty() && field.path.len() > 64 {
         return Err(Error::Limit("field rules exceed 64 path steps".into()));
     }
@@ -118,7 +122,7 @@ pub(crate) fn validate_catalog(collection: &Collection) -> Result<()> {
         }
         validate_options(field, &policy.options)?;
     }
-    Ok(())
+    crate::computed::validate_catalog(collection)
 }
 
 pub(crate) fn defaults(collection: &Collection, document: &mut Document) -> Result<()> {

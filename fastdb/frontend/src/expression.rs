@@ -9,6 +9,16 @@ impl Connection {
         params: &Parameters,
         doc: Option<&Document>,
     ) -> Result<Value> {
+        self.evaluate_with_budget(expr, params, doc, None)
+    }
+    pub(crate) fn evaluate_with_budget(
+        &self,
+        expr: Expr,
+        params: &Parameters,
+        doc: Option<&Document>,
+        mut budget: Option<&mut crate::links::FetchBudget>,
+    ) -> Result<Value> {
+        let metered = budget.is_some();
         let value = match expr {
             Expr::Case {
                 base,
@@ -16,25 +26,31 @@ impl Connection {
                 fallback,
             } => {
                 let base = base
-                    .map(|expr| self.evaluate(*expr, params, doc))
+                    .map(|expr| {
+                        self.evaluate_with_budget(*expr, params, doc, budget.as_deref_mut())
+                    })
                     .transpose()?;
                 let mut chosen = fallback.map(|e| *e);
                 for (condition, value) in branches {
-                    let condition = self.evaluate(condition, params, doc)?;
+                    let condition =
+                        self.evaluate_with_budget(condition, params, doc, budget.as_deref_mut())?;
                     let condition = if let Some(base) = &base {
-                        self.binary_document(base.clone(), "=", condition)?
+                        self.binary_document(base.clone(), "=", condition, metered)?
                     } else {
                         condition
                     };
-                    if self.scalar_expression("CASE WHEN ?1 THEN 1 ELSE 0 END", &[condition])?
-                        == Value::Integer(1)
+                    if self.scalar_expression(
+                        "CASE WHEN ?1 THEN 1 ELSE 0 END",
+                        &[condition],
+                        metered,
+                    )? == Value::Integer(1)
                     {
                         chosen = Some(value);
                         break;
                     }
                 }
                 chosen
-                    .map(|e| self.evaluate(e, params, doc))
+                    .map(|e| self.evaluate_with_budget(e, params, doc, budget.as_deref_mut()))
                     .transpose()?
                     .unwrap_or(Value::Null)
             }
@@ -58,21 +74,26 @@ impl Connection {
             Expr::Object(fields) => Value::Object(
                 fields
                     .into_iter()
-                    .map(|(k, e)| Ok((k, self.evaluate(e, params, doc)?)))
+                    .map(|(k, e)| {
+                        Ok((
+                            k,
+                            self.evaluate_with_budget(e, params, doc, budget.as_deref_mut())?,
+                        ))
+                    })
                     .collect::<Result<_>>()?,
             ),
             Expr::Array(values) => Value::Array(
                 values
                     .into_iter()
-                    .map(|e| self.evaluate(e, params, doc))
+                    .map(|e| self.evaluate_with_budget(e, params, doc, budget.as_deref_mut()))
                     .collect::<Result<_>>()?,
             ),
             Expr::Unary(op, expr) => {
-                let value = self.evaluate(*expr, params, doc)?;
+                let value = self.evaluate_with_budget(*expr, params, doc, budget.as_deref_mut())?;
                 if !matches!(op.as_str(), "+" | "-" | "NOT") {
                     return Err(Error::Unsupported("unary expression".into()));
                 }
-                self.scalar_expression(&format!("{op} ?1"), &[value])?
+                self.scalar_expression(&format!("{op} ?1"), &[value], metered)?
             }
             Expr::Binary(a, op, b) => {
                 if !matches!(
@@ -101,9 +122,9 @@ impl Connection {
                 ) {
                     return Err(Error::Unsupported("binary expression".into()));
                 }
-                let a = self.evaluate(*a, params, doc)?;
-                let b = self.evaluate(*b, params, doc)?;
-                self.binary_document(a, &op, b)?
+                let a = self.evaluate_with_budget(*a, params, doc, budget.as_deref_mut())?;
+                let b = self.evaluate_with_budget(*b, params, doc, budget.as_deref_mut())?;
+                self.binary_document(a, &op, b, metered)?
             }
             Expr::Call(name, args) => {
                 if name.eq_ignore_ascii_case("coalesce") || name.eq_ignore_ascii_case("ifnull") {
@@ -112,7 +133,8 @@ impl Connection {
                     }
                     let mut result = Value::Null;
                     for expr in args {
-                        result = self.evaluate(expr, params, doc)?;
+                        result =
+                            self.evaluate_with_budget(expr, params, doc, budget.as_deref_mut())?;
                         if !matches!(result, Value::Null) {
                             break;
                         }
@@ -121,16 +143,50 @@ impl Connection {
                 } else {
                     let args = args
                         .into_iter()
-                        .map(|e| self.evaluate(e, params, doc))
+                        .map(|e| self.evaluate_with_budget(e, params, doc, budget.as_deref_mut()))
                         .collect::<Result<Vec<_>>>()?;
-                    self.call_document_function(&name, args)?
+                    if name.eq_ignore_ascii_case("replace") {
+                        if let Some(budget) = budget.as_deref() {
+                            if args
+                                .iter()
+                                .any(|value| !matches!(value, Value::String(_) | Value::Null))
+                            {
+                                return Err(Error::Validation(
+                                    "computed replace requires strings or null".into(),
+                                ));
+                            }
+                            if let [Value::String(input), Value::String(from), Value::String(to)] =
+                                args.as_slice()
+                            {
+                                if !from.is_empty() && to.len() > from.len() {
+                                    let size = input
+                                        .matches(from.as_str())
+                                        .count()
+                                        .checked_mul(to.len() - from.len())
+                                        .and_then(|extra| input.len().checked_add(extra));
+                                    if size.is_none_or(|size| {
+                                        size > budget.limit.saturating_sub(budget.used)
+                                    }) {
+                                        return Err(Error::Limit(
+                                            "computed replace output exceeds evaluation budget"
+                                                .into(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.call_document_function(&name, args, metered)?
                 }
             }
         };
         value.validate()?;
+        if let Some(budget) = budget {
+            budget.charge(&value)?;
+        }
         Ok(value)
     }
-    fn scalar_expression(&self, sql: &str, values: &[Value]) -> Result<Value> {
+    fn scalar_expression(&self, sql: &str, values: &[Value], metered: bool) -> Result<Value> {
         if values.iter().any(|v| {
             matches!(
                 v,
@@ -148,7 +204,11 @@ impl Connection {
                 crate::scalar(value)?,
             )?;
         }
-        let rows = crate::collect_rows(&mut statement)?;
+        let rows = if metered {
+            self.meter_statement(&mut statement, crate::collect_rows)?
+        } else {
+            crate::collect_rows(&mut statement)?
+        };
         let value = rows
             .into_iter()
             .next()
@@ -156,7 +216,7 @@ impl Connection {
             .ok_or_else(|| Error::Storage("expression returned no value".into()))?;
         Ok(crate::from_engine(value))
     }
-    fn binary_document(&self, a: Value, op: &str, b: Value) -> Result<Value> {
+    fn binary_document(&self, a: Value, op: &str, b: Value, metered: bool) -> Result<Value> {
         if matches!(&a, Value::Record(_)) || matches!(&b, Value::Record(_)) {
             if !matches!(
                 op,
@@ -202,11 +262,29 @@ impl Connection {
             return self.scalar_expression(
                 &format!("?1 {op} ?2"),
                 &[Value::Integer(cmp), Value::Integer(0)],
+                metered,
             );
         }
-        self.scalar_expression(&format!("?1 {op} ?2"), &[a, b])
+        self.scalar_expression(&format!("?1 {op} ?2"), &[a, b], metered)
     }
-    fn call_document_function(&self, name: &str, mut args: Vec<Value>) -> Result<Value> {
+    fn call_document_function(
+        &self,
+        name: &str,
+        mut args: Vec<Value>,
+        metered: bool,
+    ) -> Result<Value> {
+        if name.eq_ignore_ascii_case("search::analyze") {
+            return match args.as_slice() {
+                [Value::String(index), Value::String(input)] => self.analyze_text(index, input),
+                [Value::String(index), Value::Null] => {
+                    self.analyzer_options(index)?;
+                    Ok(Value::Null)
+                }
+                _ => Err(Error::Validation(
+                    "search::analyze expects an index name and text".into(),
+                )),
+            };
+        }
         if matches!(
             name.to_ascii_lowercase().as_str(),
             "vector32"
@@ -237,8 +315,11 @@ impl Connection {
             } else {
                 name
             };
-            let value =
-                self.scalar_expression(&format!("{}({slots})", crate::quote(native)), &args)?;
+            let value = self.scalar_expression(
+                &format!("{}({slots})", crate::quote(native)),
+                &args,
+                metered,
+            )?;
             if matches!(
                 name.to_ascii_lowercase().as_str(),
                 "vector32"
@@ -349,7 +430,11 @@ impl Connection {
                     .map(|i| format!("?{i}"))
                     .collect::<Vec<_>>()
                     .join(",");
-                self.scalar_expression(&format!("{}({args_sql})", crate::quote(name)), &args)
+                self.scalar_expression(
+                    &format!("{}({args_sql})", crate::quote(name)),
+                    &args,
+                    metered,
+                )
             }
         }
     }

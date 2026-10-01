@@ -194,6 +194,24 @@ impl Connection {
                 | Statement::DropRelation { .. }
                 | Statement::CreateFunction { .. }
                 | Statement::DropFunction { .. } => Some(SchemaStatement::Logical),
+                Statement::Sql(sql) => match crate::select::parsed(&sql)? {
+                    turso_parser::ast::Cmd::Stmt(turso_parser::ast::Stmt::Reindex {
+                        name: Some(name),
+                    }) if name
+                        .db_name
+                        .as_ref()
+                        .is_none_or(|db| db.as_str().eq_ignore_ascii_case("main"))
+                        && self.collections()?.iter().any(|collection| {
+                            collection
+                                .indexes
+                                .iter()
+                                .any(|index| index.name.eq_ignore_ascii_case(name.name.as_str()))
+                        }) =>
+                    {
+                        Some(SchemaStatement::Logical)
+                    }
+                    _ => None,
+                },
                 _ => None,
             })
         });

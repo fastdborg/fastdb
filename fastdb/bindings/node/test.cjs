@@ -3982,3 +3982,53 @@ test('strict schemas and typed arrays validate writes in both clients', async ()
     } finally { await db.close(); }
   }
 });
+
+test('stored calculations preserve typed results and atomic indexes in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      for (const sql of [
+        'CREATE TABLE docs',
+        'DEFINE FIELD source ON docs TYPE integer DEFAULT 7',
+        'DEFINE FIELD calculated ON docs TYPE integer VALUE (source+1)',
+        'DEFINE FIELD ref ON docs TYPE record<refs> VALUE (type::record(\'refs\',source))',
+        'CREATE UNIQUE INDEX docs_calculated ON docs(calculated)',
+      ]) await db.execute(sql);
+      assert.deepEqual(await db.all('INSERT INTO docs {id:docs:a,calculated:999} RETURNING calculated,ref'), [[8n,new Record('refs',7n)]]);
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:b,source:9}');
+      await assert.rejects(async () => db.execute('UPDATE docs SET source=7'), error => error.code === 'FDB_CONSTRAINT');
+      assert.deepEqual(await db.all('SELECT calculated FROM docs ORDER BY id'), [[8n],[10n]]);
+      assert.deepEqual(await db.all('UPDATE docs:a PATCH [{op:\'replace\',path:\'/source\',value:10}] RETURNING calculated,ref'), [[11n,new Record('refs',10n)]]);
+      await db.execute('COMMIT');
+      await assert.rejects(async () => db.execute('DEFINE FIELD bad ON docs TYPE integer VALUE (bad+1)'), error => error.code === 'FDB_VALIDATION');
+      const field=(await db.all('INFO FOR TABLE docs'))[0][0].fields.find(field => field.path[0] === 'calculated');
+      assert.equal(field.computed,'source+1');
+      await db.checkCollectionIntegrity('docs');
+    } finally { await db.close(); }
+  }
+});
+
+test('analyzer inspection and managed rebuilds preserve typed results in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute("INSERT INTO docs {id:docs:a,body:'Database',n:7}");
+      await db.execute("CREATE SEARCH INDEX words ON docs(body) USING FULLTEXT WITH(tokenizer='ngram',min_gram=2,max_gram=2)");
+      await db.execute('CREATE INDEX docs_n ON docs(n)');
+      const tokens=(await db.all("SELECT search::analyze('words','Café')"))[0][0];
+      assert.deepEqual(tokens.map(token=>token.text),['ca','af','fé']);
+      assert.equal(tokens[2].offset_to,5n);
+      const before=await db.all("SELECT id FROM search::text('words','data',10)");
+      assert.deepEqual(before,[[new Record('docs','a')]]);
+      await db.execute('BEGIN');
+      await db.execute('REINDEX words'); await db.execute('REINDEX docs_n');
+      await db.execute('ROLLBACK');
+      await db.execute('REINDEX words'); await db.execute('REINDEX docs_n');
+      assert.deepEqual(await db.all("SELECT id FROM search::text('words','data',10)"),before);
+      assert.deepEqual(await db.all('SELECT id FROM docs WHERE n=7'),before);
+      await assert.rejects(async()=>db.all("SELECT search::analyze('words',7)"),error=>error.code==='FDB_VALIDATION');
+      await db.checkCollectionIntegrity('docs');
+    } finally { await db.close(); }
+  }
+});
