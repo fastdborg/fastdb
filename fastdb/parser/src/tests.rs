@@ -296,11 +296,14 @@ fn declared_inverse_relationship_grammar() {
 
 #[test]
 fn vector_index_options_are_explicit_unique_and_order_independent() {
+    assert!(
+        matches!(parse("CREATE SEARCH INDEX compressed ON items(v) USING VECTOR WITH(quantization='f16',metric='cosine',dimensions=3)").unwrap(),Statement::CreateVectorIndex {quantization:Some(value),..} if value=="f16")
+    );
     for options in [
         "dimensions=3,metric='cosine'",
         "metric='cosine',dimensions=3",
     ] {
-        assert_eq!(parse(&format!("CREATE SEARCH INDEX IF NOT EXISTS embeddings ON items(nested.v) USING VECTOR WITH ({options});")).unwrap(),Statement::CreateVectorIndex {if_not_exists:true,table:"items".into(),name:"embeddings".into(),path:vec!["nested".into(),"v".into()],dimensions:3,metric:"cosine".into()});
+        assert_eq!(parse(&format!("CREATE SEARCH INDEX IF NOT EXISTS embeddings ON items(nested.v) USING VECTOR WITH ({options});")).unwrap(),Statement::CreateVectorIndex {if_not_exists:true,table:"items".into(),name:"embeddings".into(),path:vec!["nested".into(),"v".into()],dimensions:3,metric:"cosine".into(),quantization:None});
     }
     for options in [
         "dimensions=3",
@@ -310,6 +313,8 @@ fn vector_index_options_are_explicit_unique_and_order_independent() {
         "dimensions=3.5,metric='l2'",
         "dimensions=-1,metric='l2'",
         "dimensions=3,metric='l2',other=1",
+        "dimensions=3,metric='l2',quantization=16",
+        "dimensions=3,metric='l2',quantization='f16',quantization='f16'",
     ] {
         assert!(
             parse(&format!(

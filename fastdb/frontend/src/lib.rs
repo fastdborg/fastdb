@@ -15,6 +15,7 @@ mod expression;
 mod fetch_clause;
 mod field_rules;
 mod schema_rules;
+mod search_filter;
 pub use field_rules::FieldOptions;
 mod analyzer;
 mod fulltext;
@@ -32,6 +33,7 @@ pub use wal_replication::WalPosition;
 #[doc(hidden)]
 pub use wire_json::decode_wire_json;
 mod links;
+pub use ann::VectorIndexOptions;
 pub use interrupt::{CancellationToken, InterruptHandle};
 mod meter;
 pub use meter::{
@@ -566,6 +568,12 @@ impl Connection {
                     .fulltext
                     .as_ref()
                     .is_some_and(|config| config.is_custom())
+            })
+            || collection.indexes.iter().any(|index| {
+                index
+                    .vector
+                    .as_ref()
+                    .is_some_and(|config| config.compressed())
             }) {
             collection.version.max(5)
         } else if collection.indexes.iter().any(|index| {
@@ -1230,8 +1238,19 @@ impl Connection {
                 path,
                 dimensions,
                 metric,
+                quantization,
             } => {
-                self.create_vector_index(&table, &name, path, dimensions, &metric, if_not_exists)?;
+                self.create_vector_index_with_options(
+                    &table,
+                    &name,
+                    path,
+                    VectorIndexOptions {
+                        dimensions,
+                        metric,
+                        quantization: quantization.unwrap_or_else(|| "f32".into()),
+                    },
+                    if_not_exists,
+                )?;
                 Ok(QueryResult::command(0))
             }
             Statement::CreateFullTextIndex {

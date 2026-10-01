@@ -187,6 +187,7 @@ mod cancellation_tests {
             ("scalar","CREATE INDEX scalar ON docs(n)"),
             ("words","CREATE SEARCH INDEX words ON docs(body) USING FULLTEXT"),
             ("vec","CREATE SEARCH INDEX vec ON docs(v) USING VECTOR WITH(dimensions=2,metric='cosine')"),
+            ("compressed","CREATE SEARCH INDEX compressed ON docs(v) USING VECTOR WITH(dimensions=2,metric='cosine',quantization='f16')"),
             ("loc","CREATE SEARCH INDEX loc ON docs(point) USING SPATIAL"),
         ] {
             let c=Database::open(":memory:").unwrap().connect().unwrap();

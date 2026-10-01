@@ -4076,3 +4076,33 @@ test('statement TIMEOUT composes with client cancellation and preserves transact
     } finally { await db.close(); }
   }
 });
+
+test('candidate filters and compressed vectors keep typed results in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const async of [false,true]) {
+    const db=async ? await AsyncDatabase.open(':memory:') : new Database();
+    try {
+      await db.execute('BEGIN');
+      for(let n=0;n<32;n++) await db.execute("INSERT INTO docs {id:$id,body:'alpha',v:$v}",{$id:new Record('docs',BigInt(n)),$v:Vector.float32([n,0])});
+      await db.execute('CREATE SEARCH INDEX words ON docs(body) USING FULLTEXT');
+      await db.execute("CREATE SEARCH INDEX vectors ON docs(v) USING VECTOR WITH(dimensions=2,metric='l2',quantization='f16')");
+      await db.execute('COMMIT');
+      const expected=[[new Record('docs',31n)]];
+      const params={$ids:[new Record('DOCS',31n),new Record('docs',31n),new Record('docs','missing')]};
+      const sources=["search::text('words','alpha',1,$ids)","search::vector('vectors',vector32('[0,0]'),1,$ids)"];
+      for(const source of sources) {
+        assert.deepEqual(await db.all(`SELECT id FROM ${source}`,params),expected);
+        assert.deepEqual(await db.all(`SELECT id FROM ${source}`,{$ids:[]}),[]);
+        await assert.rejects(async()=>db.all(`SELECT id FROM ${source}`,{$ids:[new Record('other',31n)]}),error=>error.code==='FDB_VALIDATION');
+        await assert.rejects(async()=>db.all(`SELECT id FROM ${source} TIMEOUT 0ms`,params),error=>error.code==='FDB_CANCELLED');
+      }
+      assert.deepEqual(await db.all("SELECT id FROM search::vector('vectors',vector32('[0,0]'),1) WHERE id=type::record('docs',31)"),[]);
+      await db.execute('BEGIN');await db.execute('DELETE FROM docs WHERE id=type::record(\'docs\',31)');
+      await db.execute('REINDEX vectors');await db.execute('REINDEX words');await db.execute('ROLLBACK');
+      for(const source of sources) assert.deepEqual(await db.all(`SELECT id FROM ${source}`,params),expected);
+      await assert.rejects(async()=>db.execute("UPDATE docs SET v=vector32('[65505,0]')"),error=>error.code==='FDB_VALIDATION');
+      assert.deepEqual(await db.all('SELECT v FROM docs WHERE id=type::record(\'docs\',31)'),[[Vector.float32([31,0])]]);
+      await db.checkCollectionIntegrity('docs');
+    } finally { await db.close(); }
+  }
+});

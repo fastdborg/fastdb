@@ -24,3 +24,4 @@ h3o = { version = "=0.9.4", default-features = false }
 
 usearch = { version = "=2.26.2", default-features = false }
 sha2 = "=0.10.9"
+half = "=2.5.0"

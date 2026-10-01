@@ -2191,6 +2191,7 @@ version = "2.1.0"
 dependencies = [
  "fastql-parser",
  "h3o",
+ "half",
  "rquickjs",
  "serde",
  "serde_json",

@@ -156,6 +156,7 @@ pub enum Statement {
         path: Vec<String>,
         dimensions: usize,
         metric: String,
+        quantization: Option<String>,
     },
     CreateFullTextIndex {
         if_not_exists: bool,
@@ -1250,6 +1251,7 @@ pub fn parse(input: &str) -> Result<Statement> {
             }
             let mut dimensions = None;
             let mut metric = None;
+            let mut quantization = None;
             loop {
                 let option = p.name()?.to_ascii_lowercase();
                 if !p.eat("=") {
@@ -1274,8 +1276,13 @@ pub fn parse(input: &str) -> Result<Statement> {
                     "metric" if metric.is_none() && token.kind == Kind::String => {
                         metric = Some(token.text.clone())
                     }
+                    "quantization" if quantization.is_none() && token.kind == Kind::String => {
+                        quantization = Some(token.text.clone())
+                    }
                     _ => {
-                        return Err(p.error("expected unique dimensions and string metric options"))
+                        return Err(
+                            p.error("expected unique dimensions, metric and quantization options")
+                        )
                     }
                 }
                 p.pos += 1;
@@ -1293,6 +1300,7 @@ pub fn parse(input: &str) -> Result<Statement> {
                 path: paths.remove(0),
                 dimensions: dimensions.ok_or_else(|| p.error("missing dimensions"))?,
                 metric: metric.ok_or_else(|| p.error("missing metric"))?,
+                quantization,
             });
         }
         if p.eat("FULLTEXT") {

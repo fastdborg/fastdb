@@ -68,6 +68,18 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
             "custom analyzers require catalog version 5".into(),
         ));
     }
+    if collection.version < 5
+        && collection.indexes.iter().any(|index| {
+            index
+                .vector
+                .as_ref()
+                .is_some_and(|config| config.compressed())
+        })
+    {
+        return Err(Error::Storage(
+            "compressed vector indexes require catalog version 5".into(),
+        ));
+    }
     if !collection.relations.is_empty() && collection.version < 3 {
         return Err(Error::Storage("relations require catalog version 3".into()));
     }
@@ -250,6 +262,7 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
         fields.push(("dimensions", Value::Integer(config.dimensions as i64)));
         fields.push(("metric", Value::String(config.metric.clone())));
         fields.push(("implementation", Value::String(config.format.clone())));
+        fields.push(("quantization", Value::String(config.quantization().into())));
     }
     object(fields)
 }

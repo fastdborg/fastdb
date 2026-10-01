@@ -3079,16 +3079,25 @@ fn source(
             });
         }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_text" {
-            let [index, query, limit] = args.as_slice() else {
+            let [index, query, limit, ..] = args.as_slice() else {
                 return Err(Error::Validation(
-                    "search::text expects index name, query and limit".into(),
+                    "search::text expects index name, query, limit and optional allowed IDs".into(),
                 ));
             };
+            if args.len() > 4 {
+                return Err(Error::Validation(
+                    "search accepts at most four arguments".into(),
+                ));
+            }
             let mut consumed = std::collections::BTreeSet::new();
             let index = crate::spatial::search_argument(index, params, &mut consumed)?;
             let query = crate::spatial::search_argument(query, params, &mut consumed)?;
             let limit = crate::spatial::search_argument(limit, params, &mut consumed)?;
-            let sql = connection.text_search_sql(&index, &query, &limit)?;
+            let filter = args
+                .get(3)
+                .map(|arg| crate::search_filter::argument(arg, params, &mut consumed))
+                .transpose()?;
+            let sql = connection.text_search_sql(&index, &query, &limit, filter.as_ref())?;
             let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
                 unreachable!()
             };
@@ -3108,16 +3117,26 @@ fn source(
             });
         }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_vector" {
-            let [index, query, limit] = args.as_slice() else {
+            let [index, query, limit, ..] = args.as_slice() else {
                 return Err(Error::Validation(
-                    "search::vector expects index name, query and limit".into(),
+                    "search::vector expects index name, query, limit and optional allowed IDs"
+                        .into(),
                 ));
             };
+            if args.len() > 4 {
+                return Err(Error::Validation(
+                    "search accepts at most four arguments".into(),
+                ));
+            }
             let mut consumed = std::collections::BTreeSet::new();
             let index = crate::spatial::search_argument(index, params, &mut consumed)?;
             let query = crate::spatial::search_argument(query, params, &mut consumed)?;
             let limit = crate::spatial::search_argument(limit, params, &mut consumed)?;
-            let sql = connection.vector_search_sql(&index, &query, &limit)?;
+            let filter = args
+                .get(3)
+                .map(|arg| crate::search_filter::argument(arg, params, &mut consumed))
+                .transpose()?;
+            let sql = connection.vector_search_sql(&index, &query, &limit, filter.as_ref())?;
             let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
                 unreachable!()
             };

@@ -384,6 +384,7 @@ impl Connection {
         name: &Value,
         query: &Value,
         limit: &Value,
+        filter: Option<&Value>,
     ) -> Result<String> {
         let (Value::String(name), Value::String(query)) = (name, query) else {
             return Err(invalid("index and query must be strings"));
@@ -398,16 +399,27 @@ impl Connection {
             return Err(invalid("limit must be an integer from 0 through 10000"));
         }
         let name = canonical(name)?;
-        let index = self
+        let (table, index) = self
             .collections()?
             .into_iter()
-            .flat_map(|c| c.indexes)
-            .find(|i| i.name == name)
+            .find_map(|collection| {
+                collection
+                    .indexes
+                    .into_iter()
+                    .find(|index| index.name == name)
+                    .map(|index| (collection.name, index))
+            })
             .ok_or_else(|| Error::NotFound(format!("text index {name}")))?;
         if index.kind != IndexKind::FullText {
             return Err(invalid("search::text requires a full-text index"));
         }
         index.require_current_text_storage()?;
+        let filter = filter
+            .map(|ids| crate::search_filter::Filter::from_value(ids, &table))
+            .transpose()?;
+        let predicate = filter.map_or_else(String::new, |filter| {
+            format!(" WHERE {}", filter.predicate())
+        });
         // Turso 0.8.1 treats a negative LIMIT as all live indexed documents.
         // Materialize all hits before stable ID tie-breaking; no shared count
         // row or table scan is needed to discover the native search limit.
@@ -418,7 +430,7 @@ impl Connection {
         if !plan.iter().any(|row| matches!(row.last(), Some(EngineValue::Text(t)) if t.as_str() == "QUERY INDEX METHOD fts")) {
             return Err(Error::Storage("full-text query did not select its native index".into()));
         }
-        Ok(format!("WITH __fastdb_text_hits AS MATERIALIZED ({inner}) SELECT id,score FROM __fastdb_text_hits ORDER BY score DESC,id LIMIT {limit}"))
+        Ok(format!("WITH __fastdb_text_hits AS MATERIALIZED ({inner}) SELECT id,score FROM __fastdb_text_hits{predicate} ORDER BY score DESC,id LIMIT {limit}"))
     }
 }
 
@@ -515,7 +527,8 @@ mod tests {
             .text_search_sql(
                 &Value::String("text_idx".into()),
                 &Value::String("hello".into()),
-                &Value::Integer(10)
+                &Value::Integer(10),
+                None
             )
             .is_err());
     }
