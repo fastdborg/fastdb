@@ -111,7 +111,9 @@ run("cli-v22", [str(bundle / "bin/fastdb-cli"), "--script"], input=cli_v22)
 cli_rows = [json.loads(line) for line in (evidence / "cli-v22.log").read_text().splitlines()]
 assert len(cli_rows) == 15 and all("error" not in result for result in cli_rows)
 def integer(value):
-    return {"type": "Integer", "value": str(value)}
+    # The CLI serializes tagged values through serde_json: integers are JSON
+    # numbers, unlike the string-encoded integers of the C ABI fixture protocol.
+    return {"type": "Integer", "value": value}
 writer = {"type": "Object", "value": {"id": {"type": "Record", "value": {"table": "writers", "key": {"String": "alice"}}}, "name": {"type": "String", "value": "Alice"}}}
 assert cli_rows[8]["rows"] == cli_rows[9]["rows"]
 assert cli_rows[8]["columns"] == ["id", "title", "writer"]
