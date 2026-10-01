@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "3cf193de952c64fd00ebd121d628c06c6ac011aa85f69003f83d7d1a963c15a2",
+  "inventorySha256": "fe32ad3475eb1df9b168cd9d241a1c66bd11351a0ad1e33dd625158b6822e33a",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -1752,12 +1752,12 @@
     },
     {
       "name": "fastdb-cli",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1776,7 +1776,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -2188,6 +2188,25 @@
           "path": "LICENSE",
           "bytes": 1443,
           "sha256": "83d0dc0dba8549e6678aafaaf0ce4f3b2a1c6a4239b46a1a8ad16d2a68381031"
+        }
+      ]
+    },
+    {
+      "name": "half",
+      "version": "2.5.0",
+      "status": "archive_verified",
+      "archiveSha256": "7db2ff139bba50379da6aa0766b52fdcb62cb5b263009b09ed58ba604e14bbd1",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10173,
+          "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1036,
+          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
         }
       ]
     },

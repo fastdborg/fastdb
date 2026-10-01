@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "16c3d2397f7d50bf03966506f42c13f77aa946516d02542966c5a51187bf1061",
+  "lockfileSha256": "9126da52f5870fa826648a7ae76718650026cc70bcf4d5623ea62d8a1aed962b",
   "packages": [
     {
       "name": "aead",
@@ -346,12 +346,12 @@
     },
     {
       "name": "fastdb-cli",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "licenseExpression": "MIT"
     },
     {
@@ -361,7 +361,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "licenseExpression": "MIT"
     },
     {
@@ -478,6 +478,11 @@
       "name": "h3o",
       "version": "0.9.4",
       "licenseExpression": "BSD-3-Clause"
+    },
+    {
+      "name": "half",
+      "version": "2.5.0",
+      "licenseExpression": "MIT OR Apache-2.0"
     },
     {
       "name": "hashbrown",

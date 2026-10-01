@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "fastql-parser",
  "h3o",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-c"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "fastdb",
  "fastdb-protocol",
@@ -2216,7 +2216,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-cli"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "fastdb",
  "fastql-parser",
@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-node"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "fastdb",
  "napi",
@@ -2243,7 +2243,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-protocol"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "fastdb",
  "serde",
@@ -2252,7 +2252,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-python"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "fastdb",
  "fastdb-protocol",
@@ -2262,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-tests"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "fastdb",
  "fastql-parser",
@@ -2278,7 +2278,7 @@ checksum = "9afc2bd4d5a73106dd53d10d73d3401c2f32730ba2c0b93ddb888a8983680471"
 
 [[package]]
 name = "fastql-parser"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "serde",
  "thiserror 2.0.16",
