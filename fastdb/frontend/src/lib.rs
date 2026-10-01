@@ -4,6 +4,7 @@ mod array_predicate;
 mod budget;
 mod bundled;
 mod udf;
+mod unnest;
 pub use budget::ResultLimits;
 mod catalog;
 mod check;
@@ -11,6 +12,9 @@ mod collections;
 mod deferred;
 mod expression;
 mod fetch_clause;
+mod field_rules;
+mod schema_rules;
+pub use field_rules::FieldOptions;
 mod fulltext;
 mod functions;
 mod guard;
@@ -228,6 +232,10 @@ struct Collection {
     indexes: Vec<Index>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     relations: Vec<relations::Relation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    field_policies: Vec<field_rules::Policy>,
+    #[serde(default, skip_serializing_if = "field_rules::is_false")]
+    strict: bool,
 }
 
 pub struct Database {
@@ -540,20 +548,22 @@ impl Connection {
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
-        collection.version = if collection.indexes.iter().any(|index| {
+        collection.version = if collection.strict || !collection.field_policies.is_empty() {
+            collection.version.max(5)
+        } else if collection.indexes.iter().any(|index| {
             index
                 .fulltext
                 .as_ref()
                 .is_some_and(|config| config.storage_version == 2)
         }) {
-            4
+            collection.version.max(4)
         } else if !collection.relations.is_empty()
             || collection
                 .indexes
                 .iter()
                 .any(|index| index.kind != IndexKind::Scalar)
         {
-            3
+            collection.version.max(3)
         } else {
             collection.version.max(catalog::version())
         };
@@ -574,7 +584,7 @@ impl Connection {
             // Names are collision-free UTF-8 hex, independent of user quoting.
             let storage = format!("__fastdb_c_{}", name.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
             self.run(&format!("CREATE TABLE {} (id BLOB PRIMARY KEY, doc BLOB NOT NULL)", quote(&storage)), &[])?;
-            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new(), relations: Vec::new() };
+            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new(), relations: Vec::new(), field_policies: Vec::new(), strict: false };
             self.run("INSERT INTO __fastdb_catalog VALUES (?1, ?2)", &[text(&name), text(&serde_json::to_string(&collection)?)])?; Ok(())
         })
     }
@@ -602,6 +612,15 @@ impl Connection {
         .transpose()
     }
     pub fn define_field(&self, table: &str, field: Field, overwrite: bool) -> Result<()> {
+        self.define_field_with_options(table, field, FieldOptions::default(), overwrite)
+    }
+    pub fn define_field_with_options(
+        &self,
+        table: &str,
+        field: Field,
+        options: FieldOptions,
+        overwrite: bool,
+    ) -> Result<()> {
         validate_path(&field.path)?;
         if let FieldType::Vector(dims) = field.kind {
             vectors::validate_dimension(dims)?;
@@ -613,6 +632,7 @@ impl Connection {
             canonical(target)?;
         }
         self.check_definition(&field)?;
+        field_rules::validate_options(&field, &options)?;
         self.atomic(|| {
             let mut c = self.catalog(table)?;
             let existing = c.fields.iter().position(|f| f.path == field.path);
@@ -624,6 +644,15 @@ impl Connection {
                 (Some(_), false) => return Err(Error::AlreadyExists(field.path.join("."))),
                 (None, true) => return Err(Error::NotFound(field.path.join("."))),
             }
+            c.field_policies.retain(|policy| policy.path != field.path);
+            if !options.is_empty() {
+                c.field_policies.push(field_rules::Policy {
+                    path: field.path.clone(),
+                    options: options.clone(),
+                });
+                c.version = c.version.max(5);
+            }
+            field_rules::validate_catalog(&c)?;
             for index in &c.indexes {
                 index.validate_vector_config(&c)?;
                 for path in index.paths() {
@@ -782,10 +811,12 @@ impl Connection {
                 );
             }
             normalize_document_id(&c, &mut doc)?;
+            field_rules::defaults(&c, &mut doc)?;
             self.validate_candidate(&c, &doc)?;
             if replace {
                 if let Some(Value::Record(record)) = doc.get("id") {
                     if let Some(previous) = self.get_in(&c, record)? {
+                        field_rules::readonly(&c, &previous, &doc)?;
                         self.delete_document(&c, &previous)?;
                     }
                 }
@@ -820,6 +851,16 @@ impl Connection {
     }
     fn replace_document(&self, c: &Collection, doc: &Document) -> Result<()> {
         self.validate_candidate(c, doc)?;
+        if c.field_policies
+            .iter()
+            .any(|policy| policy.options.readonly)
+        {
+            if let Some(Value::Record(id)) = doc.get("id") {
+                if let Some(before) = self.get_in(c, id)? {
+                    field_rules::readonly(c, &before, doc)?;
+                }
+            }
+        }
         let id = EngineValue::Blob(doc["id"].encode()?);
         self.run_customer(
             &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
@@ -1071,6 +1112,10 @@ impl Connection {
             }
             Statement::Info { scope, name } => self.info(&scope, name.as_deref()),
 
+            Statement::DefineSchema { table, strict } => {
+                self.define_schema(&table, strict)?;
+                Ok(QueryResult::command(0))
+            }
             Statement::DefineField {
                 table,
                 path,
@@ -1079,15 +1124,23 @@ impl Connection {
                 required,
                 nullable,
                 check,
+                default,
+                readonly,
+                flexible,
                 overwrite,
             } => {
+                let (element_type, element_nullable) = if kind == "array" {
+                    field_rules::element_type(target.as_deref())?
+                } else {
+                    (None, false)
+                };
                 let kind = match (kind.as_str(), target) {
                     ("string", None) => FieldType::String,
                     ("integer", None) => FieldType::Integer,
                     ("number", None) => FieldType::Number,
                     ("boolean", None) => FieldType::Boolean,
                     ("object", None) => FieldType::Object,
-                    ("array", None) => FieldType::Array,
+                    ("array", _) => FieldType::Array,
                     ("record", Some(target)) => FieldType::Record(canonical(&target)?),
                     ("vector", Some(target)) => FieldType::Vector(
                         target
@@ -1096,7 +1149,13 @@ impl Connection {
                     ),
                     _ => return Err(Error::Unsupported("field type is not implemented".into())),
                 };
-                self.define_field(
+                let default = default
+                    .map(|expression| {
+                        field_rules::constant(&expression)?;
+                        self.evaluate(expression, params, None)
+                    })
+                    .transpose()?;
+                self.define_field_with_options(
                     &table,
                     Field {
                         path,
@@ -1104,6 +1163,13 @@ impl Connection {
                         required,
                         nullable,
                         check,
+                    },
+                    FieldOptions {
+                        default,
+                        readonly,
+                        flexible,
+                        element_type,
+                        element_nullable,
                     },
                     overwrite,
                 )?;
@@ -1432,25 +1498,7 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
         match value {
             None if !f.required => continue,
             Some(Value::Null) if f.nullable => continue,
-            Some(v)
-                if matches!(
-                    (&f.kind, v),
-                    (FieldType::String, Value::String(_))
-                        | (FieldType::Integer, Value::Integer(_))
-                        | (FieldType::Number, Value::Integer(_) | Value::Number(_))
-                        | (FieldType::Boolean, Value::Boolean(_))
-                        | (FieldType::Object, Value::Object(_))
-                        | (FieldType::Array, Value::Array(_))
-                ) =>
-            {
-                continue
-            }
-            Some(Value::Vector(bytes)) if matches!(&f.kind, FieldType::Vector(dims) if vectors::dimensions(bytes)? == *dims) => {
-                continue
-            }
-            Some(Value::Record(r)) if matches!(&f.kind, FieldType::Record(target) if target.eq_ignore_ascii_case(&r.table)) => {
-                continue
-            }
+            Some(value) if field_rules::matches_kind(&f.kind, value)? => continue,
             _ => {
                 return Err(Error::Validation(format!(
                     "field {} failed {:?} validation",
@@ -1460,6 +1508,8 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
             }
         }
     }
+    field_rules::validate_arrays(c, doc)?;
+    schema_rules::validate(c, doc)?;
     for index in &c.indexes {
         index.document_keys(doc)?;
     }

@@ -131,6 +131,10 @@ pub enum Statement {
         scope: String,
         name: Option<String>,
     },
+    DefineSchema {
+        table: String,
+        strict: bool,
+    },
     DefineField {
         table: String,
         path: Vec<String>,
@@ -139,6 +143,9 @@ pub enum Statement {
         required: bool,
         nullable: bool,
         check: Option<String>,
+        default: Option<Expr>,
+        readonly: bool,
+        flexible: bool,
         overwrite: bool,
     },
     CreateVectorIndex {
@@ -1076,6 +1083,24 @@ pub fn parse(input: &str) -> Result<Statement> {
         return Ok(Statement::DropRelation { name, if_exists });
     }
     p.pos = 0;
+    if p.eat("DEFINE") && p.eat("SCHEMA") {
+        if !p.eat("ON") {
+            return Err(p.error("expected ON"));
+        }
+        let table = p.name()?;
+        let strict = if p.eat("STRICT") {
+            true
+        } else if p.eat("FLEXIBLE") {
+            false
+        } else {
+            return Err(p.error("expected STRICT or FLEXIBLE"));
+        };
+        if !p.end() {
+            return Err(p.error("unexpected schema clause"));
+        }
+        return Ok(Statement::DefineSchema { table, strict });
+    }
+    p.pos = 0;
     if p.eat("DEFINE") && p.eat("FIELD") {
         let overwrite = p.eat("OVERWRITE");
         let path = p.path()?;
@@ -1088,7 +1113,7 @@ pub fn parse(input: &str) -> Result<Statement> {
         }
         let kind = p.name()?.to_ascii_lowercase();
         let target = if p.eat("<") {
-            let target = if kind == "vector" {
+            let mut target = if kind == "vector" {
                 let token = p
                     .tokens
                     .get(p.pos)
@@ -1102,6 +1127,35 @@ pub fn parse(input: &str) -> Result<Statement> {
             } else {
                 p.name()?
             };
+            if kind == "array" {
+                if p.eat("<") {
+                    if !matches!(target.to_ascii_lowercase().as_str(), "record" | "vector") {
+                        return Err(p.error("array element parameters require record or vector"));
+                    }
+                    let inner = if target.eq_ignore_ascii_case("vector") {
+                        let token = p
+                            .tokens
+                            .get(p.pos)
+                            .ok_or_else(|| p.error("expected vector dimension"))?;
+                        if token.kind != Kind::Number {
+                            return Err(p.error("expected vector dimension"));
+                        }
+                        let value = token.text.clone();
+                        p.pos += 1;
+                        value
+                    } else {
+                        p.name()?
+                    };
+                    if !p.eat(">") {
+                        return Err(p.error("expected >"));
+                    }
+                    target = format!("{target}<{inner}>");
+                }
+                if p.tokens.get(p.pos).is_some_and(|token| token.text == "?") {
+                    p.pos += 1;
+                    target.push('?');
+                }
+            }
             if !p.eat(">") {
                 return Err(p.error("expected >"));
             }
@@ -1111,6 +1165,13 @@ pub fn parse(input: &str) -> Result<Statement> {
         };
         let required = p.eat("REQUIRED");
         let nullable = p.eat("NULLABLE");
+        let default = if p.eat("DEFAULT") {
+            Some(p.expr(0)?)
+        } else {
+            None
+        };
+        let readonly = p.eat("READONLY");
+        let flexible = p.eat("FLEXIBLE");
         let check = if p.eat("CHECK") {
             if !p.eat("(") {
                 return Err(p.error("expected CHECK (expression)"));
@@ -1150,6 +1211,9 @@ pub fn parse(input: &str) -> Result<Statement> {
             required,
             nullable,
             check,
+            default,
+            readonly,
+            flexible,
             overwrite,
         });
     }

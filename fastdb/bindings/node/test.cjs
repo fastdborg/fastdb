@@ -3910,3 +3910,75 @@ test('array predicates and field selection preserve typed values in both clients
     } finally { await db.close(); }
   }
 });
+
+test('typed unnest expands arrays through SQL in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const values = [9223372036854775807n,true,Buffer.from([0,255]),new Record('refs','a'),{n:2n},null];
+      const result = await db.execute('SELECT u.key,u.value FROM array::unnest($items) u ORDER BY u.key', {$items:values});
+      assert.deepEqual(result.columns,['key','value']);
+      assert.deepEqual(result.rows,values.map((value,i) => [BigInt(i),value]));
+      await db.execute('INSERT INTO docs {items:$items}', {$items:[1n,2n,2n]});
+      assert.deepEqual(await db.all('SELECT u.value,count(*) FROM docs d CROSS JOIN array::unnest(d.items) u GROUP BY u.value ORDER BY u.value'), [[1n,1n],[2n,2n]]);
+      assert.deepEqual(await db.all('SELECT * FROM array::unnest(NULL)'), []);
+      await assert.rejects(async () => db.execute('SELECT count(*) FROM array::unnest($items)', {$items:Array(100001).fill(null)}), error => error.code === 'FDB_LIMIT');
+      assert.deepEqual(await db.all('SELECT count(*) FROM docs'), [[1n]]);
+    } finally { await db.close(); }
+  }
+});
+
+test('field defaults and readonly validation preserve both client transactions', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const data = {n:9223372036854775807n,bytes:Buffer.from([0,255]),ref:new Record('refs','a')};
+      await db.execute('CREATE TABLE docs');
+      await db.execute('DEFINE FIELD stamp ON docs TYPE integer REQUIRED DEFAULT 7 READONLY');
+      await db.execute('DEFINE FIELD data ON docs TYPE object DEFAULT $data READONLY', {$data:data});
+      assert.deepEqual(await db.all('INSERT INTO docs {id:docs:a} RETURNING stamp,data'), [[7n,data]]);
+      await db.execute('BEGIN');
+      await db.execute('INSERT INTO docs {id:docs:prior}');
+      await assert.rejects(async () => db.execute('UPDATE docs:a PATCH [{op:\'replace\',path:\'/stamp\',value:8}]'), error => error.code === 'FDB_VALIDATION');
+      await assert.rejects(async () => db.execute('UPDATE docs:a MERGE {data:{n:0}}'), error => error.code === 'FDB_VALIDATION');
+      assert.deepEqual(await db.all('SELECT stamp,data FROM docs ORDER BY id'), [[7n,data],[7n,data]]);
+      await db.execute('COMMIT');
+      const info = (await db.all('INFO FOR TABLE docs'))[0][0];
+      const stamp = info.fields.find(field => field.path[0] === 'stamp');
+      assert.equal(stamp.has_default,true);
+      assert.equal(stamp.readonly,true);
+      assert.equal(stamp.default,7n);
+    } finally { await db.close(); }
+  }
+});
+
+test('strict schemas and typed arrays validate writes in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      for (const sql of [
+        'CREATE TABLE docs',
+        'DEFINE FIELD n ON docs TYPE integer REQUIRED DEFAULT 7',
+        'DEFINE FIELD ints ON docs TYPE array<integer?>',
+        'DEFINE FIELD refs ON docs TYPE array<record<refs>>',
+        'DEFINE FIELD extra ON docs TYPE object FLEXIBLE',
+        'DEFINE SCHEMA ON docs STRICT',
+      ]) await db.execute(sql);
+      const refs = [new Record('refs','a')];
+      const ints = [9223372036854775807n,null];
+      await db.execute('INSERT INTO docs {id:docs:a,ints:$ints,refs:$refs,extra:{anything:true}}', {$ints:ints,$refs:refs});
+      assert.deepEqual(await db.all('SELECT n,ints,refs FROM docs'), [[7n,ints,refs]]);
+      for (const sql of ["UPDATE docs:a {ints:['wrong']}", 'UPDATE docs:a {unknown:1}', 'UPDATE docs:a {refs:[other:a]}', 'REMOVE FIELD ints ON docs']) {
+        await assert.rejects(async () => db.execute(sql), error => error.code === 'FDB_VALIDATION');
+      }
+      const info = (await db.all('INFO FOR TABLE docs'))[0][0];
+      assert.equal(info.strict,true);
+      const field = info.fields.find(field => field.path[0] === 'ints');
+      assert.equal(field.element_type,'integer');
+      assert.equal(field.element_nullable,true);
+      await db.execute('DEFINE SCHEMA ON docs FLEXIBLE');
+      await db.execute('UPDATE docs:a {unknown:1}');
+      await assert.rejects(async () => db.execute('DEFINE SCHEMA ON docs STRICT'), error => error.code === 'FDB_VALIDATION');
+    } finally { await db.close(); }
+  }
+});

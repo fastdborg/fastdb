@@ -15,6 +15,11 @@ struct Source {
     consumed: std::collections::BTreeSet<String>,
 }
 impl Source {
+    fn is_unnest(&self) -> bool {
+        self.derived_logical
+            && matches!(&self.table, SelectTable::TableCall(name, args, _)
+                if name.name.as_str() == "json_each" && matches!(args.first().map(AsRef::as_ref), Some(Expr::FunctionCall {name,..}) if name.as_str() == "__fastdb_unnest_json"))
+    }
     fn logical(&self) -> bool {
         self.collection.is_some() || self.derived_logical
     }
@@ -1623,7 +1628,10 @@ impl Scope {
             let Some((column, nested)) = path.split_first() else {
                 return Err(unsupported("doc::row on derived sources"));
             };
-            let value = format!("{}.{}", quote(&self.sources[i].alias), quote(column));
+            let mut value = format!("{}.{}", quote(&self.sources[i].alias), quote(column));
+            if column.eq_ignore_ascii_case("value") && self.sources[i].is_unnest() {
+                value = format!("CAST({value} AS BLOB)");
+            }
             if nested.is_empty() {
                 return expression(&if typed {
                     value
@@ -1794,6 +1802,14 @@ impl Scope {
         }
     }
     fn sql_argument(&self, expr: &mut Expr) -> Result<()> {
+        if let Expr::FunctionCall { name, args, .. } = expr {
+            if name.as_str() == "__fastdb_unnest_json" {
+                let [value] = args.as_mut_slice() else {
+                    return Err(Error::Validation("array::unnest expects one array".into()));
+                };
+                return self.typed(value);
+            }
+        }
         if self.preserved(expr)? {
             *expr = expression(&format!("__fastdb_sql_scalar({expr})"))?;
             Ok(())
@@ -2985,6 +3001,38 @@ fn source(
     inspect_native: bool,
 ) -> Result<Source> {
     if let SelectTable::TableCall(name, args, alias) = table {
+        if name.db_name.is_none() && name.name.as_str() == "__fastdb_unnest" {
+            let [input] = args.as_slice() else {
+                return Err(Error::Validation("array::unnest expects one array".into()));
+            };
+            let alias = alias
+                .clone()
+                .unwrap_or_else(|| As::As(Name::exact("unnest".into())));
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&format!(
+                "SELECT * FROM json_each(__fastdb_unnest_json({input})) AS {}",
+                quote(alias.name().as_str())
+            ))?
+            else {
+                unreachable!()
+            };
+            let OneSelect::Select {
+                from: Some(from), ..
+            } = select.body.select
+            else {
+                unreachable!()
+            };
+            return Ok(Source {
+                table: *from.select,
+                alias: alias.name().as_str().into(),
+                collection: None,
+                derived: Some(vec![("key".into(), false), ("value".into(), true)]),
+                derived_logical: true,
+                derived_physical: None,
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed: Default::default(),
+            });
+        }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_near" {
             let [index, center, radius] = args.as_slice() else {
                 return Err(Error::Validation(
@@ -3976,6 +4024,7 @@ pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Resu
                 "array::len" => "__fastdb_h_array_len",
                 "array::distinct" => "__fastdb_h_array_distinct",
                 "array::flatten" => "__fastdb_h_array_flatten",
+                "array::unnest" => "__fastdb_unnest",
                 "doc::keys" => "__fastdb_h_object_keys",
                 "doc::values" => "__fastdb_h_object_values",
                 "doc::entries" => "__fastdb_h_object_entries",
@@ -4673,7 +4722,7 @@ impl Connection {
                 if matches!(
                     table.as_ref(),
                     SelectTable::Table(..) | SelectTable::Select(..)
-                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector"))
+                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest"))
                 {
                     local.push(source(
                         self,
@@ -5281,7 +5330,7 @@ impl Connection {
                                         table.as_ref(),
                                         SelectTable::Table(..) | SelectTable::Select(..)
                                     ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _)
-                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector"))
+                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest"))
                                     {
                                         resolved.push(source(
                                             self,
@@ -6113,6 +6162,17 @@ impl Connection {
                             .using
                             .bindings
                             .get(&name.as_str().to_ascii_lowercase()),
+                        _ => None,
+                    } {
+                        column.clone()
+                    } else if let Some(column) = match &expr {
+                        Expr::Id(name) | Expr::Name(name) => scope
+                            .sources
+                            .iter()
+                            .filter(|source| source.is_unnest())
+                            .flat_map(|source| source.derived.iter().flatten())
+                            .find(|(column, _)| column.eq_ignore_ascii_case(name.as_str()))
+                            .map(|(column, _)| column),
                         _ => None,
                     } {
                         column.clone()
@@ -7604,7 +7664,11 @@ fn expand_stars(
                             quote(&source.alias),
                             quote(physical)
                         ))?),
-                        Some(As::As(Name::from_string(quote(name)))),
+                        Some(As::As(if source.is_unnest() {
+                            Name::exact(name.clone())
+                        } else {
+                            Name::from_string(quote(name))
+                        })),
                     ));
                 }
                 continue;

@@ -35,6 +35,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
             (
+                c"__fastdb_unnest_json",
+                unnest_json as turso_ext::ScalarFunction,
+                1,
+            ),
+            (
                 c"__fastdb_pagination_value",
                 pagination_value as turso_ext::ScalarFunction,
                 1,
@@ -112,7 +117,7 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 api.ctx,
                 name.as_ptr(),
                 argc,
-                name != c"__fastdb_pagination_value",
+                name != c"__fastdb_pagination_value" && name != c"__fastdb_unnest_json",
                 0,
                 callback,
                 None,
@@ -1956,4 +1961,23 @@ mod cte_evaluation_tests {
             }
         }
     }
+}
+
+#[scalar(name = "__fastdb_unnest_json")]
+fn unnest_json(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("array::unnest expects one array".into()));
+        };
+        Ok(ExtValue::from_text(crate::unnest::json(&decode_arg(
+            value,
+        )?)?))
+    })();
+    result.unwrap_or_else(|error| {
+        ExtValue::error_with_message(match error {
+            Error::Limit(message) => format!("__fastdb_udf_limit:{message}"),
+            Error::Validation(message) => format!("__fastdb_udf_validation:{message}"),
+            other => other.to_string(),
+        })
+    })
 }

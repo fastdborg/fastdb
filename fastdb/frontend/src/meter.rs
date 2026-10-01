@@ -187,7 +187,8 @@ impl Connection {
         let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
             use fastql_parser::Statement;
             Ok(match fastql_parser::parse(sql)? {
-                Statement::DefineField { .. }
+                Statement::DefineSchema { .. }
+                | Statement::DefineField { .. }
                 | Statement::RemoveField { .. }
                 | Statement::DefineRelation { .. }
                 | Statement::DropRelation { .. }
@@ -737,6 +738,7 @@ impl Connection {
         maintenance: bool,
         execute: impl FnOnce(&mut turso_core::Statement) -> Result<T>,
     ) -> Result<T> {
+        let _unnest = crate::unnest::Scope::enter();
         let meter = self
             .work_meter
             .lock()

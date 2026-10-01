@@ -364,3 +364,80 @@ fn standalone_expression_parser_rejects_statements_and_trailing_delimiters() {
         assert!(crate::parse_expression(input).is_err(), "{input}");
     }
 }
+
+#[test]
+fn field_default_and_readonly_modifiers_preserve_native_default_sql() {
+    let Statement::DefineField {
+        default,
+        readonly,
+        required,
+        check,
+        ..
+    } = parse("DEFINE FIELD n ON docs TYPE integer REQUIRED DEFAULT -7 READONLY CHECK(n<0)")
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(default, Some(Expr::Integer(-7)));
+    assert!(readonly && required && check.is_some());
+    for sql in [
+        "DEFINE FIELD n ON docs TYPE integer READONLY DEFAULT 7",
+        "DEFINE FIELD n ON docs TYPE integer DEFAULT 7 DEFAULT 8",
+        "DEFINE FIELD n ON docs TYPE integer READONLY READONLY",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    let sql = "CREATE TABLE native(n INTEGER DEFAULT 7)";
+    assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
+}
+
+#[test]
+fn strict_schema_and_typed_array_modifiers_are_explicit() {
+    assert_eq!(
+        parse("DEFINE SCHEMA ON docs STRICT").unwrap(),
+        Statement::DefineSchema {
+            table: "docs".into(),
+            strict: true
+        }
+    );
+    assert_eq!(
+        parse("DEFINE SCHEMA ON docs FLEXIBLE").unwrap(),
+        Statement::DefineSchema {
+            table: "docs".into(),
+            strict: false
+        }
+    );
+    for target in [
+        "integer?",
+        "record<writers>",
+        "vector<3>?",
+        "object",
+        "any",
+        "array",
+    ] {
+        let Statement::DefineField {
+            kind,
+            target: actual,
+            flexible,
+            ..
+        } = parse(&format!(
+            "DEFINE FIELD values ON docs TYPE array<{target}> FLEXIBLE"
+        ))
+        .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(kind, "array");
+        assert_eq!(actual, Some(target.into()));
+        assert!(flexible);
+    }
+    for sql in [
+        "DEFINE SCHEMA docs STRICT",
+        "DEFINE SCHEMA ON docs",
+        "DEFINE SCHEMA ON docs STRICT extra",
+        "DEFINE FIELD n ON docs TYPE array<array<integer>>",
+        "DEFINE FIELD n ON docs TYPE array<integer??>",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+}

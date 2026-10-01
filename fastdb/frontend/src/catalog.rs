@@ -45,11 +45,16 @@ pub(crate) const fn legacy_version() -> u32 {
     1
 }
 pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
-    if !matches!(collection.version, 1..=4) {
+    if !matches!(collection.version, 1..=5) {
         return Err(Error::Storage(format!(
             "unsupported collection metadata version {}",
             collection.version
         )));
+    }
+    if (collection.strict || !collection.field_policies.is_empty()) && collection.version < 5 {
+        return Err(Error::Storage(
+            "field rules require catalog version 5".into(),
+        ));
     }
     if !collection.relations.is_empty() && collection.version < 3 {
         return Err(Error::Storage("relations require catalog version 3".into()));
@@ -126,6 +131,7 @@ pub(crate) fn decode(metadata: &str, name: &str) -> Result<Collection> {
                 canonical(target)?;
             }
         }
+        crate::field_rules::validate_catalog(&c)?;
         let mut names = std::collections::BTreeSet::new();
         for index in &c.indexes {
             crate::validate_path(&index.path)?;
@@ -461,6 +467,13 @@ impl Connection {
                 .position(|f| f.path == path)
                 .ok_or_else(|| Error::NotFound(path.join(".")))?;
             c.fields.remove(position);
+            c.field_policies.retain(|policy| policy.path != path);
+            if c.strict {
+                crate::field_rules::validate_catalog(&c)?;
+                for document in self.documents(&c)? {
+                    self.validate_candidate(&c, &document)?;
+                }
+            }
             self.save_catalog(&c)
         })
     }
@@ -641,6 +654,11 @@ impl Connection {
                     .fields
                     .iter()
                     .map(|f| {
+                        let options = c
+                            .field_policies
+                            .iter()
+                            .find(|policy| policy.path == f.path)
+                            .map(|policy| &policy.options);
                         object([
                             ("path", strings(&f.path)),
                             (
@@ -659,6 +677,39 @@ impl Connection {
                             ("required", Value::Boolean(f.required)),
                             ("nullable", Value::Boolean(f.nullable)),
                             (
+                                "has_default",
+                                Value::Boolean(
+                                    options.is_some_and(|options| options.default.is_some()),
+                                ),
+                            ),
+                            (
+                                "default",
+                                options
+                                    .and_then(|options| options.default.clone())
+                                    .unwrap_or(Value::Null),
+                            ),
+                            (
+                                "readonly",
+                                Value::Boolean(options.is_some_and(|options| options.readonly)),
+                            ),
+                            (
+                                "flexible",
+                                Value::Boolean(options.is_some_and(|options| options.flexible)),
+                            ),
+                            (
+                                "element_type",
+                                options
+                                    .and_then(|options| options.element_type.as_ref())
+                                    .map(|kind| Value::String(crate::field_rules::type_name(kind)))
+                                    .unwrap_or(Value::Null),
+                            ),
+                            (
+                                "element_nullable",
+                                Value::Boolean(
+                                    options.is_some_and(|options| options.element_nullable),
+                                ),
+                            ),
+                            (
                                 "check",
                                 f.check
                                     .as_ref()
@@ -676,6 +727,7 @@ impl Connection {
                 Ok(object([
                     ("name", Value::String(c.name)),
                     ("model", Value::String("document".into())),
+                    ("strict", Value::Boolean(c.strict)),
                     ("fields", Value::Array(fields)),
                     ("indexes", Value::Array(indexes)),
                     ("relations", Value::Array(relations)),
