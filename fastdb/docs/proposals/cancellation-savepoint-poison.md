@@ -1,5 +1,8 @@
 # Canceled-write savepoint recovery
 
+Raw logs were deleted during the user-requested 2026-10-01 cleanup. The
+qualification summary below is retained; Git history retains tracked log content.
+
 Current status (2026-09-30): **retained and adapted to Turso 0.8.1**. The selected
 named savepoint still needs its prior transaction-poison state restored after
 successful rollback. Neither 0.8.1 nor the inspected upstream main supplies it.
@@ -32,9 +35,9 @@ inserts occurred before cancellation, verify undo and prior work, and then requi
 successful caller completion; Node also reopens the file. They fail at the same
 commit boundary on original Node 22/24 and C artifacts; see
 [the receipt](cancellation-savepoint-poison/installed-regressions-before.json),
-[Node 22](cancellation-savepoint-poison/node22-regression-before.log),
-[Node 24](cancellation-savepoint-poison/node24-regression-before.log), and
-[C ABI](cancellation-savepoint-poison/c-regression-before.log).
+Node 22 (raw log removed),
+Node 24 (raw log removed), and
+C ABI (raw log removed).
 
 A timing-independent Rust regression extends the existing plain-native write
 cancellation test to commit or release its caller scope, rather than only
@@ -46,7 +49,7 @@ source suite had not covered this final commit boundary.
 - [Node reproduction](cancellation-savepoint-poison/reproduce.cjs) and
   [before results](cancellation-savepoint-poison/node-before.json).
 - [Deterministic regression patch](cancellation-savepoint-poison/frontend-regression.patch)
-  and [failing baseline log](cancellation-savepoint-poison/frontend-before.log).
+  and failing baseline log (raw log removed).
 
 ## Cause and proposed correction
 
@@ -81,7 +84,7 @@ includes the two implementation files and five lifecycle regressions. SHA-256:
 It applies to `a4df9cc27da6b4d6f0fdcc82aff5b61edafdfdff`.
 
 The isolated candidate passes **41 statement-lifecycle tests** with `fts` and
-`conn_raw_api` enabled; see [the log](cancellation-savepoint-poison/core-lifecycle-after.log).
+`conn_raw_api` enabled; see the log (raw log removed).
 Coverage includes WAL and MVCC recovery, COMMIT/root RELEASE, unchanged rejection
 of unrecovered abandoned writes, pre-existing poison, nested/same-name scopes,
 and an attached writer whose savepoint is created lazily. The attached case
@@ -95,12 +98,12 @@ Two independent code reviews found no blocking defect. The marker is restored
 only after the currently fallible rollback paths finish; a failed target lookup
 retains the marker. The expanded frontend regression passes all ten deterministic cancellation and
 caller-boundary combinations within one test; see
-[the after log](cancellation-savepoint-poison/frontend-after.log). The additional
+the after log (raw log removed). The additional
 savepoint tests also pass: **20 tests**, overlapping the lifecycle filter,
 with no failures or ignored tests; see
-[the savepoint log](cancellation-savepoint-poison/core-savepoint-after.log).
+the savepoint log (raw log removed).
 Scoped formatting and core/frontend Clippy with warnings denied pass; see
-[the Clippy log](cancellation-savepoint-poison/clippy-after.log).
+the Clippy log (raw log removed).
 
 Commands (Rust 1.88.0, isolated worktree, locked dependencies):
 

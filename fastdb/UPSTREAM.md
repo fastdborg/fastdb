@@ -99,7 +99,7 @@ The historical threaded-WASI probe added a target-specific rquickjs-sys 0.12.2 b
 under the frontend, pinned bindgen 0.72.1 in Cargo.lock, and no existing crate
 version upgrades. Native features remain unchanged. WASI SDK 33.0 and libclang
 18.1.1 are external build tools; C++ exceptions require the SDK's exception-enabled
-libraries. Core and vendor sources remain unchanged. See `docs/v2-wasm-probe.md`
+libraries. Core and vendor sources remain unchanged. See `docs/browser-removal.md`
 for real-browser dependency checks and the remaining full-text/worker/I/O gates.
 
 The removed browser client added `fastdb-protocol` and `fastdb-browser` as explicit workspace
@@ -118,13 +118,13 @@ savepoint for ordinary INSERT/UPDATE/DELETE in existing caller scopes, rolling
 back on cancellation and preserving native conflict-error dispositions. Native
 oracle checks include rows, transaction state, changes() and last_insert_rowid().
 This change uses public engine APIs and does not modify upstream sources. The scalar-error transaction and WASI FTS exceptions were subsequently approved
-and integrated; see the maintenance register below. See [browser client evidence](docs/v2-browser-client.md).
+and integrated; see the maintenance register below. See [browser client evidence](docs/browser-removal.md).
 
 The historical browser OPFS adapter implemented the existing public engine `IO`
 and `File` traits and used `Database::open_with_io`. Dedicated browser workers owned
 exclusive database/WAL handles, mapped sync to flush, and returned synchronous I/O
 completions to Rust. That adapter added no core/storage-format change or dependency.
-See [OPFS qualification](docs/v2-browser-opfs.md) for the fault/platform gates at
+See [OPFS qualification](docs/browser-removal.md) for the fault/platform gates at
 that stage. Neither that browser qualification nor WASI FTS is a current release gate.
 
 ## Approved core exception: first-commit FULL-mode WAL sync

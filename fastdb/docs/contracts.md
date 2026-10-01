@@ -163,7 +163,7 @@ Statement validation/index failures restore document and index changes. Native
 engine errors can abort the enclosing transaction; inspect transaction reports
 rather than assuming every failure preserves earlier pending work. Broader join
 scope, planner, resource and recovery qualification remains open. See
-[the join design](update-from.md) and [verification evidence](verification.md).
+[the join design](update-from.md) and [verification evidence](status.md).
 
 ## Tuple updates
 
@@ -196,7 +196,7 @@ paths in tuple target lists remain unsupported. In particular, the pinned native
 multi-row VALUES tuple form has observed last-row selection for constants and a
 compiler panic for correlated fields. FastDB's collection path rejects it with
 FDB_UNSUPPORTED. The detailed probes and scoped test evidence are recorded in
-[verification.md](verification.md); this is an implemented subset, not complete
+[verification.md](status.md); this is an implemented subset, not complete
 SQLite compatibility or a completed V1 SQL release gate.
 
 ## Object-write expression subset
@@ -871,7 +871,7 @@ Native-table INSERT SELECT cancellation during IN, NOT IN, EXISTS and scalar agg
 
 ## Observed pinned trigger cancellation exception (2026-09-07)
 
-Interruption inside an AFTER INSERT trigger currently surfaces as FDB_BUSY because the pinned OpProgram executor maps child Interrupt and Busy results to Busy. Do not treat the completed source-evaluation tests as proof of correct error classification inside trigger execution. The first native/autocommit reproducer leaves both target and trigger-effect tables empty; broader after-write transaction behavior still requires qualification. The strict regression is an ignored, explicitly failing V1 release gate. See [the proposed core fix](trigger-interrupt.md); approval and validation remain pending.
+Interruption inside an AFTER INSERT trigger currently surfaces as FDB_BUSY because the pinned OpProgram executor maps child Interrupt and Busy results to Busy. Do not treat the completed source-evaluation tests as proof of correct error classification inside trigger execution. The first native/autocommit reproducer leaves both target and trigger-effect tables empty; broader after-write transaction behavior still requires qualification. The strict regression is an ignored, explicitly failing V1 release gate. See [the proposed core fix](trigger-interrupt-review.md); approval and validation remain pending.
 
 ## Source-free typed nested SELECTs (2026-09-07)
 
@@ -1453,7 +1453,7 @@ its partial rows and preserves prior work; autocommit keeps its native transacti
 boundary. Non-cancellation error handling retains native conflict dispositions,
 including OR FAIL and OR ROLLBACK. The regression avoids SQL callbacks/triggers,
 which can change engine statement-journal eligibility. See
-[browser/client evidence](v2-browser-client.md) for control/fix results and the
+[browser/client evidence](browser-removal.md) for control/fix results and the
 conflict oracle. The pending user-function scalar-error bug and ambiguous
 FDB_ROLLBACK cleanup outcomes remain separate limitations.
 
