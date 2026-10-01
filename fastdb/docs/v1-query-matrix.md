@@ -51,7 +51,9 @@ speculative combination before release:
   Correlation, lexical alias collisions and nested compound pagination retain
   context-specific restrictions documented with their regressions; general
   arbitrary correlation is not established by this matrix.
-- Collection ON CONFLICT targets remain deferred; use explicit ID UPSERT.
+- The V1 release deferred collection ON CONFLICT targets. The 2.2.0 source adds
+  ID and declared unique targets under the [2.2.0 contract](v2.2-language.md#collection-on-conflict-source-implemented-release-pending);
+  exact release qualification is pending.
   Ordinary relational ON CONFLICT remains native. RETURNING rejects aggregate,
   window and subquery expressions and preserves its documented snapshot rules.
 - Search indexes, inverse links, user JavaScript, changefeeds and scripting are

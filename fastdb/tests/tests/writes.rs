@@ -379,11 +379,17 @@ fn typed_parameters_and_validation_cannot_be_bypassed() {
         "UPDATE users SET name = 42",
         "UPDATE users SET active = 1",
         "INSERT INTO users (id,name) VALUES (1,'bad')",
-        "INSERT INTO users (id,name) VALUES (users:u2,'x') ON CONFLICT DO NOTHING",
+        "INSERT INTO users (id,name,active) VALUES (users:u2,'x',1) ON CONFLICT DO NOTHING",
         "UPDATE users SET name='x', name='y'",
     ] {
         assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
     }
+    assert!(q(
+        &c,
+        "INSERT INTO users (name) VALUES ('Typed') ON CONFLICT(name) DO NOTHING RETURNING *"
+    )
+    .rows
+    .is_empty());
     assert_eq!(
         q(&c, "SELECT name FROM users").rows,
         vec![vec![Value::String("Typed".into())]]

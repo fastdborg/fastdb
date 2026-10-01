@@ -35,6 +35,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
             (
+                c"__fastdb_array_key",
+                array_key as turso_ext::ScalarFunction,
+                1,
+            ),
+            (
                 c"__fastdb_unnest_json",
                 unnest_json as turso_ext::ScalarFunction,
                 1,
@@ -441,6 +446,25 @@ fn unwrap(args: &[ExtValue]) -> ExtValue {
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
+#[scalar(name = "__fastdb_array_key")]
+fn array_key(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("array key arity".into()));
+        };
+        let value = decode_arg(value)?;
+        value.encode_with_limit(Some(1024 * 1024))?;
+        Ok(ExtValue::from_blob(crate::collections::identity(&value)?))
+    })();
+    result.unwrap_or_else(|error| {
+        let prefix = match &error {
+            Error::Limit(_) => "__fastdb_udf_limit:",
+            Error::Validation(_) => "__fastdb_udf_validation:",
+            _ => "",
+        };
+        ExtValue::error_with_message(format!("{prefix}{error}"))
+    })
+}
 #[scalar(name = "__fastdb_helper")]
 fn helper(args: &[ExtValue]) -> ExtValue {
     let result = (|| -> Result<ExtValue> {
@@ -469,6 +493,7 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             ("array_new", _) => Value::Array(args),
             (
                 "array_len"
+                | "array_contains"
                 | "array_distinct"
                 | "array_flatten"
                 | "object_keys"
@@ -511,7 +536,14 @@ fn helper(args: &[ExtValue]) -> ExtValue {
     result.unwrap_or_else(|e| {
         let prefix = if matches!(
             args.first().and_then(ExtValue::to_text),
-            Some("search_analyze" | "mutation_diff" | "doc_before" | "doc_after" | "doc_diff")
+            Some(
+                "search_analyze"
+                    | "mutation_diff"
+                    | "doc_before"
+                    | "doc_after"
+                    | "doc_diff"
+                    | "array_contains"
+            )
         ) {
             match e {
                 Error::Limit(_) => "__fastdb_udf_limit:",

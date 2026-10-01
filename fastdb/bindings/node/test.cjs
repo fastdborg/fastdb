@@ -4106,3 +4106,40 @@ test('candidate filters and compressed vectors keep typed results in both client
     } finally { await db.close(); }
   }
 });
+
+test('compound and array indexes support atomic conflict updates in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      await db.execute("INSERT INTO docs {id:docs:a,tenant:1,email:'one',n:2,tags:[true,1],body:'before',v:vector32('[1,0]')}");
+      await db.execute('CREATE UNIQUE INDEX address ON docs(tenant,email)');
+      await db.execute('CREATE SEARCH INDEX tags ON docs(tags) USING ARRAY');
+      await db.execute('CREATE SEARCH INDEX words ON docs(body) USING FULLTEXT');
+      await db.execute("CREATE SEARCH INDEX vectors ON docs(v) USING VECTOR WITH(dimensions=2,metric='l2')");
+      const tags=[false,2n,Buffer.from([0,255]),new Record('docs','link')];
+      const result=await db.execute("INSERT INTO docs(id,tenant,email,n,tags,body,v) VALUES(docs:b,1,'one',3,$tags,'after',$v) ON CONFLICT(tenant,email) DO UPDATE SET n=n+excluded.n,tags=excluded.tags,body=excluded.body,v=excluded.v RETURNING id,n,tags,doc::before(),doc::after()",{$tags:tags,$v:Vector.float32([2,0])});
+      assert.equal(result.affected,1n);
+      assert.deepEqual(result.rows[0].slice(0,3),[new Record('docs','a'),5n,tags]);
+      assert.equal(result.rows[0][3].n,2n);
+      assert.equal(result.rows[0][4].n,5n);
+      for(const needle of tags) {
+        const params={$needle:needle};
+        assert.deepEqual(await db.all('SELECT id FROM docs WHERE array::contains(tags,$needle)',params),[[new Record('docs','a')]]);
+        assert.deepEqual(await db.all('SELECT id FROM docs NOT INDEXED WHERE array::contains(tags,$needle)',params),[[new Record('docs','a')]]);
+      }
+      const plan=await db.all('EXPLAIN QUERY PLAN SELECT id FROM docs WHERE array::contains(tags,$needle)',{$needle:2n});
+      assert.ok(plan.flat().some(value=>typeof value==='string' && value.includes('SEARCH') && value.includes('tags')));
+      assert.deepEqual(await db.all("SELECT id FROM search::text('words','after',1)"),[[new Record('docs','a')]]);
+      assert.deepEqual(await db.all("SELECT id FROM search::vector('vectors',vector32('[2,0]'),1)"),[[new Record('docs','a')]]);
+      assert.deepEqual((await db.execute("INSERT INTO docs(tenant,email) VALUES(1,'one') ON CONFLICT DO NOTHING RETURNING *")).rows,[]);
+      await db.execute('BEGIN');
+      await db.execute("UPDATE docs:a MERGE {pending:true}");
+      const before=await db.collection('docs').get('a');
+      await assert.rejects(async()=>db.execute("INSERT INTO docs(tenant,email,tags) VALUES(1,'one',$bad) ON CONFLICT(tenant,email) DO UPDATE SET tags=excluded.tags",{$bad:[{invalid:true}]}),error=>error.code==='FDB_VALIDATION');
+      assert.deepEqual(await db.collection('docs').get('a'),before);
+      await db.execute('REINDEX address');await db.execute('REINDEX tags');
+      await db.checkCollectionIntegrity('docs');
+      await db.execute('ROLLBACK');
+    } finally { await db.close(); }
+  }
+});

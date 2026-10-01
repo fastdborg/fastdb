@@ -480,6 +480,7 @@ impl Connection {
             ),
             fulltext: None,
             vector: Some(config),
+            scalar: None,
         };
         self.atomic(||{
             let mut collection=self.catalog(table)?;

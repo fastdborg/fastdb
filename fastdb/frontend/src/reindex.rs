@@ -22,7 +22,7 @@ impl Connection {
                 match index.kind {
                     IndexKind::FullText => self.build_text_storage(index, &documents)?,
                     IndexKind::Vector => self.build_vector_storage(index, &documents)?,
-                    IndexKind::Scalar | IndexKind::Spatial => {
+                    IndexKind::Scalar | IndexKind::Spatial | IndexKind::Array => {
                         self.run(&index.table_ddl(), &[])?;
                         self.run(&index.index_ddl(), &[])?;
                         for document in &documents {
@@ -85,7 +85,7 @@ mod tests {
     fn rebuild_repairs_missing_auxiliary_entries_from_documents() {
         let c = Database::open(":memory:").unwrap().connect().unwrap();
         for sql in [
-            "INSERT INTO docs {id:docs:a,n:7,body:'hello',v:vector32('[1,0]'),point:geo::point(1,2)}",
+            "INSERT INTO docs {id:docs:a,n:7,body:'hello',tags:['a','b'],v:vector32('[1,0]'),point:geo::point(1,2)}",
             "CREATE INDEX scalar ON docs(n)",
             "CREATE SEARCH INDEX words ON docs(body) USING FULLTEXT",
             "CREATE SEARCH INDEX vec ON docs(v) USING VECTOR WITH(dimensions=2,metric='cosine')",
@@ -189,10 +189,11 @@ mod cancellation_tests {
             ("vec","CREATE SEARCH INDEX vec ON docs(v) USING VECTOR WITH(dimensions=2,metric='cosine')"),
             ("compressed","CREATE SEARCH INDEX compressed ON docs(v) USING VECTOR WITH(dimensions=2,metric='cosine',quantization='f16')"),
             ("loc","CREATE SEARCH INDEX loc ON docs(point) USING SPATIAL"),
+            ("tags","CREATE SEARCH INDEX tags ON docs(tags) USING ARRAY"),
         ] {
             let c=Database::open(":memory:").unwrap().connect().unwrap();
-            c.execute("INSERT INTO docs {id:docs:a,n:1,body:'hello',v:vector32('[1,0]'),point:geo::point(1,2)}",&Parameters::new()).unwrap();
-            c.execute("INSERT INTO docs {id:docs:b,n:2,body:'world',v:vector32('[0,1]'),point:geo::point(2,3)}",&Parameters::new()).unwrap();
+            c.execute("INSERT INTO docs {id:docs:a,n:1,body:'hello',tags:['a','b'],v:vector32('[1,0]'),point:geo::point(1,2)}",&Parameters::new()).unwrap();
+            c.execute("INSERT INTO docs {id:docs:b,n:2,body:'world',tags:['b'],v:vector32('[0,1]'),point:geo::point(2,3)}",&Parameters::new()).unwrap();
             c.execute(ddl,&Parameters::new()).unwrap();
             c.execute("BEGIN",&Parameters::new()).unwrap();
             c.execute("INSERT INTO prior {id:prior:a,n:7}",&Parameters::new()).unwrap();

@@ -2899,6 +2899,7 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
             "__fastdb_h_array_new" => Some("array::new"),
             "__fastdb_h_array_append" => Some("array::append"),
             "__fastdb_h_array_len" => Some("array::len"),
+            "__fastdb_h_array_contains" => Some("array::contains"),
             "__fastdb_h_array_distinct" => Some("array::distinct"),
             "__fastdb_h_array_flatten" => Some("array::flatten"),
             "__fastdb_h_object_keys" => Some("doc::keys"),
@@ -3593,21 +3594,197 @@ fn constant(expr: &Expr) -> bool {
         _ => false,
     }
 }
+fn array_filter(
+    scope: &Scope,
+    source_index: usize,
+    predicate: &Expr,
+) -> Result<Option<(crate::Index, Expr)>> {
+    let Some(collection) = &scope.sources[source_index].collection else {
+        return Ok(None);
+    };
+    if !collection
+        .indexes
+        .iter()
+        .any(|index| index.kind == crate::IndexKind::Array)
+    {
+        return Ok(None);
+    }
+    match predicate {
+        Expr::Parenthesized(values) if values.len() == 1 => {
+            return array_filter(scope, source_index, &values[0])
+        }
+        Expr::Binary(lhs, Operator::And, rhs) => {
+            if let Some(candidate) = array_filter(scope, source_index, lhs)? {
+                return Ok(Some(candidate));
+            }
+            return array_filter(scope, source_index, rhs);
+        }
+        _ => {}
+    }
+    let Expr::FunctionCall {
+        name,
+        args,
+        distinctness,
+        order_by,
+        within_group,
+        filter_over,
+    } = predicate
+    else {
+        return Ok(None);
+    };
+    if name.as_str() != "__fastdb_h_array_contains"
+        || distinctness.is_some()
+        || !order_by.is_empty()
+        || !within_group.is_empty()
+        || filter_over.filter_clause.is_some()
+        || filter_over.over_clause.is_some()
+    {
+        return Ok(None);
+    }
+    let [field, needle] = args.as_slice() else {
+        return Ok(None);
+    };
+    if !(constant(needle)
+        || matches!(needle.as_ref(),Expr::Id(name) if !name.quoted() && (name.as_str().eq_ignore_ascii_case("true")||name.as_str().eq_ignore_ascii_case("false"))))
+    {
+        return Ok(None);
+    }
+    let Some((source, path)) = scope.field(field)? else {
+        return Ok(None);
+    };
+    if source != source_index {
+        return Ok(None);
+    }
+    let Some(index) = collection
+        .indexes
+        .iter()
+        .find(|index| index.kind == crate::IndexKind::Array && index.path == path)
+    else {
+        return Ok(None);
+    };
+    let mut needle = *needle.clone();
+    scope.typed(&mut needle)?;
+    Ok(Some((
+        index.clone(),
+        expression(&format!("i.key=__fastdb_array_key({needle})"))?,
+    )))
+}
+
+fn compound_filter(
+    scope: &Scope,
+    source_index: usize,
+    predicate: &Expr,
+) -> Result<Option<(crate::Index, Expr)>> {
+    fn conjuncts<'a>(predicate: &'a Expr, output: &mut Vec<&'a Expr>) {
+        match predicate {
+            Expr::Parenthesized(values) if values.len() == 1 => conjuncts(&values[0], output),
+            Expr::Binary(lhs, Operator::And, rhs) => {
+                conjuncts(lhs, output);
+                conjuncts(rhs, output);
+            }
+            _ => output.push(predicate),
+        }
+    }
+    let Some(collection) = &scope.sources[source_index].collection else {
+        return Ok(None);
+    };
+    if !collection
+        .indexes
+        .iter()
+        .any(|index| index.kind == crate::IndexKind::Scalar && index.scalar.is_some())
+    {
+        return Ok(None);
+    }
+    let mut conditions = Vec::new();
+    conjuncts(predicate, &mut conditions);
+    let mut best = None;
+    let mut best_length = 0;
+    for index in collection
+        .indexes
+        .iter()
+        .filter(|index| index.kind == crate::IndexKind::Scalar && index.scalar.is_some())
+    {
+        let mut filters = Vec::new();
+        for (position, path) in index.paths().enumerate() {
+            let mut matched = None;
+            for condition in &conditions {
+                let Expr::Binary(lhs, Operator::Equals, rhs) = condition else {
+                    continue;
+                };
+                for (mut field, value) in
+                    [(lhs.as_ref(), rhs.as_ref()), (rhs.as_ref(), lhs.as_ref())]
+                {
+                    while let Expr::Parenthesized(values) = field {
+                        if values.len() != 1 {
+                            break;
+                        }
+                        field = &values[0];
+                    }
+                    if constant(value)
+                        && scope.field(field)?.is_some_and(|(source, field_path)| {
+                            source == source_index && field_path.as_slice() == path
+                        })
+                    {
+                        let column = if position == 0 {
+                            "key".into()
+                        } else {
+                            format!("f{position}")
+                        };
+                        matched = Some(Expr::Binary(
+                            Box::new(expression(&format!("i.{column}"))?),
+                            Operator::Equals,
+                            Box::new(index_literal(value, &scope.params)?),
+                        ));
+                        break;
+                    }
+                }
+                if matched.is_some() {
+                    break;
+                }
+            }
+            let Some(filter) = matched else { break };
+            filters.push(filter);
+        }
+        if filters.len() > best_length {
+            best_length = filters.len();
+            let filter = filters
+                .into_iter()
+                .reduce(|lhs, rhs| Expr::Binary(Box::new(lhs), Operator::And, Box::new(rhs)))
+                .expect("nonempty compound prefix");
+            best = Some((index.clone(), filter));
+        }
+    }
+    Ok(best)
+}
+
 fn indexed_filter(
+    scope: &Scope,
+    source_index: usize,
+    predicate: &Expr,
+) -> Result<Option<(crate::Index, Expr)>> {
+    if let Some(candidate) = compound_filter(scope, source_index, predicate)? {
+        return Ok(Some(candidate));
+    }
+    if let Some(candidate) = array_filter(scope, source_index, predicate)? {
+        return Ok(Some(candidate));
+    }
+    scalar_indexed_filter(scope, source_index, predicate)
+}
+fn scalar_indexed_filter(
     scope: &Scope,
     source_index: usize,
     predicate: &Expr,
 ) -> Result<Option<(crate::Index, Expr)>> {
     if let Expr::Parenthesized(es) = predicate {
         if es.len() == 1 {
-            return indexed_filter(scope, source_index, &es[0]);
+            return scalar_indexed_filter(scope, source_index, &es[0]);
         }
     }
     if let Expr::Binary(lhs, Operator::And, rhs) = predicate {
-        if let Some(candidate) = indexed_filter(scope, source_index, lhs)? {
+        if let Some(candidate) = scalar_indexed_filter(scope, source_index, lhs)? {
             return Ok(Some(candidate));
         }
-        return indexed_filter(scope, source_index, rhs);
+        return scalar_indexed_filter(scope, source_index, rhs);
     }
     // Null-accepting predicates cannot generally move below an outer join:
     // filtering matched rows can manufacture new NULL-extended rows.
@@ -4075,6 +4252,7 @@ pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Resu
                 "array::new" => "__fastdb_h_array_new",
                 "array::append" => "__fastdb_h_array_append",
                 "array::len" => "__fastdb_h_array_len",
+                "array::contains" => "__fastdb_h_array_contains",
                 "array::distinct" => "__fastdb_h_array_distinct",
                 "array::flatten" => "__fastdb_h_array_flatten",
                 "array::unnest" => "__fastdb_unnest",

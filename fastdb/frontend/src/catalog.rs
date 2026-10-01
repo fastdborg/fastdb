@@ -80,6 +80,26 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
             "compressed vector indexes require catalog version 5".into(),
         ));
     }
+    if collection.version < 5
+        && collection
+            .indexes
+            .iter()
+            .any(|index| index.scalar.is_some())
+    {
+        return Err(Error::Storage(
+            "compound indexes require catalog version 5".into(),
+        ));
+    }
+    if collection.version < 5
+        && collection
+            .indexes
+            .iter()
+            .any(|index| index.kind == crate::IndexKind::Array)
+    {
+        return Err(Error::Storage(
+            "array indexes require catalog version 5".into(),
+        ));
+    }
     if !collection.relations.is_empty() && collection.version < 3 {
         return Err(Error::Storage("relations require catalog version 3".into()));
     }
@@ -165,6 +185,7 @@ pub(crate) fn decode(metadata: &str, name: &str) -> Result<Collection> {
             {
                 return Err(Error::Storage("invalid index identity".into()));
             }
+            index.validate_scalar_config()?;
             index.validate_text_config()?;
             index.validate_vector_config(&c)?;
             for path in index.paths() {
@@ -191,6 +212,7 @@ pub(crate) fn compatible_index(
                     field.kind,
                     FieldType::Object | FieldType::Array | FieldType::Vector(_)
                 ),
+                crate::IndexKind::Array => !matches!(field.kind, FieldType::Array),
                 crate::IndexKind::Spatial => !matches!(field.kind, FieldType::Object),
                 crate::IndexKind::FullText => !matches!(field.kind, FieldType::String),
                 crate::IndexKind::Vector => !matches!(field.kind, FieldType::Vector(_)),
@@ -207,6 +229,19 @@ pub(crate) fn compatible_index(
                 path.join(".")
             )));
         }
+    }
+    if kind == crate::IndexKind::Array
+        && c.field_policies.iter().any(|policy| {
+            policy.path == path
+                && matches!(
+                    policy.options.element_type,
+                    Some(FieldType::Object | FieldType::Array | FieldType::Vector(_))
+                )
+        })
+    {
+        return Err(Error::Validation(
+            "array index requires scalar or record element types".into(),
+        ));
     }
     Ok(())
 }
@@ -226,7 +261,9 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
         (
             "kind",
             Value::String(
-                if index.kind == crate::IndexKind::Spatial {
+                if index.kind == crate::IndexKind::Array {
+                    "array"
+                } else if index.kind == crate::IndexKind::Spatial {
                     "spatial"
                 } else if index.kind == crate::IndexKind::FullText {
                     "fulltext"
@@ -239,6 +276,9 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
             ),
         ),
     ];
+    if index.scalar.is_some() {
+        fields.push(("paths", Value::Array(index.paths().map(strings).collect())));
+    }
     if let Some(config) = &index.fulltext {
         fields.push(("paths", Value::Array(index.paths().map(strings).collect())));
         fields.push(("tokenizer", Value::String(config.tokenizer.clone())));

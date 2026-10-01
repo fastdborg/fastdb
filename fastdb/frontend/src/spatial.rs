@@ -141,13 +141,23 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value> {
 
 impl crate::Index {
     pub(crate) fn table_ddl(&self) -> String {
+        if self.kind == crate::IndexKind::Array {
+            return format!(
+                "CREATE TABLE {} (\"key\" BLOB NOT NULL,id BLOB NOT NULL,PRIMARY KEY(id,\"key\"))",
+                crate::quote(&self.storage)
+            );
+        }
         if self.kind == crate::IndexKind::FullText {
             return self.text_table_ddl();
         }
         let extra = if self.kind == crate::IndexKind::Spatial {
-            ", longitude"
+            ", longitude".to_owned()
+        } else if self.kind == crate::IndexKind::Scalar {
+            (1..self.paths().count())
+                .map(|i| format!(",f{i}"))
+                .collect::<String>()
         } else {
-            ""
+            String::new()
         };
         format!(
             "CREATE TABLE {} (\"key\", id BLOB NOT NULL{extra})",
@@ -155,6 +165,13 @@ impl crate::Index {
         )
     }
     pub(crate) fn index_ddl(&self) -> String {
+        if self.kind == crate::IndexKind::Array {
+            return format!(
+                "CREATE INDEX {} ON {} (\"key\",id)",
+                crate::quote(&self.name),
+                crate::quote(&self.storage)
+            );
+        }
         if self.kind == crate::IndexKind::Vector {
             return format!(
                 "CREATE UNIQUE INDEX {} ON {} (id)",
@@ -164,6 +181,15 @@ impl crate::Index {
         }
         if self.kind == crate::IndexKind::FullText {
             return self.text_index_ddl();
+        }
+        if self.kind == crate::IndexKind::Scalar {
+            return format!(
+                "CREATE {} INDEX {} ON {} ({})",
+                if self.unique { "UNIQUE" } else { "" },
+                crate::quote(&self.name),
+                crate::quote(&self.storage),
+                self.scalar_columns().join(",")
+            );
         }
         // Spatial entries include nulls for optional fields. Radius predicates
         // exclude them while integrity audits retain one entry per document.

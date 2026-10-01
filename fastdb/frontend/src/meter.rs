@@ -156,6 +156,7 @@ impl Connection {
                     Statement::CreateCollection { .. }
                     | Statement::CreateIndex { .. }
                     | Statement::CreateSpatialIndex { .. }
+                    | Statement::CreateArrayIndex { .. }
                     | Statement::CreateFullTextIndex { .. }
                     | Statement::CreateVectorIndex { .. } => Some(SchemaStatement::Logical),
                     Statement::Sql(sql) => match crate::select::parsed(&sql)? {

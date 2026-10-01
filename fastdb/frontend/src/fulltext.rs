@@ -64,11 +64,17 @@ impl Index {
     }
 
     pub(crate) fn paths(&self) -> impl Iterator<Item = &[String]> {
-        std::iter::once(self.path.as_slice()).chain(
-            self.fulltext
-                .iter()
-                .flat_map(|c| c.additional_paths.iter().map(Vec::as_slice)),
-        )
+        std::iter::once(self.path.as_slice())
+            .chain(
+                self.fulltext
+                    .iter()
+                    .flat_map(|c| c.additional_paths.iter().map(Vec::as_slice)),
+            )
+            .chain(
+                self.scalar
+                    .iter()
+                    .flat_map(|c| c.additional_paths.iter().map(Vec::as_slice)),
+            )
     }
     pub(crate) fn validate_text_config(&self) -> Result<()> {
         match (&self.kind, &self.fulltext) {
@@ -101,11 +107,21 @@ impl Index {
                 }
                 Ok(())
             }
-            (IndexKind::Scalar | IndexKind::Spatial | IndexKind::Vector, None) => Ok(()),
+            (
+                IndexKind::Scalar | IndexKind::Array | IndexKind::Spatial | IndexKind::Vector,
+                None,
+            ) => Ok(()),
             _ => Err(invalid("incompatible text index configuration")),
         }
     }
     pub(crate) fn document_keys(&self, doc: &Document) -> Result<Vec<EngineValue>> {
+        if self.kind == IndexKind::Array {
+            self.array_keys(doc)?;
+            return Ok(Vec::new());
+        }
+        if self.kind == IndexKind::Scalar {
+            return self.scalar_keys(doc);
+        }
         if self.kind != IndexKind::FullText {
             return self.keys(crate::path_value(doc, &self.path)?.unwrap_or(&Value::Null));
         }
@@ -121,7 +137,8 @@ impl Index {
     }
     pub(crate) fn key_columns(&self) -> String {
         match self.kind {
-            IndexKind::Scalar | IndexKind::Vector => "\"key\"".into(),
+            IndexKind::Scalar => self.scalar_columns().join(","),
+            IndexKind::Vector | IndexKind::Array => "\"key\"".into(),
             IndexKind::Spatial => "\"key\",longitude".into(),
             IndexKind::FullText => std::iter::once("\"key\"".to_owned())
                 .chain((1..self.paths().count()).map(|i| format!("f{i}")))
@@ -222,6 +239,7 @@ impl Connection {
                     .collect::<String>()
             ),
             vector: None,
+            scalar: None,
             fulltext: Some(Config {
                 additional_paths: paths[1..].to_vec(),
                 tokenizer: options.identity(),

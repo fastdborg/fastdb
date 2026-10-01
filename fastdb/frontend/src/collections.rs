@@ -5,6 +5,9 @@ const MAX_ITEMS: usize = 100_000;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 
 pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value> {
+    if name == "array_contains" {
+        return contains(args);
+    }
     let [input] = args else {
         return Err(Error::Validation(format!("{name} expects one argument")));
     };
@@ -83,6 +86,36 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value> {
     Ok(output)
 }
 
+fn contains(args: &[Value]) -> Result<Value> {
+    let [input, needle] = args else {
+        return Err(Error::Validation(
+            "array::contains expects array and value".into(),
+        ));
+    };
+    needle.encode_with_limit(Some(1024 * 1024))?;
+    let mut budget = crate::links::FetchBudget {
+        used: 0,
+        limit: MAX_BYTES,
+    };
+    charge(&mut budget, input)?;
+    charge(&mut budget, needle)?;
+    let found = match input {
+        Value::Null => false,
+        Value::Array(values) => {
+            bounded(values.len())?;
+            values.iter().any(|value| equal(value, needle))
+        }
+        _ => {
+            return Err(Error::Validation(
+                "array::contains expects array or null".into(),
+            ))
+        }
+    };
+    let output = Value::Boolean(found);
+    charge(&mut budget, &output)?;
+    Ok(output)
+}
+
 fn bounded(length: usize) -> Result<()> {
     if length > MAX_ITEMS {
         return Err(Error::Limit(
@@ -121,7 +154,7 @@ pub(crate) fn equal(left: &Value, right: &Value) -> bool {
     }
 }
 
-fn identity(value: &Value) -> Result<Vec<u8>> {
+pub(crate) fn identity(value: &Value) -> Result<Vec<u8>> {
     fn normalize(value: &mut Value) {
         match value {
             Value::Record(record) => record.table.make_ascii_lowercase(),

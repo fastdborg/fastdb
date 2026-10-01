@@ -6,6 +6,7 @@ mod bundled;
 mod udf;
 mod unnest;
 pub use budget::ResultLimits;
+mod array_index;
 mod catalog;
 mod check;
 mod collections;
@@ -14,6 +15,7 @@ mod deferred;
 mod expression;
 mod fetch_clause;
 mod field_rules;
+mod scalar_index;
 mod schema_rules;
 mod search_filter;
 pub use field_rules::FieldOptions;
@@ -208,6 +210,7 @@ pub struct Field {
 enum IndexKind {
     #[default]
     Scalar,
+    Array,
     Spatial,
     FullText,
     Vector,
@@ -229,6 +232,8 @@ struct Index {
     fulltext: Option<fulltext::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vector: Option<ann::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scalar: Option<scalar_index::Config>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Collection {
@@ -563,6 +568,14 @@ impl Connection {
         let mut collection = collection.clone();
         collection.version = if collection.strict
             || !collection.field_policies.is_empty()
+            || collection
+                .indexes
+                .iter()
+                .any(|index| index.kind == IndexKind::Array)
+            || collection
+                .indexes
+                .iter()
+                .any(|index| index.scalar.is_some())
             || collection.indexes.iter().any(|index| {
                 index
                     .fulltext
@@ -730,7 +743,30 @@ impl Connection {
         if_not_exists: bool,
         kind: IndexKind,
     ) -> Result<()> {
-        validate_path(&path)?;
+        self.create_index_paths(table, name, vec![path], unique, if_not_exists, kind)
+    }
+    fn create_index_paths(
+        &self,
+        table: &str,
+        name: &str,
+        paths: Vec<Vec<String>>,
+        unique: bool,
+        if_not_exists: bool,
+        kind: IndexKind,
+    ) -> Result<()> {
+        if paths.is_empty() || paths.len() > 16 || (kind != IndexKind::Scalar && paths.len() != 1) {
+            return Err(Error::Validation(
+                "scalar indexes require 1..16 paths".into(),
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for path in &paths {
+            validate_path(path)?;
+            if !seen.insert(path) {
+                return Err(Error::Validation("duplicate index path".into()));
+            }
+        }
+        let path = paths[0].clone();
         let name = canonical(name)?;
         self.atomic(|| {
             let mut c = self.catalog(table)?;
@@ -739,7 +775,7 @@ impl Connection {
                 &[text(&name)],
             )?;
             if !existing.is_empty() {
-                if kind == IndexKind::Spatial
+                if matches!(kind, IndexKind::Spatial | IndexKind::Array)
                     && if_not_exists
                     && c.indexes
                         .iter()
@@ -764,7 +800,9 @@ impl Connection {
             {
                 return Err(Error::AlreadyExists(name.clone()));
             }
-            catalog::compatible_index(&c, &path, kind)?;
+            for path in &paths {
+                catalog::compatible_index(&c, path, kind)?;
+            }
             let storage = format!(
                 "__fastdb_i_{}",
                 name.as_bytes()
@@ -780,7 +818,11 @@ impl Connection {
                 storage,
                 fulltext: None,
                 vector: None,
+                scalar: (paths.len() > 1).then(|| scalar_index::Config {
+                    additional_paths: paths[1..].to_vec(),
+                }),
             };
+            index.validate_scalar_config()?;
             self.run(&index.table_ddl(), &[])?;
             self.run(&index.index_ddl(), &[])?;
             for doc in self.documents(&c)? {
@@ -794,6 +836,9 @@ impl Connection {
         index.require_current_text_storage()?;
         if index.kind == IndexKind::Vector {
             return self.insert_vector_entry(index, doc);
+        }
+        if index.kind == IndexKind::Array {
+            return self.insert_array_entries(index, doc);
         }
         let mut values = index.document_keys(doc)?;
         let id = doc
@@ -824,23 +869,7 @@ impl Connection {
     ) -> Result<Document> {
         self.atomic(|| {
             let c = self.collection_for_write(table)?;
-            if !doc.contains_key("id") {
-                let rows = self.run_customer("SELECT uuid7_str()", &[])?;
-                let Some(EngineValue::Text(key)) = rows.first().and_then(|r| r.first()) else {
-                    return Err(Error::Storage("UUID generator returned non-text".into()));
-                };
-                doc.insert(
-                    "id".into(),
-                    Value::Record(Record {
-                        table: c.name.clone(),
-                        key: Key::String(key.as_str().into()),
-                    }),
-                );
-            }
-            normalize_document_id(&c, &mut doc)?;
-            field_rules::defaults(&c, &mut doc)?;
-            self.compute_fields(&c, &mut doc)?;
-            self.validate_candidate(&c, &doc)?;
+            self.prepare_insert_document(&c, &mut doc)?;
             if replace {
                 if let Some(Value::Record(record)) = doc.get("id") {
                     if let Some(previous) = self.get_in(&c, record)? {
@@ -850,18 +879,42 @@ impl Connection {
                 }
                 self.delete_unique_conflicts(&c, &doc)?;
             }
-            self.run_customer(
-                &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
-                &[
-                    EngineValue::Blob(doc["id"].encode()?),
-                    EngineValue::Blob(value::encode_document(&doc)?),
-                ],
-            )?;
-            for index in &c.indexes {
-                self.insert_index(index, &doc)?;
-            }
+            self.store_insert_document(&c, &doc)?;
             Ok(doc)
         })
+    }
+    fn prepare_insert_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        if !doc.contains_key("id") {
+            let rows = self.run_customer("SELECT uuid7_str()", &[])?;
+            let Some(EngineValue::Text(key)) = rows.first().and_then(|r| r.first()) else {
+                return Err(Error::Storage("UUID generator returned non-text".into()));
+            };
+            doc.insert(
+                "id".into(),
+                Value::Record(Record {
+                    table: c.name.clone(),
+                    key: Key::String(key.as_str().into()),
+                }),
+            );
+        }
+        normalize_document_id(c, doc)?;
+        field_rules::defaults(c, doc)?;
+        self.compute_fields(c, doc)?;
+        self.validate_candidate(c, doc)?;
+        Ok(())
+    }
+    fn store_insert_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        self.run_customer(
+            &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
+            &[
+                EngineValue::Blob(doc["id"].encode()?),
+                EngineValue::Blob(value::encode_document(doc)?),
+            ],
+        )?;
+        for index in &c.indexes {
+            self.insert_index(index, doc)?;
+        }
+        Ok(())
     }
     pub fn patch(&self, record: &Record, patch: Document) -> Result<Option<Document>> {
         if patch.contains_key("id") {
@@ -914,8 +967,8 @@ impl Connection {
     }
     fn delete_unique_conflicts(&self, c: &Collection, doc: &Document) -> Result<()> {
         for index in c.indexes.iter().filter(|index| index.unique) {
-            let value = path_value(doc, &index.path)?.unwrap_or(&Value::Null);
-            for conflict in self.lookup_index(&c.name, &index.name, value)? {
+            let keys = index.scalar_keys(doc)?;
+            for conflict in self.lookup_scalar_keys(c, index, &keys)? {
                 if conflict.get("id") != doc.get("id") {
                     self.delete_document(c, &conflict)?;
                 }
@@ -953,9 +1006,9 @@ impl Connection {
                 .iter()
                 .find(|i| i.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| Error::NotFound(name.into()))?;
-            if index.kind != IndexKind::Scalar {
+            if index.kind != IndexKind::Scalar || index.scalar.is_some() {
                 return Err(Error::Validation(
-                    "scalar lookup requires a scalar index".into(),
+                    "scalar lookup requires a single-path scalar index".into(),
                 ));
             }
             let rows = self.run_customer(
@@ -1275,6 +1328,15 @@ impl Connection {
                 )?;
                 Ok(QueryResult::command(0))
             }
+            Statement::CreateArrayIndex {
+                if_not_exists,
+                table,
+                name,
+                path,
+            } => {
+                self.create_array_index(&table, &name, path, if_not_exists)?;
+                Ok(QueryResult::command(0))
+            }
             Statement::CreateSpatialIndex {
                 if_not_exists,
                 table,
@@ -1289,11 +1351,13 @@ impl Connection {
                 table,
                 name,
                 path,
+                additional_paths,
                 unique,
                 sql,
             } => match self.catalog(&table) {
                 Ok(_) => {
-                    self.create_index_if(&table, &name, path, unique, if_not_exists)?;
+                    let paths = std::iter::once(path).chain(additional_paths).collect();
+                    self.create_compound_index(&table, &name, paths, unique, if_not_exists)?;
                     Ok(QueryResult::command(0))
                 }
                 Err(Error::NotFound(_)) => self.sql(&sql, params),

@@ -5,6 +5,8 @@ use crate::{
 };
 use turso_parser::ast::*;
 
+mod upsert;
+
 struct WriteSource {
     with: Option<With>,
     from: Option<FromClause>,
@@ -607,9 +609,12 @@ impl Connection {
                 let InsertBody::Select(select, upsert) = body else {
                     return Err(unsupported("collection DEFAULT VALUES"));
                 };
-                if upsert.is_some() {
-                    return Err(unsupported("collection ON CONFLICT; use document UPSERT"));
-                }
+                let clauses = upsert.as_deref().map(|clause| {
+                    if !matches!(or_conflict, None | Some(ResolveType::Abort)) {
+                        return Err(unsupported("collection ON CONFLICT with a separate OR policy"));
+                    }
+                    self.prepare_upsert(&tbl_name, clause)
+                }).transpose()?;
                 let mut values_budget = self.write_buffer_budget()?;
                 let values = if let (OneSelect::Values(rows), None, true) = (
                     &select.body.select,
@@ -651,6 +656,12 @@ impl Connection {
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in values {
                     let doc: Document = fields.iter().cloned().zip(row).collect();
+                    if let Some(clauses) = &clauses {
+                        if let Some(snapshot) = self.insert_on_conflict(&tbl_name, doc, clauses, params, capture)? {
+                            crate::retain_write_document(&mut snapshot_budget, &mut documents, snapshot)?;
+                        }
+                        continue;
+                    }
                     let before = if capture && or_conflict == Some(ResolveType::Replace) { match doc.get("id") {
                         Some(Value::Record(record))=>self.get(&crate::normalized_id(record,&crate::canonical(tbl_name.name.as_str())?)?)?,
                         _=>None,

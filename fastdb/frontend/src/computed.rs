@@ -59,9 +59,8 @@ fn definition_inner(sql: &str) -> Result<Definition> {
                     "replace" | "geo::within" => arity == 3,
                     "coalesce" => arity >= 2,
                     "ifnull" | "nullif" | "type::record" | "doc::get" | "doc::has"
-                    | "string::normalize" | "array::append" | "geo::point" | "geo::distance" => {
-                        arity == 2
-                    }
+                    | "string::normalize" | "array::append" | "array::contains" | "geo::point"
+                    | "geo::distance" => arity == 2,
                     "array::new" => true,
                     _ => false,
                 };

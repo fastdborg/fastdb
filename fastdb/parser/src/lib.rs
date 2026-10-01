@@ -167,6 +167,12 @@ pub enum Statement {
         min_gram: Option<usize>,
         max_gram: Option<usize>,
     },
+    CreateArrayIndex {
+        if_not_exists: bool,
+        table: String,
+        name: String,
+        path: Vec<String>,
+    },
     CreateSpatialIndex {
         if_not_exists: bool,
         table: String,
@@ -178,6 +184,7 @@ pub enum Statement {
         table: String,
         name: String,
         path: Vec<String>,
+        additional_paths: Vec<Vec<String>>,
         unique: bool,
         sql: String,
     },
@@ -1366,6 +1373,17 @@ pub fn parse(input: &str) -> Result<Statement> {
                 max_gram,
             });
         }
+        if p.eat("ARRAY") {
+            if paths.len() != 1 || !p.end() {
+                return Err(p.error("ARRAY index requires one path"));
+            }
+            return Ok(Statement::CreateArrayIndex {
+                if_not_exists,
+                table,
+                name,
+                path: paths.remove(0),
+            });
+        }
         if !(p.eat("SPATIAL") && p.end()) || paths.len() != 1 {
             return Err(p.error("expected FULLTEXT paths or one SPATIAL path"));
         }
@@ -1395,6 +1413,10 @@ pub fn parse(input: &str) -> Result<Statement> {
                     return Err(p.error("expected ("));
                 }
                 let path = p.path()?;
+                let mut additional_paths = Vec::new();
+                while p.eat(",") {
+                    additional_paths.push(p.path()?);
+                }
                 if !p.eat(")") || !p.end() {
                     return Err(p.error("expected index end"));
                 }
@@ -1403,6 +1425,7 @@ pub fn parse(input: &str) -> Result<Statement> {
                     table,
                     name,
                     path,
+                    additional_paths,
                     unique,
                     sql: input.into(),
                 })

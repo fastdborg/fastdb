@@ -331,6 +331,28 @@ fn vector_index_options_are_explicit_unique_and_order_independent() {
 }
 
 #[test]
+fn compound_and_array_index_grammar_preserves_native_fallbacks() {
+    assert!(
+        matches!(parse("CREATE UNIQUE INDEX pair ON docs(a,nested.b)").unwrap(), Statement::CreateIndex {unique:true,path,additional_paths,..} if path==["a"] && additional_paths==[vec!["nested".to_owned(),"b".to_owned()]])
+    );
+    assert!(
+        matches!(parse("CREATE SEARCH INDEX IF NOT EXISTS tags ON docs(nested.tags) USING ARRAY").unwrap(),Statement::CreateArrayIndex {if_not_exists:true,path,..} if path==["nested","tags"])
+    );
+    for sql in [
+        "CREATE SEARCH INDEX tags ON docs(a,b) USING ARRAY",
+        "CREATE SEARCH INDEX tags ON docs(a) USING ARRAY WITH(max=10)",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    for sql in [
+        "CREATE INDEX native ON relational(a DESC,b COLLATE NOCASE)",
+        "CREATE INDEX native ON relational(a) WHERE a>0",
+    ] {
+        assert!(matches!(parse(sql).unwrap(), Statement::Sql(_)), "{sql}");
+    }
+}
+
+#[test]
 fn javascript_function_ddl_keeps_source_and_typed_signatures() {
     assert_eq!(parse("CREATE OR REPLACE FUNCTION App::normalize(value string, fallback string?) RETURNS string? LANGUAGE JAVASCRIPT AS 'return value || fallback;';").unwrap(),Statement::CreateFunction {name:"app::normalize".into(),parameters:vec![("value".into(),"string".into()),("fallback".into(),"string?".into())],returns:"string?".into(),source:"return value || fallback;".into(),replace:true});
     assert_eq!(
