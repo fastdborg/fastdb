@@ -8,7 +8,7 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `9126da52f5870fa826648a7
 
 ## Packages without collected archive or supplemental texts
 
-fastdb-node 2.2.0, fastdb 2.2.0, fastql-parser 2.2.0
+
 
 ## Source file index
 
@@ -264,8 +264,17 @@ fastdb-node 2.2.0, fastdb 2.2.0, fastql-parser 2.2.0
 - `LICENSE-APACHE`: [source text 7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996](#text-7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996)
 - `LICENSE-MIT`: [source text 7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2](#text-7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2)
 
+### fastdb-node 2.2.0
+- Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
+
+### fastdb 2.2.0
+- Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
+
 ### fastdivide 0.4.2
 - `LICENSE.txt`: [source text 97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9](#text-97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9)
+
+### fastql-parser 2.2.0
+- Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
 ### fastrand 2.3.0
 - `LICENSE-APACHE`: [source text a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2)
