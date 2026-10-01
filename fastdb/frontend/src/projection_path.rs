@@ -145,8 +145,6 @@ pub(crate) fn project(
     }
 }
 
-/// Rewrite only paths containing wildcard/index steps. A single `name.*` is
-/// left to SQL name resolution so an existing table alias always wins.
 pub(crate) fn expand(sql: &str) -> Result<String> {
     let mut tokens = Vec::new();
     for token in fastql_parser::tokenize(sql)? {
@@ -281,7 +279,10 @@ pub(crate) fn expand(sql: &str) -> Result<String> {
             }
         }
         let single_star = base_end == start && matches!(parts.as_slice(), [Part::All]);
-        if special && !single_star {
+        let aliased = tokens
+            .get(end + 1)
+            .is_some_and(|t| t.kind == Kind::Word && t.text.eq_ignore_ascii_case("AS"));
+        if special && (!single_star || aliased) {
             let base = &sql[tokens[start].start..tokens[base_end].end];
             let encoded = serde_json::to_string(&parts)?.replace('\'', "''");
             out.push_str(&sql[copied..tokens[start].start]);

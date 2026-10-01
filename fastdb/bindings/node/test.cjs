@@ -5,6 +5,32 @@ const { Database, Record, Vector } = require('./index.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+test('ordinary reference wildcard aliases preserve typed values in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      const payload = {name:'Alice', large:9223372036854775807n, bytes:Buffer.from([0,255]), active:true, nothing:null, vector:Vector.float32([1,2]), link:new Record('writers','missing')};
+      await db.execute('INSERT INTO writers DOCUMENT $doc', {$doc:{id:new Record('writers','w1'), ...payload}});
+      await db.execute("INSERT INTO articles {id:articles:a1,title:'Hello',author:writers:w1}");
+      await db.execute('CREATE INDEX article_author ON articles(author)');
+      const parameters = {$writer:'w1'};
+      for (const [sql, fetch] of [
+        ["SELECT id, title, author.* AS writer FROM articles WHERE author = type::record('writers', $writer) ORDER BY id", "SELECT id, title, record::fetch(author) AS writer FROM articles WHERE author = type::record('writers', $writer) ORDER BY id"],
+        ["SELECT a.id, a.title, a.author.* AS writer FROM articles AS a WHERE a.author = type::record('writers', $writer) ORDER BY a.id LIMIT 20", "SELECT a.id, a.title, record::fetch(a.author) AS writer FROM articles AS a WHERE a.author = type::record('writers', $writer) ORDER BY a.id LIMIT 20"],
+      ]) {
+        const actual = await db.execute(sql,parameters);
+        const expected = await db.execute(fetch,parameters);
+        assert.deepEqual(actual.columns, ['id','title','writer']);
+        assert.deepEqual(actual.rows, expected.rows);
+        assert.deepEqual(actual.rows[0][2], {id:new Record('writers','w1'), ...payload});
+      }
+      const duplicate = await db.execute('SELECT author.* AS writer,author.* AS writer FROM articles');
+      assert.deepEqual(duplicate.columns, ['writer','writer']);
+      assert.deepEqual(duplicate.rows[0][0], duplicate.rows[0][1]);
+      await assert.rejects(async () => db.execute('SELECT author.* AS writer FROM articles author'));
+    } finally { await db.close(); }
+  }
+});
 test('FastQL V1 document examples compose with explicit setup in both clients', async () => {
   const { AsyncDatabase } = require('./index.cjs');
   for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {

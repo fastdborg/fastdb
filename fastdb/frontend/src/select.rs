@@ -7470,6 +7470,26 @@ fn expand_stars(
                 }
             }
             _ => {
+                if let ResultColumn::Expr(expr, _) = column {
+                    if let Expr::FunctionCall { name, args, .. } = expr.as_ref() {
+                        if name.as_str() == "__fastdb_h_doc_project"
+                            && args.len() == 2
+                            && args[1].to_string() == "'[\"All\"]'"
+                        {
+                            if let Expr::Id(name) | Expr::Name(name) = args[0].as_ref() {
+                                if scope
+                                    .sources
+                                    .iter()
+                                    .any(|source| source.alias.eq_ignore_ascii_case(name.as_str()))
+                                {
+                                    return Err(unsupported(
+                                        "result alias on a source wildcard; qualify the document field to expand it",
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 expanded.push(column.clone());
                 continue;
             }

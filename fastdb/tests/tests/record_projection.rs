@@ -11,6 +11,193 @@ fn setup(c: &fastdb::Connection) {
     q(c,"INSERT INTO posts {id:posts:p1,title:'Hello',author:users:u1,profile:{city:'Bangkok'},missing_author:users:none,tags:[1,2]}");
 }
 #[test]
+fn ordinary_reference_wildcard_aliases_match_fetch() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "INSERT INTO writers {id:writers:w1,name:'Alice'}");
+    q(
+        &c,
+        "INSERT INTO articles {id:articles:a1,title:'Hello',author:writers:w1}",
+    );
+    q(&c, "CREATE INDEX articles_author ON articles(author)");
+    let params = Parameters::from([("$writer".into(), Value::String("w1".into()))]);
+    for (sql, equivalent) in [
+        (
+            "SELECT id, title, author.* AS writer FROM articles WHERE author = type::record('writers', $writer) ORDER BY id",
+            "SELECT id, title, record::fetch(author) AS writer FROM articles WHERE author = type::record('writers', $writer) ORDER BY id",
+        ),
+        (
+            "SELECT a.id, a.title, a.author.* AS writer FROM articles AS a WHERE a.author = type::record('writers', $writer) ORDER BY a.id LIMIT 20",
+            "SELECT a.id, a.title, record::fetch(a.author) AS writer FROM articles AS a WHERE a.author = type::record('writers', $writer) ORDER BY a.id LIMIT 20",
+        ),
+    ] {
+        let expected = c.execute(equivalent, &params).unwrap();
+        let actual = c.execute(sql, &params).unwrap();
+        assert_eq!(actual.columns, expected.columns);
+        assert_eq!(actual.rows, expected.rows);
+        let profile = c.profile_select(sql, &params).unwrap();
+        assert_eq!(profile.result.rows, expected.rows);
+        assert_eq!(profile.metrics.fetch_batches, 1);
+    }
+}
+
+#[test]
+fn ordinary_wildcard_aliases_preserve_values_and_source_precedence() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    setup(&c);
+    q(&c, "UPDATE posts:p1 {authors:[users:u1,users:missing,null,7,{name:'Embedded'}],nothing:null,\"odd.key\":{flag:true}}");
+    for (path, expected) in [
+        ("author", "record::fetch(author)"),
+        ("profile", "profile"),
+        ("missing_author", "NULL"),
+        ("missing", "NULL"),
+        ("\"nothing\"", "NULL"),
+        ("title", "NULL"),
+        ("authors", "p.authors.*"),
+        ("\"odd.key\"", "p.\"odd.key\".*"),
+        ("[odd.key]", "p.\"odd.key\".*"),
+        ("`odd.key`", "p.\"odd.key\".*"),
+    ] {
+        let actual = q(&c, &format!("SELECT {path} . /* gap */ * AS \"same name\",{path}.* AS \"same name\" FROM posts p"));
+        let expected = q(&c, &format!("SELECT {expected} FROM posts p")).rows[0][0].clone();
+        assert_eq!(actual.columns, vec!["same name", "same name"]);
+        assert_eq!(
+            actual.rows,
+            vec![vec![expected.clone(), expected]],
+            "{path}"
+        );
+    }
+    assert_eq!(
+        q(&c, "SELECT author.* FROM posts author").rows,
+        q(&c, "SELECT * FROM posts").rows
+    );
+    assert_eq!(
+        q(&c, "SELECT author.author.* AS writer FROM posts author").rows,
+        q(&c, "SELECT record::fetch(author) FROM posts").rows
+    );
+    q(&c, "CREATE TABLE native(n INTEGER)");
+    q(&c, "INSERT INTO native VALUES(9)");
+    assert_eq!(
+        q(&c, "SELECT author.* FROM native author").rows,
+        vec![vec![Value::Integer(9)]]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT a.author.* AS writer FROM posts a JOIN users b ON a.author=b.id"
+        )
+        .rows,
+        q(&c, "SELECT record::fetch(author) FROM posts").rows
+    );
+    for sql in [
+        "SELECT author.* AS writer FROM posts author",
+        "SELECT author.* AS writer FROM native author",
+        "SELECT author.* AS writer FROM posts a JOIN users b ON a.author=b.id",
+        "SELECT DISTINCT author.* AS writer FROM posts",
+        "SELECT coalesce(author.* AS writer,NULL) FROM posts",
+        "SELECT author.* AS writer FROM posts ORDER BY writer",
+        "SELECT author.* AS writer FROM posts WHERE writer IS NOT NULL",
+        "SELECT author.* AS writer FROM posts GROUP BY writer",
+        "UPDATE posts SET title='bad' RETURNING author.* AS writer",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    assert_eq!(
+        q(&c, "SELECT title FROM posts").rows,
+        vec![vec![Value::String("Hello".into())]]
+    );
+}
+
+#[test]
+fn ordinary_wildcard_aliases_keep_index_selection_and_batched_fetches() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "INSERT INTO writers {id:writers:w1,name:'Alice'}");
+    q(&c, "BEGIN");
+    for n in 0..100 {
+        q(&c, &format!("INSERT INTO articles {{id:type::record('articles',{n}),title:'Article',author:writers:{}}}", if n % 10 == 0 { "w1" } else { "other" }));
+    }
+    q(&c, "COMMIT");
+    let sql = "SELECT id,author.* AS writer,author.* AS writer FROM articles WHERE author=type::record('writers',$key) ORDER BY id LIMIT 3 OFFSET 1";
+    let params = Parameters::from([("$key".into(), Value::String("w1".into()))]);
+    let scan = c.profile_select(sql, &params).unwrap();
+    q(&c, "CREATE INDEX article_author ON articles(author)");
+    let indexed = c.profile_select(sql, &params).unwrap();
+    assert_eq!(indexed.result.rows, scan.result.rows);
+    assert_eq!(indexed.result.rows.len(), 3);
+    assert_eq!(indexed.result.columns, vec!["id", "writer", "writer"]);
+    assert!(indexed.metrics.fullscan_steps < scan.metrics.fullscan_steps);
+    assert!(indexed.metrics.rows_read < scan.metrics.rows_read);
+    assert_eq!(indexed.metrics.fetch_batches, 1);
+    let single = c.profile_select("SELECT author.* AS writer FROM articles WHERE author=type::record('writers',$key) LIMIT 1", &params).unwrap();
+    assert_eq!(
+        indexed.metrics.fetch_rows_read,
+        single.metrics.fetch_rows_read
+    );
+    for row in &indexed.result.rows {
+        assert_eq!(row[1], row[2]);
+    }
+}
+
+#[test]
+fn ordinary_wildcard_aliases_preserve_snapshot_limits_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wildcard.db");
+    let sql = "SELECT author.* AS writer FROM posts";
+    let params = Parameters::new();
+    {
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let a = db.connect().unwrap();
+        let b = db.connect().unwrap();
+        setup(&a);
+        q(&a, "BEGIN");
+        let old = q(&a, sql).rows;
+        q(&b, "UPDATE users:u1 {name:'New'}");
+        assert_eq!(q(&a, sql).rows, old);
+        assert_eq!(a.profile_select(sql, &params).unwrap().result.rows, old);
+        q(&a, "COMMIT");
+        assert_ne!(q(&a, sql).rows, old);
+        q(&a, "BEGIN");
+        q(&a, "UPDATE users:u1 {name:'Pending'}");
+        let pending = q(&a, "SELECT record::fetch(author) FROM posts").rows;
+        assert_eq!(q(&a, sql).rows, pending);
+        assert_eq!(
+            a.select_with_limits(
+                sql,
+                &params,
+                ResultLimits {
+                    max_rows: 1,
+                    max_payload_bytes: 1
+                }
+            )
+            .unwrap_err()
+            .code(),
+            "FDB_LIMIT"
+        );
+        let token = fastdb::CancellationToken::new();
+        token.cancel();
+        assert_eq!(
+            a.execute_cancellable(sql, &params, &token)
+                .unwrap_err()
+                .code(),
+            "FDB_CANCELLED"
+        );
+        assert_eq!(a.transaction_state(), fastdb::TransactionState::Active);
+        assert_eq!(q(&a, sql).rows, pending);
+        q(&a, "COMMIT");
+    }
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        q(&c, sql).rows,
+        q(&c, "SELECT record::fetch(author) FROM posts").rows
+    );
+    assert!(
+        matches!(&q(&c, sql).rows[0][0], Value::Object(doc) if doc["name"] == Value::String("Pending".into()))
+    );
+}
+#[test]
 fn brace_fields_preserve_typed_positions_and_one_hop_objects() {
     let db = Database::open(":memory:").unwrap();
     let c = db.connect().unwrap();
