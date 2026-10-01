@@ -320,3 +320,14 @@ table IDs are not physical root pages. The focused `schema_meter` regression
 requires DDL to succeed with a zero customer-mutation budget, while INSERT,
 CREATE TABLE AS SELECT and DELETE still count their real customer rows. This
 changes only the existing execution-metering exception.
+
+## Core exception: shared FTS analyzer inspection (2.2.0)
+
+The user authorized engine updates for the FastQL 2.2.0 roadmap. The additive
+[reviewed hook](docs/proposals/fts-analyzer-inspection.md) extracts existing
+registration from `core/index_method/fts/mod.rs` into sibling `analysis.rs`.
+A public streaming visitor exposes borrowed token data from the same manager;
+callers supply bounds and can stop with their own error. No storage format,
+registration behavior or dependency changes. Three hook regressions and eight
+existing full-text regressions pass; combined release checks remain pending.
+The [exception register](docs/core-exceptions.md) records removal criteria.

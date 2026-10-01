@@ -50,16 +50,15 @@ use tantivy::{
     indexer::{AddOperation, SegmentWriter},
     query::{EnableScoring, Query, Scorer},
     schema::{Field, IndexRecordOption, Schema},
-    tokenizer::{
-        NgramTokenizer, RawTokenizer, SimpleTokenizer, TextAnalyzer, TokenStream,
-        WhitespaceTokenizer,
-    },
+    tokenizer::{SimpleTokenizer, TextAnalyzer, TokenStream},
     DocAddress, DocSet, Index, IndexReader, IndexSettings, Searcher, SegmentReader,
     TantivyDocument, Term, TERMINATED,
 };
 use turso_parser::ast::{Select, SortOrder};
 use uncased::UncasedStr;
 
+mod analysis;
+pub use analysis::{analyze_text, AnalyzedToken};
 mod directory;
 mod format;
 mod rows;
@@ -1233,22 +1232,7 @@ impl FtsCursor {
 
     /// Register custom tokenizers with a Tantivy index.
     fn register_tokenizers(&self, index: &Index) {
-        let tokenizers = index.tokenizers();
-        tokenizers.register("raw", RawTokenizer::default());
-        tokenizers.register("simple", SimpleTokenizer::default());
-        tokenizers.register("whitespace", WhitespaceTokenizer::default());
-        // Full n-grams for substring matching (not prefix-only). The window
-        // comes from the WITH clause `min_gram`/`max_gram` keys and was
-        // validated at CREATE INDEX time, so construction cannot fail here.
-        let (min_gram, max_gram) = self.ngram_window;
-        if let Ok(ngram) = NgramTokenizer::new(min_gram, max_gram, false) {
-            // Lowercase the n-grams so matching is case-insensitive, like the
-            // other tokenizers.
-            let analyzer = TextAnalyzer::builder(ngram)
-                .filter(tantivy::tokenizer::LowerCaser)
-                .build();
-            tokenizers.register("ngram", analyzer);
-        }
+        analysis::register(index.tokenizers(), self.ngram_window);
     }
 
     fn build_query_parser(&self, index: &Index) -> Arc<tantivy::query::QueryParser> {
