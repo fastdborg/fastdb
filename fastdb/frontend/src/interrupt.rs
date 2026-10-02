@@ -41,14 +41,12 @@ pub(crate) struct ActiveCancellation {
 impl ActiveCancellation {
     fn install(self: &Arc<Self>, connection: &turso_core::Connection) {
         let active = self.clone();
-        connection.set_progress_handler(
-            1,
-            Some(Box::new(move || {
-                active.suspended.load(Ordering::SeqCst) == 0
-                    && active.tokens.iter().any(CancellationToken::is_cancelled)
-                    && !active.delivered.swap(true, Ordering::SeqCst)
-            })),
-        );
+        connection.set_progress_handler(1, Some(Box::new(move || active.interrupt_requested())));
+    }
+    fn interrupt_requested(&self) -> bool {
+        self.suspended.load(Ordering::SeqCst) == 0
+            && self.tokens.iter().any(CancellationToken::is_cancelled)
+            && !self.delivered.swap(true, Ordering::SeqCst)
     }
 }
 struct ProgressGuard<'a> {
@@ -189,6 +187,19 @@ impl Connection {
         token: &CancellationToken,
     ) -> Result<crate::MigrationReport> {
         self.with_cancellation(token, || self.migrate(migrations))
+    }
+
+    pub(crate) fn check_cancellation(&self) -> Result<()> {
+        let active = self
+            .cancellation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if active.is_some_and(|active| active.interrupt_requested()) {
+            Err(crate::Error::Engine(turso_core::LimboError::Interrupt))
+        } else {
+            Ok(())
+        }
     }
 
     pub(crate) fn cancellation_cleanup<T>(&self, operation: impl FnOnce() -> T) -> T {
@@ -676,6 +687,93 @@ mod tests {
                         0
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn token_cancellation_at_nested_release_preserves_atomic_outcomes() {
+        for stop in 1..=32 {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            q(&c, "CREATE TABLE native(n INTEGER)");
+            q(&c, "BEGIN");
+            q(&c, "INSERT INTO native VALUES(0)");
+            let token = CancellationToken::new();
+            let release_started = Arc::new(AtomicBool::new(false));
+            let result = c.with_cancellation(&token, || {
+                let active = c.cancellation.lock().unwrap().clone().unwrap();
+                let cancel = token.clone();
+                let started = release_started.clone();
+                let ticks = AtomicUsize::new(0);
+                c.engine.set_progress_handler(
+                    1,
+                    Some(Box::new(move || {
+                        if started.load(Ordering::SeqCst)
+                            && ticks.fetch_add(1, Ordering::SeqCst) + 1 == stop
+                        {
+                            cancel.cancel();
+                        }
+                        active.interrupt_requested()
+                    })),
+                );
+                c.atomic(|| {
+                    c.run("INSERT INTO native VALUES(1)", &[])?;
+                    c.atomic(|| {
+                        c.run("INSERT INTO native VALUES(2)", &[])?;
+                        release_started.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })?;
+                    c.run("INSERT INTO native VALUES(3)", &[])?;
+                    Ok(())
+                })
+            });
+            let rows = q(&c, "SELECT n FROM native ORDER BY n").rows;
+            match result {
+                Ok(()) => assert_eq!(
+                    rows,
+                    (0..=3).map(|n| vec![Value::Integer(n)]).collect::<Vec<_>>(),
+                    "stop={stop}"
+                ),
+                Err(error) => {
+                    assert_eq!(error.code(), "FDB_CANCELLED", "stop={stop}: {error}");
+                    assert_eq!(rows, vec![vec![Value::Integer(0)]], "stop={stop}");
+                }
+            }
+            assert_eq!(c.transaction_state(), crate::TransactionState::Active);
+            q(&c, "COMMIT");
+        }
+    }
+
+    #[test]
+    fn token_cancelled_before_release_restores_prior_work() {
+        for outer in [false, true] {
+            let db = Database::open(":memory:").unwrap();
+            let c = db.connect().unwrap();
+            q(&c, "CREATE TABLE native(n INTEGER)");
+            if outer {
+                q(&c, "BEGIN");
+            }
+            q(&c, "INSERT INTO native VALUES(0)");
+            let state = c.transaction_state();
+            let token = CancellationToken::new();
+            let error = c
+                .with_cancellation(&token, || {
+                    c.atomic(|| {
+                        c.run("INSERT INTO native VALUES(1)", &[])?;
+                        token.cancel();
+                        Ok(())
+                    })
+                })
+                .unwrap_err();
+            assert_eq!(error.code(), "FDB_CANCELLED");
+            assert_eq!(c.transaction_state(), state);
+            assert_eq!(
+                q(&c, "SELECT n FROM native").rows,
+                vec![vec![Value::Integer(0)]]
+            );
+            if outer {
+                q(&c, "COMMIT");
             }
         }
     }

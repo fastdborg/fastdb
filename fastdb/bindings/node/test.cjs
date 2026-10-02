@@ -929,7 +929,7 @@ test('AbortSignal transfers preserve atomic imports and return complete exports 
         timer = setTimeout(()=>controller.abort(),20);
         const [cancelled,read] = await results;
         assert.equal(cancelled.status,'rejected');
-        assert.equal(cancelled.reason.code,'FDB_CANCELLED');
+        assert.equal(cancelled.reason.code,'FDB_CANCELLED',cancelled.reason.message);
         assert.equal(cancelled.reason.transaction.after,'active');
         assert.deepEqual(read.value,[1000n]);
         assert.equal((await db.checkCollectionIntegrity('docs')).documents,1n);

@@ -514,7 +514,8 @@ impl Connection {
             Ok(_) => true, // A failed RELEASE must use the ordinary cleanup path.
         };
         let result = operation.and_then(|v| {
-            self.run(&format!("RELEASE {name}"), &[])?;
+            self.check_cancellation()?;
+            self.cancellation_cleanup(|| self.run(&format!("RELEASE {name}"), &[]))?;
             Ok(v)
         });
         match result {
