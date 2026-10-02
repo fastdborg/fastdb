@@ -5,6 +5,8 @@ use crate::{
 };
 use turso_parser::ast::*;
 
+mod upsert;
+
 struct WriteSource {
     with: Option<With>,
     from: Option<FromClause>,
@@ -336,49 +338,53 @@ impl Connection {
         params: &Parameters,
         limits: crate::ResultLimits,
     ) -> Result<QueryResult> {
-        crate::parser_stack(|| {
-            use fastql_parser::Statement;
-            let mut native_sql = None;
-            let valid = match fastql_parser::parse(sql)? {
-                Statement::Insert { .. }
-                | Statement::Upsert { .. }
-                | Statement::Patch { .. }
-                | Statement::PatchWhere { .. }
-                | Statement::Delete { .. } => true,
-                Statement::Sql(sql) => {
-                    let valid = matches!(
-                        parsed(&expand_paths(&expand_records(Some(self), &sql)?)?)?,
-                        Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. })
-                    );
-                    native_sql = Some(sql);
-                    valid
-                }
-                _ => false,
-            };
-            if !valid {
-                return Err(unsupported("write result limits require one data write"));
-            }
-            self.atomic(|| {
-                let result = if let Some(sql) = &native_sql {
-                    if let Some(result) =
-                        self.collection_write_with_limits(sql, params, Some(limits))?
-                    {
-                        result
-                    } else if let Some(result) = self.collection_select(sql, params)? {
-                        result
-                    } else {
-                        return self
-                            .native_profiled_with_limits(sql, params, Some(limits))
-                            .map(|profile| profile.result);
+        self.with_statement_timeout(sql, |sql| {
+            crate::parser_stack(|| {
+                use fastql_parser::Statement;
+                let mut native_sql = None;
+                let valid = match fastql_parser::parse(sql)? {
+                    Statement::Insert { .. }
+                    | Statement::MutateDocument { .. }
+                    | Statement::Upsert { .. }
+                    | Statement::Patch { .. }
+                    | Statement::PatchWhere { .. }
+                    | Statement::Delete { .. } => true,
+                    Statement::Sql(sql) => {
+                        let valid = matches!(
+                            parsed(&expand_paths(&expand_records(Some(self), &sql)?)?)?,
+                            Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. })
+                        );
+                        native_sql = Some(sql);
+                        valid
                     }
-                } else {
-                    self.execute_inner_with_result_limits(sql, params, Some(limits))?
+                    _ => false,
                 };
-                let mut budget = crate::budget::ResultBudget::new(Some(limits), &result.columns)?;
-                for row in &result.rows {
-                    budget.row(row)?;
+                if !valid {
+                    return Err(unsupported("write result limits require one data write"));
                 }
-                Ok(result)
+                self.atomic(|| {
+                    let result = if let Some(sql) = &native_sql {
+                        if let Some(result) =
+                            self.collection_write_with_limits(sql, params, Some(limits))?
+                        {
+                            result
+                        } else if let Some(result) = self.collection_select(sql, params)? {
+                            result
+                        } else {
+                            return self
+                                .native_profiled_with_limits(sql, params, Some(limits))
+                                .map(|profile| profile.result);
+                        }
+                    } else {
+                        self.execute_inner_with_result_limits(sql, params, Some(limits))?
+                    };
+                    let mut budget =
+                        crate::budget::ResultBudget::new(Some(limits), &result.columns)?;
+                    for row in &result.rows {
+                        budget.row(row)?;
+                    }
+                    Ok(result)
+                })
             })
         })
     }
@@ -387,13 +393,13 @@ impl Connection {
         &self,
         table: &str,
         projection: Option<String>,
-        documents: Vec<Document>,
+        documents: Vec<crate::mutation_result::Snapshot>,
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<QueryResult> {
         let mut snapshot_budget = self.write_buffer_budget()?;
         for document in &documents {
-            snapshot_budget.document(document)?;
+            document.charge(&mut snapshot_budget)?;
         }
         let Some(projection) = projection else {
             return Ok(QueryResult::command(documents.len() as i64));
@@ -560,6 +566,18 @@ impl Connection {
             return Err(unsupported("attached collection writes"));
         }
         crate::guard::internal_names(sql)?;
+        let returning_columns = match &statement {
+            Stmt::Insert { returning, .. } | Stmt::Delete { returning, .. } => returning,
+            Stmt::Update(update) => &update.returning,
+            _ => unreachable!(),
+        };
+        let capture = crate::mutation_result::needs_before(
+            &returning_columns
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        )?;
         let mut retained_failure = None;
         let result = self.atomic(|| match statement {
             Stmt::Insert {
@@ -591,9 +609,12 @@ impl Connection {
                 let InsertBody::Select(select, upsert) = body else {
                     return Err(unsupported("collection DEFAULT VALUES"));
                 };
-                if upsert.is_some() {
-                    return Err(unsupported("collection ON CONFLICT; use document UPSERT"));
-                }
+                let clauses = upsert.as_deref().map(|clause| {
+                    if !matches!(or_conflict, None | Some(ResolveType::Abort)) {
+                        return Err(unsupported("collection ON CONFLICT with a separate OR policy"));
+                    }
+                    self.prepare_upsert(&tbl_name, clause)
+                }).transpose()?;
                 let mut values_budget = self.write_buffer_budget()?;
                 let values = if let (OneSelect::Values(rows), None, true) = (
                     &select.body.select,
@@ -634,7 +655,17 @@ impl Connection {
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
                 for row in values {
-                    let doc = fields.iter().cloned().zip(row).collect();
+                    let doc: Document = fields.iter().cloned().zip(row).collect();
+                    if let Some(clauses) = &clauses {
+                        if let Some(snapshot) = self.insert_on_conflict(&tbl_name, doc, clauses, params, capture)? {
+                            crate::retain_write_document(&mut snapshot_budget, &mut documents, snapshot)?;
+                        }
+                        continue;
+                    }
+                    let before = if capture && or_conflict == Some(ResolveType::Replace) { match doc.get("id") {
+                        Some(Value::Record(record))=>self.get(&crate::normalized_id(record,&crate::canonical(tbl_name.name.as_str())?)?)?,
+                        _=>None,
+                    }} else {None};
                     let document = match self.insert_with_replace(tbl_name.name.as_str(), doc, or_conflict == Some(ResolveType::Replace)) {
                         Ok(document) => document,
                         Err(cause) => {
@@ -667,7 +698,7 @@ impl Connection {
                     crate::retain_write_document(
                         &mut snapshot_budget,
                         &mut documents,
-                        document,
+                        crate::mutation_result::Snapshot::after(document,before),
                     )?;
                 }
                 Ok(Some(self.returning_rows(
@@ -900,6 +931,7 @@ impl Connection {
                 )?;
                 let mut documents = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
+                let mut output_budget = self.write_buffer_budget()?;
                 for row in rows {
                     let mutate = || -> Result<()> {
                     let mut values = row.into_iter();
@@ -915,6 +947,7 @@ impl Connection {
                     }
                     // All assignments were evaluated before any mutation. Move
                     // their owned values and the snapshot instead of cloning them.
+                    let before = capture.then(||document.clone());
                     let mut targets = paths.iter();
                     for (value, width) in values.zip(&widths) {
                         let assigned = if *width == 1 {
@@ -943,15 +976,17 @@ impl Connection {
                     }
                     // Reject the next snapshot before validation and storage work.
                     // Earlier rows still belong to the operation savepoint.
-                    snapshot_budget.document(&document)?;
                     // validate_targets forbids changing the record identity.
+                    snapshot_budget.document(&document)?;
                     let collection = self.catalog(&id(&document)?.table)?;
                     if update.or_conflict == Some(ResolveType::Replace) {
-                        self.replace_conflicting_document(&collection, &document)?;
+                        self.replace_conflicting_document(&collection, &mut document)?;
                     } else {
-                        self.replace_document(&collection, &document)?;
+                        self.replace_document(&collection, &mut document)?;
                     }
-                    documents.push(document);
+                    let snapshot=crate::mutation_result::Snapshot::after(document,before);
+                    snapshot.charge(&mut output_budget)?;
+                    documents.push(snapshot);
                     Ok(())
                     };
                     // A skipped candidate must restore both its document and every
@@ -1018,7 +1053,7 @@ impl Connection {
                     snapshot_budget.document(&doc)?;
                     let collection = self.catalog(&id(&doc)?.table)?;
                     self.delete_document(&collection, &doc)?;
-                    documents.push(doc);
+                    documents.push(crate::mutation_result::Snapshot::deleted(doc));
                 }
                 Ok(Some(self.returning_rows(
                     &tbl_name, &returning, documents, params, limits,

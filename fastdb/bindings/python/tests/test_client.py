@@ -8,6 +8,62 @@ from fastdb import BatchError, CancellationToken, Database, FastDBError, Migrati
 
 
 class ClientTests(unittest.TestCase):
+    def test_v22_native_contract_fixture(self):
+        import json
+        import struct
+
+        fixture = pathlib.Path(__file__).resolve().parents[2] / "fixtures/native-client.json"
+        steps = [step for step in json.loads(fixture.read_text()) if step.get("release") == "2.2.0"]
+        self.assertGreaterEqual(len(steps), 50)
+
+        def value(tagged):
+            kind = tagged["type"]
+            raw = tagged.get("value")
+            if kind == "Null":
+                return None
+            if kind == "Integer":
+                return int(raw)
+            if kind in ("String", "Boolean"):
+                return raw
+            if kind == "Number":
+                return struct.unpack(">d", bytes.fromhex(raw))[0]
+            if kind == "Binary":
+                return bytes(raw)
+            if kind == "Record":
+                return Record(raw["table"], value(raw["key"]))
+            if kind == "Array":
+                return [value(item) for item in raw]
+            if kind == "Object":
+                return {key: value(item) for key, item in raw.items()}
+            self.fail(f"Unhandled fixture value {kind}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            file = pathlib.Path(directory) / "v22.db"
+            db = Database(file)
+            try:
+                for index, step in enumerate(steps):
+                    with self.subTest(step=index):
+                        if step.get("reopen"):
+                            db.close()
+                            db = Database(file)
+                            continue
+                        request = step["request"]
+                        if request["op"] == "integrity":
+                            self.assertEqual(db.check_collection_integrity(request["table"])["documents"], 1)
+                            continue
+                        self.assertEqual(request["op"], "execute")
+                        params = {name: value(item) for name, item in request["parameters"].items()}
+                        if "error" in step:
+                            with self.assertRaises(FastDBError) as failure:
+                                db.execute(request["sql"], params)
+                            self.assertEqual(failure.exception.code, step["error"])
+                        else:
+                            result = db.execute(request["sql"], params)
+                            if "rows" in step:
+                                self.assertEqual(result.rows, [[value(item) for item in row] for row in step["rows"]])
+            finally:
+                db.close()
+
     def test_typed_roundtrip_duplicate_columns_and_persistence(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "typed.db"

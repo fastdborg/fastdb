@@ -75,7 +75,21 @@ pub struct RecordProjection {
     pub alias: Option<String>,
 }
 #[derive(Debug, PartialEq)]
+pub enum MutationMode {
+    Content,
+    Merge,
+    Patch,
+}
+#[derive(Debug, PartialEq)]
 pub enum Statement {
+    MutateDocument {
+        table: String,
+        target: Option<Record>,
+        mode: MutationMode,
+        value: Expr,
+        predicate: Option<String>,
+        returning: Option<String>,
+    },
     CreateFunction {
         name: String,
         parameters: Vec<(String, String)>,
@@ -117,6 +131,10 @@ pub enum Statement {
         scope: String,
         name: Option<String>,
     },
+    DefineSchema {
+        table: String,
+        strict: bool,
+    },
     DefineField {
         table: String,
         path: Vec<String>,
@@ -125,6 +143,10 @@ pub enum Statement {
         required: bool,
         nullable: bool,
         check: Option<String>,
+        default: Option<Expr>,
+        readonly: bool,
+        flexible: bool,
+        computed: Option<String>,
         overwrite: bool,
     },
     CreateVectorIndex {
@@ -134,12 +156,22 @@ pub enum Statement {
         path: Vec<String>,
         dimensions: usize,
         metric: String,
+        quantization: Option<String>,
     },
     CreateFullTextIndex {
         if_not_exists: bool,
         table: String,
         name: String,
         paths: Vec<Vec<String>>,
+        tokenizer: Option<String>,
+        min_gram: Option<usize>,
+        max_gram: Option<usize>,
+    },
+    CreateArrayIndex {
+        if_not_exists: bool,
+        table: String,
+        name: String,
+        path: Vec<String>,
     },
     CreateSpatialIndex {
         if_not_exists: bool,
@@ -152,6 +184,7 @@ pub enum Statement {
         table: String,
         name: String,
         path: Vec<String>,
+        additional_paths: Vec<Vec<String>>,
         unique: bool,
         sql: String,
     },
@@ -214,6 +247,9 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut out = Vec::new();
     let mut i = 0;
     let mut object_depth: usize = 0;
+    let mut array_depth: usize = 0;
+    let mut paren_depth: usize = 0;
+    let mut patch_expression = false;
     while i < b.len() {
         if b[i].is_ascii_whitespace() {
             i += 1;
@@ -248,7 +284,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
         }
         let start = i;
         let (kind, text) = match b[i] {
-            b'[' if object_depth > 0 => {
+            b'[' if object_depth > 0 || array_depth > 0 || patch_expression => {
                 i += 1;
                 (Kind::Symbol, "[".into())
             }
@@ -326,6 +362,18 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
             }
         };
         if kind == Kind::Symbol {
+            if text == "[" {
+                array_depth += 1;
+            }
+            if text == "]" {
+                array_depth = array_depth.saturating_sub(1);
+            }
+            if text == "(" {
+                paren_depth += 1;
+            }
+            if text == ")" {
+                paren_depth = paren_depth.saturating_sub(1);
+            }
             if text == "{" {
                 object_depth += 1;
             }
@@ -339,6 +387,24 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
             start,
             end: i,
         });
+        if object_depth == 0 && array_depth == 0 && paren_depth == 0 {
+            let last = out.last().expect("just pushed token");
+            if last.kind == Kind::Word {
+                if last.text.eq_ignore_ascii_case("WHERE")
+                    || last.text.eq_ignore_ascii_case("RETURNING")
+                {
+                    patch_expression = false;
+                } else if last.text.eq_ignore_ascii_case("PATCH")
+                    && out.first().is_some_and(|t| {
+                        t.kind == Kind::Word && t.text.eq_ignore_ascii_case("UPDATE")
+                    })
+                    && (out.len() == 3
+                        || ((out.len() == 5 || out.len() == 6) && out[2].text == ":"))
+                {
+                    patch_expression = true;
+                }
+            }
+        }
     }
     Ok(out)
 }
@@ -429,6 +495,48 @@ impl Parser<'_> {
             return Err(self.error("unexpected trailing syntax"));
         }
         Ok(projection)
+    }
+    fn predicate(&mut self) -> Result<Option<String>> {
+        if !self.eat("WHERE") {
+            return Ok(None);
+        }
+        let start = self
+            .tokens
+            .get(self.pos)
+            .ok_or_else(|| self.error("expected WHERE predicate"))?
+            .start;
+        let mut end = self.tokens.len();
+        if end > self.pos
+            && self.tokens[end - 1].kind == Kind::Symbol
+            && self.tokens[end - 1].text == ";"
+        {
+            end -= 1;
+        }
+        let mut depth = 0;
+        for i in self.pos..end {
+            let token = &self.tokens[i];
+            if token.kind == Kind::Symbol {
+                match token.text.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth == 0
+                && i > self.pos
+                && token.kind == Kind::Word
+                && token.text.eq_ignore_ascii_case("RETURNING")
+            {
+                end = i;
+                break;
+            }
+        }
+        if end <= self.pos {
+            return Err(self.error("expected WHERE predicate"));
+        }
+        let text = self.input[start..self.tokens[end - 1].end].to_owned();
+        self.pos = end;
+        Ok(Some(text))
     }
     fn path(&mut self) -> Result<Vec<String>> {
         let mut path = vec![self.name()?];
@@ -809,6 +917,21 @@ pub fn validate_delimiter_depth(tokens: &[Token]) -> Result<()> {
     Ok(())
 }
 
+pub fn parse_expression(input: &str) -> Result<Expr> {
+    let tokens = tokenize(input)?;
+    validate_delimiter_depth(&tokens)?;
+    let mut parser = Parser {
+        input,
+        tokens,
+        pos: 0,
+    };
+    let expression = parser.expr(0)?;
+    if parser.pos != parser.tokens.len() {
+        return Err(parser.error("expected one expression"));
+    }
+    Ok(expression)
+}
+
 pub fn parse(input: &str) -> Result<Statement> {
     let mut p = Parser {
         input,
@@ -972,6 +1095,24 @@ pub fn parse(input: &str) -> Result<Statement> {
         return Ok(Statement::DropRelation { name, if_exists });
     }
     p.pos = 0;
+    if p.eat("DEFINE") && p.eat("SCHEMA") {
+        if !p.eat("ON") {
+            return Err(p.error("expected ON"));
+        }
+        let table = p.name()?;
+        let strict = if p.eat("STRICT") {
+            true
+        } else if p.eat("FLEXIBLE") {
+            false
+        } else {
+            return Err(p.error("expected STRICT or FLEXIBLE"));
+        };
+        if !p.end() {
+            return Err(p.error("unexpected schema clause"));
+        }
+        return Ok(Statement::DefineSchema { table, strict });
+    }
+    p.pos = 0;
     if p.eat("DEFINE") && p.eat("FIELD") {
         let overwrite = p.eat("OVERWRITE");
         let path = p.path()?;
@@ -984,7 +1125,7 @@ pub fn parse(input: &str) -> Result<Statement> {
         }
         let kind = p.name()?.to_ascii_lowercase();
         let target = if p.eat("<") {
-            let target = if kind == "vector" {
+            let mut target = if kind == "vector" {
                 let token = p
                     .tokens
                     .get(p.pos)
@@ -998,6 +1139,35 @@ pub fn parse(input: &str) -> Result<Statement> {
             } else {
                 p.name()?
             };
+            if kind == "array" {
+                if p.eat("<") {
+                    if !matches!(target.to_ascii_lowercase().as_str(), "record" | "vector") {
+                        return Err(p.error("array element parameters require record or vector"));
+                    }
+                    let inner = if target.eq_ignore_ascii_case("vector") {
+                        let token = p
+                            .tokens
+                            .get(p.pos)
+                            .ok_or_else(|| p.error("expected vector dimension"))?;
+                        if token.kind != Kind::Number {
+                            return Err(p.error("expected vector dimension"));
+                        }
+                        let value = token.text.clone();
+                        p.pos += 1;
+                        value
+                    } else {
+                        p.name()?
+                    };
+                    if !p.eat(">") {
+                        return Err(p.error("expected >"));
+                    }
+                    target = format!("{target}<{inner}>");
+                }
+                if p.tokens.get(p.pos).is_some_and(|token| token.text == "?") {
+                    p.pos += 1;
+                    target.push('?');
+                }
+            }
             if !p.eat(">") {
                 return Err(p.error("expected >"));
             }
@@ -1007,13 +1177,22 @@ pub fn parse(input: &str) -> Result<Statement> {
         };
         let required = p.eat("REQUIRED");
         let nullable = p.eat("NULLABLE");
-        let check = if p.eat("CHECK") {
+        let default = if p.eat("DEFAULT") {
+            Some(p.expr(0)?)
+        } else {
+            None
+        };
+        let readonly = p.eat("READONLY");
+        let flexible = p.eat("FLEXIBLE");
+        let mut expression_clause = |name: &str| -> Result<Option<String>> {
+            if !p.eat(name) {
+                return Ok(None);
+            }
             if !p.eat("(") {
-                return Err(p.error("expected CHECK (expression)"));
+                return Err(p.error("expected parenthesized field expression"));
             }
             let start = p.tokens[p.pos - 1].end;
             let mut depth = 1usize;
-            let mut end = None;
             while let Some(token) = p.tokens.get(p.pos) {
                 if token.kind == Kind::Symbol {
                     if token.text == "(" {
@@ -1022,19 +1201,18 @@ pub fn parse(input: &str) -> Result<Statement> {
                     if token.text == ")" {
                         depth -= 1;
                         if depth == 0 {
-                            end = Some(token.start);
+                            let end = token.start;
                             p.pos += 1;
-                            break;
+                            return Ok(Some(input[start..end].trim().to_owned()));
                         }
                     }
                 }
                 p.pos += 1;
             }
-            let end = end.ok_or_else(|| p.error("unterminated CHECK expression"))?;
-            Some(input[start..end].trim().to_owned())
-        } else {
-            None
+            Err(p.error("unterminated field expression"))
         };
+        let computed = expression_clause("VALUE")?;
+        let check = expression_clause("CHECK")?;
         if !p.end() {
             return Err(p.error("unsupported field definition clause"));
         }
@@ -1046,6 +1224,10 @@ pub fn parse(input: &str) -> Result<Statement> {
             required,
             nullable,
             check,
+            default,
+            readonly,
+            flexible,
+            computed,
             overwrite,
         });
     }
@@ -1076,6 +1258,7 @@ pub fn parse(input: &str) -> Result<Statement> {
             }
             let mut dimensions = None;
             let mut metric = None;
+            let mut quantization = None;
             loop {
                 let option = p.name()?.to_ascii_lowercase();
                 if !p.eat("=") {
@@ -1100,8 +1283,13 @@ pub fn parse(input: &str) -> Result<Statement> {
                     "metric" if metric.is_none() && token.kind == Kind::String => {
                         metric = Some(token.text.clone())
                     }
+                    "quantization" if quantization.is_none() && token.kind == Kind::String => {
+                        quantization = Some(token.text.clone())
+                    }
                     _ => {
-                        return Err(p.error("expected unique dimensions and string metric options"))
+                        return Err(
+                            p.error("expected unique dimensions, metric and quantization options")
+                        )
                     }
                 }
                 p.pos += 1;
@@ -1119,14 +1307,81 @@ pub fn parse(input: &str) -> Result<Statement> {
                 path: paths.remove(0),
                 dimensions: dimensions.ok_or_else(|| p.error("missing dimensions"))?,
                 metric: metric.ok_or_else(|| p.error("missing metric"))?,
+                quantization,
             });
         }
-        if p.eat("FULLTEXT") && p.end() {
+        if p.eat("FULLTEXT") {
+            let mut tokenizer = None;
+            let mut min_gram = None;
+            let mut max_gram = None;
+            if p.eat("WITH") {
+                if !p.eat("(") {
+                    return Err(p.error("expected analyzer options"));
+                }
+                loop {
+                    let option = p.name()?.to_ascii_lowercase();
+                    if !p.eat("=") {
+                        return Err(p.error("expected ="));
+                    }
+                    let token = p
+                        .tokens
+                        .get(p.pos)
+                        .ok_or_else(|| p.error("expected option value"))?;
+                    match option.as_str() {
+                        "tokenizer" if tokenizer.is_none() && token.kind == Kind::String => {
+                            tokenizer = Some(token.text.clone())
+                        }
+                        "min_gram" | "max_gram" if token.kind == Kind::Number => {
+                            let value = token
+                                .text
+                                .parse::<usize>()
+                                .map_err(|_| p.error("expected integer ngram size"))?;
+                            let slot = if option == "min_gram" {
+                                &mut min_gram
+                            } else {
+                                &mut max_gram
+                            };
+                            if slot.replace(value).is_some() {
+                                return Err(p.error("duplicate analyzer option"));
+                            }
+                        }
+                        _ => {
+                            return Err(
+                                p.error("expected unique tokenizer, min_gram or max_gram option")
+                            )
+                        }
+                    }
+                    p.pos += 1;
+                    if !p.eat(",") {
+                        break;
+                    }
+                }
+                if !p.eat(")") {
+                    return Err(p.error("expected end of analyzer options"));
+                }
+            }
+            if !p.end() {
+                return Err(p.error("expected end of FULLTEXT index"));
+            }
             return Ok(Statement::CreateFullTextIndex {
                 if_not_exists,
                 table,
                 name,
                 paths,
+                tokenizer,
+                min_gram,
+                max_gram,
+            });
+        }
+        if p.eat("ARRAY") {
+            if paths.len() != 1 || !p.end() {
+                return Err(p.error("ARRAY index requires one path"));
+            }
+            return Ok(Statement::CreateArrayIndex {
+                if_not_exists,
+                table,
+                name,
+                path: paths.remove(0),
             });
         }
         if !(p.eat("SPATIAL") && p.end()) || paths.len() != 1 {
@@ -1158,6 +1413,10 @@ pub fn parse(input: &str) -> Result<Statement> {
                     return Err(p.error("expected ("));
                 }
                 let path = p.path()?;
+                let mut additional_paths = Vec::new();
+                while p.eat(",") {
+                    additional_paths.push(p.path()?);
+                }
                 if !p.eat(")") || !p.end() {
                     return Err(p.error("expected index end"));
                 }
@@ -1166,6 +1425,7 @@ pub fn parse(input: &str) -> Result<Statement> {
                     table,
                     name,
                     path,
+                    additional_paths,
                     unique,
                     sql: input.into(),
                 })
@@ -1204,49 +1464,47 @@ pub fn parse(input: &str) -> Result<Statement> {
     p.pos = 0;
     if p.eat("UPDATE") {
         if let Ok(table) = p.name() {
+            let target = if p.tokens.get(p.pos).is_some_and(|t| t.text == ":")
+                && p.tokens.get(p.pos + 1).is_none_or(|t| t.text != ":")
+            {
+                p.pos = 1;
+                Some(p.record()?)
+            } else {
+                None
+            };
+            let mode = if p.eat("CONTENT") {
+                Some(MutationMode::Content)
+            } else if p.eat("MERGE") {
+                Some(MutationMode::Merge)
+            } else if p.eat("PATCH") {
+                Some(MutationMode::Patch)
+            } else {
+                None
+            };
+            if let Some(mode) = mode {
+                let value = p.expr(0)?;
+                let predicate = p.predicate()?;
+                if target.is_some() && predicate.is_some() {
+                    return Err(p.error("fixed mutation targets do not accept an additional WHERE"));
+                }
+                let returning = p.returning()?;
+                return Ok(Statement::MutateDocument {
+                    table,
+                    target,
+                    mode,
+                    value,
+                    predicate,
+                    returning,
+                });
+            }
+        }
+    }
+    p.pos = 0;
+    if p.eat("UPDATE") {
+        if let Ok(table) = p.name() {
             if p.tokens.get(p.pos).is_some_and(|t| t.text == "{") {
                 let value = p.expr(0)?;
-                let predicate = if p.eat("WHERE") {
-                    let start = p
-                        .tokens
-                        .get(p.pos)
-                        .ok_or_else(|| p.error("expected WHERE predicate"))?
-                        .start;
-                    let mut end = p.tokens.len();
-                    if end > p.pos
-                        && p.tokens[end - 1].kind == Kind::Symbol
-                        && p.tokens[end - 1].text == ";"
-                    {
-                        end -= 1;
-                    }
-                    let mut depth = 0;
-                    for i in p.pos..end {
-                        let token = &p.tokens[i];
-                        if token.kind == Kind::Symbol {
-                            match token.text.as_str() {
-                                "(" | "[" | "{" => depth += 1,
-                                ")" | "]" | "}" => depth -= 1,
-                                _ => {}
-                            }
-                        }
-                        if depth == 0
-                            && i > p.pos
-                            && token.kind == Kind::Word
-                            && token.text.eq_ignore_ascii_case("RETURNING")
-                        {
-                            end = i;
-                            break;
-                        }
-                    }
-                    if end <= p.pos {
-                        return Err(p.error("expected WHERE predicate"));
-                    }
-                    let text = input[start..p.tokens[end - 1].end].to_owned();
-                    p.pos = end;
-                    Some(text)
-                } else {
-                    None
-                };
+                let predicate = p.predicate()?;
                 let returning = p.returning()?;
                 return Ok(Statement::PatchWhere {
                     table,

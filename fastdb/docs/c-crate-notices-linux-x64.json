@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "4f7d388ffc797bc863852ffb49f0f7b5bc3cfc55b9f462dd643d3e049c73ed63",
+  "inventorySha256": "5991a3a0b79891e3bd4361770b3e82c6cfd708f2a877efd5923fc5e7da48e4c3",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -172,9 +172,9 @@
     },
     {
       "name": "aristo-macros",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "status": "archive_verified",
-      "archiveSha256": "382cece5540ed31a126d26ca551561a670d7940074787b420585bd0d39676e7f",
+      "archiveSha256": "d64a66d21a80182b35b1741997a6d2456911f54b7eb1918aa4e2382fc205268d",
       "declaredLicenseFile": null,
       "noticeCandidates": [],
       "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
@@ -182,9 +182,9 @@
     },
     {
       "name": "aristo",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "status": "archive_verified",
-      "archiveSha256": "fe6ebb7c22c91a8d0b936448480e0216a9621dc09481a3c08a08f9fe4a64ad57",
+      "archiveSha256": "fcdeefa800110050103e2459a2f8dbdbd560ad046e30f1f87e24ce19c2cb8bde",
       "declaredLicenseFile": null,
       "noticeCandidates": [],
       "inlineSearchScope": "Code/text files at most 200000 bytes; selected suffixes and marker phrases; not exhaustive",
@@ -1624,17 +1624,17 @@
     },
     {
       "name": "fastdb-c",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb-protocol",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1653,7 +1653,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1956,6 +1956,25 @@
           "path": "LICENSE",
           "bytes": 1443,
           "sha256": "83d0dc0dba8549e6678aafaaf0ce4f3b2a1c6a4239b46a1a8ad16d2a68381031"
+        }
+      ]
+    },
+    {
+      "name": "half",
+      "version": "2.5.0",
+      "status": "archive_verified",
+      "archiveSha256": "7db2ff139bba50379da6aa0766b52fdcb62cb5b263009b09ed58ba604e14bbd1",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10173,
+          "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1036,
+          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
         }
       ]
     },
@@ -3890,6 +3909,25 @@
       ]
     },
     {
+      "name": "simdutf8",
+      "version": "0.1.5",
+      "status": "archive_verified",
+      "archiveSha256": "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10173,
+          "sha256": "0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1035,
+          "sha256": "1847e0e0698142ed4347c1441a9fa81c8fbddd44b1d8bbcd5e3647f991759d7f"
+        }
+      ]
+    },
+    {
       "name": "simsimd",
       "version": "6.5.3",
       "status": "archive_verified",
@@ -4207,9 +4245,9 @@
     },
     {
       "name": "tantivy",
-      "version": "0.26.1",
+      "version": "0.26.2",
       "status": "archive_verified",
-      "archiveSha256": "edde6a10743fff00a4e1a8c9ef020bf5f3cbad301b7d2d39f2b07f123c4eac07",
+      "archiveSha256": "861facfabd71044968f364837f9a083b56464ba5a59079f88706ee5c451ca069",
       "declaredLicenseFile": null,
       "noticeCandidates": [
         {
@@ -4443,22 +4481,22 @@
     },
     {
       "name": "turso_core",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "turso_ext",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "turso_macros",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "turso_parser",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "status": "workspace_source_requires_separate_review"
     },
     {

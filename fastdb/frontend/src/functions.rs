@@ -35,6 +35,16 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
             ),
             (c"__fastdb_pack", pack as turso_ext::ScalarFunction, 1),
             (
+                c"__fastdb_array_key",
+                array_key as turso_ext::ScalarFunction,
+                1,
+            ),
+            (
+                c"__fastdb_unnest_json",
+                unnest_json as turso_ext::ScalarFunction,
+                1,
+            ),
+            (
                 c"__fastdb_pagination_value",
                 pagination_value as turso_ext::ScalarFunction,
                 1,
@@ -57,6 +67,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 1,
             ),
             (c"__fastdb_unwrap", unwrap as turso_ext::ScalarFunction, 1),
+            (
+                c"__fastdb_equality_key",
+                equality_key as turso_ext::ScalarFunction,
+                1,
+            ),
             (
                 c"__fastdb_sql_scalar",
                 sql_scalar as turso_ext::ScalarFunction,
@@ -112,7 +127,7 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 api.ctx,
                 name.as_ptr(),
                 argc,
-                name != c"__fastdb_pagination_value",
+                name != c"__fastdb_pagination_value" && name != c"__fastdb_unnest_json",
                 0,
                 callback,
                 None,
@@ -304,7 +319,7 @@ fn pack(args: &[ExtValue]) -> ExtValue {
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
-fn compare_values(a: &Value, b: &Value) -> Result<Option<std::cmp::Ordering>> {
+pub(crate) fn compare_values(a: &Value, b: &Value) -> Result<Option<std::cmp::Ordering>> {
     if matches!(a, Value::Null) || matches!(b, Value::Null) {
         return Ok(None);
     }
@@ -436,6 +451,47 @@ fn unwrap(args: &[ExtValue]) -> ExtValue {
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }
+#[scalar(name = "__fastdb_equality_key")]
+fn equality_key(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("equality key arity".into()));
+        };
+        let value = decode_arg(value)?;
+        if matches!(value, Value::Array(_) | Value::Object(_) | Value::Vector(_)) {
+            value.encode_with_limit(Some(64 * 1024 * 1024))?;
+            return Ok(ExtValue::from_blob(crate::collections::identity(&value)?));
+        }
+        scalar_result(&value)
+    })();
+    result.unwrap_or_else(|error| {
+        let prefix = match &error {
+            Error::Limit(_) => "__fastdb_udf_limit:",
+            Error::Validation(_) => "__fastdb_udf_validation:",
+            _ => "",
+        };
+        ExtValue::error_with_message(format!("{prefix}{error}"))
+    })
+}
+#[scalar(name = "__fastdb_array_key")]
+fn array_key(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("array key arity".into()));
+        };
+        let value = decode_arg(value)?;
+        value.encode_with_limit(Some(1024 * 1024))?;
+        Ok(ExtValue::from_blob(crate::collections::identity(&value)?))
+    })();
+    result.unwrap_or_else(|error| {
+        let prefix = match &error {
+            Error::Limit(_) => "__fastdb_udf_limit:",
+            Error::Validation(_) => "__fastdb_udf_validation:",
+            _ => "",
+        };
+        ExtValue::error_with_message(format!("{prefix}{error}"))
+    })
+}
 #[scalar(name = "__fastdb_helper")]
 fn helper(args: &[ExtValue]) -> ExtValue {
     let result = (|| -> Result<ExtValue> {
@@ -447,6 +503,13 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             .ok_or_else(|| Error::Validation("helper name".into()))?;
         let args = args.iter().map(decode_arg).collect::<Result<Vec<_>>>()?;
         let value = match (name, args.as_slice()) {
+            ("doc_before" | "doc_after" | "doc_diff", _) => {
+                return Err(Error::Validation(
+                    "mutation snapshot helpers require collection RETURNING".into(),
+                ))
+            }
+            ("mutation_diff", _) => crate::mutation_result::call_diff(&args)?,
+            ("search_analyze", _) => crate::analyzer::call(&args)?,
             ("geo_cell", _) => crate::spatial::call("cell", &args)?,
             ("geo_cell_center", _) => crate::spatial::call("cell_center", &args)?,
             ("geo_point", _) => crate::spatial::call("point", &args)?,
@@ -455,6 +518,20 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             ("string_slugify", _) => crate::bundled::call("slugify", &args)?,
             ("string_normalize", _) => crate::bundled::call("normalize", &args)?,
             ("array_new", _) => Value::Array(args),
+            (
+                "array_len"
+                | "array_contains"
+                | "array_distinct"
+                | "array_flatten"
+                | "object_keys"
+                | "object_values"
+                | "object_entries"
+                | "object_from_entries",
+                _,
+            ) => crate::collections::call(name, &args)?,
+            ("doc_omit", [Value::Object(document), Value::String(paths)]) => {
+                crate::omit::apply(document, paths)?
+            }
             ("array_append", [Value::Array(array), element]) => {
                 let mut array = array.clone();
                 array.push(element.clone());
@@ -483,7 +560,28 @@ fn helper(args: &[ExtValue]) -> ExtValue {
         };
         Ok(ExtValue::from_blob(value.encode()?))
     })();
-    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+    result.unwrap_or_else(|e| {
+        let prefix = if matches!(
+            args.first().and_then(ExtValue::to_text),
+            Some(
+                "search_analyze"
+                    | "mutation_diff"
+                    | "doc_before"
+                    | "doc_after"
+                    | "doc_diff"
+                    | "array_contains"
+            )
+        ) {
+            match e {
+                Error::Limit(_) => "__fastdb_udf_limit:",
+                Error::Validation(_) => "__fastdb_udf_validation:",
+                _ => "",
+            }
+        } else {
+            ""
+        };
+        ExtValue::error_with_message(format!("{prefix}{e}"))
+    })
 }
 
 #[scalar(name = "__fastdb_count_value")]
@@ -1943,4 +2041,23 @@ mod cte_evaluation_tests {
             }
         }
     }
+}
+
+#[scalar(name = "__fastdb_unnest_json")]
+fn unnest_json(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [value] = args else {
+            return Err(Error::Validation("array::unnest expects one array".into()));
+        };
+        Ok(ExtValue::from_text(crate::unnest::json(&decode_arg(
+            value,
+        )?)?))
+    })();
+    result.unwrap_or_else(|error| {
+        ExtValue::error_with_message(match error {
+            Error::Limit(message) => format!("__fastdb_udf_limit:{message}"),
+            Error::Validation(message) => format!("__fastdb_udf_validation:{message}"),
+            other => other.to_string(),
+        })
+    })
 }

@@ -111,6 +111,14 @@ impl Connection {
             }
             execution?;
             for index in &c.indexes {
+                if index.kind == crate::IndexKind::Array {
+                    let entries = self.audit_array_index(&c, index).map_err(stored)?;
+                    report.index_entries = report
+                        .index_entries
+                        .checked_add(entries)
+                        .ok_or_else(|| Error::Limit("integrity entry count overflow".into()))?;
+                    continue;
+                }
                 let mut seen = std::collections::BTreeSet::new();
                 let mut failure = None;
                 if index.kind == crate::IndexKind::FullText

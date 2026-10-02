@@ -148,28 +148,34 @@ impl Connection {
         result_limits: ResultLimits,
         work_limits: CreateWorkLimits,
     ) -> Option<MeteredCreate> {
-        let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
-            use fastql_parser::Statement;
-            use turso_parser::ast::{Cmd, Stmt};
-            Ok(match fastql_parser::parse(sql)? {
-                Statement::CreateCollection { .. }
-                | Statement::CreateIndex { .. }
-                | Statement::CreateSpatialIndex { .. }
-                | Statement::CreateFullTextIndex { .. }
-                | Statement::CreateVectorIndex { .. } => Some(SchemaStatement::Logical),
-                Statement::Sql(sql) => match crate::select::parsed(&sql)? {
-                    Cmd::Stmt(
-                        Stmt::CreateTable {
-                            temporary: false, ..
-                        }
-                        | Stmt::CreateIndex { using: None, .. },
-                    ) => Some(SchemaStatement::Native),
+        self.with_statement_timeout(sql, |sql| {
+            let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
+                use fastql_parser::Statement;
+                use turso_parser::ast::{Cmd, Stmt};
+                Ok(match fastql_parser::parse(sql)? {
+                    Statement::CreateCollection { .. }
+                    | Statement::CreateIndex { .. }
+                    | Statement::CreateSpatialIndex { .. }
+                    | Statement::CreateArrayIndex { .. }
+                    | Statement::CreateFullTextIndex { .. }
+                    | Statement::CreateVectorIndex { .. } => Some(SchemaStatement::Logical),
+                    Statement::Sql(sql) => match crate::select::parsed(&sql)? {
+                        Cmd::Stmt(
+                            Stmt::CreateTable {
+                                temporary: false, ..
+                            }
+                            | Stmt::CreateIndex { using: None, .. },
+                        ) => Some(SchemaStatement::Native),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            })
-        });
-        self.execute_metered_schema(sql, params, result_limits, work_limits, syntax)
+                })
+            });
+            Ok(self.execute_metered_schema(sql, params, result_limits, work_limits, syntax))
+        })
+        .unwrap_or_else(|error| {
+            self.execute_metered_schema(sql, params, result_limits, work_limits, Err(error))
+        })
     }
 
     /// Execute logical field definition/removal, relation definition/removal and
@@ -184,19 +190,42 @@ impl Connection {
         result_limits: ResultLimits,
         work_limits: SchemaWorkLimits,
     ) -> Option<MeteredSchema> {
-        let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
-            use fastql_parser::Statement;
-            Ok(match fastql_parser::parse(sql)? {
-                Statement::DefineField { .. }
-                | Statement::RemoveField { .. }
-                | Statement::DefineRelation { .. }
-                | Statement::DropRelation { .. }
-                | Statement::CreateFunction { .. }
-                | Statement::DropFunction { .. } => Some(SchemaStatement::Logical),
-                _ => None,
-            })
-        });
-        self.execute_metered_schema(sql, params, result_limits, work_limits, syntax)
+        self.with_statement_timeout(sql, |sql| {
+            let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
+                use fastql_parser::Statement;
+                Ok(match fastql_parser::parse(sql)? {
+                    Statement::DefineSchema { .. }
+                    | Statement::DefineField { .. }
+                    | Statement::RemoveField { .. }
+                    | Statement::DefineRelation { .. }
+                    | Statement::DropRelation { .. }
+                    | Statement::CreateFunction { .. }
+                    | Statement::DropFunction { .. } => Some(SchemaStatement::Logical),
+                    Statement::Sql(sql) => match crate::select::parsed(&sql)? {
+                        turso_parser::ast::Cmd::Stmt(turso_parser::ast::Stmt::Reindex {
+                            name: Some(name),
+                        }) if name
+                            .db_name
+                            .as_ref()
+                            .is_none_or(|db| db.as_str().eq_ignore_ascii_case("main"))
+                            && self.collections()?.iter().any(|collection| {
+                                collection.indexes.iter().any(|index| {
+                                    index.name.eq_ignore_ascii_case(name.name.as_str())
+                                })
+                            }) =>
+                        {
+                            Some(SchemaStatement::Logical)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                })
+            });
+            Ok(self.execute_metered_schema(sql, params, result_limits, work_limits, syntax))
+        })
+        .unwrap_or_else(|error| {
+            self.execute_metered_schema(sql, params, result_limits, work_limits, Err(error))
+        })
     }
 
     /// Execute ordinary main-schema CREATE/DROP VIEW, DROP TABLE/INDEX and
@@ -212,6 +241,7 @@ impl Connection {
         result_limits: ResultLimits,
         work_limits: DdlWorkLimits,
     ) -> Option<MeteredDdl> {
+        self.with_statement_timeout(sql, |sql| {
         let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
             use turso_parser::ast::{Cmd, Stmt};
             let fastql_parser::Statement::Sql(native) = fastql_parser::parse(sql)? else {
@@ -269,7 +299,8 @@ impl Connection {
                 _ => None,
             })
         });
-        self.execute_metered_schema(sql, params, result_limits, work_limits, syntax)
+            Ok(self.execute_metered_schema(sql, params, result_limits, work_limits, syntax))
+        }).unwrap_or_else(|error| self.execute_metered_schema(sql, params, result_limits, work_limits, Err(error)))
     }
 
     /// Execute EXPLAIN or EXPLAIN QUERY PLAN without executing the explained
@@ -282,29 +313,36 @@ impl Connection {
         result_limits: ResultLimits,
         work_limits: DdlWorkLimits,
     ) -> Option<MeteredDdl> {
-        let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
-            use turso_parser::ast::Cmd;
-            let fastql_parser::Statement::Sql(native) = fastql_parser::parse(sql)? else {
-                return Ok(None);
-            };
-            // Match the normal SELECT lowering's namespace/record syntax before
-            // classifying; parsing raw FastQL would reject managed search plans.
-            let expanded =
-                crate::select::expand_paths(&crate::select::expand_records(Some(self), &native)?)?;
-            // ANN lowering currently materializes candidates before preparing
-            // the outer SQL. Its graph/storage work is not qualified by this
-            // adapter, so never report that path as a zero-read explanation.
-            if fastql_parser::tokenize(&expanded)?.iter().any(|token| {
-                token.kind == fastql_parser::Kind::Word && token.text == "__fastdb_vector"
-            }) {
-                return Ok(None);
-            }
-            Ok(match crate::select::parsed(&expanded)? {
-                Cmd::Explain(_) | Cmd::ExplainQueryPlan { .. } => Some(SchemaStatement::Native),
-                _ => None,
-            })
-        });
-        self.execute_metered_schema(sql, params, result_limits, work_limits, syntax)
+        self.with_statement_timeout(sql, |sql| {
+            let syntax = crate::parser_stack(|| -> Result<Option<SchemaStatement>> {
+                use turso_parser::ast::Cmd;
+                let fastql_parser::Statement::Sql(native) = fastql_parser::parse(sql)? else {
+                    return Ok(None);
+                };
+                // Match the normal SELECT lowering's namespace/record syntax before
+                // classifying; parsing raw FastQL would reject managed search plans.
+                let expanded = crate::select::expand_paths(&crate::select::expand_records(
+                    Some(self),
+                    &native,
+                )?)?;
+                // ANN lowering currently materializes candidates before preparing
+                // the outer SQL. Its graph/storage work is not qualified by this
+                // adapter, so never report that path as a zero-read explanation.
+                if fastql_parser::tokenize(&expanded)?.iter().any(|token| {
+                    token.kind == fastql_parser::Kind::Word && token.text == "__fastdb_vector"
+                }) {
+                    return Ok(None);
+                }
+                Ok(match crate::select::parsed(&expanded)? {
+                    Cmd::Explain(_) | Cmd::ExplainQueryPlan { .. } => Some(SchemaStatement::Native),
+                    _ => None,
+                })
+            });
+            Ok(self.execute_metered_schema(sql, params, result_limits, work_limits, syntax))
+        })
+        .unwrap_or_else(|error| {
+            self.execute_metered_schema(sql, params, result_limits, work_limits, Err(error))
+        })
     }
 
     fn ddl_targets_main(&self, name: &turso_parser::ast::QualifiedName) -> Result<bool> {
@@ -525,32 +563,35 @@ impl Connection {
             max_row_mutations: Some(0),
             max_vm_steps: work_limits.max_vm_steps,
         }));
-        let outcome = crate::parser_stack(|| {
-            if let Some(name) = params.keys().next() {
-                return Err(Error::Parameter(format!("unused binding {name}")));
-            }
-            let fastql_parser::Statement::Info { scope, name } = fastql_parser::parse(sql)? else {
-                return Err(Error::Unsupported(
-                    "metered INFO requires logical schema inspection".into(),
-                ));
-            };
-            {
-                let mut slot = self.work_meter.lock().unwrap_or_else(|e| e.into_inner());
-                if slot.is_some() {
-                    return Err(Error::Unsupported("nested metered execution".into()));
+        let outcome = self.with_statement_timeout(sql, |sql| {
+            crate::parser_stack(|| {
+                if let Some(name) = params.keys().next() {
+                    return Err(Error::Parameter(format!("unused binding {name}")));
                 }
-                *slot = Some(meter.clone());
-            }
-            let _scope = Scope(self);
-            self.meter_catalog_reads
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let result = self.info(&scope, name.as_deref())?;
-            let mut budget =
-                crate::budget::ResultBudget::new(Some(result_limits), &result.columns)?;
-            for row in &result.rows {
-                budget.row(row)?;
-            }
-            Ok(result)
+                let fastql_parser::Statement::Info { scope, name } = fastql_parser::parse(sql)?
+                else {
+                    return Err(Error::Unsupported(
+                        "metered INFO requires logical schema inspection".into(),
+                    ));
+                };
+                {
+                    let mut slot = self.work_meter.lock().unwrap_or_else(|e| e.into_inner());
+                    if slot.is_some() {
+                        return Err(Error::Unsupported("nested metered execution".into()));
+                    }
+                    *slot = Some(meter.clone());
+                }
+                let _scope = Scope(self);
+                self.meter_catalog_reads
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                let result = self.info(&scope, name.as_deref())?;
+                let mut budget =
+                    crate::budget::ResultBudget::new(Some(result_limits), &result.columns)?;
+                for row in &result.rows {
+                    budget.row(row)?;
+                }
+                Ok(result)
+            })
         });
         let snapshot = meter.snapshot();
         MeteredInfo {
@@ -587,23 +628,25 @@ impl Connection {
             max_row_mutations: None,
             max_vm_steps: work_limits.max_vm_steps,
         }));
-        let outcome = crate::parser_stack(|| {
-            {
-                let mut slot = self.work_meter.lock().unwrap_or_else(|e| e.into_inner());
-                if slot.is_some() {
-                    return Err(Error::Unsupported("nested metered execution".into()));
+        let outcome = self.with_statement_timeout(sql, |sql| {
+            crate::parser_stack(|| {
+                {
+                    let mut slot = self.work_meter.lock().unwrap_or_else(|e| e.into_inner());
+                    if slot.is_some() {
+                        return Err(Error::Unsupported("nested metered execution".into()));
+                    }
+                    *slot = Some(meter.clone());
                 }
-                *slot = Some(meter.clone());
-            }
-            let _scope = Scope(self);
-            match fastql_parser::parse(sql)? {
-                fastql_parser::Statement::SelectRecord(target) => {
-                    self.metered_record(&target, params, result_limits)
+                let _scope = Scope(self);
+                match fastql_parser::parse(sql)? {
+                    fastql_parser::Statement::SelectRecord(target) => {
+                        self.metered_record(&target, params, result_limits)
+                    }
+                    _ => self
+                        .profile_select_with_limits(sql, params, result_limits)
+                        .map(|profile| profile.result),
                 }
-                _ => self
-                    .profile_select_with_limits(sql, params, result_limits)
-                    .map(|profile| profile.result),
-            }
+            })
         });
         let snapshot = meter.snapshot();
         MeteredRead {
@@ -737,6 +780,7 @@ impl Connection {
         maintenance: bool,
         execute: impl FnOnce(&mut turso_core::Statement) -> Result<T>,
     ) -> Result<T> {
+        let _unnest = crate::unnest::Scope::enter();
         let meter = self
             .work_meter
             .lock()

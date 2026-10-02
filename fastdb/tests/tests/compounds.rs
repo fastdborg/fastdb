@@ -734,7 +734,7 @@ fn pinned_correlated_unordered_union_pagination_is_not_materialization_equivalen
 }
 
 #[test]
-fn rejected_composite_membership_preserves_prior_work_and_allows_retry() {
+fn composite_membership_preserves_prior_work_and_allows_retry() {
     for composite in [
         Value::Array(vec![Value::Integer(1)]),
         Value::Object(std::collections::BTreeMap::from([(
@@ -763,18 +763,23 @@ fn rejected_composite_membership_preserves_prior_work_and_allows_retry() {
         q(&c, "BEGIN");
         q(&c, "INSERT INTO sink(n) VALUES(9)");
         let insert = "INSERT INTO sink(n) SELECT d.n FROM docs d WHERE (SELECT count(*) FROM probe WHERE d.k IN(SELECT d.k INTERSECT SELECT 1 LIMIT 1))=1 ORDER BY d.n RETURNING n";
-        let error = c.execute(insert, &Parameters::new()).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("expected scalar or record index value"),
-            "{error}"
-        );
+        let error = c
+            .write_with_result_limits(
+                insert,
+                &Parameters::new(),
+                fastdb::ResultLimits {
+                    max_rows: 0,
+                    max_payload_bytes: 1024,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(error, fastdb::Error::Limit(_)), "{error}");
         assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
         assert_eq!(
             q(&c, "SELECT n FROM sink").rows,
             vec![vec![Value::Integer(9)]]
         );
+        assert_eq!(q(&c, insert).rows, vec![vec![Value::Integer(1)]]);
         q(&c, "ROLLBACK");
         assert!(q(&c, "SELECT n FROM sink").rows.is_empty());
         assert_eq!(
@@ -798,6 +803,333 @@ fn rejected_composite_membership_preserves_prior_work_and_allows_retry() {
         assert_eq!(
             q(&c, "SELECT k FROM docs WHERE n=2").rows,
             vec![vec![composite]]
+        );
+    }
+}
+
+#[test]
+fn composite_sets_and_distinct_use_typed_identity_without_scalar_coercion_changes() {
+    let c = Database::open(":memory:").unwrap().connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    let one = Value::Object(
+        [(
+            "values".into(),
+            Value::Array(vec![
+                Value::Integer(1),
+                Value::Number(-0.0),
+                Value::Record(fastdb::Record {
+                    table: "DOCS".into(),
+                    key: fastdb::Key::String("a".into()),
+                }),
+            ]),
+        )]
+        .into(),
+    );
+    let equivalent = Value::Object(
+        [(
+            "values".into(),
+            Value::Array(vec![
+                Value::Integer(1),
+                Value::Number(0.0),
+                Value::Record(fastdb::Record {
+                    table: "docs".into(),
+                    key: fastdb::Key::String("a".into()),
+                }),
+            ]),
+        )]
+        .into(),
+    );
+    let distinct = Value::Object(
+        [(
+            "values".into(),
+            Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(0.0),
+                Value::Record(fastdb::Record {
+                    table: "docs".into(),
+                    key: fastdb::Key::String("a".into()),
+                }),
+            ]),
+        )]
+        .into(),
+    );
+    for (n, value) in [
+        (1, one.clone()),
+        (2, equivalent.clone()),
+        (3, distinct.clone()),
+    ] {
+        c.execute(
+            "INSERT INTO docs {n:$n,v:$v}",
+            &Parameters::from([("$n".into(), Value::Integer(n)), ("$v".into(), value)]),
+        )
+        .unwrap();
+    }
+    let params = Parameters::from([
+        ("$one".into(), one),
+        ("$same".into(), equivalent),
+        ("$different".into(), distinct),
+    ]);
+    let run = |sql: &str| {
+        c.execute(
+            sql,
+            &params
+                .iter()
+                .filter(|(name, _)| sql.contains(name.as_str()))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        )
+    };
+    assert_eq!(
+        run("SELECT $one AS v UNION SELECT $same")
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        run("SELECT $one AS v UNION SELECT $different")
+            .unwrap()
+            .rows
+            .len(),
+        2
+    );
+    assert_eq!(
+        run("SELECT $one AS v INTERSECT SELECT $same")
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+    assert!(run("SELECT $one AS v EXCEPT SELECT $same")
+        .unwrap()
+        .rows
+        .is_empty());
+    assert_eq!(q(&c, "SELECT DISTINCT v FROM docs").rows.len(), 2);
+    assert_eq!(
+        q(
+            &c,
+            "WITH keys AS (SELECT v FROM docs UNION SELECT v FROM docs) SELECT count(*) FROM keys"
+        )
+        .rows,
+        vec![vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        q(&c, "SELECT v FROM docs UNION ALL SELECT v FROM docs")
+            .rows
+            .len(),
+        6
+    );
+    assert_eq!(
+        q(&c, "SELECT 1 UNION SELECT 1.0 UNION SELECT true")
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        q(&c, "SELECT 'A' COLLATE NOCASE UNION SELECT 'a'")
+            .rows
+            .len(),
+        1
+    );
+    for sql in [
+        "SELECT v FROM docs ORDER BY v",
+        "SELECT DISTINCT v FROM docs ORDER BY v",
+        "SELECT v+1 FROM docs",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+}
+
+#[test]
+fn composite_membership_retains_sql_null_truth_and_binary_tag_separation() {
+    let c = Database::open(":memory:").unwrap().connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    let array = Value::Array(vec![Value::Integer(1), Value::Null]);
+    let object = Value::Object([("x".into(), Value::Boolean(true))].into());
+    let vector = q(&c, "SELECT vector32('[1,0]')").rows[0][0].clone();
+    for (n,value) in [(1,array.clone()),(2,object.clone()),(3,Value::Null),(4,Value::Binary(b"FDB\x01{\"type\":\"Array\",\"value\":[{\"type\":\"Integer\",\"value\":1},{\"type\":\"Null\"}]}".to_vec())),(5,vector.clone())] {c.execute("INSERT INTO docs {n:$n,v:$value}",&Parameters::from([("$n".into(),Value::Integer(n)),("$value".into(),value)])).unwrap();}
+    let params = Parameters::from([
+        ("$array".into(), array),
+        ("$object".into(), object),
+        ("$vector".into(), vector),
+    ]);
+    let run = |sql: &str| {
+        c.execute(
+            sql,
+            &params
+                .iter()
+                .filter(|(name, _)| sql.contains(name.as_str()))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        )
+    };
+    assert_eq!(
+        run("SELECT n FROM docs WHERE v IN($array,$object,$vector) ORDER BY n")
+            .unwrap()
+            .rows,
+        vec![
+            vec![Value::Integer(1)],
+            vec![Value::Integer(2)],
+            vec![Value::Integer(5)]
+        ]
+    );
+    assert_eq!(
+        run("SELECT n FROM docs WHERE v NOT IN($array,NULL) ORDER BY n")
+            .unwrap()
+            .rows
+            .len(),
+        0
+    );
+    assert_eq!(
+        run("SELECT v IN($array,NULL),v NOT IN($array,NULL) FROM docs ORDER BY n")
+            .unwrap()
+            .rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(0)],
+            vec![Value::Null, Value::Null],
+            vec![Value::Null, Value::Null],
+            vec![Value::Null, Value::Null],
+            vec![Value::Null, Value::Null]
+        ]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs WHERE v IN(SELECT v FROM docs WHERE n=1) ORDER BY n"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(q(&c,"SELECT n FROM docs WHERE v IN(SELECT v FROM docs WHERE n=2 UNION SELECT v FROM docs WHERE n=5) ORDER BY n").rows,vec![vec![Value::Integer(2)],vec![Value::Integer(5)]]);
+    q(&c, "CREATE INDEX docs_n ON docs(n)");
+    assert!(run("SELECT n FROM docs WHERE n IN($array)")
+        .unwrap()
+        .rows
+        .is_empty());
+    assert_eq!(
+        run("SELECT n FROM docs WHERE n IN(1,$array) ORDER BY n")
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(
+        run("SELECT n FROM docs NOT INDEXED WHERE n IN(1,$array) ORDER BY n")
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+}
+
+#[test]
+fn typed_row_membership_preserves_components_nulls_and_set_identity() {
+    let c = Database::open(":memory:").unwrap().connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    for sql in [
+        "INSERT INTO docs {id:docs:a,n:1,k:[1,2]}",
+        "INSERT INTO docs {id:docs:b,n:2,k:{a:1}}",
+        "INSERT INTO docs {id:docs:c,n:3,k:null}",
+    ] {
+        q(&c, sql);
+    }
+    for rhs in [
+        "SELECT n,k FROM docs WHERE n<3",
+        "SELECT n,k FROM docs WHERE n<3 UNION SELECT n,k FROM docs WHERE n=1",
+        "WITH members AS (SELECT n,k FROM docs WHERE n<3) SELECT n,k FROM members",
+    ] {
+        assert_eq!(q(&c, &format!("SELECT n,(n,k) IN({rhs}) AS found,(n,k) NOT IN({rhs}) AS absent FROM docs ORDER BY n")).rows, vec![
+            vec![Value::Integer(1),Value::Integer(1),Value::Integer(0)],
+            vec![Value::Integer(2),Value::Integer(1),Value::Integer(0)],
+            vec![Value::Integer(3),Value::Integer(0),Value::Integer(1)],
+        ], "{rhs}");
+    }
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n,(n,k) IN(SELECT n,k FROM docs) FROM docs ORDER BY n"
+        )
+        .rows,
+        vec![
+            vec![Value::Integer(1), Value::Integer(1)],
+            vec![Value::Integer(2), Value::Integer(1)],
+            vec![Value::Integer(3), Value::Null],
+        ]
+    );
+    assert_eq!(q(&c, "SELECT d.n FROM docs d WHERE (d.n,d.k) IN(SELECT p.n,p.k FROM docs p WHERE p.n=d.n) ORDER BY d.n").rows, vec![vec![Value::Integer(1)],vec![Value::Integer(2)]]);
+    q(&c, "CREATE TABLE native(n INTEGER,k TEXT)");
+    q(&c, "INSERT INTO native VALUES(1,'one'),(2,'two')");
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM native WHERE (n,k) IN(SELECT n,k FROM native WHERE n=1)"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    let params = Parameters::from([
+        (
+            "$a".into(),
+            Value::Array(vec![Value::Integer(1), Value::Integer(2)]),
+        ),
+        (
+            "$b".into(),
+            Value::Object(std::collections::BTreeMap::from([(
+                "a".into(),
+                Value::Integer(1),
+            )])),
+        ),
+    ]);
+    assert_eq!(
+        c.execute(
+            "SELECT n FROM docs WHERE (n,k) IN((1,$a),(2,$b)) ORDER BY n",
+            &params
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs WHERE (n,id) IN(SELECT n,id FROM docs WHERE n=1)"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs WHERE (n,id) IN((1,docs:a),(2,docs:a))"
+        )
+        .rows,
+        vec![vec![Value::Integer(1)]]
+    );
+    assert_eq!(
+        q(
+            &c,
+            "SELECT n FROM docs WHERE (n,k) IN(SELECT n,k FROM docs WHERE 0)"
+        )
+        .rows,
+        Vec::<Vec<Value>>::new()
+    );
+}
+
+#[test]
+fn typed_row_membership_rejects_unsupported_affinity_and_widths() {
+    let c = Database::open(":memory:").unwrap().connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "INSERT INTO docs {n:1,k:[1]}");
+    q(&c, "CREATE TABLE native(n INTEGER,k BLOB)");
+    q(&c, "INSERT INTO native VALUES(1,X'01')");
+    for sql in [
+        "SELECT (n,k) IN(SELECT n FROM docs) FROM docs",
+        "SELECT (n,k) IN(SELECT n,k,id FROM docs) FROM docs",
+        "SELECT (n,k) IN(SELECT CAST(n AS INTEGER),k FROM docs) FROM docs",
+        "SELECT (native.n,native.k) IN(SELECT n,k FROM docs) FROM native JOIN docs",
+    ] {
+        assert_eq!(
+            c.execute(sql, &Parameters::new()).unwrap_err().code(),
+            "FDB_UNSUPPORTED",
+            "{sql}"
         );
     }
 }

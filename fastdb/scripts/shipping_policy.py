@@ -61,3 +61,10 @@ def check_manifest(manifest):
         check_artifact(artifact["profile"])
         if not artifact.get("sha256") or PROFILE not in artifact.get("path", "").split("/"):
             raise ValueError("Invalid Cargo artifact identity")
+
+
+def check_security_review(receipt, lockfile_sha256):
+    if receipt.get("cargo_lock_sha256") != lockfile_sha256:
+        raise ValueError("Dependency security review does not match the shipping Cargo.lock")
+    if receipt.get("unresolved_count") != 0:
+        raise ValueError("Dependency security review has unresolved or missing findings status")

@@ -65,6 +65,9 @@ fn failure_retains_work_and_restores_data_indexes_and_caller_transaction() {
     for sql in [
         "INSERT INTO native VALUES(1),(2),(3)",
         "UPDATE docs SET n=n+10",
+        "UPDATE docs CONTENT {n:n+10}",
+        "UPDATE docs MERGE {n:n+10}",
+        "UPDATE docs PATCH [{op:'replace',path:'/n',value:n+10}]",
     ] {
         let r = c.write_metered(sql, &p, limits(), budget(1));
         assert!(r.outcome.is_err(), "{sql}");

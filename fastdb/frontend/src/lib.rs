@@ -1,14 +1,29 @@
 //! Embedded FastDB frontend over the pinned Turso engine.
 mod ann;
+mod array_predicate;
 mod budget;
 mod bundled;
 mod udf;
+mod unnest;
 pub use budget::ResultLimits;
+mod array_index;
 mod catalog;
 mod check;
+mod collections;
+mod computed;
 mod deferred;
 mod expression;
+mod fetch_clause;
+mod field_rules;
+mod scalar_index;
+mod schema_rules;
+mod search_filter;
+pub use field_rules::FieldOptions;
+mod analyzer;
 mod fulltext;
+mod mutation_result;
+mod reindex;
+pub use analyzer::FullTextOptions;
 mod functions;
 mod guard;
 mod integrity;
@@ -20,6 +35,7 @@ pub use wal_replication::WalPosition;
 #[doc(hidden)]
 pub use wire_json::decode_wire_json;
 mod links;
+pub use ann::VectorIndexOptions;
 pub use interrupt::{CancellationToken, InterruptHandle};
 mod meter;
 pub use meter::{
@@ -29,6 +45,9 @@ pub use meter::{
 };
 mod migration;
 pub use migration::{Migration, MigrationReport};
+mod mutation;
+mod omit;
+mod patch;
 mod path;
 mod profile;
 mod projection_path;
@@ -36,6 +55,7 @@ mod relations;
 pub use profile::{ProfiledQuery, QueryMetrics};
 mod select;
 mod spatial;
+mod timeout;
 mod transaction;
 mod transfer;
 pub use transfer::TransferFormat;
@@ -190,6 +210,7 @@ pub struct Field {
 enum IndexKind {
     #[default]
     Scalar,
+    Array,
     Spatial,
     FullText,
     Vector,
@@ -211,6 +232,8 @@ struct Index {
     fulltext: Option<fulltext::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vector: Option<ann::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scalar: Option<scalar_index::Config>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Collection {
@@ -222,6 +245,10 @@ struct Collection {
     indexes: Vec<Index>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     relations: Vec<relations::Relation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    field_policies: Vec<field_rules::Policy>,
+    #[serde(default, skip_serializing_if = "field_rules::is_false")]
+    strict: bool,
 }
 
 pub struct Database {
@@ -328,6 +355,7 @@ impl Database {
             write_buffer_limits: None,
             ann_cache: Default::default(),
             work_meter: Default::default(),
+            cancellation: Default::default(),
             meter_catalog_reads: Default::default(),
             meter_schema_changes: Default::default(),
         };
@@ -345,15 +373,16 @@ pub struct Connection {
     write_buffer_limits: Option<ResultLimits>,
     ann_cache: std::sync::Mutex<Option<ann::Cache>>,
     work_meter: std::sync::Mutex<Option<Arc<turso_core::execution_meter::ExecutionMeter>>>,
+    cancellation: std::sync::Mutex<Option<Arc<interrupt::ActiveCancellation>>>,
     meter_catalog_reads: std::sync::atomic::AtomicBool,
     meter_schema_changes: std::sync::atomic::AtomicBool,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
-    documents: &mut Vec<Document>,
-    document: Document,
+    documents: &mut Vec<mutation_result::Snapshot>,
+    document: mutation_result::Snapshot,
 ) -> Result<()> {
-    budget.document(&document)?;
+    document.charge(budget)?;
     documents.push(document);
     Ok(())
 }
@@ -462,9 +491,10 @@ impl Connection {
             }
             // The callback has not run. Remove an opened frame, or accept the
             // pinned engine's exact missing-frame error if opening never happened.
-            let rollback = self
-                .run(&format!("ROLLBACK TO {name}"), &[])
-                .and_then(|_| self.run(&format!("RELEASE {name}"), &[]));
+            let rollback = self.cancellation_cleanup(|| {
+                self.run(&format!("ROLLBACK TO {name}"), &[])
+                    .and_then(|_| self.run(&format!("RELEASE {name}"), &[]))
+            });
             return match rollback {
                 Ok(_) => Err(cause),
                 Err(Error::Engine(turso_core::LimboError::TxError(message)))
@@ -484,7 +514,8 @@ impl Connection {
             Ok(_) => true, // A failed RELEASE must use the ordinary cleanup path.
         };
         let result = operation.and_then(|v| {
-            self.run(&format!("RELEASE {name}"), &[])?;
+            self.check_cancellation()?;
+            self.cancellation_cleanup(|| self.run(&format!("RELEASE {name}"), &[]))?;
             Ok(v)
         });
         match result {
@@ -493,12 +524,14 @@ impl Connection {
                 if self.engine.get_auto_commit() {
                     return Err(cause);
                 }
-                let rollback = if should_rollback {
-                    self.run(&format!("ROLLBACK TO {name}"), &[])
-                        .and_then(|_| self.run(&format!("RELEASE {name}"), &[]))
-                } else {
-                    self.run(&format!("RELEASE {name}"), &[])
-                };
+                let rollback = self.cancellation_cleanup(|| {
+                    if should_rollback {
+                        self.run(&format!("ROLLBACK TO {name}"), &[])
+                            .and_then(|_| self.run(&format!("RELEASE {name}"), &[]))
+                    } else {
+                        self.run(&format!("RELEASE {name}"), &[])
+                    }
+                });
                 match rollback {
                     Ok(_) => Err(cause),
                     Err(rollback) => Err(Error::Rollback {
@@ -534,20 +567,43 @@ impl Connection {
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
-        collection.version = if collection.indexes.iter().any(|index| {
+        collection.version = if collection.strict
+            || !collection.field_policies.is_empty()
+            || collection
+                .indexes
+                .iter()
+                .any(|index| index.kind == IndexKind::Array)
+            || collection
+                .indexes
+                .iter()
+                .any(|index| index.scalar.is_some())
+            || collection.indexes.iter().any(|index| {
+                index
+                    .fulltext
+                    .as_ref()
+                    .is_some_and(|config| config.is_custom())
+            })
+            || collection.indexes.iter().any(|index| {
+                index
+                    .vector
+                    .as_ref()
+                    .is_some_and(|config| config.compressed())
+            }) {
+            collection.version.max(5)
+        } else if collection.indexes.iter().any(|index| {
             index
                 .fulltext
                 .as_ref()
                 .is_some_and(|config| config.storage_version == 2)
         }) {
-            4
+            collection.version.max(4)
         } else if !collection.relations.is_empty()
             || collection
                 .indexes
                 .iter()
                 .any(|index| index.kind != IndexKind::Scalar)
         {
-            3
+            collection.version.max(3)
         } else {
             collection.version.max(catalog::version())
         };
@@ -568,7 +624,7 @@ impl Connection {
             // Names are collision-free UTF-8 hex, independent of user quoting.
             let storage = format!("__fastdb_c_{}", name.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
             self.run(&format!("CREATE TABLE {} (id BLOB PRIMARY KEY, doc BLOB NOT NULL)", quote(&storage)), &[])?;
-            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new(), relations: Vec::new() };
+            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new(), relations: Vec::new(), field_policies: Vec::new(), strict: false };
             self.run("INSERT INTO __fastdb_catalog VALUES (?1, ?2)", &[text(&name), text(&serde_json::to_string(&collection)?)])?; Ok(())
         })
     }
@@ -596,6 +652,15 @@ impl Connection {
         .transpose()
     }
     pub fn define_field(&self, table: &str, field: Field, overwrite: bool) -> Result<()> {
+        self.define_field_with_options(table, field, FieldOptions::default(), overwrite)
+    }
+    pub fn define_field_with_options(
+        &self,
+        table: &str,
+        field: Field,
+        options: FieldOptions,
+        overwrite: bool,
+    ) -> Result<()> {
         validate_path(&field.path)?;
         if let FieldType::Vector(dims) = field.kind {
             vectors::validate_dimension(dims)?;
@@ -607,6 +672,7 @@ impl Connection {
             canonical(target)?;
         }
         self.check_definition(&field)?;
+        field_rules::validate_options(&field, &options)?;
         self.atomic(|| {
             let mut c = self.catalog(table)?;
             let existing = c.fields.iter().position(|f| f.path == field.path);
@@ -618,6 +684,15 @@ impl Connection {
                 (Some(_), false) => return Err(Error::AlreadyExists(field.path.join("."))),
                 (None, true) => return Err(Error::NotFound(field.path.join("."))),
             }
+            c.field_policies.retain(|policy| policy.path != field.path);
+            if !options.is_empty() {
+                c.field_policies.push(field_rules::Policy {
+                    path: field.path.clone(),
+                    options: options.clone(),
+                });
+                c.version = c.version.max(5);
+            }
+            field_rules::validate_catalog(&c)?;
             for index in &c.indexes {
                 index.validate_vector_config(&c)?;
                 for path in index.paths() {
@@ -626,6 +701,7 @@ impl Connection {
             }
             for doc in self.documents(&c)? {
                 self.validate_candidate(&c, &doc)?;
+                self.validate_computed_fields(&c, &doc)?;
             }
             self.save_catalog(&c)
         })
@@ -668,7 +744,30 @@ impl Connection {
         if_not_exists: bool,
         kind: IndexKind,
     ) -> Result<()> {
-        validate_path(&path)?;
+        self.create_index_paths(table, name, vec![path], unique, if_not_exists, kind)
+    }
+    fn create_index_paths(
+        &self,
+        table: &str,
+        name: &str,
+        paths: Vec<Vec<String>>,
+        unique: bool,
+        if_not_exists: bool,
+        kind: IndexKind,
+    ) -> Result<()> {
+        if paths.is_empty() || paths.len() > 16 || (kind != IndexKind::Scalar && paths.len() != 1) {
+            return Err(Error::Validation(
+                "scalar indexes require 1..16 paths".into(),
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for path in &paths {
+            validate_path(path)?;
+            if !seen.insert(path) {
+                return Err(Error::Validation("duplicate index path".into()));
+            }
+        }
+        let path = paths[0].clone();
         let name = canonical(name)?;
         self.atomic(|| {
             let mut c = self.catalog(table)?;
@@ -677,7 +776,7 @@ impl Connection {
                 &[text(&name)],
             )?;
             if !existing.is_empty() {
-                if kind == IndexKind::Spatial
+                if matches!(kind, IndexKind::Spatial | IndexKind::Array)
                     && if_not_exists
                     && c.indexes
                         .iter()
@@ -702,7 +801,9 @@ impl Connection {
             {
                 return Err(Error::AlreadyExists(name.clone()));
             }
-            catalog::compatible_index(&c, &path, kind)?;
+            for path in &paths {
+                catalog::compatible_index(&c, path, kind)?;
+            }
             let storage = format!(
                 "__fastdb_i_{}",
                 name.as_bytes()
@@ -718,7 +819,11 @@ impl Connection {
                 storage,
                 fulltext: None,
                 vector: None,
+                scalar: (paths.len() > 1).then(|| scalar_index::Config {
+                    additional_paths: paths[1..].to_vec(),
+                }),
             };
+            index.validate_scalar_config()?;
             self.run(&index.table_ddl(), &[])?;
             self.run(&index.index_ddl(), &[])?;
             for doc in self.documents(&c)? {
@@ -732,6 +837,9 @@ impl Connection {
         index.require_current_text_storage()?;
         if index.kind == IndexKind::Vector {
             return self.insert_vector_entry(index, doc);
+        }
+        if index.kind == IndexKind::Array {
+            return self.insert_array_entries(index, doc);
         }
         let mut values = index.document_keys(doc)?;
         let id = doc
@@ -762,41 +870,52 @@ impl Connection {
     ) -> Result<Document> {
         self.atomic(|| {
             let c = self.collection_for_write(table)?;
-            if !doc.contains_key("id") {
-                let rows = self.run_customer("SELECT uuid7_str()", &[])?;
-                let Some(EngineValue::Text(key)) = rows.first().and_then(|r| r.first()) else {
-                    return Err(Error::Storage("UUID generator returned non-text".into()));
-                };
-                doc.insert(
-                    "id".into(),
-                    Value::Record(Record {
-                        table: c.name.clone(),
-                        key: Key::String(key.as_str().into()),
-                    }),
-                );
-            }
-            normalize_document_id(&c, &mut doc)?;
-            self.validate_candidate(&c, &doc)?;
+            self.prepare_insert_document(&c, &mut doc)?;
             if replace {
                 if let Some(Value::Record(record)) = doc.get("id") {
                     if let Some(previous) = self.get_in(&c, record)? {
+                        field_rules::readonly(&c, &previous, &doc)?;
                         self.delete_document(&c, &previous)?;
                     }
                 }
                 self.delete_unique_conflicts(&c, &doc)?;
             }
-            self.run_customer(
-                &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
-                &[
-                    EngineValue::Blob(doc["id"].encode()?),
-                    EngineValue::Blob(value::encode_document(&doc)?),
-                ],
-            )?;
-            for index in &c.indexes {
-                self.insert_index(index, &doc)?;
-            }
+            self.store_insert_document(&c, &doc)?;
             Ok(doc)
         })
+    }
+    fn prepare_insert_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        if !doc.contains_key("id") {
+            let rows = self.run_customer("SELECT uuid7_str()", &[])?;
+            let Some(EngineValue::Text(key)) = rows.first().and_then(|r| r.first()) else {
+                return Err(Error::Storage("UUID generator returned non-text".into()));
+            };
+            doc.insert(
+                "id".into(),
+                Value::Record(Record {
+                    table: c.name.clone(),
+                    key: Key::String(key.as_str().into()),
+                }),
+            );
+        }
+        normalize_document_id(c, doc)?;
+        field_rules::defaults(c, doc)?;
+        self.compute_fields(c, doc)?;
+        self.validate_candidate(c, doc)?;
+        Ok(())
+    }
+    fn store_insert_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        self.run_customer(
+            &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
+            &[
+                EngineValue::Blob(doc["id"].encode()?),
+                EngineValue::Blob(value::encode_document(doc)?),
+            ],
+        )?;
+        for index in &c.indexes {
+            self.insert_index(index, doc)?;
+        }
+        Ok(())
     }
     pub fn patch(&self, record: &Record, patch: Document) -> Result<Option<Document>> {
         if patch.contains_key("id") {
@@ -808,12 +927,26 @@ impl Connection {
                 return Ok(None);
             };
             doc.extend(patch);
-            self.replace_document(&c, &doc)?;
+            self.replace_document(&c, &mut doc)?;
             Ok(Some(doc))
         })
     }
-    fn replace_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+    fn replace_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        self.compute_fields(c, doc)?;
         self.validate_candidate(c, doc)?;
+        self.write_validated_document(c, doc)
+    }
+    fn write_validated_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        if c.field_policies
+            .iter()
+            .any(|policy| policy.options.readonly)
+        {
+            if let Some(Value::Record(id)) = doc.get("id") {
+                if let Some(before) = self.get_in(c, id)? {
+                    field_rules::readonly(c, &before, doc)?;
+                }
+            }
+        }
         let id = EngineValue::Blob(doc["id"].encode()?);
         self.run_customer(
             &format!("UPDATE {} SET doc = ?1 WHERE id = ?2", quote(&c.storage)),
@@ -827,15 +960,16 @@ impl Connection {
     }
     // Caller owns the statement savepoint. A failure restores conflicting
     // documents along with the target and all managed indexes.
-    fn replace_conflicting_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+    fn replace_conflicting_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        self.compute_fields(c, doc)?;
         self.validate_candidate(c, doc)?;
         self.delete_unique_conflicts(c, doc)?;
-        self.replace_document(c, doc)
+        self.write_validated_document(c, doc)
     }
     fn delete_unique_conflicts(&self, c: &Collection, doc: &Document) -> Result<()> {
         for index in c.indexes.iter().filter(|index| index.unique) {
-            let value = path_value(doc, &index.path)?.unwrap_or(&Value::Null);
-            for conflict in self.lookup_index(&c.name, &index.name, value)? {
+            let keys = index.scalar_keys(doc)?;
+            for conflict in self.lookup_scalar_keys(c, index, &keys)? {
                 if conflict.get("id") != doc.get("id") {
                     self.delete_document(c, &conflict)?;
                 }
@@ -873,9 +1007,9 @@ impl Connection {
                 .iter()
                 .find(|i| i.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| Error::NotFound(name.into()))?;
-            if index.kind != IndexKind::Scalar {
+            if index.kind != IndexKind::Scalar || index.scalar.is_some() {
                 return Err(Error::Validation(
-                    "scalar lookup requires a scalar index".into(),
+                    "scalar lookup requires a single-path scalar index".into(),
                 ));
             }
             let rows = self.run_customer(
@@ -901,10 +1035,12 @@ impl Connection {
         params: &Parameters,
         limits: Option<ResultLimits>,
     ) -> Result<QueryResult> {
-        if udf::has_calls(sql)? {
-            return self.atomic(|| self.execute_snapshot(sql, params, limits));
-        }
-        self.execute_snapshot(sql, params, limits)
+        self.with_statement_timeout(sql, |sql| {
+            if udf::has_calls(sql)? || analyzer::has_calls(sql)? {
+                return self.atomic(|| self.execute_snapshot(sql, params, limits));
+            }
+            self.execute_snapshot(sql, params, limits)
+        })
     }
     fn execute_snapshot(
         &self,
@@ -918,6 +1054,48 @@ impl Connection {
             _ => Err(Error::Validation("expected a typed document object".into())),
         };
         match fastql_parser::parse(sql)? {
+            Statement::MutateDocument {
+                table,
+                target,
+                mode,
+                value,
+                predicate,
+                returning,
+            } => self.atomic(|| {
+                let collection = self.catalog(&table)?;
+                let sources = if let Some(target) = target {
+                    self.get(&target)?.into_iter().collect::<Vec<_>>()
+                } else {
+                    let suffix = predicate.map_or(String::new(), |p| format!(" WHERE {p}"));
+                    let query = format!("SELECT * FROM {}{suffix}", quote(&table));
+                    self.write_candidate_select(&query, params, false)?
+                        .ok_or_else(|| Error::NotFound(table.clone()))?
+                        .rows
+                        .into_iter()
+                        .map(|row| match row.into_iter().next() {
+                            Some(Value::Object(document)) => Ok(document),
+                            _ => Err(Error::Storage("expected candidate document".into())),
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                };
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
+                let mut candidates = Vec::new();
+                let mut budget = self.write_buffer_budget()?;
+                for before in sources {
+                    let value = self.evaluate(value.clone(), params, Some(&before))?;
+                    let document = mutation::apply(&mode, &before, value)?;
+                    let snapshot =
+                        mutation_result::Snapshot::after(document, capture.then_some(before));
+                    snapshot.charge(&mut budget)?;
+                    candidates.push(snapshot);
+                }
+                let mut output_budget = self.write_buffer_budget()?;
+                for document in &mut candidates {
+                    self.replace_document(&collection, &mut document.document)?;
+                    document.charge(&mut output_budget)?;
+                }
+                self.object_returning(&table, returning, candidates, params, limits)
+            }),
             Statement::CreateFunction {
                 name,
                 parameters,
@@ -978,6 +1156,11 @@ impl Connection {
                 };
                 doc.insert("id".into(), Value::Record(record));
                 let doc = self.upsert(&table, doc)?;
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
+                let doc = mutation_result::Snapshot::after(
+                    doc,
+                    (capture && !before.is_empty()).then_some(before),
+                );
                 self.object_returning(&table, returning, vec![doc], params, limits)
             }),
             Statement::PatchWhere {
@@ -992,6 +1175,7 @@ impl Connection {
                     .write_candidate_select(&query, params, false)?
                     .ok_or_else(|| Error::NotFound(table.clone()))?
                     .rows;
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
                 let mut candidates = Vec::new();
                 let mut candidate_budget = self.write_buffer_budget()?;
                 for row in rows {
@@ -1008,16 +1192,24 @@ impl Connection {
                     };
                     candidate_budget.document(&patch)?;
                     candidate_budget.value(&Value::Record(id.clone()))?;
-                    candidates.push((id.clone(), patch));
+                    let id = id.clone();
+                    let before = capture.then_some(before);
+                    if let Some(before) = &before {
+                        candidate_budget.document_fields(before)?;
+                    }
+                    candidates.push((id, patch, before));
                 }
                 let mut docs = Vec::new();
                 let mut snapshot_budget = self.write_buffer_budget()?;
-                for (id, patch) in candidates {
+                for (id, patch, before) in candidates {
                     retain_write_document(
                         &mut snapshot_budget,
                         &mut docs,
-                        self.patch(&id, patch)?
-                            .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
+                        mutation_result::Snapshot::after(
+                            self.patch(&id, patch)?
+                                .ok_or_else(|| Error::Storage("candidate disappeared".into()))?,
+                            before,
+                        ),
                     )?;
                 }
                 self.object_returning(&table, returning, docs, params, limits)
@@ -1028,6 +1220,10 @@ impl Connection {
             }
             Statement::Info { scope, name } => self.info(&scope, name.as_deref()),
 
+            Statement::DefineSchema { table, strict } => {
+                self.define_schema(&table, strict)?;
+                Ok(QueryResult::command(0))
+            }
             Statement::DefineField {
                 table,
                 path,
@@ -1036,15 +1232,24 @@ impl Connection {
                 required,
                 nullable,
                 check,
+                default,
+                readonly,
+                flexible,
+                computed,
                 overwrite,
             } => {
+                let (element_type, element_nullable) = if kind == "array" {
+                    field_rules::element_type(target.as_deref())?
+                } else {
+                    (None, false)
+                };
                 let kind = match (kind.as_str(), target) {
                     ("string", None) => FieldType::String,
                     ("integer", None) => FieldType::Integer,
                     ("number", None) => FieldType::Number,
                     ("boolean", None) => FieldType::Boolean,
                     ("object", None) => FieldType::Object,
-                    ("array", None) => FieldType::Array,
+                    ("array", _) => FieldType::Array,
                     ("record", Some(target)) => FieldType::Record(canonical(&target)?),
                     ("vector", Some(target)) => FieldType::Vector(
                         target
@@ -1053,7 +1258,13 @@ impl Connection {
                     ),
                     _ => return Err(Error::Unsupported("field type is not implemented".into())),
                 };
-                self.define_field(
+                let default = default
+                    .map(|expression| {
+                        field_rules::constant(&expression)?;
+                        self.evaluate(expression, params, None)
+                    })
+                    .transpose()?;
+                self.define_field_with_options(
                     &table,
                     Field {
                         path,
@@ -1061,6 +1272,14 @@ impl Connection {
                         required,
                         nullable,
                         check,
+                    },
+                    FieldOptions {
+                        default,
+                        computed,
+                        readonly,
+                        flexible,
+                        element_type,
+                        element_nullable,
                     },
                     overwrite,
                 )?;
@@ -1073,8 +1292,19 @@ impl Connection {
                 path,
                 dimensions,
                 metric,
+                quantization,
             } => {
-                self.create_vector_index(&table, &name, path, dimensions, &metric, if_not_exists)?;
+                self.create_vector_index_with_options(
+                    &table,
+                    &name,
+                    path,
+                    VectorIndexOptions {
+                        dimensions,
+                        metric,
+                        quantization: quantization.unwrap_or_else(|| "f32".into()),
+                    },
+                    if_not_exists,
+                )?;
                 Ok(QueryResult::command(0))
             }
             Statement::CreateFullTextIndex {
@@ -1082,8 +1312,30 @@ impl Connection {
                 table,
                 name,
                 paths,
+                tokenizer,
+                min_gram,
+                max_gram,
             } => {
-                self.create_fulltext_index(&table, &name, paths, if_not_exists)?;
+                self.create_fulltext_index_with_options(
+                    &table,
+                    &name,
+                    paths,
+                    FullTextOptions {
+                        tokenizer: tokenizer.unwrap_or_else(|| "default".into()),
+                        min_gram,
+                        max_gram,
+                    },
+                    if_not_exists,
+                )?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::CreateArrayIndex {
+                if_not_exists,
+                table,
+                name,
+                path,
+            } => {
+                self.create_array_index(&table, &name, path, if_not_exists)?;
                 Ok(QueryResult::command(0))
             }
             Statement::CreateSpatialIndex {
@@ -1100,11 +1352,13 @@ impl Connection {
                 table,
                 name,
                 path,
+                additional_paths,
                 unique,
                 sql,
             } => match self.catalog(&table) {
                 Ok(_) => {
-                    self.create_index_if(&table, &name, path, unique, if_not_exists)?;
+                    let paths = std::iter::once(path).chain(additional_paths).collect();
+                    self.create_compound_index(&table, &name, paths, unique, if_not_exists)?;
                     Ok(QueryResult::command(0))
                 }
                 Err(Error::NotFound(_)) => self.sql(&sql, params),
@@ -1122,7 +1376,8 @@ impl Connection {
                 value,
                 returning,
             } => self.atomic(|| {
-                let doc = self.insert(&table, object(value)?)?;
+                let doc =
+                    mutation_result::Snapshot::after(self.insert(&table, object(value)?)?, None);
                 self.object_returning(&table, returning, vec![doc], params, limits)
             }),
             Statement::SelectRecordProjection { target, fields } => self
@@ -1149,7 +1404,10 @@ impl Connection {
                 let Value::Object(patch) = self.evaluate(value, params, Some(&before))? else {
                     return Err(Error::Validation("expected object patch".into()));
                 };
-                let doc = self.patch(&target, patch)?;
+                let capture = mutation_result::needs_before(returning.as_deref().unwrap_or(""))?;
+                let doc = self
+                    .patch(&target, patch)?
+                    .map(|doc| mutation_result::Snapshot::after(doc, capture.then_some(before)));
                 self.object_returning(
                     &target.table,
                     returning,
@@ -1159,7 +1417,9 @@ impl Connection {
                 )
             }),
             Statement::Delete { target, returning } => self.atomic(|| {
-                let doc = self.delete(&target)?;
+                let doc = self
+                    .delete(&target)?
+                    .map(mutation_result::Snapshot::deleted);
                 self.object_returning(
                     &target.table,
                     returning,
@@ -1389,25 +1649,7 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
         match value {
             None if !f.required => continue,
             Some(Value::Null) if f.nullable => continue,
-            Some(v)
-                if matches!(
-                    (&f.kind, v),
-                    (FieldType::String, Value::String(_))
-                        | (FieldType::Integer, Value::Integer(_))
-                        | (FieldType::Number, Value::Integer(_) | Value::Number(_))
-                        | (FieldType::Boolean, Value::Boolean(_))
-                        | (FieldType::Object, Value::Object(_))
-                        | (FieldType::Array, Value::Array(_))
-                ) =>
-            {
-                continue
-            }
-            Some(Value::Vector(bytes)) if matches!(&f.kind, FieldType::Vector(dims) if vectors::dimensions(bytes)? == *dims) => {
-                continue
-            }
-            Some(Value::Record(r)) if matches!(&f.kind, FieldType::Record(target) if target.eq_ignore_ascii_case(&r.table)) => {
-                continue
-            }
+            Some(value) if field_rules::matches_kind(&f.kind, value)? => continue,
             _ => {
                 return Err(Error::Validation(format!(
                     "field {} failed {:?} validation",
@@ -1417,6 +1659,8 @@ fn validate_document(c: &Collection, doc: &Document) -> Result<()> {
             }
         }
     }
+    field_rules::validate_arrays(c, doc)?;
+    schema_rules::validate(c, doc)?;
     for index in &c.indexes {
         index.document_keys(doc)?;
     }

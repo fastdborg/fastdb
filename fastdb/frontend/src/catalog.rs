@@ -45,11 +45,60 @@ pub(crate) const fn legacy_version() -> u32 {
     1
 }
 pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
-    if !matches!(collection.version, 1..=4) {
+    if !matches!(collection.version, 1..=5) {
         return Err(Error::Storage(format!(
             "unsupported collection metadata version {}",
             collection.version
         )));
+    }
+    if (collection.strict || !collection.field_policies.is_empty()) && collection.version < 5 {
+        return Err(Error::Storage(
+            "field rules require catalog version 5".into(),
+        ));
+    }
+    if collection.version < 5
+        && collection.indexes.iter().any(|index| {
+            index
+                .fulltext
+                .as_ref()
+                .is_some_and(|config| config.is_custom())
+        })
+    {
+        return Err(Error::Storage(
+            "custom analyzers require catalog version 5".into(),
+        ));
+    }
+    if collection.version < 5
+        && collection.indexes.iter().any(|index| {
+            index
+                .vector
+                .as_ref()
+                .is_some_and(|config| config.compressed())
+        })
+    {
+        return Err(Error::Storage(
+            "compressed vector indexes require catalog version 5".into(),
+        ));
+    }
+    if collection.version < 5
+        && collection
+            .indexes
+            .iter()
+            .any(|index| index.scalar.is_some())
+    {
+        return Err(Error::Storage(
+            "compound indexes require catalog version 5".into(),
+        ));
+    }
+    if collection.version < 5
+        && collection
+            .indexes
+            .iter()
+            .any(|index| index.kind == crate::IndexKind::Array)
+    {
+        return Err(Error::Storage(
+            "array indexes require catalog version 5".into(),
+        ));
     }
     if !collection.relations.is_empty() && collection.version < 3 {
         return Err(Error::Storage("relations require catalog version 3".into()));
@@ -126,6 +175,7 @@ pub(crate) fn decode(metadata: &str, name: &str) -> Result<Collection> {
                 canonical(target)?;
             }
         }
+        crate::field_rules::validate_catalog(&c)?;
         let mut names = std::collections::BTreeSet::new();
         for index in &c.indexes {
             crate::validate_path(&index.path)?;
@@ -135,6 +185,7 @@ pub(crate) fn decode(metadata: &str, name: &str) -> Result<Collection> {
             {
                 return Err(Error::Storage("invalid index identity".into()));
             }
+            index.validate_scalar_config()?;
             index.validate_text_config()?;
             index.validate_vector_config(&c)?;
             for path in index.paths() {
@@ -161,6 +212,7 @@ pub(crate) fn compatible_index(
                     field.kind,
                     FieldType::Object | FieldType::Array | FieldType::Vector(_)
                 ),
+                crate::IndexKind::Array => !matches!(field.kind, FieldType::Array),
                 crate::IndexKind::Spatial => !matches!(field.kind, FieldType::Object),
                 crate::IndexKind::FullText => !matches!(field.kind, FieldType::String),
                 crate::IndexKind::Vector => !matches!(field.kind, FieldType::Vector(_)),
@@ -177,6 +229,19 @@ pub(crate) fn compatible_index(
                 path.join(".")
             )));
         }
+    }
+    if kind == crate::IndexKind::Array
+        && c.field_policies.iter().any(|policy| {
+            policy.path == path
+                && matches!(
+                    policy.options.element_type,
+                    Some(FieldType::Object | FieldType::Array | FieldType::Vector(_))
+                )
+        })
+    {
+        return Err(Error::Validation(
+            "array index requires scalar or record element types".into(),
+        ));
     }
     Ok(())
 }
@@ -196,7 +261,9 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
         (
             "kind",
             Value::String(
-                if index.kind == crate::IndexKind::Spatial {
+                if index.kind == crate::IndexKind::Array {
+                    "array"
+                } else if index.kind == crate::IndexKind::Spatial {
                     "spatial"
                 } else if index.kind == crate::IndexKind::FullText {
                     "fulltext"
@@ -209,14 +276,33 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
             ),
         ),
     ];
+    if index.scalar.is_some() {
+        fields.push(("paths", Value::Array(index.paths().map(strings).collect())));
+    }
     if let Some(config) = &index.fulltext {
         fields.push(("paths", Value::Array(index.paths().map(strings).collect())));
         fields.push(("tokenizer", Value::String(config.tokenizer.clone())));
+        if let Ok(options) = config.options() {
+            fields.push(("analyzer", Value::String(options.tokenizer)));
+            fields.push((
+                "min_gram",
+                options
+                    .min_gram
+                    .map_or(Value::Null, |n| Value::Integer(n as i64)),
+            ));
+            fields.push((
+                "max_gram",
+                options
+                    .max_gram
+                    .map_or(Value::Null, |n| Value::Integer(n as i64)),
+            ));
+        }
     }
     if let Some(config) = &index.vector {
         fields.push(("dimensions", Value::Integer(config.dimensions as i64)));
         fields.push(("metric", Value::String(config.metric.clone())));
         fields.push(("implementation", Value::String(config.format.clone())));
+        fields.push(("quantization", Value::String(config.quantization().into())));
     }
     object(fields)
 }
@@ -444,7 +530,7 @@ impl Connection {
             };
             if let Some(mut existing) = self.get_in(&c, id)? {
                 existing.extend(doc);
-                self.replace_document(&c, &existing)?;
+                self.replace_document(&c, &mut existing)?;
                 Ok(existing)
             } else {
                 self.insert(&c.name, doc)
@@ -461,6 +547,14 @@ impl Connection {
                 .position(|f| f.path == path)
                 .ok_or_else(|| Error::NotFound(path.join(".")))?;
             c.fields.remove(position);
+            c.field_policies.retain(|policy| policy.path != path);
+            if c.strict {
+                crate::field_rules::validate_catalog(&c)?;
+                for document in self.documents(&c)? {
+                    self.validate_candidate(&c, &document)?;
+                    self.validate_computed_fields(&c, &document)?;
+                }
+            }
             self.save_catalog(&c)
         })
     }
@@ -525,35 +619,15 @@ impl Connection {
                     .as_ref()
                     .is_none_or(|db| db.as_str().eq_ignore_ascii_case("main")) =>
             {
-                for mut collection in self.collections()? {
-                    if let Some(position) = collection.indexes.iter().position(|index| {
-                        index.name.eq_ignore_ascii_case(name.name.as_str())
-                            && index.kind == crate::IndexKind::FullText
-                    }) {
-                        return self.atomic(|| {
-                            let index = &mut collection.indexes[position];
-                            let legacy = index
-                                .fulltext
-                                .as_ref()
-                                .is_some_and(|config| config.storage_version == 1);
-                            self.run(&format!("DROP INDEX {}", quote(&index.name)), &[])?;
-                            self.run(&index.text_index_ddl(), &[])?;
-                            if legacy {
-                                self.run(
-                                    &format!("DROP TABLE {}", quote(&index.text_stats())),
-                                    &[],
-                                )?;
-                            }
-                            index
-                                .fulltext
-                                .as_mut()
-                                .expect("fulltext config")
-                                .storage_version = 2;
-                            self.save_catalog(&collection)?;
-                            self.validate_storage_schema()?;
-                            Ok(Some(QueryResult::command(0)))
-                        });
-                    }
+                let managed = self.collections()?.iter().any(|collection| {
+                    collection
+                        .indexes
+                        .iter()
+                        .any(|index| index.name.eq_ignore_ascii_case(name.name.as_str()))
+                });
+                if managed {
+                    self.reindex(name.name.as_str())?;
+                    return Ok(Some(QueryResult::command(0)));
                 }
                 Ok(None)
             }
@@ -641,6 +715,11 @@ impl Connection {
                     .fields
                     .iter()
                     .map(|f| {
+                        let options = c
+                            .field_policies
+                            .iter()
+                            .find(|policy| policy.path == f.path)
+                            .map(|policy| &policy.options);
                         object([
                             ("path", strings(&f.path)),
                             (
@@ -656,8 +735,48 @@ impl Connection {
                                     FieldType::Vector(dims) => format!("vector<{dims}>"),
                                 }),
                             ),
+                            (
+                                "computed",
+                                options
+                                    .and_then(|options| options.computed.as_ref())
+                                    .map(|sql| Value::String(sql.clone()))
+                                    .unwrap_or(Value::Null),
+                            ),
                             ("required", Value::Boolean(f.required)),
                             ("nullable", Value::Boolean(f.nullable)),
+                            (
+                                "has_default",
+                                Value::Boolean(
+                                    options.is_some_and(|options| options.default.is_some()),
+                                ),
+                            ),
+                            (
+                                "default",
+                                options
+                                    .and_then(|options| options.default.clone())
+                                    .unwrap_or(Value::Null),
+                            ),
+                            (
+                                "readonly",
+                                Value::Boolean(options.is_some_and(|options| options.readonly)),
+                            ),
+                            (
+                                "flexible",
+                                Value::Boolean(options.is_some_and(|options| options.flexible)),
+                            ),
+                            (
+                                "element_type",
+                                options
+                                    .and_then(|options| options.element_type.as_ref())
+                                    .map(|kind| Value::String(crate::field_rules::type_name(kind)))
+                                    .unwrap_or(Value::Null),
+                            ),
+                            (
+                                "element_nullable",
+                                Value::Boolean(
+                                    options.is_some_and(|options| options.element_nullable),
+                                ),
+                            ),
                             (
                                 "check",
                                 f.check
@@ -676,6 +795,7 @@ impl Connection {
                 Ok(object([
                     ("name", Value::String(c.name)),
                     ("model", Value::String("document".into())),
+                    ("strict", Value::Boolean(c.strict)),
                     ("fields", Value::Array(fields)),
                     ("indexes", Value::Array(indexes)),
                     ("relations", Value::Array(relations)),

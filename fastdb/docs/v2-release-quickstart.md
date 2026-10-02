@@ -1,13 +1,13 @@
-# FastDB 2.1.0 for Linux x64
+# FastDB 2.2.0 for Linux x64
 
 This bundle contains the embedded FastDB engine, FastQL V2 and native clients.
 Use one owning process per database file; see DEPLOYMENT.md and OPERATIONS.md.
 The supported target is a Linux application server embedding FastDB; no graph
 database API or separate network database daemon is promised.
 Verify its checksum file before use. The release record and manifest describe
-the exact source, build profile and tested platform. Back up V1 databases before
-opening them with V2. A database using V2 catalog features cannot be downgraded
-to V1; follow BACKUP.md for restore procedures.
+the exact source, build profile and tested platform. Back up existing databases before opening them with 2.2.0. New managed
+features use catalog version 5; older binaries reject this metadata. Restore a
+pre-upgrade backup to return to an older release; follow BACKUP.md.
 
 The target baseline is Ubuntu 24.04 x86_64 under WSL2 (glibc 2.39). Install the
 distribution's libc6, libgcc-s1 and libstdc++6 packages. The candidate's exact ELF
@@ -15,18 +15,33 @@ symbol requirements and installed-runtime results must be recorded in its
 qualification evidence before publication. Symbol floors are not a tested
 distribution matrix. Alpine/musl and other architectures are outside this bundle.
 
+## Upgrade an existing FastDB database
+
+Stop the old owning process, preserve a pre-upgrade backup and open the working
+copy with 2.2.0. Full-text indexes created by 2.0.0/2.1.0 require an explicit
+rebuild before search or writes to their collection:
+
+```sql
+REINDEX articles_text;
+```
+
+Use each existing full-text index name in place of `articles_text`. Rebuilds are
+transactional. Keep the backup until application checks and reopen checks pass.
+Version 2.2.0 qualifies upgrades and independent restores from 1.0.0, 2.0.0 and
+2.1.0; this does not promise a binary downgrade.
+
 ## Install a client
 
 Node.js 22 or newer:
 
 ```sh
-pnpm add /absolute/path/to/bundle/packages/fastdb-node-2.1.0.tgz
+pnpm add /absolute/path/to/bundle/packages/fastdb-node-2.2.0.tgz
 ```
 
 Python 3.10 or newer:
 
 ```sh
-python -m pip install /absolute/path/to/bundle/packages/fastdb_embedded-2.1.0-cp310-abi3-*.whl
+python -m pip install /absolute/path/to/bundle/packages/fastdb_embedded-2.2.0-cp310-abi3-*.whl
 ```
 
 The wheel tag expresses its build compatibility check. The release's actual
@@ -67,7 +82,9 @@ work on a worker thread and is appropriate for request handlers. Browser UIs
 communicate with an application backend. No browser runtime or cloud hosting is
 included here.
 
-`bin/fastdb-cli` accepts SQL and FastQL scripts. V2 adds indexed spatial/H3,
+`bin/fastdb-cli` accepts SQL and FastQL scripts. 2.2.0 adds document PATCH/CONTENT/MERGE, explicit FETCH/OMIT, schema rules,
+compound/array indexes, conflict updates, filtered search, F16 ANN graphs and
+statement deadlines. Existing V2 features include indexed spatial/H3,
 FTS and ANN search, record brace projections, indexed inverse relationships and
 sandboxed JavaScript functions. Read the feature contracts in the source archive
 for supported forms and limits. Preserve positional result columns and inspect

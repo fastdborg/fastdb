@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "4fffaa23990bc8b514b0081b63da337223320efab2c9371ea4ea42cdf2521194",
+  "lockfileSha256": "9126da52f5870fa826648a7ae76718650026cc70bcf4d5623ea62d8a1aed962b",
   "packages": [
     {
       "name": "aead",
@@ -56,12 +56,12 @@
     },
     {
       "name": "aristo-macros",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "aristo",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "licenseExpression": "MIT"
     },
     {
@@ -311,17 +311,17 @@
     },
     {
       "name": "fastdb-c",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb-protocol",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "licenseExpression": "MIT"
     },
     {
@@ -331,7 +331,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "licenseExpression": "MIT"
     },
     {
@@ -418,6 +418,11 @@
       "name": "h3o",
       "version": "0.9.4",
       "licenseExpression": "BSD-3-Clause"
+    },
+    {
+      "name": "half",
+      "version": "2.5.0",
+      "licenseExpression": "MIT OR Apache-2.0"
     },
     {
       "name": "hashbrown",
@@ -950,6 +955,11 @@
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
+      "name": "simdutf8",
+      "version": "0.1.5",
+      "licenseExpression": "MIT OR Apache-2.0"
+    },
+    {
       "name": "simsimd",
       "version": "6.5.3",
       "licenseExpression": "Apache-2.0"
@@ -1066,7 +1076,7 @@
     },
     {
       "name": "tantivy",
-      "version": "0.26.1",
+      "version": "0.26.2",
       "licenseExpression": "MIT"
     },
     {
@@ -1136,22 +1146,22 @@
     },
     {
       "name": "turso_core",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_ext",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_macros",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_parser",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "licenseExpression": "MIT"
     },
     {

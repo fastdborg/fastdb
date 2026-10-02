@@ -733,3 +733,136 @@ fn normalized_cte_names_preserve_typed_insert_and_transaction_failures() {
         expected.rows
     );
 }
+
+#[test]
+fn recursive_collection_seed_preserves_typed_values_and_sql_steps() {
+    let (_db, c) = setup();
+    let sql = "WITH RECURSIVE r(n,id,flag,profile,data) AS (SELECT n,id,flag,profile,data FROM docs WHERE n=1 UNION ALL SELECT n+1,id,flag,profile,data FROM r WHERE n<3) SELECT n,id,flag,profile,data FROM r ORDER BY n";
+    let initial = q(&c, "SELECT n,id,flag,profile,data FROM docs WHERE n=1")
+        .rows
+        .remove(0);
+    let expected = (1..=3)
+        .map(|n| {
+            let mut row = initial.clone();
+            row[0] = Value::Integer(n);
+            row
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(q(&c, sql).rows, expected);
+    assert_eq!(q(&c,"WITH RECURSIVE r(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM r WHERE n<3) SELECT n FROM r").rows, vec![vec![Value::Integer(1)],vec![Value::Integer(2)],vec![Value::Integer(3)]]);
+    assert_eq!(q(&c,"WITH RECURSIVE r(n) AS (SELECT n FROM docs WHERE n=1 UNION ALL SELECT n+1 FROM r WHERE n<100) SELECT n FROM r LIMIT 3").rows,vec![vec![Value::Integer(1)],vec![Value::Integer(2)],vec![Value::Integer(3)]]);
+}
+
+#[test]
+fn recursive_collection_queries_observe_limits_snapshots_and_write_atomicity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("recursive.db");
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let c = db.connect().unwrap();
+    let other = db.connect().unwrap();
+    q(&c, "CREATE TABLE docs");
+    q(&c, "CREATE TABLE sink");
+    q(&c, "CREATE UNIQUE INDEX sink_n ON sink(n)");
+    q(&c, "INSERT INTO docs {id:docs:a,n:1,payload:[true,{a:1}]}");
+    let prefix="WITH RECURSIVE r(n,payload) AS (SELECT n,payload FROM docs UNION ALL SELECT n+1,payload FROM r WHERE n<$end)";
+    let sql = format!("{prefix} SELECT n,payload FROM r ORDER BY n");
+    let params = Parameters::from([("$end".into(), Value::Integer(3))]);
+    let expected = c.execute(&sql, &params).unwrap().rows;
+    assert_eq!(expected.len(), 3);
+    assert!(c
+        .execute(&format!("EXPLAIN QUERY PLAN {sql}"), &params)
+        .is_ok());
+    assert!(c.execute(&format!("EXPLAIN {sql}"), &params).is_ok());
+    let mut extra = params.clone();
+    extra.insert("$unused".into(), Value::Integer(1));
+    assert_eq!(c.execute(&sql, &extra).unwrap_err().code(), "FDB_PARAMETER");
+    let limits = fastdb::ResultLimits {
+        max_rows: 2,
+        max_payload_bytes: 100000,
+    };
+    q(&c, "BEGIN");
+    q(&c, "INSERT INTO sink {n:9}");
+    assert_eq!(
+        c.select_with_limits(&sql, &params, limits)
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(
+        c.profile_select_with_limits(&sql, &params, limits)
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+    let infinite="WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION ALL SELECT n+1 FROM r) SELECT sum(n) FROM r";
+    let stopped = c.select_metered(
+        infinite,
+        &Parameters::new(),
+        limits,
+        fastdb::ReadWorkLimits {
+            max_rows_read: None,
+            max_vm_steps: Some(1000),
+        },
+    );
+    assert_eq!(stopped.outcome.unwrap_err().code(), "FDB_CANCELLED");
+    assert!(stopped.work.vm_steps >= 1000);
+    assert_eq!(
+        c.execute(&format!("{infinite} TIMEOUT 10ms"), &Parameters::new())
+            .unwrap_err()
+            .code(),
+        "FDB_CANCELLED"
+    );
+    let insert =
+        format!("INSERT INTO sink(n,payload) {prefix} SELECT n,payload FROM r RETURNING n");
+    assert_eq!(
+        c.write_with_result_limits(&insert, &params, limits)
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+    assert_eq!(
+        q(&c, "SELECT n FROM sink").rows,
+        vec![vec![Value::Integer(9)]]
+    );
+    assert_eq!(c.execute(&insert, &params).unwrap().rows.len(), 3);
+    assert_eq!(c.transaction_state(), fastdb::TransactionState::Active);
+    q(&c, "ROLLBACK");
+    assert!(q(&c, "SELECT n FROM sink").rows.is_empty());
+    q(&c, "BEGIN");
+    assert_eq!(c.execute(&sql, &params).unwrap().rows, expected);
+    q(&other, "UPDATE docs SET n=2");
+    assert_eq!(c.execute(&sql, &params).unwrap().rows, expected);
+    q(&c, "ROLLBACK");
+    assert_eq!(c.execute(&sql, &params).unwrap().rows.len(), 2);
+    drop(other);
+    drop(c);
+    drop(db);
+    let c = Database::open(path.to_str().unwrap())
+        .unwrap()
+        .connect()
+        .unwrap();
+    assert_eq!(c.execute(&sql, &params).unwrap().rows.len(), 2);
+    c.check_collection_integrity("sink", Default::default())
+        .unwrap();
+}
+
+#[test]
+fn recursive_collection_boundaries_reject_without_changing_prior_work() {
+    let (_db, c) = setup();
+    q(&c, "BEGIN");
+    q(&c, "UPDATE docs:a MERGE {prior:true}");
+    for sql in [
+        "WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION SELECT n+1 FROM r WHERE n<3) SELECT n FROM r",
+        "WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION ALL SELECT n+1 FROM r ORDER BY 1 LIMIT 3) SELECT n FROM r",
+        "WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION ALL SELECT sum(n) FROM r) SELECT n FROM r",
+        "WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION ALL SELECT a.n+b.n FROM r a JOIN r b) SELECT n FROM r",
+        "WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION ALL SELECT n,n FROM r) SELECT n FROM r",
+        "WITH RECURSIVE r(n) AS (SELECT record::fetch(ref) FROM docs UNION ALL SELECT n FROM r) SELECT n FROM r",
+        "WITH RECURSIVE r(n) AS (SELECT n FROM docs UNION ALL SELECT n+1 FROM r), s AS (SELECT n FROM r) SELECT n FROM s",
+    ] {
+        assert!(c.execute(sql,&Parameters::new()).is_err(),"{sql}");
+        assert_eq!(c.transaction_state(),fastdb::TransactionState::Active);
+        assert_eq!(q(&c,"SELECT prior FROM docs WHERE id=docs:a").rows,vec![vec![Value::Boolean(true)]]);
+    }
+    q(&c, "ROLLBACK");
+}

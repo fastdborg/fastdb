@@ -17,6 +17,9 @@ fn collection_write_buffer_rows_reject_before_mutation_and_preserve_prior_work()
         "UPDATE docs SET (n,a)=(SELECT n+10,n)",
         "UPDATE docs SET (n,a)=(SELECT x.n+10,x.n FROM docs x WHERE x.id=docs.id)",
         "UPDATE docs {n:n+10}",
+        "UPDATE docs CONTENT {n:n+10}",
+        "UPDATE docs MERGE {n:n+10}",
+        "UPDATE docs PATCH [{op:'replace',path:'/n',value:n+10}]",
         "DELETE FROM docs",
     ] {
         let db = Database::open(":memory:").unwrap();

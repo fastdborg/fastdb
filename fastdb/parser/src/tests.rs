@@ -1,5 +1,60 @@
 use super::*;
 #[test]
+fn content_and_merge_keep_targets_parameters_and_returning() {
+    let Statement::MutateDocument {
+        table,
+        target,
+        mode,
+        value,
+        predicate,
+        returning,
+    } = parse("UPDATE docs CONTENT $body WHERE id=$id RETURNING id;").unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(table, "docs");
+    assert_eq!(target, None);
+    assert_eq!(mode, MutationMode::Content);
+    assert_eq!(value, Expr::Parameter("$body".into()));
+    assert_eq!(predicate, Some("id=$id".into()));
+    assert_eq!(returning, Some("id".into()));
+    assert!(matches!(
+        parse("UPDATE docs:one MERGE {nested:{n:1}} RETURNING *").unwrap(),
+        Statement::MutateDocument {
+            mode: MutationMode::Merge,
+            target: Some(_),
+            ..
+        }
+    ));
+    assert!(
+        matches!(parse("UPDATE docs {n:1} WHERE title='RETURNING' RETURNING n").unwrap(),Statement::PatchWhere{predicate:Some(p),..} if p=="title='RETURNING'")
+    );
+    assert!(matches!(
+        parse("UPDATE docs:one PATCH [{op:'remove',path:'/n'}] RETURNING id").unwrap(),
+        Statement::MutateDocument {
+            mode: MutationMode::Patch,
+            ..
+        }
+    ));
+    for sql in [
+        "UPDATE docs:one PATCH [] WHERE true",
+        "UPDATE docs:one CONTENT {} WHERE true",
+        "UPDATE docs CONTENT",
+        "UPDATE docs MERGE {} WHERE",
+        "UPDATE docs CONTENT {} RETURNING",
+        "UPDATE docs CONTENT {}; DELETE FROM docs",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    for sql in [
+        "UPDATE content SET merge=1",
+        "UPDATE docs AS content SET merge=2",
+        "UPDATE docs SET content=$content RETURNING merge",
+    ] {
+        assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
+    }
+}
+#[test]
 fn sql_is_preserved() {
     for sql in [
         "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
@@ -16,6 +71,32 @@ fn sql_is_preserved() {
             Statement::Sql(sql.into())
         );
     }
+}
+
+#[test]
+fn patch_arrays_do_not_change_sql_bracket_names() {
+    for sql in [
+        "UPDATE [docs] AS [patch] SET [items] = [other]",
+        "SELECT [patch], [a[0] FROM [docs]",
+        "SELECT [items] [PATCH] FROM [docs]",
+    ] {
+        assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
+    }
+    let Statement::MutateDocument {
+        value,
+        predicate,
+        returning,
+        ..
+    } = parse(
+        "UPDATE docs PATCH [{op:'add',path:'/bracket]',value:[1,[2]]}] WHERE [n]=1 RETURNING [id]",
+    )
+    .unwrap()
+    else {
+        panic!()
+    };
+    assert!(matches!(value, Expr::Array(_)));
+    assert_eq!(predicate, Some("[n]=1".into()));
+    assert_eq!(returning, Some("[id]".into()));
 }
 #[test]
 fn collection_and_records() {
@@ -140,7 +221,10 @@ fn fulltext_index_declarations_preserve_ordered_paths() {
             if_not_exists: true,
             table: "posts".into(),
             name: "titles".into(),
-            paths: vec![vec!["title".into()], vec!["profile".into(), "body".into()]]
+            paths: vec![vec!["title".into()], vec!["profile".into(), "body".into()]],
+            tokenizer: None,
+            min_gram: None,
+            max_gram: None
         }
     );
     for sql in [
@@ -212,11 +296,14 @@ fn declared_inverse_relationship_grammar() {
 
 #[test]
 fn vector_index_options_are_explicit_unique_and_order_independent() {
+    assert!(
+        matches!(parse("CREATE SEARCH INDEX compressed ON items(v) USING VECTOR WITH(quantization='f16',metric='cosine',dimensions=3)").unwrap(),Statement::CreateVectorIndex {quantization:Some(value),..} if value=="f16")
+    );
     for options in [
         "dimensions=3,metric='cosine'",
         "metric='cosine',dimensions=3",
     ] {
-        assert_eq!(parse(&format!("CREATE SEARCH INDEX IF NOT EXISTS embeddings ON items(nested.v) USING VECTOR WITH ({options});")).unwrap(),Statement::CreateVectorIndex {if_not_exists:true,table:"items".into(),name:"embeddings".into(),path:vec!["nested".into(),"v".into()],dimensions:3,metric:"cosine".into()});
+        assert_eq!(parse(&format!("CREATE SEARCH INDEX IF NOT EXISTS embeddings ON items(nested.v) USING VECTOR WITH ({options});")).unwrap(),Statement::CreateVectorIndex {if_not_exists:true,table:"items".into(),name:"embeddings".into(),path:vec!["nested".into(),"v".into()],dimensions:3,metric:"cosine".into(),quantization:None});
     }
     for options in [
         "dimensions=3",
@@ -226,6 +313,8 @@ fn vector_index_options_are_explicit_unique_and_order_independent() {
         "dimensions=3.5,metric='l2'",
         "dimensions=-1,metric='l2'",
         "dimensions=3,metric='l2',other=1",
+        "dimensions=3,metric='l2',quantization=16",
+        "dimensions=3,metric='l2',quantization='f16',quantization='f16'",
     ] {
         assert!(
             parse(&format!(
@@ -239,6 +328,28 @@ fn vector_index_options_are_explicit_unique_and_order_independent() {
         "CREATE SEARCH INDEX i ON items(v,w) USING VECTOR WITH (dimensions=3,metric='l2')"
     )
     .is_err());
+}
+
+#[test]
+fn compound_and_array_index_grammar_preserves_native_fallbacks() {
+    assert!(
+        matches!(parse("CREATE UNIQUE INDEX pair ON docs(a,nested.b)").unwrap(), Statement::CreateIndex {unique:true,path,additional_paths,..} if path==["a"] && additional_paths==[vec!["nested".to_owned(),"b".to_owned()]])
+    );
+    assert!(
+        matches!(parse("CREATE SEARCH INDEX IF NOT EXISTS tags ON docs(nested.tags) USING ARRAY").unwrap(),Statement::CreateArrayIndex {if_not_exists:true,path,..} if path==["nested","tags"])
+    );
+    for sql in [
+        "CREATE SEARCH INDEX tags ON docs(a,b) USING ARRAY",
+        "CREATE SEARCH INDEX tags ON docs(a) USING ARRAY WITH(max=10)",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    for sql in [
+        "CREATE INDEX native ON relational(a DESC,b COLLATE NOCASE)",
+        "CREATE INDEX native ON relational(a) WHERE a>0",
+    ] {
+        assert!(matches!(parse(sql).unwrap(), Statement::Sql(_)), "{sql}");
+    }
 }
 
 #[test]
@@ -267,4 +378,117 @@ fn javascript_function_ddl_keeps_source_and_typed_signatures() {
     ] {
         assert!(parse(sql).is_err(), "{sql}");
     }
+}
+
+#[test]
+fn standalone_expression_parser_rejects_statements_and_trailing_delimiters() {
+    assert!(crate::parse_expression("active=true AND this.n >= $min").is_ok());
+    for input in [
+        "",
+        "this;",
+        "this; SELECT 1",
+        "this other",
+        "SELECT 1",
+        "this)",
+    ] {
+        assert!(crate::parse_expression(input).is_err(), "{input}");
+    }
+}
+
+#[test]
+fn field_default_and_readonly_modifiers_preserve_native_default_sql() {
+    let Statement::DefineField {
+        default,
+        readonly,
+        required,
+        check,
+        ..
+    } = parse("DEFINE FIELD n ON docs TYPE integer REQUIRED DEFAULT -7 READONLY CHECK(n<0)")
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(default, Some(Expr::Integer(-7)));
+    assert!(readonly && required && check.is_some());
+    for sql in [
+        "DEFINE FIELD n ON docs TYPE integer READONLY DEFAULT 7",
+        "DEFINE FIELD n ON docs TYPE integer DEFAULT 7 DEFAULT 8",
+        "DEFINE FIELD n ON docs TYPE integer READONLY READONLY",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    let sql = "CREATE TABLE native(n INTEGER DEFAULT 7)";
+    assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
+}
+
+#[test]
+fn strict_schema_and_typed_array_modifiers_are_explicit() {
+    assert_eq!(
+        parse("DEFINE SCHEMA ON docs STRICT").unwrap(),
+        Statement::DefineSchema {
+            table: "docs".into(),
+            strict: true
+        }
+    );
+    assert_eq!(
+        parse("DEFINE SCHEMA ON docs FLEXIBLE").unwrap(),
+        Statement::DefineSchema {
+            table: "docs".into(),
+            strict: false
+        }
+    );
+    for target in [
+        "integer?",
+        "record<writers>",
+        "vector<3>?",
+        "object",
+        "any",
+        "array",
+    ] {
+        let Statement::DefineField {
+            kind,
+            target: actual,
+            flexible,
+            ..
+        } = parse(&format!(
+            "DEFINE FIELD values ON docs TYPE array<{target}> FLEXIBLE"
+        ))
+        .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(kind, "array");
+        assert_eq!(actual, Some(target.into()));
+        assert!(flexible);
+    }
+    for sql in [
+        "DEFINE SCHEMA docs STRICT",
+        "DEFINE SCHEMA ON docs",
+        "DEFINE SCHEMA ON docs STRICT extra",
+        "DEFINE FIELD n ON docs TYPE array<array<integer>>",
+        "DEFINE FIELD n ON docs TYPE array<integer??>",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+}
+
+#[test]
+fn stored_value_clauses_preserve_checks_and_native_generated_columns() {
+    let Statement::DefineField {
+        computed, check, ..
+    } = parse("DEFINE FIELD n ON docs TYPE integer VALUE (a + length(')')) CHECK(n>0)").unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(computed, Some("a + length(')')".into()));
+    assert_eq!(check, Some("n>0".into()));
+    for sql in [
+        "DEFINE FIELD n ON docs TYPE integer VALUE a+1",
+        "DEFINE FIELD n ON docs TYPE integer VALUE (a+1",
+        "DEFINE FIELD n ON docs TYPE integer CHECK(n>0) VALUE (a+1)",
+    ] {
+        assert!(parse(sql).is_err());
+    }
+    let sql = "CREATE TABLE native(a INTEGER,b INTEGER GENERATED ALWAYS AS (a+1) STORED)";
+    assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
 }

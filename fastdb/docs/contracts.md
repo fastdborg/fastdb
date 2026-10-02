@@ -69,8 +69,10 @@ INSERT OR REPLACE removes an existing document with the same record ID and other
 documents conflicting with unique index keys before inserting the new document.
 All their managed index entries are removed atomically. Omitted fields are absent
 in the replacement document; this is not an object merge. Candidate validation
-and other statement failures restore earlier replacements. ON CONFLICT clauses
-remain unsupported; object UPSERT is separate.
+and other statement failures restore earlier replacements. The 2.2.0 source adds
+bounded ON CONFLICT clauses for ID and declared scalar unique targets; see the
+[2.2.0 contract](v2.2-language.md#collection-on-conflict-source-implemented-release-pending).
+Object UPSERT remains separate. Exact 2.2.0 release qualification is pending.
 
 
 Collection UPDATE accepts explicit OR ABORT as its default statement rollback

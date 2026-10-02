@@ -1,6 +1,6 @@
 [package]
 name = "fastdb"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -24,3 +24,4 @@ h3o = { version = "=0.9.4", default-features = false }
 
 usearch = { version = "=2.26.2", default-features = false }
 sha2 = "=0.10.9"
+half = "=2.5.0"

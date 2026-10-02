@@ -15,6 +15,11 @@ struct Source {
     consumed: std::collections::BTreeSet<String>,
 }
 impl Source {
+    fn is_unnest(&self) -> bool {
+        self.derived_logical
+            && matches!(&self.table, SelectTable::TableCall(name, args, _)
+                if name.name.as_str() == "json_each" && matches!(args.first().map(AsRef::as_ref), Some(Expr::FunctionCall {name,..}) if name.as_str() == "__fastdb_unnest_json"))
+    }
     fn logical(&self) -> bool {
         self.collection.is_some() || self.derived_logical
     }
@@ -50,6 +55,7 @@ type CteSources = std::collections::BTreeMap<String, Option<Source>>;
 enum SubqueryAffinity {
     None,
     MembershipColumn,
+    MembershipRows,
     // An empty source name keeps a correlated RHS local to its membership expression.
     NativeMembership(String, String),
     NativeScalar(String),
@@ -514,7 +520,7 @@ fn native_correlated_body(
                         let sql = Cmd::Stmt(Stmt::Select(prepared.clone())).to_string();
                         (
                             expression(&format!(
-                                "(WITH {name}(v) AS ({}) SELECT __fastdb_unwrap(v) FROM {name})",
+                                "(WITH {name}(v) AS ({}) SELECT __fastdb_equality_key(v) FROM {name})",
                                 sql.trim().trim_end_matches(';')
                             ))?,
                             if column {
@@ -676,9 +682,9 @@ fn native_correlated_body(
                 standalone_aliases: Default::default(),
             };
             if typed && mode == NativeCorrelationMode::CompoundArm {
-                if !scope.comparison_key(value)? {
+                if !scope.membership_key(value)? {
                     scope.lower(value)?;
-                    *value = expression(&format!("__fastdb_unwrap(__fastdb_pack({value}))"))?;
+                    *value = expression(&format!("__fastdb_equality_key(__fastdb_pack({value}))"))?;
                 }
             } else if typed {
                 scope.typed(value)?;
@@ -1623,7 +1629,10 @@ impl Scope {
             let Some((column, nested)) = path.split_first() else {
                 return Err(unsupported("doc::row on derived sources"));
             };
-            let value = format!("{}.{}", quote(&self.sources[i].alias), quote(column));
+            let mut value = format!("{}.{}", quote(&self.sources[i].alias), quote(column));
+            if column.eq_ignore_ascii_case("value") && self.sources[i].is_unnest() {
+                value = format!("CAST({value} AS BLOB)");
+            }
             if nested.is_empty() {
                 return expression(&if typed {
                     value
@@ -1794,6 +1803,14 @@ impl Scope {
         }
     }
     fn sql_argument(&self, expr: &mut Expr) -> Result<()> {
+        if let Expr::FunctionCall { name, args, .. } = expr {
+            if name.as_str() == "__fastdb_unnest_json" {
+                let [value] = args.as_mut_slice() else {
+                    return Err(Error::Validation("array::unnest expects one array".into()));
+                };
+                return self.typed(value);
+            }
+        }
         if self.preserved(expr)? {
             *expr = expression(&format!("__fastdb_sql_scalar({expr})"))?;
             Ok(())
@@ -1802,20 +1819,43 @@ impl Scope {
         }
     }
     fn comparison_key(&self, expr: &mut Expr) -> Result<bool> {
+        self.comparison_key_mode(expr, false)
+    }
+    fn membership_key(&self, expr: &mut Expr) -> Result<bool> {
+        if let Expr::Parenthesized(values) = expr {
+            if values.len() > 1 {
+                let mut lowered = values.clone();
+                for value in &mut lowered {
+                    if !self.comparison_key_mode(value, true)? {
+                        return Ok(false);
+                    }
+                }
+                *values = lowered;
+                return Ok(true);
+            }
+        }
+        self.comparison_key_mode(expr, true)
+    }
+    fn comparison_key_mode(&self, expr: &mut Expr, composites: bool) -> Result<bool> {
+        let key = if composites {
+            "__fastdb_equality_key"
+        } else {
+            "__fastdb_unwrap"
+        };
         // Keep explicit collation and unary plus outside the conversion.
         // Plus preserves the scalar value while removing SQL affinity.
         match expr {
             Expr::Collate(value, _) | Expr::Unary(UnaryOperator::Positive, value) => {
-                return self.comparison_key(value);
+                return self.comparison_key_mode(value, composites);
             }
             Expr::Parenthesized(values) if values.len() == 1 => {
-                return self.comparison_key(&mut values[0]);
+                return self.comparison_key_mode(&mut values[0], composites);
             }
             _ => {}
         }
         if let Some((mut value, typed)) = self.standalone_alias(expr) {
             if typed {
-                *expr = expression(&format!("__fastdb_unwrap({value})"))?;
+                *expr = expression(&format!("{key}({value})"))?;
                 return Ok(true);
             }
             if native_alias_key(&mut value)? {
@@ -1826,11 +1866,16 @@ impl Scope {
         }
         if let Some((i, path)) = self.field(expr)? {
             // Direct IDs must remain column references for primary-key seeks.
-            *expr = self.accessor(i, &path, false)?;
+            *expr = if composites && !(path == ["id"] && self.sources[i].collection.is_some()) {
+                let value = self.accessor(i, &path, true)?;
+                expression(&format!("{key}({value})"))?
+            } else {
+                self.accessor(i, &path, false)?
+            };
             return Ok(true);
         }
         if self.preserved(expr)? {
-            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            *expr = expression(&format!("{key}({expr})"))?;
             return Ok(true);
         }
         let cast_type = match expr {
@@ -1852,7 +1897,7 @@ impl Scope {
                 | Expr::Like { .. }
         ) {
             self.typed(expr)?;
-            *expr = expression(&format!("__fastdb_unwrap({expr})"))?;
+            *expr = expression(&format!("{key}({expr})"))?;
             if let Some(type_name) = cast_type {
                 // The conversion returns the already-cast scalar (or its binary
                 // key). Repeating CAST preserves its affinity for IN coercion.
@@ -2006,6 +2051,25 @@ impl Scope {
             return Ok(false);
         };
         let helper = helper.to_owned();
+        if helper == "doc_fetch_source" {
+            if !args.is_empty() || self.sources.len() != 1 || self.sources[0].collection.is_none() {
+                return Err(unsupported("FETCH requires one collection source"));
+            }
+            *expr = self.accessor(0, &[], true)?;
+            return Ok(true);
+        }
+        if helper == "doc_omit_row" {
+            if args.len() != 1 || self.sources.len() != 1 || self.sources[0].collection.is_none() {
+                return Err(unsupported("OMIT requires one collection source"));
+            }
+            self.typed(&mut args[0])?;
+            *expr = expression(&format!(
+                "__fastdb_helper('doc_omit',{},{})",
+                self.accessor(0, &[], true)?,
+                args[0]
+            ))?;
+            return Ok(true);
+        }
         if helper == "doc_project" {
             return Err(unsupported(
                 "paths are allowed only as top-level SELECT projections",
@@ -2111,6 +2175,15 @@ impl Scope {
                     }
                 }
                 self.consumed.borrow_mut().extend(consumed.iter().cloned());
+                if *column == SubqueryAffinity::MembershipRows {
+                    let mut value = *lhs.clone();
+                    if !self.membership_key(&mut value)? {
+                        return Err(unsupported("row membership with a collection subquery requires typed collection fields or scalar expressions on the left"));
+                    }
+                    let negate = if *not { "NOT " } else { "" };
+                    *expr = expression(&format!("{value} {negate}IN {query}"))?;
+                    return Ok(());
+                }
                 if let SubqueryAffinity::NativeMembership(collation, shared) = column {
                     let direct_keys = shared.is_empty()
                         && self.sources.iter().any(Source::logical)
@@ -2118,11 +2191,12 @@ impl Scope {
                     let mut value = *lhs.clone();
                     let is_column = membership_column(&value)
                         || matches!(order_base(&value), Expr::Cast { .. });
-                    if !self.comparison_key(&mut value)? {
+                    if !self.membership_key(&mut value)? {
                         self.lower(&mut value)?;
                         if direct_keys {
-                            value =
-                                expression(&format!("__fastdb_unwrap(__fastdb_pack({value}))"))?;
+                            value = expression(&format!(
+                                "__fastdb_equality_key(__fastdb_pack({value}))"
+                            ))?;
                         } else {
                             **lhs = value;
                             if shared.is_empty() {
@@ -2190,12 +2264,12 @@ impl Scope {
                     } else {
                         shared.as_str()
                     };
-                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_unwrap(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
+                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_equality_key(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();
                 let negate = if *not { "NOT " } else { "" };
-                if self.comparison_key(&mut value)? {
+                if self.membership_key(&mut value)? {
                     *expr = expression(&format!("{value} {negate}IN {query}"))?;
                 } else if native_column_reference(&value) {
                     // The generated scalar wrapper introduces a new scope. Keep
@@ -2229,10 +2303,12 @@ impl Scope {
                     } else {
                         "+v"
                     };
-                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN (SELECT {key} FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT {key} FROM __fastdb_in_source) END)"))?;
+                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_equality_key(__fastdb_pack({value})) {negate}IN (SELECT {key} FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT {key} FROM __fastdb_in_source) END)"))?;
                 } else {
                     self.typed(&mut value)?;
-                    *expr = expression(&format!("__fastdb_unwrap({value}) {negate}IN {query}"))?;
+                    *expr = expression(&format!(
+                        "__fastdb_equality_key({value}) {negate}IN {query}"
+                    ))?;
                 }
                 return Ok(());
             }
@@ -2664,23 +2740,23 @@ impl Scope {
             }
             Expr::InList { lhs, rhs, not } => {
                 let mut value = *lhs.clone();
-                if self.comparison_key(&mut value)? {
+                if self.membership_key(&mut value)? {
                     // Use one collision-resistant scalar representation for the
                     // whole list, including native functions returning blobs.
                     **lhs = value;
                     for value in rhs.iter_mut() {
-                        if !self.comparison_key(value)? {
+                        if !self.membership_key(value)? {
                             self.typed(value)?;
-                            **value = expression(&format!("__fastdb_unwrap({value})"))?;
+                            **value = expression(&format!("__fastdb_equality_key({value})"))?;
                         }
                     }
                     return Ok(());
                 }
                 if native_column_reference(&value) {
                     for value in rhs.iter_mut() {
-                        if !self.comparison_key(value)? {
+                        if !self.membership_key(value)? {
                             self.typed(value)?;
-                            **value = expression(&format!("__fastdb_unwrap({value})"))?;
+                            **value = expression(&format!("__fastdb_equality_key({value})"))?;
                         }
                     }
                     if let Some(collation) = self.derived_native_collation(&value, false) {
@@ -2699,7 +2775,7 @@ impl Scope {
                     // IN ignores RHS affinity. Preserve the native LHS column's
                     // affinity for scalar values and encode only its BLOB values.
                     *expr = expression(&format!(
-                        "CASE WHEN typeof({value})='blob' THEN __fastdb_unwrap(__fastdb_pack({value})) {negate}IN ({list}) ELSE {value} {negate}IN ({list}) END"
+                        "CASE WHEN typeof({value})='blob' THEN __fastdb_equality_key(__fastdb_pack({value})) {negate}IN ({list}) ELSE {value} {negate}IN ({list}) END"
                     ))?;
                     return Ok(());
                 }
@@ -2820,6 +2896,19 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
                 continue;
             }
         }
+        if token.text == "__fastdb_h_search_analyze" {
+            if let Some(config) = tokens.get(i + 2).filter(|t| t.kind == Kind::String) {
+                out.push_str(&sql[copied..token.start]);
+                out.push_str("search::analyze(");
+                copied = config.end;
+                i += 3;
+                if tokens.get(i).is_some_and(|t| t.text == ",") {
+                    copied = tokens[i].end;
+                    i += 1;
+                }
+                continue;
+            }
+        }
         if token.text == "__fastdb_h_udf" {
             if let Some(definition) = tokens.get(i + 2).filter(|t| t.kind == Kind::String) {
                 let d: crate::udf::Definition = serde_json::from_str(&definition.text)?;
@@ -2850,10 +2939,21 @@ fn public_expression_name(expr: &Expr) -> Result<String> {
             "__fastdb_h_record_table" => Some("record::table"),
             "__fastdb_h_array_new" => Some("array::new"),
             "__fastdb_h_array_append" => Some("array::append"),
+            "__fastdb_h_array_len" => Some("array::len"),
+            "__fastdb_h_array_contains" => Some("array::contains"),
+            "__fastdb_h_array_distinct" => Some("array::distinct"),
+            "__fastdb_h_array_flatten" => Some("array::flatten"),
+            "__fastdb_h_object_keys" => Some("doc::keys"),
+            "__fastdb_h_object_values" => Some("doc::values"),
+            "__fastdb_h_object_entries" => Some("doc::entries"),
+            "__fastdb_h_object_from_entries" => Some("doc::from_entries"),
             "__fastdb_h_doc_get" => Some("doc::get"),
             "__fastdb_h_doc_project" => Some("doc::project"),
             "__fastdb_h_doc_has" => Some("doc::has"),
             "__fastdb_h_doc_row" => Some("doc::row"),
+            "__fastdb_h_doc_before" => Some("doc::before"),
+            "__fastdb_h_doc_after" => Some("doc::after"),
+            "__fastdb_h_doc_diff" => Some("doc::diff"),
             _ => None,
         };
         if let Some(public) = public {
@@ -2959,6 +3059,38 @@ fn source(
     inspect_native: bool,
 ) -> Result<Source> {
     if let SelectTable::TableCall(name, args, alias) = table {
+        if name.db_name.is_none() && name.name.as_str() == "__fastdb_unnest" {
+            let [input] = args.as_slice() else {
+                return Err(Error::Validation("array::unnest expects one array".into()));
+            };
+            let alias = alias
+                .clone()
+                .unwrap_or_else(|| As::As(Name::exact("unnest".into())));
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&format!(
+                "SELECT * FROM json_each(__fastdb_unnest_json({input})) AS {}",
+                quote(alias.name().as_str())
+            ))?
+            else {
+                unreachable!()
+            };
+            let OneSelect::Select {
+                from: Some(from), ..
+            } = select.body.select
+            else {
+                unreachable!()
+            };
+            return Ok(Source {
+                table: *from.select,
+                alias: alias.name().as_str().into(),
+                collection: None,
+                derived: Some(vec![("key".into(), false), ("value".into(), true)]),
+                derived_logical: true,
+                derived_physical: None,
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed: Default::default(),
+            });
+        }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_near" {
             let [index, center, radius] = args.as_slice() else {
                 return Err(Error::Validation(
@@ -2989,16 +3121,25 @@ fn source(
             });
         }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_text" {
-            let [index, query, limit] = args.as_slice() else {
+            let [index, query, limit, ..] = args.as_slice() else {
                 return Err(Error::Validation(
-                    "search::text expects index name, query and limit".into(),
+                    "search::text expects index name, query, limit and optional allowed IDs".into(),
                 ));
             };
+            if args.len() > 4 {
+                return Err(Error::Validation(
+                    "search accepts at most four arguments".into(),
+                ));
+            }
             let mut consumed = std::collections::BTreeSet::new();
             let index = crate::spatial::search_argument(index, params, &mut consumed)?;
             let query = crate::spatial::search_argument(query, params, &mut consumed)?;
             let limit = crate::spatial::search_argument(limit, params, &mut consumed)?;
-            let sql = connection.text_search_sql(&index, &query, &limit)?;
+            let filter = args
+                .get(3)
+                .map(|arg| crate::search_filter::argument(arg, params, &mut consumed))
+                .transpose()?;
+            let sql = connection.text_search_sql(&index, &query, &limit, filter.as_ref())?;
             let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
                 unreachable!()
             };
@@ -3018,16 +3159,26 @@ fn source(
             });
         }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_vector" {
-            let [index, query, limit] = args.as_slice() else {
+            let [index, query, limit, ..] = args.as_slice() else {
                 return Err(Error::Validation(
-                    "search::vector expects index name, query and limit".into(),
+                    "search::vector expects index name, query, limit and optional allowed IDs"
+                        .into(),
                 ));
             };
+            if args.len() > 4 {
+                return Err(Error::Validation(
+                    "search accepts at most four arguments".into(),
+                ));
+            }
             let mut consumed = std::collections::BTreeSet::new();
             let index = crate::spatial::search_argument(index, params, &mut consumed)?;
             let query = crate::spatial::search_argument(query, params, &mut consumed)?;
             let limit = crate::spatial::search_argument(limit, params, &mut consumed)?;
-            let sql = connection.vector_search_sql(&index, &query, &limit)?;
+            let filter = args
+                .get(3)
+                .map(|arg| crate::search_filter::argument(arg, params, &mut consumed))
+                .transpose()?;
+            let sql = connection.vector_search_sql(&index, &query, &limit, filter.as_ref())?;
             let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
                 unreachable!()
             };
@@ -3484,21 +3635,197 @@ fn constant(expr: &Expr) -> bool {
         _ => false,
     }
 }
+fn array_filter(
+    scope: &Scope,
+    source_index: usize,
+    predicate: &Expr,
+) -> Result<Option<(crate::Index, Expr)>> {
+    let Some(collection) = &scope.sources[source_index].collection else {
+        return Ok(None);
+    };
+    if !collection
+        .indexes
+        .iter()
+        .any(|index| index.kind == crate::IndexKind::Array)
+    {
+        return Ok(None);
+    }
+    match predicate {
+        Expr::Parenthesized(values) if values.len() == 1 => {
+            return array_filter(scope, source_index, &values[0])
+        }
+        Expr::Binary(lhs, Operator::And, rhs) => {
+            if let Some(candidate) = array_filter(scope, source_index, lhs)? {
+                return Ok(Some(candidate));
+            }
+            return array_filter(scope, source_index, rhs);
+        }
+        _ => {}
+    }
+    let Expr::FunctionCall {
+        name,
+        args,
+        distinctness,
+        order_by,
+        within_group,
+        filter_over,
+    } = predicate
+    else {
+        return Ok(None);
+    };
+    if name.as_str() != "__fastdb_h_array_contains"
+        || distinctness.is_some()
+        || !order_by.is_empty()
+        || !within_group.is_empty()
+        || filter_over.filter_clause.is_some()
+        || filter_over.over_clause.is_some()
+    {
+        return Ok(None);
+    }
+    let [field, needle] = args.as_slice() else {
+        return Ok(None);
+    };
+    if !(constant(needle)
+        || matches!(needle.as_ref(),Expr::Id(name) if !name.quoted() && (name.as_str().eq_ignore_ascii_case("true")||name.as_str().eq_ignore_ascii_case("false"))))
+    {
+        return Ok(None);
+    }
+    let Some((source, path)) = scope.field(field)? else {
+        return Ok(None);
+    };
+    if source != source_index {
+        return Ok(None);
+    }
+    let Some(index) = collection
+        .indexes
+        .iter()
+        .find(|index| index.kind == crate::IndexKind::Array && index.path == path)
+    else {
+        return Ok(None);
+    };
+    let mut needle = *needle.clone();
+    scope.typed(&mut needle)?;
+    Ok(Some((
+        index.clone(),
+        expression(&format!("i.key=__fastdb_array_key({needle})"))?,
+    )))
+}
+
+fn compound_filter(
+    scope: &Scope,
+    source_index: usize,
+    predicate: &Expr,
+) -> Result<Option<(crate::Index, Expr)>> {
+    fn conjuncts<'a>(predicate: &'a Expr, output: &mut Vec<&'a Expr>) {
+        match predicate {
+            Expr::Parenthesized(values) if values.len() == 1 => conjuncts(&values[0], output),
+            Expr::Binary(lhs, Operator::And, rhs) => {
+                conjuncts(lhs, output);
+                conjuncts(rhs, output);
+            }
+            _ => output.push(predicate),
+        }
+    }
+    let Some(collection) = &scope.sources[source_index].collection else {
+        return Ok(None);
+    };
+    if !collection
+        .indexes
+        .iter()
+        .any(|index| index.kind == crate::IndexKind::Scalar && index.scalar.is_some())
+    {
+        return Ok(None);
+    }
+    let mut conditions = Vec::new();
+    conjuncts(predicate, &mut conditions);
+    let mut best = None;
+    let mut best_length = 0;
+    for index in collection
+        .indexes
+        .iter()
+        .filter(|index| index.kind == crate::IndexKind::Scalar && index.scalar.is_some())
+    {
+        let mut filters = Vec::new();
+        for (position, path) in index.paths().enumerate() {
+            let mut matched = None;
+            for condition in &conditions {
+                let Expr::Binary(lhs, Operator::Equals, rhs) = condition else {
+                    continue;
+                };
+                for (mut field, value) in
+                    [(lhs.as_ref(), rhs.as_ref()), (rhs.as_ref(), lhs.as_ref())]
+                {
+                    while let Expr::Parenthesized(values) = field {
+                        if values.len() != 1 {
+                            break;
+                        }
+                        field = &values[0];
+                    }
+                    if constant(value)
+                        && scope.field(field)?.is_some_and(|(source, field_path)| {
+                            source == source_index && field_path.as_slice() == path
+                        })
+                    {
+                        let column = if position == 0 {
+                            "key".into()
+                        } else {
+                            format!("f{position}")
+                        };
+                        matched = Some(Expr::Binary(
+                            Box::new(expression(&format!("i.{column}"))?),
+                            Operator::Equals,
+                            Box::new(index_literal(value, &scope.params)?),
+                        ));
+                        break;
+                    }
+                }
+                if matched.is_some() {
+                    break;
+                }
+            }
+            let Some(filter) = matched else { break };
+            filters.push(filter);
+        }
+        if filters.len() > best_length {
+            best_length = filters.len();
+            let filter = filters
+                .into_iter()
+                .reduce(|lhs, rhs| Expr::Binary(Box::new(lhs), Operator::And, Box::new(rhs)))
+                .expect("nonempty compound prefix");
+            best = Some((index.clone(), filter));
+        }
+    }
+    Ok(best)
+}
+
 fn indexed_filter(
+    scope: &Scope,
+    source_index: usize,
+    predicate: &Expr,
+) -> Result<Option<(crate::Index, Expr)>> {
+    if let Some(candidate) = compound_filter(scope, source_index, predicate)? {
+        return Ok(Some(candidate));
+    }
+    if let Some(candidate) = array_filter(scope, source_index, predicate)? {
+        return Ok(Some(candidate));
+    }
+    scalar_indexed_filter(scope, source_index, predicate)
+}
+fn scalar_indexed_filter(
     scope: &Scope,
     source_index: usize,
     predicate: &Expr,
 ) -> Result<Option<(crate::Index, Expr)>> {
     if let Expr::Parenthesized(es) = predicate {
         if es.len() == 1 {
-            return indexed_filter(scope, source_index, &es[0]);
+            return scalar_indexed_filter(scope, source_index, &es[0]);
         }
     }
     if let Expr::Binary(lhs, Operator::And, rhs) = predicate {
-        if let Some(candidate) = indexed_filter(scope, source_index, lhs)? {
+        if let Some(candidate) = scalar_indexed_filter(scope, source_index, lhs)? {
             return Ok(Some(candidate));
         }
-        return indexed_filter(scope, source_index, rhs);
+        return scalar_indexed_filter(scope, source_index, rhs);
     }
     // Null-accepting predicates cannot generally move below an outer join:
     // filtering matched rows can manufacture new NULL-extended rows.
@@ -3583,7 +3910,13 @@ fn indexed_filter(
                         lhs: key,
                         rhs: keys
                             .into_iter()
-                            .map(|e| index_literal(e, &scope.params).map(Box::new))
+                            .map(|e| {
+                                let mut value = e.clone();
+                                if !scope.membership_key(&mut value)? {
+                                    return Err(unsupported("indexed membership key"));
+                                }
+                                Ok(Box::new(value))
+                            })
                             .collect::<Result<_>>()?,
                         not: false,
                     }
@@ -3743,7 +4076,7 @@ fn lower_set_operations(
             "SELECT {} FROM {table}",
             columns
                 .iter()
-                .map(|column| format!("__fastdb_unwrap({column})"))
+                .map(|column| format!("__fastdb_equality_key({column})"))
                 .collect::<Vec<_>>()
                 .join(",")
         )
@@ -3775,12 +4108,12 @@ fn lower_set_operations(
                 .join(",");
             let grouping = columns
                 .iter()
-                .map(|column| format!("__fastdb_unwrap(l.{column})"))
+                .map(|column| format!("__fastdb_equality_key(l.{column})"))
                 .collect::<Vec<_>>()
                 .join(",");
             let matching = columns
                 .iter()
-                .map(|column| format!("__fastdb_unwrap(l.{column}) IS k.{column}"))
+                .map(|column| format!("__fastdb_equality_key(l.{column}) IS k.{column}"))
                 .collect::<Vec<_>>()
                 .join(" AND ");
             definitions.push(format!("{result}({names}) AS MATERIALIZED (SELECT {outputs} FROM {candidates} l JOIN {key_table} k ON {matching} GROUP BY {grouping})"));
@@ -3810,7 +4143,7 @@ fn lower_distinct(
         *alias = Some(As::As(Name::exact(name.clone())));
         output.push(quote(&name));
         keys.push(if typed[i] {
-            format!("__fastdb_unwrap({})", quote(&name))
+            format!("__fastdb_equality_key({})", quote(&name))
         } else {
             quote(&name)
         });
@@ -3869,7 +4202,8 @@ fn lower_distinct(
 // longer paths as a temporary AST expression; Scope resolves it before SQL
 // preparation. This marker is never a registered engine function.
 pub(crate) fn expand_paths(sql: &str) -> Result<String> {
-    let expanded = crate::projection_path::expand(sql)?;
+    let expanded =
+        crate::projection_path::expand(&crate::omit::expand(&crate::fetch_clause::expand(sql)?)?)?;
     let sql = expanded.as_str();
     use fastql_parser::Kind;
     let tokens = fastql_parser::tokenize(sql)?;
@@ -3928,6 +4262,24 @@ pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Resu
                 tokens[i].text.to_ascii_lowercase(),
                 tokens[i + 3].text.to_ascii_lowercase()
             );
+            if namespace == "search::analyze" {
+                let index = tokens
+                    .get(i + 5)
+                    .filter(|t| t.kind == fastql_parser::Kind::String)
+                    .ok_or_else(|| unsupported("search::analyze requires a literal index name"))?;
+                if tokens.get(i + 6).is_none_or(|t| t.text != ",") {
+                    return Err(unsupported("search::analyze expects index name and text"));
+                }
+                let connection = connection
+                    .ok_or_else(|| unsupported("analyzer lookup requires a connection"))?;
+                let config = serde_json::to_string(&connection.analyzer_options(&index.text)?)?
+                    .replace('\'', "''");
+                out.push_str(&sql[copied..tokens[i].start]);
+                out.push_str(&format!("__fastdb_h_search_analyze('{config}',"));
+                copied = tokens[i + 4].end;
+                i += 5;
+                continue;
+            }
             let mapped = match namespace.as_str() {
                 "search::near" => "__fastdb_near",
                 "search::text" => "__fastdb_text",
@@ -3946,6 +4298,18 @@ pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Resu
                 "record::table" => "__fastdb_h_record_table",
                 "array::new" => "__fastdb_h_array_new",
                 "array::append" => "__fastdb_h_array_append",
+                "array::len" => "__fastdb_h_array_len",
+                "array::contains" => "__fastdb_h_array_contains",
+                "array::distinct" => "__fastdb_h_array_distinct",
+                "array::flatten" => "__fastdb_h_array_flatten",
+                "array::unnest" => "__fastdb_unnest",
+                "doc::before" => "__fastdb_h_doc_before",
+                "doc::after" => "__fastdb_h_doc_after",
+                "doc::diff" => "__fastdb_h_doc_diff",
+                "doc::keys" => "__fastdb_h_object_keys",
+                "doc::values" => "__fastdb_h_object_values",
+                "doc::entries" => "__fastdb_h_object_entries",
+                "doc::from_entries" => "__fastdb_h_object_from_entries",
                 "doc::get" => "__fastdb_h_doc_get",
                 "doc::has" => "__fastdb_h_doc_has",
                 "doc::row" => "__fastdb_h_doc_row",
@@ -4079,10 +4443,12 @@ impl Connection {
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<crate::ProfiledQuery> {
-        if crate::udf::has_calls(sql)? {
-            return self.atomic(|| self.profile_select_snapshot(sql, params, limits));
-        }
-        self.profile_select_snapshot(sql, params, limits)
+        self.with_statement_timeout(sql, |sql| {
+            if crate::udf::has_calls(sql)? || crate::analyzer::has_calls(sql)? {
+                return self.atomic(|| self.profile_select_snapshot(sql, params, limits));
+            }
+            self.profile_select_snapshot(sql, params, limits)
+        })
     }
     fn profile_select_snapshot(
         &self,
@@ -4102,6 +4468,7 @@ impl Connection {
             }
         };
         let expanded = expand_paths(&expand_records(Some(self), &sql)?)?;
+        crate::mutation_result::reject_outside_returning(&expanded)?;
         if !matches!(parsed(&expanded)?, Cmd::Stmt(Stmt::Select(_))) {
             return Err(Error::Unsupported(
                 "profiling requires one SQL SELECT".into(),
@@ -4235,7 +4602,7 @@ impl Connection {
         &self,
         table: &QualifiedName,
         columns: &[ResultColumn],
-        documents: Vec<crate::Document>,
+        documents: Vec<crate::mutation_result::Snapshot>,
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<QueryResult> {
@@ -4248,7 +4615,7 @@ impl Connection {
             let mut budget = crate::budget::ResultBudget::new(limits, &columns)?;
             let mut rows = Vec::new();
             for document in documents {
-                let row = vec![Value::Object(document)];
+                let row = vec![Value::Object(document.document)];
                 budget.row(&row)?;
                 rows.push(row);
             }
@@ -4258,6 +4625,38 @@ impl Connection {
                 affected,
             });
         }
+        let mut columns = columns.to_vec();
+        let original = columns
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut nonce = 0usize;
+        let (before_name, after_name) = loop {
+            let before = format!("$__fastdb_mutation_before_{nonce}");
+            let after = format!("$__fastdb_mutation_after_{nonce}");
+            if !params.contains_key(&before)
+                && !params.contains_key(&after)
+                && !original.contains(&before)
+                && !original.contains(&after)
+            {
+                break (before, after);
+            }
+            nonce += 1;
+        };
+        let mut rewritten = false;
+        for column in &mut columns {
+            if let ResultColumn::Expr(expr, alias) = column {
+                let label = public_expression_name(expr)?;
+                if crate::mutation_result::rewrite_expression(expr, &before_name, &after_name)? {
+                    if alias.as_ref().is_none_or(|alias| !alias.is_explicit()) {
+                        *alias = Some(As::As(Name::exact(label)));
+                    }
+                    rewritten = true;
+                }
+            }
+        }
+        let mut scoped_params = rewritten.then(|| params.clone());
         let projections = columns
             .iter()
             .map(ToString::to_string)
@@ -4279,14 +4678,38 @@ impl Connection {
         let metadata_only = documents.is_empty().then_some(None);
         let inputs = documents.into_iter().map(Some).chain(metadata_only);
         for snapshot in inputs {
+            if let Some(parameters) = &mut scoped_params {
+                let before = if sql.contains(&before_name) {
+                    snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.before())
+                        .cloned()
+                        .map(Value::Object)
+                        .unwrap_or(Value::Null)
+                } else {
+                    Value::Null
+                };
+                let after = if sql.contains(&after_name) {
+                    snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.after_document())
+                        .cloned()
+                        .map(Value::Object)
+                        .unwrap_or(Value::Null)
+                } else {
+                    Value::Null
+                };
+                parameters.insert(before_name.clone(), before);
+                parameters.insert(after_name.clone(), after);
+            }
             let row = self
                 .collection_select_options(
                     &sql,
-                    params,
+                    scoped_params.as_ref().unwrap_or(params),
                     SelectOptions {
                         trusted: true,
                         ignore_unused: true,
-                        snapshot: Some(snapshot.as_ref()),
+                        snapshot: Some(snapshot.as_ref().map(|snapshot| &snapshot.document)),
                         ..Default::default()
                     },
                 )?
@@ -4312,7 +4735,7 @@ impl Connection {
         params: &Parameters,
         options: SelectOptions<'_>,
     ) -> Result<Option<QueryResult>> {
-        if !options.guarded && crate::udf::has_calls(sql)? {
+        if !options.guarded && (crate::udf::has_calls(sql)? || crate::analyzer::has_calls(sql)?) {
             return self.atomic(|| {
                 self.collection_select_options(
                     sql,
@@ -4325,6 +4748,7 @@ impl Connection {
             });
         }
         let expanded = expand_paths(&expand_records(Some(self), sql)?)?;
+        crate::mutation_result::reject_outside_returning(&expanded)?;
         if !options.guarded
             // Native INSERT conflict policies (especially OR FAIL) must keep
             // their own statement boundary. Fetched native sources are rejected
@@ -4639,7 +5063,7 @@ impl Connection {
                 if matches!(
                     table.as_ref(),
                     SelectTable::Table(..) | SelectTable::Select(..)
-                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector"))
+                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest"))
                 {
                     local.push(source(
                         self,
@@ -4896,7 +5320,30 @@ impl Connection {
         let mut cte_logical = false;
         if let Some(mut with) = select.with.take() {
             if with.recursive {
-                return Ok(None);
+                select.with = Some(with);
+                return self
+                    .lower_recursive_collection_select(
+                        select,
+                        params,
+                        inherited_ctes,
+                        ignore_unused,
+                    )
+                    .map(|plan| {
+                        plan.map(|mut plan| {
+                            plan.explain = explain;
+                            if let Cmd::Stmt(statement) = plan.command {
+                                plan.command = match &cmd {
+                                    Cmd::Explain(_) => Cmd::Explain(statement),
+                                    Cmd::ExplainQueryPlan { format, .. } => Cmd::ExplainQueryPlan {
+                                        stmt: statement,
+                                        format: *format,
+                                    },
+                                    _ => Cmd::Stmt(statement),
+                                };
+                            }
+                            plan
+                        })
+                    });
             }
             let mut local_names = std::collections::BTreeSet::new();
             for cte in &with.ctes {
@@ -5247,7 +5694,7 @@ impl Connection {
                                         table.as_ref(),
                                         SelectTable::Table(..) | SelectTable::Select(..)
                                     ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _)
-                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector"))
+                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest"))
                                     {
                                         resolved.push(source(
                                             self,
@@ -5396,6 +5843,55 @@ impl Connection {
                             )?
                         };
                         if let Some(mut plan) = plan {
+                            let row_width = match &*expr {
+                                Expr::InSelect { lhs, .. } => match lhs.as_ref() {
+                                    Expr::Parenthesized(values) if values.len() > 1 => {
+                                        Some(values.len())
+                                    }
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            if let Some(width) = row_width {
+                                if plan.typed.len() != width
+                                    || plan.typed.iter().any(|typed| !typed)
+                                    || plan.fetched.iter().any(|fetched| *fetched)
+                                {
+                                    return Err(unsupported("row membership requires matching widths and typed collection output columns without FETCH"));
+                                }
+                                let id = self
+                                    .next_subquery_id
+                                    .fetch_update(
+                                        std::sync::atomic::Ordering::Relaxed,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                        |id| id.checked_add(1),
+                                    )
+                                    .map_err(|_| {
+                                        Error::Limit(
+                                            "internal subquery identifiers exhausted".into(),
+                                        )
+                                    })?;
+                                let members = format!("__fastdb_members_{id}");
+                                let names = (0..width)
+                                    .map(|index| format!("v{index}"))
+                                    .collect::<Vec<_>>();
+                                let keys = names
+                                    .iter()
+                                    .map(|name| format!("__fastdb_equality_key({name}) AS {name}"))
+                                    .collect::<Vec<_>>()
+                                    .join(",");
+                                let sql = plan.command.to_string();
+                                let lowered = expression(&format!(
+                                    "(WITH {members}({}) AS ({}) SELECT {keys} FROM {members})",
+                                    names.join(","),
+                                    sql.trim().trim_end_matches(';')
+                                ))?;
+                                expression_subqueries.insert(
+                                    expr.to_string(),
+                                    (lowered, plan.consumed, SubqueryAffinity::MembershipRows),
+                                );
+                                return Ok(());
+                            }
                             let mut direct_local_scalar = false;
                             if !exists
                                 && !membership
@@ -5465,8 +5961,9 @@ impl Connection {
                                         )
                                     })?;
                                 let members = format!("__fastdb_members_{id}");
-                                let values =
-                                    format!("SELECT __fastdb_unwrap({output}) AS v FROM {members}");
+                                let values = format!(
+                                    "SELECT __fastdb_equality_key({output}) AS v FROM {members}"
+                                );
                                 // A field has typeless column affinity, which differs
                                 // from a function expression with no affinity. Restore
                                 // a column boundary after decoding its comparison key.
@@ -5893,7 +6390,7 @@ impl Connection {
                 if matches!(affinity, SubqueryAffinity::NativeMembership(_, _)) {
                     let column = matches!(&inner.body.select, OneSelect::Select { columns, .. }
                         if matches!(columns.as_slice(), [ResultColumn::Expr(value, _)] if membership_column(value)));
-                    let values = "SELECT __fastdb_unwrap(v) AS v FROM __fastdb_members";
+                    let values = "SELECT __fastdb_equality_key(v) AS v FROM __fastdb_members";
                     let values = if column {
                         format!("SELECT v FROM ({values} UNION ALL SELECT CAST(NULL AS BLOB) WHERE 0) AS __fastdb_member_values")
                     } else {
@@ -6041,6 +6538,11 @@ impl Connection {
                 }
                 ResultColumn::Expr(expr, alias) => {
                     let mut expr = *expr.clone();
+                    if snapshot.is_some()
+                        && matches!(&expr, Expr::FunctionCall {name,..} if name.as_str() == "__fastdb_h_doc_omit_row")
+                    {
+                        return Err(unsupported("OMIT in RETURNING"));
+                    }
                     let field = scope.field(&expr)?.or(match &expr {
                         Expr::FunctionCall { name, args, .. }
                             if name.as_str() == "__fastdb_h_doc_project" =>
@@ -6074,6 +6576,17 @@ impl Connection {
                             .using
                             .bindings
                             .get(&name.as_str().to_ascii_lowercase()),
+                        _ => None,
+                    } {
+                        column.clone()
+                    } else if let Some(column) = match &expr {
+                        Expr::Id(name) | Expr::Name(name) => scope
+                            .sources
+                            .iter()
+                            .filter(|source| source.is_unnest())
+                            .flat_map(|source| source.derived.iter().flatten())
+                            .find(|(column, _)| column.eq_ignore_ascii_case(name.as_str()))
+                            .map(|(column, _)| column),
                         _ => None,
                     } {
                         column.clone()
@@ -6155,6 +6668,18 @@ impl Connection {
                                 .ok_or_else(|| unsupported("invalid projection path"))?
                                 .replace("''", "'");
                             let mut parts = crate::projection_path::decode(&encoded)?;
+                            for part in &parts {
+                                if let crate::projection_path::Part::Filter(source) = part {
+                                    let predicate =
+                                        crate::array_predicate::Predicate::prepare(source)?;
+                                    for name in predicate.parameters {
+                                        if !params.contains_key(&name) {
+                                            return Err(Error::Parameter(name));
+                                        }
+                                        scope.consumed.borrow_mut().insert(name);
+                                    }
+                                }
+                            }
                             if let Some((index, field)) = scope.projection_field(&base)? {
                                 let mut prefix = field[1..]
                                     .iter()
@@ -6633,6 +7158,189 @@ impl Connection {
         )
         .map(Some)
     }
+    fn lower_recursive_collection_select(
+        &self,
+        select: &Select,
+        params: &Parameters,
+        inherited: Option<&CteSources>,
+        ignore_unused: bool,
+    ) -> Result<Option<LoweredSelect>> {
+        let with = select.with.as_ref().expect("recursive WITH");
+        if with.ctes.len() != 1 {
+            return Ok(None);
+        }
+        let mut cte = with.ctes[0].clone();
+        if cte.select.with.is_some()
+            || cte.select.body.compounds.len() != 1
+            || cte.select.body.compounds[0].operator != CompoundOperator::UnionAll
+            || !cte.select.order_by.is_empty()
+            || cte.select.limit.is_some()
+        {
+            return Ok(None);
+        }
+        let mut scope = inherited.cloned().unwrap_or_default();
+        scope.insert(cte.tbl_name.as_str().to_ascii_lowercase(), None);
+        let mut initial = cte.select.clone();
+        initial.body.compounds.clear();
+        let sql = Cmd::Stmt(Stmt::Select(initial)).to_string();
+        let Some(mut seed) = self.lower_collection_select(
+            &sql,
+            &sql,
+            params,
+            SelectOptions {
+                trusted: true,
+                nested: true,
+                ctes: Some(&scope),
+                ..Default::default()
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        if seed.fetched.iter().any(|value| *value) {
+            return Err(unsupported("FETCH inside recursive collection CTEs"));
+        }
+        let names = if cte.columns.is_empty() {
+            seed.names.clone()
+        } else {
+            if cte.columns.len() != seed.typed.len() {
+                return Err(Error::Validation(
+                    "recursive CTE column count mismatch".into(),
+                ));
+            }
+            cte.columns
+                .iter()
+                .map(|column| column.col_name.as_str().to_owned())
+                .collect()
+        };
+        let physical = derived_physical_names(&names);
+        cte.columns = physical
+            .iter()
+            .map(|name| IndexedColumn {
+                col_name: Name::from_string(quote(name)),
+                collation_name: None,
+                order: None,
+            })
+            .collect();
+        let Cmd::Stmt(Stmt::Select(probe)) =
+            parsed(&format!("SELECT * FROM {}", quote(cte.tbl_name.as_str())))?
+        else {
+            unreachable!();
+        };
+        let OneSelect::Select {
+            from: Some(from), ..
+        } = probe.body.select
+        else {
+            unreachable!();
+        };
+        scope.insert(
+            cte.tbl_name.as_str().to_ascii_lowercase(),
+            Some(Source {
+                table: *from.select,
+                alias: cte.tbl_name.as_str().to_owned(),
+                collection: None,
+                derived: Some(names.iter().cloned().map(|name| (name, true)).collect()),
+                derived_logical: true,
+                derived_physical: Some(physical),
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed: seed.consumed.clone(),
+            }),
+        );
+        let recursive = Select {
+            with: None,
+            body: SelectBody {
+                select: cte.select.body.compounds[0].select.clone(),
+                compounds: Vec::new(),
+            },
+            order_by: Vec::new(),
+            limit: None,
+        };
+        let sql = Cmd::Stmt(Stmt::Select(recursive)).to_string();
+        let mut step = self
+            .lower_collection_select(
+                &sql,
+                &sql,
+                params,
+                SelectOptions {
+                    trusted: true,
+                    nested: true,
+                    ctes: Some(&scope),
+                    force_logical: true,
+                    ..Default::default()
+                },
+            )?
+            .ok_or_else(|| unsupported("recursive collection step"))?;
+        if step.typed.len() != seed.typed.len() || step.fetched.iter().any(|value| *value) {
+            return Err(unsupported(
+                "recursive collection CTEs require matching column counts without FETCH",
+            ));
+        }
+        for plan in [&mut seed, &mut step] {
+            let Cmd::Stmt(Stmt::Select(body)) = &mut plan.command else {
+                unreachable!();
+            };
+            if body.with.is_some()
+                || !body.body.compounds.is_empty()
+                || !body.order_by.is_empty()
+                || body.limit.is_some()
+            {
+                return Err(unsupported(
+                    "nested query preparation in a recursive collection CTE",
+                ));
+            }
+            let OneSelect::Select { columns, .. } = &mut body.body.select else {
+                return Err(unsupported("recursive collection CTE SELECT columns"));
+            };
+            for (column, typed) in columns.iter_mut().zip(&plan.typed) {
+                let ResultColumn::Expr(value, _) = column else {
+                    unreachable!();
+                };
+                if !typed {
+                    **value = expression(&format!("__fastdb_pack({value})"))?;
+                }
+            }
+        }
+        let Cmd::Stmt(Stmt::Select(seed_select)) = seed.command else {
+            unreachable!();
+        };
+        let Cmd::Stmt(Stmt::Select(step_select)) = step.command else {
+            unreachable!();
+        };
+        cte.select.body.select = seed_select.body.select;
+        cte.select.body.compounds[0].select = step_select.body.select;
+        let mut outer = select.clone();
+        outer.with = None;
+        let sql = Cmd::Stmt(Stmt::Select(outer)).to_string();
+        let mut result = self
+            .lower_collection_select(
+                &sql,
+                &sql,
+                params,
+                SelectOptions {
+                    trusted: true,
+                    nested: true,
+                    ctes: Some(&scope),
+                    force_logical: true,
+                    ignore_unused,
+                    ..Default::default()
+                },
+            )?
+            .ok_or_else(|| unsupported("recursive collection CTE output"))?;
+        let Cmd::Stmt(Stmt::Select(body)) = &mut result.command else {
+            unreachable!();
+        };
+        let mut prepared = with.clone();
+        prepared.ctes = vec![cte];
+        if let Some(generated) = body.with.take() {
+            prepared.ctes.extend(generated.ctes);
+        }
+        body.with = Some(prepared);
+        result.consumed.extend(seed.consumed);
+        result.consumed.extend(step.consumed);
+        Ok(Some(result))
+    }
+
     fn lower_compound(
         &self,
         select: &Select,
@@ -7290,7 +7998,8 @@ impl Connection {
                         .map(|(index, path)| (row[*index].clone(), path.clone()))
                 })
                 .collect::<Vec<_>>();
-            let (values, counters) = crate::projection_path::project(self, &inputs, &mut budget)?;
+            let (values, counters) =
+                crate::projection_path::project(self, &inputs, &mut budget, params)?;
             metrics.fetch_batches += counters.batches;
             metrics.fetch_rows_read += counters.rows_read;
             metrics.fetch_vm_steps += counters.vm_steps;
@@ -7470,7 +8179,54 @@ fn expand_stars(
                 }
             }
             _ => {
-                expanded.push(column.clone());
+                let mut column = column.clone();
+                if let ResultColumn::Expr(expr, alias) = &mut column {
+                    if let Expr::FunctionCall { name, args, .. } = expr.as_mut() {
+                        if name.as_str() == "__fastdb_h_doc_project" && args.len() == 2 {
+                            if let Expr::Id(name) | Expr::Name(name) = args[0].as_ref() {
+                                if scope
+                                    .sources
+                                    .iter()
+                                    .any(|source| source.alias.eq_ignore_ascii_case(name.as_str()))
+                                {
+                                    let encoded = args[1].to_string();
+                                    let encoded = encoded
+                                        .strip_prefix('\'')
+                                        .and_then(|s| s.strip_suffix('\''))
+                                        .ok_or_else(|| unsupported("invalid projection path"))?
+                                        .replace("''", "'");
+                                    let parts = crate::projection_path::decode(&encoded)?;
+                                    if matches!(
+                                        parts.as_slice(),
+                                        [crate::projection_path::Part::All]
+                                    ) {
+                                        return Err(unsupported("result alias on a source wildcard; qualify the document field to expand it"));
+                                    }
+                                    if matches!(
+                                        parts.first(),
+                                        Some(crate::projection_path::Part::Filter(_))
+                                    ) {
+                                        return Err(unsupported("array predicate on a SQL source alias; qualify the array field"));
+                                    }
+                                    if matches!(
+                                        parts.first(),
+                                        Some(crate::projection_path::Part::Fields(_))
+                                    ) {
+                                        let source = name.as_str().to_owned();
+                                        args[0] = Box::new(expression(&format!(
+                                            "__fastdb_h_doc_row({})",
+                                            quote(&source)
+                                        ))?);
+                                        if alias.is_none() {
+                                            *alias = Some(As::As(Name::exact(source)))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                expanded.push(column);
                 continue;
             }
         };
@@ -7505,7 +8261,11 @@ fn expand_stars(
                             quote(&source.alias),
                             quote(physical)
                         ))?),
-                        Some(As::As(Name::from_string(quote(name)))),
+                        Some(As::As(if source.is_unnest() {
+                            Name::exact(name.clone())
+                        } else {
+                            Name::from_string(quote(name))
+                        })),
                     ));
                 }
                 continue;

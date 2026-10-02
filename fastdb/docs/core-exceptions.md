@@ -7,6 +7,18 @@ below tracks upstream replacement candidates; no patch is removed from the
 existing pinned engine merely because a newer upstream revision contains a fix.
 No automatic removal or periodic monitoring is configured.
 
+## FTS analyzer inspection (2026-10-02)
+
+The 2.2.0 roadmap authorizes engine changes needed for missing FastQL features.
+The reviewed additive hook extracts tokenizer registration from
+`core/index_method/fts/mod.rs` into `core/index_method/fts/analysis.rs` and exports
+a streaming visitor shared with real index registration. No storage change or
+new dependency. [Design and evidence](proposals/fts-analyzer-inspection.md).
+`fts_analysis_hook` passes three tests and existing `fulltext` passes eight.
+Retain token/case/Unicode/long-token/ngram boundaries, early-stop, native-query
+and reopen regressions. Remove this exception when upstream provides an
+equivalent shared visitor and these tests pass without the extraction.
+
 ## Follow-up audit (2026-09-30)
 
 Rechecked every `core/` deviation from 0.8.1 and fetched upstream main at

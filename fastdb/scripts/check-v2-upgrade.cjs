@@ -99,7 +99,7 @@ if (!phase) {
     assert.throws(() => {
       const db = new Database(file);
       try { db.execute('SELECT * FROM docs'); } finally { db.close(); }
-    }, phase === 'reject-fts-downgrade' ? /unknown module name: 'fts'/ : /unsupported collection metadata version 3/);
+    }, phase === 'reject-fts-downgrade' ? /unknown module name: 'fts'/ : /unsupported collection metadata version 4/);
     console.log(`${phase}: V1 rejects the upgraded database`);
   } else {
     const db = new Database(file);
@@ -121,6 +121,14 @@ if (!phase) {
           if (!old) {
             assert.deepEqual(info[0][0].relations, []);
             delete info[0][0].relations;
+            if (Object.hasOwn(info[0][0], 'strict')) {
+              assert.equal(info[0][0].strict, false); delete info[0][0].strict;
+              for (const field of info[0][0].fields) {
+                for (const [key, expected] of Object.entries({computed:null,has_default:false,default:null,readonly:false,flexible:false,element_type:null,element_nullable:false})) {
+                  assert.equal(field[key], expected); delete field[key];
+                }
+              }
+            }
             for (const index of info[0][0].indexes) { assert.equal(index.kind, 'scalar'); delete index.kind; }
           }
           assert.deepEqual(normalize(info), fixture.info[table]);

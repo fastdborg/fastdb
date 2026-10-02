@@ -805,5 +805,1035 @@
     "result_subset": {
       "type": "Vector"
     }
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_users {id:v22_users:u,name:'Alice'}",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE TABLE v22_docs",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "DEFINE FIELD stamp ON v22_docs TYPE integer REQUIRED DEFAULT 7 READONLY",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "DEFINE FIELD n ON v22_docs TYPE integer REQUIRED",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "DEFINE FIELD total ON v22_docs TYPE integer VALUE (n*2)",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "DEFINE FIELD tags ON v22_docs TYPE array<integer>",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_docs {id:v22_docs:a,n:1,uid:'one',tags:[1,2],owner:v22_users:u,body:'Alpha beta',items:[{n:1},{n:2}]}",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE UNIQUE INDEX v22_address ON v22_docs(n,uid)",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX v22_tags ON v22_docs(tags) USING ARRAY",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX v22_words ON v22_docs(body) USING FULLTEXT WITH(tokenizer='simple')",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n,stamp,total,tags FROM v22_docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "1"
+        },
+        {
+          "type": "Integer",
+          "value": "7"
+        },
+        {
+          "type": "Integer",
+          "value": "2"
+        },
+        {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Integer",
+              "value": "1"
+            },
+            {
+              "type": "Integer",
+              "value": "2"
+            }
+          ]
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT owner.*.name AS writer FROM v22_docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "String",
+          "value": "Alice"
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT items[WHERE n>1].{n} AS selected FROM v22_docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Object",
+              "value": {
+                "n": {
+                  "type": "Integer",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT array::len(array::distinct(tags)),array::flatten(array::new(tags,tags)),doc::from_entries(doc::entries($value)) FROM v22_docs",
+      "parameters": {
+        "$value": {
+          "type": "Object",
+          "value": {
+            "large": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "flag": {
+              "type": "Boolean",
+              "value": true
+            },
+            "bytes": {
+              "type": "Binary",
+              "value": [
+                0,
+                255
+              ]
+            },
+            "ref": {
+              "type": "Record",
+              "value": {
+                "table": "v22_users",
+                "key": {
+                  "type": "String",
+                  "value": "u"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "2"
+        },
+        {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Integer",
+              "value": "1"
+            },
+            {
+              "type": "Integer",
+              "value": "2"
+            },
+            {
+              "type": "Integer",
+              "value": "1"
+            },
+            {
+              "type": "Integer",
+              "value": "2"
+            }
+          ]
+        },
+        {
+          "type": "Object",
+          "value": {
+            "large": {
+              "type": "Integer",
+              "value": "9223372036854775807"
+            },
+            "flag": {
+              "type": "Boolean",
+              "value": true
+            },
+            "bytes": {
+              "type": "Binary",
+              "value": [
+                0,
+                255
+              ]
+            },
+            "ref": {
+              "type": "Record",
+              "value": {
+                "table": "v22_users",
+                "key": {
+                  "type": "String",
+                  "value": "u"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT value FROM array::unnest($values) ORDER BY key",
+      "parameters": {
+        "$values": {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Integer",
+              "value": "1"
+            },
+            {
+              "type": "Integer",
+              "value": "2"
+            }
+          ]
+        }
+      }
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "1"
+        }
+      ],
+      [
+        {
+          "type": "Integer",
+          "value": "2"
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "UPDATE v22_docs:a MERGE {n:2} RETURNING n,total",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "2"
+        },
+        {
+          "type": "Integer",
+          "value": "4"
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_docs(n,uid,tags) VALUES(2,'one',array::new(3)) ON CONFLICT(n,uid) DO UPDATE SET n=n+1,tags=excluded.tags RETURNING n,total,doc::diff()",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "3"
+        },
+        {
+          "type": "Integer",
+          "value": "6"
+        },
+        {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Object",
+              "value": {
+                "op": {
+                  "type": "String",
+                  "value": "replace"
+                },
+                "path": {
+                  "type": "String",
+                  "value": "/n"
+                },
+                "value": {
+                  "type": "Integer",
+                  "value": "3"
+                }
+              }
+            },
+            {
+              "type": "Object",
+              "value": {
+                "op": {
+                  "type": "String",
+                  "value": "replace"
+                },
+                "path": {
+                  "type": "String",
+                  "value": "/tags"
+                },
+                "value": {
+                  "type": "Array",
+                  "value": [
+                    {
+                      "type": "Integer",
+                      "value": "3"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "Object",
+              "value": {
+                "op": {
+                  "type": "String",
+                  "value": "replace"
+                },
+                "path": {
+                  "type": "String",
+                  "value": "/total"
+                },
+                "value": {
+                  "type": "Integer",
+                  "value": "6"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "UPDATE v22_docs:a PATCH [{op:'add',path:'/tags/-',value:4}] RETURNING tags",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Integer",
+              "value": "3"
+            },
+            {
+              "type": "Integer",
+              "value": "4"
+            }
+          ]
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM v22_docs WHERE array::contains(tags,4)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v22_docs",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::text('v22_words','Alpha',1,$ids)",
+      "parameters": {
+        "$ids": {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Record",
+              "value": {
+                "table": "v22_docs",
+                "key": {
+                  "type": "String",
+                  "value": "a"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v22_docs",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT array::len(search::analyze('v22_words','Alpha beta'))",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "2"
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT DISTINCT tags FROM v22_docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Integer",
+              "value": "3"
+            },
+            {
+              "type": "Integer",
+              "value": "4"
+            }
+          ]
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n FROM v22_docs WHERE (n,tags) IN(SELECT n,tags FROM v22_docs)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "3"
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "WITH RECURSIVE r(n) AS (SELECT n FROM v22_docs UNION ALL SELECT n+1 FROM r WHERE n<5) SELECT n FROM r ORDER BY n",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "3"
+        }
+      ],
+      [
+        {
+          "type": "Integer",
+          "value": "4"
+        }
+      ],
+      [
+        {
+          "type": "Integer",
+          "value": "5"
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "REINDEX v22_address",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "REINDEX v22_tags",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "REINDEX v22_words",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_fetch {id:v22_fetch:a,owner:v22_users:u,secret:'hidden'}",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT * OMIT secret FROM v22_fetch",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Object",
+          "value": {
+            "id": {
+              "type": "Record",
+              "value": {
+                "table": "v22_fetch",
+                "key": {
+                  "type": "String",
+                  "value": "a"
+                }
+              }
+            },
+            "owner": {
+              "type": "Record",
+              "value": {
+                "table": "v22_users",
+                "key": {
+                  "type": "String",
+                  "value": "u"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT * FROM v22_fetch FETCH owner",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Object",
+          "value": {
+            "id": {
+              "type": "Record",
+              "value": {
+                "table": "v22_fetch",
+                "key": {
+                  "type": "String",
+                  "value": "a"
+                }
+              }
+            },
+            "owner": {
+              "type": "Object",
+              "value": {
+                "id": {
+                  "type": "Record",
+                  "value": {
+                    "table": "v22_users",
+                    "key": {
+                      "type": "String",
+                      "value": "u"
+                    }
+                  }
+                },
+                "name": {
+                  "type": "String",
+                  "value": "Alice"
+                }
+              }
+            },
+            "secret": {
+              "type": "String",
+              "value": "hidden"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "UPDATE v22_fetch:a CONTENT {owner:v22_users:u} RETURNING *",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Object",
+          "value": {
+            "id": {
+              "type": "Record",
+              "value": {
+                "table": "v22_fetch",
+                "key": {
+                  "type": "String",
+                  "value": "a"
+                }
+              }
+            },
+            "owner": {
+              "type": "Record",
+              "value": {
+                "table": "v22_users",
+                "key": {
+                  "type": "String",
+                  "value": "u"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE TABLE v22_strict",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "DEFINE FIELD n ON v22_strict TYPE integer",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "DEFINE SCHEMA ON v22_strict STRICT",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_strict {n:1}",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_strict {extra:1}",
+      "parameters": {}
+    },
+    "error": "FDB_VALIDATION",
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_docs {n:9,tags:[true]}",
+      "parameters": {}
+    },
+    "error": "FDB_VALIDATION",
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "UPDATE v22_docs SET stamp=8",
+      "parameters": {}
+    },
+    "error": "FDB_VALIDATION",
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v22_vectors {id:v22_vectors:a,v:vector32('[1,0]')}",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX v22_vectors_i ON v22_vectors(v) USING VECTOR WITH(dimensions=2,metric='l2',quantization='f16')",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::vector('v22_vectors_i',vector32('[1,0]'),1,$ids)",
+      "parameters": {
+        "$ids": {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Record",
+              "value": {
+                "table": "v22_vectors",
+                "key": {
+                  "type": "String",
+                  "value": "a"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v22_vectors",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "REINDEX v22_vectors_i",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "BEGIN",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "UPDATE v22_docs:a MERGE {n:4}",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "UPDATE v22_docs SET n=9 TIMEOUT 0ms",
+      "parameters": {}
+    },
+    "error": "FDB_CANCELLED",
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "WITH RECURSIVE r(n) AS (SELECT n FROM v22_docs UNION ALL SELECT n+1 FROM r WHERE n<100000000) SELECT sum(n) FROM r TIMEOUT 10ms",
+      "parameters": {}
+    },
+    "error": "FDB_CANCELLED",
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n,total FROM v22_docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "4"
+        },
+        {
+          "type": "Integer",
+          "value": "8"
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "ROLLBACK",
+      "parameters": {}
+    },
+    "release": "2.2.0"
+  },
+  {
+    "reopen": true,
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT n,total,tags FROM v22_docs",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Integer",
+          "value": "3"
+        },
+        {
+          "type": "Integer",
+          "value": "6"
+        },
+        {
+          "type": "Array",
+          "value": [
+            {
+              "type": "Integer",
+              "value": "3"
+            },
+            {
+              "type": "Integer",
+              "value": "4"
+            }
+          ]
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::text('v22_words','Alpha',1)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v22_docs",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::vector('v22_vectors_i',vector32('[1,0]'),1)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v22_vectors",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM v22_docs WHERE array::contains(tags,4)",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v22_docs",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "integrity",
+      "table": "v22_docs",
+      "max_documents": 100,
+      "max_encoded_bytes": 100000
+    },
+    "result_subset": {
+      "documents": 1
+    },
+    "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "integrity",
+      "table": "v22_vectors",
+      "max_documents": 100,
+      "max_encoded_bytes": 100000
+    },
+    "result_subset": {
+      "documents": 1
+    },
+    "release": "2.2.0"
   }
 ]

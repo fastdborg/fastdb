@@ -4,6 +4,40 @@ Requested after the 2.0.0 release; these additions are not in the published
 2.0.0 binaries. SQL table/alias stars and positional result rows retain their
 existing meanings.
 
+The 2.2.0 working tree also accepts an explicit alias on an unqualified field
+wildcard in an ordinary SELECT list:
+
+```sql
+SELECT id, title, author.* AS writer
+FROM articles
+WHERE author = type::record('writers', $writer)
+ORDER BY id;
+
+SELECT a.id, a.title, a.author.* AS writer
+FROM articles AS a
+WHERE a.author = type::record('writers', $writer)
+ORDER BY a.id LIMIT 20;
+```
+
+For a scalar reference, `author.* AS writer` equals
+`record::fetch(author) AS writer`. It contributes one positional column, not
+one column per target field. Plain `author` retains its typed record value.
+Object, array, null, missing-target and scalar behavior follows the same path
+rules below. Source filters, ordering and pagination apply before expansion;
+they can use the existing managed indexes. In joins, qualify the field.
+
+Source names and aliases still take precedence: `author.* FROM articles author`
+selects the whole source. SQL source stars cannot be renamed with `AS writer`;
+use `author.author.* AS writer` to select that source's reference field. SQL
+identifier quoting remains unchanged, including quoting reserved field names.
+Whitespace and comments around the dot/star are accepted.
+
+Installed 2.1.0 rejects the first example at `AS` but accepts the second. This
+was a parser/lowering gap in the unqualified aliased form, not a missing record
+resolver. The fix uses the existing snapshot, traversal and result-limit paths.
+See [2.2.0 working evidence](v2.2-tasks.md); exact release artifact and client
+qualification is still pending.
+
 - [x] Verify wildcard behavior against SurrealDB 3.2.4.
 - [x] Implement object/array wildcards, bracket and dot array positions, and
   batched record-link traversal within the source query's transaction snapshot.

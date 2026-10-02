@@ -8,6 +8,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const packageDir = path.resolve(__dirname, '../bindings/node');
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+const v22Steps = JSON.parse(fs.readFileSync(path.join(__dirname, '../bindings/fixtures/native-client.json'), 'utf8')).filter(step => step.release === '2.2.0');
 assert(fs.existsSync(path.join(packageDir, 'fastdb.node')), 'Build the addon with fastdb/scripts/check-node.sh first');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-package-'));
 const run = (command, args, cwd) => execFileSync(command, args, {
@@ -38,6 +39,41 @@ const path = require('node:path');
 const { Database, AsyncDatabase, Record, Vector, isFastDBError } = require('@fastdb/node');
 assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_modules')));
 (async () => {
+  const v22Steps = ${JSON.stringify(v22Steps)};
+  assert.ok(v22Steps.length>=50);
+  const fixtureValue=tagged=>{
+    const value=tagged.value;
+    switch(tagged.type) {
+      case 'Null':return null;
+      case 'Integer':return BigInt(value);
+      case 'Number':return Buffer.from(value,'hex').readDoubleBE();
+      case 'String':case 'Boolean':return value;
+      case 'Binary':return Buffer.from(value);
+      case 'Record':return new Record(value.table,fixtureValue(value.key));
+      case 'Array':return value.map(fixtureValue);
+      case 'Object':return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,fixtureValue(item)]));
+      default:throw Error('Unhandled fixture value '+tagged.type);
+    }
+  };
+  for(const asynchronous of [false,true]) {
+    const file=path.join(__dirname,'v22-'+asynchronous+'.db');
+    const open=()=>asynchronous?AsyncDatabase.open(file):new Database(file);
+    let client=await open();
+    try {
+      for(const [index,step] of v22Steps.entries()) {
+        if(step.reopen) {await client.close();client=await open();continue;}
+        const request=step.request;
+        if(request.op==='integrity') {assert.equal((await client.checkCollectionIntegrity(request.table)).documents,1n);continue;}
+        assert.equal(request.op,'execute');
+        const parameters=Object.fromEntries(Object.entries(request.parameters).map(([key,item])=>[key,fixtureValue(item)]));
+        if(step.error) await assert.rejects(async()=>client.execute(request.sql,parameters),error=>error.code===step.error,'fixture '+index);
+        else {
+          const result=await client.execute(request.sql,parameters);
+          if(step.rows) assert.deepEqual(result.rows,step.rows.map(row=>row.map(fixtureValue)),'fixture '+index);
+        }
+      }
+    } finally {await client.close();}
+  }
   const cancellationFailures = [];
   for (const [start, finish, name] of [
     ['BEGIN', 'COMMIT', 'commit'],

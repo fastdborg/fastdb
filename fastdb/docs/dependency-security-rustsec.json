@@ -1,12 +1,130 @@
 {
-  "reviewed_at": "2026-09-25T13:36:08.336560+00:00",
-  "source_commit": "62bce0442ecf8d39dd1b4fb59cfab691d6b3ca66",
-  "cargo_lock_sha256": "4fffaa23990bc8b514b0081b63da337223320efab2c9371ea4ea42cdf2521194",
+  "findings": [
+    {
+      "kind": "unsound",
+      "package": "lru",
+      "version": "0.16.4",
+      "id": "RUSTSEC-2026-0253",
+      "title": "Potential use-after-free due to lack of panic safety in `LruCache::pop()`",
+      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0253.html",
+      "accepted_informational": true,
+      "applicability": "Tantivy 0.26.2 only instantiates LruCache<usize, Block> in src/store/reader.rs; production calls get/put/len, never pop. usize has no panicking destructor."
+    }
+  ],
+  "excluded_workspace_findings": [
+    {
+      "kind": "vulnerability",
+      "package": "h2",
+      "version": "0.4.12",
+      "id": "RUSTSEC-2026-0258",
+      "title": "h2 unbounded empty DATA frames",
+      "url": "https://github.com/hyperium/hyper/security/advisories/GHSA-q83h-524g-xf6h"
+    },
+    {
+      "kind": "vulnerability",
+      "package": "quick-xml",
+      "version": "0.26.0",
+      "id": "RUSTSEC-2026-0194",
+      "title": "Quadratic run time when checking a start tag for duplicate attribute names",
+      "url": "https://github.com/tafia/quick-xml/issues/969"
+    },
+    {
+      "kind": "vulnerability",
+      "package": "quick-xml",
+      "version": "0.26.0",
+      "id": "RUSTSEC-2026-0195",
+      "title": "Unbounded namespace-declaration allocation in `NsReader` enables memory-exhaustion denial of service",
+      "url": "https://github.com/tafia/quick-xml/issues/970"
+    },
+    {
+      "kind": "vulnerability",
+      "package": "rkyv",
+      "version": "0.7.46",
+      "id": "RUSTSEC-2026-0235",
+      "title": "Insufficient archive validation can cause out-of-bounds reads in archives containing Rc/Arc",
+      "url": "https://github.com/rkyv/rkyv/issues/670"
+    },
+    {
+      "kind": "unmaintained",
+      "package": "bincode",
+      "version": "1.3.3",
+      "id": "RUSTSEC-2025-0141",
+      "title": "Bincode is unmaintained",
+      "url": "https://git.sr.ht/~stygianentity/bincode/tree/v3.0/item/README.md"
+    },
+    {
+      "kind": "unmaintained",
+      "package": "bitmaps",
+      "version": "3.2.1",
+      "id": "RUSTSEC-2026-0247",
+      "title": "bitmaps is unmaintained",
+      "url": "https://github.com/bodil/bitmaps"
+    },
+    {
+      "kind": "unmaintained",
+      "package": "number_prefix",
+      "version": "0.4.0",
+      "id": "RUSTSEC-2025-0119",
+      "title": "number_prefix crate is unmaintained",
+      "url": "https://github.com/ogham/rust-number-prefix/pull/8"
+    },
+    {
+      "kind": "unmaintained",
+      "package": "paste",
+      "version": "1.0.15",
+      "id": "RUSTSEC-2024-0436",
+      "title": "paste - no longer maintained",
+      "url": "https://github.com/dtolnay/paste"
+    },
+    {
+      "kind": "unmaintained",
+      "package": "proc-macro-error2",
+      "version": "2.0.1",
+      "id": "RUSTSEC-2026-0173",
+      "title": "proc-macro-error2 is unmaintained",
+      "url": "https://github.com/GnomedDev/proc-macro-error-2/issues/17"
+    },
+    {
+      "kind": "unmaintained",
+      "package": "yaml-rust",
+      "version": "0.4.5",
+      "id": "RUSTSEC-2024-0320",
+      "title": "yaml-rust is unmaintained.",
+      "url": "https://github.com/rustsec/advisory-db/issues/1921"
+    },
+    {
+      "kind": "unsound",
+      "package": "anyhow",
+      "version": "1.0.98",
+      "id": "RUSTSEC-2026-0190",
+      "title": "Unsoundness in `Error::downcast_mut()`",
+      "url": "https://github.com/dtolnay/anyhow/issues/451"
+    },
+    {
+      "kind": "unsound",
+      "package": "bitmaps",
+      "version": "3.2.1",
+      "id": "RUSTSEC-2025-0167",
+      "title": "`Bitmap::try_from(&[u8])` can create invalid values",
+      "url": "https://github.com/bodil/bitmaps/issues/35"
+    },
+    {
+      "kind": "unsound",
+      "package": "scc",
+      "version": "2.4.0",
+      "id": "RUSTSEC-2026-0205",
+      "title": "`Array::insert` violates exception safety if compare function panics, leading to potential Double-Free",
+      "url": "https://codeberg.org/wvwwvwwv/scalable-concurrent-containers/issues/232"
+    }
+  ],
+  "reviewed_at": "2026-10-02T01:53:26.200212+00:00",
+  "source_commit": "04671fb52d17f7a24393698663c93d0769de42ca",
+  "cargo_lock_sha256": "9126da52f5870fa826648a7ae76718650026cc70bcf4d5623ea62d8a1aed962b",
   "advisory_database": {
     "repository": "https://github.com/RustSec/advisory-db.git",
-    "commit": "913a741345c1df04dd8ee83f4304f439caa30ccc",
-    "committed_at": "2026-09-25T13:56:01+02:00",
-    "advisory_count": 1269
+    "commit": "6de4455103aced2cba86e3b86e5c090b22827cf1",
+    "committed_at": "2026-10-01T22:25:27+02:00",
+    "advisory_count": 1279
   },
   "scanner": "cargo-audit 0.22.2",
   "target": "x86_64-unknown-linux-gnu",
@@ -59,11 +177,11 @@
     },
     {
       "name": "aristo",
-      "version": "0.4.0"
+      "version": "0.4.1"
     },
     {
       "name": "aristo-macros",
-      "version": "0.4.0"
+      "version": "0.4.1"
     },
     {
       "name": "async-trait",
@@ -311,27 +429,27 @@
     },
     {
       "name": "fastdb",
-      "version": "2.1.0"
+      "version": "2.2.0"
     },
     {
       "name": "fastdb-c",
-      "version": "2.1.0"
+      "version": "2.2.0"
     },
     {
       "name": "fastdb-cli",
-      "version": "2.1.0"
+      "version": "2.2.0"
     },
     {
       "name": "fastdb-node",
-      "version": "2.1.0"
+      "version": "2.2.0"
     },
     {
       "name": "fastdb-protocol",
-      "version": "2.1.0"
+      "version": "2.2.0"
     },
     {
       "name": "fastdb-python",
-      "version": "2.1.0"
+      "version": "2.2.0"
     },
     {
       "name": "fastdivide",
@@ -339,7 +457,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.1.0"
+      "version": "2.2.0"
     },
     {
       "name": "fastrand",
@@ -440,6 +558,10 @@
     {
       "name": "h3o-bit",
       "version": "0.1.2"
+    },
+    {
+      "name": "half",
+      "version": "2.5.0"
     },
     {
       "name": "hashbrown",
@@ -1066,6 +1188,10 @@
       "version": "1.4.2"
     },
     {
+      "name": "simdutf8",
+      "version": "0.1.5"
+    },
+    {
       "name": "simsimd",
       "version": "6.5.3"
     },
@@ -1135,7 +1261,7 @@
     },
     {
       "name": "tantivy",
-      "version": "0.26.1"
+      "version": "0.26.2"
     },
     {
       "name": "tantivy-bitpacker",
@@ -1259,19 +1385,19 @@
     },
     {
       "name": "turso_core",
-      "version": "0.7.2"
+      "version": "0.8.1"
     },
     {
       "name": "turso_ext",
-      "version": "0.7.2"
+      "version": "0.8.1"
     },
     {
       "name": "turso_macros",
-      "version": "0.7.2"
+      "version": "0.8.1"
     },
     {
       "name": "turso_parser",
-      "version": "0.7.2"
+      "version": "0.8.1"
     },
     {
       "name": "twox-hash",
@@ -1438,135 +1564,10 @@
       "version": "2.0.16+zstd.1.5.7"
     }
   ],
-  "findings": [
-    {
-      "kind": "unsound",
-      "package": "lru",
-      "version": "0.16.4",
-      "id": "RUSTSEC-2026-0253",
-      "title": "Potential use-after-free due to lack of panic safety in `LruCache::pop()`",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0253.html",
-      "accepted_informational": true
-    }
-  ],
-  "excluded_workspace_findings": [
-    {
-      "kind": "vulnerability",
-      "package": "h2",
-      "version": "0.4.12",
-      "id": "RUSTSEC-2026-0258",
-      "title": "h2 unbounded empty DATA frames",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0258.html"
-    },
-    {
-      "kind": "vulnerability",
-      "package": "quick-xml",
-      "version": "0.26.0",
-      "id": "RUSTSEC-2026-0194",
-      "title": "Quadratic run time when checking a start tag for duplicate attribute names",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0194.html"
-    },
-    {
-      "kind": "vulnerability",
-      "package": "quick-xml",
-      "version": "0.26.0",
-      "id": "RUSTSEC-2026-0195",
-      "title": "Unbounded namespace-declaration allocation in `NsReader` enables memory-exhaustion denial of service",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0195.html"
-    },
-    {
-      "kind": "vulnerability",
-      "package": "quick-xml",
-      "version": "0.32.0",
-      "id": "RUSTSEC-2026-0194",
-      "title": "Quadratic run time when checking a start tag for duplicate attribute names",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0194.html"
-    },
-    {
-      "kind": "vulnerability",
-      "package": "quick-xml",
-      "version": "0.32.0",
-      "id": "RUSTSEC-2026-0195",
-      "title": "Unbounded namespace-declaration allocation in `NsReader` enables memory-exhaustion denial of service",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0195.html"
-    },
-    {
-      "kind": "vulnerability",
-      "package": "quinn-proto",
-      "version": "0.11.14",
-      "id": "RUSTSEC-2026-0185",
-      "title": " Remote memory exhaustion in quinn-proto from unbounded out-of-order stream reassembly",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0185.html"
-    },
-    {
-      "kind": "unmaintained",
-      "package": "bincode",
-      "version": "1.3.3",
-      "id": "RUSTSEC-2025-0141",
-      "title": "Bincode is unmaintained",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2025-0141.html"
-    },
-    {
-      "kind": "unmaintained",
-      "package": "bitmaps",
-      "version": "3.2.1",
-      "id": "RUSTSEC-2026-0247",
-      "title": "bitmaps is unmaintained",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0247.html"
-    },
-    {
-      "kind": "unmaintained",
-      "package": "number_prefix",
-      "version": "0.4.0",
-      "id": "RUSTSEC-2025-0119",
-      "title": "number_prefix crate is unmaintained",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2025-0119.html"
-    },
-    {
-      "kind": "unmaintained",
-      "package": "proc-macro-error2",
-      "version": "2.0.1",
-      "id": "RUSTSEC-2026-0173",
-      "title": "proc-macro-error2 is unmaintained",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0173.html"
-    },
-    {
-      "kind": "unmaintained",
-      "package": "yaml-rust",
-      "version": "0.4.5",
-      "id": "RUSTSEC-2024-0320",
-      "title": "yaml-rust is unmaintained.",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2024-0320.html"
-    },
-    {
-      "kind": "unsound",
-      "package": "anyhow",
-      "version": "1.0.98",
-      "id": "RUSTSEC-2026-0190",
-      "title": "Unsoundness in `Error::downcast_mut()`",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0190.html"
-    },
-    {
-      "kind": "unsound",
-      "package": "bitmaps",
-      "version": "3.2.1",
-      "id": "RUSTSEC-2025-0167",
-      "title": "`Bitmap::try_from(&[u8])` can create invalid values",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2025-0167.html"
-    },
-    {
-      "kind": "unsound",
-      "package": "scc",
-      "version": "2.4.0",
-      "id": "RUSTSEC-2026-0205",
-      "title": "`Array::insert` violates exception safety if compare function panics, leading to potential Double-Free",
-      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0205.html"
-    }
-  ],
   "unresolved_count": 0,
   "limits": [
-    "Version/target reachability, not compiled-function reachability or exploitability analysis",
-    "Dev-only and non-Linux dependencies excluded; yanked-package check disabled",
-    "C/C++ libraries, language runtimes, system packages and source code require separate review"
+    "Version/target dependency closure; not compiled-function reachability or a source-code security audit",
+    "Dev-only and non-Linux dependencies excluded; yanked-package checking disabled",
+    "C/C++ libraries, language runtimes and system packages require separate review"
   ]
 }

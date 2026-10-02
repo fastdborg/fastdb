@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct Config {
     pub additional_paths: Vec<Vec<String>>,
     pub tokenizer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_gram: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_gram: Option<usize>,
     #[serde(default = "legacy_storage_version")]
     pub storage_version: u32,
 }
@@ -25,6 +29,28 @@ fn invalid(message: &str) -> Error {
     Error::Validation(format!("fulltext: {message}"))
 }
 
+impl Config {
+    pub(crate) fn is_custom(&self) -> bool {
+        self.tokenizer != TOKENIZER || self.min_gram.is_some() || self.max_gram.is_some()
+    }
+    pub(crate) fn options(&self) -> Result<crate::FullTextOptions> {
+        let name = self
+            .tokenizer
+            .strip_prefix("tantivy-")
+            .and_then(|s| s.strip_suffix("-0.26"))
+            .ok_or_else(|| invalid("unknown tokenizer identity"))?;
+        let options = crate::FullTextOptions {
+            tokenizer: name.into(),
+            min_gram: self.min_gram,
+            max_gram: self.max_gram,
+        };
+        if options.normalized()? != options || (self.is_custom() && self.storage_version != 2) {
+            return Err(invalid("noncanonical analyzer configuration"));
+        }
+        Ok(options)
+    }
+}
+
 impl Index {
     pub(crate) fn require_current_text_storage(&self) -> Result<()> {
         if self
@@ -38,16 +64,22 @@ impl Index {
     }
 
     pub(crate) fn paths(&self) -> impl Iterator<Item = &[String]> {
-        std::iter::once(self.path.as_slice()).chain(
-            self.fulltext
-                .iter()
-                .flat_map(|c| c.additional_paths.iter().map(Vec::as_slice)),
-        )
+        std::iter::once(self.path.as_slice())
+            .chain(
+                self.fulltext
+                    .iter()
+                    .flat_map(|c| c.additional_paths.iter().map(Vec::as_slice)),
+            )
+            .chain(
+                self.scalar
+                    .iter()
+                    .flat_map(|c| c.additional_paths.iter().map(Vec::as_slice)),
+            )
     }
     pub(crate) fn validate_text_config(&self) -> Result<()> {
         match (&self.kind, &self.fulltext) {
             (IndexKind::FullText, Some(config))
-                if config.tokenizer == TOKENIZER
+                if config.options().is_ok()
                     && matches!(config.storage_version, 1 | 2)
                     && !self.unique =>
             {
@@ -75,11 +107,21 @@ impl Index {
                 }
                 Ok(())
             }
-            (IndexKind::Scalar | IndexKind::Spatial | IndexKind::Vector, None) => Ok(()),
+            (
+                IndexKind::Scalar | IndexKind::Array | IndexKind::Spatial | IndexKind::Vector,
+                None,
+            ) => Ok(()),
             _ => Err(invalid("incompatible text index configuration")),
         }
     }
     pub(crate) fn document_keys(&self, doc: &Document) -> Result<Vec<EngineValue>> {
+        if self.kind == IndexKind::Array {
+            self.array_keys(doc)?;
+            return Ok(Vec::new());
+        }
+        if self.kind == IndexKind::Scalar {
+            return self.scalar_keys(doc);
+        }
         if self.kind != IndexKind::FullText {
             return self.keys(crate::path_value(doc, &self.path)?.unwrap_or(&Value::Null));
         }
@@ -95,7 +137,8 @@ impl Index {
     }
     pub(crate) fn key_columns(&self) -> String {
         match self.kind {
-            IndexKind::Scalar | IndexKind::Vector => "\"key\"".into(),
+            IndexKind::Scalar => self.scalar_columns().join(","),
+            IndexKind::Vector | IndexKind::Array => "\"key\"".into(),
             IndexKind::Spatial => "\"key\",longitude".into(),
             IndexKind::FullText => std::iter::once("\"key\"".to_owned())
                 .chain((1..self.paths().count()).map(|i| format!("f{i}")))
@@ -113,8 +156,20 @@ impl Index {
         )
     }
     pub(crate) fn text_index_ddl(&self) -> String {
+        let config = self.fulltext.as_ref().expect("fulltext config");
+        let suffix = if config.is_custom() {
+            let options = config.options().expect("validated analyzer");
+            let sizes = options
+                .min_gram
+                .zip(options.max_gram)
+                .map(|(min, max)| format!(",min_gram={min},max_gram={max}"))
+                .unwrap_or_default();
+            format!(" WITH (tokenizer='{}'{sizes})", options.tokenizer)
+        } else {
+            String::new()
+        };
         format!(
-            "CREATE INDEX {} ON {} USING fts ({})",
+            "CREATE INDEX {} ON {} USING fts ({}){suffix}",
             quote(&self.name),
             quote(&self.storage),
             self.key_columns()
@@ -150,6 +205,23 @@ impl Connection {
         paths: Vec<Vec<String>>,
         if_not_exists: bool,
     ) -> Result<()> {
+        self.create_fulltext_index_with_options(
+            table,
+            name,
+            paths,
+            crate::FullTextOptions::default(),
+            if_not_exists,
+        )
+    }
+    pub fn create_fulltext_index_with_options(
+        &self,
+        table: &str,
+        name: &str,
+        paths: Vec<Vec<String>>,
+        options: crate::FullTextOptions,
+        if_not_exists: bool,
+    ) -> Result<()> {
+        let options = options.normalized()?;
         let name = canonical(name)?;
         let Some(path) = paths.first() else {
             return Err(invalid("at least one text field is required"));
@@ -167,9 +239,12 @@ impl Connection {
                     .collect::<String>()
             ),
             vector: None,
+            scalar: None,
             fulltext: Some(Config {
                 additional_paths: paths[1..].to_vec(),
-                tokenizer: TOKENIZER.into(),
+                tokenizer: options.identity(),
+                min_gram: options.min_gram,
+                max_gram: options.max_gram,
                 storage_version: 2,
             }),
         };
@@ -184,15 +259,18 @@ impl Connection {
                 return Err(Error::AlreadyExists(name.clone()));
             }
             for path in index.paths() { crate::catalog::compatible_index(&c, path, index.kind)?; }
-            self.run(&index.table_ddl(), &[])?;
-            self.run(&index.index_ddl(), &[])?;
-
-            for documents in self.documents(&c)?.chunks(BUILD_BATCH_ROWS) {
-                self.insert_text_build_batch(&index, documents)?;
-            }
+            self.build_text_storage(&index, &self.documents(&c)?)?;
             c.indexes.push(index.clone());
             self.save_catalog(&c)
         })
+    }
+    pub(crate) fn build_text_storage(&self, index: &Index, documents: &[Document]) -> Result<()> {
+        self.run(&index.table_ddl(), &[])?;
+        self.run(&index.index_ddl(), &[])?;
+        for batch in documents.chunks(BUILD_BATCH_ROWS) {
+            self.insert_text_build_batch(index, batch)?;
+        }
+        Ok(())
     }
     fn insert_text_build_batch(&self, index: &Index, documents: &[Document]) -> Result<()> {
         let mut values = Vec::new();
@@ -324,6 +402,7 @@ impl Connection {
         name: &Value,
         query: &Value,
         limit: &Value,
+        filter: Option<&Value>,
     ) -> Result<String> {
         let (Value::String(name), Value::String(query)) = (name, query) else {
             return Err(invalid("index and query must be strings"));
@@ -338,16 +417,27 @@ impl Connection {
             return Err(invalid("limit must be an integer from 0 through 10000"));
         }
         let name = canonical(name)?;
-        let index = self
+        let (table, index) = self
             .collections()?
             .into_iter()
-            .flat_map(|c| c.indexes)
-            .find(|i| i.name == name)
+            .find_map(|collection| {
+                collection
+                    .indexes
+                    .into_iter()
+                    .find(|index| index.name == name)
+                    .map(|index| (collection.name, index))
+            })
             .ok_or_else(|| Error::NotFound(format!("text index {name}")))?;
         if index.kind != IndexKind::FullText {
             return Err(invalid("search::text requires a full-text index"));
         }
         index.require_current_text_storage()?;
+        let filter = filter
+            .map(|ids| crate::search_filter::Filter::from_value(ids, &table))
+            .transpose()?;
+        let predicate = filter.map_or_else(String::new, |filter| {
+            format!(" WHERE {}", filter.predicate())
+        });
         // Turso 0.8.1 treats a negative LIMIT as all live indexed documents.
         // Materialize all hits before stable ID tie-breaking; no shared count
         // row or table scan is needed to discover the native search limit.
@@ -358,7 +448,7 @@ impl Connection {
         if !plan.iter().any(|row| matches!(row.last(), Some(EngineValue::Text(t)) if t.as_str() == "QUERY INDEX METHOD fts")) {
             return Err(Error::Storage("full-text query did not select its native index".into()));
         }
-        Ok(format!("WITH __fastdb_text_hits AS MATERIALIZED ({inner}) SELECT id,score FROM __fastdb_text_hits ORDER BY score DESC,id LIMIT {limit}"))
+        Ok(format!("WITH __fastdb_text_hits AS MATERIALIZED ({inner}) SELECT id,score FROM __fastdb_text_hits{predicate} ORDER BY score DESC,id LIMIT {limit}"))
     }
 }
 
@@ -455,7 +545,8 @@ mod tests {
             .text_search_sql(
                 &Value::String("text_idx".into()),
                 &Value::String("hello".into()),
-                &Value::Integer(10)
+                &Value::Integer(10),
+                None
             )
             .is_err());
     }

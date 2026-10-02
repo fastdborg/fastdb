@@ -209,9 +209,20 @@ fn positional_ordering_and_indexed_null_semantics() {
         "EXPLAIN QUERY PLAN SELECT name FROM users WHERE id = users:2",
     );
     assert!(format!("{:?}", plan.rows).contains("SEARCH"));
-    assert!(c
-        .execute("SELECT DISTINCT profile FROM users", &Parameters::new())
-        .is_err());
+    let profiles = query(&c, "SELECT DISTINCT profile FROM users").rows;
+    assert_eq!(profiles.len(), 3);
+    for city in [
+        Value::String("Bangkok".into()),
+        Value::String("Berlin".into()),
+        Value::Null,
+    ] {
+        assert!(
+            profiles.contains(&vec![Value::Object(std::collections::BTreeMap::from([(
+                "city".into(),
+                city
+            )]))])
+        );
+    }
 }
 
 #[test]
@@ -465,9 +476,11 @@ fn distinct_preserves_record_identity_collation_and_binary_values() {
     );
     query(&c, "CREATE TABLE arrays");
     query(&c, "INSERT INTO arrays {v:[1]}");
-    assert!(c
-        .execute("SELECT DISTINCT v FROM arrays", &Parameters::new())
-        .is_err());
+    query(&c, "INSERT INTO arrays {v:[1]}");
+    assert_eq!(
+        query(&c, "SELECT DISTINCT v FROM arrays").rows,
+        vec![vec![Value::Array(vec![Value::Integer(1)])]]
+    );
 }
 
 #[test]
