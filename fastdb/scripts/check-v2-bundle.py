@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -172,7 +173,17 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
 </PropertyGroup><ItemGroup><PackageReference Include="FastDB.Embedded" Version="{version}"/></ItemGroup></Project>''')
     (dotnet / "Program.cs").write_bytes((ROOT / "fastdb/bindings/csharp/Tests/Program.cs").read_bytes())
     (dotnet / "NuGet.Config").write_text(f'<configuration><packageSources><clear/><add key="bundle" value="{bundle / "packages"}"/></packageSources></configuration>')
-    env = dict(base_env, NUGET_PACKAGES=str(temporary / "nuget-cache"), DOTNET_CLI_TELEMETRY_OPTOUT="1")
+    nuget_cache = temporary / "nuget-cache"
+    # Only the FastDB package must come from the bundle. SDK targeting packs are
+    # not FastDB artifacts; newer SDKs restore them through NuGet even when the
+    # source list is cleared, so seed them from the host cache to keep the
+    # isolated cache usable without opening a network source.
+    global_cache = Path(os.environ.get("NUGET_PACKAGES", Path.home() / ".nuget" / "packages"))
+    for pack in ["microsoft.netcore.app.ref", "microsoft.aspnetcore.app.ref", "microsoft.netcore.app.host.linux-x64"]:
+        source = global_cache / pack
+        if source.is_dir():
+            shutil.copytree(source, nuget_cache / pack, dirs_exist_ok=True)
+    env = dict(base_env, NUGET_PACKAGES=str(nuget_cache), DOTNET_CLI_TELEMETRY_OPTOUT="1")
     run("nuget-package", ["dotnet", "run", "--", str(ROOT / "fastdb/bindings/fixtures/native-client.json")], cwd=dotnet, env=env)
 
 report = {"version": version, "buildProfile": manifest["buildProfile"], "rustProfilePolicy": manifest["rustProfilePolicy"], "bundleManifestSha256": sha(bundle / "manifest.json"),
