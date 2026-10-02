@@ -90,8 +90,15 @@ silent scan substitution.
 
 Exact-artifact qualification of the Linux x64 CLI, all seven native clients,
 cancellation, limits, previous-version upgrade/restore and bounded recovery
-runs against the built candidate; its receipts and immutable build identities
-are recorded below after the build, following the 2.1.0 documentation pattern.
+passes against the built candidate: **all 23 installed verification groups**,
+covering the C ABI, the CLI (including both reference-wildcard example
+statements), SQLite adoption, native ELF policy checks, Node 22.0.0/24.19.0,
+CPython 3.10.21/3.12.3/3.14.7, PHP 8.3.6 with FFI, Go 1.27.1 with race
+detection, Swift 6.4, .NET process ownership, and immutable 1.0.0/2.0.0/2.1.0
+upgrade/restore with unchanged previous backups and rejected binary
+downgrades. The 55-step 2.2.0 native-client fixture exercises every adopted
+language feature through the Node, Python and C# clients; the standalone Rust
+consumer covers the remaining Rust path against the same source identities.
 
 ## Distribution and compatibility
 
@@ -109,6 +116,18 @@ storage still migrates through explicit REINDEX during upgrade qualification.
 candidate writes, reopens, unchanged previous backups, independent restores
 and rejected downgrades. SQLite adoption is separate from FastDB version
 upgrades.
+
+| Immutable build identity | SHA-256 |
+|---|---|
+| Source commit | `c4d4d84a2c54a212cbeed6de9e47bf4f9e0cabe6` |
+| Source archive | `f5d382266966d1b8f274ce8434967c4501f4f3ade71d6ad8569fbb5db3532907` |
+| Cargo.lock | `9126da52f5870fa826648a7ae76718650026cc70bcf4d5623ea62d8a1aed962b` |
+| Build manifest | `3c80f841a55656d794af98529a0f49529478115a729785cb52c303ccca18c484` |
+| Build SHA256SUMS | `3a5b851eb77ec9e229789e281498faa3dd1a78da6f5e90f6162d893783b216f4` |
+
+The local build manifest identifies the candidate; it is not modified to claim
+publication. The qualification working receipts live under the release task
+logs; the Record Links demo consumes the same qualified package.
 
 ## Completed release evidence
 
