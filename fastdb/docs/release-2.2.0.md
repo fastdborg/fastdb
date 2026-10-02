@@ -2,8 +2,7 @@
 
 Author: GLM (ZCode agent), 2026-10-02.
 
-Status: **Linux x64 candidate; review fixes applied, release evidence refresh pending**,
-2026-10-02. Language contracts
+Status: **released for Linux x64**, 2026-10-02. Language contracts
 are in [the 2.2.0 working specification](v2.2-language.md), with scope decisions
 in [the decision record](v2.2-decisions.md) and milestone evidence in
 [the checklist](v2.2-tasks.md). The released 2.1.0 artifacts remain immutable.
@@ -83,8 +82,8 @@ and SQL source stars keep their meaning. See
 
 The complete scoped check passes on the version-aligned 2.2.0 source under the
 local resource guard: formatting and scoped Clippy across eight packages,
-**964 Rust tests**, **139 Node/application tests**, strict TypeScript and
-**five C ABI tests**, with zero failed, ignored or skipped tests. Every adopted
+**966 Rust tests**, **139 Node/application tests**, strict TypeScript and
+**five C ABI tests** and **two release-policy tests**, with zero failed, ignored or skipped tests. Every adopted
 feature carries focused real-engine regressions linked from
 [the checklist](v2.2-tasks.md); indexed features prove native index use without
 silent scan substitution.
@@ -120,15 +119,15 @@ upgrades.
 
 | Immutable build identity | SHA-256 |
 |---|---|
-| Source commit | `c4d4d84a2c54a212cbeed6de9e47bf4f9e0cabe6` |
-| Source archive | `f5d382266966d1b8f274ce8434967c4501f4f3ade71d6ad8569fbb5db3532907` |
+| Source commit | `468be008ed477bb88a9b43cfd72a20c95ff325ca` |
+| Source archive | `f43887edcea003645be4dddc8476d86816eac22f8f06e61bdb857622ced3e7b9` |
 | Cargo.lock | `9126da52f5870fa826648a7ae76718650026cc70bcf4d5623ea62d8a1aed962b` |
-| Build manifest | `3c80f841a55656d794af98529a0f49529478115a729785cb52c303ccca18c484` |
-| Build SHA256SUMS | `3a5b851eb77ec9e229789e281498faa3dd1a78da6f5e90f6162d893783b216f4` |
+| Build manifest | `db64b0303016d1a153ac4760db2c9e57139ee9aea6e34aa3421bca2da5f5bb14` |
+| Build SHA256SUMS | `50163d2cc4d7bb077b96859e29894e319d2d40ca15b7c7cb88cbf6c40069f879` |
 
-The local build manifest identifies the candidate; it is not modified to claim
-publication. The qualification working receipts live under the release task
-logs; the Record Links demo consumes the same qualified package.
+The original build manifest is preserved unchanged. The published archive
+contains the final qualification logs and receipts under `evidence/`; the Record
+Links demo consumes the same qualified Node package.
 
 Source review found two issues after the local qualification. The demo now runs
 a versioned full-text rebuild when upgrading an existing 2.1.0 showcase; a
@@ -136,13 +135,35 @@ regression using the published old binary fails before the fix and passes after
 it. The bundle also contained the 2.1.0 dependency-review receipt, which did not
 match its lockfile. The source review receipts now cover the exact 2.2.0 lockfile,
 and the builder and bundle verifier reject mismatched or unresolved reviews.
-The original checksummed candidate remains unchanged and fails this new gate.
-Refresh the release's dependency evidence before qualification/publication;
-do not treat the earlier 23-group result as satisfying the new evidence check.
+The original candidate remains unchanged and fails the new gate. The final
+bundle was rebuilt from the review-fix commit and passed all 23 installed groups
+plus the standalone archived-source Rust consumer with corrected evidence.
 See [the review record](v2.2-tasks.md#independent-review-and-fixes-2026-10-02).
+
+Exact-source CI also exposed a token cancellation race at nested savepoint
+RELEASE. The frontend now checks pending cancellation before releasing the
+frame and suspends token delivery until RELEASE completes. Two new deterministic
+regressions preserve atomic outcomes and earlier caller work. All 19 cancellation
+unit tests and the full source and artifact checks pass after this correction.
 
 ## Completed release evidence
 
 Release gates and their evidence are tracked in
 [the 2.2.0 checklist](v2.2-tasks.md); this record is completed as each gate
 passes, and later documentation commits never change the tagged build source.
+
+## Published delivery, 2026-10-02
+
+All release gates are complete. [Exact-source CI](https://github.com/fastdborg/fastdb/actions/runs/36955122727)
+passed; [PR #15](https://github.com/fastdborg/fastdb/pull/15) was merged without
+squashing. The annotated `fastdb-v2.2.0` tag identifies the exact artifact source.
+See the [qualification receipt](release-2.2.0-qualification.json) and
+[independent download receipt](release-2.2.0-download.json).
+
+[Download 2.2.0](https://github.com/fastdborg/fastdb/releases/tag/fastdb-v2.2.0): `fastdb-2.2.0-linux-x64.tar.gz` (80,926,443 bytes),
+SHA-256 `124561587662978c0cd9e36899728fc11f2a7a9a95e08664100d8c1c44e3a110`. Anonymous HTTPS retrieval verified the sibling checksum,
+every internal checksum, the qualified native/package/source payloads and the tag.
+The corrected release quickstart is included in the frozen source; the
+original build quickstart, manifest and checksums are retained under `evidence/`.
+`ENVELOPE.md` retains the explicitly dated 2.1.0 measurements; no new performance
+claim is made for 2.2.0.

@@ -1,19 +1,18 @@
 # FastDB embedded database
 
-Current source integrates [Turso 0.8.1](docs/turso-0.8.1.md). Its explicit FTS migration,
-catalog version 4, concurrent transactions, and rejection of trailing DML LIMIT
-supersede the older descriptions below; published release artifacts are unchanged.
+FastDB and FastQL [2.2.0 are released for Linux x64](docs/release-2.2.0.md),
+with native Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go clients.
+See the [completed checklist](docs/v2.2-tasks.md),
+[verified download](docs/release-2.2.0-download.json),
+[language contracts](docs/v2.2-language.md) and [engine provenance](UPSTREAM.md).
 
-FastDB and FastQL [2.1.0 are released for Linux x64](docs/release-2.1.0.md).
-The [completed V2 checklist](docs/v2-tasks.md) covers indexed search, spatial and
-seven native clients. See [status](docs/status.md), [contracts](docs/contracts.md), and
-[engine provenance](UPSTREAM.md). Cloud is a separate workstream.
-
-Production 2.1.0 has passed source, hosted CI, exact seven-client artifacts,
-both measured workloads and independent public download verification. See the
-[2.1.0 evidence](docs/release-2.1.0.md), [operating envelope](docs/production-envelope.md),
-[deployment contract](docs/deployment.md), [operations guide](docs/operations.md)
-and [SQLite-file adoption guide](docs/sqlite-adoption.md).
+The release integrates Turso 0.8.1 and managed catalog version 5. Preserve a
+pre-upgrade backup; legacy full-text indexes require explicit REINDEX. See the
+[quickstart](docs/v2-release-quickstart.md), [deployment contract](docs/deployment.md),
+[operations guide](docs/operations.md) and [SQLite adoption](docs/sqlite-adoption.md).
+The [operating envelope](docs/production-envelope.md) retains dated 2.1.0
+measurements. Cloud, browser/WASM and graph-database product features are excluded.
+The 2.2.0 language contracts supersede older subset descriptions below.
 
 From the repository root:
 
@@ -80,13 +79,13 @@ retain their contracts; line and interactive modes continue after a failed comma
 and exit nonzero if any command failed.
 
 V2 development also includes [dense ANN search](docs/v2-ann.md), qualified under
-its documented native contract. Release `2.1.0` uses optimized
-`fastdb-production`; the [production checklist](docs/v2.1-tasks.md) is complete.
-See the [verified public download](docs/release-2.1.0-download.json).
+its documented native contract. Release `2.2.0` uses optimized
+`fastdb-production`; the [production checklist](docs/v2.2-tasks.md) is complete.
+See the [verified public download](docs/release-2.2.0-download.json).
 
 The [Python binding](bindings/python/README.md) embeds the same frontend at
-version `2.1.0`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
+version `2.2.0`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
 removed from active development and excluded from this release. Current Linux
-installed-wheel checks are recorded in the [2.1.0 evidence](docs/release-2.1.0.md).
+installed-wheel checks are recorded in the [2.2.0 evidence](docs/release-2.2.0.md).
 
 [PHP, Swift, C# and Go native clients](docs/native-language-clients.md) share a FastDB C ABI. Local builds and the common contract test are documented there.

@@ -1,18 +1,26 @@
 # FastDB implementation status
 
-FastDB and FastQL **2.1.0 are released for Linux x64**. See the
-[release record](release-2.1.0.md), [public download receipt](release-2.1.0-download.json),
-[completed production checklist](v2.1-tasks.md) and [engine provenance](../UPSTREAM.md).
+FastDB and FastQL **2.2.0 are released for Linux x64**. See the
+[release record](release-2.2.0.md), [public download receipt](release-2.2.0-download.json),
+[completed release checklist](v2.2-tasks.md) and [engine provenance](../UPSTREAM.md).
 Cloud v0.2.0 remains separate; it was not changed or deployed by this release.
 
 Release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go.
 Browser/WASM is removed. macOS, Windows, ARM and Apple mobile are outside V2.
 Packages are distributed in the GitHub Linux bundle, not language registries.
 The immutable 2.0.0 bundle used the development build profile with debug symbols
-stripped. The 2.1.0 release uses optimized `fastdb-production`, retaining
+stripped. The 2.1.0 and 2.2.0 releases use optimized `fastdb-production`, retaining
 assertions and overflow checks; see [the build policy](production-build.md).
 
 ## Current release
+
+2.2.0 completes the FastQL language checklist. Exact-source CI, all seven native
+clients, upgrade/restore, independent review and public download checks pass.
+See [language contracts](v2.2-language.md), [scope decisions](v2.2-decisions.md)
+and [qualification](release-2.2.0-qualification.json). Back up before upgrading;
+new catalog-5 metadata rejects old binaries and legacy FTS requires REINDEX.
+
+## Historical 2.1.0 release
 
 Production 2.1.0 is complete: source, hosted CI, exact seven-client artifacts,
 both measured workloads and independent public download verification pass.
