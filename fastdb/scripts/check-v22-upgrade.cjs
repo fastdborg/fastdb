@@ -53,7 +53,9 @@ if(!phase) {
   const old=['seed','previous-restore','reject-downgrade','reject-catalog5'].includes(phase);
   const {Database,Record,Vector}=require(old?oldPackage:newPackage);
   if(phase==='reject-downgrade'||phase==='reject-catalog5') {
-    const expected=phase==='reject-catalog5'?/unsupported collection metadata version 5/:/unsupported collection metadata version [45]|unknown module name: 'fts'/;
+    // 2.0.0/2.1.0 refuse the 2.2.0 metadata either at the version gate, the
+    // FTS module check, or strict parsing of the new storage_version field.
+    const expected=phase==='reject-catalog5'?/unsupported collection metadata version 5|unknown field `storage_version`/:/unsupported collection metadata version [45]|unknown module name: 'fts'|unknown field `storage_version`/;
     assert.throws(()=>{const db=new Database(file);try{db.all('SELECT * FROM next_docs');}finally{db.close();}},expected);
     console.log(`${phase}: passed`);process.exit(0);
   }
