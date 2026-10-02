@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tarfile
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
-from shipping_policy import PROFILE, POLICY, build_environment, check_artifact, check_profile
+from shipping_policy import PROFILE, POLICY, build_environment, check_artifact, check_profile, check_security_review
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -90,6 +90,7 @@ if platform.system() != "Linux" or platform.machine() != "x86_64":
     raise SystemExit("This release builder is qualified for Linux x64")
 run(["python3", "fastdb/scripts/check-release-versions.py"])
 run(["python3", "fastdb/scripts/check-runtime-notices.py"])
+check_security_review(json.loads((ROOT / "fastdb/docs/dependency-security-rustsec.json").read_text()), sha(ROOT / "Cargo.lock"))
 status = capture(["git", "status", "--porcelain"])
 source_commit = capture(["git", "rev-parse", "HEAD"])
 if status and not args.development:

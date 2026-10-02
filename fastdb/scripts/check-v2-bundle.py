@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-from shipping_policy import check_manifest, check_profile, check_artifact
+from shipping_policy import check_manifest, check_profile, check_artifact, check_security_review
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -45,6 +45,7 @@ actual = {p.relative_to(bundle).as_posix() for p in bundle.rglob("*") if p.is_fi
 assert actual == checksums.keys(), "Unlisted or missing bundle files"
 manifest = json.loads((bundle / "manifest.json").read_text())
 check_manifest(manifest)
+check_security_review(json.loads((bundle / "evidence/dependency-security-rustsec.json").read_text()), manifest["lockfileSha256"])
 receipts = {}
 for line in (bundle / "evidence/cargo-build.jsonl").read_text().splitlines():
     receipt = json.loads(line)
@@ -57,6 +58,7 @@ with tarfile.open(bundle / "fastdb-source.tar.gz") as source:
     check_profile(source_cargo.decode())
     assert hashlib.sha256(source_cargo).hexdigest() == manifest["sourceCargoTomlSha256"]
     assert hashlib.sha256(source.extractfile("fastdb-source/.cargo/config.toml").read()).hexdigest() == manifest["sourceCargoConfigSha256"]
+    assert hashlib.sha256(source.extractfile("fastdb-source/Cargo.lock").read()).hexdigest() == manifest["lockfileSha256"]
 version = manifest["version"]
 release = json.loads((ROOT / "fastdb/release.json").read_text())
 assert version == release["version"]

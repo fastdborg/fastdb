@@ -1,6 +1,6 @@
-# Dependency security review for 2.1
+# Dependency security review for 2.2.0
 
-Reviewed 2026-09-25 for the Linux x64 candidate. This is a scoped advisory and
+Reviewed 2026-10-02 for the Linux x64 2.2.0 candidate. This is a scoped advisory and
 applicability review, not a source-code security audit or a claim that the
 application has no vulnerabilities. Maintainer responsibilities and private
 reporting are in [operations](operations.md).
@@ -9,26 +9,27 @@ reporting are in [operations](operations.md).
 
 The [machine-readable receipt](dependency-security-rustsec.json) records the
 exact lockfile checksum, source revision, package identities, advisory database
-revision, findings and excluded workspace findings. The source checkout had
-uncommitted candidate changes during review; the lockfile checksum, not the
-pre-existing HEAD alone, identifies the reviewed dependency versions.
+revision, findings and excluded workspace findings. The 2.2.0 review was rerun against the version-aligned lockfile during source
+review. Its checksum matches the candidate manifest; documentation and release
+check fixes were uncommitted during the scan. The pinned advisory database is
+unchanged from the earlier 2026-10-02 scan.
 
 Tool: official RustSec `cargo-audit 0.22.2` Linux x86_64 binary. Download archive
 SHA-256: `ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39`.
 Advisory repository: `https://github.com/RustSec/advisory-db`, pinned commit
-`913a741345c1df04dd8ee83f4304f439caa30ccc`, 1269 advisories. Network refresh and
+`6de4455103aced2cba86e3b86e5c090b22827cf1`, 1279 advisories. Network refresh and
 yanked-package checks are disabled during the pinned scan.
 
 `cargo tree --locked` selects normal and build dependencies for `fastdb-cli`,
 `fastdb-node`, `fastdb-python` and `fastdb-c` on
 `x86_64-unknown-linux-gnu`. These include the shared FastDB frontend used by Rust
-and the C library used by PHP/Swift/C#/Go. The union contains 354 package/version
+and the C library used by PHP/Swift/C#/Go. The union contains 356 package/version
 identities, including local packages. Package inclusion is conservative evidence
 of possible reachability, not proof that every function is linked or called.
 Dev-only and other-target dependencies are excluded. Unrelated upstream
 workspace findings remain visible in the receipt and are not silently ignored.
 
-After the targeted updates below, the shipping closure has **zero RustSec
+The 2.2.0 Linux shipping closure has **zero RustSec
 vulnerability findings** and one informational unsoundness finding with a
 documented non-applicability decision. This statement is limited to the pinned
 database and dependency closure.
@@ -41,6 +42,8 @@ database and dependency closure.
 | rusqlite / libsqlite3-sys | 0.37.0 / 0.35.0 → 0.40.2 / 0.38.2 | The newly shipped CLI importer needs SQLite's current fixes; bundled SQLite changes 3.50.2 → 3.53.2. |
 | rquickjs / core / sys | 0.12.2 → 0.13.0 | Bundled QuickJS-NG changes 0.15.1 → 0.16.2, including the security fixes below. |
 
+The dependency updates in the table were made for 2.1.0 and remain in 2.2.0.
+No new dependency version change was needed for this review.
 The rustls update also resolves aws-lc-rs 1.18.1, aws-lc-sys 0.45.0 and
 rustls-webpki 0.103.15. The rusqlite update resolves hashlink 0.12.2 plus
 non-Linux SQLite WASM support packages in the workspace lockfile; those WASM
@@ -58,16 +61,16 @@ project's pinned Rust 1.88.0; declarations alone are not compilation evidence.
 [RUSTSEC-2026-0253](https://rustsec.org/advisories/RUSTSEC-2026-0253.html) requires
 `LruCache::pop()` to unwind through a key's panicking `Drop` implementation, then
 further access to the damaged cache. The only `lru::LruCache` instantiation in
-pinned Tantivy 0.26.1 is `LruCache<usize, Block>` in `src/store/reader.rs`.
+pinned Tantivy 0.26.2 is `LruCache<usize, Block>` in `src/store/reader.rs`.
 It calls `get` and `put`, not `pop`; `usize` has no destructor that can panic.
 The FastDB/engine sources contain no direct use of this external `lru` crate.
-The engine's separately implemented `LruCache` in `core/index_method/fts.rs` is
+The engine's separately implemented `LruCache` in `core/index_method/fts/mod.rs` is
 not this dependency.
 
 The advisory's required trigger is therefore unavailable in this shipping
-integration. Retain 0.16.4 without modifying upstream manifests. The advisory is
-explicitly accepted only as informational in the scan command; vulnerability
-findings cannot be accepted through that flag. FastDB maintainers must revisit
+integration. Retain 0.16.4 without modifying upstream manifests. The unfiltered scanner report retains all findings. The shipping-closure review
+accepts this exact informational advisory only after checking its package identity
+and trigger; it does not suppress vulnerability advisories. FastDB maintainers must revisit
 this analysis whenever Tantivy, cache key types/call sites or the lru dependency
 changes, and at each release/upstream sync. Patched upstream lru starts at
 0.18.2; remove this exception when the pinned dependency moves to a fixed version.
@@ -82,7 +85,8 @@ corruption, JSON rope-indentation disclosure, and error-stack/Promise OOM
 use-after-free issues. Memory-limited UDF execution does not make allocation
 failure irrelevant. Rquickjs 0.13.0 bundles QuickJS-NG 0.16.2, verified from
 `rquickjs-sys-0.13.0/quickjs/quickjs.h`; the listed upstream fixes are in 0.16.0.
-All ten published repository advisories were inspected, including older
+The 2026-10-02 retrieval returned the same ten published repository advisories
+and affected/patched version ranges as the earlier review. They were inspected, including older
 array/proxy/typed-array fixes and their version/architecture restrictions.
 See [QuickJS-NG advisories](https://github.com/quickjs-ng/quickjs/security/advisories).
 

@@ -2,7 +2,8 @@
 
 Author: GLM (ZCode agent), 2026-10-02.
 
-Status: **qualified candidate for Linux x64**, 2026-10-02. Language contracts
+Status: **Linux x64 candidate; review fixes applied, release evidence refresh pending**,
+2026-10-02. Language contracts
 are in [the 2.2.0 working specification](v2.2-language.md), with scope decisions
 in [the decision record](v2.2-decisions.md) and milestone evidence in
 [the checklist](v2.2-tasks.md). The released 2.1.0 artifacts remain immutable.
@@ -128,6 +129,17 @@ upgrades.
 The local build manifest identifies the candidate; it is not modified to claim
 publication. The qualification working receipts live under the release task
 logs; the Record Links demo consumes the same qualified package.
+
+Source review found two issues after the local qualification. The demo now runs
+a versioned full-text rebuild when upgrading an existing 2.1.0 showcase; a
+regression using the published old binary fails before the fix and passes after
+it. The bundle also contained the 2.1.0 dependency-review receipt, which did not
+match its lockfile. The source review receipts now cover the exact 2.2.0 lockfile,
+and the builder and bundle verifier reject mismatched or unresolved reviews.
+The original checksummed candidate remains unchanged and fails this new gate.
+Refresh the release's dependency evidence before qualification/publication;
+do not treat the earlier 23-group result as satisfying the new evidence check.
+See [the review record](v2.2-tasks.md#independent-review-and-fixes-2026-10-02).
 
 ## Completed release evidence
 
