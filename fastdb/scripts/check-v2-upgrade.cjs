@@ -99,7 +99,7 @@ if (!phase) {
     assert.throws(() => {
       const db = new Database(file);
       try { db.execute('SELECT * FROM docs'); } finally { db.close(); }
-    }, phase === 'reject-fts-downgrade' ? /unknown module name: 'fts'/ : /unsupported collection metadata version 3/);
+    }, phase === 'reject-fts-downgrade' ? /unknown module name: 'fts'/ : /unsupported collection metadata version 4/);
     console.log(`${phase}: V1 rejects the upgraded database`);
   } else {
     const db = new Database(file);
