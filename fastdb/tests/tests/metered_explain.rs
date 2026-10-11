@@ -26,6 +26,16 @@ fn vector_explain_rejects_without_falling_back_to_unmetered_execution() {
         "CREATE SEARCH INDEX vec ON vectors(v) USING VECTOR WITH(dimensions=2,metric='l2')",
     );
     q(&c, "INSERT INTO vectors {id:vectors:a,v:vector32('[1,0]')}");
+    assert!(
+        c.explain_metered(
+            "SELECT id FROM search::vector('vec',vector32('[1,0]'),1)",
+            &Parameters::new(),
+            limits(),
+            Default::default(),
+        )
+        .is_none(),
+        "another statement family must not receive an EXPLAIN rejection"
+    );
     q(&c, "BEGIN");
     let measured = c
         .explain_metered(
