@@ -127,7 +127,9 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual(await client.all('SELECT title FROM record_sources:missing'), []);
       const sourceProof = await client.profileSelect('SELECT title FROM record_sources:a');
       assert.equal(sourceProof.metrics.fullscanSteps, 0n);
-      assert.equal(sourceProof.metrics.indexSteps, 1n);
+      assert.ok(sourceProof.metrics.btreeSeeks > 0n);
+      const sourcePlan = await client.all('EXPLAIN QUERY PLAN SELECT title FROM record_sources:a');
+      assert.ok(sourcePlan.some(row => row.some(value => typeof value === 'string' && value.includes('SEARCH'))));
     } finally {await client.close();}
   }
   const cancellationFailures = [];
