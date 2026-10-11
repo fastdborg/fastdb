@@ -19,8 +19,9 @@ The same URL application can qualify a dedicated empty Cloud database. Supply
 `FASTDB_FIXTURE_URL` and `FASTDB_FIXTURE_TOKEN` through a protected environment,
 then run `node fastdb/service/tests/url-client-fixture.cjs`. It refuses nonempty
 databases and removes its tables after success. Failure preserves the fixture
-for investigation. Do not use a customer database. Cloud qualification has not
-passed yet; local results do not establish hosted compatibility.
+for investigation. Do not use a customer database. The hosted common fixture and production Studio browser qualification pass,
+including exact write recovery and cleanup. Local results alone do not establish
+hosted compatibility; rerun the dedicated Cloud fixture for relevant changes.
 
 From the `turso` checkout, build the native commands with the resource wrapper:
 
