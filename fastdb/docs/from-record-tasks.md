@@ -46,3 +46,12 @@ compilation took 12m28s; Node tests took 86.6s; C ABI tests took 6.70s after a
 The source addition has no upstream or catalog/protocol change. Existing
 uncommitted service/client/WAL work was preserved. No release or Cloud deployment
 was performed. Completed task logs were removed after recording these results.
+
+## Release delivery (2026-10-12)
+
+The user separately authorized a minor release and Cloud deployment. FastDB/FastQL
+2.3.0 is published and independently downloaded/verified; see [the release](release-2.3.0.md)
+and [completed checklist](v2.3-tasks.md). Cloud's private 0.4.1 service now uses the
+qualified engine; hosted fixed/bound sources, missing IDs, typed keys and index SEARCH
+pass, and the fixture is removed. The original implementation-only scope and
+qualification above remain historical. The API rate limit was not changed.
