@@ -50,5 +50,9 @@ if (!phase) {
         db.execute("UPDATE docs:a SET title='new'"); db.execute('COMMIT');
       }
     }
-  } finally { db.close(); }
+  } finally {
+    // Produce a self-contained offline backup before copying the main file.
+    assert.deepEqual(db.all('PRAGMA wal_checkpoint(TRUNCATE)'), [[0n,0n,0n]]);
+    db.close();
+  }
 }
