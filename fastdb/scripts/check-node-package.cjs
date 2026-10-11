@@ -19,6 +19,8 @@ try {
   const packed = JSON.parse(run(pnpm, ['pack', '--json', '--pack-destination', temporary], packageDir));
   assert.deepEqual(packed.files.map(file => file.path).sort(), [
     'LICENSE.md', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'RUST-LIBRARY-NOTICES.html', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs', 'native.cjs',
+    'client.cjs', 'client.d.ts', 'values.cjs', 'request-journal.cjs',
+    'client-internal.cjs', 'embedded-client.cjs', 'embedded-client.d.ts', 'embedded-worker.cjs',
   ].sort());
   assert(fs.statSync(path.join(packageDir, 'fastdb.node')).size > 0);
   const generated = path.resolve(temporary, packed.filename);
@@ -29,6 +31,52 @@ try {
   fs.mkdirSync(consumer);
   fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'fastdb-package-smoke', version: '0.0.0', private: true }));
   run(pnpm, ['add', '--offline', '--ignore-scripts', supplied || generated], consumer);
+  fs.writeFileSync(path.join(consumer, 'remote-smoke.cjs'), `
+const assert = require('node:assert/strict');
+const Module = require('node:module');
+const load = Module._load;
+Module._load = function(id, ...args) {
+  if (id.endsWith('.node') || /native\\.cjs|worker\\.cjs/.test(id)) throw Error('remote import attempted native loading');
+  return load.call(this, id, ...args);
+};
+const { Float64, Record, Vector, encodeValue, decodeValue } = require('@fastdb/node/client');
+for (const value of [new Float64(1), new Float64(-0), new Record('posts', 1n), Vector.float32([1,2]), Vector.sparse32Entries(4, [[3,-1]])]) {
+  const wire = encodeValue(value);
+  assert.deepEqual(encodeValue(decodeValue(wire)), wire);
+}
+import('@fastdb/node/client').then(client => assert.equal(typeof client.connect, 'function'));
+`);
+  run(process.execPath, ['remote-smoke.cjs'], consumer);
+  fs.writeFileSync(path.join(consumer, 'embedded-smoke.cjs'), `
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { openEmbedded, Record, Float64 } = require('@fastdb/node/embedded-client');
+(async () => {
+  const file = path.join(__dirname, 'embedded.fastdb');
+  const first = await openEmbedded({path:file,create:true});
+  const second = await openEmbedded({path:file});
+  try {
+    assert.equal(first.databaseId,second.databaseId);
+    await first.writeAtomic([{sql:'CREATE TABLE docs'}, {sql:'INSERT INTO docs DOCUMENT $doc',params:{$doc:{id:new Record('docs','a'),n:9223372036854775807n,f:new Float64(-0)}}}]);
+    const read = await second.read([{sql:'SELECT n,f FROM docs'}]);
+    assert.equal(read.results[0].rows[0][0],9223372036854775807n);
+    assert(Object.is(read.results[0].rows[0][1].value,-0));
+    const request=first.prepareWrite([{sql:'UPDATE docs:a SET n=1'}]);
+    const reply=await first.submit(request);
+    assert.deepEqual(await second.recover(request),reply);
+  } finally {await first.close();await second.close();}
+  const reopened=await openEmbedded({path:file});
+  try {assert.equal((await reopened.read([{sql:'SELECT n FROM docs'}])).results[0].rows[0][0],1n);}
+  finally {await reopened.close();}
+})().catch(error=>{console.error(error);process.exitCode=1});
+`);
+  run(process.execPath, ['embedded-smoke.cjs'], consumer);
+  fs.writeFileSync(path.join(consumer, 'embedded-import.mjs'), `
+import { openEmbedded, EmbeddedDatabase, ClientError, Float64, Record, Vector } from '@fastdb/node/embedded-client';
+import assert from 'node:assert/strict';
+for(const value of [openEmbedded,EmbeddedDatabase,ClientError,Float64,Record,Vector]) assert.equal(typeof value,'function');
+`);
+  run(process.execPath, ['embedded-import.mjs'], consumer);
   for (const notice of ['THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'RUST-LIBRARY-NOTICES.html']) {
     assert.equal(fs.readFileSync(path.join(consumer, 'node_modules/@fastdb/node', notice), 'utf8'), fs.readFileSync(path.join(packageDir, notice), 'utf8'));
   }

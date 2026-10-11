@@ -54,8 +54,17 @@ mod projection_path;
 mod relations;
 pub use profile::{ProfiledQuery, QueryMetrics};
 mod select;
+mod service_catalog;
 mod spatial;
 mod timeout;
+pub use service_catalog::{ServiceCatalog, ServiceReceipt};
+mod request;
+mod request_wire;
+pub use request::{RequestBudget, RequestStatementKind};
+pub use request_wire::{
+    PreparedRequestStatement, RequestEnvelope, RequestError, RequestStatement, RequestWorkLimits,
+    MAX_SEQUENCE as MAX_REQUEST_SEQUENCE,
+};
 mod transaction;
 mod transfer;
 pub use transfer::TransferFormat;

@@ -199,6 +199,27 @@ impl NativeDatabase {
         })
     }
     #[napi]
+    pub fn execute_atomic_request(
+        &self,
+        body: String,
+        cancellation_key: Option<String>,
+    ) -> napi::Result<String> {
+        let token = match cancellation_key {
+            Some(key) => cancellations()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key.parse::<u64>().map_err(error)?)
+                .cloned()
+                .ok_or_else(|| error("unknown cancellation token"))?,
+            None => fastdb::CancellationToken::new(),
+        };
+        self.report(|connection| {
+            connection
+                .execute_atomic_request(&body, &token)
+                .map(JsonText)
+        })
+    }
+    #[napi]
     pub fn execute_cancellable(
         &self,
         sql: String,
