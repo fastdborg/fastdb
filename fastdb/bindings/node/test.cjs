@@ -179,6 +179,12 @@ test('V1 record targets and row cardinality stay explicit in both clients', asyn
       await db.execute("INSERT INTO docs {id:type::record('docs',$key),n:20}", {$key:'1'});
       assert.equal((await db.exactlyOne('SELECT docs:1'))[0].n, 10n);
       assert.equal((await db.exactlyOne('SELECT docs:`1`'))[0].n, 20n);
+      assert.deepEqual(await db.exactlyOne('SELECT n FROM docs:1'), [10n]);
+      assert.deepEqual(await db.exactlyOne('SELECT n FROM docs:`1`'), [20n]);
+      assert.deepEqual(await db.exactlyOne("SELECT d.id,d.n FROM type::record('docs',$key) d WHERE d.n=$n", {$key:'1',$n:20n}), [new Record('docs','1'),20n]);
+      assert.deepEqual(await db.all('SELECT n FROM docs:missing'), []);
+      assert.equal(await db.first('SELECT n FROM docs:missing'), undefined);
+      await assert.rejects(async () => db.exactlyOne('SELECT n FROM docs:missing'), /exactly one/);
       assert.deepEqual(await db.exactlyOne('SELECT docs:1 AS reference'), [new Record('docs',1n)]);
       assert.deepEqual(await db.all('SELECT record::id(id) FROM docs ORDER BY n'), [[1n],['1']]);
       await assert.rejects(async () => db.execute('INSERT INTO docs {id:other:1}'), error => error.code === 'FDB_VALIDATION');

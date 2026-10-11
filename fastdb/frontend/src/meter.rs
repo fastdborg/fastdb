@@ -325,18 +325,23 @@ impl Connection {
                     Some(self),
                     &native,
                 )?)?;
+                if !matches!(
+                    crate::select::parsed(&expanded)?,
+                    Cmd::Explain(_) | Cmd::ExplainQueryPlan { .. }
+                ) {
+                    return Ok(None);
+                }
                 // ANN lowering currently materializes candidates before preparing
                 // the outer SQL. Its graph/storage work is not qualified by this
                 // adapter, so never report that path as a zero-read explanation.
                 if fastql_parser::tokenize(&expanded)?.iter().any(|token| {
                     token.kind == fastql_parser::Kind::Word && token.text == "__fastdb_vector"
                 }) {
-                    return Ok(None);
+                    return Err(Error::Unsupported(
+                        "metered vector EXPLAIN is not supported".into(),
+                    ));
                 }
-                Ok(match crate::select::parsed(&expanded)? {
-                    Cmd::Explain(_) | Cmd::ExplainQueryPlan { .. } => Some(SchemaStatement::Native),
-                    _ => None,
-                })
+                Ok(Some(SchemaStatement::Native))
             });
             Ok(self.execute_metered_schema(sql, params, result_limits, work_limits, syntax))
         })

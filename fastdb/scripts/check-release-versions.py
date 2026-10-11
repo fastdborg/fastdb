@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 version = json.loads((ROOT / "fastdb/release.json").read_text())["version"]
 if not re.fullmatch(r"[1-9][0-9]*\.[0-9]+\.[0-9]+", version):
     raise ValueError("Release version must be a stable semantic version")
-crates = ["frontend", "parser", "cli", "tests", "bindings/node", "bindings/python", "bindings/protocol", "bindings/c"]
+crates = ["frontend", "parser", "cli", "service", "tests", "bindings/node", "bindings/python", "bindings/protocol", "bindings/c"]
 lock = tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]
 for crate in crates:
     manifest = tomllib.loads((ROOT / "fastdb" / crate / "Cargo.toml").read_text())["package"]
@@ -29,4 +29,4 @@ assert ET.parse(ROOT / "fastdb/bindings/csharp/FastDB/FastDB.csproj").findtext("
 module = (ROOT / "fastdb/bindings/go/go.mod").read_text().splitlines()[0]
 assert module == f"module github.com/fastdborg/fastdb/fastdb/bindings/go/v{version.split('.')[0]}"
 assert '"fastdb/bindings/browser"' not in (ROOT / "Cargo.toml").read_text()
-print(f"All eight FastDB crates and native client package identities match {version}")
+print(f"All nine FastDB crates and native client package identities match {version}")

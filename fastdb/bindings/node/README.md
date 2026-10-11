@@ -369,4 +369,121 @@ This is not a hard promise-return deadline. Native progress checks observe expir
 parsing, non-engine work, cleanup and response transport can exceed the requested
 time, and completion can win a race. Synchronous clients do not expose this option.
 
+### URL client for the Studio service work
+
+The new `@fastdb/node/client` entry supports the current Cloud read-v2/write
+envelopes and the version-1 local service contract. The URL client, native service,
+and embedded adapter are implemented in development source. They are not released.
+The hosted common fixture and production Studio browser workflow pass. Existing
+native imports are unchanged. Final release-candidate packaging remains pending.
+
+Cloud query responses advertise `x-fastdb-query-version: 2`. This version covers
+tagged Record keys and typed query errors; resource URLs remain `/v1`, and
+`readVersion: 2` separately defines fresh-read execution. The SDK accepts version
+2 and historical responses without this header. An unknown advertised version
+fails with `FDB_PROTOCOL`; a dispatched write remains `unknown` and retains its
+exact saved request for recovery. Historical enum-key receipts still decode.
+
+```js
+const { connect, Float64, Record, saveRequest, loadRequest } = require('@fastdb/node/client');
+const db = await connect({ url: process.env.FASTDB_URL, token: process.env.FASTDB_TOKEN });
+const snapshot = await db.read([{ sql: 'SELECT * FROM posts LIMIT 20' }]);
+const request = db.prepareWrite([
+  { sql: 'UPDATE posts:p1 SET score=$score', params: { $score: new Float64(1) } },
+], { ifSequence: snapshot.sequence });
+await saveRequest('/private/new-request.json', request);
+try {
+  await db.submit(request);
+} catch (error) {
+  if (error.outcome === 'unknown') {
+    // Keep this journal. Recovery sends its original identity and exact body.
+    await db.recover(await loadRequest('/private/new-request.json'));
+  } else throw error;
+}
+await db.close();
+```
+
+Use a new journal filename for each prepared write. `saveRequest` refuses to
+overwrite an existing file and flushes a mode-0600 file and its directory. Journals
+contain SQL and parameter values; they are private even though they contain no
+token. A rejected recovery attempt does not establish an earlier write's outcome.
+Do not automatically replace an expired or uncertain request with a new write.
+
+URL imports never load the native addon. Cloud URLs use stable organization and
+database UUIDs; dashboard URLs ending in `/query` are accepted too. The proposed
+local URL is `http://127.0.0.1:4321`. Use HTTPS for other hosts. Redirects are
+rejected, and the bearer token must be passed separately from the URL.
+
+Results use positional rows, preserving duplicate columns. Integer results are
+bigint. Number results are explicit `Float64` instances with a `.value` number;
+they retain their exact float type when rebound, including integral floats and
+negative zero. This new entry exports its own `Record`, `Vector` and value codec.
+Use those types for its parameters. Encoded vectors and dense float32/float64 or
+sparse-entry factories work without native code. Null is a present field;
+undefined and array holes are rejected instead of silently removing data.
+
+Requests and responses have finite byte/row limits. Each call defaults to a
+20-second timeout and accepts `signal`/`timeoutMs`. Cancellation after dispatch
+leaves a write unknown until a receipt confirms it. Cloud capabilities are marked
+as documented, because its API currently does not negotiate the local capability
+object. See the [service contract](../../docs/service-protocol.md) for limits,
+receipt rules and compatibility gaps.
+
+### Embedded client for the same asynchronous interface
+
+Use `@fastdb/node/embedded-client` for native file access through the new managed
+interface. This entry requires the native addon. It exports the same value types
+and `info`, `read`, `prepareWrite`, `submit`, `recover`, and `writeAtomic` methods.
+CommonJS and ESM imports are supported.
+
+```js
+const { openEmbedded, Record } = require('@fastdb/node/embedded-client');
+const db = await openEmbedded({ path: 'app.fastdb' });
+try {
+  await db.writeAtomic([
+    { sql: 'UPSERT posts:p1 { count: $count }', params: { $count: 9223372036854775807n } },
+  ]);
+  const result = await db.read([
+    { sql: 'SELECT * FROM posts WHERE id=$id', params: { $id: new Record('posts', 'p1') } },
+  ]);
+  console.log(result.results[0].rows);
+} finally {
+  await db.close();
+}
+```
+
+Opening requires an existing regular file with one link. To create a new file,
+use `openEmbedded({ path: 'new.fastdb', create: true })`. Creation refuses existing
+files and journal sidecars. New files retain the embedded WAL default. Existing
+MVCC files retain their journal mode. The managed connection enables SQL foreign
+keys without changing the legacy APIs.
+
+Clients for the same canonical file in one Node module share one native worker.
+Each batch runs as one worker operation inside a managed transaction. All
+statements are validated before execution. User transaction control is rejected.
+Failures and exceeded result/work limits restore the batch. Existing
+`executeBatch` behavior remains unchanged.
+
+Sequence conditions cover writes through this shared adapter. Its capabilities
+report `sequenceScope: 'adapter'` and `replayDurability: 'adapter-lifetime'`.
+Other native or legacy handles do not advance this revision. Studio must reuse
+the managed adapter for each canonical file. Use the service URL for sharing
+between application processes.
+
+The adapter retains 64 exact write receipts in memory. Saved journals can recover
+a write while that adapter remains open. After its last client closes, reopening
+creates a new identity and refuses old requests. Reconcile uncertain writes from
+the stored data after a reopen. Service and Cloud connections provide recovery
+across process restarts.
+
+The initial limits are 16 open file adapters, 32 outstanding requests per adapter,
+and 2 MiB of queued request bodies. The request, result, and work limits match the
+common contract. Calls default to 20 seconds and accept a 1–120,000 ms timeout.
+Opening also has a deadline. If opening expires, cleanup continues until native
+startup returns. Filesystem work and native cleanup are not hard preempted.
+
+Close stops requests from that client and cancels its outstanding work. The last
+client drains the worker queue, closes the native handle, and waits for worker
+exit. Await every client's `close()` to release ownership.
+
 For typed collection CRUD helpers, see the [document SDK guide](https://github.com/fastdborg/fastdb/blob/main/fastdb/docs/node-sdk.md).

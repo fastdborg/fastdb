@@ -2,6 +2,244 @@ use fastdb::{Database, Parameters, TransactionState as State, Value};
 fn q(c: &fastdb::Connection, sql: &str) {
     c.execute(sql, &Parameters::new()).expect(sql);
 }
+
+#[test]
+fn managed_atomic_requests_preserve_typed_values_and_journal_mode() {
+    for mvcc in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("atomic.fastdb");
+        let database = Database::open(path.to_str().unwrap()).unwrap();
+        let connection = database.connect().unwrap();
+        if mvcc {
+            q(&connection, "PRAGMA journal_mode=mvcc");
+        }
+        let mode = connection
+            .execute("PRAGMA journal_mode", &Parameters::new())
+            .unwrap()
+            .rows;
+        let reply = connection.execute_atomic_request(r#"{
+            "readOnly":false,"statements":[
+                {"sql":"CREATE TABLE data"},
+                {"sql":"INSERT INTO data DOCUMENT $doc","params":{"$doc":{"type":"Object","value":{
+                    "id":{"type":"Record","value":{"table":"data","key":{"type":"String","value":"a"}}},
+                    "n":{"type":"Integer","value":"9223372036854775807"},
+                    "f":{"type":"Number","value":"8000000000000000"},
+                    "bytes":{"type":"Binary","value":[0,255]}
+                }}}},
+                {"sql":"SELECT n AS same,n AS same,f,bytes FROM data"}
+            ]}"#, &fastdb::CancellationToken::new()).unwrap();
+        assert!(
+            reply.contains(r#""columns":["same","same","f","bytes"]"#),
+            "{reply}"
+        );
+        assert!(reply.contains(r#""value":"9223372036854775807""#));
+        assert!(reply.contains(r#""value":"8000000000000000""#));
+        assert!(reply.contains(r#""value":[0,255]"#));
+        assert_eq!(connection.transaction_state(), State::Autocommit);
+        assert_eq!(
+            connection
+                .execute("PRAGMA journal_mode", &Parameters::new())
+                .unwrap()
+                .rows,
+            mode
+        );
+        drop(connection);
+        drop(database);
+        let database = Database::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            database
+                .connect()
+                .unwrap()
+                .execute("SELECT n FROM data", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(i64::MAX)]]
+        );
+    }
+}
+
+#[test]
+fn managed_atomic_request_failure_restores_prior_rows_and_indexes() {
+    for mvcc in [false, true] {
+        let database = Database::open(":memory:").unwrap();
+        let connection = database.connect().unwrap();
+        if mvcc {
+            q(&connection, "PRAGMA journal_mode=mvcc");
+        }
+        q(&connection, "CREATE TABLE items");
+        q(&connection, "DEFINE FIELD n ON items TYPE integer REQUIRED");
+        q(&connection, "CREATE UNIQUE INDEX by_n ON items(n)");
+        q(&connection, "INSERT INTO items {id:items:a,n:1}");
+        let error = connection
+            .execute_atomic_request(
+                r#"{"readOnly":false,"statements":[
+            {"sql":"INSERT INTO items {id:items:b,n:2}"},
+            {"sql":"UPDATE items:a SET n=2"}
+        ]}"#,
+                &fastdb::CancellationToken::new(),
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_CONSTRAINT");
+        assert_eq!(connection.transaction_state(), State::Autocommit);
+        assert_eq!(
+            connection
+                .execute("SELECT n FROM items", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(1)]]
+        );
+        connection
+            .execute_atomic_request(
+                r#"{"readOnly":false,"statements":[{"sql":"INSERT INTO items {id:items:b,n:2}"}]}"#,
+                &fastdb::CancellationToken::new(),
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute("SELECT n FROM items WHERE n=2", &Parameters::new())
+                .unwrap()
+                .rows,
+            vec![vec![Value::Integer(2)]]
+        );
+        connection
+            .check_collection_integrity("items", fastdb::IntegrityLimits::default())
+            .unwrap();
+    }
+}
+
+#[test]
+fn managed_atomic_requests_reject_user_transaction_control_before_mutation() {
+    let database = Database::open(":memory:").unwrap();
+    let connection = database.connect().unwrap();
+    q(&connection, "CREATE TABLE data (n INTEGER)");
+    for sql in [
+        "BEGIN",
+        "COMMIT",
+        "ROLLBACK",
+        "SAVEPOINT caller",
+        "PRAGMA journal_mode=mvcc",
+        "SELECT 1; SELECT 2",
+    ] {
+        let body = format!(
+            r#"{{"readOnly":false,"statements":[{{"sql":"INSERT INTO data VALUES(1)"}},{{"sql":"{sql}"}}]}}"#
+        );
+        assert!(
+            connection
+                .execute_atomic_request(&body, &fastdb::CancellationToken::new())
+                .is_err(),
+            "{sql}"
+        );
+        assert_eq!(
+            connection
+                .execute("SELECT n FROM data", &Parameters::new())
+                .unwrap()
+                .rows
+                .len(),
+            0
+        );
+        assert_eq!(connection.transaction_state(), State::Autocommit);
+    }
+    assert!(connection
+        .execute_atomic_request(
+            r#"{"readOnly":true,"statements":[{"sql":"SELECT 'a;b' AS text"}]}"#,
+            &fastdb::CancellationToken::new()
+        )
+        .unwrap()
+        .contains("a;b"));
+}
+
+#[test]
+fn managed_atomic_request_result_and_work_limits_roll_back_writes() {
+    let database = Database::open(":memory:").unwrap();
+    let connection = database.connect().unwrap();
+    q(&connection, "CREATE TABLE data (n INTEGER)");
+    for body in [
+        r#"{"readOnly":false,"workLimits":{"rowMutations":1},"statements":[{"sql":"INSERT INTO data VALUES(1)"},{"sql":"INSERT INTO data VALUES(2)"}]}"#,
+        r#"{"readOnly":false,"statements":[{"sql":"INSERT INTO data VALUES(1)"},{"sql":"SELECT hex(zeroblob(80000))"},{"sql":"SELECT hex(zeroblob(80000))"}]}"#,
+        r#"{"readOnly":false,"statements":[{"sql":"INSERT INTO data VALUES(1)"},{"sql":"WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t WHERE n<1001) SELECT n FROM t"}]}"#,
+    ] {
+        let error = connection
+            .execute_atomic_request(body, &fastdb::CancellationToken::new())
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT", "{body}: {error}");
+        assert_eq!(connection.transaction_state(), State::Autocommit);
+        assert!(connection
+            .execute("SELECT n FROM data", &Parameters::new())
+            .unwrap()
+            .rows
+            .is_empty());
+    }
+}
+
+#[test]
+fn managed_atomic_requests_preserve_caller_work_and_recover_after_cancellation() {
+    let database = Database::open(":memory:").unwrap();
+    let connection = database.connect().unwrap();
+    q(&connection, "CREATE TABLE data (n INTEGER)");
+    let body = r#"{"readOnly":false,"statements":[{"sql":"INSERT INTO data VALUES(1)"}]}"#;
+    q(&connection, "BEGIN");
+    q(&connection, "INSERT INTO data VALUES(7)");
+    assert_eq!(
+        connection
+            .execute_atomic_request(body, &fastdb::CancellationToken::new())
+            .unwrap_err()
+            .code(),
+        "FDB_UNSUPPORTED"
+    );
+    assert_eq!(connection.transaction_state(), State::Active);
+    q(&connection, "COMMIT");
+    let token = fastdb::CancellationToken::new();
+    token.cancel();
+    assert_eq!(
+        connection
+            .execute_atomic_request(body, &token)
+            .unwrap_err()
+            .code(),
+        "FDB_CANCELLED"
+    );
+    assert_eq!(connection.transaction_state(), State::Autocommit);
+    connection
+        .execute_atomic_request(body, &fastdb::CancellationToken::new())
+        .unwrap();
+    assert_eq!(
+        connection
+            .execute("SELECT n FROM data ORDER BY n", &Parameters::new())
+            .unwrap()
+            .rows,
+        vec![vec![Value::Integer(1)], vec![Value::Integer(7)]]
+    );
+}
+
+#[test]
+fn managed_atomic_fresh_reads_reject_mutations_and_invalid_envelopes() {
+    let database = Database::open(":memory:").unwrap();
+    let connection = database.connect().unwrap();
+    for body in [
+        r#"{"readOnly":true,"statements":[{"sql":"CREATE TABLE hidden"}]}"#,
+        r#"{"readOnly":false,"statements":[]}"#,
+        r#"{"readOnly":true,"statements":[{"sql":"SELECT 1"}],"unexpected":true}"#,
+        r#"{"readOnly":true,"statements":[{"sql":"SELECT $n","params":{"$n":{"type":"Integer","value":"9223372036854775808"}}}]}"#,
+    ] {
+        assert!(connection
+            .execute_atomic_request(body, &fastdb::CancellationToken::new())
+            .is_err());
+        assert_eq!(connection.transaction_state(), State::Autocommit);
+    }
+    assert!(connection
+        .execute("SELECT * FROM hidden", &Parameters::new())
+        .is_err());
+    let body = format!(
+        r#"{{"readOnly":true,"statements":[{{"sql":"SELECT '{}'"}}]}}"#,
+        "x".repeat(65536)
+    );
+    assert_eq!(
+        connection
+            .execute_atomic_request(&body, &fastdb::CancellationToken::new())
+            .unwrap_err()
+            .code(),
+        "FDB_LIMIT"
+    );
+}
 #[test]
 fn validation_errors_preserve_outer_work_and_report_active_state() {
     let dir = tempfile::tempdir().unwrap();

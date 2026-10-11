@@ -46,6 +46,13 @@ SQL-shaped VALUES/SET writes preserve a direct typed parameter or copied documen
 
 Record literals in expression positions and type::record(target,key) compile to a private pure constructor. Direct record projections retain the typed value; arbitrary type propagation through scalar functions remains incomplete. The Rust parameter map addresses anonymous/numbered slots as ?1, ?2, etc. The pinned engine rejects namespace-like $name::suffix parameters; FastDB preserves that baseline error.
 
+The 2026-10-11 source addition also accepts record sources, such as
+`SELECT title FROM docs:a` and `SELECT title FROM type::record('docs',$key)`.
+These restrict the collection by complete typed ID before applying ordinary
+collection projections, filters or joins. Missing IDs return zero rows.
+See [record sources](record-sources.md) for the contract and qualification.
+This addition is included in the 2.3.0 release.
+
 Catalog writes now use version 2. Missing version markers from the initial prototype are read as version 1; version 1 remains readable when it has no CHECK metadata. Unknown versions and version-1 entries containing CHECKs are rejected. Publishing validation metadata upgrades its catalog entry atomically. This is backward reading of the initial representation, not a general migration runner or a completed upgrade rehearsal.
 
 UPSERT requires a typed id and either inserts or shallow-patches that id atomically. Target-form bodies omit id. DROP INDEX removes both its managed storage and catalog entry; DROP TABLE on a collection removes all owned indexes and validation metadata. Both are transactional, and collection drop leaves weak references unchanged. REMOVE FIELD retains stored values and indexes. A validator cannot change an indexed path into an incompatible object/array or non-object parent. INFO returns logical metadata under an info-valued column; its serialization remains provisional.

@@ -21,6 +21,7 @@ parser.add_argument("--uv", default="uv")
 parser.add_argument("--v1-package", type=Path, required=True)
 parser.add_argument("--v2-package", type=Path, required=True, help="Immutable published 2.0.0 Node package")
 parser.add_argument("--v21-package", type=Path, required=True, help="Immutable published 2.1.0 Node package")
+parser.add_argument("--v22-package", type=Path, help="Immutable published 2.2.0 Node package; required for 2.3.0")
 args = parser.parse_args()
 bundle = args.bundle.resolve()
 evidence = args.evidence.resolve()
@@ -73,6 +74,10 @@ v2 = args.v2_package.resolve()
 assert json.loads((v2 / "package.json").read_text())["version"] == "2.0.0"
 v21 = args.v21_package.resolve()
 assert json.loads((v21 / "package.json").read_text())["version"] == "2.1.0"
+if version == "2.3.0":
+    assert args.v22_package, "2.3.0 requires a 2.2.0 upgrade/restore fixture"
+    v22 = args.v22_package.resolve()
+    assert json.loads((v22 / "package.json").read_text())["version"] == "2.2.0"
 results = []
 
 
@@ -166,6 +171,9 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
         for previous, label in [(v2, "v2"), (v21, "v21")]:
             run(f"{label}-upgrade-restore-{index}", [node, "fastdb/scripts/check-v22-upgrade.cjs", str(previous),
                                                    str(installed_node), str(evidence / f"{label}-upgrade-fixture-{index}")])
+        if version == "2.3.0":
+            run(f"v22-upgrade-restore-{index}", [node, "fastdb/scripts/check-v23-upgrade.cjs", str(v22),
+                                                 str(installed_node), str(evidence / f"v22-upgrade-fixture-{index}")])
 
     # Test the shipped .nupkg, never a previously cached same-version package.
     dotnet = temporary / "dotnet"

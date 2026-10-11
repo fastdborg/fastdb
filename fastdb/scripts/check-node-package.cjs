@@ -19,16 +19,63 @@ try {
   const packed = JSON.parse(run(pnpm, ['pack', '--json', '--pack-destination', temporary], packageDir));
   assert.deepEqual(packed.files.map(file => file.path).sort(), [
     'LICENSE.md', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'RUST-LIBRARY-NOTICES.html', 'README.md', 'fastdb.node', 'index.cjs', 'index.d.ts', 'package.json', 'worker.cjs', 'native.cjs',
+    'client.cjs', 'client.d.ts', 'values.cjs', 'request-journal.cjs',
+    'client-internal.cjs', 'embedded-client.cjs', 'embedded-client.d.ts', 'embedded-worker.cjs',
   ].sort());
   assert(fs.statSync(path.join(packageDir, 'fastdb.node')).size > 0);
   const generated = path.resolve(temporary, packed.filename);
   const supplied = process.env.FASTDB_PACKAGE_TARBALL;
   if (supplied) assert(fs.readFileSync(supplied).equals(fs.readFileSync(generated)), 'Supplied candidate differs from current package');
-  if (process.env.FASTDB_PACKAGE_OUTPUT) fs.copyFileSync(generated, process.env.FASTDB_PACKAGE_OUTPUT, fs.constants.COPYFILE_EXCL);
   const consumer = path.join(temporary, 'consumer');
   fs.mkdirSync(consumer);
   fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'fastdb-package-smoke', version: '0.0.0', private: true }));
   run(pnpm, ['add', '--offline', '--ignore-scripts', supplied || generated], consumer);
+  fs.writeFileSync(path.join(consumer, 'remote-smoke.cjs'), `
+const assert = require('node:assert/strict');
+const Module = require('node:module');
+const load = Module._load;
+Module._load = function(id, ...args) {
+  if (id.endsWith('.node') || /native\\.cjs|worker\\.cjs/.test(id)) throw Error('remote import attempted native loading');
+  return load.call(this, id, ...args);
+};
+const { Float64, Record, Vector, encodeValue, decodeValue } = require('@fastdb/node/client');
+for (const value of [new Float64(1), new Float64(-0), new Record('posts', 1n), Vector.float32([1,2]), Vector.sparse32Entries(4, [[3,-1]])]) {
+  const wire = encodeValue(value);
+  assert.deepEqual(encodeValue(decodeValue(wire)), wire);
+}
+import('@fastdb/node/client').then(client => assert.equal(typeof client.connect, 'function'));
+`);
+  run(process.execPath, ['remote-smoke.cjs'], consumer);
+  fs.writeFileSync(path.join(consumer, 'embedded-smoke.cjs'), `
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { openEmbedded, Record, Float64 } = require('@fastdb/node/embedded-client');
+(async () => {
+  const file = path.join(__dirname, 'embedded.fastdb');
+  const first = await openEmbedded({path:file,create:true});
+  const second = await openEmbedded({path:file});
+  try {
+    assert.equal(first.databaseId,second.databaseId);
+    await first.writeAtomic([{sql:'CREATE TABLE docs'}, {sql:'INSERT INTO docs DOCUMENT $doc',params:{$doc:{id:new Record('docs','a'),n:9223372036854775807n,f:new Float64(-0)}}}]);
+    const read = await second.read([{sql:'SELECT n,f FROM docs'}]);
+    assert.equal(read.results[0].rows[0][0],9223372036854775807n);
+    assert(Object.is(read.results[0].rows[0][1].value,-0));
+    const request=first.prepareWrite([{sql:'UPDATE docs:a SET n=1'}]);
+    const reply=await first.submit(request);
+    assert.deepEqual(await second.recover(request),reply);
+  } finally {await first.close();await second.close();}
+  const reopened=await openEmbedded({path:file});
+  try {assert.equal((await reopened.read([{sql:'SELECT n FROM docs'}])).results[0].rows[0][0],1n);}
+  finally {await reopened.close();}
+})().catch(error=>{console.error(error);process.exitCode=1});
+`);
+  run(process.execPath, ['embedded-smoke.cjs'], consumer);
+  fs.writeFileSync(path.join(consumer, 'embedded-import.mjs'), `
+import { openEmbedded, EmbeddedDatabase, ClientError, Float64, Record, Vector } from '@fastdb/node/embedded-client';
+import assert from 'node:assert/strict';
+for(const value of [openEmbedded,EmbeddedDatabase,ClientError,Float64,Record,Vector]) assert.equal(typeof value,'function');
+`);
+  run(process.execPath, ['embedded-import.mjs'], consumer);
   for (const notice of ['THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_CRATE_NOTICES.md', 'RUST-LIBRARY-NOTICES.html']) {
     assert.equal(fs.readFileSync(path.join(consumer, 'node_modules/@fastdb/node', notice), 'utf8'), fs.readFileSync(path.join(packageDir, notice), 'utf8'));
   }
@@ -72,6 +119,17 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
           if(step.rows) assert.deepEqual(result.rows,step.rows.map(row=>row.map(fixtureValue)),'fixture '+index);
         }
       }
+      await client.execute('CREATE TABLE record_sources');
+      await client.execute("INSERT INTO record_sources(id,title) VALUES(record_sources:a,'indexed'),(record_sources:7,'integer'),(type::record('record_sources','7'),'string')");
+      assert.deepEqual(await client.all('SELECT title FROM record_sources:a'), [['indexed']]);
+      assert.deepEqual(await client.all('SELECT title FROM record_sources:7'), [['integer']]);
+      assert.deepEqual(await client.all("SELECT title FROM type::record('record_sources', $key)", {$key:'7'}), [['string']]);
+      assert.deepEqual(await client.all('SELECT title FROM record_sources:missing'), []);
+      const sourceProof = await client.profileSelect('SELECT title FROM record_sources:a');
+      assert.equal(sourceProof.metrics.fullscanSteps, 0n);
+      assert.ok(sourceProof.metrics.btreeSeeks > 0n);
+      const sourcePlan = await client.all('EXPLAIN QUERY PLAN SELECT title FROM record_sources:a');
+      assert.ok(sourcePlan.some(row => row.some(value => typeof value === 'string' && value.includes('SEARCH'))));
     } finally {await client.close();}
   }
   const cancellationFailures = [];
@@ -95,9 +153,10 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 200);
       try {
-        // The deadline bounds a missed interrupt; successful completion is a failure.
+        // Ten million possible rows keep optimized builds busy past the abort.
+        // The deadline bounds a missed interrupt; completion remains a failure.
         await assert.rejects(client.execute(
-          'INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e',
+          'INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e,nums f,nums g',
           {}, {signal: controller.signal, timeoutMs: 3000}), error => {
           assert.equal(error.code, 'FDB_CANCELLED');
           assert.deepEqual(error.transaction, {before: 'active', after: 'active'});
@@ -983,6 +1042,7 @@ async function open() {
 void open;
 `);
   run(process.execPath, [path.join(packageDir, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs', 'smoke.ts'], consumer);
+  if (process.env.FASTDB_PACKAGE_OUTPUT) fs.copyFileSync(generated, process.env.FASTDB_PACKAGE_OUTPUT, fs.constants.COPYFILE_EXCL);
   console.log(`Node package smoke passed: ${process.platform}/${process.arch}, Node ${process.versions.node}, ${packed.files.length} files, ${fs.statSync(generated).size} packed bytes`);
 } finally {
   fs.rmSync(temporary, { recursive: true, force: true });

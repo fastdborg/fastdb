@@ -1,5 +1,9 @@
 mod cloud;
 mod input;
+#[cfg(target_os = "linux")]
+mod migration;
+#[cfg(unix)]
+mod service;
 #[cfg(unix)]
 mod signals;
 mod sqlite;
@@ -55,6 +59,16 @@ fn output_with_metrics(
     Ok(failed)
 }
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    match std::env::args().nth(1).as_deref() {
+        Some("migrate-to-mvcc") => return migration::migrate(std::env::args().skip(2).collect()),
+        Some("restore-migration") => return migration::restore(std::env::args().skip(2).collect()),
+        _ => {}
+    }
+    #[cfg(unix)]
+    if std::env::args().nth(1).as_deref() == Some("serve") {
+        return service::run(std::env::args().skip(2).collect());
+    }
     if std::env::args().nth(1).as_deref() == Some("sqlite") {
         return sqlite::run(std::env::args().skip(2).collect());
     }
@@ -151,6 +165,10 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
             }
             "--help" | "-h" => {
                 writeln!(io::stdout().lock(), "Usage: fastdb-cli [--interactive | --script | --line] [--max-input-bytes N] [--history PATH] [DATABASE]\n       fastdb-cli --migrate DIRECTORY [DATABASE]\n       fastdb-cli (--import COLLECTION | --export COLLECTION) [--ndjson] [DATABASE]\n       fastdb-cli --check-collection COLLECTION [--max-documents N] [--max-encoded-bytes N] DATABASE\nSQLite adoption: fastdb-cli sqlite check SOURCE | sqlite import SOURCE DESTINATION\nTerminal input opens an interactive prompt; piped input runs a script.\n--script reads through EOF and stops on the first error.\n--interactive accepts multiline statements and .help, .clear, .quit.\nUnix terminals support line editing and in-memory history; --history PATH saves history.\nCtrl-C clears pending input at the prompt or requests cancellation of running engine work.\n--line retains one-statement-per-line execution and continues after errors.\n--write-buffer-limits ROWS BYTES caps each frontend collection-write buffer for SQL input and migrations.\nInput buffers default to 16 MiB; --max-input-bytes changes this byte limit.\n.select-limit ROWS BYTES SELECT ... and .profile-limit ROWS BYTES SELECT ... bound returned results.\n.timeout MILLISECONDS SQL requests cooperative cancellation at its deadline.\n.write-limit ROWS BYTES SQL checks write results atomically; these are not process memory caps.")?;
+                #[cfg(unix)]
+                writeln!(io::stdout().lock(), "Local service: fastdb serve DATABASE [--port PORT] [--token-file PATH] [--create]\nUse fastdb serve --help for MVCC ownership and credential details.")?;
+                #[cfg(target_os = "linux")]
+                writeln!(io::stdout().lock(), "Offline migration: fastdb migrate-to-mvcc SOURCE OUTPUT_DIRECTORY --backup BACKUP_DIRECTORY\nRecovery: fastdb restore-migration BACKUP_DIRECTORY OUTPUT_DIRECTORY")?;
                 io::stdout().lock().flush()?;
                 return Ok(std::process::ExitCode::SUCCESS);
             }

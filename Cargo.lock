@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "fastql-parser",
  "h3o",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-c"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "fastdb",
  "fastdb-protocol",
@@ -2216,10 +2216,12 @@ dependencies = [
 
 [[package]]
 name = "fastdb-cli"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "fastdb",
+ "fastdb-service",
  "fastql-parser",
+ "libc",
  "reqwest",
  "rusqlite",
  "rustyline",
@@ -2227,12 +2229,13 @@ dependencies = [
  "sha2 0.10.9",
  "signal-hook",
  "tempfile",
+ "tokio",
  "uuid",
 ]
 
 [[package]]
 name = "fastdb-node"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "fastdb",
  "napi",
@@ -2243,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-protocol"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "fastdb",
  "serde",
@@ -2252,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-python"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "fastdb",
  "fastdb-protocol",
@@ -2261,8 +2264,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastdb-service"
+version = "2.3.0"
+dependencies = [
+ "bytes",
+ "fastdb",
+ "fastql-parser",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "turso_core",
+ "uuid",
+]
+
+[[package]]
 name = "fastdb-tests"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "fastdb",
  "fastql-parser",
@@ -2278,7 +2301,7 @@ checksum = "9afc2bd4d5a73106dd53d10d73d3401c2f32730ba2c0b93ddb888a8983680471"
 
 [[package]]
 name = "fastql-parser"
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
  "serde",
  "thiserror 2.0.16",
@@ -2899,6 +2922,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2921,6 +2950,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "pin-utils",

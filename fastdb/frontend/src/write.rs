@@ -350,8 +350,12 @@ impl Connection {
                     | Statement::PatchWhere { .. }
                     | Statement::Delete { .. } => true,
                     Statement::Sql(sql) => {
+                        let normalized = crate::update::normalize(&sql)?;
+                        let syntax = normalized
+                            .as_ref()
+                            .map_or(sql.as_str(), |value| value.sql.as_str());
                         let valid = matches!(
-                            parsed(&expand_paths(&expand_records(Some(self), &sql)?)?)?,
+                            parsed(&expand_paths(&expand_records(Some(self), syntax)?)?)?,
                             Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. })
                         );
                         native_sql = Some(sql);

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "fe32ad3475eb1df9b168cd9d241a1c66bd11351a0ad1e33dd625158b6822e33a",
+  "inventorySha256": "01a31fcee5c89ff4d4b725bee3d92d538c536bda7b7dfdcc44478b62bc5f07cb",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -1752,12 +1752,17 @@
     },
     {
       "name": "fastdb-cli",
-      "version": "2.2.0",
+      "version": "2.3.0",
+      "status": "workspace_source_requires_separate_review"
+    },
+    {
+      "name": "fastdb-service",
+      "version": "2.3.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1776,7 +1781,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -2397,6 +2402,25 @@
           "path": "LICENSE-MIT",
           "bytes": 1063,
           "sha256": "391a5396cec6230bfabd4ef4eb2350eb895bc5efce377a2218f5702ed020d3e3"
+        }
+      ]
+    },
+    {
+      "name": "httpdate",
+      "version": "1.0.3",
+      "status": "archive_verified",
+      "archiveSha256": "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10255,
+          "sha256": "4d10fe5f3aa176b05b229a248866bad70b834c173f1252a814ff4748d8a13837"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1051,
+          "sha256": "934887691e05d69d7c86ad3f2c360980fa30c15b035e351f3c9865e99da4debc"
         }
       ]
     },
@@ -5322,6 +5346,20 @@
           "path": "LICENSE",
           "bytes": 2195,
           "sha256": "f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2"
+        }
+      ]
+    },
+    {
+      "name": "tokio-macros",
+      "version": "2.5.0",
+      "status": "archive_verified",
+      "archiveSha256": "6e06d43f1345a3bcd39f6a56dbb7dcab2ba47e68e8ac134855e7e2bdbaf8cab8",
+      "declaredLicenseFile": null,
+      "noticeCandidates": [
+        {
+          "path": "LICENSE",
+          "bytes": 1102,
+          "sha256": "0b83dc40cba89b9922bb84b0a9c7d2768ce37c1d7e138b7424fd4549915778c9"
         }
       ]
     },

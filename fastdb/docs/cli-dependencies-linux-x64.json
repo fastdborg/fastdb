@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "9126da52f5870fa826648a7ae76718650026cc70bcf4d5623ea62d8a1aed962b",
+  "lockfileSha256": "698fb8633d6d40f5d681ed240f8c2b1354f5c6250ca9a1df1cb4ed64ac57ba2a",
   "packages": [
     {
       "name": "aead",
@@ -346,12 +346,17 @@
     },
     {
       "name": "fastdb-cli",
-      "version": "2.2.0",
+      "version": "2.3.0",
+      "licenseExpression": "MIT"
+    },
+    {
+      "name": "fastdb-service",
+      "version": "2.3.0",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "licenseExpression": "MIT"
     },
     {
@@ -361,7 +366,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "licenseExpression": "MIT"
     },
     {
@@ -537,6 +542,11 @@
     {
       "name": "httparse",
       "version": "1.10.1",
+      "licenseExpression": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "httpdate",
+      "version": "1.0.3",
       "licenseExpression": "MIT OR Apache-2.0"
     },
     {
@@ -1383,6 +1393,11 @@
       "name": "tinystr",
       "version": "0.8.3",
       "licenseExpression": "Unicode-3.0"
+    },
+    {
+      "name": "tokio-macros",
+      "version": "2.5.0",
+      "licenseExpression": "MIT"
     },
     {
       "name": "tokio-rustls",

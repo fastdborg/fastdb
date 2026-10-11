@@ -5,6 +5,7 @@ resolver = "2"
 members = [
     "fastdb/parser",
     "fastdb/frontend",
+    "fastdb/service",
     "fastdb/cli",
     "fastdb/tests",
     "fastdb/bindings/node",

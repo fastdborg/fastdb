@@ -9,7 +9,7 @@ use turso_parser::ast::{Cmd, Stmt};
 // Compare our fixed generated DDL lexically, avoiding recursive parsing of
 // externally modified schema SQL. Whitespace, keyword case and trailing
 // semicolons are immaterial; constraints and identifier quoting remain exact.
-fn schema_tokens(sql: &str) -> Result<Vec<(fastql_parser::Kind, String)>> {
+pub(crate) fn schema_tokens(sql: &str) -> Result<Vec<(fastql_parser::Kind, String)>> {
     use fastql_parser::Kind;
     let mut tokens = fastql_parser::tokenize(sql)
         .map_err(|e| Error::Storage(format!("invalid managed schema SQL: {e}")))?

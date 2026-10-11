@@ -139,6 +139,7 @@ copy(target / "libfastdb_node.so", ROOT / "fastdb/bindings/node/fastdb.node")
 # Strip only distributed copies, retaining full Cargo artifacts for diagnosis.
 run(["strip", "--strip-debug", str(out / "bin/fastdb-cli"), str(out / "lib/libfastdb_c.so"),
      str(ROOT / "fastdb/bindings/node/fastdb.node")])
+copy(out / "bin/fastdb-cli", out / "bin/fastdb")
 packed = json.loads(capture(["pnpm", "pack", "--json", "--pack-destination", str(out / "packages")], ROOT / "fastdb/bindings/node"))
 node = Path(packed["filename"])
 if not node.is_absolute():

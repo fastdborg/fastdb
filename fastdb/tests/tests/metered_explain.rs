@@ -18,6 +18,40 @@ fn seed(c: &fastdb::Connection) {
     q(c, "CREATE INDEX docs_n ON docs(n)");
 }
 #[test]
+fn vector_explain_rejects_without_falling_back_to_unmetered_execution() {
+    let c = Database::open(":memory:").unwrap().connect().unwrap();
+    q(&c, "CREATE TABLE vectors");
+    q(
+        &c,
+        "CREATE SEARCH INDEX vec ON vectors(v) USING VECTOR WITH(dimensions=2,metric='l2')",
+    );
+    q(&c, "INSERT INTO vectors {id:vectors:a,v:vector32('[1,0]')}");
+    assert!(
+        c.explain_metered(
+            "SELECT id FROM search::vector('vec',vector32('[1,0]'),1)",
+            &Parameters::new(),
+            limits(),
+            Default::default(),
+        )
+        .is_none(),
+        "another statement family must not receive an EXPLAIN rejection"
+    );
+    q(&c, "BEGIN");
+    let measured = c
+        .explain_metered(
+            "EXPLAIN QUERY PLAN SELECT id FROM search::vector('vec',vector32('[1,0]'),1)",
+            &Parameters::new(),
+            limits(),
+            Default::default(),
+        )
+        .expect("unsupported vector explanation must retain measured rejection");
+    assert_eq!(measured.outcome.unwrap_err().code(), "FDB_UNSUPPORTED");
+    assert_eq!(measured.work.rows_read, 0);
+    assert_eq!(measured.work.row_mutations, 0);
+    assert_eq!(c.transaction_state(), TransactionState::Active);
+    q(&c, "ROLLBACK");
+}
+#[test]
 fn ordinary_views_count_schema_work_and_never_execute_their_select() {
     let dir = tempfile::tempdir().unwrap();
     for path in [
@@ -330,7 +364,10 @@ fn explain_search_distinguishes_nonexecuting_plans_from_materialized_ann() {
         for prefix in ["EXPLAIN", "EXPLAIN QUERY PLAN"] {
             let sql=format!("{prefix} {query}");
             if query.contains("search::vector") {
-                assert!(c.explain_metered(&sql, &Parameters::new(), limits(), Default::default()).is_none(), "ANN lowering work must not be labeled zero");
+                let rejected = c.explain_metered(&sql, &Parameters::new(), limits(), Default::default()).unwrap();
+                assert_eq!(rejected.outcome.unwrap_err().code(), "FDB_UNSUPPORTED");
+                assert_eq!(rejected.work.rows_read, 0);
+                assert_eq!(rejected.work.row_mutations, 0);
                 assert!(!c.execute(&sql, &Parameters::new()).unwrap().rows.is_empty(), "ordinary compatibility path is preserved");
                 continue;
             }
