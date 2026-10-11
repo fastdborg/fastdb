@@ -3,6 +3,10 @@
 Version 1. Defined 2026-10-11 for the Studio implementation. This document is a
 contract for new work, not a claim that the service is released. The existing
 2.2.0 embedded APIs and script-batch semantics remain unchanged.
+Cloud query/read responses separately advertise `x-fastdb-query-version: 2` for
+SDK-tagged Record keys and confirmed typed errors. Resource URLs remain `/v1`;
+`readVersion: 2` defines fresh-read execution. The SDK rejects unknown advertised
+response versions and preserves dispatched writes as uncertain for exact recovery.
 
 ## Commands and ownership
 
@@ -107,8 +111,9 @@ cross-process durable replay belongs to the service and Cloud.
 
 Opening requires an existing file unless `create: true` explicitly creates one.
 Local service request connections also enable SQL foreign keys before beginning
-their transaction and report `foreignKeys: true` in capabilities. Existing Cloud
-foreign-key behavior still requires qualification against the real API.
+their transaction and report `foreignKeys: true` in capabilities. Cloud query
+connections also enable foreign keys before BEGIN; immediate/deferred rollback
+and the hosted common fixture pass qualification.
 The adapter preserves its journal mode and enables foreign keys on its managed
 connection. Clients for the same canonical file in one Node module share a worker
 and revision. Other native handles do not advance that revision. Capabilities
@@ -213,11 +218,11 @@ same ID, sequence bounds and exact body. Do not generate a replacement automatic
 A rejected recovery attempt does not prove that an earlier attempt rolled back.
 If the receipt window expires, require reconciliation before making a new write.
 
-Local confirmed failures include ID, publication sequence and a structured error
-receipt after all SQL effects are rolled back. Cloud currently can publish a
-failure receipt but return only an HTTP error string. The client treats that public
-response as unresolved; it cannot manufacture receipt identity. This is an explicit
-compatibility limitation, not a reason to change or deploy Cloud during this work.
+Local and Cloud confirmed failures include ID, publication sequence and a typed
+error receipt after all SQL effects are rolled back. Cloud retains zero-work stale
+rejections and converts historical error strings at the confirmed public boundary
+without rewriting stored receipts. Generic HTTP/network errors still leave a
+write unresolved; a client cannot manufacture receipt identity or rollback.
 
 ## Finite budgets and errors
 
@@ -263,12 +268,12 @@ headers in error messages. Authentication/capacity errors remain distinguishable
 
 | Operation | Embedded adapter | Local service | Existing Cloud |
 | --- | --- | --- | --- |
-| Typed positional results | New client contract | Version 1 | Transfer-v1 results |
+| Typed positional results | New client contract | Version 1 | Tagged response version 2 |
 | Fresh read-only batch | One managed transaction | `/read`, version 2 | `/read`, version 2 |
 | Atomic parameterized batch | One managed worker operation | `/query` | `/query` |
 | Durable cross-process replay | Not advertised | Protected in-file receipts | Hosted retained receipts |
 | Exact stale-edit condition | Adapter-scoped revision | `ifSequence` | `ifSequence` |
-| INFO DB/TABLE/INDEX, EXPLAIN | Checked native APIs | Checked native APIs | Supported runtime paths; verify live fixtures |
+| INFO DB/TABLE/INDEX, EXPLAIN | Checked native APIs | Checked native APIs | Hosted metadata and indexed scalar EXPLAIN qualified |
 | Vector/spatial/full-text | Existing checked native features | Same checked frontend | Existing checked runtime; budgets may reject |
 | Capability discovery | Adapter reports limits | Negotiated details | Documented contract, no negotiated details |
 | Auth/account administration | Not applicable | One protected service token | Outside shared client and Studio release |
@@ -276,7 +281,11 @@ headers in error messages. Authentication/capacity errors remain distinguishable
 Cloud imposes additional scopes, quotas, storage and admission limits. Changing
 URL/token does not transfer data or remove those limits. Real Cloud qualification
 requires an isolated database, dedicated credentials and recorded public API
-evidence. Mocked transport tests establish client behavior only.
+evidence. The hosted common SDK fixture and production Studio browser workflow
+pass, including typed edits, rejected drafts, rollback and exact uncertain-write
+recovery; their dedicated fixtures were cleaned up. Mocked transport tests
+establish client behavior only. Vector EXPLAIN remains explicitly unsupported,
+and reserved automatic unique-index details remain an engine metadata limitation.
 
 References: [current Cloud API](../../../cloud/docs/api.md),
 [database JWTs](../../../cloud/docs/database-jwt.md),
