@@ -120,7 +120,7 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
         }
       }
       await client.execute('CREATE TABLE record_sources');
-      await client.execute("INSERT INTO record_sources {id:record_sources:a,title:'indexed'}, {id:record_sources:7,title:'integer'}, {id:record_sources:'7',title:'string'}");
+      await client.execute("INSERT INTO record_sources(id,title) VALUES(record_sources:a,'indexed'),(record_sources:7,'integer'),(record_sources:'7','string')");
       assert.deepEqual(await client.all('SELECT title FROM record_sources:a'), [['indexed']]);
       assert.deepEqual(await client.all('SELECT title FROM record_sources:7'), [['integer']]);
       assert.deepEqual(await client.all("SELECT title FROM type::record('record_sources', $key)", {$key:'7'}), [['string']]);

@@ -36,7 +36,7 @@ if (!phase) {
     if (phase === 'seed') {
       db.execute('CREATE TABLE docs');
       db.execute('CREATE UNIQUE INDEX docs_title ON docs(title)');
-      db.execute("INSERT INTO docs {id:docs:a,title:'old'}, {id:docs:7,title:'integer'}, {id:docs:'7',title:'string'}");
+      db.execute("INSERT INTO docs(id,title) VALUES(docs:a,'old'),(docs:7,'integer'),(docs:'7','string')");
     } else {
       assert.deepEqual(db.all('SELECT title FROM docs:a'), [[phase === 'upgrade' ? 'old' : 'new']]);
       assert.deepEqual(db.all('SELECT title FROM docs:7'), [['integer']]);
