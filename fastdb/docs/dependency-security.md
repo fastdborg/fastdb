@@ -1,4 +1,14 @@
-# Dependency security review for 2.2.0
+# Dependency security review for 2.3.0
+Reviewed 2026-10-12 for the Linux x64 2.3.0 candidate. The exact lockfile
+scan covers 359 package/version identities and the current pinned advisory
+database `7eebec69c352c7191b1f13eb95dd510eeca5d1de`. It found zero unresolved
+shipping findings; the retained lru informational exception below was reviewed
+again against unchanged Tantivy cache types and call sites. QuickJS-NG's published
+advisory identities/ranges remain unchanged; USearch's advisory endpoint still
+returns no published entries. Node declares no runtime dependencies.
+
+The following 2.2.0 history records why the retained dependency versions were
+selected. It does not substitute for the new exact-lockfile machine-readable scan.
 
 Reviewed 2026-10-02 for the Linux x64 2.2.0 candidate. This is a scoped advisory and
 applicability review, not a source-code security audit or a claim that the

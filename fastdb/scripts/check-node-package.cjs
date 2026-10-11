@@ -119,6 +119,15 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
           if(step.rows) assert.deepEqual(result.rows,step.rows.map(row=>row.map(fixtureValue)),'fixture '+index);
         }
       }
+      await client.execute('CREATE TABLE record_sources');
+      await client.execute("INSERT INTO record_sources {id:record_sources:a,title:'indexed'}, {id:record_sources:7,title:'integer'}, {id:record_sources:'7',title:'string'}");
+      assert.deepEqual(await client.all('SELECT title FROM record_sources:a'), [['indexed']]);
+      assert.deepEqual(await client.all('SELECT title FROM record_sources:7'), [['integer']]);
+      assert.deepEqual(await client.all("SELECT title FROM type::record('record_sources', $key)", {$key:'7'}), [['string']]);
+      assert.deepEqual(await client.all('SELECT title FROM record_sources:missing'), []);
+      const sourceProof = await client.profileSelect('SELECT title FROM record_sources:a');
+      assert.equal(sourceProof.stats.fullscan_steps, 0n);
+      assert.equal(sourceProof.stats.index_steps, 1n);
     } finally {await client.close();}
   }
   const cancellationFailures = [];

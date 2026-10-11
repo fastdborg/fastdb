@@ -1,5 +1,5 @@
 {
-  "review_date": "2026-10-02",
+  "review_date": "2026-10-12",
   "quickjs": {
     "crate": "rquickjs-sys 0.13.0",
     "bundled_version": "0.16.2",

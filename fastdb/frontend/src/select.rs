@@ -3059,6 +3059,51 @@ fn source(
     inspect_native: bool,
 ) -> Result<Source> {
     if let SelectTable::TableCall(name, args, alias) = table {
+        if name.db_name.is_none() && name.name.as_str() == "__fastdb_record_value" {
+            let constructor = expression(&format!(
+                "__fastdb_record_value({})",
+                args.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))?;
+            let mut consumed = std::collections::BTreeSet::new();
+            let Value::Record(mut record) =
+                crate::search_filter::argument(&constructor, params, &mut consumed)?
+            else {
+                return Err(Error::Validation(
+                    "record source requires a typed record".into(),
+                ));
+            };
+            record.table = crate::canonical(&record.table)?;
+            let collection = connection.catalog(&record.table)?;
+            let alias = alias
+                .clone()
+                .unwrap_or_else(|| As::As(Name::exact(record.table.clone())));
+            let id = Value::Record(record)
+                .encode()?
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&format!(
+                "SELECT id,doc FROM {} WHERE id=X'{id}'",
+                quote(&collection.storage)
+            ))?
+            else {
+                unreachable!()
+            };
+            return Ok(Source {
+                table: SelectTable::Select(select, Some(alias.clone())),
+                alias: alias.name().as_str().into(),
+                collection: Some(collection),
+                derived: None,
+                derived_logical: false,
+                derived_physical: None,
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed,
+            });
+        }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_unnest" {
             let [input] = args.as_slice() else {
                 return Err(Error::Validation("array::unnest expects one array".into()));
@@ -3938,7 +3983,7 @@ fn lower_source(
     source: &Source,
     candidate: Option<(crate::Index, Expr)>,
 ) -> Result<()> {
-    if source.derived.is_some() {
+    if source.derived.is_some() || matches!(&source.table, SelectTable::Select(..)) {
         *table = source.table.clone();
         return Ok(());
     }
@@ -5063,7 +5108,7 @@ impl Connection {
                 if matches!(
                     table.as_ref(),
                     SelectTable::Table(..) | SelectTable::Select(..)
-                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest"))
+                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest" | "__fastdb_record_value"))
                 {
                     local.push(source(
                         self,
@@ -5694,7 +5739,7 @@ impl Connection {
                                         table.as_ref(),
                                         SelectTable::Table(..) | SelectTable::Select(..)
                                     ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _)
-                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest"))
+                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest" | "__fastdb_record_value"))
                                     {
                                         resolved.push(source(
                                             self,
@@ -6755,6 +6800,9 @@ impl Connection {
             .iter()
             .enumerate()
             .map(|(i, source)| {
+                if source.collection.is_some() && matches!(&source.table, SelectTable::Select(..)) {
+                    return Ok(None);
+                }
                 if matches!(
                     &source.table,
                     SelectTable::Table(_, _, Some(Indexed::NotIndexed))

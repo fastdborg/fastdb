@@ -19,6 +19,233 @@ fn setup() -> (Database, fastdb::Connection) {
     (db, c)
 }
 #[test]
+fn record_sources_preserve_projections_filters_and_typed_keys() {
+    let (_db, c) = setup();
+    query(&c, "INSERT INTO docs {id:docs:a,title:'Requested syntax'}");
+    assert_eq!(
+        query(&c, "SELECT title FROM docs:a").rows,
+        vec![vec![Value::String("Requested syntax".into())]]
+    );
+    query(
+        &c,
+        "INSERT INTO users {id:users:a,name:'String key',active:true}",
+    );
+    query(&c, "INSERT INTO users {id:users:`2`,name:'String two'}");
+    for (source, key) in [
+        ("users:a", "users:a"),
+        ("USERS:2", "users:2"),
+        ("users:-1", "users:-1"),
+        ("users:`2`", "users:`2`"),
+        ("users:missing", "users:missing"),
+    ] {
+        for projection in ["name", "*", "id,active,tags,unknown", "users.profile.city"] {
+            assert_eq!(
+                query(&c, &format!("SELECT {projection} FROM {source}")).rows,
+                query(
+                    &c,
+                    &format!("SELECT {projection} FROM users WHERE id={key}")
+                )
+                .rows
+            );
+        }
+    }
+    assert_eq!(
+        query(
+            &c,
+            "SELECT u.name FROM users:2 AS u WHERE u.active=true ORDER BY u.name LIMIT 1"
+        )
+        .rows,
+        vec![vec![Value::String("Bob".into())]]
+    );
+    assert!(query(
+        &c,
+        "SELECT name FROM users:2 WHERE active=false OR name='Alice'"
+    )
+    .rows
+    .is_empty());
+    assert_eq!(
+        query(&c, "SELECT count(*) FROM users:missing").rows,
+        vec![vec![Value::Integer(0)]]
+    );
+    query(
+        &c,
+        "INSERT INTO users {id:users:9223372036854775807,name:'Max'}",
+    );
+    query(
+        &c,
+        "INSERT INTO users {id:users:-9223372036854775808,name:'Min'}",
+    );
+    assert_eq!(
+        query(&c, "SELECT name FROM users:9223372036854775807").rows,
+        vec![vec![Value::String("Max".into())]]
+    );
+    assert_eq!(
+        query(&c, "SELECT name FROM users:-9223372036854775808").rows,
+        vec![vec![Value::String("Min".into())]]
+    );
+}
+
+#[test]
+fn record_sources_compose_with_joins_subqueries_and_transactions() {
+    let (_db, c) = setup();
+    assert_eq!(
+        query(
+            &c,
+            "SELECT u.name,v.name FROM users:2 u LEFT JOIN users:missing v ON true"
+        )
+        .rows,
+        vec![vec![Value::String("Bob".into()), Value::Null]]
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT u.name,v.name FROM users:2 u JOIN users:10 v ON u.id!=v.id"
+        )
+        .rows,
+        vec![vec![
+            Value::String("Bob".into()),
+            Value::String("Alice".into())
+        ]]
+    );
+    assert_eq!(
+        query(&c, "SELECT u.name,v.name FROM users:2 u, users:10 v").rows,
+        vec![vec![
+            Value::String("Bob".into()),
+            Value::String("Alice".into())
+        ]]
+    );
+    assert_eq!(
+        query(
+            &c,
+            "WITH chosen AS (SELECT name FROM users:2) SELECT name FROM chosen"
+        )
+        .rows,
+        vec![vec![Value::String("Bob".into())]]
+    );
+    assert_eq!(
+        query(&c, "SELECT q.name FROM (SELECT name FROM users:2) q").rows,
+        vec![vec![Value::String("Bob".into())]]
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT name FROM users WHERE EXISTS(SELECT 1 FROM users:2 u WHERE u.id=users.id)"
+        )
+        .rows,
+        vec![vec![Value::String("Bob".into())]]
+    );
+    query(&c, "BEGIN");
+    query(&c, "UPDATE users:2 {name:'Changed'}");
+    assert_eq!(
+        query(&c, "SELECT name FROM users:2").rows,
+        vec![vec![Value::String("Changed".into())]]
+    );
+    query(&c, "ROLLBACK");
+    assert_eq!(
+        query(&c, "SELECT name FROM users:2").rows,
+        vec![vec![Value::String("Bob".into())]]
+    );
+    let plan = query(&c, "EXPLAIN QUERY PLAN SELECT name FROM users:2");
+    let details = format!("{:?}", plan.rows);
+    assert!(
+        details.contains("SEARCH") && details.contains("(id=?)"),
+        "{details}"
+    );
+    query(
+        &c,
+        &format!(
+            "INSERT INTO users(n) VALUES {}",
+            (0..1000)
+                .map(|n| format!("({n})"))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    );
+    let profile = c
+        .profile_select("SELECT name FROM users:2", &Parameters::new())
+        .unwrap();
+    assert_eq!(profile.result.rows, vec![vec![Value::String("Bob".into())]]);
+    assert_eq!(profile.metrics.fullscan_steps, 0);
+    assert!(profile.metrics.rows_read <= 3, "{:?}", profile.metrics);
+}
+
+#[test]
+fn record_sources_bind_constructor_keys_without_interpolating_sql() {
+    let (_db, c) = setup();
+    let params = Parameters::from([
+        ("$key".into(), Value::Integer(2)),
+        ("$name".into(), Value::String("Bob".into())),
+    ]);
+    assert_eq!(
+        c.execute(
+            "SELECT u.name FROM type::record('users',$key) u WHERE u.name=$name",
+            &params
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::String("Bob".into())]]
+    );
+    let positional = Parameters::from([
+        ("?1".into(), Value::Integer(2)),
+        ("?2".into(), Value::String("Bob".into())),
+    ]);
+    assert_eq!(
+        c.execute(
+            "SELECT name FROM type::record('users',?) WHERE name=?",
+            &positional
+        )
+        .unwrap()
+        .rows,
+        vec![vec![Value::String("Bob".into())]]
+    );
+    let malicious = Parameters::from([(
+        "$key".into(),
+        Value::String("a'); DROP TABLE users; --".into()),
+    )]);
+    c.execute(
+        "INSERT INTO users DOCUMENT $doc",
+        &Parameters::from([(
+            "$doc".into(),
+            Value::Object(std::collections::BTreeMap::from([
+                (
+                    "id".into(),
+                    Value::Record(Record {
+                        table: "users".into(),
+                        key: Key::String("a'); DROP TABLE users; --".into()),
+                    }),
+                ),
+                ("name".into(), Value::String("Quoted".into())),
+            ])),
+        )]),
+    )
+    .unwrap();
+    assert_eq!(
+        c.execute("SELECT name FROM type::record('users',$key)", &malicious)
+            .unwrap()
+            .rows,
+        vec![vec![Value::String("Quoted".into())]]
+    );
+    for sql in [
+        "SELECT name FROM unknown:a",
+        "SELECT name FROM type::record('users',1.5)",
+        "SELECT name FROM type::record('users',null)",
+        "SELECT name FROM __fastdb_record_value('users',2)",
+        "SELECT name FROM users:9223372036854775808",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    assert!(c
+        .execute(
+            "SELECT name FROM users:2",
+            &Parameters::from([("$unused".into(), Value::Integer(1))])
+        )
+        .is_err());
+    assert_eq!(
+        query(&c, "SELECT count(*) FROM users").rows,
+        vec![vec![Value::Integer(4)]]
+    );
+}
+#[test]
 fn projections_filters_sort_and_pagination() {
     let (_db, c) = setup();
     let result=query(&c,"SELECT u.id, u.name, u.active, u.profile.city AS city, u.tags, u.unknown FROM users AS u WHERE u.profile.city = 'Bangkok' ORDER BY u.name LIMIT 1 OFFSET 0");

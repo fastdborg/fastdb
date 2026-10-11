@@ -8,7 +8,9 @@ const [oldPackage,newPackage,directory,phase,file]=process.argv.slice(2);
 if(!oldPackage||!newPackage||!directory) throw Error('Usage: node check-v22-upgrade.cjs <published-2.0-or-2.1-package> <2.2-package> <new-output-directory>');
 for(const value of [oldPackage,newPackage,directory]) assert.ok(path.isAbsolute(value));
 const oldVersion=require(path.join(oldPackage,'package.json')).version;
-assert.equal(require(path.join(newPackage,'package.json')).version,'2.2.0');
+const newVersion=require(path.join(newPackage,'package.json')).version;
+assert.match(newVersion,/^2\.[0-9]+\.0$/);
+assert.ok(Number(newVersion.split('.')[1])>=2);
 const hashes={
   '2.0.0':'11e472d275bb287bc4806e086d3ffed268bf170240b7f2ab6d981270e87f523d',
   '2.1.0':'e39e9f5ca3e22c1c4d5f594fd362bc523289c86a006d49f6cfed338e7f94ac5d',
@@ -42,7 +44,7 @@ if(!phase) {
   const downgrade=path.join(directory,'downgrade-copy.db');copy(candidate,downgrade);run('reject-downgrade',downgrade);
   const catalog5=path.join(directory,'catalog5.db');run('catalog5-seed',catalog5);run('reject-catalog5',catalog5);
   assert.equal(digest(previous),previousHash);assert.equal(digest(candidate),candidateHash);
-  const report={fromVersion:oldVersion,toVersion:'2.2.0',node:process.version,
+  const report={fromVersion:oldVersion,toVersion:newVersion,node:process.version,
     fromAddonSha256:hashes[oldVersion],toAddonSha256:digest(path.join(newPackage,'fastdb.node')),
     fromBackupSha256:previousHash,toBackupSha256:candidateHash,backupsUnchanged:true,
     explicitFtsReindex:true,reindexRollbackVerified:true,oldReaderRejectsCatalog5:true,phases,
