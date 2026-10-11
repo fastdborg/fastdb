@@ -1,7 +1,7 @@
 # FastDB service and shared client contract
 
 Version 1. Defined 2026-10-11 for the Studio implementation. This document is a
-contract for new work, not a claim that the service is released. The existing
+contract shipped in FastDB 2.3.0. The existing
 2.2.0 embedded APIs and script-batch semantics remain unchanged.
 Cloud query/read responses separately advertise `x-fastdb-query-version: 2` for
 SDK-tagged Record keys and confirmed typed errors. Resource URLs remain `/v1`;

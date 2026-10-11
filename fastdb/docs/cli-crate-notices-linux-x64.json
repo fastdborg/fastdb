@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "9bd2dea797bca851209979c261ce35443564fd4488abbaa302c7e881867b3635",
+  "inventorySha256": "01a31fcee5c89ff4d4b725bee3d92d538c536bda7b7dfdcc44478b62bc5f07cb",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -1757,7 +1757,7 @@
     },
     {
       "name": "fastdb-service",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "status": "workspace_source_requires_separate_review"
     },
     {

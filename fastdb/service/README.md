@@ -1,7 +1,6 @@
 # FastDB local service
 
-Development source for the optional Linux x64 database service. This package is
-not part of the released FastDB 2.2.0 artifacts. Studio integration and delivery
+The optional Linux x64 database service is included in FastDB 2.3.0. Studio integration and delivery
 remain in the [implementation checklist](../../../plan-studio.md).
 
 Shared client qualification, from `turso`, uses the built native addon and CLI:

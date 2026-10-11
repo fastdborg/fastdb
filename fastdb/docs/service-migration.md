@@ -1,7 +1,6 @@
 # Move an offline WAL database to the local service
 
-These commands exist in development source. They are not included in the
-released FastDB 2.2.0 binaries. The migration targets Linux x64 and the current
+These commands are included in FastDB 2.3.0. The migration targets Linux x64 and the current
 native FastDB WAL format.
 
 The service requires MVCC, which allows concurrent transactions within one
@@ -13,7 +12,7 @@ conversion. Ordinary `serve` startup never converts a database.
 
 Stop the application that owns `app.fastdb` and close all of its database handles.
 Choose unused output and backup directories. Their parent directories must exist.
-Run the development executable with paths on the local filesystem:
+Run the released executable with paths on the local filesystem:
 
 ```sh
 fastdb migrate-to-mvcc app.fastdb ./app-service --backup ./app-before-mvcc

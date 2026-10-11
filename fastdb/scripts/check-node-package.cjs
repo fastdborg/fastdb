@@ -126,8 +126,8 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       assert.deepEqual(await client.all("SELECT title FROM type::record('record_sources', $key)", {$key:'7'}), [['string']]);
       assert.deepEqual(await client.all('SELECT title FROM record_sources:missing'), []);
       const sourceProof = await client.profileSelect('SELECT title FROM record_sources:a');
-      assert.equal(sourceProof.stats.fullscan_steps, 0n);
-      assert.equal(sourceProof.stats.index_steps, 1n);
+      assert.equal(sourceProof.metrics.fullscanSteps, 0n);
+      assert.equal(sourceProof.metrics.indexSteps, 1n);
     } finally {await client.close();}
   }
   const cancellationFailures = [];

@@ -1,7 +1,7 @@
 {
-  "reviewed_at": "2026-10-11T20:00:19.129075+00:00",
-  "source_commit": "8db31515e667ccb64a6c2b2e3c8f48f43fe9c371",
-  "cargo_lock_sha256": "111536685d8aba552faaab57cb9916e1636c9705ee1ea54400710f1775924c47",
+  "reviewed_at": "2026-10-11T20:02:50.402682+00:00",
+  "source_commit": "d02ed2a939f3a453db206792041b279bf127e28d",
+  "cargo_lock_sha256": "698fb8633d6d40f5d681ed240f8c2b1354f5c6250ca9a1df1cb4ed64ac57ba2a",
   "advisory_database": {
     "repository": "https://github.com/RustSec/advisory-db",
     "commit": "7eebec69c352c7191b1f13eb95dd510eeca5d1de",
@@ -335,7 +335,7 @@
     },
     {
       "name": "fastdb-service",
-      "version": "2.2.0"
+      "version": "2.3.0"
     },
     {
       "name": "fastdivide",
