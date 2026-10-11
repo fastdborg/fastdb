@@ -331,7 +331,9 @@ impl Connection {
                 if fastql_parser::tokenize(&expanded)?.iter().any(|token| {
                     token.kind == fastql_parser::Kind::Word && token.text == "__fastdb_vector"
                 }) {
-                    return Ok(None);
+                    return Err(Error::Unsupported(
+                        "metered vector EXPLAIN is not supported".into(),
+                    ));
                 }
                 Ok(match crate::select::parsed(&expanded)? {
                     Cmd::Explain(_) | Cmd::ExplainQueryPlan { .. } => Some(SchemaStatement::Native),

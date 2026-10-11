@@ -17,3 +17,5 @@ report `FDB_LIMIT`. A normal cancellation must retain its own code.
 
 This is a FastDB frontend change. It does not patch upstream engine sources or
 change the released 2.2.0 artifacts.
+
+Metered vector EXPLAIN now returns a measured FDB_UNSUPPORTED rejection before ANN candidate execution. It must not fall through to unmetered execution or produce an unacknowledged Cloud read. Ordinary unmetered EXPLAIN compatibility is unchanged. Focused regression checks both EXPLAIN modes, zero customer reads/mutations, and preserved outer transaction.
