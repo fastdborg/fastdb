@@ -26,7 +26,6 @@ try {
   const generated = path.resolve(temporary, packed.filename);
   const supplied = process.env.FASTDB_PACKAGE_TARBALL;
   if (supplied) assert(fs.readFileSync(supplied).equals(fs.readFileSync(generated)), 'Supplied candidate differs from current package');
-  if (process.env.FASTDB_PACKAGE_OUTPUT) fs.copyFileSync(generated, process.env.FASTDB_PACKAGE_OUTPUT, fs.constants.COPYFILE_EXCL);
   const consumer = path.join(temporary, 'consumer');
   fs.mkdirSync(consumer);
   fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'fastdb-package-smoke', version: '0.0.0', private: true }));
@@ -143,9 +142,10 @@ assert(require.resolve('@fastdb/node').startsWith(path.join(__dirname, 'node_mod
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 200);
       try {
-        // The deadline bounds a missed interrupt; successful completion is a failure.
+        // Ten million possible rows keep optimized builds busy past the abort.
+        // The deadline bounds a missed interrupt; completion remains a failure.
         await assert.rejects(client.execute(
-          'INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e',
+          'INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e,nums f,nums g',
           {}, {signal: controller.signal, timeoutMs: 3000}), error => {
           assert.equal(error.code, 'FDB_CANCELLED');
           assert.deepEqual(error.transaction, {before: 'active', after: 'active'});
@@ -1031,6 +1031,7 @@ async function open() {
 void open;
 `);
   run(process.execPath, [path.join(packageDir, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs', 'smoke.ts'], consumer);
+  if (process.env.FASTDB_PACKAGE_OUTPUT) fs.copyFileSync(generated, process.env.FASTDB_PACKAGE_OUTPUT, fs.constants.COPYFILE_EXCL);
   console.log(`Node package smoke passed: ${process.platform}/${process.arch}, Node ${process.versions.node}, ${packed.files.length} files, ${fs.statSync(generated).size} packed bytes`);
 } finally {
   fs.rmSync(temporary, { recursive: true, force: true });
