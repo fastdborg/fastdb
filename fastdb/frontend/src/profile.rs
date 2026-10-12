@@ -14,6 +14,18 @@ pub struct QueryMetrics {
     pub fetch_batches: u64,
     pub fetch_rows_read: u64,
     pub fetch_vm_steps: u64,
+    /// Adjacency index entries read by GRAPH sources, including rejected candidates.
+    pub graph_adjacency_entries: u64,
+    /// Candidate (path or node, edge) expansions considered by GRAPH sources.
+    pub graph_expansions: u64,
+    /// Edge or node documents loaded to evaluate GRAPH step predicates.
+    pub graph_documents: u64,
+    /// Rows materialized by GRAPH sources before outer SQL filtering.
+    pub graph_rows: u64,
+    /// Nodes marked visited (REACHABLE) or expanded as path ends (PATHS).
+    pub graph_visited: u64,
+    /// Peak bytes of graph-owned traversal state, as conservatively estimated.
+    pub graph_peak_bytes: u64,
 }
 impl QueryMetrics {
     pub(crate) fn from_statement(statement: &turso_core::Statement) -> Self {
@@ -29,6 +41,12 @@ impl QueryMetrics {
             fetch_batches: 0,
             fetch_rows_read: 0,
             fetch_vm_steps: 0,
+            graph_adjacency_entries: 0,
+            graph_expansions: 0,
+            graph_documents: 0,
+            graph_rows: 0,
+            graph_visited: 0,
+            graph_peak_bytes: 0,
         }
     }
 }

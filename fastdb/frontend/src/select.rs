@@ -3203,6 +3203,49 @@ fn source(
                 consumed,
             });
         }
+        if name.db_name.is_none() && name.name.as_str() == "__fastdb_graph" {
+            let body = match args.as_slice() {
+                [arg] => match arg.as_ref() {
+                    Expr::Literal(Literal::String(body)) => body.clone(),
+                    _ => return Err(Error::Validation("GRAPH expects one path".into())),
+                },
+                _ => return Err(Error::Validation("GRAPH expects one path".into())),
+            };
+            let body = body
+                .strip_prefix('\'')
+                .and_then(|body| body.strip_suffix('\''))
+                .ok_or_else(|| Error::Validation("GRAPH expects one path".into()))?
+                .replace("''", "'");
+            let mut consumed = std::collections::BTreeSet::new();
+            let (sql, with_path) = connection.graph_source_sql(&body, params, &mut consumed)?;
+            let Cmd::Stmt(Stmt::Select(select)) = parsed(&sql)? else {
+                unreachable!()
+            };
+            let alias = alias
+                .clone()
+                .unwrap_or_else(|| As::As(Name::exact("graph".into())));
+            let mut derived = vec![
+                ("root".into(), true),
+                ("node".into(), true),
+                ("edge".into(), true),
+                ("depth".into(), false),
+            ];
+            if with_path {
+                derived.push(("nodes".into(), true));
+                derived.push(("edges".into(), true));
+            }
+            return Ok(Source {
+                table: SelectTable::Select(select, Some(alias.clone())),
+                alias: alias.name().as_str().into(),
+                collection: None,
+                derived: Some(derived),
+                derived_logical: true,
+                derived_physical: None,
+                native_collations: Default::default(),
+                native_expression_collations: Default::default(),
+                consumed,
+            });
+        }
         if name.db_name.is_none() && name.name.as_str() == "__fastdb_vector" {
             let [index, query, limit, ..] = args.as_slice() else {
                 return Err(Error::Validation(
@@ -3571,6 +3614,10 @@ fn source(
         native_collations: Default::default(),
         consumed: Default::default(),
     })
+}
+// A GRAPH source has no native SQL meaning, so its errors never fall back.
+fn graph_table(table: &SelectTable) -> bool {
+    matches!(table, SelectTable::TableCall(name, _, _) if name.name.as_str() == "__fastdb_graph")
 }
 fn native_column_collation(expr: &Expr) -> bool {
     match expr {
@@ -4287,6 +4334,8 @@ pub(crate) fn expand_paths(sql: &str) -> Result<String> {
 }
 
 pub(crate) fn expand_records(connection: Option<&Connection>, sql: &str) -> Result<String> {
+    let graph = crate::graph::expand_sources(sql)?;
+    let sql = graph.as_ref();
     let tokens = fastql_parser::tokenize(sql)?;
     let mut out = String::new();
     let mut copied = 0;
@@ -4501,6 +4550,8 @@ impl Connection {
         params: &Parameters,
         limits: Option<crate::ResultLimits>,
     ) -> Result<crate::ProfiledQuery> {
+        self.take_graph_counters();
+        self.take_graph_plan();
         let sql = match fastql_parser::parse(sql)? {
             fastql_parser::Statement::SelectRecordProjection { target, fields } => {
                 return self.profile_record_projection(&target, &fields, params, limits);
@@ -4530,6 +4581,7 @@ impl Connection {
                             | "__fastdb_near"
                             | "__fastdb_text"
                             | "__fastdb_vector"
+                            | "__fastdb_graph"
                     )
             });
         let execute = || match self.lower_collection_select(
@@ -4780,6 +4832,8 @@ impl Connection {
         params: &Parameters,
         options: SelectOptions<'_>,
     ) -> Result<Option<QueryResult>> {
+        self.take_graph_counters();
+        self.take_graph_plan();
         if !options.guarded && (crate::udf::has_calls(sql)? || crate::analyzer::has_calls(sql)?) {
             return self.atomic(|| {
                 self.collection_select_options(
@@ -4810,6 +4864,7 @@ impl Connection {
                                 | "__fastdb_near"
                                 | "__fastdb_text"
                                 | "__fastdb_vector"
+                                | "__fastdb_graph"
                         )
                 }))
         {
@@ -5108,7 +5163,7 @@ impl Connection {
                 if matches!(
                     table.as_ref(),
                     SelectTable::Table(..) | SelectTable::Select(..)
-                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest" | "__fastdb_record_value"))
+                ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _) if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest" | "__fastdb_record_value" | "__fastdb_graph"))
                 {
                     local.push(source(
                         self,
@@ -5347,6 +5402,7 @@ impl Connection {
             return Ok(None);
         };
         let explain = matches!(cmd, Cmd::ExplainQueryPlan { .. } | Cmd::Explain(_));
+        let _graph_explain = crate::graph::ExplainScope::enter(explain);
         let select = match &mut cmd {
             Cmd::Stmt(Stmt::Select(s))
             | Cmd::Explain(Stmt::Select(s))
@@ -5438,7 +5494,9 @@ impl Connection {
                     },
                 ) {
                     Ok(plan) => plan,
-                    Err(Error::Unsupported(_)) => return Ok(None),
+                    Err(Error::Unsupported(_)) if !sql.contains("__fastdb_graph(") => {
+                        return Ok(None)
+                    }
                     Err(e) => return Err(e),
                 };
                 let (columns, mut physical, logical, consumed) = if let Some(plan) = plan {
@@ -5739,7 +5797,7 @@ impl Connection {
                                         table.as_ref(),
                                         SelectTable::Table(..) | SelectTable::Select(..)
                                     ) || matches!(table.as_ref(), SelectTable::TableCall(name, _, _)
-                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest" | "__fastdb_record_value"))
+                                        if matches!(name.name.as_str().to_ascii_lowercase().as_str(), "json_each" | "json_tree" | "__fastdb_near" | "__fastdb_text" | "__fastdb_vector" | "__fastdb_unnest" | "__fastdb_record_value" | "__fastdb_graph"))
                                     {
                                         resolved.push(source(
                                             self,
@@ -6189,7 +6247,7 @@ impl Connection {
                 true,
             ) {
                 Ok(s) => s,
-                Err(Error::Unsupported(_)) => return Ok(None),
+                Err(Error::Unsupported(_)) if !graph_table(&from.select) => return Ok(None),
                 Err(e) => return Err(e),
             };
             sources.push(first);
@@ -6204,7 +6262,7 @@ impl Connection {
                     true,
                 ) {
                     Ok(s) => sources.push(s),
-                    Err(Error::Unsupported(_)) => return Ok(None),
+                    Err(Error::Unsupported(_)) if !graph_table(&join.table) => return Ok(None),
                     Err(e) => return Err(e),
                 }
             }
@@ -7990,7 +8048,31 @@ impl Connection {
             return Err(error);
         }
         execution?;
+        let graph_plan = self.take_graph_plan();
+        if explain && engine_names.len() == 4 && !graph_plan.is_empty() {
+            let mut described: Vec<Vec<Value>> = graph_plan
+                .into_iter()
+                .enumerate()
+                .map(|(i, detail)| {
+                    vec![
+                        Value::Integer(-1 - i as i64),
+                        Value::Integer(0),
+                        Value::Integer(0),
+                        Value::String(detail),
+                    ]
+                })
+                .collect();
+            described.append(&mut rows);
+            rows = described;
+        }
         let mut metrics = crate::QueryMetrics::from_statement(&statement);
+        let graph = self.take_graph_counters();
+        metrics.graph_adjacency_entries = graph.adjacency_entries;
+        metrics.graph_expansions = graph.expansions;
+        metrics.graph_documents = graph.documents;
+        metrics.graph_rows = graph.rows;
+        metrics.graph_visited = graph.visited;
+        metrics.graph_peak_bytes = graph.peak_bytes;
         if !native_insert && !explain && fetched.iter().any(|v| *v) {
             let mut forward = Vec::new();
             let mut reverse = Vec::new();

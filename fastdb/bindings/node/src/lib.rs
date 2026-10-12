@@ -619,7 +619,13 @@ fn profile_value(profile: fastdb::ProfiledQuery) -> fastdb::Result<JsonText> {
         "vmSteps":m.vm_steps.to_string(), "sortOperations":m.sort_operations.to_string(),
         "btreeSeeks":m.btree_seeks.to_string(),
         "fetchBatches":m.fetch_batches.to_string(), "fetchRowsRead":m.fetch_rows_read.to_string(),
-        "fetchVmSteps":m.fetch_vm_steps.to_string()
+        "fetchVmSteps":m.fetch_vm_steps.to_string(),
+        "graphAdjacencyEntries":m.graph_adjacency_entries.to_string(),
+        "graphExpansions":m.graph_expansions.to_string(),
+        "graphDocuments":m.graph_documents.to_string(),
+        "graphRows":m.graph_rows.to_string(),
+        "graphVisited":m.graph_visited.to_string(),
+        "graphPeakBytes":m.graph_peak_bytes.to_string()
     });
     let result = query_value(profile.result)?;
     Ok(JsonText(wrap_json(

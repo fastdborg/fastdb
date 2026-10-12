@@ -154,6 +154,7 @@ impl Connection {
                 use turso_parser::ast::{Cmd, Stmt};
                 Ok(match fastql_parser::parse(sql)? {
                     Statement::CreateCollection { .. }
+                    | Statement::CreateEdgeTable { .. }
                     | Statement::CreateIndex { .. }
                     | Statement::CreateSpatialIndex { .. }
                     | Statement::CreateArrayIndex { .. }

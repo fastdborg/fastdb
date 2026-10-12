@@ -1,5 +1,7 @@
 //! Additive FastQL dispatch. Unrecognized statements retain their original SQL.
+mod graph;
 mod script;
+pub use graph::{parse_graph, Direction, GraphHop, GraphMode, GraphQuery, GraphStep};
 pub use script::{script_complete, split_script, ScriptStatement};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -192,6 +194,21 @@ pub enum Statement {
     CreateCollection {
         name: String,
         if_not_exists: bool,
+    },
+    CreateEdgeTable {
+        name: String,
+        if_not_exists: bool,
+        source: String,
+        target: String,
+        cascade: bool,
+    },
+    Relate {
+        source: Expr,
+        edge: String,
+        id: Option<Record>,
+        target: Expr,
+        value: Option<Expr>,
+        returning: Option<String>,
     },
     Insert {
         table: String,
@@ -1437,6 +1454,75 @@ pub fn parse(input: &str) -> Result<Statement> {
             })();
             return Ok(parsed.unwrap_or_else(|_| Statement::Sql(input.into())));
         }
+    }
+    p.pos = 0;
+    if p.eat("CREATE") && p.eat("EDGE") {
+        if !p.eat("TABLE") {
+            return Err(p.error("expected CREATE EDGE TABLE"));
+        }
+        let if_not_exists = p.eat("IF");
+        if if_not_exists && !(p.eat("NOT") && p.eat("EXISTS")) {
+            return Err(p.error("expected IF NOT EXISTS"));
+        }
+        let name = p.name()?;
+        if !p.eat("FROM") {
+            return Err(p.error("expected FROM source collection"));
+        }
+        let source = p.name()?;
+        if !p.eat("TO") {
+            return Err(p.error("expected TO target collection"));
+        }
+        let target = p.name()?;
+        let cascade = if p.eat("ON") {
+            if !p.eat("DELETE") {
+                return Err(p.error("expected ON DELETE"));
+            }
+            if p.eat("CASCADE") {
+                true
+            } else if p.eat("RESTRICT") {
+                false
+            } else {
+                return Err(p.error("expected ON DELETE RESTRICT or CASCADE"));
+            }
+        } else {
+            false
+        };
+        if !p.end() {
+            return Err(p.error("unexpected CREATE EDGE TABLE clause"));
+        }
+        return Ok(Statement::CreateEdgeTable {
+            name,
+            if_not_exists,
+            source,
+            target,
+            cascade,
+        });
+    }
+    p.pos = 0;
+    if p.eat("RELATE") {
+        let source = p.endpoint()?;
+        if p.arrow()? != Some(Direction::Out) {
+            return Err(p.error("RELATE uses source -> edge -> target"));
+        }
+        let (edge, id) = p.relate_edge()?;
+        if p.arrow()? != Some(Direction::Out) {
+            return Err(p.error("RELATE uses source -> edge -> target"));
+        }
+        let target = p.endpoint()?;
+        let value = if p.tokens.get(p.pos).is_some_and(|t| t.text == "{") || p.eat("DOCUMENT") {
+            Some(p.expr(0)?)
+        } else {
+            None
+        };
+        let returning = p.returning()?;
+        return Ok(Statement::Relate {
+            source,
+            edge,
+            id,
+            target,
+            value,
+            returning,
+        });
     }
     p.pos = 0;
     if p.eat("CREATE") && p.eat("TABLE") {
