@@ -158,6 +158,14 @@ impl Error {
             Self::Rollback { .. } => "FDB_ROLLBACK",
         }
     }
+
+    pub fn requires_exclusive_transaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Engine(turso_core::LimboError::TxError(message))
+                if message.starts_with("DDL statements require an exclusive transaction")
+        )
+    }
 }
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Serialize)]

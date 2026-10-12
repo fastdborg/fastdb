@@ -231,41 +231,46 @@ impl DatabaseService {
                 .any(|s| s.kind == fastdb::RequestStatementKind::Schema)
         });
         let _permit = self.admission.acquire(started)?;
-        if schema_change {
-            let _schema = self.lock_before(started, || self.schema.try_write())?;
-            self.query_locked(&request, &hash, statements, started, true)
-        } else {
+        if !schema_change {
             let _schema = self.lock_before(started, || self.schema.try_read())?;
-            self.query_locked(&request, &hash, statements, started, false)
+            if let Some(reply) = self.query_locked(&request, &hash, &statements, started, false)? {
+                return Ok(reply);
+            }
         }
+        let _schema = self.lock_before(started, || self.schema.try_write())?;
+        Ok(self
+            .query_locked(&request, &hash, &statements, started, true)?
+            .expect("an exclusive transaction never asks for another exclusive retry"))
     }
 
     fn query_locked(
         &self,
         request: &Request,
         hash: &str,
-        statements: Result<Vec<PreparedStatement>>,
+        statements: &Result<Vec<PreparedStatement>>,
         deadline: Instant,
         schema_change: bool,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         self.check_fence()?;
         {
             let mut publication = self.lock_before(deadline, || self.publication.try_lock())?;
             if let Some(reply) = self.replay(&publication, request, hash)? {
-                return Ok(reply);
+                return Ok(Some(reply));
             }
             check_position(request, publication.sequence)?;
             if request
                 .if_sequence
                 .is_some_and(|expected| expected != publication.sequence)
             {
-                return self.failure(
-                    &mut publication,
-                    request,
-                    hash,
-                    Error::new("FDB_CONFLICT", "sequence changed; refresh before saving"),
-                    request.budget()?,
-                );
+                return self
+                    .failure(
+                        &mut publication,
+                        request,
+                        hash,
+                        &Error::new("FDB_CONFLICT", "sequence changed; refresh before saving"),
+                        request.budget()?,
+                    )
+                    .map(Some);
             }
         }
         let statements = match statements {
@@ -273,24 +278,39 @@ impl DatabaseService {
             Err(error) => {
                 let mut publication = self.lock_before(deadline, || self.publication.try_lock())?;
                 if let Some(reply) = self.replay(&publication, request, hash)? {
-                    return Ok(reply);
+                    return Ok(Some(reply));
                 }
                 check_position(request, publication.sequence)?;
-                return self.failure(&mut publication, request, hash, error, request.budget()?);
+                return self
+                    .failure(&mut publication, request, hash, error, request.budget()?)
+                    .map(Some);
             }
         };
         let token = CancellationToken::with_deadline(deadline);
         let mut budget = request.budget()?;
         for _ in 0..16 {
+            budget = request.budget()?;
             self.check_fence()?;
             let scope = self.connection()?;
             scope.begin(schema_change)?;
             let snapshot = scope.connection.service_catalog()?.sequence;
-            let result = execute(&scope.connection, &statements, &mut budget, &token);
+            let result =
+                scope
+                    .connection
+                    .execute_request_statements(statements, &mut budget, &token);
+            if !schema_change
+                && result
+                    .as_ref()
+                    .is_err_and(fastdb::Error::requires_exclusive_transaction)
+            {
+                scope.rollback()?;
+                return Ok(None);
+            }
+            let result = result.map_err(Error::from);
             let mut publication = self.lock_before(deadline, || self.publication.try_lock())?;
             if let Some(reply) = self.replay(&publication, request, hash)? {
                 scope.rollback()?;
-                return Ok(reply);
+                return Ok(Some(reply));
             }
             check_position(request, publication.sequence)?;
             if request
@@ -298,19 +318,23 @@ impl DatabaseService {
                 .is_some_and(|expected| expected != publication.sequence)
             {
                 scope.rollback()?;
-                return self.failure(
-                    &mut publication,
-                    request,
-                    hash,
-                    Error::new("FDB_CONFLICT", "sequence changed; refresh before saving"),
-                    budget,
-                );
+                return self
+                    .failure(
+                        &mut publication,
+                        request,
+                        hash,
+                        &Error::new("FDB_CONFLICT", "sequence changed; refresh before saving"),
+                        budget,
+                    )
+                    .map(Some);
             }
             let results = match result {
                 Ok(results) => results,
                 Err(error) => {
                     scope.rollback()?;
-                    return self.failure(&mut publication, request, hash, error, budget);
+                    return self
+                        .failure(&mut publication, request, hash, &error, budget)
+                        .map(Some);
                 }
             };
             if snapshot != publication.sequence {
@@ -334,28 +358,31 @@ impl DatabaseService {
                     "FDB_WRITE_CONFLICT" | "FDB_BUSY_SNAPSHOT" | "FDB_BUSY"
                 ) {
                     scope.rollback()?;
-                    return self.failure(&mut publication, request, hash, error, budget);
+                    return self
+                        .failure(&mut publication, request, hash, &error, budget)
+                        .map(Some);
                 }
                 return Err(self.fence());
             }
             publication.sequence += 1;
-            return Ok(response);
+            return Ok(Some(response));
         }
         let mut publication = self.lock_before(deadline, || self.publication.try_lock())?;
         if let Some(reply) = self.replay(&publication, request, hash)? {
-            return Ok(reply);
+            return Ok(Some(reply));
         }
         check_position(request, publication.sequence)?;
         self.failure(
             &mut publication,
             request,
             hash,
-            Error::new(
+            &Error::new(
                 "FDB_WRITE_CONFLICT",
                 "publication changed during the bounded retry attempts",
             ),
             budget,
         )
+        .map(Some)
     }
 
     fn replay(
@@ -384,7 +411,7 @@ impl DatabaseService {
         publication: &mut Publication,
         request: &Request,
         hash: &str,
-        error: Error,
+        error: &Error,
         budget: RequestBudget,
     ) -> Result<String> {
         if matches!(error.code.as_str(), "FDB_ROLLBACK" | "FDB_STORAGE") {
