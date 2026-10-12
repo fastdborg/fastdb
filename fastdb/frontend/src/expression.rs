@@ -63,7 +63,10 @@ impl Connection {
             Expr::Parameter(name) => params.get(&name).cloned().ok_or(Error::Parameter(name))?,
             Expr::Field(path) => {
                 let doc = doc.ok_or_else(|| {
-                    Error::Validation(format!("field {} has no source document", path.join(".")))
+                    let field = path.join(".");
+                    Error::Validation(format!(
+                        "\"{field}\" is a field reference, but this statement has no source document; use '{field}' for a string"
+                    ))
                 })?;
                 match crate::path_value(doc, &path) {
                     Ok(v) => v.cloned().unwrap_or(Value::Null),
