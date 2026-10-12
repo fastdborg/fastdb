@@ -1,11 +1,15 @@
-# Dependency security review for 2.3.0
-Reviewed 2026-10-12 for the Linux x64 2.3.0 candidate. The exact lockfile
-scan covers 359 package/version identities and the current pinned advisory
-database `7eebec69c352c7191b1f13eb95dd510eeca5d1de`. It found zero unresolved
-shipping findings; the retained lru informational exception below was reviewed
-again against unchanged Tantivy cache types and call sites. QuickJS-NG's published
-advisory identities/ranges remain unchanged; USearch's advisory endpoint still
-returns no published entries. Node declares no runtime dependencies.
+# Dependency security review for 2.4.0
+Reviewed 2026-10-12 for the Linux x64 2.4.0 candidate. The exact lockfile
+scan covers 359 package/version identities against the RustSec advisory
+database at `7a656e76726dc815b52f1bdb7b2a5ea6b51ad3ba` (fetched 2026-10-12)
+using the same pinned `cargo-audit 0.22.2` binary. It found zero unresolved
+shipping findings; the retained lru informational exception below is unchanged.
+Graph support adds no dependency: the lockfile differs from 2.3.0 only in the
+nine FastDB workspace package versions. Node declares no runtime dependencies.
+
+The 2.3.0 review (database `7eebec69c352c7191b1f13eb95dd510eeca5d1de`) and the
+2.2.0 history below record why the retained dependency versions were selected.
+They do not substitute for the new exact-lockfile machine-readable scan.
 
 The following 2.2.0 history records why the retained dependency versions were
 selected. It does not substitute for the new exact-lockfile machine-readable scan.

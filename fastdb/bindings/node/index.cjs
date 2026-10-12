@@ -56,7 +56,7 @@ function encode(value, depth = 0) {
   const tagged = (type, value) => ({ type, value });
   if (value === null) return { type: 'Null' };
   if (typeof value === 'boolean') return tagged('Boolean', value);
-  if (typeof value === 'string') return tagged('String', value);
+  if (typeof value === 'string') return tagged('String', text(value));
   if (typeof value === 'bigint') {
     if (value < -(1n << 63n) || value >= (1n << 63n)) throw new RangeError('integer outside int64');
     return tagged('Integer', value.toString());
@@ -70,14 +70,25 @@ function encode(value, depth = 0) {
     const bytes = Buffer.alloc(8); bytes.writeDoubleBE(value);
     return tagged('Number', bytes.toString('hex'));
   }
-  if (value instanceof Record) return tagged('Record', { table: value.table, key: encode(value.key, depth) });
+  if (value instanceof Record) return tagged('Record', { table: text(value.table), key: encode(value.key, depth) });
   if (value instanceof Vector) return tagged('Vector', [...value.bytes]);
   if (value instanceof Uint8Array) return tagged('Binary', [...value]);
-  if (Array.isArray(value)) return tagged('Array', value.map(v => encode(v, depth + 1)));
+  if (Array.isArray(value)) {
+    const entries = [];
+    for (let i = 0; i < value.length; i++) {
+      if (!Object.hasOwn(value, i)) throw new TypeError('array holes are not database values');
+      entries.push(encode(value[i], depth + 1));
+    }
+    return tagged('Array', entries);
+  }
   if (value && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
-    return tagged('Object', Object.fromEntries(Object.entries(value).map(([k,v]) => [k, encode(v, depth + 1)])));
+    return tagged('Object', Object.fromEntries(Object.entries(value).map(([k,v]) => [text(k), encode(v, depth + 1)])));
   }
   throw new TypeError('unsupported parameter value');
+}
+function text(value) {
+  if (!value.isWellFormed()) throw new TypeError('strings must be well-formed Unicode');
+  return value;
 }
 function decode(value) {
   switch (value.type) {
@@ -210,13 +221,13 @@ class Database {
   }
   close() { this.#handle.close(); this.#closed = true; }
   execute(sql, parameters = {}) {
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     const report = unwrap(this.#native.execute(sql, JSON.stringify(params)));
     const result = report.execution.result;
     return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };
   }
   profileSelect(sql, parameters = {}) {
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     return decodeProfile(this.#native.profileSelect(sql, JSON.stringify(params)));
   }
   selectWithLimits(sql, limits, parameters = {}) {
@@ -224,12 +235,12 @@ class Database {
   }
   profileSelectWithLimits(sql, limits, parameters = {}) {
     const args = resultLimits(limits);
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     return decodeProfile(this.#native.profileSelectWithLimits(sql, JSON.stringify(params), ...args));
   }
   writeWithResultLimits(sql, limits, parameters = {}) {
     const args = resultLimits(limits);
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     const report = unwrap(this.#native.writeWithResultLimits(sql, JSON.stringify(params), ...args));
     const result = report.execution.result;
     return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };
@@ -361,13 +372,13 @@ class AsyncDatabase {
     return this.#closePromise;
   }
   async execute(sql, parameters = {}, options = {}) {
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     const report = unwrap(await this.#request('execute', [sql, JSON.stringify(params)], false, options.signal, options.timeoutMs));
     const result = report.execution.result;
     return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };
   }
   async profileSelect(sql, parameters = {}, options = {}) {
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     return decodeProfile(await this.#request('profileSelect', [sql, JSON.stringify(params)], false, options.signal, options.timeoutMs));
   }
   async selectWithLimits(sql, limits, parameters = {}, options = {}) {
@@ -375,12 +386,12 @@ class AsyncDatabase {
   }
   async profileSelectWithLimits(sql, limits, parameters = {}, options = {}) {
     const args = resultLimits(limits);
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     return decodeProfile(await this.#request('profileSelectWithLimits', [sql, JSON.stringify(params), ...args], false, options.signal, options.timeoutMs));
   }
   async writeWithResultLimits(sql, limits, parameters = {}, options = {}) {
     const args = resultLimits(limits);
-    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [k, encode(v)]));
+    const params = Object.fromEntries(Object.entries(parameters).map(([k,v]) => [text(k), encode(v)]));
     const report = unwrap(await this.#request('writeWithResultLimits', [sql, JSON.stringify(params), ...args], false, options.signal, options.timeoutMs));
     const result = report.execution.result;
     return { columns: result.columns, rows: decodeRows(result.rows), affected: BigInt(result.affected), transaction: report.transaction };

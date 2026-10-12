@@ -1,5 +1,7 @@
 //! Additive FastQL dispatch. Unrecognized statements retain their original SQL.
+mod graph;
 mod script;
+pub use graph::{parse_graph, Direction, GraphHop, GraphMode, GraphQuery, GraphStep};
 pub use script::{script_complete, split_script, ScriptStatement};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -193,6 +195,21 @@ pub enum Statement {
         name: String,
         if_not_exists: bool,
     },
+    CreateEdgeTable {
+        name: String,
+        if_not_exists: bool,
+        source: String,
+        target: String,
+        cascade: bool,
+    },
+    Relate {
+        source: Expr,
+        edge: String,
+        id: Option<Record>,
+        target: Expr,
+        value: Option<Expr>,
+        returning: Option<String>,
+    },
     Insert {
         table: String,
         value: Expr,
@@ -250,6 +267,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut array_depth: usize = 0;
     let mut paren_depth: usize = 0;
     let mut patch_expression = false;
+    let mut statement_start = 0;
     while i < b.len() {
         if b[i].is_ascii_whitespace() {
             i += 1;
@@ -389,17 +407,21 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
         });
         if object_depth == 0 && array_depth == 0 && paren_depth == 0 {
             let last = out.last().expect("just pushed token");
-            if last.kind == Kind::Word {
+            let statement = &out[statement_start..];
+            if last.kind == Kind::Symbol && last.text == ";" {
+                patch_expression = false;
+                statement_start = out.len();
+            } else if last.kind == Kind::Word {
                 if last.text.eq_ignore_ascii_case("WHERE")
                     || last.text.eq_ignore_ascii_case("RETURNING")
                 {
                     patch_expression = false;
                 } else if last.text.eq_ignore_ascii_case("PATCH")
-                    && out.first().is_some_and(|t| {
-                        t.kind == Kind::Word && t.text.eq_ignore_ascii_case("UPDATE")
-                    })
-                    && (out.len() == 3
-                        || ((out.len() == 5 || out.len() == 6) && out[2].text == ":"))
+                    && statement[0].kind == Kind::Word
+                    && statement[0].text.eq_ignore_ascii_case("UPDATE")
+                    && (statement.len() == 3
+                        || ((statement.len() == 5 || statement.len() == 6)
+                            && statement[2].text == ":"))
                 {
                     patch_expression = true;
                 }
@@ -1434,6 +1456,75 @@ pub fn parse(input: &str) -> Result<Statement> {
         }
     }
     p.pos = 0;
+    if p.eat("CREATE") && p.eat("EDGE") {
+        if !p.eat("TABLE") {
+            return Err(p.error("expected CREATE EDGE TABLE"));
+        }
+        let if_not_exists = p.eat("IF");
+        if if_not_exists && !(p.eat("NOT") && p.eat("EXISTS")) {
+            return Err(p.error("expected IF NOT EXISTS"));
+        }
+        let name = p.name()?;
+        if !p.eat("FROM") {
+            return Err(p.error("expected FROM source collection"));
+        }
+        let source = p.name()?;
+        if !p.eat("TO") {
+            return Err(p.error("expected TO target collection"));
+        }
+        let target = p.name()?;
+        let cascade = if p.eat("ON") {
+            if !p.eat("DELETE") {
+                return Err(p.error("expected ON DELETE"));
+            }
+            if p.eat("CASCADE") {
+                true
+            } else if p.eat("RESTRICT") {
+                false
+            } else {
+                return Err(p.error("expected ON DELETE RESTRICT or CASCADE"));
+            }
+        } else {
+            false
+        };
+        if !p.end() {
+            return Err(p.error("unexpected CREATE EDGE TABLE clause"));
+        }
+        return Ok(Statement::CreateEdgeTable {
+            name,
+            if_not_exists,
+            source,
+            target,
+            cascade,
+        });
+    }
+    p.pos = 0;
+    if p.eat("RELATE") {
+        let source = p.endpoint()?;
+        if p.arrow()? != Some(Direction::Out) {
+            return Err(p.error("RELATE uses source -> edge -> target"));
+        }
+        let (edge, id) = p.relate_edge()?;
+        if p.arrow()? != Some(Direction::Out) {
+            return Err(p.error("RELATE uses source -> edge -> target"));
+        }
+        let target = p.endpoint()?;
+        let value = if p.tokens.get(p.pos).is_some_and(|t| t.text == "{") || p.eat("DOCUMENT") {
+            Some(p.expr(0)?)
+        } else {
+            None
+        };
+        let returning = p.returning()?;
+        return Ok(Statement::Relate {
+            source,
+            edge,
+            id,
+            target,
+            value,
+            returning,
+        });
+    }
+    p.pos = 0;
     if p.eat("CREATE") && p.eat("TABLE") {
         let if_not_exists = p.eat("IF");
         if if_not_exists && !(p.eat("NOT") && p.eat("EXISTS")) {
@@ -1450,6 +1541,28 @@ pub fn parse(input: &str) -> Result<Statement> {
     }
     p.pos = 0;
     if p.eat("INSERT") && p.eat("INTO") {
+        if p.tokens.get(p.pos + 1).is_some_and(|t| t.text == ":")
+            && p.tokens.get(p.pos + 2).is_none_or(|t| t.text != ":")
+        {
+            let target = p.record()?;
+            if p.tokens.get(p.pos).is_none_or(|t| t.text != "{") {
+                return Err(p.error("record target INSERT requires an object body"));
+            }
+            let Expr::Object(mut fields) = p.expr(0)? else {
+                return Err(p.error("record target INSERT requires an object body"));
+            };
+            if fields.contains_key("id") {
+                return Err(p.error("record target INSERT body must omit id"));
+            }
+            let table = target.table.clone();
+            fields.insert("id".into(), Expr::Record(target));
+            let returning = p.returning()?;
+            return Ok(Statement::Insert {
+                table,
+                value: Expr::Object(fields),
+                returning,
+            });
+        }
         let table = p.name()?;
         if p.tokens.get(p.pos).is_some_and(|t| t.text == "{") || p.eat("DOCUMENT") {
             let value = p.expr(0)?;

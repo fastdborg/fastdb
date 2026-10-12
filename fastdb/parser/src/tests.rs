@@ -492,3 +492,171 @@ fn stored_value_clauses_preserve_checks_and_native_generated_columns() {
     let sql = "CREATE TABLE native(a INTEGER,b INTEGER GENERATED ALWAYS AS (a+1) STORED)";
     assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
 }
+
+#[test]
+fn script_patch_arrays_are_scoped_to_their_statement() {
+    let script = "SELECT 1; UPDATE docs:one PATCH [{op:'add',path:'/a]',value:[1,[2]]}];";
+    let pieces = split_script(script).unwrap();
+    assert_eq!(
+        pieces.iter().map(|s| s.sql).collect::<Vec<_>>(),
+        [
+            "SELECT 1;",
+            "UPDATE docs:one PATCH [{op:'add',path:'/a]',value:[1,[2]]}];"
+        ]
+    );
+    assert!(script_complete(script).unwrap());
+    assert!(matches!(
+        parse(pieces[1].sql).unwrap(),
+        Statement::MutateDocument {
+            mode: MutationMode::Patch,
+            ..
+        }
+    ));
+    let script = "UPDATE docs:one PATCH [{op:'remove',path:'/n'}]; SELECT [a)b] FROM t;";
+    assert_eq!(split_script(script).unwrap()[1].sql, "SELECT [a)b] FROM t;");
+}
+
+#[test]
+fn insert_record_targets_become_the_document_id() {
+    let Statement::Insert {
+        table,
+        value: Expr::Object(fields),
+        returning,
+    } = parse("INSERT INTO posts:first {\n    foo: 'bar'\n} RETURNING *").expect("target insert")
+    else {
+        panic!("expected insert");
+    };
+    assert_eq!(table, "posts");
+    assert_eq!(returning.as_deref(), Some("*"));
+    assert_eq!(
+        fields.get("id"),
+        Some(&Expr::Record(Record {
+            table: "posts".into(),
+            key: Key::String("first".into()),
+        }))
+    );
+    assert_eq!(fields.get("foo"), Some(&Expr::String("bar".into())));
+    assert_eq!(
+        parse("INSERT INTO posts:7 {title: 'x'}").unwrap(),
+        parse("INSERT INTO posts {id: posts:7, title: 'x'}").unwrap()
+    );
+    assert!(parse("INSERT INTO posts:first {id: posts:first, title: 'x'}").is_err());
+    assert!(parse("INSERT INTO posts:first DOCUMENT $doc").is_err());
+    assert!(parse("INSERT INTO posts:first").is_err());
+}
+
+#[test]
+fn edge_tables_and_relate_parse_their_clauses() {
+    assert_eq!(
+        parse("CREATE EDGE TABLE follows FROM people TO people ON DELETE CASCADE;").unwrap(),
+        Statement::CreateEdgeTable {
+            name: "follows".into(),
+            if_not_exists: false,
+            source: "people".into(),
+            target: "people".into(),
+            cascade: true,
+        }
+    );
+    assert!(matches!(
+        parse("CREATE EDGE TABLE IF NOT EXISTS wrote FROM people TO articles").unwrap(),
+        Statement::CreateEdgeTable {
+            if_not_exists: true,
+            cascade: false,
+            ..
+        }
+    ));
+    for sql in [
+        "CREATE EDGE follows FROM a TO b",
+        "CREATE EDGE TABLE follows FROM a",
+        "CREATE EDGE TABLE follows FROM a TO b ON DELETE SET NULL",
+        "CREATE EDGE TABLE follows FROM a TO b extra",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    let Statement::Relate {
+        source,
+        edge,
+        id,
+        target,
+        value,
+        returning,
+    } = parse("RELATE people:alice->follows:ab -> people:bob { weight: 2 } RETURNING id").unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        source,
+        Expr::Record(Record {
+            table: "people".into(),
+            key: Key::String("alice".into())
+        })
+    );
+    assert_eq!(edge, "follows");
+    assert_eq!(id.unwrap().key, Key::String("ab".into()));
+    assert!(matches!(target, Expr::Record(_)));
+    assert!(matches!(value, Some(Expr::Object(_))));
+    assert_eq!(returning.as_deref(), Some("id"));
+    assert!(matches!(
+        parse("RELATE type::record('people', $s) -> follows -> $t DOCUMENT $props").unwrap(),
+        Statement::Relate {
+            source: Expr::Call(_, _),
+            target: Expr::Parameter(_),
+            value: Some(Expr::Parameter(_)),
+            id: None,
+            ..
+        }
+    ));
+    for sql in [
+        "RELATE people:a <- follows <- people:b",
+        "RELATE people:a -> follows people:b",
+        "RELATE 'people:a' -> follows -> people:b",
+        "RELATE people:a - > follows -> people:b",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+}
+
+#[test]
+fn graph_bodies_parse_hops_steps_and_recursion() {
+    let graph =
+        parse_graph("people:alice -> follows -> people -> wrote -> articles WITH PATH").unwrap();
+    assert_eq!(graph.hops.len(), 2);
+    assert!(graph.with_path);
+    assert_eq!(graph.hops[1].edge.table, "wrote");
+    assert_eq!(graph.hops[1].node.table, "articles");
+    assert_eq!(
+        parse_graph("people:bob <- follows <- people").unwrap().hops[0].direction,
+        Direction::In
+    );
+    assert_eq!(
+        parse_graph("people:bob <-> follows <-> people")
+            .unwrap()
+            .hops[0]
+            .direction,
+        Direction::Both
+    );
+    let graph = parse_graph(
+        "$root -> (follows AS e WHERE e.weight >= $min) -> (People AS n WHERE n.active = true) DEPTH 0 TO 4 MODE PATHS",
+    )
+    .unwrap();
+    assert_eq!(graph.depth, Some((0, 4)));
+    assert_eq!(graph.mode, Some(GraphMode::Paths));
+    assert!(graph.with_path);
+    assert_eq!(graph.hops[0].edge.alias.as_deref(), Some("e"));
+    assert_eq!(graph.hops[0].node.table, "people");
+    assert!(graph.hops[0].edge.predicate.is_some());
+    for body in [
+        "people:a",
+        "people:a -> follows <- people",
+        "people:a -> follows -> people DEPTH 1 TO 3",
+        "people:a -> follows -> people MODE REACHABLE",
+        "people:a -> follows -> people DEPTH 3 TO 1 MODE REACHABLE",
+        "people:a -> follows -> people DEPTH -1 TO 1 MODE REACHABLE",
+        "people:a -> f -> p -> g -> q DEPTH 1 TO 2 MODE REACHABLE",
+        "people.a -> follows -> people",
+        "people:a -> follows -> people LIMIT 3",
+        "people:a -> (follows WHERE) -> people",
+    ] {
+        assert!(parse_graph(body).is_err(), "{body}");
+    }
+}

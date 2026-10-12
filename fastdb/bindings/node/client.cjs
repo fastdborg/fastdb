@@ -2,7 +2,7 @@
 const { randomUUID } = require('node:crypto');
 const { Buffer } = require('node:buffer');
 const { addAbortListener } = require('node:events');
-const { Float64, Record, Vector, encodeValue, decodeValue, plainObject } = require('./values.cjs');
+const { Float64, Record, Vector, encodeValue, decodeValue, plainObject, text } = require('./values.cjs');
 
 const MAX_REQUEST = 65_536;
 const MAX_RESPONSE = 524_288;
@@ -206,9 +206,9 @@ function encodeStatements(statements) {
   if (!Array.isArray(statements) || statements.length < 1 || statements.length > 32) throw new RangeError('request requires 1..32 statements');
   return statements.map(statement => {
     if (!plainObject(statement) || Object.keys(statement).some(key => !['sql', 'params'].includes(key)) || typeof statement.sql !== 'string' || !statement.sql.trim()) throw new TypeError('statement requires SQL and optional params');
-    if (statement.params === undefined) return { sql: statement.sql };
+    if (statement.params === undefined) return { sql: text(statement.sql) };
     if (!plainObject(statement.params)) throw new TypeError('params require an object');
-    return { sql: statement.sql, params: Object.fromEntries(Object.entries(statement.params).map(([key, value]) => [key, encodeValue(value)])) };
+    return { sql: text(statement.sql), params: Object.fromEntries(Object.entries(statement.params).map(([key, value]) => [text(key), encodeValue(value)])) };
   });
 }
 

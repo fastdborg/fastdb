@@ -148,3 +148,31 @@ fn long_expression_chains_fail_before_evaluation() {
         .is_err());
     assert!(q(&c, "SELECT * FROM posts").rows.is_empty());
 }
+#[test]
+fn field_references_without_a_source_document_suggest_single_quotes() {
+    let (_db, c) = setup();
+    for (sql, field) in [
+        ("INSERT INTO posts:a {foo: \"bar\"}", "bar"),
+        ("INSERT INTO posts {id: posts:b, foo: bar}", "bar"),
+        (
+            "INSERT INTO posts {id: posts:c, foo: \"first name\".city}",
+            "first name.city",
+        ),
+    ] {
+        let error = c.execute(sql, &Parameters::new()).unwrap_err();
+        assert_eq!(error.code(), "FDB_VALIDATION", "{sql}");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "validation: \"{field}\" is a field reference, but this statement has no source document; use '{field}' for a string"
+            ),
+            "{sql}"
+        );
+    }
+    q(&c, "INSERT INTO posts:d {\"first name\": 'Ann'}");
+    q(&c, "UPDATE posts {copy: \"first name\"} WHERE id = posts:d");
+    assert_eq!(
+        q(&c, "SELECT copy FROM posts:d").rows,
+        vec![vec![Value::String("Ann".into())]]
+    );
+}

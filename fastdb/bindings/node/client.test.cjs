@@ -282,6 +282,20 @@ test('private journals survive a new client, preserve exact body, and reject ove
   await db.close();
 });
 
+test('a journal saved for the largest escaped request body can be loaded', async t => {
+  const root = path.resolve(__dirname, '../../../..', '.local/tmp');
+  await fs.mkdir(root, { recursive: true });
+  const dir = await fs.mkdtemp(path.join(root, 'studio-client-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const db = await connect({ url: cloud, token: 'test-token', fetch: async () => json({ id: 'cloud-test', sequence: 0 }) });
+  const prepared = db.prepareWrite([{ sql: 'SELECT $x', params: { $x: '\\'.repeat(32_690) } }]);
+  const file = path.join(dir, 'request.json');
+  await saveRequest(file, prepared);
+  assert.ok((await fs.stat(file)).size > 131_072);
+  assert.deepEqual(await loadRequest(file), prepared);
+  await db.close();
+});
+
 test('real HTTP cancellation after dispatch leaves a write unknown; close cancels pending work', async t => {
   let received;
   const admitted = new Promise(resolve => { received = resolve; });

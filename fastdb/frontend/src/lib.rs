@@ -25,6 +25,8 @@ mod mutation_result;
 mod reindex;
 pub use analyzer::FullTextOptions;
 mod functions;
+mod graph;
+pub use graph::GraphLimits;
 mod guard;
 mod integrity;
 pub use integrity::{IntegrityLimits, IntegrityReport};
@@ -158,6 +160,14 @@ impl Error {
             Self::Rollback { .. } => "FDB_ROLLBACK",
         }
     }
+
+    pub fn requires_exclusive_transaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Engine(turso_core::LimboError::TxError(message))
+                if message.starts_with("DDL statements require an exclusive transaction")
+        )
+    }
 }
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Serialize)]
@@ -258,6 +268,10 @@ struct Collection {
     field_policies: Vec<field_rules::Policy>,
     #[serde(default, skip_serializing_if = "field_rules::is_false")]
     strict: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edge: Option<graph::Edge>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    edge_dependents: Vec<String>,
 }
 
 pub struct Database {
@@ -367,6 +381,9 @@ impl Database {
             cancellation: Default::default(),
             meter_catalog_reads: Default::default(),
             meter_schema_changes: Default::default(),
+            graph_limits: Default::default(),
+            graph_counters: Default::default(),
+            graph_plan: Default::default(),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -385,6 +402,9 @@ pub struct Connection {
     cancellation: std::sync::Mutex<Option<Arc<interrupt::ActiveCancellation>>>,
     meter_catalog_reads: std::sync::atomic::AtomicBool,
     meter_schema_changes: std::sync::atomic::AtomicBool,
+    graph_limits: std::sync::Mutex<GraphLimits>,
+    graph_counters: std::sync::Mutex<graph::GraphCounters>,
+    graph_plan: std::sync::Mutex<Vec<String>>,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
@@ -576,7 +596,10 @@ impl Connection {
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
-        collection.version = if collection.strict
+        collection.version = if collection.edge.is_some() || !collection.edge_dependents.is_empty()
+        {
+            collection.version.max(graph::CATALOG_VERSION)
+        } else if collection.strict
             || !collection.field_policies.is_empty()
             || collection
                 .indexes
@@ -597,7 +620,8 @@ impl Connection {
                     .vector
                     .as_ref()
                     .is_some_and(|config| config.compressed())
-            }) {
+            })
+        {
             collection.version.max(5)
         } else if collection.indexes.iter().any(|index| {
             index
@@ -633,7 +657,7 @@ impl Connection {
             // Names are collision-free UTF-8 hex, independent of user quoting.
             let storage = format!("__fastdb_c_{}", name.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
             self.run(&format!("CREATE TABLE {} (id BLOB PRIMARY KEY, doc BLOB NOT NULL)", quote(&storage)), &[])?;
-            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new(), relations: Vec::new(), field_policies: Vec::new(), strict: false };
+            let collection = Collection { version:catalog::version(), name: name.clone(), storage, fields: Vec::new(), indexes: Vec::new(), relations: Vec::new(), field_policies: Vec::new(), strict: false, edge: None, edge_dependents: Vec::new() };
             self.run("INSERT INTO __fastdb_catalog VALUES (?1, ?2)", &[text(&name), text(&serde_json::to_string(&collection)?)])?; Ok(())
         })
     }
@@ -677,6 +701,7 @@ impl Connection {
         if field.path[0] == "id" {
             return Err(Error::Validation("id has a fixed type".into()));
         }
+        self.graph_check_field(table, &field.path)?;
         if let FieldType::Record(target) = &field.kind {
             canonical(target)?;
         }
@@ -884,6 +909,7 @@ impl Connection {
                 if let Some(Value::Record(record)) = doc.get("id") {
                     if let Some(previous) = self.get_in(&c, record)? {
                         field_rules::readonly(&c, &previous, &doc)?;
+                        self.graph_check_edge_update(&c, &doc)?;
                         self.delete_document(&c, &previous)?;
                     }
                 }
@@ -908,12 +934,16 @@ impl Connection {
             );
         }
         normalize_document_id(c, doc)?;
+        if c.edge.is_some() {
+            self.graph_normalize_edge(c, doc)?;
+        }
         field_rules::defaults(c, doc)?;
         self.compute_fields(c, doc)?;
         self.validate_candidate(c, doc)?;
         Ok(())
     }
     fn store_insert_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        self.graph_check_new_edge(c, doc)?;
         self.run_customer(
             &format!("INSERT INTO {} VALUES (?1, ?2)", quote(&c.storage)),
             &[
@@ -924,7 +954,7 @@ impl Connection {
         for index in &c.indexes {
             self.insert_index(index, doc)?;
         }
-        Ok(())
+        self.graph_link_edge(c, doc)
     }
     pub fn patch(&self, record: &Record, patch: Document) -> Result<Option<Document>> {
         if patch.contains_key("id") {
@@ -941,11 +971,13 @@ impl Connection {
         })
     }
     fn replace_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        self.graph_restore_endpoints(c, doc)?;
         self.compute_fields(c, doc)?;
         self.validate_candidate(c, doc)?;
         self.write_validated_document(c, doc)
     }
     fn write_validated_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        self.graph_check_edge_update(c, doc)?;
         if c.field_policies
             .iter()
             .any(|policy| policy.options.readonly)
@@ -970,6 +1002,7 @@ impl Connection {
     // Caller owns the statement savepoint. A failure restores conflicting
     // documents along with the target and all managed indexes.
     fn replace_conflicting_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
+        self.graph_restore_endpoints(c, doc)?;
         self.compute_fields(c, doc)?;
         self.validate_candidate(c, doc)?;
         self.delete_unique_conflicts(c, doc)?;
@@ -998,6 +1031,7 @@ impl Connection {
     }
     // Caller owns the operation savepoint and a snapshot read within it.
     fn delete_document(&self, c: &Collection, doc: &Document) -> Result<()> {
+        self.graph_delete(c, doc)?;
         let id = EngineValue::Blob(doc["id"].encode()?);
         for index in &c.indexes {
             self.delete_index_entry(index, &id)?;
@@ -1380,6 +1414,28 @@ impl Connection {
                 self.create_collection(&name, if_not_exists)?;
                 Ok(QueryResult::command(0))
             }
+            Statement::CreateEdgeTable {
+                name,
+                if_not_exists,
+                source,
+                target,
+                cascade,
+            } => {
+                self.create_edge_table(&name, &source, &target, cascade, if_not_exists)?;
+                Ok(QueryResult::command(0))
+            }
+            Statement::Relate {
+                source,
+                edge,
+                id,
+                target,
+                value,
+                returning,
+            } => self.atomic(|| {
+                let doc = self.relate_document(source, &edge, id, target, value, params)?;
+                let doc = mutation_result::Snapshot::after(self.insert(&edge, doc)?, None);
+                self.object_returning(&edge, returning, vec![doc], params, limits)
+            }),
             Statement::Insert {
                 table,
                 value,

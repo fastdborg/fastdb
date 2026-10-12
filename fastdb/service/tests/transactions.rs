@@ -470,3 +470,137 @@ fn stored_functions_and_analyzers_resolve_inside_the_read_snapshot() {
     assert_eq!(result["results"][0]["rows"][0][0]["value"], "hello");
     assert_eq!(result["results"][0]["rows"][0][1]["type"], "Array");
 }
+
+#[test]
+fn a_document_insert_creates_its_missing_collection() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = DatabaseService::create(&directory.path().join("app.fastdb")).unwrap();
+    let insert = query(
+        &service,
+        "first-post",
+        &["INSERT INTO posts { id: posts:first, title: 'first post', content: 'Hello, this is the first post' }"],
+    );
+    assert!(insert["error"].is_null(), "{insert}");
+    assert_eq!(insert["sequence"], 1);
+    assert_eq!(
+        read(&service, "SELECT title FROM posts:first")["results"][0]["rows"],
+        json!([[{"type":"String","value":"first post"}]])
+    );
+    let second = query(
+        &service,
+        "second-post",
+        &["INSERT INTO posts { id: posts:second, title: 'second post' }"],
+    );
+    assert!(second["error"].is_null(), "{second}");
+    assert_eq!(second["sequence"], 2);
+}
+
+#[test]
+fn a_failed_insert_into_a_missing_collection_leaves_no_collection() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = DatabaseService::create(&directory.path().join("app.fastdb")).unwrap();
+    let failure = query(
+        &service,
+        "failed-post",
+        &[
+            "INSERT INTO posts { id: posts:first, title: 'first post' }",
+            "INSERT INTO posts { id: posts:first, title: 'duplicate' }",
+        ],
+    );
+    assert!(failure["error"]["code"].is_string(), "{failure}");
+    assert_eq!(failure["sequence"], 1);
+    let missing: Value = serde_json::from_str(
+        &service
+            .read(&{
+                let mut body: Value =
+                    serde_json::from_str(&request("read", 0, &["SELECT id FROM posts"])).unwrap();
+                body["readVersion"] = json!(2);
+                body.to_string()
+            })
+            .unwrap_or_else(|error| json!({"error":error.code}).to_string()),
+    )
+    .unwrap();
+    assert!(!missing["error"].is_null(), "{missing}");
+}
+
+#[test]
+fn a_retried_write_gets_a_fresh_work_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = Arc::new(DatabaseService::create(&directory.path().join("app.fastdb")).unwrap());
+    let setup = query(
+        &service,
+        "setup",
+        &["CREATE TABLE items (id INTEGER PRIMARY KEY)"],
+    );
+    assert!(setup["error"].is_null(), "{setup}");
+    let mut body: Value = serde_json::from_str(&request(
+        "slow",
+        1,
+        &[
+            "INSERT INTO items VALUES(1)",
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<20000) SELECT count(*) FROM n",
+        ],
+    ))
+    .unwrap();
+    body["workLimits"] = json!({"rowMutations":1});
+    let slow = {
+        let service = service.clone();
+        std::thread::spawn(move || service.query(&body.to_string()).unwrap())
+    };
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let other = query(&service, "other", &["INSERT INTO items VALUES(2)"]);
+    assert!(other["error"].is_null(), "{other}");
+    let slow: Value = serde_json::from_str(&slow.join().unwrap()).unwrap();
+    assert!(slow["error"].is_null(), "{slow}");
+    assert_eq!(slow["sequence"], 3);
+    assert_eq!(slow["executionWork"]["rowMutations"], 1);
+    assert_eq!(
+        read(&service, "SELECT id FROM items ORDER BY id")["results"][0]["rows"],
+        json!([[{"type":"Integer","value":"1"}],[{"type":"Integer","value":"2"}]])
+    );
+}
+
+#[test]
+fn malformed_parameters_fail_the_request_without_stopping_the_service() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = DatabaseService::create(&directory.path().join("app.fastdb")).unwrap();
+    for (index, value) in [
+        json!(5),
+        json!({"type":"Integer","value":"99999999999999999999"}),
+        json!({"type":"Number","value":"not a number"}),
+        json!({"type":"Bytes","value":"AA"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let body = json!({"requestId":format!("bad-{index}"),"afterSequence":index,"statements":[{"sql":"SELECT $v","params":{"$v":value}}]}).to_string();
+        let reply: Value = serde_json::from_str(&service.query(&body).unwrap()).unwrap();
+        assert_eq!(reply["error"]["code"], "FDB_VALIDATION", "{reply}");
+        assert_eq!(reply["sequence"], index + 1);
+    }
+    let after = query(&service, "after", &["SELECT 1"]);
+    assert!(after["error"].is_null(), "{after}");
+    assert_eq!(after["sequence"], 5);
+}
+
+#[test]
+fn a_record_target_insert_sets_the_document_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = DatabaseService::create(&directory.path().join("app.fastdb")).unwrap();
+    let insert = query(
+        &service,
+        "target-insert",
+        &["INSERT INTO posts:first {\n    foo: 'bar'\n}"],
+    );
+    assert!(insert["error"].is_null(), "{insert}");
+    assert_eq!(
+        read(&service, "SELECT foo FROM posts:first")["results"][0]["rows"],
+        json!([[{"type":"String","value":"bar"}]])
+    );
+    let duplicate = query(
+        &service,
+        "target-duplicate",
+        &["INSERT INTO posts:first {foo: 'again'}"],
+    );
+    assert_eq!(duplicate["error"]["code"], "FDB_CONSTRAINT", "{duplicate}");
+}

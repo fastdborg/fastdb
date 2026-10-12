@@ -45,7 +45,7 @@ pub(crate) const fn legacy_version() -> u32 {
     1
 }
 pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
-    if !matches!(collection.version, 1..=5) {
+    if !matches!(collection.version, 1..=6) {
         return Err(Error::Storage(format!(
             "unsupported collection metadata version {}",
             collection.version
@@ -129,6 +129,7 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
             crate::vectors::validate_dimension(dims)?;
         }
     }
+    crate::graph::validate_version(collection)?;
     if collection.version == 1 && collection.fields.iter().any(|f| f.check.is_some()) {
         return Err(Error::Storage(
             "CHECK metadata requires catalog version 2".into(),
@@ -334,6 +335,28 @@ impl SchemaSnapshot {
         }
         Ok(())
     }
+    fn managed_index_set(&self, table: &str, expected: &[&str]) -> Result<()> {
+        for row in &self.rows {
+            let [EngineValue::Text(kind), name, EngineValue::Text(actual_table), sql] =
+                row.as_slice()
+            else {
+                continue;
+            };
+            if actual_table.as_str() != table
+                || !(kind.as_str() == "trigger"
+                    || (kind.as_str() == "index" && !matches!(sql, EngineValue::Null)))
+            {
+                continue;
+            }
+            if !matches!(name, EngineValue::Text(name) if kind.as_str() == "index" && expected.contains(&name.as_str()))
+            {
+                return Err(Error::Storage(format!(
+                    "unexpected dependency on managed table {table}"
+                )));
+            }
+        }
+        Ok(())
+    }
     fn managed_dependencies(&self, table: &str, expected_index: Option<&str>) -> Result<()> {
         for row in &self.rows {
             let [EngineValue::Text(kind), name, EngineValue::Text(actual_table), sql] =
@@ -373,8 +396,24 @@ impl Connection {
         schema.managed_dependencies("__fastdb_functions", None)?;
         self.validate_functions()?;
         let mut storage = std::collections::BTreeSet::new();
-        for c in self.collections()? {
+        let collections = self.collections()?;
+        crate::graph::validate_catalog(&collections, self.graph_marker_present()?)?;
+        for c in collections {
             storage.insert(c.storage.clone());
+            if let Some(edge) = &c.edge {
+                for (name, kind, ddl) in edge.schema() {
+                    if !storage.insert(name.clone()) {
+                        return Err(Error::Storage(format!(
+                            "graph storage {name} has multiple owners"
+                        )));
+                    }
+                    schema.schema_object(&name, kind, &edge.adjacency, &ddl)?;
+                }
+                schema.managed_index_set(
+                    &edge.adjacency,
+                    &[&edge.outgoing_index(), &edge.incoming_index()],
+                )?;
+            }
             schema.schema_object(
                 &c.storage,
                 "table",
@@ -454,6 +493,7 @@ impl Connection {
             let canonical = name.as_str().to_ascii_lowercase();
             if (canonical.starts_with("__fastdb_c_")
                 || canonical.starts_with("__fastdb_i_")
+                || canonical.starts_with("__fastdb_g_")
                 || canonical.starts_with("__turso_internal_fts_dir_"))
                 && !storage.contains(name.as_str())
             {
@@ -509,8 +549,8 @@ impl Connection {
     }
     pub(crate) fn collections(&self) -> Result<Vec<Collection>> {
         self.run(
-            "SELECT name,metadata FROM __fastdb_catalog ORDER BY name",
-            &[],
+            "SELECT name,metadata FROM __fastdb_catalog WHERE name != ?1 ORDER BY name",
+            &[text(crate::graph::MARKER)],
         )?
         .into_iter()
         .map(|row| match row.as_slice() {
@@ -572,6 +612,7 @@ impl Connection {
                     ));
                 }
             }
+            self.drop_edge_metadata(&c)?;
             for index in &c.indexes {
                 self.drop_index_storage(index)?;
             }
@@ -691,7 +732,11 @@ impl Connection {
             let info=match (scope,name) {
                 ("db",None)=>{
                     let mut entries=Vec::new();
-                    for c in self.collections()? {entries.push(object([("name",Value::String(c.name)),("model",Value::String("document".into()))]));}
+                    for c in self.collections()? {
+                    let mut entry=vec![("name",Value::String(c.name)),("model",Value::String("document".into()))];
+                    if let Some(edge)=c.edge {entry.push(("kind",Value::String("edge".into())));entry.push(("source",Value::String(edge.source)));entry.push(("target",Value::String(edge.target)));}
+                    entries.push(object(entry));
+                }
                     for row in self.run("SELECT name FROM sqlite_schema WHERE type='table' AND substr(lower(name),1,9) != '__fastdb_' AND substr(lower(name),1,7) != 'sqlite_' AND substr(lower(name),1,17) != '__turso_internal_' ORDER BY name",&[])? {
                         if let EngineValue::Text(t)=&row[0] {entries.push(object([("name",Value::String(t.as_str().into())),("model",Value::String("relational".into()))]));}
                     }
@@ -792,7 +837,7 @@ impl Connection {
                     .iter()
                     .map(|r| Value::String(r.name.clone()))
                     .collect();
-                Ok(object([
+                let mut info = vec![
                     ("name", Value::String(c.name)),
                     ("model", Value::String("document".into())),
                     ("strict", Value::Boolean(c.strict)),
@@ -808,7 +853,31 @@ impl Connection {
                             "transactions".into(),
                         ]),
                     ),
-                ]))
+                ];
+                if let Some(edge) = &c.edge {
+                    info.push(("kind", Value::String("edge".into())));
+                    info.push((
+                        "edge",
+                        object([
+                            ("source", Value::String(edge.source.clone())),
+                            ("target", Value::String(edge.target.clone())),
+                            (
+                                "on_delete",
+                                Value::String(
+                                    if edge.cascade { "cascade" } else { "restrict" }.into(),
+                                ),
+                            ),
+                            (
+                                "adjacency_indexes",
+                                strings(&["outgoing".into(), "incoming".into()]),
+                            ),
+                        ]),
+                    ));
+                }
+                if !c.edge_dependents.is_empty() {
+                    info.push(("edge_tables", strings(&c.edge_dependents)));
+                }
+                Ok(object(info))
             }
             Err(Error::NotFound(_)) => {
                 let schema = self.run("SELECT type FROM sqlite_schema WHERE type IN ('table','view') AND name=?1 COLLATE NOCASE", &[text(&name)])?;

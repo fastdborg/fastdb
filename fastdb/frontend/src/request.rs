@@ -318,6 +318,7 @@ fn classify(sql: &str) -> Result<RequestStatementKind> {
         | Statement::Patch { .. }
         | Statement::PatchWhere { .. }
         | Statement::Delete { .. }
+        | Statement::Relate { .. }
         | Statement::MutateDocument { .. } => Write,
         Statement::Sql(native) => {
             use turso_parser::ast::{Cmd, Stmt};

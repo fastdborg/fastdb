@@ -348,6 +348,7 @@ impl Connection {
                     | Statement::Upsert { .. }
                     | Statement::Patch { .. }
                     | Statement::PatchWhere { .. }
+                    | Statement::Relate { .. }
                     | Statement::Delete { .. } => true,
                     Statement::Sql(sql) => {
                         let normalized = crate::update::normalize(&sql)?;
@@ -527,6 +528,11 @@ impl Connection {
         let Ok(Cmd::Stmt(mut statement)) = parsed(&expanded) else {
             return Ok(None);
         };
+        if !matches!(statement, Stmt::Select(_)) && expanded.contains("__fastdb_graph(") {
+            return Err(unsupported(
+                "GRAPH sources are available in SELECT statements",
+            ));
+        }
         let leading_with = if let Stmt::Insert {
             with,
             body: InsertBody::Select(select, _),
@@ -926,6 +932,14 @@ impl Connection {
                 );
                 crate::update::validate_targets(&paths)?;
                 let unset = normalized.as_ref().is_some_and(|n| n.unset);
+                if unset
+                    && paths.iter().any(|path| matches!(path[0].as_str(), "source" | "target"))
+                    && self.catalog(update.tbl_name.name.as_str())?.edge.is_some()
+                {
+                    return Err(Error::Validation(
+                        "edge source and target are system fields and cannot be removed".into(),
+                    ));
+                }
                 let rows = self.write_candidates(
                     &update.tbl_name,
                     WriteSource { with: update.with, from: update.from },

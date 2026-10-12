@@ -82,7 +82,7 @@ function encodeValue(value, depth = 0) {
   const tagged = (type, value) => ({ type, value });
   if (value === null) return { type: 'Null' };
   if (typeof value === 'boolean') return tagged('Boolean', value);
-  if (typeof value === 'string') return tagged('String', value);
+  if (typeof value === 'string') return tagged('String', text(value));
   if (typeof value === 'bigint') { checkInteger(value); return tagged('Integer', value.toString()); }
   if (value instanceof Float64) return encodeFloat(value.value);
   if (typeof value === 'number') {
@@ -93,7 +93,7 @@ function encodeValue(value, depth = 0) {
     }
     return encodeFloat(value);
   }
-  if (value instanceof Record) return tagged('Record', { table: value.table, key: encodeValue(value.key) });
+  if (value instanceof Record) return tagged('Record', { table: text(value.table), key: encodeValue(value.key) });
   if (value instanceof Vector) return tagged('Vector', [...value.bytes]);
   if (value instanceof Uint8Array) return tagged('Binary', [...value]);
   if (Array.isArray(value)) {
@@ -104,7 +104,7 @@ function encodeValue(value, depth = 0) {
     }
     return tagged('Array', entries);
   }
-  if (plainObject(value)) return tagged('Object', Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, encodeValue(entry, depth + 1)])));
+  if (plainObject(value)) return tagged('Object', Object.fromEntries(Object.entries(value).map(([key, entry]) => [text(key), encodeValue(entry, depth + 1)])));
   throw new TypeError('unsupported parameter value');
 }
 
@@ -166,6 +166,11 @@ function decodeValue(value, depth = 0) {
   }
 }
 
+function text(value) {
+  if (!value.isWellFormed()) throw new TypeError('strings must be well-formed Unicode');
+  return value;
+}
+
 function checkInteger(value) {
   if (value < -(1n << 63n) || value >= (1n << 63n)) throw new RangeError('integer outside int64');
 }
@@ -178,4 +183,4 @@ function plainObject(value) {
   return value !== null && typeof value === 'object' && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 }
 
-module.exports = { Float64, Record, Vector, encodeValue, decodeValue, plainObject };
+module.exports = { Float64, Record, Vector, encodeValue, decodeValue, plainObject, text };

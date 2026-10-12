@@ -157,6 +157,12 @@ pub(crate) fn prepare_statements(
                 .iter()
                 .map(|(key, value)| {
                     crate::Value::from_portable_value(value.clone())
+                        .map_err(|error| match error {
+                            crate::Error::Encoding(error) => crate::Error::Validation(format!(
+                                "parameter {key} is not a portable value: {error}"
+                            )),
+                            error => error,
+                        })
                         .map(|value| (key.clone(), value))
                 })
                 .collect::<crate::Result<_>>()?;

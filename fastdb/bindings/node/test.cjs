@@ -2660,6 +2660,29 @@ test('direct JSON response composition preserves escaped names and nested values
   }
 });
 
+test('array holes are rejected as invalid parameters in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      await assert.rejects(async () => db.execute('SELECT $v', { $v: [1, , 2] }), { name: 'TypeError', message: /array holes/ });
+      await assert.rejects(async () => db.execute('SELECT $v', { $v: { nested: new Array(1) } }), { name: 'TypeError', message: /array holes/ });
+      assert.deepEqual((await db.execute('SELECT $v', { $v: [1n, null] })).rows, [[[1n, null]]]);
+    } finally { await db.close(); }
+  }
+});
+
+test('malformed Unicode parameters are rejected as invalid input in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      for (const params of [{ $v: 'a\ud800' }, { $v: { ['\udc00']: 1 } }, { $v: new Record('docs', 'k\ud800') }, { ['$\ud800']: 1 }]) {
+        await assert.rejects(async () => db.execute('SELECT $v', params), { name: 'TypeError', message: /well-formed/ });
+      }
+      assert.deepEqual((await db.execute('SELECT $v', { $v: '\ud83d\ude00' })).rows, [['\ud83d\ude00']]);
+    } finally { await db.close(); }
+  }
+});
+
 test('maximum logical depth survives wire framing, storage and transfer', async () => {
   const {AsyncDatabase} = require('./index.cjs');
   for (const db of [new Database(), await AsyncDatabase.open()]) {
@@ -4168,6 +4191,38 @@ test('composite sets, row membership and collection recursion preserve values in
       await assert.rejects(async()=>db.all('WITH RECURSIVE r(n) AS (SELECT n FROM docs WHERE n=1 UNION ALL SELECT n+1 FROM r) SELECT sum(n) FROM r TIMEOUT 10ms'),e=>e.code==='FDB_CANCELLED');
       assert.equal((await db.collection('docs').get('a')).prior,true);
       await db.execute('ROLLBACK');
+    } finally { await db.close(); }
+  }
+});
+test('edge tables, RELATE and GRAPH sources keep typed records in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open(':memory:')]) {
+    try {
+      for (const sql of [
+        'CREATE TABLE people',
+        'CREATE EDGE TABLE follows FROM people TO people',
+        "INSERT INTO people:alice {name:'Alice'}",
+        "INSERT INTO people:bob {name:'Bob'}",
+        "INSERT INTO people:carol {name:'Carol'}",
+      ]) await db.execute(sql);
+      const edge = await db.exactlyOne('RELATE $s -> follows:ab -> $t {weight:$w} RETURNING id,source,target,weight', {$s:new Record('people','alice'),$t:new Record('people','bob'),$w:2n});
+      assert.deepEqual(edge,[new Record('follows','ab'),new Record('people','alice'),new Record('people','bob'),2n]);
+      await db.execute('RELATE people:bob -> follows:bc -> people:carol');
+      await assert.rejects(async () => db.execute('RELATE people:bob -> follows -> people:nobody'), e=>e.code==='FDB_CONSTRAINT');
+      await assert.rejects(async () => db.execute('DELETE FROM people WHERE id = people:bob'), e=>e.code==='FDB_CONSTRAINT');
+      const sql = "SELECT g.node, g.depth, g.edges, p.name FROM GRAPH(type::record('people', $root) -> follows -> people DEPTH 1 TO 3 MODE REACHABLE WITH PATH) AS g JOIN people p ON p.id = g.node ORDER BY g.depth";
+      assert.deepEqual(await db.all(sql, {$root:'alice'}), [
+        [new Record('people','bob'),1n,[new Record('follows','ab')],'Bob'],
+        [new Record('people','carol'),2n,[new Record('follows','ab'),new Record('follows','bc')],'Carol'],
+      ]);
+      const profile = await db.profileSelect(sql, {$root:'alice'});
+      assert.equal(profile.metrics.graphRows, 2n);
+      assert.equal(profile.metrics.graphAdjacencyEntries, 2n);
+      assert.equal(profile.metrics.graphVisited, 3n);
+      await assert.rejects(async () => db.execute('SELECT * FROM GRAPH(people:alice -> follows) g'), e=>e.code==='FDB_SYNTAX');
+      const info = await db.exactlyOne('INFO FOR TABLE follows');
+      assert.equal(info[0].kind, 'edge');
+      assert.deepEqual(info[0].edge.source, 'people');
     } finally { await db.close(); }
   }
 });

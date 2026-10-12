@@ -212,6 +212,20 @@ impl Connection {
                     .checked_add(entries)
                     .ok_or_else(|| Error::Limit("integrity entry count overflow".into()))?;
             }
+            if c.edge.is_some() {
+                let entries = self.graph_integrity(&c)?;
+                if entries != report.documents {
+                    return Err(Error::Storage(format!(
+                        "edge table {} adjacency does not match its edges",
+                        c.name
+                    )));
+                }
+                report.indexes += 2;
+                report.index_entries = report
+                    .index_entries
+                    .checked_add(entries.saturating_mul(2))
+                    .ok_or_else(|| Error::Limit("integrity entry count overflow".into()))?;
+            }
             Ok(report)
         })
     }

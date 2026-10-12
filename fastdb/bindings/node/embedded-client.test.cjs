@@ -15,6 +15,22 @@ async function fixture(t) {
   return { directory, file: path.join(directory, 'app.fastdb') };
 }
 
+test('malformed Unicode is rejected before dispatch and leaves the shared adapter usable', async t => {
+  const { file } = await fixture(t);
+  const db = await openEmbedded({ path: file, create: true });
+  t.after(() => db.close());
+  await db.writeAtomic([{ sql: 'CREATE TABLE notes(text)' }]);
+  for (const statement of [
+    { sql: 'INSERT INTO notes VALUES($text)', params: { $text: 'emoji \ud83d' } },
+    { sql: 'INSERT INTO notes VALUES($text)', params: { $text: { ['\udc00']: 1 } } },
+    { sql: 'INSERT INTO notes VALUES($text)', params: { ['$\ud800']: 1 } },
+    { sql: "INSERT INTO notes VALUES('\ud800')" },
+  ]) assert.throws(() => db.prepareWrite([statement]), { name: 'TypeError', message: /well-formed/ });
+  await assert.rejects(db.read([{ sql: 'SELECT $text', params: { $text: new Record('notes', 'k\ud800') } }]), { name: 'TypeError', message: /well-formed/ });
+  await db.writeAtomic([{ sql: 'INSERT INTO notes VALUES($text)', params: { $text: 'emoji \ud83d\ude00' } }]);
+  assert.deepEqual((await db.read([{ sql: 'SELECT text FROM notes' }])).results[0].rows, [['emoji \ud83d\ude00']]);
+});
+
 test('embedded client explicitly creates files and round-trips portable values without a service', async t => {
   const { file } = await fixture(t);
   await assert.rejects(openEmbedded({ path: file }), error => error.code === 'FDB_NOT_FOUND');

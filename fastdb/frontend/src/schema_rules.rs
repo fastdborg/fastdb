@@ -38,6 +38,10 @@ pub(crate) fn validate(collection: &Collection, document: &Document) -> Result<(
     }
     let mut root = Node::default();
     root.children.insert("id".into(), Node::default());
+    if collection.edge.is_some() {
+        root.children.insert("source".into(), Node::default());
+        root.children.insert("target".into(), Node::default());
+    }
     for field in &collection.fields {
         let mut node = &mut root;
         for key in &field.path {
