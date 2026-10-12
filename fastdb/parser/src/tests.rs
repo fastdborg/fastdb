@@ -492,3 +492,55 @@ fn stored_value_clauses_preserve_checks_and_native_generated_columns() {
     let sql = "CREATE TABLE native(a INTEGER,b INTEGER GENERATED ALWAYS AS (a+1) STORED)";
     assert_eq!(parse(sql).unwrap(), Statement::Sql(sql.into()));
 }
+
+#[test]
+fn script_patch_arrays_are_scoped_to_their_statement() {
+    let script = "SELECT 1; UPDATE docs:one PATCH [{op:'add',path:'/a]',value:[1,[2]]}];";
+    let pieces = split_script(script).unwrap();
+    assert_eq!(
+        pieces.iter().map(|s| s.sql).collect::<Vec<_>>(),
+        [
+            "SELECT 1;",
+            "UPDATE docs:one PATCH [{op:'add',path:'/a]',value:[1,[2]]}];"
+        ]
+    );
+    assert!(script_complete(script).unwrap());
+    assert!(matches!(
+        parse(pieces[1].sql).unwrap(),
+        Statement::MutateDocument {
+            mode: MutationMode::Patch,
+            ..
+        }
+    ));
+    let script = "UPDATE docs:one PATCH [{op:'remove',path:'/n'}]; SELECT [a)b] FROM t;";
+    assert_eq!(split_script(script).unwrap()[1].sql, "SELECT [a)b] FROM t;");
+}
+
+#[test]
+fn insert_record_targets_become_the_document_id() {
+    let Statement::Insert {
+        table,
+        value: Expr::Object(fields),
+        returning,
+    } = parse("INSERT INTO posts:first {\n    foo: 'bar'\n} RETURNING *").expect("target insert")
+    else {
+        panic!("expected insert");
+    };
+    assert_eq!(table, "posts");
+    assert_eq!(returning.as_deref(), Some("*"));
+    assert_eq!(
+        fields.get("id"),
+        Some(&Expr::Record(Record {
+            table: "posts".into(),
+            key: Key::String("first".into()),
+        }))
+    );
+    assert_eq!(fields.get("foo"), Some(&Expr::String("bar".into())));
+    assert_eq!(
+        parse("INSERT INTO posts:7 {title: 'x'}").unwrap(),
+        parse("INSERT INTO posts {id: posts:7, title: 'x'}").unwrap()
+    );
+    assert!(parse("INSERT INTO posts:first {id: posts:first, title: 'x'}").is_err());
+    assert!(parse("INSERT INTO posts:first DOCUMENT $doc").is_err());
+    assert!(parse("INSERT INTO posts:first").is_err());
+}

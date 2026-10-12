@@ -250,6 +250,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut array_depth: usize = 0;
     let mut paren_depth: usize = 0;
     let mut patch_expression = false;
+    let mut statement_start = 0;
     while i < b.len() {
         if b[i].is_ascii_whitespace() {
             i += 1;
@@ -389,17 +390,21 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
         });
         if object_depth == 0 && array_depth == 0 && paren_depth == 0 {
             let last = out.last().expect("just pushed token");
-            if last.kind == Kind::Word {
+            let statement = &out[statement_start..];
+            if last.kind == Kind::Symbol && last.text == ";" {
+                patch_expression = false;
+                statement_start = out.len();
+            } else if last.kind == Kind::Word {
                 if last.text.eq_ignore_ascii_case("WHERE")
                     || last.text.eq_ignore_ascii_case("RETURNING")
                 {
                     patch_expression = false;
                 } else if last.text.eq_ignore_ascii_case("PATCH")
-                    && out.first().is_some_and(|t| {
-                        t.kind == Kind::Word && t.text.eq_ignore_ascii_case("UPDATE")
-                    })
-                    && (out.len() == 3
-                        || ((out.len() == 5 || out.len() == 6) && out[2].text == ":"))
+                    && statement[0].kind == Kind::Word
+                    && statement[0].text.eq_ignore_ascii_case("UPDATE")
+                    && (statement.len() == 3
+                        || ((statement.len() == 5 || statement.len() == 6)
+                            && statement[2].text == ":"))
                 {
                     patch_expression = true;
                 }
@@ -1450,6 +1455,28 @@ pub fn parse(input: &str) -> Result<Statement> {
     }
     p.pos = 0;
     if p.eat("INSERT") && p.eat("INTO") {
+        if p.tokens.get(p.pos + 1).is_some_and(|t| t.text == ":")
+            && p.tokens.get(p.pos + 2).is_none_or(|t| t.text != ":")
+        {
+            let target = p.record()?;
+            if p.tokens.get(p.pos).is_none_or(|t| t.text != "{") {
+                return Err(p.error("record target INSERT requires an object body"));
+            }
+            let Expr::Object(mut fields) = p.expr(0)? else {
+                return Err(p.error("record target INSERT requires an object body"));
+            };
+            if fields.contains_key("id") {
+                return Err(p.error("record target INSERT body must omit id"));
+            }
+            let table = target.table.clone();
+            fields.insert("id".into(), Expr::Record(target));
+            let returning = p.returning()?;
+            return Ok(Statement::Insert {
+                table,
+                value: Expr::Object(fields),
+                returning,
+            });
+        }
         let table = p.name()?;
         if p.tokens.get(p.pos).is_some_and(|t| t.text == "{") || p.eat("DOCUMENT") {
             let value = p.expr(0)?;
