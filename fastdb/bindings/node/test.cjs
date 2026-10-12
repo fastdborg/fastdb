@@ -2660,6 +2660,29 @@ test('direct JSON response composition preserves escaped names and nested values
   }
 });
 
+test('array holes are rejected as invalid parameters in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      await assert.rejects(async () => db.execute('SELECT $v', { $v: [1, , 2] }), { name: 'TypeError', message: /array holes/ });
+      await assert.rejects(async () => db.execute('SELECT $v', { $v: { nested: new Array(1) } }), { name: 'TypeError', message: /array holes/ });
+      assert.deepEqual((await db.execute('SELECT $v', { $v: [1n, null] })).rows, [[[1n, null]]]);
+    } finally { await db.close(); }
+  }
+});
+
+test('malformed Unicode parameters are rejected as invalid input in both clients', async () => {
+  const { AsyncDatabase } = require('./index.cjs');
+  for (const db of [new Database(), await AsyncDatabase.open()]) {
+    try {
+      for (const params of [{ $v: 'a\ud800' }, { $v: { ['\udc00']: 1 } }, { $v: new Record('docs', 'k\ud800') }, { ['$\ud800']: 1 }]) {
+        await assert.rejects(async () => db.execute('SELECT $v', params), { name: 'TypeError', message: /well-formed/ });
+      }
+      assert.deepEqual((await db.execute('SELECT $v', { $v: '\ud83d\ude00' })).rows, [['\ud83d\ude00']]);
+    } finally { await db.close(); }
+  }
+});
+
 test('maximum logical depth survives wire framing, storage and transfer', async () => {
   const {AsyncDatabase} = require('./index.cjs');
   for (const db of [new Database(), await AsyncDatabase.open()]) {
