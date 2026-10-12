@@ -21,7 +21,8 @@ parser.add_argument("--uv", default="uv")
 parser.add_argument("--v1-package", type=Path, required=True)
 parser.add_argument("--v2-package", type=Path, required=True, help="Immutable published 2.0.0 Node package")
 parser.add_argument("--v21-package", type=Path, required=True, help="Immutable published 2.1.0 Node package")
-parser.add_argument("--v22-package", type=Path, help="Immutable published 2.2.0 Node package; required for 2.3.0")
+parser.add_argument("--v22-package", type=Path, help="Immutable published 2.2.0 Node package; required for 2.3.0 and later")
+parser.add_argument("--v23-package", type=Path, help="Immutable published 2.3.0 Node package; required for 2.4.0")
 args = parser.parse_args()
 bundle = args.bundle.resolve()
 evidence = args.evidence.resolve()
@@ -74,10 +75,14 @@ v2 = args.v2_package.resolve()
 assert json.loads((v2 / "package.json").read_text())["version"] == "2.0.0"
 v21 = args.v21_package.resolve()
 assert json.loads((v21 / "package.json").read_text())["version"] == "2.1.0"
-if version == "2.3.0":
-    assert args.v22_package, "2.3.0 requires a 2.2.0 upgrade/restore fixture"
+if version in ("2.3.0", "2.4.0"):
+    assert args.v22_package, f"{version} requires a 2.2.0 upgrade/restore fixture"
     v22 = args.v22_package.resolve()
     assert json.loads((v22 / "package.json").read_text())["version"] == "2.2.0"
+if version == "2.4.0":
+    assert args.v23_package, "2.4.0 requires a 2.3.0 upgrade/restore fixture"
+    v23 = args.v23_package.resolve()
+    assert json.loads((v23 / "package.json").read_text())["version"] == "2.3.0"
 results = []
 
 
@@ -130,6 +135,21 @@ assert cli_rows[10]["rows"] == [[integer(1), integer(2), {"type": "Array", "valu
 assert cli_rows[11]["rows"] == [[integer(2), integer(4)]]
 assert cli_rows[12]["rows"] == cli_rows[13]["rows"] == [[integer(2)]]
 assert cli_rows[14]["rows"] == [[integer(2)], [integer(3)], [integer(4)]]
+if version == "2.4.0":
+    cli_graph = """CREATE TABLE people;
+CREATE EDGE TABLE follows FROM people TO people;
+INSERT INTO people:a {name:'A'};
+INSERT INTO people:b {name:'B'};
+RELATE people:a -> follows:ab -> people:b;
+SELECT g.node, g.depth, g.edges FROM GRAPH(people:a -> follows -> people DEPTH 1 TO 2 MODE REACHABLE WITH PATH) g;
+EXPLAIN QUERY PLAN SELECT g.node FROM GRAPH(people:a -> follows -> people) g;
+"""
+    run("cli-graph", [str(bundle / "bin/fastdb-cli"), "--script"], input=cli_graph)
+    graph_rows = [json.loads(line) for line in (evidence / "cli-graph.log").read_text().splitlines()]
+    assert len(graph_rows) == 7 and all("error" not in result for result in graph_rows)
+    record = lambda table, key: {"type": "Record", "value": {"table": table, "key": {"String": key}}}
+    assert graph_rows[5]["rows"] == [[record("people", "b"), integer(1), {"type": "Array", "value": [record("follows", "ab")]}]]
+    assert any("GRAPH HOP 1 follows SEARCH USING COVERING INDEX" in json.dumps(row) for row in graph_rows[6]["rows"])
 run("sqlite-adoption", ["python3", "fastdb/scripts/check-sqlite-adoption.py",
                         str(bundle / "bin/fastdb-cli"), str(evidence / "sqlite-adoption.json")], env=base_env)
 sqlite_adoption = json.loads((evidence / "sqlite-adoption.json").read_text())
@@ -171,9 +191,12 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
         for previous, label in [(v2, "v2"), (v21, "v21")]:
             run(f"{label}-upgrade-restore-{index}", [node, "fastdb/scripts/check-v22-upgrade.cjs", str(previous),
                                                    str(installed_node), str(evidence / f"{label}-upgrade-fixture-{index}")])
-        if version == "2.3.0":
+        if version in ("2.3.0", "2.4.0"):
             run(f"v22-upgrade-restore-{index}", [node, "fastdb/scripts/check-v23-upgrade.cjs", str(v22),
                                                  str(installed_node), str(evidence / f"v22-upgrade-fixture-{index}")])
+        if version == "2.4.0":
+            run(f"v23-upgrade-restore-{index}", [node, "fastdb/scripts/check-v24-upgrade.cjs", str(v23),
+                                                 str(installed_node), str(evidence / f"v23-upgrade-fixture-{index}")])
 
     # Test the shipped .nupkg, never a previously cached same-version package.
     dotnet = temporary / "dotnet"
