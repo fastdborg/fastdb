@@ -1,13 +1,13 @@
 # FastDB embedded database
 
-FastDB and FastQL [2.5.1 are released for Linux x64](docs/release-2.5.1.md),
+FastDB and FastQL [2.5.2 are released for Linux x64](docs/release-2.5.2.md),
 with native Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go clients.
-See the [completed checklist](docs/v2.5.1-tasks.md),
-[verified download](docs/release-2.5.1-download.json),
+See the [completed checklist](docs/v2.5.2-tasks.md),
+[verified download](docs/release-2.5.2-download.json),
 [language contracts](docs/v2.2-language.md) and [engine provenance](UPSTREAM.md).
 
-2.5.1 makes field reads and filtered nearest search faster and meters nearest
-planning work. 2.5.0 added a bounded spatial model: Polygon and MultiPolygon values, exact
+2.5.2 makes spatial `EXPLAIN` read no data. 2.5.1 made field reads and filtered
+nearest search faster and metered nearest planning work. 2.5.0 added a bounded spatial model: Polygon and MultiPolygon values, exact
 point-in-region predicates, `ST_*` aliases, more H3 functions, a two-dimensional
 spatial index and region indexes for stored zones. See the
 [spatial contract](docs/spatial-upgrade.md). Spatial indexes created or rebuilt
@@ -90,13 +90,13 @@ retain their contracts; line and interactive modes continue after a failed comma
 and exit nonzero if any command failed.
 
 V2 development also includes [dense ANN search](docs/v2-ann.md), qualified under
-its documented native contract. Release `2.5.1` uses optimized
-`fastdb-production`; the [release checklist](docs/v2.5.1-tasks.md) is complete.
-See the [verified public download](docs/release-2.5.1-download.json).
+its documented native contract. Release `2.5.2` uses optimized
+`fastdb-production`; the [release checklist](docs/v2.5.2-tasks.md) is complete.
+See the [verified public download](docs/release-2.5.2-download.json).
 
 The [Python binding](bindings/python/README.md) embeds the same frontend at
-version `2.5.1`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
+version `2.5.2`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
 removed from active development and excluded from this release. Current Linux
-installed-wheel checks are recorded in the [2.5.1 evidence](docs/release-2.5.1.md).
+installed-wheel checks are recorded in the [2.5.2 evidence](docs/release-2.5.2.md).
 
 [PHP, Swift, C# and Go native clients](docs/native-language-clients.md) share a FastDB C ABI. Local builds and the common contract test are documented there.
