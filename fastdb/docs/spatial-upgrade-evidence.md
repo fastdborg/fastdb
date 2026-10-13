@@ -387,20 +387,28 @@ key ranges and nearest rounds; ceilings are about 1.5 times the measured work.
 
 ### Moving drivers with concurrent searches
 
-Script: `scripts/bench-spatial-movement.cjs`, run through `scripts/fastdb-heavy`
-with the production Node addon. 100,000 drivers in 20 cities on one file; one
-writer connection moves random drivers with synced autocommit updates while three
-reader connections alternate nearest and viewport searches for 20 seconds. Final
-integrity covers every document, and 20 indexed nearest results match a scan.
+Script: `scripts/bench-spatial-movement.cjs`, run three times through
+`scripts/fastdb-heavy` with the 2.5.1 release Node package. 100,000 drivers in 20
+cities on one file; one writer connection moves random drivers with synced
+autocommit updates while three reader connections alternate nearest and viewport
+searches for 20 seconds. Each run ends with an integrity check of every document
+and 20 indexed nearest results compared with a scan.
 
-| Operation | Count | p50 | p95 | p99 |
+Times are p50 / p95 / p99 milliseconds.
+
+| Run | Moves per second | Driver move (synced) | Nearest 5 available and fresh | Viewport 0.02 degree |
 | --- | --- | --- | --- | --- |
-| Driver move (synced) | 2,385, 119 per second | 8.0 ms | 10.6 ms | 11.9 ms |
-| Nearest 5 available and fresh | 1,087 | 46.7 ms | 82.5 ms | 115.8 ms |
-| Viewport 0.02 degree | 1,085 | 4.3 ms | 6.6 ms | 7.8 ms |
+| 1 | 80 | 8.6 / 28.9 / 53.2 | 39.0 / 73.4 / 101.8 | 3.8 / 6.2 / 7.2 |
+| 2 | 122 | 7.6 / 10.5 / 11.8 | 40.6 / 75.4 / 118.5 | 4.0 / 6.1 / 7.2 |
+| 3 | 116 | 8.2 / 10.9 / 11.9 | 38.9 / 72.5 / 105.7 | 3.9 / 6.3 / 7.3 |
 
-Recorded budgets on this host: moves at p95 under 15 ms, nearest at p95 under
-120 ms and viewports at p95 under 10 ms with one writer and three readers.
+The first run's move p95 of 29 ms did not repeat: the next two runs stayed under
+11 ms. Its cause was not isolated; synced commits on this WSL2 disk vary between
+runs. Recorded budgets on this host, with
+one writer and three readers: moves at p95 under 15 ms in a typical run, nearest
+search at p95 under 120 ms and viewports at p95 under 10 ms. A development build
+before release measured 119 moves per second with p95 values of 10.6, 82.5 and
+6.6 ms.
 
 ### Robustness
 
