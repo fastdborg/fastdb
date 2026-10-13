@@ -237,6 +237,21 @@ errors are unchanged:
   the first radius that yields `k` rows. Rounds grow by the observed shortfall,
   at least doubling. Everything runs in one savepoint. EXPLAIN shows the first
   round's radius without probing.
+- Filters that match few documents (2.5.1). After a round that finds fewer than
+  `k` rows, the planner counts that round's candidates. Reading a candidate by ID
+  costs about eight sequential scan steps, so once the candidates read so far, or
+  the number the observed match rate predicts for the next round, reach an eighth
+  of the index entries, the statement uses the ordinary plan instead. That plan
+  evaluates the distance guard after the other conditions.
+- Scalar indexes (2.5.1). When another top-level condition is an equality or IN
+  with constants on a top-level field that has a scalar index, the planner counts
+  the documents that condition selects, up to 4,096. A region or radius condition
+  keeps its spatial search only if the search returns no more candidates than the
+  scalar index selects. A nearest statement uses the scalar index plan when it
+  selects fewer than 4,096 documents and the square of that count is below
+  `2 * k` times the spatial index entries; the rounds would read about
+  `k * entries / count` candidates. Otherwise the spatial candidates drive the
+  statement, and the scalar index is not scanned.
 
 FastDB rejects `field IS NOT NULL` when the field holds an object, so the NULL
 exclusion is written on the distance value. Statements outside these forms keep
@@ -302,8 +317,30 @@ change.
 - `spatial_rounds`: radius rounds run by `search::nearest` and by ordinary
   nearest statements before the final statement.
 
-The engine's own fields still describe only the final statement. Entries read
-during nearest rounds are not yet included in `rows_read` or `index_steps`.
+The engine's own fields describe the final statement:
+
+- `index_steps` counts index entries read. For a spatial search these are its
+  candidates. Each candidate is refined exactly once against the stored
+  coordinates or shape, so refinement needs no separate counter.
+- `rows_read` counts table rows and index entries read, which includes the
+  documents fetched for the remaining conditions and the result.
+- Planning probes, the rounds before the final statement and the bounded counts
+  for scalar indexes are not included in `rows_read` or `index_steps`. They add
+  to `spatial_rounds` and `spatial_ranges`.
+- Metered reads charge all of that work, including `search::nearest` rounds, to
+  the statement's read and VM budgets (2.5.1; 2.5.0 charged only the final
+  statement).
+
+## 9a. Deferred functions
+
+`geo::cell_cover(region, resolution)` is not added. It would return the H3 cells
+whose centers lie in a region, which is an aggregation convenience rather than an
+index cover, because center containment can omit cells that the region crosses.
+The same aggregation is available by grouping an indexed region search by
+`geo::cell(location, resolution)`, and no application in the planned examples
+needs the cell list itself. It can be reconsidered with a budgeted fill from
+`geo::cell_disk` if users ask for it. Merging cells into an outline needs polygon
+union, which stays excluded.
 
 ## 10. Initial cost assessment
 

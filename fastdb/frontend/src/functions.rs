@@ -180,6 +180,18 @@ fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
             .to_text()
             .ok_or_else(|| Error::Storage("expected field path".into()))?,
     )?;
+    if (mode == 1 || mode == 3) && !path.is_empty() {
+        return Ok(match crate::value::encoded_field(bytes, &path)? {
+            crate::value::EncodedField::Found(encoded) => ExtValue::from_blob(encoded),
+            crate::value::EncodedField::Missing => ExtValue::from_blob(Value::Null.encode()?),
+            crate::value::EncodedField::RootNotObject if mode == 3 => {
+                ExtValue::from_blob(Value::Null.encode()?)
+            }
+            crate::value::EncodedField::RootNotObject => {
+                return Err(Error::Storage("expected object".into()))
+            }
+        });
+    }
     let field = if path.is_empty() {
         match Value::decode(bytes)? {
             value @ Value::Object(_) => crate::value::Field::Found(value),
@@ -243,21 +255,41 @@ fn scalar_result(value: &Value) -> Result<ExtValue> {
         EngineValue::Blob(b) => ExtValue::from_blob(b),
     })
 }
+/// Distinct field paths kept parsed; a statement usually reads a few fields per row.
+const FIELD_PATHS: usize = 8;
+
+/// Path text and its parsed steps.
+type ParsedPath = (String, std::rc::Rc<Vec<String>>);
+
 thread_local! {
-    static FIELD_PATH: std::cell::RefCell<(String, std::rc::Rc<Vec<String>>)> =
-        std::cell::RefCell::new((String::new(), std::rc::Rc::new(Vec::new())));
+    /// Next slot to replace, and the parsed paths.
+    static FIELD_PATH: std::cell::RefCell<(usize, Vec<ParsedPath>)> =
+        const { std::cell::RefCell::new((0, Vec::new())) };
 }
 
-/// Parsed field path, reused while consecutive rows read the same path.
+/// Parsed field path, reused while rows read the same few paths.
 fn field_path(text: &str) -> Result<std::rc::Rc<Vec<String>>> {
     if let Some(path) = FIELD_PATH.with(|cached| {
-        let cached = cached.borrow();
-        (cached.0 == text && !text.is_empty()).then(|| cached.1.clone())
+        cached
+            .borrow()
+            .1
+            .iter()
+            .find(|(cached, _)| cached == text)
+            .map(|(_, path)| path.clone())
     }) {
         return Ok(path);
     }
     let path = std::rc::Rc::new(serde_json::from_str::<Vec<String>>(text)?);
-    FIELD_PATH.with(|cached| *cached.borrow_mut() = (text.to_owned(), path.clone()));
+    FIELD_PATH.with(|cached| {
+        let (next, entries) = &mut *cached.borrow_mut();
+        let entry = (text.to_owned(), path.clone());
+        if entries.len() < FIELD_PATHS {
+            entries.push(entry);
+        } else {
+            entries[*next] = entry;
+            *next = (*next + 1) % FIELD_PATHS;
+        }
+    });
     Ok(path)
 }
 

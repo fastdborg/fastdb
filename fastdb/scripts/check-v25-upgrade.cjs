@@ -7,7 +7,8 @@ const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const [oldPackage, newPackage, directory, phase, file] = process.argv.slice(2);
 assert.equal(require(path.join(oldPackage, 'package.json')).version, '2.4.0');
-assert.equal(require(path.join(newPackage, 'package.json')).version, '2.5.0');
+const newVersion = require(path.join(newPackage, 'package.json')).version;
+assert.ok(['2.5.0', '2.5.1'].includes(newVersion), newVersion);
 const digest = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const point = (x, y) => ({ type: 'Point', coordinates: [x, y] });
 if (!phase) {
@@ -27,7 +28,7 @@ if (!phase) {
   run('old-reopen', restored);
   run('upgrade', restored); run('reopen', restored);
   assert.equal(digest(backup), originalHash);
-  const report = { fromVersion: '2.4.0', toVersion: '2.5.0', node: process.version,
+  const report = { fromVersion: '2.4.0', toVersion: newVersion, node: process.version,
     fromAddonSha256: digest(path.join(oldPackage, 'fastdb.node')),
     toAddonSha256: digest(path.join(newPackage, 'fastdb.node')),
     previousBackupSha256: originalHash, backupsUnchanged: true,

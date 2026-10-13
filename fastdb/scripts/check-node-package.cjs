@@ -8,7 +8,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const packageDir = path.resolve(__dirname, '../bindings/node');
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-const v22Steps = JSON.parse(fs.readFileSync(path.join(__dirname, '../bindings/fixtures/native-client.json'), 'utf8')).filter(step => step.release === '2.2.0');
+const v22Steps = JSON.parse(fs.readFileSync(path.join(__dirname, '../bindings/fixtures/native-client.json'), 'utf8')).filter(step => ['2.2.0', '2.5.1'].includes(step.release));
 assert(fs.existsSync(path.join(packageDir, 'fastdb.node')), 'Build the addon with fastdb/scripts/check-node.sh first');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'fastdb-package-'));
 const run = (command, args, cwd) => execFileSync(command, args, {

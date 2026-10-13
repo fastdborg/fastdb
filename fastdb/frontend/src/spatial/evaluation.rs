@@ -569,3 +569,133 @@ fn sql_workload_evaluation() {
         println!("{line}");
     }
 }
+
+#[test]
+#[ignore = "Filtered nearest measurement; run with --profile fastdb-production -- --ignored --nocapture"]
+fn nearest_filter_evaluation() {
+    let mut random = Random(0x5eed);
+    let n = 100_000;
+    let centers = cities(&mut random, 20);
+    let points = city_points(&mut random, &centers, n, 0.05);
+    let db = crate::Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let none = crate::Parameters::new();
+    c.execute("CREATE TABLE people", &none).unwrap();
+    for (start, chunk) in points.chunks(1000).enumerate() {
+        c.execute("BEGIN", &none).unwrap();
+        for (i, p) in chunk.iter().enumerate() {
+            let id = start * 1000 + i;
+            let fleet = if random.next() % 1000 == 0 {
+                "night"
+            } else {
+                "day"
+            };
+            c.execute(
+                &format!(
+                    "INSERT INTO people {{id:type::record('people',{id}),available:{},last_seen:{},fleet:'{fleet}',location:geo::point({},{})}}",
+                    random.next() % 3 == 0,
+                    random.next() % 100,
+                    p.0,
+                    p.1
+                ),
+                &none,
+            )
+            .unwrap();
+        }
+        c.execute("COMMIT", &none).unwrap();
+    }
+    c.execute(
+        "CREATE SEARCH INDEX people_location ON people(location) USING SPATIAL",
+        &none,
+    )
+    .unwrap();
+    let probes = (0..20)
+        .map(|_| {
+            let p = points[(random.next() % points.len() as u64) as usize];
+            clamp((p.0 + random.normal() * 0.01, p.1 + random.normal() * 0.01))
+        })
+        .collect::<Vec<_>>();
+    let nearest = |filter: &str| {
+        probes
+            .iter()
+            .map(|p| {
+                let d = format!("ST_DistanceSphere(location, ST_Point({}, {}))", p.0, p.1);
+                format!("SELECT id, {d} AS d FROM people WHERE {d} IS NOT NULL AND {filter} ORDER BY d, id LIMIT 5")
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut out = vec![
+        "| Query | Mean | Max | Rows | Rows read | Index steps | Full-scan steps | Rounds |"
+            .to_owned(),
+        "| --- | --- | --- | --- | --- | --- | --- | --- |".to_owned(),
+    ];
+    let run = |label: &str, queries: &[String], out: &mut Vec<String>| {
+        let (mut rows, mut read, mut index, mut fullscan, mut rounds) = (0, 0, 0, 0, 0);
+        let mut worst = std::time::Duration::ZERO;
+        let start = std::time::Instant::now();
+        for sql in queries {
+            let one = std::time::Instant::now();
+            let profile = c.profile_select(sql, &none).unwrap();
+            worst = worst.max(one.elapsed());
+            if std::env::var_os("FASTDB_EVAL_DETAIL").is_some() {
+                eprintln!(
+                    "{label}: {:?} rounds={} ranges={} read={} index={} scan={}",
+                    one.elapsed(),
+                    profile.metrics.spatial_rounds,
+                    profile.metrics.spatial_ranges,
+                    profile.metrics.rows_read,
+                    profile.metrics.index_steps,
+                    profile.metrics.fullscan_steps
+                );
+            }
+            rows += profile.result.rows.len() as u64;
+            read += profile.metrics.rows_read;
+            index += profile.metrics.index_steps;
+            fullscan += profile.metrics.fullscan_steps;
+            rounds += profile.metrics.spatial_rounds;
+        }
+        let q = queries.len() as u64;
+        out.push(format!(
+            "| {label} | {:?} | {worst:?} | {} | {} | {} | {} | {} |",
+            start.elapsed() / q as u32,
+            rows / q,
+            read / q,
+            index / q,
+            fullscan / q,
+            rounds / q
+        ));
+    };
+    run(
+        "available, fresh",
+        &nearest("available = true AND last_seen >= 90"),
+        &mut out,
+    );
+    run(
+        "rare fleet, no fleet index",
+        &nearest("fleet = 'night'"),
+        &mut out,
+    );
+    run(
+        "scan only: rare fleet",
+        &probes
+            .iter()
+            .map(|p| format!("SELECT id FROM people NOT INDEXED WHERE fleet = 'night' AND ST_DistanceSphere(location, ST_Point({}, {})) IS NOT NULL ORDER BY ST_DistanceSphere(location, ST_Point({}, {})), id LIMIT 5", p.0, p.1, p.0, p.1))
+            .collect::<Vec<_>>(),
+        &mut out,
+    );
+    c.execute("CREATE INDEX people_fleet ON people(fleet)", &none)
+        .unwrap();
+    run(
+        "rare fleet, fleet index",
+        &nearest("fleet = 'night'"),
+        &mut out,
+    );
+    run(
+        "common fleet, fleet index",
+        &nearest("fleet = 'day'"),
+        &mut out,
+    );
+    for line in out {
+        println!("{line}");
+    }
+}

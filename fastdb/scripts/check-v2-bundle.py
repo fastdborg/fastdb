@@ -23,7 +23,8 @@ parser.add_argument("--v2-package", type=Path, required=True, help="Immutable pu
 parser.add_argument("--v21-package", type=Path, required=True, help="Immutable published 2.1.0 Node package")
 parser.add_argument("--v22-package", type=Path, help="Immutable published 2.2.0 Node package; required for 2.3.0 and later")
 parser.add_argument("--v23-package", type=Path, help="Immutable published 2.3.0 Node package; required for 2.4.0 and later")
-parser.add_argument("--v24-package", type=Path, help="Immutable published 2.4.0 Node package; required for 2.5.0")
+parser.add_argument("--v24-package", type=Path, help="Immutable published 2.4.0 Node package; required for 2.5.0 and later")
+parser.add_argument("--v25-package", type=Path, help="Immutable published 2.5.0 Node package; required for 2.5.1")
 args = parser.parse_args()
 bundle = args.bundle.resolve()
 evidence = args.evidence.resolve()
@@ -76,18 +77,22 @@ v2 = args.v2_package.resolve()
 assert json.loads((v2 / "package.json").read_text())["version"] == "2.0.0"
 v21 = args.v21_package.resolve()
 assert json.loads((v21 / "package.json").read_text())["version"] == "2.1.0"
-if version in ("2.3.0", "2.4.0", "2.5.0"):
+if version in ("2.3.0", "2.4.0", "2.5.0", "2.5.1"):
     assert args.v22_package, f"{version} requires a 2.2.0 upgrade/restore fixture"
     v22 = args.v22_package.resolve()
     assert json.loads((v22 / "package.json").read_text())["version"] == "2.2.0"
-if version in ("2.4.0", "2.5.0"):
+if version in ("2.4.0", "2.5.0", "2.5.1"):
     assert args.v23_package, f"{version} requires a 2.3.0 upgrade/restore fixture"
     v23 = args.v23_package.resolve()
     assert json.loads((v23 / "package.json").read_text())["version"] == "2.3.0"
-if version == "2.5.0":
-    assert args.v24_package, "2.5.0 requires a 2.4.0 upgrade/restore fixture"
+if version in ("2.5.0", "2.5.1"):
+    assert args.v24_package, f"{version} requires a 2.4.0 upgrade/restore fixture"
     v24 = args.v24_package.resolve()
     assert json.loads((v24 / "package.json").read_text())["version"] == "2.4.0"
+if version == "2.5.1":
+    assert args.v25_package, "2.5.1 requires a 2.5.0 upgrade/restore fixture"
+    v25 = args.v25_package.resolve()
+    assert json.loads((v25 / "package.json").read_text())["version"] == "2.5.0"
 results = []
 
 
@@ -140,7 +145,7 @@ assert cli_rows[10]["rows"] == [[integer(1), integer(2), {"type": "Array", "valu
 assert cli_rows[11]["rows"] == [[integer(2), integer(4)]]
 assert cli_rows[12]["rows"] == cli_rows[13]["rows"] == [[integer(2)]]
 assert cli_rows[14]["rows"] == [[integer(2)], [integer(3)], [integer(4)]]
-if version in ("2.4.0", "2.5.0"):
+if version in ("2.4.0", "2.5.0", "2.5.1"):
     cli_graph = """CREATE TABLE people;
 CREATE EDGE TABLE follows FROM people TO people;
 INSERT INTO people:a {name:'A'};
@@ -155,7 +160,7 @@ EXPLAIN QUERY PLAN SELECT g.node FROM GRAPH(people:a -> follows -> people) g;
     record = lambda table, key: {"type": "Record", "value": {"table": table, "key": {"String": key}}}
     assert graph_rows[5]["rows"] == [[record("people", "b"), integer(1), {"type": "Array", "value": [record("follows", "ab")]}]]
     assert any("GRAPH HOP 1 follows SEARCH USING COVERING INDEX" in json.dumps(row) for row in graph_rows[6]["rows"])
-if version == "2.5.0":
+if version in ("2.5.0", "2.5.1"):
     cli_spatial = """CREATE TABLE places;
 INSERT INTO places:a {location:ST_Point(106.70, 10.80), open:true};
 INSERT INTO places:b {location:ST_Point(106.71, 10.80), open:false};
@@ -219,15 +224,18 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
         for previous, label in [(v2, "v2"), (v21, "v21")]:
             run(f"{label}-upgrade-restore-{index}", [node, "fastdb/scripts/check-v22-upgrade.cjs", str(previous),
                                                    str(installed_node), str(evidence / f"{label}-upgrade-fixture-{index}")])
-        if version in ("2.3.0", "2.4.0", "2.5.0"):
+        if version in ("2.3.0", "2.4.0", "2.5.0", "2.5.1"):
             run(f"v22-upgrade-restore-{index}", [node, "fastdb/scripts/check-v23-upgrade.cjs", str(v22),
                                                  str(installed_node), str(evidence / f"v22-upgrade-fixture-{index}")])
-        if version in ("2.4.0", "2.5.0"):
+        if version in ("2.4.0", "2.5.0", "2.5.1"):
             run(f"v23-upgrade-restore-{index}", [node, "fastdb/scripts/check-v24-upgrade.cjs", str(v23),
                                                  str(installed_node), str(evidence / f"v23-upgrade-fixture-{index}")])
-        if version == "2.5.0":
+        if version in ("2.5.0", "2.5.1"):
             run(f"v24-upgrade-restore-{index}", [node, "fastdb/scripts/check-v25-upgrade.cjs", str(v24),
                                                  str(installed_node), str(evidence / f"v24-upgrade-fixture-{index}")])
+        if version == "2.5.1":
+            run(f"v25-upgrade-restore-{index}", [node, "fastdb/scripts/check-v251-upgrade.cjs", str(v25),
+                                                 str(installed_node), str(evidence / f"v25-upgrade-fixture-{index}")])
 
     # Test the shipped .nupkg, never a previously cached same-version package.
     dotnet = temporary / "dotnet"

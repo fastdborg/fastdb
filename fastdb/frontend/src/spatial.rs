@@ -1116,7 +1116,8 @@ impl crate::Connection {
                     crate::quote(&index.name)
                 )
             };
-            let rows = self.run(
+            // Customer reads: a metered statement charges every round.
+            let rows = self.run_customer(
                 &format!(
                     "SELECT id, distance_m FROM ({candidates}) ORDER BY distance_m, __fastdb_sort_encoded(id) LIMIT {k}"
                 ),
@@ -1636,6 +1637,92 @@ mod index_tests {
         assert_eq!(run(&c), current);
         c.check_collection_integrity("places", Default::default())
             .unwrap();
+    }
+    #[test]
+    fn interrupted_reindex_keeps_the_latitude_format_index() {
+        let path = std::env::temp_dir().join(format!(
+            "fastdb-spatial-reindex-{}-{:?}.db",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path = path.to_str().unwrap().to_owned();
+        let none = Parameters::new();
+        let near = "SELECT id, distance_m FROM search::near('locations', geo::point(10, 10), 3000000) ORDER BY distance_m, id";
+        let expected = {
+            let db = Database::open(&path).unwrap();
+            let c = db.connect().unwrap();
+            c.execute("CREATE TABLE places", &none).unwrap();
+            c.execute("BEGIN", &none).unwrap();
+            for i in 0..2000u64 {
+                let longitude = ((i * 7919) % 36001) as f64 / 100.0 - 180.0;
+                let latitude = ((i * 104_729) % 18001) as f64 / 100.0 - 90.0;
+                c.execute(
+                    &format!("INSERT INTO places {{id:type::record('places',{i}),location:geo::point({longitude},{latitude})}}"),
+                    &none,
+                )
+                .unwrap();
+            }
+            c.execute(
+                "CREATE SEARCH INDEX locations ON places(location) USING SPATIAL",
+                &none,
+            )
+            .unwrap();
+            c.execute("COMMIT", &none).unwrap();
+            downgrade_to_latitude_format(&c);
+            let expected = c.execute(near, &none).unwrap().rows;
+            assert!(!expected.is_empty());
+
+            // Cancelled before it starts, or by a deadline while rebuilding.
+            let cancelled = crate::CancellationToken::new();
+            cancelled.cancel();
+            let error = c
+                .execute_cancellable("REINDEX locations", &none, &cancelled)
+                .unwrap_err();
+            assert_eq!(error.code(), "FDB_CANCELLED");
+            let deadline = crate::CancellationToken::with_deadline(
+                std::time::Instant::now() + std::time::Duration::from_millis(2),
+            );
+            if let Err(error) = c.execute_cancellable("REINDEX locations", &none, &deadline) {
+                assert_eq!(error.code(), "FDB_CANCELLED");
+                assert_eq!(c.catalog("places").unwrap().indexes[0].spatial, None);
+            } else {
+                downgrade_to_latitude_format(&c);
+            }
+
+            // Rolled back after the rebuild finished.
+            c.execute("BEGIN", &none).unwrap();
+            c.execute("REINDEX locations", &none).unwrap();
+            assert!(c.catalog("places").unwrap().indexes[0].spatial.is_some());
+            c.execute("ROLLBACK", &none).unwrap();
+            assert_eq!(c.catalog("places").unwrap().indexes[0].spatial, None);
+            assert_eq!(c.execute(near, &none).unwrap().rows, expected);
+
+            // Closed with the rebuild uncommitted.
+            c.execute("BEGIN", &none).unwrap();
+            c.execute("REINDEX locations", &none).unwrap();
+            expected
+        };
+        let db = Database::open(&path).unwrap();
+        let c = db.connect().unwrap();
+        let collection = c.catalog("places").unwrap();
+        assert_eq!(
+            (collection.version, collection.indexes[0].spatial.clone()),
+            (3, None)
+        );
+        assert_eq!(c.execute(near, &none).unwrap().rows, expected);
+        c.check_collection_integrity("places", Default::default())
+            .unwrap();
+        c.execute("REINDEX locations", &none).unwrap();
+        assert_eq!(
+            c.catalog("places").unwrap().indexes[0].spatial,
+            Some(super::Config::current())
+        );
+        assert_eq!(c.execute(near, &none).unwrap().rows, expected);
+        drop(c);
+        drop(db);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{path}{suffix}"));
+        }
     }
     #[test]
     fn spatial_audit_detects_stale_longitude_and_missing_entries() {

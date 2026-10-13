@@ -1835,5 +1835,397 @@
       "documents": 1
     },
     "release": "2.2.0"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v25_zones {id:v25_zones:north,shape:$shape}",
+      "parameters": {
+        "$shape": {
+          "type": "Object",
+          "value": {
+            "type": {
+              "type": "String",
+              "value": "Polygon"
+            },
+            "coordinates": {
+              "type": "Array",
+              "value": [
+                {
+                  "type": "Array",
+                  "value": [
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059100000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402a800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059500000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402a800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059500000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402c800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059100000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402c800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059100000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402a800000000000"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX v25_zones_shape ON v25_zones(shape) USING SPATIAL WITH (geometry = 'region')",
+      "parameters": {}
+    },
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM v25_zones WHERE ST_Covers(shape, ST_Point(100.5, 13.5))",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v25_zones",
+            "key": {
+              "type": "String",
+              "value": "north"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT shape FROM v25_zones",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Object",
+          "value": {
+            "type": {
+              "type": "String",
+              "value": "Polygon"
+            },
+            "coordinates": {
+              "type": "Array",
+              "value": [
+                {
+                  "type": "Array",
+                  "value": [
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059100000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402a800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059500000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402a800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059500000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402c800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059100000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402c800000000000"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Array",
+                      "value": [
+                        {
+                          "type": "Number",
+                          "value": "4059100000000000"
+                        },
+                        {
+                          "type": "Number",
+                          "value": "402a800000000000"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT ST_AsGeoJSON(shape) FROM v25_zones",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "String",
+          "value": "{\"type\":\"Polygon\",\"coordinates\":[[[100.25,13.25],[101.25,13.25],[101.25,14.25],[100.25,14.25],[100.25,13.25]]]}"
+        }
+      ]
+    ],
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM search::containing('v25_zones_shape', $p, 'covers')",
+      "parameters": {
+        "$p": {
+          "type": "Object",
+          "value": {
+            "type": {
+              "type": "String",
+              "value": "Point"
+            },
+            "coordinates": {
+              "type": "Array",
+              "value": [
+                {
+                  "type": "Number",
+                  "value": "4059200000000000"
+                },
+                {
+                  "type": "Number",
+                  "value": "402b000000000000"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v25_zones",
+            "key": {
+              "type": "String",
+              "value": "north"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v25_places {id:v25_places:a,point:ST_Point(100.5,13.5),open:true}",
+      "parameters": {}
+    },
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v25_places {id:v25_places:b,point:ST_Point(100.4,13.4),open:false}",
+      "parameters": {}
+    },
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "CREATE SEARCH INDEX v25_places_point ON v25_places(point) USING SPATIAL",
+      "parameters": {}
+    },
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM v25_places WHERE ST_DistanceSphere(point, ST_Point(100.4, 13.4)) IS NOT NULL AND open = true ORDER BY ST_DistanceSphere(point, ST_Point(100.4, 13.4)), id LIMIT 1",
+      "parameters": {}
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v25_places",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "SELECT id FROM v25_places WHERE ST_DWithin(point, $p, 100)",
+      "parameters": {
+        "$p": {
+          "type": "Object",
+          "value": {
+            "type": {
+              "type": "String",
+              "value": "Point"
+            },
+            "coordinates": {
+              "type": "Array",
+              "value": [
+                {
+                  "type": "Number",
+                  "value": "4059200000000000"
+                },
+                {
+                  "type": "Number",
+                  "value": "402b000000000000"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "rows": [
+      [
+        {
+          "type": "Record",
+          "value": {
+            "table": "v25_places",
+            "key": {
+              "type": "String",
+              "value": "a"
+            }
+          }
+        }
+      ]
+    ],
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "execute",
+      "sql": "INSERT INTO v25_zones {id:v25_zones:bad,shape:ST_GeomFromGeoJSON('{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,1],[1,0],[0,1],[0,0]]]}')}",
+      "parameters": {}
+    },
+    "error": "FDB_VALIDATION",
+    "release": "2.5.1"
+  },
+  {
+    "request": {
+      "op": "integrity",
+      "table": "v25_zones",
+      "max_documents": 100,
+      "max_encoded_bytes": 100000
+    },
+    "result_subset": {
+      "documents": 1
+    },
+    "release": "2.5.1"
   }
 ]
