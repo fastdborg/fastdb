@@ -1,12 +1,16 @@
-# Dependency security review for 2.5.0
-Reviewed 2026-10-13 for the Linux x64 2.5.0 candidate. The exact lockfile
+# Dependency security review for 2.5.1
+Reviewed 2026-10-13 for the Linux x64 2.5.1 candidate. The exact lockfile
 scan covers 359 package/version identities against the RustSec advisory
-database at `57dcc0f2192e025138907a495c1ac9a7e1e3e123` (fetched 2026-10-13,
-1,307 advisories) using the same pinned `cargo-audit 0.22.2` binary. It found
+database at `d8325cf4f578e2df4cc5b98a30e9f46b3b88e9f0` (fetched 2026-10-13,
+1,309 advisories) using the same pinned `cargo-audit 0.22.2` binary. It found
 zero unresolved shipping findings; the retained lru informational exception
-below is unchanged. The spatial upgrade adds no dependency: the lockfile differs
-from 2.4.0 only in the nine FastDB workspace package versions. The prepared-region
-cache is implemented in FastDB and does not use the external `lru` crate.
+below is unchanged. 2.5.1 adds no dependency and enables no new dependency
+feature: the lockfile differs from 2.5.0 only in the nine FastDB workspace
+package versions. Native QuickJS-NG, USearch and SQLite advisories are unchanged
+since the 2.5.0 review.
+
+The 2.5.0 review (database `57dcc0f2192e025138907a495c1ac9a7e1e3e123`) found the
+same shipping result. Its notes on newly excluded findings follow.
 
 The newer database adds three quinn-proto advisories and one unsafe-libyaml
 notice. Both packages are outside the Linux normal/build closure of the four
