@@ -293,6 +293,9 @@ and invalid geometries are rejected on write and at index creation.
   version 7. `REINDEX` rebuilds it in the same format.
 - Point sources reject region indexes and `search::containing` rejects point
   indexes.
+- `INFO FOR TABLE` and `INFO FOR INDEX` report `geometry` (`point` or `region`)
+  and `format` (`latitude` for the released 2.4.0 format, `two_dimensional`
+  otherwise) for every spatial index (2.5.1).
 
 ### Index maintenance
 

@@ -2206,3 +2206,38 @@ fn randomized_writes_keep_indexed_results_equal_to_scans() {
             .unwrap();
     }
 }
+
+#[test]
+fn info_reports_spatial_index_geometry_and_format() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE places");
+    q(&c, "CREATE TABLE zones");
+    q(
+        &c,
+        "CREATE SEARCH INDEX places_location ON places(location) USING SPATIAL",
+    );
+    q(
+        &c,
+        "CREATE SEARCH INDEX zones_shape ON zones(shape) USING SPATIAL WITH (geometry = 'region')",
+    );
+    for (sql, geometry) in [
+        ("INFO FOR INDEX places_location", "point"),
+        ("INFO FOR INDEX zones_shape", "region"),
+    ] {
+        let info = format!("{:?}", q(&c, sql).rows);
+        assert!(
+            info.contains(&format!("\"geometry\": String(\"{geometry}\")")),
+            "{sql}: {info}"
+        );
+        assert!(
+            info.contains("\"format\": String(\"two_dimensional\")"),
+            "{sql}: {info}"
+        );
+    }
+    let table = format!("{:?}", q(&c, "INFO FOR TABLE zones").rows);
+    assert!(
+        table.contains("\"geometry\": String(\"region\")"),
+        "{table}"
+    );
+}
