@@ -236,7 +236,8 @@ errors are unchanged:
   radius rounds with the statement's own filters from that radius, and run with
   the first radius that yields `k` rows. Rounds grow by the observed shortfall,
   at least doubling. Everything runs in one savepoint. EXPLAIN shows the first
-  round's radius without probing.
+  round's radius. To choose it, EXPLAIN reads spatial index entries, which metered
+  requests charge as reads, but it runs no filtered probes.
 - Filters that match few documents (2.5.1). After a round that finds fewer than
   `k` rows, the planner counts that round's candidates. Reading a candidate by ID
   costs about eight sequential scan steps, so once the candidates read so far, or
