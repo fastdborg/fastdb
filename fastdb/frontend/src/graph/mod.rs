@@ -2,7 +2,7 @@
 mod predicate;
 mod query;
 pub use query::GraphLimits;
-pub(crate) use query::{expand_sources, ExplainScope, GraphCounters};
+pub(crate) use query::{expand_sources, explaining, ExplainScope, GraphCounters};
 
 use crate::{
     canonical, decode_document, quote, text, Collection, Connection, Document, Error, Result, Value,

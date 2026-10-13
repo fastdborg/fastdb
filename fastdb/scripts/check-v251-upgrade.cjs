@@ -1,14 +1,18 @@
 'use strict';
 // Open separate copies with immutable old/new packages, never two owning processes.
-// 2.5.1 changes no stored format, so 2.5.0 must keep reading files that 2.5.1 wrote.
+// 2.5.x patches change no stored format, so an older 2.5 package must keep reading
+// files that a newer one wrote.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const [oldPackage, newPackage, directory, phase, file] = process.argv.slice(2);
-assert.equal(require(path.join(oldPackage, 'package.json')).version, '2.5.0');
-assert.equal(require(path.join(newPackage, 'package.json')).version, '2.5.1');
+const oldVersion = require(path.join(oldPackage, 'package.json')).version;
+const newVersion = require(path.join(newPackage, 'package.json')).version;
+assert.ok(['2.5.0', '2.5.1'].includes(oldVersion), oldVersion);
+assert.ok(['2.5.1', '2.5.2'].includes(newVersion), newVersion);
+assert.ok(oldVersion < newVersion, `${oldVersion} -> ${newVersion}`);
 const digest = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const point = (x, y) => ({ type: 'Point', coordinates: [x, y] });
 if (!phase) {
@@ -25,7 +29,7 @@ if (!phase) {
   fs.copyFileSync(backup, restored, fs.constants.COPYFILE_EXCL);
   run('upgrade', restored); run('old-reader', restored); run('reopen', restored);
   assert.equal(digest(backup), originalHash);
-  const report = { fromVersion: '2.5.0', toVersion: '2.5.1', node: process.version,
+  const report = { fromVersion: oldVersion, toVersion: newVersion, node: process.version,
     fromAddonSha256: digest(path.join(oldPackage, 'fastdb.node')),
     toAddonSha256: digest(path.join(newPackage, 'fastdb.node')),
     previousBackupSha256: originalHash, backupsUnchanged: true,
@@ -70,7 +74,7 @@ if (!phase) {
       const before = queries();
       assert.ok(before.near.length >= 5 && before.viewport.length >= 5);
       if (phase === 'upgrade') {
-        // Writes from 2.5.1 that 2.5.0 must read back.
+        // Writes from the newer package that the older one must read back.
         db.execute('UPDATE places SET location = geo::point(106.75, 10.85), name = $n WHERE id = places:1', { $n: 'moved' });
         db.execute("UPSERT places:60 {name:'new night', fleet:'night', location:geo::point(106.7001, 10.8001)}");
         db.execute('DELETE FROM places WHERE id = places:2');

@@ -236,8 +236,14 @@ errors are unchanged:
   radius rounds with the statement's own filters from that radius, and run with
   the first radius that yields `k` rows. Rounds grow by the observed shortfall,
   at least doubling. Everything runs in one savepoint. EXPLAIN shows the first
-  round's radius. To choose it, EXPLAIN reads spatial index entries, which metered
-  requests charge as reads, but it runs no filtered probes.
+  round at its nominal 100 m radius.
+- EXPLAIN reads no data (2.5.2). It shows the spatial plan, including the first
+  nearest round of `search::nearest` and of ordinary nearest statements at the
+  nominal radius. Choices that count data are made only when the statement runs:
+  the starting and later radii, the scalar index preference and the early scan.
+  An EXPLAIN can therefore name the spatial index for a statement that runs
+  through a scalar index or a scan. 2.5.0 and 2.5.1 read spatial index entries,
+  and 2.5.1 also counted scalar matches, during EXPLAIN.
 - Filters that match few documents (2.5.1). After a round that finds fewer than
   `k` rows, the planner counts that round's candidates. Reading a candidate by ID
   costs about eight sequential scan steps, so once the candidates read so far, or
@@ -333,7 +339,8 @@ The engine's own fields describe the final statement:
   to `spatial_rounds` and `spatial_ranges`.
 - Metered reads charge all of that work, including `search::nearest` rounds, to
   the statement's read and VM budgets (2.5.1; 2.5.0 charged only the final
-  statement).
+  statement). EXPLAIN performs none of this work (2.5.2), so metered EXPLAIN
+  reports zero rows read.
 
 ## 9a. Deferred functions
 

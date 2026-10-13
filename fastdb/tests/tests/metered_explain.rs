@@ -377,3 +377,72 @@ fn explain_search_distinguishes_nonexecuting_plans_from_materialized_ann() {
         }
     }
 }
+
+#[test]
+fn spatial_explain_reads_no_documents_or_index_entries() {
+    let c = Database::open(":memory:").unwrap().connect().unwrap();
+    q(&c, "CREATE TABLE drivers");
+    q(&c, "CREATE TABLE zones");
+    q(&c, "BEGIN");
+    for i in 0..500u64 {
+        let longitude = ((i * 7919) % 36001) as f64 / 100.0 - 180.0;
+        let latitude = ((i * 104_729) % 17001) as f64 / 100.0 - 85.0;
+        let fleet = if i % 100 == 0 { "night" } else { "day" };
+        q(&c, &format!(
+            "INSERT INTO drivers {{id:type::record('drivers',{i}),available:{},fleet:'{fleet}',location:geo::point({longitude},{latitude})}}",
+            i % 3 == 0
+        ));
+    }
+    q(
+        &c,
+        "INSERT INTO zones {id:zones:a,shape:ST_MakeEnvelope(0, 0, 20, 20)}",
+    );
+    q(
+        &c,
+        "CREATE SEARCH INDEX drivers_location ON drivers(location) USING SPATIAL",
+    );
+    q(
+        &c,
+        "CREATE SEARCH INDEX zones_shape ON zones(shape) USING SPATIAL WITH (geometry = 'region')",
+    );
+    q(&c, "CREATE INDEX drivers_fleet ON drivers(fleet)");
+    q(&c, "COMMIT");
+    let nearest = |filter: &str| {
+        format!("SELECT id FROM drivers WHERE ST_DistanceSphere(location, ST_Point(10, 10)) IS NOT NULL AND {filter} ORDER BY ST_DistanceSphere(location, ST_Point(10, 10)), id LIMIT 5")
+    };
+    let mut readers = Vec::new();
+    for (sql, index) in [
+        (nearest("available = true"), "drivers_location"),
+        (nearest("fleet = 'day'"), "drivers_location"),
+        // EXPLAIN reads nothing, so it cannot count the fleet; it shows the
+        // spatial plan, and execution may still choose the fleet index.
+        (nearest("fleet = 'night'"), "drivers_location"),
+        ("SELECT id FROM drivers WHERE ST_DWithin(location, ST_Point(10, 10), 500000) AND fleet = 'day'".to_owned(), "drivers_location"),
+        ("SELECT id FROM drivers WHERE ST_Covers(ST_MakeEnvelope(0, 0, 20, 20), location)".to_owned(), "drivers_location"),
+        ("SELECT id FROM zones WHERE ST_Covers(shape, ST_Point(10, 10))".to_owned(), "zones_shape"),
+        ("SELECT id FROM search::near('drivers_location', ST_Point(10, 10), 500000)".to_owned(), "drivers_location"),
+        ("SELECT id FROM search::bbox('drivers_location', 0, 0, 20, 20)".to_owned(), "drivers_location"),
+        ("SELECT id FROM search::polygon('drivers_location', ST_MakeEnvelope(0, 0, 20, 20), 'covers')".to_owned(), "drivers_location"),
+        ("SELECT id FROM search::nearest('drivers_location', ST_Point(10, 10), 5)".to_owned(), "drivers_location"),
+        ("SELECT id FROM search::containing('zones_shape', ST_Point(10, 10), 'covers')".to_owned(), "zones_shape"),
+    ] {
+        for explain in ["EXPLAIN QUERY PLAN", "EXPLAIN"] {
+            let statement = format!("{explain} {sql}");
+            let measured = c
+                .explain_metered(&statement, &Parameters::new(), limits(), Default::default())
+                .expect(&statement);
+            let rows = match measured.outcome {
+                Ok(result) => result.rows,
+                Err(error) => panic!("{statement}: {error}"),
+            };
+            if measured.work.rows_read != 0 {
+                readers.push(format!("{} rows read: {statement}", measured.work.rows_read));
+            }
+            assert_eq!(measured.work.row_mutations, 0, "{statement}");
+            if explain == "EXPLAIN QUERY PLAN" {
+                assert!(format!("{rows:?}").contains(index), "{statement}: {rows:?}");
+            }
+        }
+    }
+    assert!(readers.is_empty(), "{readers:#?}");
+}

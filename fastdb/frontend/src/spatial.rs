@@ -1048,6 +1048,11 @@ impl crate::Connection {
             .transpose()?
             .map(|filter| format!(" AND {}", filter.predicate()))
             .unwrap_or_default();
+        // EXPLAIN describes the first round's index search at its nominal radius
+        // and reads no data; execution chooses later radii from the index.
+        if crate::graph::explaining() {
+            return Ok(self.nearest_round_sql(&index, center, k, &allowed, NEAREST_FIRST_RADIUS_M));
+        }
         let (rows, _) = self.nearest_rows(&index, center, k, &allowed, NEAREST_FIRST_RADIUS_M)?;
         if rows.is_empty() {
             return Ok("SELECT NULL AS id, NULL AS distance_m WHERE 0".into());
@@ -1089,45 +1094,55 @@ impl crate::Connection {
             if last {
                 radius = f64::MAX;
             }
-            let candidates = if index.spatial.is_some() {
-                let distance = format!(
-                    "__fastdb_geo_distance(longitude, latitude, {}, {})",
-                    center.0, center.1
-                );
-                let ranges = morton::cover_windows(&radius_windows(center, radius), RANGE_BUDGET);
-                self.record_spatial(ranges.len(), 1);
-                ranged_sql(
-                    index,
-                    &ranges,
-                    &format!("id, {distance} AS distance_m"),
-                    &format!("{distance} <= {radius}{allowed}"),
-                    "NULL AS id, NULL AS distance_m",
-                )
-            } else {
-                self.record_spatial(1, 1);
-                let (low, high) = latitude_bounds(center.1, radius);
-                let distance = format!(
-                    "__fastdb_geo_distance(longitude, key, {}, {})",
-                    center.0, center.1
-                );
-                format!(
-                    "SELECT id, {distance} AS distance_m FROM {} INDEXED BY {} WHERE key >= {low} AND key <= {high} AND {distance} <= {radius}{allowed}",
-                    crate::quote(&index.storage),
-                    crate::quote(&index.name)
-                )
-            };
+            let round = self.nearest_round_sql(index, center, k, allowed, radius);
             // Customer reads: a metered statement charges every round.
-            let rows = self.run_customer(
-                &format!(
-                    "SELECT id, distance_m FROM ({candidates}) ORDER BY distance_m, __fastdb_sort_encoded(id) LIMIT {k}"
-                ),
-                &[],
-            )?;
+            let rows = self.run_customer(&round, &[])?;
             if rows.len() == k || last {
                 return Ok((rows, radius));
             }
             radius = next_radius(radius, rows.len(), k);
         }
+    }
+
+    /// SQL for one nearest round: the `k` closest indexed points within `radius`.
+    fn nearest_round_sql(
+        &self,
+        index: &crate::Index,
+        center: (f64, f64),
+        k: usize,
+        allowed: &str,
+        radius: f64,
+    ) -> String {
+        let candidates = if index.spatial.is_some() {
+            let distance = format!(
+                "__fastdb_geo_distance(longitude, latitude, {}, {})",
+                center.0, center.1
+            );
+            let ranges = morton::cover_windows(&radius_windows(center, radius), RANGE_BUDGET);
+            self.record_spatial(ranges.len(), 1);
+            ranged_sql(
+                index,
+                &ranges,
+                &format!("id, {distance} AS distance_m"),
+                &format!("{distance} <= {radius}{allowed}"),
+                "NULL AS id, NULL AS distance_m",
+            )
+        } else {
+            self.record_spatial(1, 1);
+            let (low, high) = latitude_bounds(center.1, radius);
+            let distance = format!(
+                "__fastdb_geo_distance(longitude, key, {}, {})",
+                center.0, center.1
+            );
+            format!(
+                    "SELECT id, {distance} AS distance_m FROM {} INDEXED BY {} WHERE key >= {low} AND key <= {high} AND {distance} <= {radius}{allowed}",
+                    crate::quote(&index.storage),
+                    crate::quote(&index.name)
+                )
+        };
+        format!(
+            "SELECT id, distance_m FROM ({candidates}) ORDER BY distance_m, __fastdb_sort_encoded(id) LIMIT {k}"
+        )
     }
 
     /// Statements started by a nearest search add to the outer profile, so the

@@ -8,7 +8,7 @@ const { execFileSync } = require('node:child_process');
 const [oldPackage, newPackage, directory, phase, file] = process.argv.slice(2);
 assert.equal(require(path.join(oldPackage, 'package.json')).version, '2.3.0');
 const newVersion = require(path.join(newPackage, 'package.json')).version;
-assert.ok(['2.4.0', '2.5.0', '2.5.1'].includes(newVersion), newVersion);
+assert.ok(['2.4.0', '2.5.0', '2.5.1', '2.5.2'].includes(newVersion), newVersion);
 const digest = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 if (!phase) {
   fs.mkdirSync(directory);
