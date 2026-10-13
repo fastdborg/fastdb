@@ -1809,10 +1809,13 @@ fn spatial_rewrites_pick_scalar_indexes_and_scans_by_selectivity() {
         ] {
             let profile = same_as_scan(&c, sql, &params);
             assert_eq!(profile.metrics.spatial_rounds, 0, "{sql}: {:?}", profile.metrics);
-            // Index entries and documents for the bounded count and the statement.
+            // Index entries and documents for the bounded count and the statement:
+            // execution read the fleet index, not spatial candidates.
             assert!(profile.metrics.rows_read < 100, "{sql}: {:?}", profile.metrics);
+            // EXPLAIN reads no data, so it cannot count the fleet and shows the
+            // spatial plan that execution would use without that count.
             let plan = plan(&c, sql, &params);
-            assert!(plan.contains("drivers_fleet") && !plan.contains("drivers_location"), "{sql}: {plan}");
+            assert!(plan.contains("drivers_location"), "{sql}: {plan}");
         }
         // Almost every driver is in the day fleet: the spatial candidates drive
         // the statement and the fleet index is not scanned.

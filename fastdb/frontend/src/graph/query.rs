@@ -58,8 +58,14 @@ pub(crate) struct GraphCounters {
 thread_local! {
     static EXPLAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
-/// Marks lowering for EXPLAIN so graph sources describe their plan without traversing.
+/// Marks lowering for EXPLAIN so graph and spatial sources describe their plan
+/// without reading data.
 pub(crate) struct ExplainScope(bool);
+
+/// Whether the current lowering is for EXPLAIN.
+pub(crate) fn explaining() -> bool {
+    EXPLAIN.with(std::cell::Cell::get)
+}
 impl ExplainScope {
     pub(crate) fn enter(explain: bool) -> Self {
         Self(EXPLAIN.with(|cell| cell.replace(cell.get() || explain)))

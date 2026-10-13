@@ -301,7 +301,13 @@ impl crate::Connection {
             .map(|(position, _, _)| *position)
             .chain(guards.iter().map(|(position, _)| *position))
             .collect::<BTreeSet<_>>();
-        let scalar = self.scalar_matches(&from_sql, &scope, &parts, &spatial_positions, params)?;
+        // Choices that count data are made only when the statement runs, so
+        // EXPLAIN reads nothing and shows the spatial plan.
+        let scalar = if explain {
+            None
+        } else {
+            self.scalar_matches(&from_sql, &scope, &parts, &spatial_positions, params)?
+        };
         if let Some((index, center, k, ordered)) = nearest {
             if let Some(k) = limit(k, params) {
                 // The indexed candidate set excludes missing locations, so a
@@ -570,7 +576,14 @@ impl crate::Connection {
         // Filters only remove points, so the radius holding k unfiltered points
         // is a safe first probe. Raw index rounds find it without document reads.
         let spatial = self.spatial_index(index, "nearest ordering")?;
-        let (_, mut radius) = self.nearest_rows(&spatial, origin, k, "", NEAREST_FIRST_RADIUS_M)?;
+        // EXPLAIN shows the first round at its nominal radius without reading
+        // the index; execution starts from the radius that holds k points.
+        let mut radius = if explain {
+            NEAREST_FIRST_RADIUS_M
+        } else {
+            self.nearest_rows(&spatial, origin, k, "", NEAREST_FIRST_RADIUS_M)?
+                .1
+        };
         let mut examined = 0;
         let mut entries = None;
         loop {
