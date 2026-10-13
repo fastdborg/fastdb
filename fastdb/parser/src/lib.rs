@@ -180,6 +180,8 @@ pub enum Statement {
         table: String,
         name: String,
         path: Vec<String>,
+        /// Index Polygon and MultiPolygon values for point containment lookups.
+        regions: bool,
     },
     CreateIndex {
         if_not_exists: bool,
@@ -1406,8 +1408,30 @@ pub fn parse(input: &str) -> Result<Statement> {
                 path: paths.remove(0),
             });
         }
-        if !(p.eat("SPATIAL") && p.end()) || paths.len() != 1 {
+        if !p.eat("SPATIAL") || paths.len() != 1 {
             return Err(p.error("expected FULLTEXT paths or one SPATIAL path"));
+        }
+        let mut regions = false;
+        if p.eat("WITH") {
+            if !(p.eat("(") && p.name()?.eq_ignore_ascii_case("geometry") && p.eat("=")) {
+                return Err(p.error("expected WITH (geometry = 'point' or 'region')"));
+            }
+            let token = p
+                .tokens
+                .get(p.pos)
+                .ok_or_else(|| p.error("expected geometry option value"))?;
+            regions = match (&token.kind, token.text.as_str()) {
+                (Kind::String, "point") => false,
+                (Kind::String, "region") => true,
+                _ => return Err(p.error("geometry must be 'point' or 'region'")),
+            };
+            p.pos += 1;
+            if !p.eat(")") {
+                return Err(p.error("expected end of SPATIAL options"));
+            }
+        }
+        if !p.end() {
+            return Err(p.error("expected end of SPATIAL index"));
         }
         let path = paths.remove(0);
         return Ok(Statement::CreateSpatialIndex {
@@ -1415,6 +1439,7 @@ pub fn parse(input: &str) -> Result<Statement> {
             table,
             name,
             path,
+            regions,
         });
     }
     p.pos = 0;

@@ -625,7 +625,9 @@ fn profile_value(profile: fastdb::ProfiledQuery) -> fastdb::Result<JsonText> {
         "graphDocuments":m.graph_documents.to_string(),
         "graphRows":m.graph_rows.to_string(),
         "graphVisited":m.graph_visited.to_string(),
-        "graphPeakBytes":m.graph_peak_bytes.to_string()
+        "graphPeakBytes":m.graph_peak_bytes.to_string(),
+        "spatialRanges":m.spatial_ranges.to_string(),
+        "spatialRounds":m.spatial_rounds.to_string()
     });
     let result = query_value(profile.result)?;
     Ok(JsonText(wrap_json(

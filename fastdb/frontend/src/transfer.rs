@@ -345,18 +345,23 @@ impl Connection {
                     return Err(Error::Limit("transfer exceeds 100000 documents".into()));
                 }
             }
+            // One savepoint covers the whole import, so any failure restores
+            // every document; documents need no savepoint of their own.
             return self.atomic(|| {
-                self.catalog(table)?;
+                let collection = self.catalog(table)?;
                 for document in ndjson_documents(input)? {
-                    self.insert(table, document?)?;
+                    self.insert_in_transaction(&collection, document?)?;
                 }
                 Ok(count)
             });
         }
         let count = json_documents(input, |_| Ok(()))?;
         self.atomic(|| {
-            self.catalog(table)?;
-            json_documents(input, |document| self.insert(table, document).map(|_| ()))?;
+            let collection = self.catalog(table)?;
+            json_documents(input, |document| {
+                self.insert_in_transaction(&collection, document)
+                    .map(|_| ())
+            })?;
             Ok(count)
         })
     }

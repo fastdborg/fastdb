@@ -196,14 +196,31 @@ fn tokenizer_bounds_bytes_before_scanning_and_tokens_before_copying() {
 #[test]
 fn spatial_index_declarations_are_additive_and_strict() {
     assert_eq!(parse("CREATE SEARCH INDEX IF NOT EXISTS locations ON places(profile.location) USING SPATIAL;").unwrap(),
-        Statement::CreateSpatialIndex { if_not_exists:true, table:"places".into(), name:"locations".into(), path:vec!["profile".into(),"location".into()] });
+        Statement::CreateSpatialIndex { if_not_exists:true, table:"places".into(), name:"locations".into(), path:vec!["profile".into(),"location".into()], regions:false });
     for sql in [
         "CREATE SEARCH INDEX i ON places(a,b) USING SPATIAL",
         "CREATE SEARCH INDEX i ON places(a) USING unknown",
         "CREATE SEARCH INDEX i ON places(a) USING SPATIAL extra",
+        "CREATE SEARCH INDEX i ON places(a) USING SPATIAL WITH (geometry = 'line')",
+        "CREATE SEARCH INDEX i ON places(a) USING SPATIAL WITH (shape = 'region')",
+        "CREATE SEARCH INDEX i ON places(a) USING SPATIAL WITH (geometry = region)",
+        "CREATE SEARCH INDEX i ON places(a) USING SPATIAL WITH (geometry = 'region') extra",
     ] {
         assert!(parse(sql).is_err(), "{sql}");
     }
+    assert_eq!(parse("CREATE SEARCH INDEX zones_shape ON zones(shape) USING SPATIAL WITH (geometry = 'region')").unwrap(),
+        Statement::CreateSpatialIndex { if_not_exists:false, table:"zones".into(), name:"zones_shape".into(), path:vec!["shape".into()], regions:true });
+    assert_eq!(
+        parse("CREATE SEARCH INDEX p ON places(location) USING SPATIAL WITH (GEOMETRY = 'point')")
+            .unwrap(),
+        Statement::CreateSpatialIndex {
+            if_not_exists: false,
+            table: "places".into(),
+            name: "p".into(),
+            path: vec!["location".into()],
+            regions: false
+        }
+    );
     assert!(matches!(
         parse("CREATE INDEX i ON places(a)").unwrap(),
         Statement::CreateIndex { .. }

@@ -253,6 +253,8 @@ struct Index {
     vector: Option<ann::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scalar: Option<scalar_index::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spatial: Option<spatial::Config>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Collection {
@@ -384,6 +386,7 @@ impl Database {
             graph_limits: Default::default(),
             graph_counters: Default::default(),
             graph_plan: Default::default(),
+            spatial_counters: Default::default(),
         };
         functions::register(&connection)?;
         connection.atomic(|| connection.validate_storage_schema())?;
@@ -405,6 +408,7 @@ pub struct Connection {
     graph_limits: std::sync::Mutex<GraphLimits>,
     graph_counters: std::sync::Mutex<graph::GraphCounters>,
     graph_plan: std::sync::Mutex<Vec<String>>,
+    spatial_counters: std::sync::Mutex<spatial::Counters>,
 }
 fn retain_write_document(
     budget: &mut budget::ResultBudget,
@@ -498,7 +502,17 @@ impl Connection {
             matches!(error.code(), "FDB_CANCELLED" | "FDB_ROLLBACK")
         })
     }
+    /// Run `f` in a uniquely named savepoint. The whole operation runs on a
+    /// grown stack, so nested statement preparation does not allocate a new
+    /// stack segment for each call.
     fn savepoint<T>(
+        &self,
+        f: impl FnOnce() -> Result<T>,
+        rollback_on_error: impl FnOnce(&Error) -> bool,
+    ) -> Result<T> {
+        parser_stack(|| self.savepoint_on_stack(f, rollback_on_error))
+    }
+    fn savepoint_on_stack<T>(
         &self,
         f: impl FnOnce() -> Result<T>,
         rollback_on_error: impl FnOnce(&Error) -> bool,
@@ -596,8 +610,13 @@ impl Connection {
     }
     fn save_catalog(&self, collection: &Collection) -> Result<()> {
         let mut collection = collection.clone();
-        collection.version = if collection.edge.is_some() || !collection.edge_dependents.is_empty()
+        collection.version = if collection
+            .indexes
+            .iter()
+            .any(|index| index.spatial.is_some())
         {
+            collection.version.max(spatial::CATALOG_VERSION)
+        } else if collection.edge.is_some() || !collection.edge_dependents.is_empty() {
             collection.version.max(graph::CATALOG_VERSION)
         } else if collection.strict
             || !collection.field_policies.is_empty()
@@ -769,6 +788,25 @@ impl Connection {
     ) -> Result<()> {
         self.create_index_kind(table, name, path, false, if_not_exists, IndexKind::Spatial)
     }
+    /// Build an index of Polygon and MultiPolygon values for finding the
+    /// stored regions that contain a point. Missing and null values are excluded.
+    pub fn create_spatial_region_index(
+        &self,
+        table: &str,
+        name: &str,
+        path: Vec<String>,
+        if_not_exists: bool,
+    ) -> Result<()> {
+        self.create_index_spatial(
+            table,
+            name,
+            vec![path],
+            false,
+            if_not_exists,
+            IndexKind::Spatial,
+            Some(spatial::Config::regions()),
+        )
+    }
     fn create_index_kind(
         &self,
         table: &str,
@@ -788,6 +826,20 @@ impl Connection {
         unique: bool,
         if_not_exists: bool,
         kind: IndexKind,
+    ) -> Result<()> {
+        let spatial = (kind == IndexKind::Spatial).then(spatial::Config::current);
+        self.create_index_spatial(table, name, paths, unique, if_not_exists, kind, spatial)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn create_index_spatial(
+        &self,
+        table: &str,
+        name: &str,
+        paths: Vec<Vec<String>>,
+        unique: bool,
+        if_not_exists: bool,
+        kind: IndexKind,
+        spatial: Option<spatial::Config>,
     ) -> Result<()> {
         if paths.is_empty() || paths.len() > 16 || (kind != IndexKind::Scalar && paths.len() != 1) {
             return Err(Error::Validation(
@@ -812,9 +864,12 @@ impl Connection {
             if !existing.is_empty() {
                 if matches!(kind, IndexKind::Spatial | IndexKind::Array)
                     && if_not_exists
-                    && c.indexes
-                        .iter()
-                        .any(|i| i.name == name && i.kind == kind && i.path == path)
+                    && c.indexes.iter().any(|i| {
+                        i.name == name
+                            && i.kind == kind
+                            && i.path == path
+                            && i.region_index() == spatial.as_ref().is_some_and(|s| s.regions)
+                    })
                 {
                     return Ok(());
                 }
@@ -856,10 +911,14 @@ impl Connection {
                 scalar: (paths.len() > 1).then(|| scalar_index::Config {
                     additional_paths: paths[1..].to_vec(),
                 }),
+                spatial,
             };
             index.validate_scalar_config()?;
             self.run(&index.table_ddl(), &[])?;
             self.run(&index.index_ddl(), &[])?;
+            for object in index.extra_schema() {
+                self.run(&object.ddl, &[])?;
+            }
             for doc in self.documents(&c)? {
                 self.insert_index(&index, &doc)?;
             }
@@ -874,6 +933,9 @@ impl Connection {
         }
         if index.kind == IndexKind::Array {
             return self.insert_array_entries(index, doc);
+        }
+        if index.region_index() {
+            return self.insert_region_entries(index, doc);
         }
         let mut values = index.document_keys(doc)?;
         let id = doc
@@ -918,6 +980,17 @@ impl Connection {
             self.store_insert_document(&c, &doc)?;
             Ok(doc)
         })
+    }
+    /// Insert into a collection whose metadata the caller already read, inside
+    /// a savepoint the caller owns and rolls back on any error.
+    pub(crate) fn insert_in_transaction(
+        &self,
+        c: &Collection,
+        mut doc: Document,
+    ) -> Result<Document> {
+        self.prepare_insert_document(c, &mut doc)?;
+        self.store_insert_document(c, &doc)?;
+        Ok(doc)
     }
     fn prepare_insert_document(&self, c: &Collection, doc: &mut Document) -> Result<()> {
         if !doc.contains_key("id") {
@@ -978,14 +1051,21 @@ impl Connection {
     }
     fn write_validated_document(&self, c: &Collection, doc: &Document) -> Result<()> {
         self.graph_check_edge_update(c, doc)?;
-        if c.field_policies
+        let readonly = c
+            .field_policies
             .iter()
-            .any(|policy| policy.options.readonly)
-        {
-            if let Some(Value::Record(id)) = doc.get("id") {
-                if let Some(before) = self.get_in(c, id)? {
-                    field_rules::readonly(c, &before, doc)?;
-                }
+            .any(|policy| policy.options.readonly);
+        let before = if readonly || c.indexes.iter().any(Index::keyed_maintenance) {
+            match doc.get("id") {
+                Some(Value::Record(id)) => self.get_in(c, id)?,
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if readonly {
+            if let Some(before) = &before {
+                field_rules::readonly(c, before, doc)?;
             }
         }
         let id = EngineValue::Blob(doc["id"].encode()?);
@@ -994,8 +1074,55 @@ impl Connection {
             &[EngineValue::Blob(value::encode_document(doc)?), id.clone()],
         )?;
         for index in &c.indexes {
-            self.delete_index_entry(index, &id)?;
+            if let (true, Some(before)) = (index.keyed_maintenance(), &before) {
+                let old = index.document_keys(before)?;
+                if old == index.document_keys(doc)? {
+                    continue;
+                }
+                self.delete_keyed_entry(index, &id, old)?;
+            } else {
+                self.delete_index_entry(index, &id)?;
+            }
             self.insert_index(index, doc)?;
+        }
+        Ok(())
+    }
+    /// Delete one scalar or spatial entry through the index on its key
+    /// columns. Entry tables have no index on the ID column, so deleting by ID
+    /// alone reads every entry. An entry that does not match its document's
+    /// keys falls back to that complete deletion.
+    fn delete_keyed_entry(
+        &self,
+        index: &Index,
+        id: &EngineValue,
+        keys: Vec<EngineValue>,
+    ) -> Result<()> {
+        let columns = index.key_columns();
+        let columns = columns.split(',').collect::<Vec<_>>();
+        if columns.len() != keys.len() {
+            return Err(Error::Storage(format!(
+                "invalid key arity for index {}",
+                index.name
+            )));
+        }
+        let condition = columns
+            .iter()
+            .enumerate()
+            .map(|(i, column)| format!("{column} IS ?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let mut values = keys;
+        values.push(id.clone());
+        let deleted = self.run_index_maintenance(
+            &format!(
+                "DELETE FROM {} WHERE {condition} AND id = ?{} RETURNING id",
+                quote(&index.storage),
+                values.len()
+            ),
+            &values,
+        )?;
+        if deleted.len() != 1 {
+            self.delete_index_entry(index, id)?;
         }
         Ok(())
     }
@@ -1034,7 +1161,11 @@ impl Connection {
         self.graph_delete(c, doc)?;
         let id = EngineValue::Blob(doc["id"].encode()?);
         for index in &c.indexes {
-            self.delete_index_entry(index, &id)?;
+            if index.keyed_maintenance() {
+                self.delete_keyed_entry(index, &id, index.document_keys(doc)?)?;
+            } else {
+                self.delete_index_entry(index, &id)?;
+            }
         }
         self.run_customer(
             &format!("DELETE FROM {} WHERE id = ?1", quote(&c.storage)),
@@ -1078,8 +1209,12 @@ impl Connection {
         params: &Parameters,
         limits: Option<ResultLimits>,
     ) -> Result<QueryResult> {
+        self.reset_spatial_counters();
         self.with_statement_timeout(sql, |sql| {
-            if udf::has_calls(sql)? || analyzer::has_calls(sql)? {
+            if udf::has_calls(sql)?
+                || analyzer::has_calls(sql)?
+                || spatial::has_snapshot_sources(sql)?
+            {
                 return self.atomic(|| self.execute_snapshot(sql, params, limits));
             }
             self.execute_snapshot(sql, params, limits)
@@ -1386,8 +1521,13 @@ impl Connection {
                 table,
                 name,
                 path,
+                regions,
             } => {
-                self.create_spatial_index(&table, &name, path, if_not_exists)?;
+                if regions {
+                    self.create_spatial_region_index(&table, &name, path, if_not_exists)?;
+                } else {
+                    self.create_spatial_index(&table, &name, path, if_not_exists)?;
+                }
                 Ok(QueryResult::command(0))
             }
             Statement::CreateIndex {

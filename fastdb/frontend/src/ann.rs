@@ -481,6 +481,7 @@ impl Connection {
             fulltext: None,
             vector: Some(config),
             scalar: None,
+            spatial: None,
         };
         self.atomic(||{
             let mut collection=self.catalog(table)?;

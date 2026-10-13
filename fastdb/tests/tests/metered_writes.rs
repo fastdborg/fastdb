@@ -324,7 +324,10 @@ fn index_maintenance_consumes_shared_reads_and_vm_budget() {
     ] {
         let r = c.write_metered("UPDATE indexed:a {n:2}", &p, limits(), work_limits);
         assert!(r.outcome.is_err());
-        assert_eq!(r.work.row_mutations, 1, "budget fails after primary write");
+        // Indexed updates read the previous document before the primary write
+        // to maintain entries by key, so the shared budget can end before or
+        // after it; either way nothing survives the failed statement.
+        assert!(r.work.row_mutations <= 1, "{:#?}", r.work);
         assert!(r.work.read_budget_exhausted || r.work.vm_budget_exhausted);
         assert_eq!(
             c.execute("SELECT n FROM indexed WHERE n=1", &p)

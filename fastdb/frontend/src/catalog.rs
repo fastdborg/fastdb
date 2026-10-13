@@ -45,7 +45,7 @@ pub(crate) const fn legacy_version() -> u32 {
     1
 }
 pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
-    if !matches!(collection.version, 1..=6) {
+    if !matches!(collection.version, 1..=7) {
         return Err(Error::Storage(format!(
             "unsupported collection metadata version {}",
             collection.version
@@ -130,6 +130,8 @@ pub(crate) fn validate_version(collection: &Collection) -> Result<()> {
         }
     }
     crate::graph::validate_version(collection)?;
+    crate::spatial::validate_version(collection)?;
+
     if collection.version == 1 && collection.fields.iter().any(|f| f.check.is_some()) {
         return Err(Error::Storage(
             "CHECK metadata requires catalog version 2".into(),
@@ -358,6 +360,9 @@ impl SchemaSnapshot {
         Ok(())
     }
     fn managed_dependencies(&self, table: &str, expected_index: Option<&str>) -> Result<()> {
+        self.managed_index_dependencies(table, expected_index.as_slice())
+    }
+    fn managed_index_dependencies(&self, table: &str, expected: &[&str]) -> Result<()> {
         for row in &self.rows {
             let [EngineValue::Text(kind), name, EngineValue::Text(actual_table), sql] =
                 row.as_slice()
@@ -370,7 +375,7 @@ impl SchemaSnapshot {
             {
                 continue;
             }
-            if !matches!(name, EngineValue::Text(name) if kind.as_str() == "index" && Some(name.as_str()) == expected_index)
+            if !matches!(name, EngineValue::Text(name) if kind.as_str() == "index" && expected.contains(&name.as_str()))
             {
                 return Err(Error::Storage(format!(
                     "unexpected dependency on managed table {table}"
@@ -438,7 +443,23 @@ impl Connection {
                     &index.table_ddl(),
                 )?;
                 schema.schema_object(&index.name, "index", &index.storage, &index.index_ddl())?;
-                schema.managed_dependencies(&index.storage, Some(&index.name))?;
+                let mut expected = vec![index.name.clone()];
+                for object in index.extra_schema() {
+                    if object.kind == "table" && !storage.insert(object.name.clone()) {
+                        return Err(Error::Storage(format!(
+                            "managed index storage {} has multiple owners",
+                            object.name
+                        )));
+                    }
+                    schema.schema_object(&object.name, object.kind, &object.table, &object.ddl)?;
+                    if object.kind == "index" && object.table == index.storage {
+                        expected.push(object.name.clone());
+                    } else if object.kind == "table" {
+                        schema.managed_dependencies(&object.name, None)?;
+                    }
+                }
+                let expected = expected.iter().map(String::as_str).collect::<Vec<_>>();
+                schema.managed_index_dependencies(&index.storage, &expected)?;
                 if index.kind == crate::IndexKind::Vector {
                     for (name, ddl) in [
                         (index.ann_state(), index.ann_state_ddl()),
