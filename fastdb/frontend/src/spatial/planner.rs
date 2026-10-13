@@ -8,6 +8,13 @@
 //! `geo::within` raise errors on NULL, so they are not rewritten in WHERE.
 use super::{number, point, prepared, search_argument, MAX_NEAREST, NEAREST_FIRST_RADIUS_M};
 
+/// A scalar index that selects fewer documents than this drives the statement
+/// instead of a spatial search; each selected document is read once.
+const SCALAR_PREFERRED: usize = 4096;
+
+/// Sequential scan steps that cost about as much as reading one candidate by ID.
+const SCAN_STEPS_PER_READ: usize = 8;
+
 use crate::{Parameters, Result, Value};
 use std::collections::BTreeSet;
 use turso_parser::ast::{
@@ -43,6 +50,8 @@ struct Scope {
     source: String,
     /// Top-level field, index name, and whether the index holds regions.
     fields: Vec<(String, String, bool)>,
+    /// Top-level fields whose scalar index the ordinary plan can search.
+    scalar: BTreeSet<String>,
 }
 
 impl Scope {
@@ -57,17 +66,46 @@ impl Scope {
     }
 
     fn lookup(&self, expr: &Expr, regions: bool) -> Option<&str> {
-        let field = match strip(expr) {
-            Expr::Id(name) => name.as_str(),
-            Expr::Qualified(table, name) if table.as_str().eq_ignore_ascii_case(&self.source) => {
-                name.as_str()
-            }
-            _ => return None,
-        };
+        let field = self.field(expr)?;
         self.fields
             .iter()
             .find(|(path, _, kind)| path == field && *kind == regions)
             .map(|(_, index, _)| index.as_str())
+    }
+
+    fn field<'a>(&self, expr: &'a Expr) -> Option<&'a str> {
+        match strip(expr) {
+            Expr::Id(name) => Some(name.as_str()),
+            Expr::Qualified(table, name) if table.as_str().eq_ignore_ascii_case(&self.source) => {
+                Some(name.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the ordinary plan can answer this condition from a scalar index:
+    /// equality or IN with constants on a scalar-indexed top-level field.
+    fn scalar_condition(&self, expr: &Expr, params: &Parameters) -> bool {
+        let indexed = |field: &Expr| {
+            self.field(field)
+                .is_some_and(|name| self.scalar.contains(name))
+        };
+        match strip(expr) {
+            Expr::Binary(left, Operator::Equals, right) => {
+                (indexed(left) && constant(right, params).is_some())
+                    || (indexed(right) && constant(left, params).is_some())
+            }
+            Expr::InList {
+                lhs,
+                rhs,
+                not: false,
+            } => {
+                !rhs.is_empty()
+                    && indexed(lhs)
+                    && rhs.iter().all(|value| constant(value, params).is_some())
+            }
+            _ => false,
+        }
     }
 }
 
@@ -210,13 +248,26 @@ impl crate::Connection {
         if fields.is_empty() {
             return Ok(());
         }
+        let scalar = collection
+            .indexes
+            .iter()
+            .filter(|index| index.kind == crate::IndexKind::Scalar && index.path.len() == 1)
+            .filter(|index| !aliases.contains(&index.path[0].to_ascii_lowercase()))
+            .map(|index| index.path[0].clone())
+            .collect();
         let scope = Scope {
             source: alias.as_ref().map_or_else(
                 || name.name.as_str().to_owned(),
                 |a| a.name().as_str().to_owned(),
             ),
             fields,
+            scalar,
         };
+        let from_sql = format!(
+            "{} AS {}",
+            crate::quote(name.name.as_str()),
+            crate::quote(&scope.source)
+        );
         let mut parts = Vec::new();
         if let Some(condition) = where_clause {
             conjuncts(condition, &mut parts);
@@ -245,6 +296,12 @@ impl crate::Connection {
         } else {
             None
         };
+        let spatial_positions = searches
+            .iter()
+            .map(|(position, _, _)| *position)
+            .chain(guards.iter().map(|(position, _)| *position))
+            .collect::<BTreeSet<_>>();
+        let scalar = self.scalar_matches(&from_sql, &scope, &parts, &spatial_positions, params)?;
         if let Some((index, center, k, ordered)) = nearest {
             if let Some(k) = limit(k, params) {
                 // The indexed candidate set excludes missing locations, so a
@@ -257,11 +314,42 @@ impl crate::Connection {
                     .collect::<BTreeSet<_>>();
                 let mut base = select.clone();
                 set_where(&mut base, remaining(&parts, &dropped));
-                if let Some(search) =
+                // The scalar plan reads the `found` matching documents; rounds read
+                // about k * entries / found candidates when matches are spread
+                // evenly, plus about as much again in earlier rounds.
+                let scalar_cheaper = match scalar.filter(|found| *found < SCALAR_PREFERRED) {
+                    Some(found) => {
+                        let entries =
+                            self.index_entries(&self.spatial_index(index, "nearest ordering")?)?;
+                        found * found < 2 * k * entries
+                    }
+                    None => false,
+                };
+                let search = if scalar_cheaper {
+                    None
+                } else {
                     self.nearest_round(&base, index, center, k, params, explain)?
-                {
+                };
+                if let Some(search) = search {
                     let condition = self.member(&search)?;
                     set_where(select, and(remaining(&parts, &dropped), condition));
+                    return Ok(());
+                }
+                if searches.is_empty() {
+                    // The ordinary plan computes distances only for documents
+                    // that pass the cheaper conditions.
+                    let guard_positions = guards
+                        .iter()
+                        .map(|(position, _)| *position)
+                        .collect::<BTreeSet<_>>();
+                    let others = remaining(&parts, &guard_positions);
+                    let guarded = guard_positions
+                        .iter()
+                        .map(|position| {
+                            Expr::Parenthesized(vec![Box::new(parts[*position].clone())])
+                        })
+                        .fold(others, and);
+                    set_where(select, guarded);
                     return Ok(());
                 }
             }
@@ -269,6 +357,13 @@ impl crate::Connection {
         let Some((position, search, exact)) = searches.into_iter().next() else {
             return Ok(());
         };
+        if let Some(found) = scalar.filter(|found| *found < SCALAR_PREFERRED) {
+            // The scalar index plan reads `found` documents; prefer it unless
+            // the spatial search returns no more candidates.
+            if self.count_candidates(&search, found + 1)? > found {
+                return Ok(());
+            }
+        }
         // An exactly equivalent condition is evaluated by the index refinement
         // on the same stored coordinates, so it is replaced, not repeated.
         let dropped = if exact {
@@ -285,7 +380,23 @@ impl crate::Connection {
     /// Index entries hold the same encoded IDs as the collection's key column,
     /// so no typed membership conversion is needed.
     fn member(&self, search: &Search) -> Result<Expr> {
-        let sql = match &search.kind {
+        let sql = self.search_sql(search)?;
+        let consumed = search
+            .consumed
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(",");
+        crate::select::rewrite_expression(&format!(
+            "__fastdb_h_spatial_member('{}', '{}')",
+            format!("SELECT id FROM ({sql})").replace('\'', "''"),
+            consumed.replace('\'', "''")
+        ))
+    }
+
+    /// Index SQL returning the IDs of a search's candidates, refined exactly.
+    fn search_sql(&self, search: &Search) -> Result<String> {
+        Ok(match &search.kind {
             SearchKind::Region {
                 index,
                 region,
@@ -305,18 +416,61 @@ impl crate::Connection {
                 point.clone(),
                 Value::String((*mode).into()),
             ])?,
-        };
-        let consumed = search
-            .consumed
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(",");
-        crate::select::rewrite_expression(&format!(
-            "__fastdb_h_spatial_member('{}', '{}')",
-            format!("SELECT id FROM ({sql})").replace('\'', "''"),
-            consumed.replace('\'', "''")
-        ))
+        })
+    }
+
+    /// Entries in a spatial index, one per document.
+    fn index_entries(&self, index: &crate::Index) -> Result<usize> {
+        let rows = self.run_customer(
+            &format!("SELECT count(*) FROM {}", crate::quote(&index.storage)),
+            &[],
+        )?;
+        Ok(match rows.first().and_then(|row| row.first()) {
+            Some(turso_core::Value::Numeric(turso_core::Numeric::Integer(n))) => *n as usize,
+            _ => 0,
+        })
+    }
+
+    /// Number of IDs a search returns, counting at most `limit`.
+    fn count_candidates(&self, search: &Search, limit: usize) -> Result<usize> {
+        let rows = self.run_customer(
+            &format!(
+                "SELECT count(*) FROM (SELECT 1 FROM ({}) LIMIT {limit})",
+                self.search_sql(search)?
+            ),
+            &[],
+        )?;
+        Ok(match rows.first().and_then(|row| row.first()) {
+            Some(turso_core::Value::Numeric(turso_core::Numeric::Integer(n))) => *n as usize,
+            _ => 0,
+        })
+    }
+
+    /// Fewest documents any scalar-indexed condition selects, counted up to
+    /// SCALAR_PREFERRED through the ordinary plan, which searches that index.
+    fn scalar_matches(
+        &self,
+        from: &str,
+        scope: &Scope,
+        parts: &[Expr],
+        skip: &BTreeSet<usize>,
+        params: &Parameters,
+    ) -> Result<Option<usize>> {
+        let mut fewest: Option<usize> = None;
+        for (position, part) in parts.iter().enumerate() {
+            if skip.contains(&position) || !scope.scalar_condition(part, params) {
+                continue;
+            }
+            let found = self
+                .collection_select_internal(
+                    &format!("SELECT 1 FROM {from} WHERE {part} LIMIT {SCALAR_PREFERRED}"),
+                    params,
+                    true,
+                )?
+                .map_or(0, |result| result.rows.len());
+            fewest = Some(fewest.map_or(found, |fewest| fewest.min(found)));
+        }
+        Ok(fewest)
     }
 
     /// Recognized condition, its index, and whether the index search returns
@@ -417,6 +571,8 @@ impl crate::Connection {
         // is a safe first probe. Raw index rounds find it without document reads.
         let spatial = self.spatial_index(index, "nearest ordering")?;
         let (_, mut radius) = self.nearest_rows(&spatial, origin, k, "", NEAREST_FIRST_RADIUS_M)?;
+        let mut examined = 0;
+        let mut entries = None;
         loop {
             // A round over the whole globe cannot prune; the ordinary plan reads
             // each document once instead of through a candidate set of all IDs.
@@ -471,6 +627,21 @@ impl crate::Connection {
                 .map_or(0, |result| result.rows.len());
             if found >= k {
                 return Ok(Some(search));
+            }
+            // A selective filter can need most of the collection. Reading a
+            // candidate by ID costs several times a sequential scan step, so once
+            // the documents read so far, or those the observed match rate
+            // predicts for the next round, reach an eighth of the index, one
+            // ordinary scan is cheaper.
+            let candidates = self.count_candidates(&search, i64::MAX as usize)?;
+            examined += candidates;
+            let entries = match entries {
+                Some(entries) => entries,
+                None => *entries.insert(self.index_entries(&spatial)?),
+            };
+            let predicted = k * candidates.max(1) / found.max(1);
+            if SCAN_STEPS_PER_READ * examined.max(predicted) >= entries {
+                return Ok(None);
             }
             radius = super::next_radius(radius, found, k);
         }

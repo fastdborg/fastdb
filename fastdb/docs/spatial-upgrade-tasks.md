@@ -23,8 +23,9 @@ capability.
 - [x] Define input and execution limits with an initial cost assessment (sections 5 and 10).
 - [x] Map the dating, driver, viewport and storm examples to planned tests (section 11).
 - [x] Record the index migration and compatibility policy (section 8).
-- [ ] Prototype nearest radius expansion in one snapshot and record round counts
-  on dense and sparse fixtures. Moved to S1, because it needs the candidate index.
+- [x] Prototype nearest radius expansion in one snapshot and record round counts
+  on dense and sparse fixtures: 3 rounds in a city and 7 in open ocean for k = 5,
+  frozen as ceilings in the [2.5.1 evidence](spatial-upgrade-evidence.md#frozen-work-ceilings).
 - [x] Prove that per-row prepared-geometry lookup does not re-parse: regions are
   cached by encoded bytes (contract section 5). A per-row timing proof on a large
   region remains with the S3 polygon benchmarks.
@@ -71,8 +72,10 @@ The full scoped milestone script result is recorded under S2.
   tests in `morton.rs`.
 - [x] Prove the nearest stopping rule (contract section 6) and record round counts.
 - [x] Measure same-latitude, city, dateline, thin-polygon and distant-population workloads.
-- [ ] Measure moving-point workloads (repeated driver movement with concurrent searches).
-- [ ] Freeze numeric acceptance ceilings for the selective fixtures beside the benchmarks.
+- [x] Measure moving-point workloads (repeated driver movement with concurrent
+  searches): [2.5.1 evidence](spatial-upgrade-evidence.md#moving-drivers-with-concurrent-searches).
+- [x] Freeze numeric acceptance ceilings for the selective fixtures beside the
+  benchmarks: asserted by `selective_fixture_work_stays_under_frozen_ceilings`.
 - [x] Select one primary design and document the decision.
 
 ## S2. Geometry layer and indexed viewport operation
@@ -116,13 +119,18 @@ The full scoped milestone script result is recorded under S2.
 - [x] `search::nearest` with the optional allowed-ID array, and the ordinary form.
 - [x] Invalid explicit arguments rejected without scan fallback.
 - [x] Sparse, fewer-than-k, tie, pending-write and rollback cases.
-- [ ] Benchmark concurrent movement and search.
+- [x] Benchmark concurrent movement and search (`scripts/bench-spatial-movement.cjs`).
+- [x] Cancellation, deadline, result-limit and `k` limit cases during rounds.
+- [x] Rare filters stop rounds early; scalar indexes on filter fields are used
+  when they select fewer documents (2.5.1).
 
 ## S5 and S6
 
-Not started: client qualification beyond the Rust and Node test suites, migration
-interruption tests, old-binary rejection with the real 2.4.0 artifacts, user
-documentation, release selection and qualification.
+- [x] Released in [2.5.0](release-2.5.0.md): seven-client qualification, 2.4.0
+  old-reader rejection with the released artifacts, user documentation and the
+  release workflow.
+- [x] 2.5.1: interrupted `REINDEX` of a latitude-format index, polygon and region
+  steps in the shared native client fixture, and a randomized write stress test.
 
 ## Comparison with SurrealDB
 
@@ -138,6 +146,8 @@ documentation, release selection and qualification.
   keyed index maintenance and faster imports; a semijoin rewrite instead of typed
   `id IN (...)` membership; region indexes for reverse geofencing. The 2.5.0
   rerun is in [the comparison](spatial-surrealdb-comparison.md).
-- [ ] Large result sets, grouping and very selective nearest filters remain
-  slower than SurrealDB.
+- [x] 2.5.1: field reads scan the canonical layout and stop at the member, which
+  halves scans and row conversion, and nearest search uses scalar indexes on
+  selective filters. Large groupings and rare filters without an index remain
+  slower than SurrealDB; see [the evidence](spatial-upgrade-evidence.md#251-follow-up).
 

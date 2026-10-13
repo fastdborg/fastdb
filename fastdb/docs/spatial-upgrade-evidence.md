@@ -324,3 +324,108 @@ Findings:
   range arms per statement and remains an open tuning item.
 - Loading 100,000 documents took 35 to 38 s and building the index 7 s. Both are
   dominated by the existing document write path, measured one statement per insert.
+
+## 2.5.1 follow-up
+
+Measured 2026-10-13 on the same host with the `fastdb-production` profile.
+These are local samples, not latency or capacity guarantees.
+
+### Nearest search with selective filters
+
+Test: `spatial::evaluation::nearest_filter_evaluation` (ignored by default).
+100,000 in-memory documents in 20 cities of about 5 km spread; one third
+available, `last_seen` from 0 to 99, and 0.1% in the `night` fleet. Each row is 20
+queries for the 5 nearest matching documents.
+
+| Query | 2.5.0 mean / max | 2.5.1 mean / max |
+| --- | --- | --- |
+| Available and fresh | 26.9 / 108.5 ms | 29.2 / 95.5 ms |
+| Night fleet, no fleet index | 885.5 / 2,960 ms | 347.4 / 595.9 ms |
+| Night fleet, plain scan for reference | 243.9 / 310.7 ms | 122.5 / 154.1 ms |
+| Night fleet, fleet index | 523.3 / 1,592 ms | 7.0 / 14.9 ms |
+| Day fleet, fleet index | 1,082 / 1,636 ms | 23.7 / 33.0 ms |
+
+In 2.5.0 a scalar index on the filter field made nearest search slower: the
+statement drove from the scalar index and checked spatial membership for almost
+every day-fleet driver. 2.5.1 counts both candidate sets and uses the smaller one
+(contract section 7). Without a fleet index, rare filters still cost about three
+plain scans on average, because rounds read documents before the match rate shows
+that a scan is cheaper. Index such fields when nearest search filters on them.
+
+### Field reads and result rows
+
+Field accessors now walk the canonical stored layout with a byte scanner, stop at
+the requested member or the first later key, and decode only that member.
+Accessors that return encoded values pass the member's stored bytes through.
+Measured over 100,000 documents, ten runs each:
+
+| Query | 2.5.0 | 2.5.1 |
+| --- | --- | --- |
+| `SELECT id FROM people WHERE fleet = 'night'` | 258 ms | 125 ms |
+| Three fields of 33,384 rows | 541 ms | 235 ms |
+| Night-fleet nearest through the ordinary plan | 218 ms | 131 ms |
+
+### Frozen work ceilings
+
+Test: `selective_fixture_work_stays_under_frozen_ceilings`. 10,000 points in 20
+cities, 10,000 uniform points and 200 zones from a fixed seed. Work counters are
+deterministic, so the test asserts them. Columns are index entries, rows read,
+key ranges and nearest rounds; ceilings are about 1.5 times the measured work.
+
+| Query | Measured | Ceiling |
+| --- | --- | --- |
+| `search::near`, 1 km in a city | 43 / 51 / 8 / 0 | 65 / 80 / 8 / 0 |
+| `ST_DWithin`, 1 km in a city | 88 / 143 / 8 / 0 | 135 / 215 / 8 / 0 |
+| `search::bbox`, 0.02 degree | 21 / 23 / 2 / 0 | 35 / 35 / 4 / 0 |
+| `ST_Covers(envelope, location)`, 0.02 degree | 52 / 87 / 2 / 0 | 80 / 130 / 4 / 0 |
+| `search::nearest`, k = 5 in a city | 0 / 5 / 24 / 3 | 50 / 10 / 40 / 5 |
+| Ordinary nearest, available, k = 5 | 100 / 167 / 56 / 5 | 150 / 250 / 90 / 8 |
+| `ST_DWithin`, 50 km in open ocean | 0 / 3 / 3 / 0 | 10 / 10 / 6 / 0 |
+| `search::nearest`, k = 5 in open ocean | 0 / 5 / 41 / 7 | 50 / 10 / 64 / 10 |
+| `ST_Covers(shape, point)`, 200 zones | 31 / 47 / 1 / 0 | 50 / 75 / 2 / 0 |
+| `search::containing`, 200 zones | 31 / 47 / 1 / 0 | 50 / 75 / 2 / 0 |
+
+### Moving drivers with concurrent searches
+
+Script: `scripts/bench-spatial-movement.cjs`, run three times through
+`scripts/fastdb-heavy` with the 2.5.1 release Node package. 100,000 drivers in 20
+cities on one file; one writer connection moves random drivers with synced
+autocommit updates while three reader connections alternate nearest and viewport
+searches for 20 seconds. Each run ends with an integrity check of every document
+and 20 indexed nearest results compared with a scan.
+
+Times are p50 / p95 / p99 milliseconds.
+
+| Run | Moves per second | Driver move (synced) | Nearest 5 available and fresh | Viewport 0.02 degree |
+| --- | --- | --- | --- | --- |
+| 1 | 80 | 8.6 / 28.9 / 53.2 | 39.0 / 73.4 / 101.8 | 3.8 / 6.2 / 7.2 |
+| 2 | 122 | 7.6 / 10.5 / 11.8 | 40.6 / 75.4 / 118.5 | 4.0 / 6.1 / 7.2 |
+| 3 | 116 | 8.2 / 10.9 / 11.9 | 38.9 / 72.5 / 105.7 | 3.9 / 6.3 / 7.3 |
+
+The first run's move p95 of 29 ms did not repeat: the next two runs stayed under
+11 ms. Its cause was not isolated; synced commits on this WSL2 disk vary between
+runs. Recorded budgets on this host, with
+one writer and three readers: moves at p95 under 15 ms in a typical run, nearest
+search at p95 under 120 ms and viewports at p95 under 10 ms. A development build
+before release measured 119 moves per second with p95 values of 10.6, 82.5 and
+6.6 ms.
+
+### Robustness
+
+- `randomized_writes_keep_indexed_results_equal_to_scans`: 120 transactions of 25
+  random inserts, updates, NULL and missing locations, deletes and zone changes,
+  clustered on the antimeridian, the poles and the prime meridian, with every
+  ninth transaction rolled back. Every fourth round compares radius, nearest,
+  envelope, region and antimeridian viewport results with scans; final integrity
+  audits pass.
+- `nearest_rounds_stop_on_cancellation_deadlines_and_limits`: cancellation and
+  deadlines during nearest rounds return `FDB_CANCELLED` inside an open
+  transaction and leave it usable; result limits fail without partial output;
+  invalid `k` values fail validation; `LIMIT 10001` keeps ordinary semantics.
+- `interrupted_reindex_keeps_the_latitude_format_index`: a cancelled, rolled-back
+  or uncommitted `REINDEX` of a latitude-format index leaves the old index,
+  catalog version 3 and its results intact after reopening.
+- The shared native client fixture adds polygon parameter round trips, region
+  indexes, `search::containing`, GeoJSON output, filtered nearest search and an
+  invalid polygon. PHP, Go, C# and Swift pass all 110 steps; Python and Node run
+  the same tagged steps.

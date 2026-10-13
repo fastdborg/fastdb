@@ -1750,3 +1750,494 @@ fn region_index_finds_containing_zones_like_a_scan() {
     c.check_collection_integrity("zones", Default::default())
         .unwrap();
 }
+
+fn fleet_drivers(c: &fastdb::Connection) {
+    q(c, "CREATE TABLE drivers");
+    q(c, "BEGIN");
+    for i in 0..4000u64 {
+        let longitude = ((i * 7919) % 36001) as f64 / 100.0 - 180.0;
+        let latitude = ((i * 104_729) % 17001) as f64 / 100.0 - 85.0;
+        let fleet = if i % 500 == 0 { "night" } else { "day" };
+        let status = if i % 1300 == 0 { "repair" } else { "active" };
+        q(c, &format!(
+            "INSERT INTO drivers {{id:type::record('drivers',{i}),fleet:'{fleet}',status:'{status}',location:geo::point({longitude},{latitude})}}"
+        ));
+    }
+    q(
+        c,
+        "INSERT INTO drivers {id:drivers:missing,fleet:'night',status:'repair'}",
+    );
+    q(
+        c,
+        "CREATE SEARCH INDEX drivers_location ON drivers(location) USING SPATIAL",
+    );
+    q(c, "CREATE INDEX drivers_fleet ON drivers(fleet)");
+    q(c, "COMMIT");
+}
+
+fn plan(c: &fastdb::Connection, sql: &str, all: &Parameters) -> String {
+    let used = all
+        .iter()
+        .filter(|(name, _)| sql.contains(name.as_str()))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<Parameters>();
+    format!(
+        "{:?}",
+        c.execute(&format!("EXPLAIN QUERY PLAN {sql}"), &used)
+            .unwrap()
+            .rows
+    )
+}
+
+#[test]
+fn spatial_rewrites_pick_scalar_indexes_and_scans_by_selectivity() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    fleet_drivers(&c);
+    for (x, y) in [(0.0, 0.0), (106.7, 10.8), (-179.9, 60.0)] {
+        let params = Parameters::from([
+            ("$x".into(), Value::Number(x)),
+            ("$y".into(), Value::Number(y)),
+            ("$fleet".into(), Value::String("night".into())),
+        ]);
+        // Eight night drivers: the scalar index selects fewer documents than
+        // any spatial round, so the ordinary plan searches it instead.
+        for sql in [
+            "SELECT id FROM drivers WHERE ST_DistanceSphere(location, ST_Point($x, $y)) IS NOT NULL AND fleet = 'night' ORDER BY ST_DistanceSphere(location, ST_Point($x, $y)), id LIMIT 5",
+            "SELECT id FROM drivers WHERE fleet = $fleet AND ST_DistanceSphere(location, ST_Point($x, $y)) IS NOT NULL ORDER BY ST_DistanceSphere(location, ST_Point($x, $y)), id LIMIT 5",
+            "SELECT id FROM drivers WHERE ST_DWithin(location, ST_Point($x, $y), 15000000) AND fleet IN ('night') ORDER BY id",
+        ] {
+            let profile = same_as_scan(&c, sql, &params);
+            assert_eq!(profile.metrics.spatial_rounds, 0, "{sql}: {:?}", profile.metrics);
+            // Index entries and documents for the bounded count and the statement.
+            assert!(profile.metrics.rows_read < 100, "{sql}: {:?}", profile.metrics);
+            let plan = plan(&c, sql, &params);
+            assert!(plan.contains("drivers_fleet") && !plan.contains("drivers_location"), "{sql}: {plan}");
+        }
+        // Almost every driver is in the day fleet: the spatial candidates drive
+        // the statement and the fleet index is not scanned.
+        for sql in [
+            "SELECT id FROM drivers WHERE ST_DistanceSphere(location, ST_Point($x, $y)) IS NOT NULL AND fleet = 'day' ORDER BY ST_DistanceSphere(location, ST_Point($x, $y)), id LIMIT 5",
+            "SELECT id FROM drivers WHERE ST_DWithin(location, ST_Point($x, $y), 300000) AND fleet = 'day' ORDER BY id",
+        ] {
+            let profile = same_as_scan(&c, sql, &params);
+            assert!(profile.metrics.rows_read < 400, "{sql}: {:?}", profile.metrics);
+            let plan = plan(&c, sql, &params);
+            assert!(plan.contains("drivers_location") && !plan.contains("drivers_fleet"), "{sql}: {plan}");
+        }
+        // Three drivers in repair and no index on status: rounds stop once the
+        // match rate shows that one ordinary scan is cheaper.
+        let sql = "SELECT id FROM drivers WHERE ST_DistanceSphere(location, ST_Point($x, $y)) IS NOT NULL AND status = 'repair' ORDER BY ST_DistanceSphere(location, ST_Point($x, $y)), id LIMIT 5";
+        let profile = same_as_scan(&c, sql, &params);
+        assert!(
+            profile.metrics.fullscan_steps > 0,
+            "{sql}: {:?}",
+            profile.metrics
+        );
+    }
+}
+
+#[test]
+fn nearest_rounds_stop_on_cancellation_deadlines_and_limits() {
+    use fastdb::{CancellationToken, ResultLimits, TransactionState};
+    use std::time::{Duration, Instant};
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE drivers");
+    q(&c, "BEGIN");
+    for i in 0..20_000u64 {
+        let longitude = ((i * 7919) % 36001) as f64 / 100.0 - 180.0;
+        let latitude = ((i * 104_729) % 17001) as f64 / 100.0 - 85.0;
+        let status = if i % 4000 == 0 { "repair" } else { "active" };
+        q(&c, &format!(
+            "INSERT INTO drivers {{id:type::record('drivers',{i}),status:'{status}',location:geo::point({longitude},{latitude})}}"
+        ));
+    }
+    q(
+        &c,
+        "CREATE SEARCH INDEX drivers_location ON drivers(location) USING SPATIAL",
+    );
+    q(&c, "COMMIT");
+    let p = Parameters::new();
+    let rare = "SELECT id FROM drivers WHERE ST_DistanceSphere(location, ST_Point(10, 10)) IS NOT NULL AND status = 'repair' ORDER BY ST_DistanceSphere(location, ST_Point(10, 10)), id LIMIT 5";
+    let explicit = "SELECT id FROM search::nearest('drivers_location', ST_Point(10, 10), 10000)";
+    let expected = c
+        .execute(
+            &rare.replacen("FROM drivers", "FROM drivers NOT INDEXED", 1),
+            &p,
+        )
+        .unwrap()
+        .rows;
+    assert_eq!(expected.len(), 5);
+
+    q(&c, "BEGIN");
+    q(
+        &c,
+        "INSERT INTO drivers {id:drivers:pending,status:'repair',location:geo::point(10,10)}",
+    );
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    for sql in [rare, explicit] {
+        let error = c.execute_cancellable(sql, &p, &cancelled).unwrap_err();
+        assert_eq!(error.code(), "FDB_CANCELLED", "{sql}");
+        // A deadline that expires during the index rounds and document probes.
+        let token = CancellationToken::with_deadline(Instant::now() + Duration::from_millis(5));
+        if let Err(error) = c.execute_cancellable(sql, &p, &token) {
+            assert_eq!(error.code(), "FDB_CANCELLED", "{sql}");
+        }
+        assert_eq!(c.transaction_state(), TransactionState::Active);
+    }
+    // The open transaction keeps its write and every probe left no state behind.
+    let rows = c.execute(rare, &p).unwrap().rows;
+    assert_eq!(
+        rows[0],
+        vec![Value::Record(fastdb::Record {
+            table: "drivers".into(),
+            key: fastdb::Key::String("pending".into()),
+        })]
+    );
+    assert_eq!(rows[1..], expected[..4]);
+    q(&c, "ROLLBACK");
+    assert_eq!(c.execute(rare, &p).unwrap().rows, expected);
+
+    // Limits fail the whole statement without partial output.
+    let limits = ResultLimits {
+        max_rows: 3,
+        max_payload_bytes: 1 << 20,
+    };
+    for sql in [rare, explicit] {
+        let error = c.select_with_limits(sql, &p, limits).unwrap_err();
+        assert_eq!(error.code(), "FDB_LIMIT", "{sql}");
+    }
+    for k in ["0", "10001", "2.5", "-1"] {
+        let error = c
+            .execute(
+                &format!(
+                    "SELECT id FROM search::nearest('drivers_location', ST_Point(10, 10), {k})"
+                ),
+                &p,
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "FDB_VALIDATION", "{k}");
+    }
+    // Above the nearest limit, the ordinary form keeps ordinary SQL semantics.
+    let all = "SELECT id FROM drivers WHERE ST_DistanceSphere(location, ST_Point(10, 10)) IS NOT NULL ORDER BY ST_DistanceSphere(location, ST_Point(10, 10)), id LIMIT 10001";
+    let profile = c.profile_select(all, &p).unwrap();
+    assert_eq!(profile.result.rows.len(), 10001);
+    assert_eq!(profile.metrics.spatial_rounds, 0);
+}
+
+/// Deterministic fixture for the frozen work ceilings: 10,000 points in 20
+/// cities of about 5 km spread, 10,000 points uniform over the sphere, and 200
+/// rectangular zones of 0.02 to 1 degree.
+fn ceiling_fixture(c: &fastdb::Connection) {
+    let mut seed = 0x0ce1u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let cities = (0..20)
+        .map(|_| (next() * 300.0 - 150.0, next() * 120.0 - 60.0))
+        .collect::<Vec<_>>();
+    q(c, "CREATE TABLE people");
+    q(c, "CREATE TABLE zones");
+    q(c, "BEGIN");
+    for i in 0..20_000usize {
+        let (x, y) = if i < 10_000 {
+            let (cx, cy) = cities[i % 20];
+            (cx + (next() - 0.5) * 0.1, cy + (next() - 0.5) * 0.1)
+        } else {
+            (
+                next() * 360.0 - 180.0,
+                (2.0 * next() - 1.0).asin().to_degrees(),
+            )
+        };
+        q(c, &format!(
+            "INSERT INTO people {{id:type::record('people',{i}),available:{},location:geo::point({x},{y})}}",
+            i % 3 == 0
+        ));
+    }
+    for i in 0..200 {
+        let (cx, cy) = cities[i % 20];
+        let (x, y) = (cx + (next() - 0.5) * 2.0, cy + (next() - 0.5) * 2.0);
+        let size = 0.02 + next();
+        q(c, &format!(
+            "INSERT INTO zones {{id:type::record('zones',{i}),shape:ST_MakeEnvelope({x},{y},{},{})}}",
+            x + size,
+            y + size
+        ));
+    }
+    q(
+        c,
+        "CREATE SEARCH INDEX people_location ON people(location) USING SPATIAL",
+    );
+    q(
+        c,
+        "CREATE SEARCH INDEX zones_shape ON zones(shape) USING SPATIAL WITH (geometry = 'region')",
+    );
+    q(c, "COMMIT");
+}
+
+#[test]
+fn selective_fixture_work_stays_under_frozen_ceilings() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    ceiling_fixture(&c);
+    // Query point inside the first city, and one in open ocean.
+    let city = c
+        .execute(
+            "SELECT ST_X(location), ST_Y(location) FROM people:0",
+            &Parameters::new(),
+        )
+        .unwrap()
+        .rows;
+    let (Value::Number(x), Value::Number(y)) = (&city[0][0], &city[0][1]) else {
+        panic!("{city:?}")
+    };
+    let (x, y) = (*x, *y);
+    // Each row: query, and ceilings on index entries read, documents read,
+    // key ranges and nearest rounds, measured on this fixture with headroom.
+    let cases: Vec<(String, [u64; 4])> = vec![
+        (format!("SELECT id FROM search::near('people_location', ST_Point({x}, {y}), 1000)"), [65, 80, 8, 0]),
+        (format!("SELECT id FROM people WHERE ST_DWithin(location, ST_Point({x}, {y}), 1000)"), [135, 215, 8, 0]),
+        (format!("SELECT id FROM search::bbox('people_location', {}, {}, {}, {})", x - 0.01, y - 0.01, x + 0.01, y + 0.01), [35, 35, 4, 0]),
+        (format!("SELECT id FROM people WHERE ST_Covers(ST_MakeEnvelope({}, {}, {}, {}), location)", x - 0.01, y - 0.01, x + 0.01, y + 0.01), [80, 130, 4, 0]),
+        (format!("SELECT id FROM search::nearest('people_location', ST_Point({x}, {y}), 5)"), [50, 10, 40, 5]),
+        (format!("SELECT id FROM people WHERE ST_DistanceSphere(location, ST_Point({x}, {y})) IS NOT NULL AND available = true ORDER BY ST_DistanceSphere(location, ST_Point({x}, {y})), id LIMIT 5"), [150, 250, 90, 8]),
+        ("SELECT id FROM people WHERE ST_DWithin(location, ST_Point(-140, -40), 50000)".to_owned(), [10, 10, 6, 0]),
+        ("SELECT id FROM search::nearest('people_location', ST_Point(-140, -40), 5)".to_owned(), [50, 10, 64, 10]),
+        (format!("SELECT id FROM zones WHERE ST_Covers(shape, ST_Point({x}, {y}))"), [50, 75, 2, 0]),
+        (format!("SELECT id FROM search::containing('zones_shape', ST_Point({x}, {y}), 'covers')"), [50, 75, 2, 0]),
+    ];
+    let mut failures = Vec::new();
+    for (sql, ceiling) in &cases {
+        let m = c.profile_select(sql, &Parameters::new()).unwrap().metrics;
+        let work = [
+            m.index_steps,
+            m.rows_read,
+            m.spatial_ranges,
+            m.spatial_rounds,
+        ];
+        eprintln!("{work:?} {sql}");
+        if work
+            .iter()
+            .zip(ceiling)
+            .any(|(work, ceiling)| work > ceiling)
+        {
+            failures.push(format!("{work:?} > {ceiling:?}: {sql}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+fn randomized_writes_keep_indexed_results_equal_to_scans() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    let mut seed = 0x51ce_u64;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    // Coordinates cluster on the antimeridian, the poles, the equator and the
+    // prime meridian, where covers split or degenerate, plus uniform points.
+    let mut coordinate = {
+        let mut seed = 0xc00d_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        move || -> (f64, f64) {
+            let unit = |n: u64| (n >> 11) as f64 / (1u64 << 53) as f64;
+            let jitter = (unit(next()) - 0.5) * 0.02;
+            match next() % 6 {
+                0 => (
+                    if next() % 2 == 0 {
+                        180.0 - jitter.abs()
+                    } else {
+                        -180.0 + jitter.abs()
+                    },
+                    unit(next()) * 160.0 - 80.0,
+                ),
+                1 => (
+                    unit(next()) * 360.0 - 180.0,
+                    if next() % 2 == 0 {
+                        90.0 - jitter.abs()
+                    } else {
+                        -90.0 + jitter.abs()
+                    },
+                ),
+                2 => (jitter, jitter),
+                3 => ((next() % 7) as f64 - 3.0, (next() % 5) as f64 - 2.0),
+                _ => (unit(next()) * 360.0 - 180.0, unit(next()) * 180.0 - 90.0),
+            }
+        }
+    };
+    q(&c, "CREATE TABLE places");
+    q(&c, "CREATE TABLE zones");
+    q(
+        &c,
+        "CREATE SEARCH INDEX places_location ON places(location) USING SPATIAL",
+    );
+    q(
+        &c,
+        "CREATE SEARCH INDEX zones_shape ON zones(shape) USING SPATIAL WITH (geometry = 'region')",
+    );
+    let point_sql = |(x, y): (f64, f64)| format!("geo::point({x},{y})");
+    let check = |c: &fastdb::Connection, round: usize, center: (f64, f64), other: (f64, f64)| {
+        let (x, y) = center;
+        // Envelopes stay narrower than 180 degrees inside the latitude range.
+        let w = x.clamp(-179.5, 120.0);
+        let e = (w + 0.5 + other.0.abs() / 4.0).min(179.9);
+        let s = y.clamp(-89.5, 60.0);
+        let n = (s + 0.5 + other.1.abs() / 4.0).min(89.9);
+        let band = (other.1.abs() / 2.0).clamp(1.0, 80.0);
+        let queries = [
+            format!("SELECT id FROM places WHERE ST_DWithin(location, ST_Point({x}, {y}), 500000) ORDER BY id"),
+            format!("SELECT id FROM places WHERE ST_DistanceSphere(location, ST_Point({x}, {y})) IS NOT NULL ORDER BY ST_DistanceSphere(location, ST_Point({x}, {y})), id LIMIT 7"),
+            format!("SELECT id FROM places WHERE ST_Covers(ST_MakeEnvelope({w}, {s}, {e}, {n}), location) ORDER BY id"),
+            format!("SELECT id FROM places WHERE ST_Intersects(location, ST_MakeEnvelope({w}, {s}, {e}, {n})) ORDER BY id"),
+            format!("SELECT id FROM zones WHERE ST_Covers(shape, ST_Point({x}, {y})) ORDER BY id"),
+            format!("SELECT id FROM zones WHERE ST_Contains(shape, ST_Point({x}, {y})) ORDER BY id"),
+        ];
+        for sql in queries {
+            let indexed = c.execute(&sql, &Parameters::new()).expect(&sql).rows;
+            let scan = sql
+                .replacen("FROM places", "FROM places NOT INDEXED", 1)
+                .replacen("FROM zones", "FROM zones NOT INDEXED", 1);
+            let expected = c.execute(&scan, &Parameters::new()).expect(&scan).rows;
+            assert_eq!(indexed, expected, "round {round}: {sql}");
+        }
+        // A viewport across the antimeridian equals its two halves.
+        let crossing = format!(
+            "SELECT id FROM search::bbox('places_location', 170, {}, -170, {band}) ORDER BY id",
+            -band
+        );
+        let halves = format!(
+            "SELECT id FROM places NOT INDEXED WHERE ST_Covers(ST_MakeEnvelope(170, {s}, 180, {band}), location) OR ST_Covers(ST_MakeEnvelope(-180, {s}, -170, {band}), location) ORDER BY id",
+            s = -band
+        );
+        assert_eq!(
+            c.execute(&crossing, &Parameters::new()).unwrap().rows,
+            c.execute(&halves, &Parameters::new()).unwrap().rows,
+            "round {round}: {crossing}"
+        );
+    };
+    let mut live_points = 0usize;
+    for round in 0..120usize {
+        let rollback = round % 9 == 4;
+        q(&c, "BEGIN");
+        for _ in 0..25 {
+            let id = next() % 400;
+            match next() % 10 {
+                0..=3 => {
+                    q(
+                        &c,
+                        &format!(
+                            "UPSERT places:{id} {{location:{}}}",
+                            point_sql(coordinate())
+                        ),
+                    );
+                }
+                4 => {
+                    q(
+                        &c,
+                        &format!("UPDATE places SET location = NULL WHERE id = places:{id}"),
+                    );
+                }
+                5 => {
+                    q(&c, &format!("DELETE FROM places WHERE id = places:{id}"));
+                }
+                6 => {
+                    q(&c, &format!("UPSERT places:{id} {{name:'no location'}}"));
+                }
+                7 | 8 => {
+                    let (x, y) = coordinate();
+                    let (x, y) = (x.clamp(-179.0, 176.0), y.clamp(-89.0, 86.0));
+                    let (dx, dy) = (
+                        0.001 + (next() % 1000) as f64 / 400.0,
+                        0.001 + (next() % 1000) as f64 / 400.0,
+                    );
+                    q(
+                        &c,
+                        &format!(
+                            "UPSERT zones:{} {{shape:ST_MakeEnvelope({x},{y},{},{})}}",
+                            id % 60,
+                            x + dx,
+                            y + dy
+                        ),
+                    );
+                }
+                _ => {
+                    q(
+                        &c,
+                        &format!("DELETE FROM zones WHERE id = zones:{}", id % 60),
+                    );
+                }
+            }
+        }
+        if rollback {
+            q(&c, "ROLLBACK");
+        } else {
+            q(&c, "COMMIT");
+        }
+        if round % 4 == 0 {
+            check(&c, round, coordinate(), coordinate());
+        }
+        let counted = q(
+            &c,
+            "SELECT count(*) FROM places WHERE ST_X(location) IS NOT NULL",
+        )
+        .rows;
+        let [Value::Integer(n)] = counted[0].as_slice() else {
+            panic!("{counted:?}")
+        };
+        live_points = *n as usize;
+    }
+    assert!(live_points > 0);
+    for table in ["places", "zones"] {
+        c.check_collection_integrity(table, Default::default())
+            .unwrap();
+    }
+}
+
+#[test]
+fn info_reports_spatial_index_geometry_and_format() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(&c, "CREATE TABLE places");
+    q(&c, "CREATE TABLE zones");
+    q(
+        &c,
+        "CREATE SEARCH INDEX places_location ON places(location) USING SPATIAL",
+    );
+    q(
+        &c,
+        "CREATE SEARCH INDEX zones_shape ON zones(shape) USING SPATIAL WITH (geometry = 'region')",
+    );
+    for (sql, geometry) in [
+        ("INFO FOR INDEX places_location", "point"),
+        ("INFO FOR INDEX zones_shape", "region"),
+    ] {
+        let info = format!("{:?}", q(&c, sql).rows);
+        assert!(
+            info.contains(&format!("\"geometry\": String(\"{geometry}\")")),
+            "{sql}: {info}"
+        );
+        assert!(
+            info.contains("\"format\": String(\"two_dimensional\")"),
+            "{sql}: {info}"
+        );
+    }
+    let table = format!("{:?}", q(&c, "INFO FOR TABLE zones").rows);
+    assert!(
+        table.contains("\"geometry\": String(\"region\")"),
+        "{table}"
+    );
+}

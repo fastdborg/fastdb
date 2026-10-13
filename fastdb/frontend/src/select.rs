@@ -4003,6 +4003,16 @@ fn compound_filter(
     Ok(best)
 }
 
+/// Whether a top-level conjunct is the spatial rewrite's semijoin marker.
+fn has_spatial_member(predicate: &Expr) -> bool {
+    match predicate {
+        Expr::Parenthesized(values) if values.len() == 1 => has_spatial_member(&values[0]),
+        Expr::Binary(lhs, Operator::And, rhs) => has_spatial_member(lhs) || has_spatial_member(rhs),
+        Expr::FunctionCall { name, .. } => name.as_str() == "__fastdb_h_spatial_member",
+        _ => false,
+    }
+}
+
 fn indexed_filter(
     scope: &Scope,
     source_index: usize,
@@ -7011,6 +7021,11 @@ impl Connection {
                     &source.table,
                     SelectTable::Table(_, _, Some(Indexed::NotIndexed))
                 ) {
+                    return Ok(None);
+                }
+                // The spatial rewrite chose its candidate set over any scalar
+                // index after counting both, so the semijoin drives the plan.
+                if where_clause.as_ref().is_some_and(|p| has_spatial_member(p)) {
                     return Ok(None);
                 }
                 where_clause

@@ -1,6 +1,6 @@
 # Spatial workloads: FastDB and SurrealDB
 
-Measured 2026-10-13 with the FastDB 2.5.0 release Node package. This is one local
+Measured 2026-10-13 with the FastDB 2.5.1 release Node package. This is one local
 sample, not a latency or capacity guarantee. Raw results:
 [spatial-surrealdb-comparison.json](spatial-surrealdb-comparison.json), also
 shipped in the release evidence.
@@ -9,7 +9,7 @@ shipped in the release evidence.
 
 | Item | FastDB | SurrealDB |
 | --- | --- | --- |
-| Version | 2.5.0 release package | 3.3.0, official Linux x64 release, SHA-256 verified |
+| Version | 2.5.1 release package | 3.3.0, official Linux x64 release, SHA-256 verified |
 | Storage | Embedded, file-backed, a point index and a region index | Server with the RocksDB file backend (`surreal start rocksdb://...`) |
 | Commit durability | Default (synced commits) | Default `SURREAL_DATASTORE_SYNC_DATA=every` |
 | Access | Node.js client in the same process | Node.js `fetch` over loopback HTTP, one sign-in, bearer token |
@@ -61,21 +61,21 @@ Times are p50 / p95 milliseconds seen by the client. SurrealDB server-reported p
 
 | Workload | Mean rows | FastDB ordinary SQL | FastDB explicit source | SurrealDB scan | SurrealDB geohash index |
 | --- | --- | --- | --- | --- | --- |
-| Available people within 5 km | 371.2 | 31.6 / 58.1 | 20.9 / 38.5 | 272.2 / 326.2 (265.5) | 35.7 / 256.1 (29.6) |
-| Map viewport 0.1 x 0.1 degrees | 1353.8 | 6.5 / 8.3 | n/a | 82.9 / 98.0 (74.4) | 42.6 / 57.6 (30.2) |
-| Points covered by a storm polygon | 3807.2 | 130.1 / 172.6 | n/a | 105.4 / 122.3 (87.2) | 64.7 / 85.0 (45.0) |
-| Which of 500 stored zones contain a point | 0.3 | 2.8 / 3.1 | n/a | 5.3 / 6.6 (1.3) | n/a |
-| 5 nearest available, fresh drivers | 5 | 25.1 / 43.0 | n/a | 78.6 / 94.1 (73.8) | 608.0 / 994.0 (579.1) |
-| 5 nearest drivers of a 0.1% fleet | 5 | 338.8 / 2528.9 | n/a | 49.7 / 63.9 (46.6) | n/a |
-| Cell counts in a 0.5 degree viewport | 4998.5 | 143.9 / 179.2 | n/a | 92.8 / 105.5 (81.9) | 51.1 / 60.2 (41.1) |
-| Move one driver (autocommit update) | 1 | 6.7 / 9.2 | n/a | 8.5 / 9.8 (4.8) | same writes, with geohash fields |
+| Available people within 5 km | 371.2 | 30.5 / 53.5 | 19.4 / 34.3 | 292.7 / 343.4 (284.8) | 46.8 / 281.1 (40.6) |
+| Map viewport 0.1 x 0.1 degrees | 1353.8 | 7.6 / 11.9 | n/a | 87.1 / 97.5 (74.7) | 48.0 / 59.7 (36.6) |
+| Points covered by a storm polygon | 3807.2 | 111.5 / 143.3 | n/a | 125.9 / 145.9 (102.7) | 74.0 / 94.6 (51.8) |
+| Which of 500 stored zones contain a point | 0.3 | 2.9 / 3.2 | n/a | 5.5 / 7.8 (1.1) | n/a |
+| 5 nearest available, fresh drivers | 5 | 29.5 / 60.8 | n/a | 86.7 / 96.2 (81.0) | 666.8 / 927.0 (634.5) |
+| 5 nearest drivers of a 0.1% fleet | 5 | 378.6 / 673.0 | n/a | 57.9 / 66.6 (52.9) | n/a |
+| Cell counts in a 0.5 degree viewport | 4998.5 | 135.6 / 164.5 | n/a | 99.4 / 118.7 (88.6) | 52.1 / 78.7 (43.6) |
+| Move one driver (autocommit update) | 1 | 6.9 / 9.5 | n/a | 8.5 / 9.8 (5.0) | same writes, with geohash fields |
 
 Mismatched result samples across all workloads: 0.
 
 | Load step | FastDB | SurrealDB |
 | --- | --- | --- |
-| Bulk load 100,000 people and 500 zones | 14.76 s (NDJSON import) | 12.97 s (INSERT batches of 1,000) |
-| Build indexes | 9.27 s (point and region index) | 30.79 s (four geohash indexes) |
+| Bulk load 100,000 people and 500 zones | 14.01 s (NDJSON import) | 14.94 s (INSERT batches of 1,000) |
+| Build indexes | 9.45 s (point and region index) | 30.87 s (four geohash indexes) |
 | Files on disk after the run | 97 MB | 72 MB |
 
 ### Uniform dataset
@@ -84,73 +84,76 @@ Times are p50 / p95 milliseconds seen by the client. SurrealDB server-reported p
 
 | Workload | Mean rows | FastDB ordinary SQL | FastDB explicit source | SurrealDB scan | SurrealDB geohash index |
 | --- | --- | --- | --- | --- | --- |
-| Available people within 5 km | 0.3 | 2.1 / 4.9 | 1.6 / 2.0 | 278.7 / 326.8 (273.7) | 7.0 / 271.9 (2.3) |
-| Map viewport 0.1 x 0.1 degrees | 1 | 1.4 / 1.5 | n/a | 62.5 / 78.1 (57.2) | 5.7 / 64.8 (1.9) |
-| Points covered by a storm polygon | 1.1 | 2.1 / 2.4 | n/a | 69.7 / 82.6 (64.9) | 5.2 / 6.1 (1.4) |
-| Which of 500 stored zones contain a point | 0 | 2.3 / 2.7 | n/a | 4.4 / 5.7 (1.0) | n/a |
-| 5 nearest available, fresh drivers | 5 | 28.8 / 85.1 | n/a | 76.4 / 84.9 (71.2) | 2062.9 / 2467.1 (1992.9) |
-| 5 nearest drivers of a 0.1% fleet | 5 | 1373.6 / 1620.7 | n/a | 53.5 / 65.0 (49.0) | n/a |
-| Cell counts in a 0.5 degree viewport | 1.3 | 2.3 / 3.7 | n/a | 62.4 / 74.8 (57.0) | 6.0 / 7.5 (1.9) |
-| Move one driver (autocommit update) | 1 | 7.3 / 9.8 | n/a | 9.0 / 10.4 (5.1) | same writes, with geohash fields |
+| Available people within 5 km | 0.3 | 2.8 / 3.3 | 2.1 / 2.3 | 286.7 / 336.8 (280.7) | 7.3 / 362.4 (2.5) |
+| Map viewport 0.1 x 0.1 degrees | 1 | 1.6 / 2.0 | n/a | 76.0 / 89.4 (69.9) | 6.1 / 68.0 (1.9) |
+| Points covered by a storm polygon | 1.1 | 2.4 / 4.0 | n/a | 71.4 / 83.2 (65.5) | 5.3 / 6.5 (1.5) |
+| Which of 500 stored zones contain a point | 0 | 2.8 / 3.1 | n/a | 4.7 / 6.3 (1.6) | n/a |
+| 5 nearest available, fresh drivers | 5 | 32.5 / 78.2 | n/a | 72.8 / 92.0 (67.3) | 2298.9 / 2585.2 (2229.3) |
+| 5 nearest drivers of a 0.1% fleet | 5 | 186.5 / 218.5 | n/a | 56.1 / 63.0 (51.4) | n/a |
+| Cell counts in a 0.5 degree viewport | 1.3 | 2.2 / 3.1 | n/a | 70.0 / 76.4 (64.7) | 5.7 / 7.4 (1.9) |
+| Move one driver (autocommit update) | 1 | 6.9 / 9.2 | n/a | 8.6 / 9.8 (4.9) | same writes, with geohash fields |
 
 Mismatched result samples across all workloads: 0.
 
 | Load step | FastDB | SurrealDB |
 | --- | --- | --- |
-| Bulk load 100,000 people and 500 zones | 14.12 s (NDJSON import) | 14.13 s (INSERT batches of 1,000) |
-| Build indexes | 8.32 s (point and region index) | 30.72 s (four geohash indexes) |
+| Bulk load 100,000 people and 500 zones | 14.51 s (NDJSON import) | 14.63 s (INSERT batches of 1,000) |
+| Build indexes | 10.37 s (point and region index) | 31.39 s (four geohash indexes) |
 | Files on disk after the run | 97 MB | 72 MB |
 
-### Change from the development run
+### Change across releases
 
-The first comparison used the development branch before the three open items
-below were implemented. FastDB p50 on the cities dataset:
+FastDB on the cities dataset. The development run preceded the 2.5.0 open items; 2.5.0 and 2.5.1 are release packages. Other values are p50.
 
-| Workload | Development run | 2.5.0 |
-| --- | --- | --- |
-| Bulk load | 93.74 s | 14.76 s |
-| Move one driver | 23.4 ms | 6.7 ms |
-| Zone lookup | 20.2 ms | 2.8 ms |
-| Available people within 5 km | 52.0 ms | 31.6 ms |
-| 5 nearest available, fresh drivers | 35.0 ms | 25.1 ms |
-| Storm polygon | 150.0 ms | 130.1 ms |
-| Cell counts | 159.1 ms | 143.9 ms |
-| 5 nearest of a 0.1% fleet | 445.3 ms | 338.8 ms |
+| Workload | Development run | 2.5.0 | 2.5.1 |
+| --- | --- | --- | --- |
+| Bulk load | 93.74 s | 14.76 s | 14.01 s |
+| Move one driver | 23.4 ms | 6.7 ms | 6.9 ms |
+| Zone lookup | 20.2 ms | 2.8 ms | 2.9 ms |
+| Available people within 5 km | 52.0 ms | 31.6 ms | 30.5 ms |
+| 5 nearest available, fresh drivers | 35.0 ms | 25.1 ms | 29.5 ms |
+| Storm polygon | 150.0 ms | 130.1 ms | 111.5 ms |
+| Cell counts | 159.1 ms | 143.9 ms | 135.6 ms |
+| 5 nearest of a 0.1% fleet, p50 | 445.3 ms | 338.8 ms | 378.6 ms |
+| 5 nearest of a 0.1% fleet, p95 | 3339.4 ms | 2528.9 ms | 673.0 ms |
+
+On the uniform dataset, the 0.1% fleet query fell from 1374 / 1621 ms in 2.5.0 to 187 / 219 ms (p50 / p95). Run-to-run variation on this host is about 10 to 20% for the faster workloads.
 
 ## Findings
 
 **Where FastDB is faster.** Selective spatial searches, zone lookups, single
 updates and index builds:
 
-- Map viewports in dense cities take 6.5 ms, about 6 times faster than SurrealDB's
-  geohash pattern and 13 times faster than its scan.
-- Zone lookup through the region index takes 2.3 to 2.8 ms in the client, against
-  4.4 to 5.3 ms for SurrealDB over HTTP. SurrealDB's server-side time is 1.0 to
-  1.3 ms, so the two are close once transport is excluded.
-- Nearest available, fresh drivers take 25 to 29 ms, against 76 to 79 ms for a
-  SurrealDB scan and 0.6 to 2.1 s for its geohash rounds.
-- A single-driver update takes 6.7 to 7.3 ms in FastDB with a synced commit,
-  against 8.5 to 9.0 ms in the SurrealDB client and 4.8 to 5.1 ms on its server.
-- Bulk import now matches SurrealDB at about 14 s, and FastDB builds both spatial
-  indexes in 8 to 9 s, against 31 s for SurrealDB's four geohash indexes.
+- Map viewports in dense cities take 7.6 ms, about 6 times faster than SurrealDB's
+  geohash pattern and 11 times faster than its scan.
+- Zone lookup through the region index takes 2.8 to 2.9 ms in the client, against
+  4.7 to 5.5 ms for SurrealDB over HTTP. SurrealDB's server-side time is 1.1 to
+  1.6 ms, so the two are close once transport is excluded.
+- Nearest available, fresh drivers take 30 to 33 ms, against 73 to 87 ms for a
+  SurrealDB scan and 0.7 to 2.3 s for its geohash rounds.
+- A single-driver update takes about 7 ms in FastDB with a synced commit, against
+  8.5 ms in the SurrealDB client and 5 ms on its server.
+- Bulk import matches SurrealDB at about 14 s, and FastDB builds both spatial
+  indexes in 9 to 10 s, against 31 s for SurrealDB's four geohash indexes.
 
 **Where SurrealDB is faster.** Workloads that return or evaluate thousands of
-documents, and very selective filters far from the index:
+documents, and very selective filters without an index:
 
-- Storm polygons with about 3,800 matches: 130 ms against 65 ms.
-- Dashboard grouping over about 5,000 rows: 144 ms against 51 ms.
-- Nearest search for a rare fleet: 0.34 to 1.4 s against 50 to 54 ms. The fleet
-  is so rare that FastDB's rounds grow to a global radius and fall back to a
-  scan with per-document filters.
+- Storm polygons with about 3,800 matches: 112 ms against 74 ms.
+- Dashboard grouping over about 5,000 rows: 136 ms against 52 ms.
+- Nearest search for a 0.1% fleet without a fleet index: 187 to 379 ms against
+  56 to 58 ms. Rounds stop once the match rate shows that a scan is cheaper, and
+  FastDB's scan costs more per document. With an index on the fleet field, the
+  local evaluation in the [spatial evidence](spatial-upgrade-evidence.md#251-follow-up)
+  answers the same query in about 7 ms.
 - FastDB files are about 35% larger.
 
 ## Changes since the development run
 
-The three open items from the development comparison are implemented in 2.5.0:
+2.5.0 implemented the three open items from the development comparison:
 
-- **Per-document cost.** Field accessors decode one field from the stored
-  encoding instead of the whole document, the stored-value nesting check is
-  faster, updates and deletes maintain scalar and point-index entries by key and
+- **Per-document cost.** Field accessors decode one field instead of the whole
+  document, updates and deletes maintain scalar and point-index entries by key and
   skip unchanged keys, each operation uses one stack segment, and imports insert
   without a savepoint and catalog read per document.
 - **Join-shaped rewrite.** Ordinary rewrites restrict the collection with a
@@ -159,12 +162,17 @@ The three open items from the development comparison are implemented in 2.5.0:
   and test candidate shapes exactly, used by `search::containing` and by
   `ST_Covers(shape, point)`.
 
+2.5.1 then made field reads stop at the requested field and return stored bytes,
+ended nearest rounds early for selective filters, and used scalar indexes on such
+filters when they select fewer documents.
+
 ## Remaining gaps
 
-- Large result sets and grouping still cost FastDB several microseconds per
-  document in evaluation and result conversion.
-- Nearest search with a filter that matches very few documents far from most
-  query points falls back to a scan.
+- Large result sets and grouping still cost FastDB more per document than
+  SurrealDB in evaluation and result conversion.
+- Nearest search with a very selective filter and no index on that field ends in
+  a scan, which is several times slower per document than SurrealDB's. Index such
+  fields.
 
 ## Reproduce
 

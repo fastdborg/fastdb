@@ -301,6 +301,20 @@ fn index_info(index: &crate::Index, table: &str) -> Value {
             ));
         }
     }
+    if index.kind == crate::IndexKind::Spatial {
+        let geometry = if index.region_index() {
+            "region"
+        } else {
+            "point"
+        };
+        let format = if index.spatial.is_some() {
+            "two_dimensional"
+        } else {
+            "latitude"
+        };
+        fields.push(("geometry", Value::String(geometry.into())));
+        fields.push(("format", Value::String(format.into())));
+    }
     if let Some(config) = &index.vector {
         fields.push(("dimensions", Value::Integer(config.dimensions as i64)));
         fields.push(("metric", Value::String(config.metric.clone())));

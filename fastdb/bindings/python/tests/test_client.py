@@ -13,7 +13,7 @@ class ClientTests(unittest.TestCase):
         import struct
 
         fixture = pathlib.Path(__file__).resolve().parents[2] / "fixtures/native-client.json"
-        steps = [step for step in json.loads(fixture.read_text()) if step.get("release") == "2.2.0"]
+        steps = [step for step in json.loads(fixture.read_text()) if step.get("release") in ("2.2.0", "2.5.1")]
         self.assertGreaterEqual(len(steps), 50)
 
         def value(tagged):

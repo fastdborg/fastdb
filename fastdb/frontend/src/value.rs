@@ -294,6 +294,26 @@ pub(crate) enum Field {
 /// that field. Encodings outside the encoder's layout (another key order,
 /// nesting beyond the parser's recursion limit) fall back to a full decode,
 /// so the result always equals reading the fully decoded document.
+/// A field's stored encoding, for accessors that return encoded values.
+pub(crate) enum EncodedField {
+    Found(Vec<u8>),
+    Missing,
+    RootNotObject,
+}
+
+/// The field's bytes as stored, which are the canonical encoding of its value,
+/// without decoding the value. Falls back to decoding for any other layout.
+pub(crate) fn encoded_field(bytes: &[u8], path: &[String]) -> Result<EncodedField> {
+    if let Some(found) = field::read_encoded(bytes, path) {
+        return Ok(found);
+    }
+    Ok(match decode_field(bytes, path)? {
+        Field::Found(value) => EncodedField::Found(value.encode()?),
+        Field::Missing => EncodedField::Missing,
+        Field::RootNotObject => EncodedField::RootNotObject,
+    })
+}
+
 pub(crate) fn decode_field(bytes: &[u8], path: &[String]) -> Result<Field> {
     if let Some(found) = field::read(bytes, path) {
         return Ok(found);
@@ -309,187 +329,154 @@ pub(crate) fn decode_field(bytes: &[u8], path: &[String]) -> Result<Field> {
 }
 
 mod field {
-    use super::{Document, Field, Record, Value};
-    use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, Visitor};
-    use std::fmt;
+    use super::{EncodedField, Field, Value};
+    use std::cmp::Ordering;
 
+    /// Stored documents are canonical serde_json output: no whitespace, every
+    /// value tagged as `{"type":"Kind"}` or `{"type":"Kind","value":...}`, and
+    /// object members written once in key order. The reader walks that layout
+    /// byte by byte, stops when the member is found or a later key shows it is
+    /// absent, and decodes only the member. Any other layout returns `None`, and
+    /// the caller decodes the whole document instead.
     pub(super) fn read(bytes: &[u8], path: &[String]) -> Option<Field> {
-        let payload = bytes.strip_prefix(b"FDB\x01")?;
-        if path.is_empty() {
-            return None;
-        }
-        let mut decoder = serde_json::Deserializer::from_slice(payload);
-        let found = Tagged { path, root: true }.deserialize(&mut decoder).ok()?;
-        decoder.end().ok()?;
-        match found {
-            Lookup::Found(value) => value.validate().ok().map(|()| Field::Found(value)),
+        match lookup(bytes, path)? {
+            Lookup::Found(text) => {
+                let value: Value = crate::decode_wire_json(std::str::from_utf8(text).ok()?).ok()?;
+                value.validate().ok().map(|()| Field::Found(value))
+            }
             Lookup::Missing => Some(Field::Missing),
             Lookup::RootNotObject => None,
         }
     }
 
-    enum Lookup {
-        Found(Value),
+    /// Stored values were validated when written, so their bytes are returned
+    /// with the encoding prefix and are not checked again.
+    pub(super) fn read_encoded(bytes: &[u8], path: &[String]) -> Option<EncodedField> {
+        match lookup(bytes, path)? {
+            Lookup::Found(text) => {
+                let mut encoded = Vec::with_capacity(text.len() + 4);
+                encoded.extend_from_slice(b"FDB\x01");
+                encoded.extend_from_slice(text);
+                Some(EncodedField::Found(encoded))
+            }
+            Lookup::Missing => Some(EncodedField::Missing),
+            Lookup::RootNotObject => None,
+        }
+    }
+
+    enum Lookup<'a> {
+        /// The member's tagged JSON text.
+        Found(&'a [u8]),
         Missing,
         RootNotObject,
     }
 
-    /// One encoded value: `{"type": kind}` or `{"type": kind, "value": ...}`.
-    struct Tagged<'p> {
-        path: &'p [String],
-        root: bool,
-    }
+    const OBJECT: &[u8] = b"{\"type\":\"Object\",\"value\":{";
+    const TAG: &[u8] = b"{\"type\":\"";
 
-    impl<'de> DeserializeSeed<'de> for Tagged<'_> {
-        type Value = Lookup;
-        fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Lookup, D::Error> {
-            d.deserialize_map(self)
+    fn lookup<'a>(bytes: &'a [u8], path: &[String]) -> Option<Lookup<'a>> {
+        let payload = bytes.strip_prefix(b"FDB\x01")?;
+        if path.is_empty() {
+            return None;
         }
-    }
-
-    impl<'de> Visitor<'de> for Tagged<'_> {
-        type Value = Lookup;
-        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("an encoded value")
-        }
-        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Lookup, A::Error> {
-            if map.next_key_seed(Is("type"))? != Some(true) {
-                return Err(A::Error::custom("type must come first"));
-            }
-            let kind = map.next_value::<Kind>()?;
-            let content = match map.next_key_seed(Is("value"))? {
-                None => false,
-                Some(true) => true,
-                Some(false) => return Err(A::Error::custom("unexpected member")),
-            };
-            let found = if self.path.is_empty() {
-                Lookup::Found(match (kind, content) {
-                    (Kind::Null, false) => Value::Null,
-                    (Kind::Null, true) => {
-                        map.next_value::<IgnoredAny>()?;
-                        Value::Null
-                    }
-                    (_, false) => return Err(A::Error::custom("missing value")),
-                    (Kind::Boolean, true) => Value::Boolean(map.next_value()?),
-                    (Kind::Integer, true) => Value::Integer(map.next_value()?),
-                    (Kind::Number, true) => Value::Number(map.next_value()?),
-                    (Kind::String, true) => Value::String(map.next_value()?),
-                    (Kind::Binary, true) => Value::Binary(map.next_value()?),
-                    (Kind::Record, true) => Value::Record(map.next_value::<Record>()?),
-                    (Kind::Object, true) => Value::Object(map.next_value::<Document>()?),
-                    (Kind::Array, true) => Value::Array(map.next_value()?),
-                    (Kind::Vector, true) => Value::Vector(map.next_value()?),
-                })
-            } else if kind == Kind::Object && content {
-                map.next_value_seed(Fields(self.path))?
-            } else {
-                if content {
-                    map.next_value::<IgnoredAny>()?;
-                }
-                if self.root {
+        let mut at = 0;
+        for (depth, step) in path.iter().enumerate() {
+            if !payload[at..].starts_with(OBJECT) {
+                // A tagged value of another kind has no members.
+                payload[at..].starts_with(TAG).then_some(())?;
+                return Some(if depth == 0 {
                     Lookup::RootNotObject
                 } else {
                     Lookup::Missing
-                }
-            };
-            if map.next_key::<IgnoredAny>()?.is_some() {
-                return Err(A::Error::custom("unexpected member"));
+                });
             }
-            Ok(found)
-        }
-    }
-
-    /// Object members: descend into the first path step, skip the others.
-    struct Fields<'p>(&'p [String]);
-
-    impl<'de> DeserializeSeed<'de> for Fields<'_> {
-        type Value = Lookup;
-        fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Lookup, D::Error> {
-            d.deserialize_map(self)
-        }
-    }
-
-    impl<'de> Visitor<'de> for Fields<'_> {
-        type Value = Lookup;
-        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("document fields")
-        }
-        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Lookup, A::Error> {
-            let (first, rest) = self.0.split_first().expect("nonempty path");
-            let mut found = Lookup::Missing;
-            while let Some(matches) = map.next_key_seed(Is(first))? {
-                if matches {
-                    found = map.next_value_seed(Tagged {
-                        path: rest,
-                        root: false,
-                    })?;
-                } else {
-                    map.next_value::<IgnoredAny>()?;
+            at += OBJECT.len();
+            loop {
+                match *payload.get(at)? {
+                    b'}' => return Some(Lookup::Missing),
+                    b'"' => {}
+                    _ => return None,
+                }
+                let key_end = string_end(payload, at)?;
+                let order = compare_key(&payload[at + 1..key_end - 1], step)?;
+                if payload.get(key_end) != Some(&b':') {
+                    return None;
+                }
+                at = key_end + 1;
+                match order {
+                    Ordering::Less => {
+                        at = value_end(payload, at)?;
+                        match *payload.get(at)? {
+                            b',' => at += 1,
+                            b'}' => return Some(Lookup::Missing),
+                            _ => return None,
+                        }
+                    }
+                    Ordering::Equal => break,
+                    Ordering::Greater => return Some(Lookup::Missing),
                 }
             }
-            Ok(found)
+        }
+        let end = value_end(payload, at)?;
+        payload[at..].starts_with(TAG).then_some(())?;
+        Some(Lookup::Found(&payload[at..end]))
+    }
+
+    /// Order of an encoded key relative to a path step, as in the sorted map.
+    fn compare_key(raw: &[u8], step: &str) -> Option<Ordering> {
+        if !raw.contains(&b'\\') {
+            return Some(raw.cmp(step.as_bytes()));
+        }
+        let mut quoted = Vec::with_capacity(raw.len() + 2);
+        quoted.push(b'"');
+        quoted.extend_from_slice(raw);
+        quoted.push(b'"');
+        let key: String = serde_json::from_slice(&quoted).ok()?;
+        Some(key.as_bytes().cmp(step.as_bytes()))
+    }
+
+    /// Position after the string that starts at `at`.
+    fn string_end(bytes: &[u8], mut at: usize) -> Option<usize> {
+        at += 1;
+        loop {
+            match *bytes.get(at)? {
+                b'"' => return Some(at + 1),
+                b'\\' => at += 2,
+                _ => at += 1,
+            }
         }
     }
 
-    /// A string key compared with an expected text, without allocating.
-    struct Is<'a>(&'a str);
-
-    impl<'de> DeserializeSeed<'de> for Is<'_> {
-        type Value = bool;
-        fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<bool, D::Error> {
-            d.deserialize_str(self)
-        }
-    }
-
-    impl<'de> Visitor<'de> for Is<'_> {
-        type Value = bool;
-        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("a string key")
-        }
-        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<bool, E> {
-            Ok(v == self.0)
-        }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum Kind {
-        Null,
-        Boolean,
-        Integer,
-        Number,
-        String,
-        Binary,
-        Record,
-        Object,
-        Array,
-        Vector,
-    }
-
-    impl<'de> serde::Deserialize<'de> for Kind {
-        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Kind, D::Error> {
-            struct KindVisitor;
-            impl<'de> Visitor<'de> for KindVisitor {
-                type Value = Kind;
-                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    f.write_str("a value type")
-                }
-                fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Kind, E> {
-                    Ok(match v {
-                        "Null" => Kind::Null,
-                        "Boolean" => Kind::Boolean,
-                        "Integer" => Kind::Integer,
-                        "Number" => Kind::Number,
-                        "String" => Kind::String,
-                        "Binary" => Kind::Binary,
-                        "Record" => Kind::Record,
-                        "Object" => Kind::Object,
-                        "Array" => Kind::Array,
-                        "Vector" => Kind::Vector,
-                        _ => return Err(E::custom("unknown value type")),
-                    })
+    /// Position after the JSON value that starts at `at`.
+    fn value_end(bytes: &[u8], mut at: usize) -> Option<usize> {
+        match *bytes.get(at)? {
+            b'"' => string_end(bytes, at),
+            b'{' | b'[' => {
+                let mut depth = 0usize;
+                loop {
+                    match *bytes.get(at)? {
+                        b'"' => {
+                            at = string_end(bytes, at)?;
+                            continue;
+                        }
+                        b'{' | b'[' => depth += 1,
+                        b'}' | b']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some(at + 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                    at += 1;
                 }
             }
-            d.deserialize_str(KindVisitor)
+            _ => {
+                while !matches!(bytes.get(at), None | Some(b',' | b'}' | b']')) {
+                    at += 1;
+                }
+                Some(at)
+            }
         }
     }
 
@@ -564,6 +551,25 @@ mod field {
                     _ => Field::Missing,
                 };
                 assert_eq!(decode_field(&bytes, &path).unwrap(), expected, "{path:?}");
+                let encoded = match crate::path_value(document, &path) {
+                    Ok(Some(found)) => Some(found.encode().unwrap()),
+                    _ => None,
+                };
+                match super::super::encoded_field(&bytes, &path).unwrap() {
+                    super::super::EncodedField::Found(found) => {
+                        assert_eq!(Some(found), encoded, "{path:?}")
+                    }
+                    super::super::EncodedField::Missing => assert_eq!(encoded, None, "{path:?}"),
+                    super::super::EncodedField::RootNotObject => panic!("{path:?}"),
+                }
+            }
+            // Keys after the requested one in the sorted encoding end the search.
+            for key in ["0", "b", "nestec", "nestee", "zzz", ""] {
+                assert_eq!(
+                    super::read(&bytes, &[key.into()]),
+                    Some(Field::Missing),
+                    "{key}"
+                );
             }
         }
 
