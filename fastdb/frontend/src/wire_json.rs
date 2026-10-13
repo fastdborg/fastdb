@@ -7,31 +7,28 @@ const MAX_WIRE_DEPTH: usize = 2 * 64 + 8;
 pub(crate) fn deserializer(
     input: &str,
 ) -> Result<serde_json::Deserializer<serde_json::de::StrRead<'_>>> {
+    let bytes = input.as_bytes();
     let mut depth = 0usize;
-    let mut quoted = false;
-    let mut escaped = false;
-    for byte in input.bytes() {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                quoted = false;
-            }
-        } else {
-            match byte {
-                b'"' => quoted = true,
-                b'[' | b'{' => {
-                    depth += 1;
-                    if depth > MAX_WIRE_DEPTH {
-                        return Err(Error::Limit("wire JSON nesting exceeds 136".into()));
-                    }
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                // Skip string content; an escape always consumes the next byte.
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
                 }
-                b']' | b'}' => depth = depth.saturating_sub(1),
-                _ => {}
             }
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_WIRE_DEPTH {
+                    return Err(Error::Limit("wire JSON nesting exceeds 136".into()));
+                }
+            }
+            b']' | b'}' if depth > 0 => depth -= 1,
+            _ => {}
         }
+        i += 1;
     }
     // Syntax (including mismatched closers and unterminated strings) remains
     // serde's responsibility. Disable its smaller default only after preflight.

@@ -19,12 +19,20 @@ impl Connection {
                 if let Some(config) = &mut index.fulltext {
                     config.storage_version = 2;
                 }
+                // Upgrade the released latitude format; keep current formats,
+                // including region indexes, as they are.
+                if index.kind == IndexKind::Spatial && index.spatial.is_none() {
+                    index.spatial = Some(crate::spatial::Config::current());
+                }
                 match index.kind {
                     IndexKind::FullText => self.build_text_storage(index, &documents)?,
                     IndexKind::Vector => self.build_vector_storage(index, &documents)?,
                     IndexKind::Scalar | IndexKind::Spatial | IndexKind::Array => {
                         self.run(&index.table_ddl(), &[])?;
                         self.run(&index.index_ddl(), &[])?;
+                        for object in index.extra_schema() {
+                            self.run(&object.ddl, &[])?;
+                        }
                         for document in &documents {
                             self.insert_index(index, document)?;
                         }

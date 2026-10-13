@@ -331,7 +331,7 @@ fn search_seed(c: &fastdb::Connection) {
 fn search_builds() -> [(&'static str, &'static str, &'static str); 3] {
     [
     ("CREATE SEARCH INDEX docs_search ON docs(title) USING FULLTEXT","SELECT id FROM search::text('docs_search','hello',10)","QUERY INDEX METHOD fts"),
-    ("CREATE SEARCH INDEX docs_search ON docs(location) USING SPATIAL","SELECT id FROM search::near('docs_search',geo::point(0,0),1000000)","USING INDEX docs_search"),
+    ("CREATE SEARCH INDEX docs_search ON docs(location) USING SPATIAL","SELECT id FROM search::near('docs_search',geo::point(0,0),1000000)","USING COVERING INDEX docs_search"),
     ("CREATE SEARCH INDEX docs_search ON docs(v) USING VECTOR WITH (metric='l2',dimensions=2)","SELECT id FROM search::vector('docs_search',vector32('[1,0]'),5)",""),
 ]
 }

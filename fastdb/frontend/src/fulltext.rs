@@ -139,6 +139,7 @@ impl Index {
         match self.kind {
             IndexKind::Scalar => self.scalar_columns().join(","),
             IndexKind::Vector | IndexKind::Array => "\"key\"".into(),
+            IndexKind::Spatial if self.spatial.is_some() => "\"key\",longitude,latitude".into(),
             IndexKind::Spatial => "\"key\",longitude".into(),
             IndexKind::FullText => std::iter::once("\"key\"".to_owned())
                 .chain((1..self.paths().count()).map(|i| format!("f{i}")))
@@ -240,6 +241,7 @@ impl Connection {
             ),
             vector: None,
             scalar: None,
+            spatial: None,
             fulltext: Some(Config {
                 additional_paths: paths[1..].to_vec(),
                 tokenizer: options.identity(),
@@ -371,6 +373,9 @@ impl Connection {
             ),
             std::slice::from_ref(id),
         )?;
+        if index.region_index() {
+            self.delete_region_shape(index, id)?;
+        }
         if index.kind == IndexKind::FullText && !rows.is_empty() {
             self.change_text_count(index, -(rows.len() as i64))?;
         }
@@ -393,6 +398,11 @@ impl Connection {
                 self.run(&format!("DROP TABLE {}", quote(&name)), &[])?;
             }
             self.discard_ann_cache(index)?;
+        }
+        for object in index.extra_schema() {
+            if object.kind == "table" {
+                self.run(&format!("DROP TABLE {}", quote(&object.name)), &[])?;
+            }
         }
         self.run(&format!("DROP TABLE {}", quote(&index.storage)), &[])?;
         Ok(())

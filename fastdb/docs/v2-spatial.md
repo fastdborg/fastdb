@@ -1,8 +1,14 @@
 # V2 spatial contract
 
-Development API; not present in released 1.0.0 artifacts. Scalar functions,
-managed radius search and H3 cell aggregation are implemented in the working tree.
-See [the V2 checklist](v2-tasks.md) for qualification and release status.
+Released in FastDB 2.0.0 and unchanged in behavior through 2.5.0: point scalar
+functions, managed radius search and H3 cell aggregation. See
+[the 2.0.0 release record](release-2.0.0.md).
+
+FastDB 2.5.0 adds Polygon and MultiPolygon values, point-in-region predicates,
+`ST_*` aliases, more H3 functions, a two-dimensional index format and region
+indexes without changing the results of anything below. Spatial indexes created
+or rebuilt by 2.5.0 use catalog version 7. See
+[the spatial upgrade contract](spatial-upgrade.md).
 
 - `geo::point(longitude, latitude)` returns an ordinary object with `type: 'Point'`
   and `coordinates: [longitude, latitude]`, both stored as float64 numbers.

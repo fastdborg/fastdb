@@ -1,5 +1,5 @@
 //! Statically linked document accessors. No database callbacks or external I/O.
-use crate::{index_scalar, path_value, Connection, Error, Result, Value};
+use crate::{index_scalar, Connection, Error, Result, Value};
 use turso_ext::{scalar, ResultCode, Value as ExtValue, ValueType};
 
 pub(crate) fn register(connection: &Connection) -> Result<()> {
@@ -12,6 +12,21 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 c"__fastdb_geo_distance",
                 geo_distance as turso_ext::ScalarFunction,
                 4,
+            ),
+            (
+                c"__fastdb_geo_bbox",
+                geo_bbox as turso_ext::ScalarFunction,
+                6,
+            ),
+            (
+                c"__fastdb_geo_locate",
+                geo_locate as turso_ext::ScalarFunction,
+                3,
+            ),
+            (
+                c"__fastdb_geo_shape_locate",
+                geo_shape_locate as turso_ext::ScalarFunction,
+                3,
             ),
             (
                 c"__fastdb_vector_field",
@@ -158,25 +173,28 @@ fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
         };
     }
     let bytes = args[0]
-        .to_blob()
+        .blob_ref()
         .ok_or_else(|| Error::Storage("expected stored document".into()))?;
-    let path: Vec<String> = serde_json::from_str(
+    let path = field_path(
         args[1]
             .to_text()
             .ok_or_else(|| Error::Storage("expected field path".into()))?,
     )?;
-    let value = match Value::decode(&bytes)? {
-        Value::Object(doc) => {
-            if path.is_empty() {
-                Value::Object(doc)
-            } else {
-                read_path(&doc, &path)?.cloned().unwrap_or(Value::Null)
-            }
+    let field = if path.is_empty() {
+        match Value::decode(bytes)? {
+            value @ Value::Object(_) => crate::value::Field::Found(value),
+            _ => crate::value::Field::RootNotObject,
         }
+    } else {
+        crate::value::decode_field(bytes, &path)?
+    };
+    let value = match field {
+        crate::value::Field::Found(value) => value,
+        crate::value::Field::Missing => Value::Null,
         // Derived columns may contain any logical value. A non-object parent
         // has no nested object fields; stored document roots remain strict.
-        _ if mode == 3 => Value::Null,
-        _ => return Err(Error::Storage("expected object".into())),
+        crate::value::Field::RootNotObject if mode == 3 => Value::Null,
+        crate::value::Field::RootNotObject => return Err(Error::Storage("expected object".into())),
     };
     if mode == 4 {
         return vector_input_value(value);
@@ -225,14 +243,24 @@ fn scalar_result(value: &Value) -> Result<ExtValue> {
         EngineValue::Blob(b) => ExtValue::from_blob(b),
     })
 }
-fn read_path<'a>(doc: &'a crate::Document, path: &[String]) -> Result<Option<&'a Value>> {
-    // Read traversal of a scalar parent is missing, unlike a SET write which
-    // must reject replacing that parent implicitly.
-    match path_value(doc, path) {
-        Err(Error::Validation(_)) => Ok(None),
-        result => result,
-    }
+thread_local! {
+    static FIELD_PATH: std::cell::RefCell<(String, std::rc::Rc<Vec<String>>)> =
+        std::cell::RefCell::new((String::new(), std::rc::Rc::new(Vec::new())));
 }
+
+/// Parsed field path, reused while consecutive rows read the same path.
+fn field_path(text: &str) -> Result<std::rc::Rc<Vec<String>>> {
+    if let Some(path) = FIELD_PATH.with(|cached| {
+        let cached = cached.borrow();
+        (cached.0 == text && !text.is_empty()).then(|| cached.1.clone())
+    }) {
+        return Ok(path);
+    }
+    let path = std::rc::Rc::new(serde_json::from_str::<Vec<String>>(text)?);
+    FIELD_PATH.with(|cached| *cached.borrow_mut() = (text.to_owned(), path.clone()));
+    Ok(path)
+}
+
 #[scalar(name = "__fastdb_scalar")]
 fn document_scalar(args: &[ExtValue]) -> ExtValue {
     get(args, 0).unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
@@ -510,11 +538,9 @@ fn helper(args: &[ExtValue]) -> ExtValue {
             }
             ("mutation_diff", _) => crate::mutation_result::call_diff(&args)?,
             ("search_analyze", _) => crate::analyzer::call(&args)?,
-            ("geo_cell", _) => crate::spatial::call("cell", &args)?,
-            ("geo_cell_center", _) => crate::spatial::call("cell_center", &args)?,
-            ("geo_point", _) => crate::spatial::call("point", &args)?,
-            ("geo_distance", _) => crate::spatial::call("distance", &args)?,
-            ("geo_within", _) => crate::spatial::call("within", &args)?,
+            (name, _) if crate::spatial::public_name(name).is_some() => {
+                crate::spatial::call(name, &args)?
+            }
             ("string_slugify", _) => crate::bundled::call("slugify", &args)?,
             ("string_normalize", _) => crate::bundled::call("normalize", &args)?,
             ("array_new", _) => Value::Array(args),
@@ -561,8 +587,9 @@ fn helper(args: &[ExtValue]) -> ExtValue {
         Ok(ExtValue::from_blob(value.encode()?))
     })();
     result.unwrap_or_else(|e| {
+        let helper = args.first().and_then(ExtValue::to_text);
         let prefix = if matches!(
-            args.first().and_then(ExtValue::to_text),
+            helper,
             Some(
                 "search_analyze"
                     | "mutation_diff"
@@ -571,7 +598,8 @@ fn helper(args: &[ExtValue]) -> ExtValue {
                     | "doc_diff"
                     | "array_contains"
             )
-        ) {
+        ) || helper.is_some_and(crate::spatial::categorized_errors)
+        {
             match e {
                 Error::Limit(_) => "__fastdb_udf_limit:",
                 Error::Validation(_) => "__fastdb_udf_validation:",
@@ -679,6 +707,75 @@ fn vector_concat(args: &[ExtValue]) -> ExtValue {
             unreachable!("vector result");
         };
         Ok(ExtValue::from_blob(bytes))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_geo_locate")]
+fn geo_locate(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [token, longitude, latitude] = args else {
+            return Err(Error::Storage("region test arity".into()));
+        };
+        let coordinate = |value: &ExtValue| match value.value_type() {
+            ValueType::Integer => Ok(value.to_integer().expect("integer") as f64),
+            ValueType::Float => Ok(value.to_float().expect("float")),
+            _ => Err(Error::Storage("invalid spatial index coordinate".into())),
+        };
+        let token = token
+            .to_integer()
+            .ok_or_else(|| Error::Storage("invalid spatial region token".into()))?;
+        Ok(ExtValue::from_integer(crate::spatial::locate_registered(
+            token,
+            (coordinate(longitude)?, coordinate(latitude)?),
+        )?))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_geo_shape_locate")]
+fn geo_shape_locate(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let [shape, longitude, latitude] = args else {
+            return Err(Error::Storage("shape test arity".into()));
+        };
+        let coordinate = |value: &ExtValue| match value.value_type() {
+            ValueType::Integer => Ok(value.to_integer().expect("integer") as f64),
+            ValueType::Float => Ok(value.to_float().expect("float")),
+            _ => Err(Error::Storage("invalid point coordinate".into())),
+        };
+        let bytes = shape
+            .blob_ref()
+            .ok_or_else(|| Error::Storage("invalid stored region shape".into()))?;
+        Ok(ExtValue::from_integer(crate::spatial::locate_shape(
+            bytes,
+            (coordinate(longitude)?, coordinate(latitude)?),
+        )?))
+    })();
+    result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
+}
+
+#[scalar(name = "__fastdb_geo_bbox")]
+fn geo_bbox(args: &[ExtValue]) -> ExtValue {
+    let result = (|| -> Result<ExtValue> {
+        let values = args
+            .iter()
+            .map(|value| match value.value_type() {
+                ValueType::Integer => Ok(value.to_integer().expect("integer") as f64),
+                ValueType::Float => Ok(value.to_float().expect("float")),
+                _ => Err(Error::Storage("invalid spatial index coordinate".into())),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let [longitude, latitude, west, south, east, north] = values.as_slice() else {
+            return Err(Error::Storage("viewport test arity".into()));
+        };
+        Ok(ExtValue::from_integer(i64::from(crate::spatial::in_bbox(
+            (*longitude, *latitude),
+            *west,
+            *south,
+            *east,
+            *north,
+        ))))
     })();
     result.unwrap_or_else(|e| ExtValue::error_with_message(e.to_string()))
 }

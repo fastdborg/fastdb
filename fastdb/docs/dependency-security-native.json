@@ -1,5 +1,5 @@
 {
-  "review_date": "2026-10-12",
+  "review_date": "2026-10-13",
   "quickjs": {
     "crate": "rquickjs-sys 0.13.0",
     "bundled_version": "0.16.2",
@@ -237,5 +237,5 @@
       "totalDependencies": 1
     }
   },
-  "review_scope": "Advisory identities and affected/patched ranges retrieved again; bundled dependency versions unchanged."
+  "review_scope": "Advisory identities and affected/patched ranges retrieved again on 2026-10-13; bundled dependency versions unchanged. QuickJS-NG lists the same ten advisories and USearch none. SQLite lists CVE-2026-51296, -51297, -51300, -51302, -51303 and -51304 as not bugs in SQLite."
 }

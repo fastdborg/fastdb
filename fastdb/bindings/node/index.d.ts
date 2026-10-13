@@ -33,6 +33,8 @@ export interface QueryMetrics {
   /** GRAPH source work: adjacency entries read, expansions, predicate documents, rows, visited nodes and peak state bytes. */
   graphAdjacencyEntries: bigint; graphExpansions: bigint; graphDocuments: bigint;
   graphRows: bigint; graphVisited: bigint; graphPeakBytes: bigint;
+  /** Spatial work: index key ranges searched and nearest radius rounds. */
+  spatialRanges: bigint; spatialRounds: bigint;
 }
 export interface ProfiledQuery { result: QueryResult; metrics: QueryMetrics; }
 export type BatchExecution = { offset: number; transaction: Transaction } & (

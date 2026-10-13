@@ -26,6 +26,10 @@ pub struct QueryMetrics {
     pub graph_visited: u64,
     /// Peak bytes of graph-owned traversal state, as conservatively estimated.
     pub graph_peak_bytes: u64,
+    /// Index key ranges searched by spatial sources and rewrites, in all rounds.
+    pub spatial_ranges: u64,
+    /// Radius rounds run by nearest searches before the final statement.
+    pub spatial_rounds: u64,
 }
 impl QueryMetrics {
     pub(crate) fn from_statement(statement: &turso_core::Statement) -> Self {
@@ -47,6 +51,8 @@ impl QueryMetrics {
             graph_rows: 0,
             graph_visited: 0,
             graph_peak_bytes: 0,
+            spatial_ranges: 0,
+            spatial_rounds: 0,
         }
     }
 }
