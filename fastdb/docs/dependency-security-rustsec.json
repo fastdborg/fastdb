@@ -1,12 +1,12 @@
 {
-  "reviewed_at": "2026-10-12T09:22:54.114619+00:00",
-  "source_commit": "0aed61e24862e73ecb3c3f6101ecadbc37fe42ea",
-  "cargo_lock_sha256": "ce0d889d618d7f6e0d27e8409423d2f82b1d65493837bc801de22fa1f10d449a",
+  "reviewed_at": "2026-10-13T05:06:19.293817+00:00",
+  "source_commit": "cb76e21092f6ed5a0c954f093641778dd31c5757",
+  "cargo_lock_sha256": "c46c35d16cbe82cfaf93fa17a4503a795fe0ad24ffc3481edad68b632bf4eb00",
   "advisory_database": {
     "repository": "https://github.com/RustSec/advisory-db.git",
-    "commit": "7a656e76726dc815b52f1bdb7b2a5ea6b51ad3ba",
-    "committed_at": "2026-10-12T10:58:45+02:00",
-    "advisory_count": 1298
+    "commit": "57dcc0f2192e025138907a495c1ac9a7e1e3e123",
+    "committed_at": "2026-10-12T20:06:48+02:00",
+    "advisory_count": 1307
   },
   "scanner": "cargo-audit 0.22.2",
   "target": "x86_64-unknown-linux-gnu",
@@ -311,31 +311,31 @@
     },
     {
       "name": "fastdb",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastdb-c",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastdb-cli",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastdb-node",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastdb-protocol",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastdb-python",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastdb-service",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastdivide",
@@ -343,7 +343,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "name": "fastrand",
@@ -1496,6 +1496,30 @@
     },
     {
       "kind": "vulnerability",
+      "package": "quinn-proto",
+      "version": "0.11.17",
+      "id": "RUSTSEC-2026-0338",
+      "title": "Remote peer can panic quinn-proto with zero-length STREAM frames during unordered reads",
+      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0338.html"
+    },
+    {
+      "kind": "vulnerability",
+      "package": "quinn-proto",
+      "version": "0.11.17",
+      "id": "RUSTSEC-2026-0340",
+      "title": "Peer minimum ACK delay can panic quinn-proto when ACK_FREQUENCY transmission is enabled",
+      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0340.html"
+    },
+    {
+      "kind": "vulnerability",
+      "package": "quinn-proto",
+      "version": "0.11.17",
+      "id": "RUSTSEC-2026-0343",
+      "title": "Outgoing datagram buffer accounting can panic the sender in quinn-proto",
+      "url": "https://rustsec.org/advisories/RUSTSEC-2026-0343.html"
+    },
+    {
+      "kind": "vulnerability",
       "package": "rkyv",
       "version": "0.7.46",
       "id": "RUSTSEC-2026-0235",
@@ -1541,6 +1565,14 @@
       "id": "RUSTSEC-2026-0173",
       "title": "proc-macro-error2 is unmaintained",
       "url": "https://rustsec.org/advisories/RUSTSEC-2026-0173.html"
+    },
+    {
+      "kind": "unmaintained",
+      "package": "unsafe-libyaml",
+      "version": "0.2.11",
+      "id": "RUSTSEC-2024-0449",
+      "title": "unsafe-libyaml is unmaintained",
+      "url": "https://rustsec.org/advisories/RUSTSEC-2024-0449.html"
     },
     {
       "kind": "unmaintained",
