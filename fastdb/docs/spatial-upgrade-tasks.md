@@ -1,7 +1,7 @@
 # Spatial upgrade checklist
 
-Status: development on branch `feat/spatial-upgrade`. Nothing here is released.
-Release number: not assigned. Contract: [spatial-upgrade.md](spatial-upgrade.md).
+Status: released in FastDB 2.5.0 ([release record](release-2.5.0.md)).
+Contract: [spatial-upgrade.md](spatial-upgrade.md).
 
 Unchecked items are future work. Internal prototypes do not establish a released
 capability.
@@ -134,6 +134,10 @@ documentation, release selection and qualification.
 - [x] Fixes from the comparison: literal LIMIT in nearest statements, exact
   condition replacement, faster nearest probing with a global fallback, and a
   larger prepared-region cache.
-- [ ] FastDB per-document evaluation, result conversion and write costs remain
-  the main gap for large result sets, scans and updates (outside spatial scope).
+- [x] Open items from the comparison, implemented for 2.5.0: single-field reads,
+  keyed index maintenance and faster imports; a semijoin rewrite instead of typed
+  `id IN (...)` membership; region indexes for reverse geofencing. The 2.5.0
+  rerun is in [the comparison](spatial-surrealdb-comparison.md).
+- [ ] Large result sets, grouping and very selective nearest filters remain
+  slower than SurrealDB.
 

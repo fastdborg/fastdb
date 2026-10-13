@@ -1,7 +1,7 @@
 # Spatial upgrade evidence
 
-Development evidence on branch `feat/spatial-upgrade`. Nothing here is a release
-claim or a latency promise. Contract: [spatial-upgrade.md](spatial-upgrade.md).
+Development evidence gathered before the 2.5.0 release. Nothing here is a latency
+promise; release qualification is in [the release record](release-2.5.0.md). Contract: [spatial-upgrade.md](spatial-upgrade.md).
 Checklist: [spatial-upgrade-tasks.md](spatial-upgrade-tasks.md).
 
 Host for every measurement: Intel Xeon E5-2673 v4, WSL2, single-threaded queries,

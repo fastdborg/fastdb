@@ -1,8 +1,7 @@
 # Spatial upgrade contract
 
-Status: development. Nothing in this document is in a released artifact. The
-release number is not assigned. Implementation status is tracked in
-[the task checklist](spatial-upgrade-tasks.md). The planning record is
+Status: released in FastDB 2.5.0 for Linux x64 ([release record](release-2.5.0.md)).
+Implementation status is tracked in [the task checklist](spatial-upgrade-tasks.md). The planning record is
 `plan-spatial-upgrade.md` in the parent planning directory.
 
 This contract revises the 2.2.0 decision that general geometry is out of scope
@@ -160,7 +159,7 @@ within a thread: a constant query region across the rows of one statement, and
 stored zones across statements. Reuse is keyed by the complete encoded bytes, so
 different values never share a prepared region.
 
-## 6. Indexed sources (development branch)
+## 6. Indexed sources
 
 | Source | Result | Contract |
 | --- | --- | --- |
@@ -187,7 +186,7 @@ empty round; otherwise it grows by the square root of the shortfall times 1.25,
 between two and eight times. Rounds and the outer statement run in one savepoint, so
 they read one snapshot that includes the caller's pending writes.
 
-## 7. Ordinary SQL index use (development branch)
+## 7. Ordinary SQL index use
 
 The planner recognizes these forms on a top-level indexed field, written
 directly or qualified by the table name or alias, in a single-table SELECT. On a

@@ -1,5 +1,5 @@
 {
-  "fastdb": "2.4.0 (feat/spatial-upgrade working tree)",
+  "fastdb": "2.5.0 (2.5.0 release package, fastdb-production)",
   "surrealdb": "3.3.0 for linux on x86_64",
   "node": "v24.19.0",
   "documents": 100000,
@@ -11,51 +11,51 @@
       "documents": 100000,
       "zones": 500,
       "load": {
-        "fastdbImportSeconds": 93.74,
-        "fastdbIndexSeconds": 8.71,
-        "surrealInsertSeconds": 14.51,
-        "surrealIndexSeconds": 32.4
+        "fastdbImportSeconds": 14.76,
+        "fastdbIndexSeconds": 9.27,
+        "surrealInsertSeconds": 12.97,
+        "surrealIndexSeconds": 30.79
       },
       "queries": {
         "nearbyAvailable5km": {
           "fastdb": {
             "client": {
-              "p50Ms": 52.036,
-              "p95Ms": 95.79,
-              "meanMs": 57.867
+              "p50Ms": 31.579,
+              "p95Ms": 58.126,
+              "meanMs": 32.363
             }
           },
           "fastdbJoin": {
             "client": {
-              "p50Ms": 32.951,
-              "p95Ms": 52.366,
-              "meanMs": 33.376
+              "p50Ms": 20.905,
+              "p95Ms": 38.545,
+              "meanMs": 21.962
             },
             "mismatchedSamples": 0
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 300.47,
-              "p95Ms": 348.444,
-              "meanMs": 288.917
+              "p50Ms": 272.245,
+              "p95Ms": 326.246,
+              "meanMs": 279.468
             },
             "server": {
-              "p50Ms": 290.164,
-              "p95Ms": 339.142,
-              "meanMs": 280.526
+              "p50Ms": 265.536,
+              "p95Ms": 319.023,
+              "meanMs": 272.017
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 37.772,
-              "p95Ms": 276.214,
-              "meanMs": 72.994
+              "p50Ms": 35.726,
+              "p95Ms": 256.129,
+              "meanMs": 71.966
             },
             "server": {
-              "p50Ms": 30.99,
-              "p95Ms": 268.527,
-              "meanMs": 66.462
+              "p50Ms": 29.604,
+              "p95Ms": 250.28,
+              "meanMs": 65.864
             },
             "mismatchedSamples": 0
           },
@@ -64,34 +64,34 @@
         "viewport01deg": {
           "fastdb": {
             "client": {
-              "p50Ms": 7.977,
-              "p95Ms": 12.879,
-              "meanMs": 7.785
+              "p50Ms": 6.519,
+              "p95Ms": 8.252,
+              "meanMs": 6.004
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 78.628,
-              "p95Ms": 105.716,
-              "meanMs": 81.825
+              "p50Ms": 82.923,
+              "p95Ms": 98.045,
+              "meanMs": 82.219
             },
             "server": {
-              "p50Ms": 65.938,
-              "p95Ms": 91.083,
-              "meanMs": 70.496
+              "p50Ms": 74.362,
+              "p95Ms": 87.258,
+              "meanMs": 72.289
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 41.187,
-              "p95Ms": 59.952,
-              "meanMs": 42.089
+              "p50Ms": 42.65,
+              "p95Ms": 57.603,
+              "meanMs": 44.167
             },
             "server": {
-              "p50Ms": 30.822,
-              "p95Ms": 45.435,
-              "meanMs": 32.176
+              "p50Ms": 30.214,
+              "p95Ms": 44.6,
+              "meanMs": 33.989
             },
             "mismatchedSamples": 0
           },
@@ -100,34 +100,34 @@
         "stormPolygon": {
           "fastdb": {
             "client": {
-              "p50Ms": 150.044,
-              "p95Ms": 206.382,
-              "meanMs": 149.427
+              "p50Ms": 130.125,
+              "p95Ms": 172.608,
+              "meanMs": 128.925
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 113.215,
-              "p95Ms": 131.054,
-              "meanMs": 108.839
+              "p50Ms": 105.367,
+              "p95Ms": 122.302,
+              "meanMs": 104.942
             },
             "server": {
-              "p50Ms": 91.061,
-              "p95Ms": 106.688,
-              "meanMs": 88.983
+              "p50Ms": 87.159,
+              "p95Ms": 101.298,
+              "meanMs": 87.285
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 67.807,
-              "p95Ms": 84.917,
-              "meanMs": 67.772
+              "p50Ms": 64.655,
+              "p95Ms": 85.018,
+              "meanMs": 67.298
             },
             "server": {
-              "p50Ms": 46.552,
-              "p95Ms": 62.872,
-              "meanMs": 45.326
+              "p50Ms": 44.989,
+              "p95Ms": 59.717,
+              "meanMs": 47.398
             },
             "mismatchedSamples": 0
           },
@@ -136,21 +136,21 @@
         "zoneLookup": {
           "fastdb": {
             "client": {
-              "p50Ms": 20.165,
-              "p95Ms": 20.538,
-              "meanMs": 19.742
+              "p50Ms": 2.817,
+              "p95Ms": 3.068,
+              "meanMs": 2.795
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 4.529,
-              "p95Ms": 6.34,
-              "meanMs": 4.649
+              "p50Ms": 5.261,
+              "p95Ms": 6.595,
+              "meanMs": 5.408
             },
             "server": {
-              "p50Ms": 0.971,
-              "p95Ms": 1.995,
-              "meanMs": 1.22
+              "p50Ms": 1.329,
+              "p95Ms": 2.206,
+              "meanMs": 1.511
             },
             "mismatchedSamples": 0
           },
@@ -159,34 +159,34 @@
         "nearest5AvailableFresh": {
           "fastdb": {
             "client": {
-              "p50Ms": 35.023,
-              "p95Ms": 61.673,
-              "meanMs": 38.652
+              "p50Ms": 25.113,
+              "p95Ms": 42.994,
+              "meanMs": 25.601
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 84.364,
-              "p95Ms": 93.689,
-              "meanMs": 84.859
+              "p50Ms": 78.636,
+              "p95Ms": 94.056,
+              "meanMs": 81.204
             },
             "server": {
-              "p50Ms": 79.454,
-              "p95Ms": 87.804,
-              "meanMs": 79.653
+              "p50Ms": 73.801,
+              "p95Ms": 89.098,
+              "meanMs": 76.496
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 650.779,
-              "p95Ms": 1002.74,
-              "meanMs": 652.633
+              "p50Ms": 607.989,
+              "p95Ms": 994.002,
+              "meanMs": 613.059
             },
             "server": {
-              "p50Ms": 622.191,
-              "p95Ms": 964.627,
-              "meanMs": 623.056
+              "p50Ms": 579.104,
+              "p95Ms": 957.539,
+              "meanMs": 585.724
             },
             "mismatchedSamples": 0
           },
@@ -195,21 +195,21 @@
         "nearest5RareFleet": {
           "fastdb": {
             "client": {
-              "p50Ms": 445.299,
-              "p95Ms": 3339.404,
-              "meanMs": 1266.654
+              "p50Ms": 338.797,
+              "p95Ms": 2528.929,
+              "meanMs": 916.573
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 55.356,
-              "p95Ms": 64.915,
-              "meanMs": 54.246
+              "p50Ms": 49.721,
+              "p95Ms": 63.873,
+              "meanMs": 50.881
             },
             "server": {
-              "p50Ms": 50.011,
-              "p95Ms": 59.031,
-              "meanMs": 49.036
+              "p50Ms": 46.579,
+              "p95Ms": 59.138,
+              "meanMs": 45.966
             },
             "mismatchedSamples": 0
           },
@@ -218,34 +218,34 @@
         "dashboardCells05deg": {
           "fastdb": {
             "client": {
-              "p50Ms": 159.098,
-              "p95Ms": 217.783,
-              "meanMs": 165.481
+              "p50Ms": 143.94,
+              "p95Ms": 179.183,
+              "meanMs": 147.959
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 101.474,
-              "p95Ms": 124.491,
-              "meanMs": 106.003
+              "p50Ms": 92.841,
+              "p95Ms": 105.491,
+              "meanMs": 89.91
             },
             "server": {
-              "p50Ms": 88.163,
-              "p95Ms": 112.47,
-              "meanMs": 94.37
+              "p50Ms": 81.861,
+              "p95Ms": 94.138,
+              "meanMs": 79.342
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 51.586,
-              "p95Ms": 67.419,
-              "meanMs": 54.025
+              "p50Ms": 51.088,
+              "p95Ms": 60.25,
+              "meanMs": 50.159
             },
             "server": {
-              "p50Ms": 42.517,
-              "p95Ms": 55.913,
-              "meanMs": 44.194
+              "p50Ms": 41.053,
+              "p95Ms": 49.883,
+              "meanMs": 40.848
             },
             "mismatchedSamples": 0
           },
@@ -254,27 +254,27 @@
       },
       "moves": {
         "fastdb": {
-          "p50Ms": 23.357,
-          "p95Ms": 39.809,
-          "meanMs": 25.828
+          "p50Ms": 6.698,
+          "p95Ms": 9.152,
+          "meanMs": 7.044
         },
         "surreal": {
           "client": {
-            "p50Ms": 9.373,
-            "p95Ms": 11.199,
-            "meanMs": 9.561
+            "p50Ms": 8.459,
+            "p95Ms": 9.754,
+            "meanMs": 8.502
           },
           "server": {
-            "p50Ms": 5.16,
-            "p95Ms": 6.147,
-            "meanMs": 5.248
+            "p50Ms": 4.769,
+            "p95Ms": 5.642,
+            "meanMs": 4.816
           }
         }
       },
       "integrity": 100000,
       "storage": {
-        "fastdbBytes": 92495552,
-        "surrealBytes": 71779206
+        "fastdbBytes": 97380024,
+        "surrealBytes": 71777920
       }
     },
     {
@@ -282,51 +282,51 @@
       "documents": 100000,
       "zones": 500,
       "load": {
-        "fastdbImportSeconds": 95.12,
-        "fastdbIndexSeconds": 8.04,
-        "surrealInsertSeconds": 14.67,
-        "surrealIndexSeconds": 32.71
+        "fastdbImportSeconds": 14.12,
+        "fastdbIndexSeconds": 8.32,
+        "surrealInsertSeconds": 14.13,
+        "surrealIndexSeconds": 30.72
       },
       "queries": {
         "nearbyAvailable5km": {
           "fastdb": {
             "client": {
-              "p50Ms": 6.78,
-              "p95Ms": 7.519,
-              "meanMs": 6.543
+              "p50Ms": 2.122,
+              "p95Ms": 4.888,
+              "meanMs": 2.473
             }
           },
           "fastdbJoin": {
             "client": {
-              "p50Ms": 1.693,
-              "p95Ms": 2.297,
-              "meanMs": 1.729
+              "p50Ms": 1.621,
+              "p95Ms": 1.984,
+              "meanMs": 1.678
             },
             "mismatchedSamples": 0
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 248.396,
-              "p95Ms": 315.783,
-              "meanMs": 267.757
+              "p50Ms": 278.675,
+              "p95Ms": 326.757,
+              "meanMs": 283.242
             },
             "server": {
-              "p50Ms": 242.91,
-              "p95Ms": 308.758,
-              "meanMs": 261.319
+              "p50Ms": 273.668,
+              "p95Ms": 322.098,
+              "meanMs": 278.07
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 6.848,
-              "p95Ms": 339.15,
-              "meanMs": 80.084
+              "p50Ms": 7.026,
+              "p95Ms": 271.873,
+              "meanMs": 64.202
             },
             "server": {
-              "p50Ms": 2.238,
-              "p95Ms": 333.565,
-              "meanMs": 74.907
+              "p50Ms": 2.296,
+              "p95Ms": 266.819,
+              "meanMs": 59.702
             },
             "mismatchedSamples": 0
           },
@@ -335,34 +335,34 @@
         "viewport01deg": {
           "fastdb": {
             "client": {
-              "p50Ms": 1.429,
-              "p95Ms": 1.75,
-              "meanMs": 1.471
+              "p50Ms": 1.389,
+              "p95Ms": 1.524,
+              "meanMs": 1.396
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 74.925,
-              "p95Ms": 87.902,
-              "meanMs": 74.13
+              "p50Ms": 62.494,
+              "p95Ms": 78.134,
+              "meanMs": 63.452
             },
             "server": {
-              "p50Ms": 68.001,
-              "p95Ms": 82.48,
-              "meanMs": 68.469
+              "p50Ms": 57.153,
+              "p95Ms": 72.669,
+              "meanMs": 58.606
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 5.985,
-              "p95Ms": 77.62,
-              "meanMs": 14.785
+              "p50Ms": 5.679,
+              "p95Ms": 64.784,
+              "meanMs": 12.509
             },
             "server": {
-              "p50Ms": 1.983,
-              "p95Ms": 72.066,
-              "meanMs": 10.497
+              "p50Ms": 1.859,
+              "p95Ms": 60.69,
+              "meanMs": 8.687
             },
             "mismatchedSamples": 0
           },
@@ -371,34 +371,34 @@
         "stormPolygon": {
           "fastdb": {
             "client": {
-              "p50Ms": 6.122,
-              "p95Ms": 7.134,
-              "meanMs": 6.238
+              "p50Ms": 2.134,
+              "p95Ms": 2.389,
+              "meanMs": 2.127
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 87.617,
-              "p95Ms": 94.533,
-              "meanMs": 85.278
+              "p50Ms": 69.659,
+              "p95Ms": 82.582,
+              "meanMs": 71.628
             },
             "server": {
-              "p50Ms": 81.257,
-              "p95Ms": 88.029,
-              "meanMs": 79.236
+              "p50Ms": 64.872,
+              "p95Ms": 76.813,
+              "meanMs": 66.545
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 6.166,
-              "p95Ms": 7.934,
-              "meanMs": 6.195
+              "p50Ms": 5.18,
+              "p95Ms": 6.08,
+              "meanMs": 5.209
             },
             "server": {
-              "p50Ms": 1.865,
-              "p95Ms": 2.523,
-              "meanMs": 1.928
+              "p50Ms": 1.42,
+              "p95Ms": 1.958,
+              "meanMs": 1.433
             },
             "mismatchedSamples": 0
           },
@@ -407,21 +407,21 @@
         "zoneLookup": {
           "fastdb": {
             "client": {
-              "p50Ms": 18.469,
-              "p95Ms": 20.104,
-              "meanMs": 18.628
+              "p50Ms": 2.266,
+              "p95Ms": 2.653,
+              "meanMs": 2.295
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 5.497,
-              "p95Ms": 7.199,
-              "meanMs": 5.727
+              "p50Ms": 4.413,
+              "p95Ms": 5.721,
+              "meanMs": 4.512
             },
             "server": {
-              "p50Ms": 1.269,
-              "p95Ms": 2.477,
-              "meanMs": 1.517
+              "p50Ms": 1.033,
+              "p95Ms": 1.988,
+              "meanMs": 1.141
             },
             "mismatchedSamples": 0
           },
@@ -430,34 +430,34 @@
         "nearest5AvailableFresh": {
           "fastdb": {
             "client": {
-              "p50Ms": 48.241,
-              "p95Ms": 110.67,
-              "meanMs": 56.952
+              "p50Ms": 28.797,
+              "p95Ms": 85.103,
+              "meanMs": 33.685
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 69.827,
-              "p95Ms": 86.761,
-              "meanMs": 72.705
+              "p50Ms": 76.388,
+              "p95Ms": 84.87,
+              "meanMs": 75.563
             },
             "server": {
-              "p50Ms": 64.868,
-              "p95Ms": 80.923,
-              "meanMs": 67.262
+              "p50Ms": 71.17,
+              "p95Ms": 80.367,
+              "meanMs": 70.742
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 2151.072,
-              "p95Ms": 2979.46,
-              "meanMs": 2193.491
+              "p50Ms": 2062.92,
+              "p95Ms": 2467.117,
+              "meanMs": 2055.658
             },
             "server": {
-              "p50Ms": 2076.41,
-              "p95Ms": 2900.432,
-              "meanMs": 2119.094
+              "p50Ms": 1992.913,
+              "p95Ms": 2391.04,
+              "meanMs": 1987.359
             },
             "mismatchedSamples": 0
           },
@@ -466,21 +466,21 @@
         "nearest5RareFleet": {
           "fastdb": {
             "client": {
-              "p50Ms": 1881.573,
-              "p95Ms": 2253.514,
-              "meanMs": 1856.332
+              "p50Ms": 1373.62,
+              "p95Ms": 1620.726,
+              "meanMs": 1344.85
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 55.316,
-              "p95Ms": 68.701,
-              "meanMs": 57.179
+              "p50Ms": 53.531,
+              "p95Ms": 65.023,
+              "meanMs": 54.087
             },
             "server": {
-              "p50Ms": 50.192,
-              "p95Ms": 63.092,
-              "meanMs": 52.26
+              "p50Ms": 49.027,
+              "p95Ms": 59.173,
+              "meanMs": 49.252
             },
             "mismatchedSamples": 0
           },
@@ -489,34 +489,34 @@
         "dashboardCells05deg": {
           "fastdb": {
             "client": {
-              "p50Ms": 2.731,
-              "p95Ms": 4.126,
-              "meanMs": 2.847
+              "p50Ms": 2.275,
+              "p95Ms": 3.709,
+              "meanMs": 2.404
             }
           },
           "surrealScan": {
             "client": {
-              "p50Ms": 62.094,
-              "p95Ms": 73.728,
-              "meanMs": 63.416
+              "p50Ms": 62.351,
+              "p95Ms": 74.804,
+              "meanMs": 64.654
             },
             "server": {
-              "p50Ms": 56.617,
-              "p95Ms": 68.623,
-              "meanMs": 58.142
+              "p50Ms": 56.983,
+              "p95Ms": 69.864,
+              "meanMs": 59.683
             },
             "mismatchedSamples": 0
           },
           "surrealGeohash": {
             "client": {
-              "p50Ms": 5.68,
-              "p95Ms": 6.803,
-              "meanMs": 5.62
+              "p50Ms": 6.011,
+              "p95Ms": 7.498,
+              "meanMs": 6.06
             },
             "server": {
-              "p50Ms": 1.821,
-              "p95Ms": 2.426,
-              "meanMs": 1.794
+              "p50Ms": 1.86,
+              "p95Ms": 2.492,
+              "meanMs": 1.914
             },
             "mismatchedSamples": 0
           },
@@ -525,27 +525,27 @@
       },
       "moves": {
         "fastdb": {
-          "p50Ms": 23.767,
-          "p95Ms": 37.086,
-          "meanMs": 24.773
+          "p50Ms": 7.306,
+          "p95Ms": 9.798,
+          "meanMs": 7.663
         },
         "surreal": {
           "client": {
-            "p50Ms": 8.952,
-            "p95Ms": 10.574,
-            "meanMs": 9.043
+            "p50Ms": 8.992,
+            "p95Ms": 10.376,
+            "meanMs": 9.027
           },
           "server": {
-            "p50Ms": 5.222,
-            "p95Ms": 6.294,
-            "meanMs": 5.282
+            "p50Ms": 5.129,
+            "p95Ms": 6.109,
+            "meanMs": 5.158
           }
         }
       },
       "integrity": 100000,
       "storage": {
-        "fastdbBytes": 92030664,
-        "surrealBytes": 71781992
+        "fastdbBytes": 96943856,
+        "surrealBytes": 71780700
       }
     }
   ]
