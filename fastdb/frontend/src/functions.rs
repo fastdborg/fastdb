@@ -356,10 +356,13 @@ pub(crate) fn decode_arg(arg: &ExtValue) -> Result<Value> {
     if arg.value_type() == ValueType::Null {
         return Ok(Value::Null);
     }
-    Value::decode(
-        &arg.to_blob()
-            .ok_or_else(|| Error::Storage("expected encoded helper argument".into()))?,
-    )
+    let bytes = arg
+        .blob_ref()
+        .ok_or_else(|| Error::Storage("expected encoded helper argument".into()))?;
+    match crate::value::decode_simple(bytes) {
+        Some(value) => Ok(value),
+        None => Value::decode(bytes),
+    }
 }
 #[scalar(name = "__fastdb_pack")]
 fn pack(args: &[ExtValue]) -> ExtValue {

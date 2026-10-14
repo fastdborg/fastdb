@@ -294,6 +294,14 @@ pub(crate) enum Field {
 /// that field. Encodings outside the encoder's layout (another key order,
 /// nesting beyond the parser's recursion limit) fall back to a full decode,
 /// so the result always equals reading the fully decoded document.
+/// Decode common canonical values without the JSON decoder: scalars and
+/// GeoJSON-style points with two number coordinates. Other values return `None`.
+pub(crate) fn decode_simple(bytes: &[u8]) -> Option<Value> {
+    let text = bytes.strip_prefix(b"FDB\x01")?;
+    let value = field::scalar(text).or_else(|| field::point(text))?;
+    value.validate().ok().map(|()| value)
+}
+
 /// A field's stored encoding, for accessors that return encoded values.
 pub(crate) enum EncodedField {
     Found(Vec<u8>),
@@ -341,7 +349,10 @@ mod field {
     pub(super) fn read(bytes: &[u8], path: &[String]) -> Option<Field> {
         match lookup(bytes, path)? {
             Lookup::Found(text) => {
-                let value: Value = crate::decode_wire_json(std::str::from_utf8(text).ok()?).ok()?;
+                let value = match scalar(text) {
+                    Some(value) => value,
+                    None => crate::decode_wire_json(std::str::from_utf8(text).ok()?).ok()?,
+                };
                 value.validate().ok().map(|()| Field::Found(value))
             }
             Lookup::Missing => Some(Field::Missing),
@@ -420,6 +431,70 @@ mod field {
         let end = value_end(payload, at)?;
         payload[at..].starts_with(TAG).then_some(())?;
         Some(Lookup::Found(&payload[at..end]))
+    }
+
+    /// `{"type":"Point","coordinates":[x,y]}` with number coordinates.
+    pub(super) fn point(text: &[u8]) -> Option<Value> {
+        let rest = text.strip_prefix(
+            b"{\"type\":\"Object\",\"value\":{\"coordinates\":{\"type\":\"Array\",\"value\":[",
+        )?;
+        let rest = rest.strip_suffix(b"]},\"type\":{\"type\":\"String\",\"value\":\"Point\"}}}")?;
+        let split = rest.windows(3).position(|w| w == b"},{")?;
+        let (x, y) = (&rest[..split + 1], &rest[split + 2..]);
+        let number = |member: &[u8]| match scalar(member)? {
+            number @ Value::Number(_) => Some(number),
+            _ => None,
+        };
+        Some(Value::Object(super::Document::from([
+            (
+                "coordinates".into(),
+                Value::Array(vec![number(x)?, number(y)?]),
+            ),
+            ("type".into(), Value::String("Point".into())),
+        ])))
+    }
+
+    /// Null, boolean, integer, number and escape-free string members, parsed
+    /// without the JSON decoder. Anything else returns `None` and is decoded.
+    pub(super) fn scalar(text: &[u8]) -> Option<Value> {
+        if text == b"{\"type\":\"Null\"}" {
+            return Some(Value::Null);
+        }
+        let rest = text.strip_prefix(b"{\"type\":\"")?;
+        let kind_end = rest.iter().position(|b| *b == b'"')?;
+        let (kind, rest) = rest.split_at(kind_end);
+        let raw = rest.strip_prefix(b"\",\"value\":")?.strip_suffix(b"}")?;
+        match kind {
+            b"Boolean" => match raw {
+                b"true" => Some(Value::Boolean(true)),
+                b"false" => Some(Value::Boolean(false)),
+                _ => None,
+            },
+            b"Integer" => std::str::from_utf8(raw)
+                .ok()?
+                .parse()
+                .ok()
+                .map(Value::Integer),
+            // serde_json writes the shortest round-trip form, which Rust parses
+            // back to the same value.
+            b"Number" => {
+                let digits = std::str::from_utf8(raw).ok()?;
+                digits
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'+' | b'.' | b'e' | b'E'))
+                    .then(|| digits.parse().ok().map(Value::Number))?
+            }
+            b"String" => {
+                let inner = raw.strip_prefix(b"\"")?.strip_suffix(b"\"")?;
+                if inner.iter().any(|b| matches!(b, b'"' | b'\\') || *b < 0x20) {
+                    return None;
+                }
+                std::str::from_utf8(inner)
+                    .ok()
+                    .map(|s| Value::String(s.to_owned()))
+            }
+            _ => None,
+        }
     }
 
     /// Order of an encoded key relative to a path step, as in the sorted map.
@@ -514,6 +589,97 @@ mod field {
                 ("vec".into(), Value::vector32(&[1.0, 2.0]).unwrap()),
                 ("with \"escape\"".into(), Value::Integer(7)),
             ]))
+        }
+
+        #[test]
+        fn simple_values_decode_like_the_json_decoder() {
+            let point = |x: f64, y: f64| {
+                Value::Object(Document::from([
+                    ("type".into(), Value::String("Point".into())),
+                    (
+                        "coordinates".into(),
+                        Value::Array(vec![Value::Number(x), Value::Number(y)]),
+                    ),
+                ]))
+            };
+            for value in [
+                point(106.7, 10.8),
+                point(-180.0, -90.0),
+                point(-0.0, 5e-324),
+                point(1.5e-7, 89.99999999999999),
+                Value::Integer(-3),
+                Value::String("day".into()),
+            ] {
+                let bytes = value.encode().unwrap();
+                assert_eq!(
+                    super::super::decode_simple(&bytes),
+                    Some(Value::decode(&bytes).unwrap()),
+                    "{value:?}"
+                );
+            }
+            for value in [
+                Value::Object(Document::from([
+                    ("type".into(), Value::String("Point".into())),
+                    (
+                        "coordinates".into(),
+                        Value::Array(vec![Value::Integer(1), Value::Number(2.0)]),
+                    ),
+                ])),
+                Value::Object(Document::from([
+                    ("type".into(), Value::String("Point".into())),
+                    ("coordinates".into(), Value::Array(vec![Value::Number(1.0)])),
+                    ("crs".into(), Value::Null),
+                ])),
+                Value::String("tab\t".into()),
+                Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]),
+            ] {
+                assert_eq!(
+                    super::super::decode_simple(&value.encode().unwrap()),
+                    None,
+                    "{value:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn scalar_members_parse_like_the_json_decoder() {
+            let values = [
+                Value::Null,
+                Value::Boolean(true),
+                Value::Boolean(false),
+                Value::Integer(0),
+                Value::Integer(i64::MIN),
+                Value::Integer(i64::MAX),
+                Value::Number(0.0),
+                Value::Number(-0.0),
+                Value::Number(0.1),
+                Value::Number(-1.5e-7),
+                Value::Number(f64::MIN_POSITIVE),
+                Value::Number(5e-324),
+                Value::Number(f64::MAX),
+                Value::Number(123456789.0),
+                Value::String(String::new()),
+                Value::String("day".into()),
+                Value::String("ภาษาไทย 🚀".into()),
+                Value::String("quote \" slash \\ tab \t nul \0".into()),
+            ];
+            for value in values {
+                let document = Value::Object(Document::from([("a".into(), value.clone())]));
+                let bytes = document.encode().unwrap();
+                let Some(Field::Found(found)) = super::read(&bytes, &["a".into()]) else {
+                    panic!("{value:?}")
+                };
+                match (&found, &value) {
+                    (Value::Number(a), Value::Number(b)) => assert_eq!(a.to_bits(), b.to_bits()),
+                    _ => assert_eq!(found, value),
+                }
+                let member = &bytes
+                    [bytes.windows(5).position(|w| w == b"\"a\":{").unwrap() + 4..bytes.len() - 2];
+                let direct = super::scalar(member);
+                let escaped =
+                    matches!(&value, Value::String(s) if s.contains(['"', '\\', '\t', '\0']));
+                assert_eq!(direct.is_none(), escaped, "{value:?}");
+            }
         }
 
         #[test]
