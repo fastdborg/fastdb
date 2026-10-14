@@ -3,6 +3,7 @@ mod ann;
 mod array_predicate;
 mod budget;
 mod bundled;
+mod grouped;
 mod udf;
 mod unnest;
 pub use budget::ResultLimits;

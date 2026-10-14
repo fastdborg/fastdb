@@ -8120,6 +8120,8 @@ impl Connection {
             explain,
             native_insert,
         } = plan;
+        let mut cmd = cmd;
+        crate::grouped::narrow(&mut cmd);
         let lowered = cmd.to_string();
         let mut statement = self.prepare(&lowered)?;
         for (name, value) in params {
