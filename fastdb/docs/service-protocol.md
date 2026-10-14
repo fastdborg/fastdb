@@ -61,8 +61,9 @@ Cloud database identity is also bound by its stable UUID route.
 | Local full URL | `http://127.0.0.1:4321/v1/database` |
 | Cloud full URL | `https://cloud.fastdb.org/v1/organizations/{org}/databases/{db}` |
 | Cloud dashboard query URL | Same scoped URL with its final `/query` removed |
+| `fastdb://` URL | The same URL with `fastdb://` replaced by `https://`, then normalized as above |
 
-Accept only HTTPS or HTTP on explicit loopback hosts. Reject URL credentials,
+Accept only HTTPS (or its `fastdb://` alias) or HTTP on explicit loopback hosts. Reject URL credentials,
 query strings and fragments. Do not follow redirects with a database credential.
 Versioned paths are mandatory; do not infer organization/database identity from
 unverified token claims. Cloud database JWTs require the stable UUID route.

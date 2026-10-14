@@ -29,7 +29,8 @@ publication. It does not fall back to the old 0.2 database routes.
 Set `FASTDB_API_KEY` to an organization key (`fdbo_…`). Credentials are accepted
 only through the environment. `FASTDB_CLOUD_URL` defaults to
 `https://cloud.fastdb.org`; another endpoint must be an HTTPS origin, with HTTP
-allowed only on loopback for local development. Redirects and implicit HTTP
+allowed only on loopback for local development. `fastdb://host` is accepted as an
+alias for `https://host` with the same rules. Redirects and implicit HTTP
 retries are disabled. TLS verification remains enabled.
 
 Select an organization with `FASTDB_ORGANIZATION_ID` or the leading

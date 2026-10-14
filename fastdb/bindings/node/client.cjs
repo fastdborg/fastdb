@@ -22,13 +22,14 @@ class ClientError extends Error {
 
 async function connect(options) {
   const db = new RemoteDatabase(options, construction);
+  if (db.deferred) return db;
   try { await db.info(); return db; }
   catch (error) { await db.close(); throw error; }
 }
 
 class RemoteDatabase {
   #url; #token; #fetch; #timeout; #sequence = 0; #id; #capabilities; #transport;
-  #closed = false; #active = new Set(); #inflightBytes = 0;
+  #closed = false; #active = new Set(); #inflightBytes = 0; #sequenceKnown = false; #deferred = false;
   constructor(options, key, transport) {
     if (key !== construction) throw new TypeError('use connect()');
     if (!plainObject(options)) throw new TypeError('connection options require an object');
@@ -39,7 +40,15 @@ class RemoteDatabase {
     this.#fetch = options.fetch ?? globalThis.fetch;
     if (typeof this.#fetch !== 'function') throw new TypeError('fetch must be a function');
     this.#timeout = timeout(options.timeoutMs ?? 20_000);
+    if (options.deferInfo !== undefined && typeof options.deferInfo !== 'boolean') throw new TypeError('deferInfo requires a boolean');
+    // Cloud database URLs carry the database id and have documented capabilities,
+    // so the details request can wait until a write needs a current sequence.
+    const cloudId = options.deferInfo === true && !transport ? /\/databases\/([0-9a-f-]{36})$/.exec(this.#url)?.[1] : undefined;
+    if (cloudId) {
+      this.#id = cloudId; this.#capabilities = capabilities(this.#url, {}); this.#deferred = true;
+    } else if (options.deferInfo === true) throw new TypeError('deferInfo applies only to Cloud database URLs');
   }
+  get deferred() { return this.#deferred; }
   get url() { return this.#url; }
   get sequence() { return this.#sequence; }
   get databaseId() { return this.#id; }
@@ -51,6 +60,7 @@ class RemoteDatabase {
     const supported = capabilities(this.#url, info);
     this.#id = info.id;
     this.#sequence = Math.max(this.#sequence, info.sequence);
+    this.#sequenceKnown = true;
     this.#capabilities = supported;
     return { ...info, capabilities: supported };
   }
@@ -67,10 +77,12 @@ class RemoteDatabase {
     const reply = await this.#request('/read', body, options, false);
     const result = confirmReply(reply, request, true);
     this.#sequence = Math.max(this.#sequence, result.sequence);
+    this.#sequenceKnown = true;
     return result;
   }
   prepareWrite(statements, options = {}) {
     this.#assertOpen();
+    if (!this.#sequenceKnown && this.#deferred && options.afterSequence === undefined) throw new ClientError('FDB_SEQUENCE_UNKNOWN', 'Read, call info() or pass afterSequence before preparing a write on a deferred connection', 'not-sent');
     if (this.#capabilities.atomicWrites !== true || this.#capabilities.replayWindow !== 64) throw new ClientError('FDB_UNSUPPORTED', 'Database does not support atomic writes with recovery', 'not-sent');
     const afterSequence = options.afterSequence ?? this.#sequence;
     checkSequence(afterSequence);
@@ -95,6 +107,7 @@ class RemoteDatabase {
       const reply = await this.#request('/query', prepared.body, options, true, prepared);
       const result = confirmReply(reply, request, false, prepared);
       this.#sequence = Math.max(this.#sequence, result.sequence);
+      this.#sequenceKnown = true;
       return result;
     } catch (error) {
       if (error instanceof ClientError) {
@@ -111,7 +124,10 @@ class RemoteDatabase {
       throw error;
     }
   }
-  async writeAtomic(statements, options = {}) { return this.submit(this.prepareWrite(statements, options), options); }
+  async writeAtomic(statements, options = {}) {
+    if (!this.#sequenceKnown && this.#deferred && options.afterSequence === undefined) await this.info(options);
+    return this.submit(this.prepareWrite(statements, options), options);
+  }
   async close() {
     this.#closed = true;
     for (const controller of this.#active) controller.abort();
@@ -192,7 +208,8 @@ function normalizeFileUrl(input) {
 
 function normalizeUrl(input) {
   if (typeof input !== 'string' || input.length > 4096) throw new TypeError('url requires a bounded database URL');
-  const url = new URL(input);
+  // fastdb:// is an alias for https://; the same checks apply after the rewrite.
+  const url = new URL(input.startsWith('fastdb://') ? 'https://' + input.slice('fastdb://'.length) : input);
   const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
   if (url.username || url.password || url.search || url.hash || (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))) throw new TypeError('use HTTPS or loopback HTTP without URL credentials, query or fragment');
   let path = url.pathname.replace(/\/$/, '').replace(/\/(?:query|read)$/, '');

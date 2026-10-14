@@ -411,8 +411,21 @@ Do not automatically replace an expired or uncertain request with a new write.
 
 URL imports never load the native addon. Cloud URLs use stable organization and
 database UUIDs; dashboard URLs ending in `/query` are accepted too. The proposed
-local URL is `http://127.0.0.1:4321`. Use HTTPS for other hosts. Redirects are
-rejected, and the bearer token must be passed separately from the URL.
+local URL is `http://127.0.0.1:4321`. Use HTTPS for other hosts. `fastdb://` is an
+alias for `https://`: the client replaces the scheme and applies the same checks,
+so `fastdb://cloud.fastdb.org/v1/organizations/{org}/databases/{db}` and the
+`https://` form are the same database. It changes no transport or protocol.
+Redirects are rejected, and the bearer token must be passed separately from the
+URL; a token in the URL is refused.
+
+`connect()` requests the database details (id and current sequence) before it
+returns. For Cloud database URLs, `connect({ url, token, deferInfo: true })` skips
+that request: the database id comes from the URL and Cloud capabilities are
+documented. Reads then start from sequence 0 as their lower bound and update the
+sequence from each reply. A write needs a current sequence: `writeAtomic` fetches
+the details first when none is known yet, and `prepareWrite` throws
+`FDB_SEQUENCE_UNKNOWN` (outcome `not-sent`) until a read, `info()` or an explicit
+`afterSequence` supplies one. `deferInfo` is rejected for local URLs.
 
 Results use positional rows, preserving duplicate columns. Integer results are
 bigint. Number results are explicit `Float64` instances with a `.value` number;
