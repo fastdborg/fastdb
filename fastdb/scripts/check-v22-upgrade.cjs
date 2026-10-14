@@ -9,8 +9,7 @@ if(!oldPackage||!newPackage||!directory) throw Error('Usage: node check-v22-upgr
 for(const value of [oldPackage,newPackage,directory]) assert.ok(path.isAbsolute(value));
 const oldVersion=require(path.join(oldPackage,'package.json')).version;
 const newVersion=require(path.join(newPackage,'package.json')).version;
-assert.match(newVersion,/^2\.[0-9]+\.[0-9]+$/);
-assert.ok(Number(newVersion.split('.')[1])>=2);
+require('./versions.cjs').assertCandidate(newVersion,'2.2.0');
 const hashes={
   '2.0.0':'11e472d275bb287bc4806e086d3ffed268bf170240b7f2ab6d981270e87f523d',
   '2.1.0':'e39e9f5ca3e22c1c4d5f594fd362bc523289c86a006d49f6cfed338e7f94ac5d',
