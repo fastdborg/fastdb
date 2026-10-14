@@ -429,3 +429,26 @@ before release measured 119 moves per second with p95 values of 10.6, 82.5 and
   indexes, `search::containing`, GeoJSON output, filtered nearest search and an
   invalid polygon. PHP, Go, C# and Swift pass all 110 steps; Python and Node run
   the same tagged steps.
+
+## 2.5.3 scans and grouping
+
+Measured 2026-10-14 with the `fastdb-production` profile on one 65 MB file-backed
+database of 100,000 documents. Binaries built from 2.5.2 (`main`) and 2.5.3
+alternated three times per query; the table shows the best run of ten
+executions each. The host was shared with other work, so differences under
+about 10% are within run-to-run variation.
+
+| Query | 2.5.2 | 2.5.3 | Change |
+| --- | --- | --- | --- |
+| `SELECT id FROM people WHERE fleet = 'night'` | 139.9 ms | 115.6 ms | −17% |
+| Three fields of 33,384 rows | 283.1 ms | 250.6 ms | −11% |
+| `GROUP BY fleet` with `count(*)` | 260.1 ms | 238.1 ms | −8% |
+| `GROUP BY fleet` with `count(*)` and `sum(last_seen)` | 517.4 ms | 395.8 ms | −24% |
+| `GROUP BY geo::cell(location, 3)` | 1,120.9 ms | 845.7 ms | −25% |
+| Night-fleet nearest through the ordinary plan | 152.9 ms | 130.1 ms | −15% |
+
+Changes: field reads parse simple members without the JSON decoder; helpers
+decode canonical points directly; grouped collection queries extract field
+values before grouping, so the GROUP BY sorter no longer copies whole documents
+or spills them to a temporary file. A ten-times larger page cache gave only 4 to
+10% on the same scans and was not adopted.

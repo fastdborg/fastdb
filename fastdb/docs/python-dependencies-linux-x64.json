@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "7581c41a2a8bf120868ea67ba78fb51c243a851108f5ae59e16e3433a715fb7e",
+  "lockfileSha256": "829363099284d0ae06249b71f5a15e7c9f302e645f6f81660aa3187f30200976",
   "packages": [
     {
       "name": "aead",
@@ -311,17 +311,17 @@
     },
     {
       "name": "fastdb-protocol",
-      "version": "2.5.2",
+      "version": "2.5.3",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb-python",
-      "version": "2.5.2",
+      "version": "2.5.3",
       "licenseExpression": "MIT"
     },
     {
       "name": "fastdb",
-      "version": "2.5.2",
+      "version": "2.5.3",
       "licenseExpression": "MIT"
     },
     {
@@ -331,7 +331,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.5.2",
+      "version": "2.5.3",
       "licenseExpression": "MIT"
     },
     {
