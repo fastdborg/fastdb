@@ -1,12 +1,13 @@
-# Dependency security review for 2.5.2
-Reviewed 2026-10-14 for the Linux x64 2.5.2 candidate. The exact lockfile
+# Dependency security review for 2.5.3
+Reviewed 2026-10-14 for the Linux x64 2.5.3 candidate. The exact lockfile
 scan covers 359 package/version identities against the RustSec advisory
-database at `6aed84668c23d7f535077a9fe918bf1fa0f6a5bc` (fetched 2026-10-14,
-1,310 advisories) using the same pinned `cargo-audit 0.22.2` binary. It found
-zero unresolved shipping findings; the retained lru informational exception
-below is unchanged. 2.5.2 adds no dependency: the lockfile differs from 2.5.1
-only in the nine FastDB workspace package versions. Native QuickJS-NG, USearch
-and SQLite advisories are unchanged since the 2.5.0 review.
+database at `6aed84668c23d7f535077a9fe918bf1fa0f6a5bc` (1,310 advisories, the
+same revision as the 2.5.2 review) using the pinned `cargo-audit 0.22.2`
+binary. It found zero unresolved shipping findings; the retained lru
+informational exception below is unchanged. 2.5.3 adds no dependency: the
+lockfile differs from 2.5.2 only in the nine FastDB workspace package versions.
+Native QuickJS-NG, USearch and SQLite advisories are unchanged since the 2.5.0
+review.
 
 The 2.5.1 review (database `d8325cf4f578e2df4cc5b98a30e9f46b3b88e9f0`) found the
 same shipping result.
