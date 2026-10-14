@@ -32,6 +32,29 @@ python3 fastdb/scripts/check-rust-client.py --shipping-profile
 Changing optimization policy requires rebuilding and requalifying the artifacts;
 stripping a development binary alone does not qualify it as optimized.
 
+## Previous-version upgrade checks
+
+`scripts/upgrade_matrix.py` lists every upgrade/restore check and the first
+candidate version that runs it; a check applies to all later 2.x candidates, so a
+new release adds only one row for its direct predecessor. The bundle check takes
+the published Node packages of earlier releases as repeated
+`--previous-package VERSION=PATH` options and fails if the table needs one that is
+missing. The Node scripts accept candidate versions by range
+(`scripts/versions.cjs`), not by list.
+
+Run the same table before tagging, against the development package
+(`fastdb/bindings/node` with its built addon) or an extracted release package:
+
+```sh
+python3 fastdb/scripts/check-upgrades.py /absolute/new/evidence/dir \
+  --package fastdb/bindings/node \
+  --node /path/to/node22 --node /path/to/node24 \
+  --previous-package 1.0.0=/path/to/node-1.0.0 --previous-package 2.0.0=/path/to/node-2.0.0 ...
+```
+
+A failure there means a script or the table needs a change; fixing it before the
+build commit is tagged avoids rebuilding and requalifying the bundle.
+
 ## Bounded exact-artifact workload
 
 ```sh

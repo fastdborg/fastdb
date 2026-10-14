@@ -10,9 +10,10 @@ const { execFileSync } = require('node:child_process');
 const [oldPackage, newPackage, directory, phase, file] = process.argv.slice(2);
 const oldVersion = require(path.join(oldPackage, 'package.json')).version;
 const newVersion = require(path.join(newPackage, 'package.json')).version;
-assert.ok(['2.5.0', '2.5.1'].includes(oldVersion), oldVersion);
-assert.ok(['2.5.1', '2.5.2'].includes(newVersion), newVersion);
-assert.ok(oldVersion < newVersion, `${oldVersion} -> ${newVersion}`);
+const versions = require('./versions.cjs');
+versions.assertCandidate(oldVersion, '2.5.0');
+versions.assertCandidate(newVersion, '2.5.1');
+assert.ok(versions.compare(oldVersion, newVersion) < 0, `${oldVersion} -> ${newVersion}`);
 const digest = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const point = (x, y) => ({ type: 'Point', coordinates: [x, y] });
 if (!phase) {

@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 from shipping_policy import check_manifest, check_profile, check_artifact, check_security_review
+import upgrade_matrix
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -18,14 +19,8 @@ parser.add_argument("evidence", type=Path)
 parser.add_argument("--node", action="append", required=True, help="Node executable; repeat for each qualified runtime")
 parser.add_argument("--python", action="append", required=True, help="Python executable; repeat for each qualified runtime")
 parser.add_argument("--uv", default="uv")
-parser.add_argument("--v1-package", type=Path, required=True)
-parser.add_argument("--v2-package", type=Path, required=True, help="Immutable published 2.0.0 Node package")
-parser.add_argument("--v21-package", type=Path, required=True, help="Immutable published 2.1.0 Node package")
-parser.add_argument("--v22-package", type=Path, help="Immutable published 2.2.0 Node package; required for 2.3.0 and later")
-parser.add_argument("--v23-package", type=Path, help="Immutable published 2.3.0 Node package; required for 2.4.0 and later")
-parser.add_argument("--v24-package", type=Path, help="Immutable published 2.4.0 Node package; required for 2.5.0 and later")
-parser.add_argument("--v25-package", type=Path, help="Immutable published 2.5.0 Node package; required for 2.5.1 and later")
-parser.add_argument("--v251-package", type=Path, help="Immutable published 2.5.1 Node package; required for 2.5.2")
+parser.add_argument("--previous-package", action="append", default=[], metavar="VERSION=PATH",
+                    help="Immutable published Node package of an earlier release; repeat for every version upgrade_matrix.py requires")
 args = parser.parse_args()
 bundle = args.bundle.resolve()
 evidence = args.evidence.resolve()
@@ -72,32 +67,7 @@ python_versions = [subprocess.check_output([python, "-c", "import platform;print
 assert {int(v.split('.')[0]) for v in node_versions} == set(release["requiredNodeMajors"]), "Incomplete Node runtime matrix"
 assert {'.'.join(v.split('.')[:2]) for v in python_versions} == set(release["requiredPythonMinors"]), "Incomplete Python runtime matrix"
 assert sha(bundle / "fastdb-source.tar.gz") == manifest["sourceArchiveSha256"]
-v1 = args.v1_package.resolve()
-assert json.loads((v1 / "package.json").read_text())["version"] == "1.0.0"
-v2 = args.v2_package.resolve()
-assert json.loads((v2 / "package.json").read_text())["version"] == "2.0.0"
-v21 = args.v21_package.resolve()
-assert json.loads((v21 / "package.json").read_text())["version"] == "2.1.0"
-if version in ("2.3.0", "2.4.0", "2.5.0", "2.5.1", "2.5.2"):
-    assert args.v22_package, f"{version} requires a 2.2.0 upgrade/restore fixture"
-    v22 = args.v22_package.resolve()
-    assert json.loads((v22 / "package.json").read_text())["version"] == "2.2.0"
-if version in ("2.4.0", "2.5.0", "2.5.1", "2.5.2"):
-    assert args.v23_package, f"{version} requires a 2.3.0 upgrade/restore fixture"
-    v23 = args.v23_package.resolve()
-    assert json.loads((v23 / "package.json").read_text())["version"] == "2.3.0"
-if version in ("2.5.0", "2.5.1", "2.5.2"):
-    assert args.v24_package, f"{version} requires a 2.4.0 upgrade/restore fixture"
-    v24 = args.v24_package.resolve()
-    assert json.loads((v24 / "package.json").read_text())["version"] == "2.4.0"
-if version in ("2.5.1", "2.5.2"):
-    assert args.v25_package, f"{version} requires a 2.5.0 upgrade/restore fixture"
-    v25 = args.v25_package.resolve()
-    assert json.loads((v25 / "package.json").read_text())["version"] == "2.5.0"
-if version == "2.5.2":
-    assert args.v251_package, "2.5.2 requires a 2.5.1 upgrade/restore fixture"
-    v251 = args.v251_package.resolve()
-    assert json.loads((v251 / "package.json").read_text())["version"] == "2.5.1"
+packages = upgrade_matrix.previous_packages(args.previous_package, version)
 results = []
 
 
@@ -150,7 +120,7 @@ assert cli_rows[10]["rows"] == [[integer(1), integer(2), {"type": "Array", "valu
 assert cli_rows[11]["rows"] == [[integer(2), integer(4)]]
 assert cli_rows[12]["rows"] == cli_rows[13]["rows"] == [[integer(2)]]
 assert cli_rows[14]["rows"] == [[integer(2)], [integer(3)], [integer(4)]]
-if version in ("2.4.0", "2.5.0", "2.5.1", "2.5.2"):
+if upgrade_matrix.at_least(version, "2.4.0"):
     cli_graph = """CREATE TABLE people;
 CREATE EDGE TABLE follows FROM people TO people;
 INSERT INTO people:a {name:'A'};
@@ -165,7 +135,7 @@ EXPLAIN QUERY PLAN SELECT g.node FROM GRAPH(people:a -> follows -> people) g;
     record = lambda table, key: {"type": "Record", "value": {"table": table, "key": {"String": key}}}
     assert graph_rows[5]["rows"] == [[record("people", "b"), integer(1), {"type": "Array", "value": [record("follows", "ab")]}]]
     assert any("GRAPH HOP 1 follows SEARCH USING COVERING INDEX" in json.dumps(row) for row in graph_rows[6]["rows"])
-if version in ("2.5.0", "2.5.1", "2.5.2"):
+if upgrade_matrix.at_least(version, "2.5.0"):
     cli_spatial = """CREATE TABLE places;
 INSERT INTO places:a {location:ST_Point(106.70, 10.80), open:true};
 INSERT INTO places:b {location:ST_Point(106.71, 10.80), open:false};
@@ -220,30 +190,14 @@ with tempfile.TemporaryDirectory(prefix="fastdb-v2-bundle-") as temp:
     consumer.mkdir()
     (consumer / "package.json").write_text('{"name":"v2-upgrade-check","private":true}')
     run("node-upgrade-install", ["pnpm", "add", "--offline", "--ignore-scripts", str(bundle / "packages" / f"fastdb-node-{version}.tgz")], cwd=consumer)
-    run("v1-upgrade-restore", [args.node[0], "fastdb/scripts/check-v2-upgrade.cjs", str(v1),
-                              str(consumer / "node_modules/@fastdb/node"), str(evidence / "upgrade-fixture")])
     installed_node = consumer / "node_modules/@fastdb/node"
-    for index, node in enumerate(args.node):
+
+    def ownership(index, node):
         env = dict(base_env, FASTDB_OWNERSHIP_PACKAGE=str(installed_node))
         run(f"node-ownership-{index}", [node, "--test", "fastdb/bindings/node/ownership.test.cjs"], env=env)
-        for previous, label in [(v2, "v2"), (v21, "v21")]:
-            run(f"{label}-upgrade-restore-{index}", [node, "fastdb/scripts/check-v22-upgrade.cjs", str(previous),
-                                                   str(installed_node), str(evidence / f"{label}-upgrade-fixture-{index}")])
-        if version in ("2.3.0", "2.4.0", "2.5.0", "2.5.1", "2.5.2"):
-            run(f"v22-upgrade-restore-{index}", [node, "fastdb/scripts/check-v23-upgrade.cjs", str(v22),
-                                                 str(installed_node), str(evidence / f"v22-upgrade-fixture-{index}")])
-        if version in ("2.4.0", "2.5.0", "2.5.1", "2.5.2"):
-            run(f"v23-upgrade-restore-{index}", [node, "fastdb/scripts/check-v24-upgrade.cjs", str(v23),
-                                                 str(installed_node), str(evidence / f"v23-upgrade-fixture-{index}")])
-        if version in ("2.5.0", "2.5.1", "2.5.2"):
-            run(f"v24-upgrade-restore-{index}", [node, "fastdb/scripts/check-v25-upgrade.cjs", str(v24),
-                                                 str(installed_node), str(evidence / f"v24-upgrade-fixture-{index}")])
-        if version in ("2.5.1", "2.5.2"):
-            run(f"v25-upgrade-restore-{index}", [node, "fastdb/scripts/check-v251-upgrade.cjs", str(v25),
-                                                 str(installed_node), str(evidence / f"v25-upgrade-fixture-{index}")])
-        if version == "2.5.2":
-            run(f"v251-upgrade-restore-{index}", [node, "fastdb/scripts/check-v251-upgrade.cjs", str(v251),
-                                                  str(installed_node), str(evidence / f"v251-upgrade-fixture-{index}")])
+
+    upgrade_matrix.run_upgrades(run, ROOT, version, installed_node, packages, args.node, evidence,
+                                before_node=ownership)
 
     # Test the shipped .nupkg, never a previously cached same-version package.
     dotnet = temporary / "dotnet"
